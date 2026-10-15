@@ -336,41 +336,65 @@ def _split(
     layers: tuple[tuple[str, ...], ...], nodes: Sequence[Node]
 ) -> tuple[tuple[str, ...], ...]:
     """Each layer as runs of nodes that may run concurrently, first fit in declaration order: a
-    read-only node (``mutates_checkout: false``) never beside one that may change the checkout,
-    and two agents never resuming one session at once."""
-    by_id = {node.id: node for node in nodes}
+    node that reads the checkout (``mutates_checkout: false``, or a group whose body holds one)
+    never beside one that may change it, and two agents never resuming one session at once."""
+    traits = {node.id: _Traits.of(node) for node in nodes}
     split: list[tuple[str, ...]] = []
     for layer in layers:
-        batches: list[list[str]] = []
+        batches: list[_Batch] = []
         for node_id in layer:
-            node = by_id[node_id]
-            fits = (b for b in batches if not any(_clash(node, by_id[o]) for o in b))
-            batch = next(fits, None)
+            batch = next((b for b in batches if b.fits(traits[node_id])), None)
             if batch is None:
-                batches.append([node_id])
-            else:
-                batch.append(node_id)
-        split.extend(tuple(batch) for batch in batches)
+                batch = _Batch()
+                batches.append(batch)
+            batch.add(node_id, traits[node_id])
+        split.extend(tuple(batch.ids) for batch in batches)
     return tuple(split)
 
 
-def _clash(node: Node, other: Node) -> bool:
-    if _read_only(node) != _read_only(other):
-        return True
-    resumed = _resumed(node)
-    return resumed is not None and resumed == _resumed(other)
+@dataclass(frozen=True)
+class _Traits:
+    """What a node does to the checkout and which sessions it resumes."""
+
+    reads: bool
+    writes: bool
+    resumed: frozenset[str]
+
+    @classmethod
+    def of(cls, node: Node) -> _Traits:
+        parts = node.nodes if isinstance(node, LoopGroupNode) else (node,)
+        executable = [
+            p for p in parts if isinstance(p, AgentNode | ShellNode | ScriptNode | LoopNode)
+        ]
+        resumed = frozenset(
+            p.context.resume
+            for p in executable
+            if isinstance(p, AgentNode | LoopNode) and not isinstance(p.context, str)
+        )
+        reads = any(not p.mutates_checkout for p in executable)
+        return cls(reads, any(p.mutates_checkout for p in executable), resumed)
 
 
-def _read_only(node: Node) -> bool:
-    if isinstance(node, AgentNode | ShellNode | ScriptNode | LoopNode):
-        return not node.mutates_checkout
-    return False
+@dataclass
+class _Batch:
+    """Nodes that run together: whether any reads or writes the checkout, the sessions resumed.
+    ``fits`` is constant work in the batch's size."""
 
+    ids: list[str] = field(default_factory=list)
+    reads: bool = False
+    writes: bool = False
+    resumed: set[str] = field(default_factory=set)
 
-def _resumed(node: Node) -> str | None:
-    if isinstance(node, AgentNode | LoopNode) and not isinstance(node.context, str):
-        return node.context.resume
-    return None
+    def fits(self, traits: _Traits) -> bool:
+        if (traits.reads and self.writes) or (traits.writes and self.reads):
+            return False
+        return self.resumed.isdisjoint(traits.resumed)
+
+    def add(self, node_id: str, traits: _Traits) -> None:
+        self.ids.append(node_id)
+        self.reads |= traits.reads
+        self.writes |= traits.writes
+        self.resumed |= traits.resumed
 
 
 def _reference_problems(

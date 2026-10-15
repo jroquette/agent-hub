@@ -6,7 +6,8 @@ so the plan keeps, for each node that needs one, the rewrites its texts went thr
 ``RefScope`` of ``ScopeStep``s, innermost first. ``NodeCall.scope`` carries it, and the runner
 renders a prompt file with ``scope.render``: the file reads its own workflow's inputs and nodes
 exactly as an inline prompt does. Each step is one pass over the text (``rewrite_refs``); a step
-reads only the text the step before it gave.
+reads only the text the step before it gave. Planning reads no file (core loads none), so a prompt
+file's references are checked when it renders: one that does not resolve fails the node ``config``.
 """
 
 from collections.abc import Mapping

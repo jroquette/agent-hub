@@ -22,6 +22,8 @@ from agent_hub.core.workflows.failures import NodeFailedError
 
 STATUS_ARGV: Final = ("git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
 STATUS_TIMEOUT: Final = 60.0
+# The end of git's stderr kept in a failure's detail (the run's record, never events).
+MAX_DETAIL: Final = 300
 
 type ChildRunner = Callable[..., ChildResult]
 
@@ -44,6 +46,7 @@ class GitCheckoutProbe:
                 detail = f"git status cannot run in {root.name}: {type(error).__name__}"
                 raise NodeFailedError("config", detail) from None
             if result.returncode != 0:
-                raise NodeFailedError("config", f"git status failed in {root.name}")
+                said = " ".join(result.stderr.decode(errors="replace").split())[-MAX_DETAIL:]
+                raise NodeFailedError("config", f"git status failed in {root.name}: {said}")
             parts.append(f"{root}\0{result.stdout.decode(errors='replace')}")
         return "\0\0".join(parts)
