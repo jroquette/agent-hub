@@ -355,4 +355,17 @@ describe("Transcript (sending-feedback)", () => {
     );
     expect(screen.getByText("Run the tests.").closest(".as-msg")).not.toHaveTextContent("Queued");
   });
+
+  it("keeps a Sending… bubble out of the live log, just after it (a11y)", () => {
+    show([
+      { type: "record", record: aLogRecord("user.message", { seq: 1 }) },
+      { type: "sending", key: "s-1", text: "One more" },
+    ]);
+
+    const log = screen.getByRole("log", { name: "Conversation" });
+    const sending = screen.getByText("One more");
+    expect(log).not.toContainElement(sending);
+    expect(log.compareDocumentPosition(sending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(log).getByText("Run the tests.")).toBeInTheDocument();
+  });
 });
