@@ -25,14 +25,8 @@ def alive(pid: int) -> bool:
     return True
 
 
-def test_kills_background_process_when_node_times_out(tmp_path: Path) -> None:
-    pidfile = tmp_path / "hub" / "pid"
-    pidfile.parent.mkdir()
-    script = f"sleep 30 & echo $! > {pidfile}; wait"
-    spec = {"id": "slow", "type": "shell", "command": ["sh", "-c", script], "timeout": "1s"}
-    node = a_plan(spec).document.nodes[0]
-    assert isinstance(node, ShellNode)
-    runner = WorkflowExecutors(
+def runner_in(tmp_path: Path) -> WorkflowExecutors:
+    return WorkflowExecutors(
         hub=tmp_path / "hub",
         config=HubConfig.model_validate(a_hub_document()),
         run_id="r1",
@@ -41,12 +35,38 @@ def test_kills_background_process_when_node_times_out(tmp_path: Path) -> None:
         hub_program=("/bin/false",),
     )
 
-    with pytest.raises(NodeFailedError) as raised:
-        runner.run(NodeCall(node, 1, RefContext({}, {}), argv=tuple(node.command)))
 
-    assert raised.value.kind == "timeout"
+def shell_call(tmp_path: Path, script: str, **keys: object) -> tuple[NodeCall, Path]:
+    pidfile = tmp_path / "hub" / "pid"
+    pidfile.parent.mkdir(exist_ok=True)
+    command = ["sh", "-c", script.replace("PIDFILE", str(pidfile))]
+    node = a_plan({"id": "slow", "type": "shell", "command": command, **keys}).document.nodes[0]
+    assert isinstance(node, ShellNode)
+    return NodeCall(node, 1, RefContext({}, {}), argv=tuple(node.command)), pidfile
+
+
+def gone(pidfile: Path) -> bool:
     pid = int(pidfile.read_text())
     deadline = time.monotonic() + 5
     while alive(pid) and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert not alive(pid)
+    return not alive(pid)
+
+
+def test_kills_background_process_when_node_times_out(tmp_path: Path) -> None:
+    call, pidfile = shell_call(tmp_path, "sleep 30 & echo $! > PIDFILE; wait", timeout="1s")
+
+    with pytest.raises(NodeFailedError) as raised:
+        runner_in(tmp_path).run(call)
+
+    assert raised.value.kind == "timeout"
+    assert gone(pidfile)
+
+
+def test_kills_background_process_when_node_exits_zero(tmp_path: Path) -> None:
+    call, pidfile = shell_call(tmp_path, "sleep 30 & echo $! > PIDFILE")
+
+    reply = runner_in(tmp_path).run(call)
+
+    assert reply.text == ""
+    assert gone(pidfile)
