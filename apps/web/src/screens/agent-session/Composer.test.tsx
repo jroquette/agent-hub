@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -40,6 +40,21 @@ describe("Composer (composer)", () => {
     expect(props.onSend).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(props.onSend).toHaveBeenCalledWith("one\ntwo");
+  });
+
+  it("sends on Alt+Enter, but leaves Ctrl/Cmd+Alt+Enter to the chat's allow chord", async () => {
+    const { box, props } = open();
+    await userEvent.type(box, "Run it");
+
+    expect(fireEvent.keyDown(box, { key: "Enter", ctrlKey: true, altKey: true })).toBe(true);
+    expect(fireEvent.keyDown(box, { key: "Enter", metaKey: true, altKey: true })).toBe(true);
+    await act(() => Promise.resolve());
+    expect(props.onSend).not.toHaveBeenCalled();
+
+    expect(fireEvent.keyDown(box, { key: "Enter", altKey: true })).toBe(false);
+    await waitFor(() => {
+      expect(props.onSend).toHaveBeenCalledWith("Run it");
+    });
   });
 
   it("sends nothing when the box is blank", async () => {

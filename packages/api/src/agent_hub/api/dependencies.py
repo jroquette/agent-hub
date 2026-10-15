@@ -26,6 +26,7 @@ from agent_hub.core.learnings.learning_ports import LearningDecisions, LearningR
 from agent_hub.core.readmodels.filters import LearningFilter
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
+from agent_hub.core.workflows.launch import ControlWorkflowRun, StartWorkflowRun
 from agent_hub.core.workflows.workflow_reads import WorkflowReads
 
 
@@ -45,6 +46,8 @@ class ApiPorts:
     cloud_sessions: CloudSessionCommands | None = None
     agent_session_links: AgentSessionLinkLookup | None = None
     workflow_reads: WorkflowReads | None = None
+    run_starts: StartWorkflowRun | None = None
+    run_control: ControlWorkflowRun | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -76,6 +79,22 @@ def hub_read_models(request: Request) -> HubReadModels:
 def workflow_reads(request: Request) -> WorkflowReads:
     """The workflow reads, or 501 when not wired."""
     port = _ports(request).workflow_reads
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def run_starts(request: Request) -> StartWorkflowRun:
+    """The workflow-run start, or 501 when not wired."""
+    port = _ports(request).run_starts
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def run_control(request: Request) -> ControlWorkflowRun:
+    """The workflow-run cancel, resume and abandon, or 501 when not wired."""
+    port = _ports(request).run_control
     if port is None:
         raise _unwired(request)
     return port
@@ -205,6 +224,8 @@ def parse_filter[M: BaseModel](model: type[M], **fields: object) -> M:
 EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
 HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
 WorkflowReadsDep = Annotated[WorkflowReads, Depends(workflow_reads)]
+RunStartsDep = Annotated[StartWorkflowRun, Depends(run_starts)]
+RunControlDep = Annotated[ControlWorkflowRun, Depends(run_control)]
 IngestHookDep = Annotated[IngestHook, Depends(ingest_hook)]
 LearningReadsDep = Annotated[LearningReads, Depends(learning_reads)]
 LearningDecisionsDep = Annotated[LearningDecisions, Depends(learning_decisions)]

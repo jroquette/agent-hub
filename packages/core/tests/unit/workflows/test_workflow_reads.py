@@ -133,3 +133,9 @@ def test_reads_hub_files_once_when_listing_fingerprint_unchanged() -> None:
 
     assert files.reads == 2
     assert [item.name for item in changed.items] == ["ship"]
+
+
+def test_gives_hub_and_plan_when_workflow_plan_asked() -> None:
+    hub_path, plan = reads().workflow_plan("demo", "ship")
+
+    assert (hub_path, plan.document.name, len(plan.layers)) == ("/hubs/demo", "ship", 3)

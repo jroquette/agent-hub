@@ -1,9 +1,18 @@
-import { useEffect, useId, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 
 import type { components } from "../../api/schema";
 import { Button, Icon, Markdown } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
+import { goSequencePending } from "../../shell/goSequence";
 import { fmtClock } from "../../lib/format";
 import { StoredCopyLabel } from "./SessionStatus";
 import {
@@ -16,6 +25,19 @@ import {
   type PermissionDecisionView,
   type PermissionView,
 } from "./transcript";
+
+/** The request the chat's chords answer: the oldest pending one (AC-234.29). */
+export const OldestPendingContext = createContext<string | undefined>(undefined);
+export const ALLOW_KEYS = "Control+Alt+Enter Meta+Alt+Enter";
+export const DENY_KEYS = "Control+Alt+Backspace Meta+Alt+Backspace";
+
+/** Whether focus is in a text field holding text: a card arriving then leaves it there. */
+function typingText(element: Element | null): boolean {
+  return (
+    (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) &&
+    element.value !== ""
+  );
+}
 
 /** The body of `POST /{id}/permissions/{request_id}` (E7). */
 export type PermissionAnswer = components["schemas"]["PermissionDecision"];
@@ -174,9 +196,13 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   const modeId = useId();
   const pending = request.decision === null;
   const focus = autoFocus ?? pending;
+  // The keys answer tool permissions only, never a question or a plan (AC-234.29).
+  const keyed = request.requestKind === "tool";
+  const oldest = useContext(OldestPendingContext) === request.requestId;
+  const chords = keyed && oldest;
 
   useEffect(() => {
-    if (focus) card.current?.focus();
+    if (focus && !typingText(document.activeElement)) card.current?.focus();
     // Only on arrival: answering keeps the focus where it is.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -201,6 +227,17 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
     const text = message.trim();
     submit(text ? { decision: "deny", message: text } : { decision: "deny" });
   };
+  // `a` / `d` while the card itself has focus, not a field or button inside it.
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.target !== event.currentTarget || disabled || !keyed) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    // The second key of a `g` sequence is the shell's: `g a` goes to Approvals, never allows.
+    if (goSequencePending()) return;
+    if (event.key === "a") submit({ decision: "allow" });
+    else if (event.key === "d") deny();
+    else return;
+    event.preventDefault();
+  };
 
   const questions = request.requestKind === "ask_user_question" ? questionsOf(request.input) : [];
   const allAnswered = questions.every((q) => (answers[q.question] ?? []).length > 0);
@@ -211,12 +248,15 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   const always = request.suggestions.filter((s) => s.destination === ALWAYS_DESTINATION);
 
   return (
+    // The card takes focus (tabIndex -1) and then answers to `a` / `d` (AC-234.29).
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <section
       ref={card}
       className={cx("as-perm", pending ? "as-perm-pending" : "as-perm-done")}
       data-request-id={request.requestId}
       aria-labelledby={titleId}
       tabIndex={-1}
+      onKeyDown={onKeyDown}
     >
       <header className="as-perm-head">
         <Icon name={pending ? "hand" : "shield-check"} />
@@ -300,6 +340,8 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
                 <Button
                   variant="primary"
                   disabled={disabled}
+                  data-shortcut="allow"
+                  aria-keyshortcuts={chords ? ALLOW_KEYS : undefined}
                   onClick={() => {
                     submit({ decision: "allow" });
                   }}
@@ -346,7 +388,13 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
                 Approve plan
               </Button>
             )}
-            <Button variant="danger" disabled={disabled} onClick={deny}>
+            <Button
+              variant="danger"
+              disabled={disabled}
+              data-shortcut={keyed ? "deny" : undefined}
+              aria-keyshortcuts={chords ? DENY_KEYS : undefined}
+              onClick={deny}
+            >
               {request.requestKind === "plan_approval" ? "Keep planning" : "Deny"}
             </Button>
           </div>

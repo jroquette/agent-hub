@@ -8,7 +8,10 @@ refuses before routing, so a refused request never reaches a port.
   cookie ``agent_hub_<port>`` (``HttpOnly; SameSite=Strict; Path=/``). The redirect drops the
   token, so it is one hop, never a loop, and the token leaves the address bar.
 - **Off.** With ``sessions_off`` (the container, L2) every route under ``/api/v1/agent-sessions``
-  answers 404 ``agent-sessions-off``, cookie or not.
+  answers 404 ``agent-sessions-off``, cookie or not, and so does every workflow-run write
+  (``run-control-off``): both start processes in a hub.
+- **Run writes** (start, cancel, resume, abandon a workflow run) need the cookie too; their
+  Origin and JSON checks are the strict ones of ``LocalSecurityMiddleware``.
 - **Cookie.** Every route under the prefix needs the cookie (constant-time match); else 401.
   With no token configured, nothing matches.
 - **Writes** need this server's exact ``Origin``, ``Sec-Fetch-Site: same-origin`` when sent and,
@@ -27,13 +30,14 @@ from starlette.requests import cookie_parser
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from agent_hub.api.local_security import STATE_CHANGING_METHODS, strict_refusal
+from agent_hub.api.local_security import STATE_CHANGING_METHODS, is_run_write, strict_refusal
 from agent_hub.api.openapi_paths import AGENT_SESSIONS, API_PREFIX
 from agent_hub.api.rfc9457 import problem
 from agent_hub.api.session_token import SessionToken, cookie_name
 
 TOKEN_PARAMETER = "token"  # noqa: S105 -- the query parameter's name, not a token
 OFF_PROBLEM_TYPE = "urn:agent-hub:problem:agent-sessions-off"
+RUNS_OFF_PROBLEM_TYPE = "urn:agent-hub:problem:run-control-off"
 UNAUTHORIZED_PROBLEM_TYPE = "urn:agent-hub:problem:agent-session-unauthorized"
 EXCHANGE_METHODS = frozenset({"GET", "HEAD"})
 BODILESS_WRITES = frozenset({"DELETE"})
@@ -102,6 +106,8 @@ class SessionAccessMiddleware:
         headers = Headers(scope=scope)
         if is_agent_session_path(path):
             response = self._refusal(scope, headers)
+        elif is_run_write(str(scope["method"]), path):
+            response = self._run_refusal(path, headers)
         else:
             response = self._exchange(scope)
         if response is None:
@@ -137,15 +143,7 @@ class SessionAccessMiddleware:
                 members={"type": OFF_PROBLEM_TYPE},
             )
         if not self._has_cookie(headers):
-            response = problem(
-                401,
-                title="Session cookie required",
-                detail="Open the address hub web printed (with its token) to drive sessions.",
-                instance=instance,
-                members={"type": UNAUTHORIZED_PROBLEM_TYPE},
-            )
-            response.headers["WWW-Authenticate"] = 'Cookie realm="agent-hub"'
-            return response
+            return self._unauthorized(instance)
         method = str(scope["method"])
         if method in STATE_CHANGING_METHODS:
             refusal = strict_refusal(headers, needs_json=method not in BODILESS_WRITES)
@@ -155,6 +153,30 @@ class SessionAccessMiddleware:
             return None
         status, title, detail = refusal
         return problem(status, title=title, detail=detail, instance=instance)
+
+    def _run_refusal(self, instance: str, headers: Headers) -> Response | None:
+        if self._off:
+            return problem(
+                404,
+                title="Run control is off",
+                detail="Workflow runs cannot be started or stopped from the agent-hub container.",
+                instance=instance,
+                members={"type": RUNS_OFF_PROBLEM_TYPE},
+            )
+        if self._has_cookie(headers):
+            return None
+        return self._unauthorized(instance)
+
+    def _unauthorized(self, instance: str) -> Response:
+        response = problem(
+            401,
+            title="Session cookie required",
+            detail="Open the address hub web printed (with its token) to drive sessions.",
+            instance=instance,
+            members={"type": UNAUTHORIZED_PROBLEM_TYPE},
+        )
+        response.headers["WWW-Authenticate"] = 'Cookie realm="agent-hub"'
+        return response
 
     def _has_cookie(self, headers: Headers) -> bool:
         if self._token is None:
