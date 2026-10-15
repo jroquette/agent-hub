@@ -6,10 +6,14 @@ without a leading dot and with a ``.tmpl`` suffix, so no tool takes a template f
 file. ``hub.schema.json`` is core's shipped schema, copied verbatim: the generator holds no copy.
 So are the agent output schemas under ``plugin/hub-workflow/schemas/`` (AGH-139 D5).
 A JSON file whose value comes from the config is built in code instead (spec Q-9): its entry names
-a builder and has no source file.
+a builder and has no source file. The built-in workflow packs are core's package data too, seeded
+byte for byte into the hub's ``workflows/`` (AGH-227), so the seed is the built-in.
 """
 
+from collections.abc import Iterator
 from dataclasses import dataclass
+from importlib.resources import files
+from importlib.resources.abc import Traversable
 from types import MappingProxyType
 from typing import Final, NamedTuple
 
@@ -97,6 +101,13 @@ def _core_verbatim(path: str, source: TemplateSource) -> TemplateEntry:
     )
 
 
+def _core_seeded(path: str, source: TemplateSource) -> TemplateEntry:
+    """A file of core's package data, copied byte for byte once: generic, seeded."""
+    return TemplateEntry(
+        path=path, source=source, kind=Kind.GENERIC, ownership=Ownership.SEEDED, verbatim=True
+    )
+
+
 def _project_built(path: str, build: JsonBuilder) -> TemplateEntry:
     return TemplateEntry(
         path=path, build=build, kind=Kind.PROJECT_OWNED, ownership=Ownership.SEEDED
@@ -179,6 +190,31 @@ _BASE_SKILLS: Final = (
 _SKILL_SUPPORT_FILES: Final = MappingProxyType({"onboard": ("reference.md",)})
 # The upstream license files the base plugin's NOTICE names (sorted).
 _LICENSE_TEXTS: Final = ("Apache-2.0.txt", "MIT-compound-engineering-plugin.txt")
+
+
+# The built-in workflow packs: `<pack>/<name>.yaml`, `prompts/`, `scripts/`, `fixtures/`.
+_BUILTIN_PACKAGE: Final = "agent_hub.core"
+_BUILTIN_PACKS: Final = "workflows/builtin"
+
+
+def _pack_files(folder: Traversable, below: str = "") -> Iterator[str]:
+    """Each file under ``folder``, as a POSIX path below it (dot and cache names skipped)."""
+    for child in sorted(folder.iterdir(), key=lambda child: child.name):
+        if child.name.startswith(".") or child.name == "__pycache__":
+            continue
+        name = f"{below}{child.name}"
+        if child.is_dir():
+            yield from _pack_files(child, f"{name}/")
+        else:
+            yield name
+
+
+def _seeded_packs() -> Iterator[TemplateEntry]:
+    """``workflows/<pack>/…``: each built-in pack file, seeded as it is shipped."""
+    root = files(_BUILTIN_PACKAGE).joinpath(*_BUILTIN_PACKS.split("/"))
+    for name in _pack_files(root):
+        source = TemplateSource(_BUILTIN_PACKAGE, f"{_BUILTIN_PACKS}/{name}")
+        yield _core_seeded(f"workflows/{name}", source)
 
 
 def _entry_point(path: str) -> TemplateEntry:
@@ -320,4 +356,6 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _entry_point("scripts/mine_transcripts.py"),
     _entry_point("scripts/recall_transcripts.py"),
     _entry_point("scripts/retro_metrics.py"),
+    # The built-in workflow packs, seeded once: the hub owns its copy, which discovery prefers.
+    *_seeded_packs(),
 )

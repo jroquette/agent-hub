@@ -24,6 +24,24 @@ CORE_SOURCES: dict[str, tuple[str, str]] = {
     "plugin/hub-workflow/schemas/eval.v1.json": (OUTPUT_SCHEMA_PACKAGE, "eval.v1.json"),
     "plugin/hub-workflow/schemas/review.v1.json": (OUTPUT_SCHEMA_PACKAGE, "review.v1.json"),
 }
+# AGH-227: the built-in workflow packs, core's package data, seeded into `workflows/` as they are.
+BUILTIN_PACKAGE = "agent_hub.core"
+BUILTIN_FOLDER = "workflows/builtin"
+SEEDED_PACK_FILES = (
+    "issue-to-pr/fixtures/blocked.yaml",
+    "issue-to-pr/fixtures/dirty.yaml",
+    "issue-to-pr/fixtures/done.yaml",
+    "issue-to-pr/fixtures/error.yaml",
+    "issue-to-pr/fixtures/from-verify.yaml",
+    "issue-to-pr/fixtures/gate-failure.yaml",
+    "issue-to-pr/fixtures/no-commit.yaml",
+    "issue-to-pr/fixtures/pr-failure.yaml",
+    "issue-to-pr/issue-to-pr.yaml",
+    "issue-to-pr/prompts/implement.md",
+)
+CORE_SOURCES |= {
+    f"workflows/{name}": (BUILTIN_PACKAGE, f"{BUILTIN_FOLDER}/{name}") for name in SEEDED_PACK_FILES
+}
 
 # AC-3.11: the D5 path set, transcribed from docs/design/hub-generator.md § Classification and
 # rendering. Each row cites the table row it comes from; every entry has no module (AC-3.12).
@@ -131,6 +149,8 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "scripts/mine_transcripts.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "scripts/recall_transcripts.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "scripts/retro_metrics.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    # Row "`workflows/<pack>/**` (the built-in packs, `issue-to-pr`)": generic, seeded (AGH-227).
+    **{f"workflows/{name}": (Kind.GENERIC, Ownership.SEEDED, None) for name in SEEDED_PACK_FILES},
 }
 
 # AGH-17 D5 (AC-17.6): each module's files, kind `module`, with the module that selects them. Exact:
@@ -283,7 +303,8 @@ def test_finds_every_source_when_package_data_read() -> None:
             continue
         package, name = entry.source
         if entry.path in CORE_SOURCES:
-            # Spec Q2: core's shipped schema, copied verbatim, never a second copy here.
+            # Spec Q2: core's shipped files (the schema, the output schemas, the built-in
+            # workflow packs), copied verbatim, never a second copy here.
             assert (package, name) == CORE_SOURCES[entry.path]
             assert entry.verbatim
         else:
@@ -469,3 +490,30 @@ def test_renders_no_temp_shaped_path_when_registry_walked(demo_config: HubConfig
     assert temp_shaped_segments(["plugin/.x.md.hub-tmp-0a1b2c3d/y"]) != []
 
     assert temp_shaped_segments(paths) == []
+
+
+def test_seeds_every_builtin_pack_file_when_registry_read() -> None:
+    builtin = files(BUILTIN_PACKAGE).joinpath(*BUILTIN_FOLDER.split("/"))
+    on_disk = sorted(name.removeprefix("/") for name in walk_files(builtin, ""))
+    seeded = {entry.path: entry for entry in REGISTRY if entry.path.startswith("workflows/")}
+
+    assert on_disk == list(SEEDED_PACK_FILES)
+    assert sorted(seeded) == [f"workflows/{name}" for name in on_disk]
+    for name in on_disk:
+        entry = seeded[f"workflows/{name}"]
+        assert entry.source == TemplateSource(BUILTIN_PACKAGE, f"{BUILTIN_FOLDER}/{name}")
+        assert entry.verbatim
+        assert (entry.kind, entry.ownership, entry.executable) == (
+            Kind.GENERIC,
+            Ownership.SEEDED,
+            False,
+        )
+
+
+def test_renders_builtin_bytes_when_workflow_pack_seeded(demo_config: HubConfig) -> None:
+    rendered = {file.path: file for file in render_hub(demo_config).files}
+    builtin = files(BUILTIN_PACKAGE).joinpath(*BUILTIN_FOLDER.split("/"))
+
+    for name in SEEDED_PACK_FILES:
+        expected = builtin.joinpath(*name.split("/")).read_bytes()
+        assert rendered[f"workflows/{name}"].content == expected, name
