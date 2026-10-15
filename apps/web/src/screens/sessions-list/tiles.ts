@@ -2,6 +2,8 @@
 import type { components } from "../../api/schema";
 import { sessionIdentity, type IconName, type LiveSession, type Status } from "../../components";
 import { fmtAgo, toNumber } from "../../lib/format";
+import type { Within } from "./filters";
+import { isDriven, type SectionRow } from "./sections";
 
 type Schemas = components["schemas"];
 type Session = Schemas["Session"];
@@ -218,4 +220,46 @@ export function tileOfDriven(session: AgentSession, now: number): LiveSession {
     needsYou: false,
     chat: true,
   };
+}
+
+/** A section row as a tile: a driven one without a twin, or an observed one. */
+export function tileOfRow(row: SectionRow, now: number): LiveSession {
+  return isDriven(row) ? tileOfDriven(row, now) : tileOf(row, now);
+}
+
+export interface RowGroup {
+  key: string;
+  label: string;
+  rows: SectionRow[];
+}
+
+function groupKey(row: SectionRow, within: Within): [string, string] {
+  const none: [string, string] = ["", within === "run" ? "Not in a run" : "No workflow"];
+  if (isDriven(row)) {
+    return within === "repo"
+      ? [`${row.project}/${row.workdir_label}`, `${row.project} › ${row.workdir_label}`]
+      : none;
+  }
+  switch (within) {
+    case "repo":
+      return [`${row.project}/${row.repo ?? ""}`, `${row.project} › ${row.repo ?? "no repo"}`];
+    case "run":
+      return row.run_id
+        ? [row.run_id, `Run ${row.issue ?? short(row.run_id)}${row.step ? ` · ${row.step}` : ""}`]
+        : none;
+    case "workflow":
+      return row.label?.workflow ? [row.label.workflow, row.label.workflow] : none;
+  }
+}
+
+/** A section's rows by `within`, in the section's order; "Not in a run" and "No workflow" go last. */
+export function groupWithin(rows: readonly SectionRow[], within: Within): RowGroup[] {
+  const groups = new Map<string, RowGroup>();
+  for (const row of rows) {
+    const [key, label] = groupKey(row, within);
+    const group = groups.get(key);
+    if (group) group.rows.push(row);
+    else groups.set(key, { key, label, rows: [row] });
+  }
+  return [...groups.values()].sort((a, b) => Number(a.key === "") - Number(b.key === ""));
 }

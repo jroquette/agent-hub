@@ -131,3 +131,26 @@ export function chipsOf(params: URLSearchParams): Chip[] {
 export function badDecimal(value: string | null): boolean {
   return value !== null && value.trim() !== "" && !/^\d+(\.\d+)?$/.test(value.trim());
 }
+
+export type View = "grid" | "table";
+export type Within = "repo" | "run" | "workflow";
+export const WITHINS: { id: Within | "flat"; label: string }[] = [
+  { id: "flat", label: "Flat" },
+  { id: "repo", label: "Project › repo" },
+  { id: "run", label: "Run" },
+  { id: "workflow", label: "Workflow" },
+];
+const isView = (value: string | null): value is View => value === "grid" || value === "table";
+
+/** The URL's `view` wins over the stored one; with neither, or an unknown value, the grid (O-3). */
+export function viewOf(params: URLSearchParams, stored: string | null): View {
+  const asked = params.get("view");
+  if (isView(asked)) return asked;
+  return isView(stored) ? stored : "grid";
+}
+
+/** The grid's sub-groups inside each section; any other value is none. */
+export function withinOf(params: URLSearchParams): Within | null {
+  const within = params.get("within");
+  return within === "repo" || within === "run" || within === "workflow" ? within : null;
+}

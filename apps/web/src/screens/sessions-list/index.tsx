@@ -1,6 +1,6 @@
 import "./sessions-list.css";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -41,12 +41,17 @@ import {
   TOOLS,
   badDecimal,
   chipsOf,
+  WITHINS,
   periodOf,
   sortOf,
+  viewOf,
+  withinOf,
   type Period,
+  type View,
 } from "./filters";
 import { CloudSessions, DrivenBanner, NewSessionControl, useDriving } from "./DrivenControls";
 import { rowHref, withDriven } from "./drivenRows";
+import { GridSection } from "./GridSection";
 import {
   useAgentSessions,
   useProjects,
@@ -62,6 +67,7 @@ const COLUMNS_KEY = "ah.sessions.columns";
 /** A section past VIRTUAL_THRESHOLD rows scrolls inside this height (as the learnings table). */
 const SECTION_MAX_HEIGHT = 640;
 const DENSITY_KEY = "ah.sessions.density";
+const VIEW_KEY = "ah.sessions.view";
 const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
 /** The session's issue: the label's (S1), else the run's. */
 const issueOf = (s: Session) => s.label?.issue ?? s.issue ?? null;
@@ -613,6 +619,46 @@ function OfflineStamp({ tz }: { tz: "local" | "utc" }) {
   ) : null;
 }
 
+/** A key typed into a field or a dialog is not a screen shortcut. */
+function typingIn(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable ||
+    ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
+    target.closest("[role=dialog]") !== null
+  );
+}
+
+/** The grid or the table: the URL's `view`, else `ah.sessions.view`, else the grid; `v` switches (AC-234.3). */
+function useView(
+  params: URLSearchParams,
+  update: (changes: Record<string, string | null>) => void,
+): [View, (view: View) => void] {
+  const [stored, setStored] = useState(() => readStored(VIEW_KEY));
+  const view = viewOf(params, stored);
+  const setView = (next: View) => {
+    writeStored(VIEW_KEY, next);
+    setStored(next);
+    update({ view: next });
+  };
+  const latest = useRef({ view, setView });
+  useEffect(() => {
+    latest.current = { view, setView };
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "v" || event.defaultPrevented) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || typingIn(event.target)) return;
+      latest.current.setView(latest.current.view === "grid" ? "table" : "grid");
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+  return [view, setView];
+}
+
 /** Sessions: "Which sessions happened, and which one do I need to look at?" (spec 14). */
 export function SessionsListScreen() {
   const [params, setParams] = useSearchParams();
@@ -670,6 +716,8 @@ export function SessionsListScreen() {
       { replace: true },
     );
   };
+  const [view, setView] = useView(params, update);
+  const within = withinOf(params);
   const clearFilters = () => {
     update(Object.fromEntries(FILTER_KEYS.map((key) => [key, null])));
     setCostDraft({ min: "", max: "" });
@@ -962,6 +1010,20 @@ export function SessionsListScreen() {
     }
     // A light placeholder: four skeleton tables at once made role queries crawl under coverage.
     if (pages.isPending) return <Skeleton lines={2} />;
+    if (view === "grid") {
+      return (
+        <GridSection
+          title={title}
+          rows={sectionRows}
+          count={count}
+          within={within}
+          pages={pages}
+          onOpen={(row) => {
+            void navigate(rowHref(row));
+          }}
+        />
+      );
+    }
     const keys = new Set(sectionRows.map((s) => s.id));
     // Past the threshold a section scrolls in its own window, so only the rows in view render.
     const bounded = sectionRows.length > VIRTUAL_THRESHOLD;
@@ -1079,27 +1141,51 @@ export function SessionsListScreen() {
             });
           }}
         />
-        <ColumnChooser
-          chosen={columns}
-          onChange={(next) => {
-            writeStored(COLUMNS_KEY, [...next].join(","));
-            writeStored(DENSITY_KEY, "compact");
-            setColumns(next);
-            setDensity("compact");
-          }}
-        />
         <SegmentedControl
-          label="Density"
-          value={density}
+          label="View"
+          value={view}
           onChange={(id) => {
-            writeStored(DENSITY_KEY, id);
-            setDensity(id === "compact" ? "compact" : "comfortable");
+            setView(id === "table" ? "table" : "grid");
           }}
           options={[
-            { id: "comfortable", icon: "list", title: "Comfortable rows" },
-            { id: "compact", icon: "list-filter", title: "Compact rows" },
+            { id: "grid", label: "Grid", title: "Grid view (v)" },
+            { id: "table", label: "Table", title: "Table view (v)" },
           ]}
         />
+        {view === "grid" ? (
+          <SegmentedControl
+            label="Group within sections"
+            value={within ?? "flat"}
+            onChange={(id) => {
+              update({ within: id === "flat" ? null : id });
+            }}
+            options={WITHINS.map(({ id, label }) => ({ id, label }))}
+          />
+        ) : (
+          <>
+            <ColumnChooser
+              chosen={columns}
+              onChange={(next) => {
+                writeStored(COLUMNS_KEY, [...next].join(","));
+                writeStored(DENSITY_KEY, "compact");
+                setColumns(next);
+                setDensity("compact");
+              }}
+            />
+            <SegmentedControl
+              label="Density"
+              value={density}
+              onChange={(id) => {
+                writeStored(DENSITY_KEY, id);
+                setDensity(id === "compact" ? "compact" : "comfortable");
+              }}
+              options={[
+                { id: "comfortable", icon: "list", title: "Comfortable rows" },
+                { id: "compact", icon: "list-filter", title: "Compact rows" },
+              ]}
+            />
+          </>
+        )}
         <SegmentedControl
           label="Period"
           value={period}

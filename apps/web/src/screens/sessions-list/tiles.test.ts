@@ -4,11 +4,12 @@ import {
   aLiveTile,
   aPermissionRequest,
   aSession,
+  aSessionLabel,
   anAgentSession,
   anId,
   at,
 } from "../../testing/builders";
-import { sortTiles, tileOf, tileOfDriven, troubled, waitingLink } from "./tiles";
+import { groupWithin, sortTiles, tileOf, tileOfDriven, troubled, waitingLink } from "./tiles";
 
 const NOW = Date.parse(at(660));
 const NO_PROBLEMS = { by_you: 0, handled: 0, needs_you: 0, open: 0 };
@@ -184,5 +185,24 @@ describe("waitingLink", () => {
 
     expect(waitingLink(prompt)).toEqual({ href: "/approvals", label: "Open approval" });
     expect(waitingLink(plan)).toEqual({ href: "/approvals", label: "Open approval" });
+  });
+});
+
+describe("groupWithin (grid sub-groups)", () => {
+  const observed = aSession({ id: anId(1), label: aSessionLabel({ workflow: "/feature" }) });
+  const driven = anAgentSession({ id: anId(2), workdir_label: "agent-hub-hub" });
+  const labels = (within: "repo" | "run" | "workflow") =>
+    groupWithin([driven, observed], within).map((group) => [group.label, group.rows.length]);
+
+  it("puts a driven session under its working folder, and with no run or workflow last", () => {
+    expect(labels("repo")).toEqual([
+      ["agent-hub › agent-hub-hub", 1],
+      ["agent-hub › agent-hub", 1],
+    ]);
+    expect(labels("run")).toEqual([["Not in a run", 2]]);
+    expect(labels("workflow")).toEqual([
+      ["/feature", 1],
+      ["No workflow", 1],
+    ]);
   });
 });
