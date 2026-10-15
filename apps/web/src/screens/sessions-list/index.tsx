@@ -966,7 +966,7 @@ export function SessionsListScreen() {
 
   const countLine = pending
     ? "Loading sessions…"
-    : `Showing ${fmtInt(rows.length)}${hasNextPage ? ` of ~${fmtInt(total)}` : ""} · ${period === "All" ? "all time" : period} · ${String(projectCount)} ${projectCount === 1 ? "project" : "projects"}`;
+    : `Showing ${fmtInt(rows.length)}${hasNextPage ? ` of ~${fmtInt(total)}` : ""} · Ended: ${period === "All" ? "all time" : `last ${period}`} · ${String(projectCount)} ${projectCount === 1 ? "project" : "projects"}`;
   const compareOk = selected.length === 2;
   const allEmpty =
     !pending && asked.every((section) => !section.pages.error && section.rows.length === 0);
