@@ -157,6 +157,33 @@ export function Button({
   );
 }
 
+export interface CopyButtonProps {
+  /** What is copied, read when pressed. */
+  text: string;
+  /** The accessible name before copying ("Copy command"); "Copied" for 1.5 s after. */
+  label: string;
+  className?: string | undefined;
+}
+/** A small ghost "Copy" button that copies `text` and shows "Copied" for a moment. */
+export function CopyButton({ text, label, className }: CopyButtonProps) {
+  const [copied, markCopied] = useCopied();
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      icon={copied ? "check" : "copy"}
+      className={className}
+      onClick={() => {
+        copyText(text);
+        markCopied();
+      }}
+      aria-label={copied ? "Copied" : label}
+    >
+      {copied ? "Copied" : "Copy"}
+    </Button>
+  );
+}
+
 export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon: IconName;
   /** The accessible name, also shown as the tooltip. */
