@@ -19,6 +19,7 @@ writes stay ``hub run``'s.
 import json
 import os
 import random
+import shutil
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -37,15 +38,19 @@ from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_runs import (
     DOCUMENT,
     RUN_ID_PATTERN,
+    SNAPSHOT,
     EventSink,
     RecordedRun,
     SystemClock,
     WorkflowRunError,
     append_record,
     ends_of,
+    make_run,
     prior_state,
     read_records,
     run_folder,
+    run_lock,
+    snapshot_hash,
     snapshot_run,
 )
 from agent_hub.core.hub_config.problems import ROOT_PATH
@@ -170,9 +175,29 @@ def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | 
         return 0
     run_id = run_id or new_run_id()
     folder = run_folder(hub, run_id)
-    pack, content_hash = snapshot_run(
-        folder, document=dict(found.document), plan=plan, pack_root=found.pack_root
-    )
+    make_run(folder)
+    with run_lock(folder):
+        try:
+            pack, content_hash = snapshot_run(
+                folder, document=dict(found.document), plan=plan, pack_root=found.pack_root
+            )
+        except WorkflowRunError:
+            # Nothing ran: a half-made run is not left to resume.
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+        return _begin(hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash)
+
+
+def _begin(
+    hub: Path,
+    folder: Path,
+    *,
+    plan: WorkflowPlan,
+    inputs: dict[str, JsonValue],
+    pack: Path,
+    content_hash: str,
+) -> int:
+    run_id, name = folder.name, plan.document.name
     header: dict[str, JsonValue] = {"event": "start", "run": run_id, "workflow": name}
     append_record(
         folder, {**header, "revision": plan.document.revision, "content_hash": content_hash}
@@ -182,10 +207,20 @@ def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | 
 
 
 def _resume(hub: Path, run_id: str) -> int:
-    folder, records = _ended_check(hub, run_id)
+    folder = _existing_run(hub, run_id)
+    with run_lock(folder):
+        return _continue(hub, folder)
+
+
+def _continue(hub: Path, folder: Path) -> int:
+    records = _ended_check(folder)
     header = records[0]
+    if snapshot_hash(folder / SNAPSHOT) != header.get("content_hash"):
+        raise WorkflowRunError(
+            f"the run {folder.name}'s snapshot no longer matches its content_hash"
+        )
     try:
-        document = (folder / "snapshot" / DOCUMENT).read_bytes()
+        document = (folder / SNAPSHOT / DOCUMENT).read_bytes()
         plan = plan_workflow(parse_workflow(_json(document)))
     except (OSError, WorkflowLoadError) as error:
         raise WorkflowRunError(f"cannot load the run's snapshot: {error}") from None
@@ -196,7 +231,7 @@ def _resume(hub: Path, run_id: str) -> int:
         folder,
         plan=plan,
         inputs=inputs if isinstance(inputs, dict) else {},
-        pack=folder / "snapshot",
+        pack=folder / SNAPSHOT,
         content_hash=str(header.get("content_hash")),
         prior=prior_state(records),
         end_index=len(ends_of(records)),
@@ -204,24 +239,33 @@ def _resume(hub: Path, run_id: str) -> int:
 
 
 def _abandon(hub: Path, run_id: str) -> None:
-    folder, records = _ended_check(hub, run_id)
-    events = _events(hub, folder.name, records[0], end_index=len(ends_of(records)))
-    RecordedRun(folder=folder, events=events, sink=EventSink()).run_ended(
-        RunEnd("cancelled", now())
-    )
+    folder = _existing_run(hub, run_id)
+    with run_lock(folder):
+        records = _ended_check(folder)
+        events = _events(hub, folder.name, records[0], end_index=len(ends_of(records)))
+        RecordedRun(folder=folder, events=events, sink=EventSink()).run_ended(
+            RunEnd("cancelled", now())
+        )
     typer.echo(f"run {run_id}: cancelled")
 
 
-def _ended_check(hub: Path, run_id: str) -> tuple[Path, list[dict[str, JsonValue]]]:
-    """The run's folder and records; refused when it already ended done or cancelled."""
+def _existing_run(hub: Path, run_id: str) -> Path:
     folder = run_folder(hub, run_id)
+    if not folder.is_dir() or folder.is_symlink():
+        raise WorkflowRunError(f"no run {run_id}")
+    return folder
+
+
+def _ended_check(folder: Path) -> list[dict[str, JsonValue]]:
+    """The run's records; refused when it already ended done or cancelled."""
+    run_id = folder.name
     records = read_records(folder)
     ends = ends_of(records)
     if not records or records[0].get("event") != "start":
         raise WorkflowRunError(f"the run {run_id} has no start record")
     if ends and ends[-1].get("status") in _ENDED:
         raise WorkflowRunError(f"the run {run_id} already ended {ends[-1].get('status')}")
-    return folder, records
+    return records
 
 
 def _execute(
@@ -277,8 +321,10 @@ def _events(
 
 
 def own_hub_program() -> tuple[str, ...]:
-    """This hub, by absolute path: what a ``hub step`` node runs."""
-    return (sys.executable, "-m", "agent_hub.cli")
+    """This hub, by absolute path: what a ``hub step`` node runs. ``-I`` keeps the cwd (a
+    checkout an agent can write) and ``PYTHON*`` variables off the module path, so a planted
+    ``typer/`` or ``agent_hub/`` never runs with the GitHub tokens."""
+    return (sys.executable, "-I", "-m", "agent_hub.cli")
 
 
 def _inputs(plan: WorkflowPlan, given: list[str]) -> dict[str, JsonValue]:

@@ -1,9 +1,14 @@
 """``hub workflow list|validate|run`` over a hub's ``workflows/`` packs (AC-213.1, AC-213.3).
 
+The ``run`` cases cover AGH-221's AC: the engine runs a sample pack end to end against the
+existing fakes (claude, make, git, gh), records it under ``.agent-runs/workflows/<run>/`` and
+sends its events; resume and abandon act on that record.
+
 Each case builds a hub under ``tmp_path`` and points the built-ins at a folder of its own, so the
 packs the platform ships never change what a case sees.
 """
 
+import fcntl
 import json
 import os
 import shutil
@@ -13,7 +18,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner, Result
 
-from agent_hub.cli import workflow_command
+from agent_hub.cli import workflow_command, workflow_runs
 from agent_hub.cli.main import app
 from agent_hub.storage.event_store import open_event_store
 
@@ -450,3 +455,97 @@ def test_exits_two_before_running_when_run_id_is_malformed(
     assert "use 1 to 32 of a-z 0-9 -" in result.stderr
     assert sample.fakes.calls("claude") == []
     assert not (sample.hub / ".agent-runs").exists()
+
+
+def started(sample: SampleRun, *more: str) -> Result:
+    return sample.run("sample", "--input", "issue=DEM-1", "--live", "--run-id", RUN_ID, *more)
+
+
+def run_path(sample: SampleRun, *parts: str) -> Path:
+    return sample.hub.joinpath(".agent-runs", "workflows", RUN_ID, *parts)
+
+
+def test_ignores_modules_planted_in_hub_when_hub_step_node_runs(sample: SampleRun) -> None:
+    marker = sample.hub / "planted-ran"
+    write(sample.hub, "typer/__init__.py", f"open({str(marker)!r}, 'w').close()\n")
+    step = "version: 1\nname: step\nrevision: 1\nnodes:\n  - id: s\n    type: shell\n"
+    write(sample.hub, "workflows/step/step.yaml", step + "    command: [hub, step]\n")
+
+    result = sample.run("step", "--live", "--run-id", "s1")
+
+    assert result.exit_code == 1
+    assert not marker.exists()
+    assert workflow_command.own_hub_program()[1:] == ("-I", "-m", "agent_hub.cli")
+
+
+@pytest.mark.parametrize("action", ["--resume", "--abandon"])
+def test_refuses_run_when_another_process_holds_its_lock(
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    monkeypatch.setenv("FAKE_MAKE_EXIT", "1")
+    started(sample)
+    before = run_path(sample, "records.jsonl").read_text()
+    descriptor = os.open(run_path(sample, "lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = sample.run(action, RUN_ID)
+    finally:
+        os.close(descriptor)
+
+    assert result.exit_code == 1
+    assert "is in use by another hub workflow run" in result.stderr
+    assert run_path(sample, "records.jsonl").read_text() == before
+
+
+def test_resumes_when_last_record_line_is_torn(
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_MAKE_EXIT", "1")
+    started(sample)
+    with run_path(sample, "records.jsonl").open("a") as file:
+        file.write('{"event": "st')
+    monkeypatch.setenv("FAKE_MAKE_EXIT", "0")
+
+    result = sample.run("--resume", RUN_ID)
+
+    assert result.exit_code == 0, result.output
+
+
+def test_refuses_resume_when_a_record_line_is_not_an_object(
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_MAKE_EXIT", "1")
+    started(sample)
+    with run_path(sample, "records.jsonl").open("a") as file:
+        file.write("[1]\n")
+
+    result = sample.run("--resume", RUN_ID)
+
+    assert result.exit_code == 1
+    assert "cannot read the run r1" in result.stderr
+
+
+def test_refuses_resume_when_snapshot_changed(
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_MAKE_EXIT", "1")
+    started(sample)
+    run_path(sample, "snapshot", "prompts", "plan.md").write_text("Something else\n")
+
+    result = sample.run("--resume", RUN_ID)
+
+    assert result.exit_code == 1
+    assert "snapshot no longer matches" in result.stderr
+    assert len(sample.fakes.calls("claude")) == 2
+
+
+def test_leaves_no_run_folder_when_a_pack_file_is_over_the_cap(sample: SampleRun) -> None:
+    big = workflow_runs.MAX_SNAPSHOT_FILE_BYTES + 1
+    write(sample.hub, "workflows/sample/scripts/report.sh", "#" * big)
+
+    result = started(sample)
+
+    assert result.exit_code == 1
+    assert "scripts/report.sh is larger than" in result.stderr
+    assert not run_path(sample).exists()
+    assert sample.fakes.calls("claude") == []
