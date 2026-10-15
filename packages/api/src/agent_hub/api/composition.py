@@ -3,9 +3,10 @@
 The event store at ``settings.db_path`` (opened and upgraded here), the hook mapper and live
 transcript tail of the collector, the hub registry at ``settings.registry_path`` and the hubs'
 files read as ``hub doctor`` reads them, the read models folded on request, the change feed
-the streams wait on, and the learning reads and decisions, which open hub pull requests through
-``hub_git`` (ADR 0024). Git config stays with the caller (the CLI): ``read_git`` makes the git
-config reader of one hub folder, so the branch prefix and author match ``hub doctor``.
+the streams wait on, the learning reads and decisions, which open hub pull requests through
+``hub_git`` (ADR 0024), and the hubs' workflows (the generator's discovery). Git config stays
+with the caller (the CLI): ``read_git`` makes the git config reader of one hub folder, so the
+branch prefix and author match ``hub doctor``.
 
 The feature tickets read Linear through ``CachedTicketSnapshots`` (ADR 0025): ``TicketReaders``
 gives its reader per request, None (not connected) when ``LINEAR_API_KEY`` is unset in
@@ -104,7 +105,9 @@ from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_reads import SkillUsageSource
 from agent_hub.core.tracker.tracker_reader import TrackerReader
+from agent_hub.core.workflows.workflow_reads import ListedWorkflowSource, ReadWorkflows
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
+from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
 from agent_hub.hub_git.git_runner import GitRunner
 from agent_hub.storage.agent_session_store import open_agent_session_store
@@ -379,6 +382,11 @@ def ticket_snapshots(
     return CachedTicketSnapshots(TicketReaders(facts, environ=env, reader=reader), clock=clock)
 
 
+def workflow_source_of(hub_path: str) -> ListedWorkflowSource:
+    """The workflows of the hub at ``hub_path``: its ``workflows/``, then the built-ins."""
+    return DiscoveredWorkflowSource(Path(hub_path))
+
+
 def default_brain_changes() -> BrainChangeRequests:
     """The ``hub_git`` adapter with this process's environment (``AGENT_HUB_IN_CONTAINER=1``
     makes every hub read-only)."""
@@ -596,6 +604,7 @@ def build_app(
         agent_sessions=None if sessions is None else sessions.control,
         cloud_sessions=None if sessions is None else sessions.cloud,
         agent_session_links=None if sessions is None else sessions.links,
+        workflow_reads=ReadWorkflows(hubs, workflow_source_of),
     )
     return create_app(
         settings,
