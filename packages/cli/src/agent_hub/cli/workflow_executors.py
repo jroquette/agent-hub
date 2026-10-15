@@ -1,7 +1,9 @@
 """The workflow engine's ``NodeRunner``: agent, shell and script nodes as children (ADR 0032).
 
 An ``agent`` or ``loop`` turn is one ``claude -p`` in the hub's main checkout, so the hub's
-settings, hooks and plugin load; the hub's repos are attached with ``--add-dir``. Its argv is
+settings, hooks and plugin load; the hub's repos are attached with ``--add-dir``. With a ``cwd``
+inside a repo (issue-to-pr's worktree) it runs there as ``hub run``'s session does: the hub and
+the other repos attached, that repo's gates allowed. Its argv is
 ``hub run``'s (``implementing_argv``: permission mode ``dontAsk``, the tracker's tools denied),
 with the node's tier from ``hub.json`` → ``models.tiers`` and its ``limits`` as ``--max-turns`` and
 ``--max-budget-usd``; ``--resume`` continues a session. Its output is the result's text, or, with
@@ -13,8 +15,11 @@ A ``shell`` node runs its rendered argv, never through a shell; a ``script`` nod
 ``sh <file>`` or ``uv run <file>`` from the pack's ``scripts/``, its ``args`` after the file. The
 output is stdout, at most ``MAX_OUTPUT_BYTES``: the child writes to a temporary file and only
 its last bytes are read back, so the memory is bounded, not the disk; past the cap the node fails
-once the child ends (``run_child`` has no early stop). The cwd is the node's ``cwd`` (relative
-to the hub), else the hub; its real path must stay in the hub or in one of its repos.
+once the child ends (``run_child`` has no early stop). An agent's reply and a ``stdin`` are
+capped at ``hub run``'s session output (1 MiB); a ``stdin`` is written to the child from a
+temporary file (NUL and any length are safe there). The cwd is the node's
+``cwd`` (relative to the hub), else the hub; its real path must stay in the hub or in one of its
+repos.
 
 Every child runs in a session of its own, so a timeout or Ctrl-C kills its whole group, and the
 group is killed again once the child ends: nothing it left in the background outlives the
@@ -70,6 +75,8 @@ from agent_hub.core.workflows.ports import NodeCall, NodeReply
 from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, resolve_pack_file
 
 MAX_OUTPUT_BYTES: Final = 512 * 1024
+# An agent's reply and a stdin (which carries one to hub step verdict): hub run's session cap.
+MAX_REPLY_BYTES: Final = SESSION_OUTPUT_LIMIT
 AGENT_EFFORT: Final = "medium"
 # Kept from a failed child's stderr for the run's record (never for events).
 MAX_DETAIL_CHARS: Final = 1_500
@@ -101,7 +108,14 @@ class WorkflowExecutors:
         if isinstance(node, AgentNode | LoopNode):
             return self._agent(call, node)
         argv, env = self._command(call)
-        result = self._spawn(argv, env=env, cwd=self._cwd(call.cwd), timeout=_timeout(node))
+        stdin = None
+        if call.stdin is not None:
+            stdin = call.stdin.encode(errors="surrogatepass")
+            if len(stdin) > MAX_REPLY_BYTES:
+                raise NodeFailedError("config", f"stdin is larger than {MAX_REPLY_BYTES} bytes")
+        result = self._spawn(
+            argv, env=env, cwd=self._cwd(call.cwd), timeout=_timeout(node), stdin=stdin
+        )
         if (kind := kind_for_exit(result.returncode)) is not None:
             raise NodeFailedError(kind, _detail(argv, result))
         return NodeReply(_bounded(result.stdout))
@@ -116,17 +130,24 @@ class WorkflowExecutors:
         prompt = call.prompt if call.prompt is not None else self._prompt_file(call, node)
         if len(prompt.encode(errors="surrogatepass")) > MAX_ARGUMENT_BYTES:
             raise NodeFailedError("config", f"the prompt is larger than {MAX_ARGUMENT_BYTES} bytes")
+        cwd = self._cwd(call.cwd)
         repos = self.config.repos
+        # In a repo (its worktree), as hub run's session: the hub and the other repos attached,
+        # that repo's gates allowed. In the hub: every repo attached, every gate allowed.
+        home = next((r for r in repos if cwd.is_relative_to(self._root(r.dir))), None)
+        folders = (str(self.hub),) if home is not None else ()
+        others = (r for r in repos if r is not home)
+        gated = (home,) if home is not None else repos
         argv = implementing_argv(
             prompt=prompt,
             max_turns=node.limits.max_turns,
             budget=node.limits.max_cost_usd,
             model=self.config.models.model_for(node.model),
             effort=AGENT_EFFORT,
-            add_dirs=tuple(str(self.hub.parent / repo.dir) for repo in repos),
+            add_dirs=(*folders, *(str(self.hub.parent / repo.dir) for repo in others)),
             tools=(
                 *IMPLEMENTING_TOOLS,
-                *gate_tools(command for repo in repos for command in (repo.check_fast, repo.check)),
+                *gate_tools(command for repo in gated for command in (repo.check_fast, repo.check)),
             ),
             denied_tools=SESSION_DENIED_TOOLS,
         )
@@ -146,7 +167,7 @@ class WorkflowExecutors:
         result = self._spawn(
             argv,
             env=env,
-            cwd=self._cwd(None),
+            cwd=cwd,
             timeout=_timeout(node, default=SESSION_TIMEOUT),
             output_limit=SESSION_OUTPUT_LIMIT,
         )
@@ -159,7 +180,8 @@ class WorkflowExecutors:
             text = json.dumps(value)
         session = reply.session_id
         safe = session if session is not None and SESSION_ID.fullmatch(session) else None
-        return NodeReply(_bounded(text.encode(errors="surrogatepass")), safe)
+        reply_bytes = text.encode(errors="surrogatepass")
+        return NodeReply(_bounded(reply_bytes, limit=MAX_REPLY_BYTES), safe)
 
     def _prompt_file(self, call: NodeCall, node: AgentNode | LoopNode) -> str:
         path = self._pack_file("prompts", node.prompt_file or "")
@@ -195,10 +217,13 @@ class WorkflowExecutors:
         hub or one of its repos."""
         hub = self.hub.resolve()
         path = hub if given is None else (hub / given).resolve()
-        roots = (hub, *((hub.parent / repo.dir).resolve() for repo in self.config.repos))
+        roots = (hub, *(self._root(repo.dir) for repo in self.config.repos))
         if not any(path.is_relative_to(root) for root in roots):
             raise NodeFailedError("config", "the cwd leaves the hub and its repos")
         return path
+
+    def _root(self, repo: str) -> Path:
+        return (self.hub.resolve().parent / repo).resolve()
 
     def _spawn(
         self,
@@ -208,6 +233,7 @@ class WorkflowExecutors:
         cwd: Path,
         timeout: float,
         output_limit: int = MAX_OUTPUT_BYTES + 1,
+        stdin: bytes | None = None,
     ) -> ChildResult:
         groups: list[int] = []
         try:
@@ -219,12 +245,16 @@ class WorkflowExecutors:
                 own_session=True,
                 output_limit=output_limit,
                 on_start=groups.append,
+                **({} if stdin is None else {"stdin": stdin}),
             )
         except ChildTimedOutError as error:
             raise NodeFailedError("timeout", str(error)) from None
         except OSError as error:
             detail = f"{argv[0]} could not start: {error.strerror or type(error).__name__}"
             raise NodeFailedError("config", detail) from None
+        except ValueError as error:
+            # An argument or variable the OS cannot take (a NUL byte, for one).
+            raise NodeFailedError("config", f"cannot start {argv[0]}: {error}") from None
         finally:
             for group in groups:
                 # The leader has ended; what it left running ends with it.
@@ -236,11 +266,9 @@ def _timeout(node: ExecutableNode, *, default: float = GATE_TIMEOUT) -> float:
     return float(duration_seconds(node.timeout)) if node.timeout is not None else default
 
 
-def _bounded(output: bytes) -> str:
-    if len(output) > MAX_OUTPUT_BYTES:
-        raise NodeFailedError(
-            "output_contract", f"the output is larger than {MAX_OUTPUT_BYTES} bytes"
-        )
+def _bounded(output: bytes, *, limit: int = MAX_OUTPUT_BYTES) -> str:
+    if len(output) > limit:
+        raise NodeFailedError("output_contract", f"the output is larger than {limit} bytes")
     return output.decode(errors="replace")
 
 

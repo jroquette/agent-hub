@@ -13,9 +13,10 @@ import pytest
 from agent_hub.cli import workflow_executors
 from agent_hub.cli.child_process import ChildResult
 from agent_hub.cli.errors import ChildTimedOutError
+from agent_hub.cli.run_children import RunChildren, RunOptions
 from agent_hub.cli.workflow_executors import MAX_OUTPUT_BYTES, WorkflowExecutors
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.testing.builders import a_models_document
+from agent_hub.core.testing.builders import a_models_document, an_issue
 from agent_hub.core.testing.workflow_fakes import a_plan
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.nodes import ExecutableNode
@@ -395,3 +396,97 @@ def test_renders_prompt_file_through_the_call_scope_when_the_node_was_included(
     executors(tmp_path, pack, child).run(NodeCall(the_node, 1, context, scope=scope))
 
     assert child.calls[0]["argv"][2] == "Fix CHILD after P\n"
+
+
+def test_runs_claude_in_worktree_as_hub_run_does_when_agent_node_has_cwd(
+    tmp_path: Path, pack: Path
+) -> None:
+    worktree = tmp_path / "demo-api" / ".claude" / "worktrees" / "dem-1"
+    worktree.mkdir(parents=True)
+    child = FakeChild([claude_result("ok")])
+    config = HubConfig.model_validate(a_models_document())
+    spec = {**AGENT, "model": "medium", "cwd": "../demo-api"}
+
+    executors(tmp_path, pack, child).run(call(spec, prompt="Go.", cwd=str(worktree)))
+
+    children = RunChildren(
+        config=config, hub=tmp_path / "hub", repo="demo-api", issue_id="DEM-1", branch_prefix="j/"
+    )
+    model = config.models.model_for("medium")
+    options = RunOptions(
+        live=True, max_turns=40, budget=3.0, model=model, start="implement", effort="medium"
+    )
+    expected = children.session_argv(an_issue(), options)
+    assert child.calls[0]["argv"][3:] == expected[3:]
+    assert child.calls[0]["cwd"] == worktree.resolve()
+
+
+@pytest.mark.parametrize("cwd", ["/etc", "..", "../demo-api/../..", "../demo-api/out"])
+def test_fails_config_when_agent_cwd_leaves_hub_and_repos(
+    tmp_path: Path, pack: Path, cwd: str
+) -> None:
+    (tmp_path / "demo-api").mkdir()
+    (tmp_path / "demo-api" / "out").symlink_to(tmp_path / "elsewhere")
+    child = FakeChild()
+    spec = {**AGENT, "cwd": "../demo-api"}
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(spec, prompt="Go.", cwd=cwd))
+
+    assert raised.value.kind == "config"
+    assert child.calls == []
+
+
+def test_writes_stdin_when_shell_node_has_one(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild()
+    spec = {"id": "read", "type": "shell", "command": ["hub", "step", "verdict"], "stdin": "x"}
+
+    executors(tmp_path, pack, child).run(call(spec, argv=tuple(spec["command"]), stdin="é\x00"))
+
+    assert child.calls[0]["stdin"] == "é\x00".encode()
+
+
+def test_fails_config_when_stdin_past_cap(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild()
+    spec = {"id": "read", "type": "shell", "command": ["cat"], "stdin": "x"}
+    big = "x" * 1_048_577
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(spec, argv=("cat",), stdin=big))
+
+    assert raised.value.kind == "config"
+    assert child.calls == []
+
+
+def test_fails_config_when_child_refuses_its_arguments(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild([ValueError("embedded null byte")])
+    spec = {"id": "st", "type": "shell", "command": ["ls"]}
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(spec, argv=("ls",)))
+
+    assert raised.value.kind == "config"
+
+
+def test_passes_stdin_when_exactly_at_session_cap(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild()
+    spec = {"id": "read", "type": "shell", "command": ["cat"], "stdin": "x"}
+
+    executors(tmp_path, pack, child).run(call(spec, argv=("cat",), stdin="x" * 1_048_576))
+
+    assert len(child.calls[0]["stdin"]) == 1_048_576
+
+
+@pytest.mark.parametrize(("size", "passes"), [(1_048_576, True), (1_048_577, False)])
+def test_bounds_agent_reply_at_session_cap_when_claude_answers(
+    tmp_path: Path, pack: Path, *, size: int, passes: bool
+) -> None:
+    child = FakeChild([claude_result("x" * size)])
+
+    if passes:
+        reply = executors(tmp_path, pack, child).run(call(AGENT, prompt="Go."))
+        assert len(reply.text) == size
+    else:
+        with pytest.raises(NodeFailedError) as raised:
+            executors(tmp_path, pack, child).run(call(AGENT, prompt="Go."))
+        assert raised.value.kind == "output_contract"
