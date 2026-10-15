@@ -206,3 +206,19 @@ def test_answers_each_gate_when_a_skeleton_is_asked_for_a_gated_plan() -> None:
     }
     assert skeleton["expect"] == {"status": "done", "outcome": None}
     assert check(skeleton, GATED).problems == ()
+
+
+def test_stubs_each_body_node_by_its_recorded_id_when_the_skeleton_has_a_group() -> None:
+    group = {
+        "id": "g",
+        "type": "loop_group",
+        "max_iterations": 2,
+        "until_when": "$b.output == 'TODO'",
+        "nodes": [{"id": "b", "type": "shell", "command": ["true"]}],
+    }
+
+    skeleton = skeleton_fixture(a_plan(group), outputs=KeysOutputs())
+
+    assert skeleton["stubs"] == {"g__b": {"text": "TODO"}}
+    assert skeleton["reached"] == ["g", "g__b"]
+    assert run_fixture(a_plan(group), parse_fixture(skeleton), outputs=KeysOutputs()).passed

@@ -9,9 +9,11 @@ A single stub answers every attempt and iteration of its node; a list answers th
 reached node with no stub, or whose list ran out, fails ``config`` and is listed as missing,
 except under an ``all_done`` join: it gets a placeholder that fits its ``output_format``
 (``skeleton_stub``), is listed as tolerated, and never sets the outcome. ``until_bash`` reads
-the iteration's ``until_exit`` (default 0, done). An ``approval`` or ``wait`` takes its answer
-from its stub (``{decision, text}``, ``{text}``, ``{choice}``, or ``{}`` to end a timed wait); with
-no stub, or a list that ran out, it pauses the run (``paused``), as a real run waits for a person.
+the iteration's ``until_exit`` (default 0, done); a ``loop_group``'s ``until_bash`` has no stub
+and reads 0, so a group that loops in a fixture ends through ``until_when``. An ``approval`` or
+``wait`` takes its answer from its stub (``{decision, text}``, ``{text}``, ``{choice}``, or ``{}``
+to end a timed wait); with no stub, or a list that ran out, it pauses the run (``paused``), as a
+real run waits for a person.
 """
 
 import json
@@ -123,9 +125,19 @@ def dry_run(
     Raises ``WorkflowEngineError`` when the engine refuses the run (its inputs).
     """
     runner, recorder = _StubRunner(stubs), _MemoryRecorder()
-    ports = EnginePorts(runner, recorder, _StillClock(), outputs, lambda: 0.0, runner)
+    # One node at a time: nothing waits in memory, and the stubs' records keep one order.
+    ports = EnginePorts(
+        runner,
+        recorder,
+        _StillClock(),
+        outputs,
+        lambda: 0.0,
+        _StillCheckout(),
+        max_parallel=1,
+        gates=runner,
+    )
     report = run_workflow(plan, inputs, ports)
-    order = [node.id for node in plan.document.nodes]
+    order = [node.id for node in plan.all_nodes()]
     returns = plan.document.returns
     return DryRunReport(
         run=report,
@@ -280,6 +292,13 @@ def _reply(node: ExecutableNode, stub: Stub) -> NodeReply:
     if node.output_format is not None:
         return NodeReply(json.dumps(stub.output, allow_nan=False))
     return NodeReply(canonical_text(stub.output))
+
+
+class _StillCheckout:
+    """No checkout changes in memory: a read-only node always passes its check."""
+
+    def status(self) -> str:
+        return ""
 
 
 class _StillClock:

@@ -145,6 +145,57 @@ def test_checks_only_the_named_workflow_when_validate_gets_a_name(hub: Path) -> 
     assert (result.exit_code, result.stdout) == (0, "check: valid (2 nodes in 2 layers)\n")
 
 
+MAIN_YAML = """\
+version: 1
+name: main
+revision: 1
+nodes:
+  - id: ci
+    type: include
+    include: check
+  - id: ship
+    type: shell
+    command: [make, ship]
+    depends_on: [ci]
+"""
+
+
+def test_expands_the_include_from_the_pack_when_validate_names_the_includer(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/main.yaml", MAIN_YAML)
+
+    result = run(hub, "validate", "main")
+
+    assert (result.exit_code, result.stdout) == (0, "main: valid (3 nodes in 3 layers)\n")
+
+
+def test_refuses_the_include_when_its_workflow_is_in_another_pack(hub: Path) -> None:
+    write(hub, "workflows/other/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/main.yaml", MAIN_YAML)
+
+    result = run(hub, "validate", "main")
+
+    assert result.exit_code == 1
+    assert (
+        result.stderr
+        == 'workflows/demo/main.yaml:7: nodes[0].include: no workflow is named "check"\n'
+    )
+
+
+def test_writes_a_skeleton_with_namespaced_stubs_when_the_workflow_includes_one(
+    hub: Path,
+) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/main.yaml", MAIN_YAML)
+
+    result = run(hub, "test", "main", "--stubs-init")
+
+    assert result.exit_code == 0, result.output
+    skeleton = (hub / "workflows/demo/fixtures/main.yaml").read_text()
+    assert "ci__lint:" in skeleton
+    assert run(hub, "test", "main").exit_code == 0
+
+
 def test_exits_one_when_validate_names_no_workflow(hub: Path) -> None:
     result = run(hub, "validate", "ghost")
 
@@ -259,6 +310,19 @@ REPORT_SH = 'printf \'{"delivered": true, "url": "%s"}\' "$1"\n'
 RUN_ID = "r1"
 
 
+def layered(items: list[Any]) -> list[Any]:
+    """``items`` with the sample's one concurrent layer (``status``, ``pr``) as a set."""
+    concurrent = [
+        i
+        for i, item in enumerate(items)
+        if str(item[0] if isinstance(item, tuple) else item) in {"status", "pr"}
+    ]
+    if len(concurrent) != 2 or concurrent[1] != concurrent[0] + 1:
+        return items
+    first = concurrent[0]
+    return [*items[:first], set(items[first : first + 2]), *items[first + 2 :]]
+
+
 class SampleRun:
     """The DEMO hub with the ``sample`` pack, and the calls its fakes logged."""
 
@@ -305,12 +369,12 @@ def test_runs_sample_pack_end_to_end_when_run_live(sample: SampleRun) -> None:
 
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines()[-1] == "run r1: done, outcome True"
-    assert sample.ends() == [
+    # status and pr share a layer: they run concurrently and record as they end.
+    assert layered(sample.ends()) == [
         ("plan", "ok"),
         ("implement", "ok"),
         ("gate", "ok"),
-        ("status", "ok"),
-        ("pr", "ok"),
+        {("status", "ok"), ("pr", "ok")},
         ("report", "ok"),
     ]
     end = sample.records()[-2]
@@ -348,14 +412,8 @@ def test_writes_snapshot_and_events_when_run_live(sample: SampleRun, tmp_path: P
     assert start["content_hash"].startswith("sha256:")
     stored = open_event_store(tmp_path / "events.db").read_all()
     assert {event.session for event in stored} == {"run:r1"}
-    assert [event.step for event in stored if event.type == "step.start"] == [
-        "plan",
-        "implement",
-        "gate",
-        "status",
-        "pr",
-        "report",
-    ]
+    starts = [event.step for event in stored if event.type == "step.start"]
+    assert layered(starts) == ["plan", "implement", "gate", {"status", "pr"}, "report"]
     (end,) = [event for event in stored if event.type == "run.end"]
     assert (end.payload["status"], end.payload["outcome"]) == ("done", True)
 
@@ -393,10 +451,9 @@ def test_fails_run_and_skips_dependants_when_gate_fails(
 
     assert result.exit_code == 1
     assert result.stdout.splitlines()[-1] == "run r1: failed"
-    assert sample.ends()[2:] == [
+    assert layered(sample.ends())[2:] == [
         ("gate", "failed"),
-        ("status", "skipped"),
-        ("pr", "skipped"),
+        {("status", "skipped"), ("pr", "skipped")},
         ("report", "skipped"),
     ]
     gate = [r for r in sample.records() if r.get("node") == "gate"][-1]
@@ -691,6 +748,65 @@ def test_warns_with_the_command_and_still_resumes_when_approve_finds_no_event_st
     assert [r["choice"] for r in sample.records() if r["event"] == "decision"] == ["approve"]
 
 
+REWORK_YAML = """\
+version: 1
+name: rework
+revision: 1
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 3
+    until_when: "$ok.output.decision == 'approve'"
+    nodes:
+      - id: work
+        type: shell
+        command: [make, check]
+      - id: ok
+        type: approval
+        message: Ship?
+        capture_response: true
+        depends_on: [work]
+"""
+
+
+def test_reworks_the_iteration_when_a_body_approval_is_rejected_then_approved(
+    sample: SampleRun,
+) -> None:
+    write(sample.hub, "workflows/rework/rework.yaml", REWORK_YAML)
+    first = sample.run("rework", "--live", "--run-id", RUN_ID)
+    decision = {"event": "decision", "node": "g__ok", "choice": "reject", "text": "tests"}
+    workflow_runs.append_record(run_path(sample), decision | {"attempt": 1})
+    second = sample.run("--resume", RUN_ID)
+    workflow_runs.append_record(run_path(sample), decision | {"attempt": 2, "choice": "approve"})
+
+    third = sample.run("--resume", RUN_ID)
+
+    assert first.stdout.splitlines()[-1] == "run r1: paused at g__ok"
+    assert second.stdout.splitlines()[-1] == "run r1: paused at g__ok"
+    assert third.exit_code == 0, third.output
+    assert third.stdout.splitlines()[-1] == "run r1: done"
+    assert [call["argv"] for call in sample.fakes.calls("make")] == [["check"], ["check"]]
+    group = [r for r in sample.records() if r.get("node") == "g" and r["event"] == "step_end"]
+    assert [(r["attempt"], r["status"]) for r in group] == [(1, "ok")]
+
+
+def test_approves_after_a_rework_when_reject_then_approve_answer_a_body_gate(
+    sample: SampleRun,
+) -> None:
+    write(sample.hub, "workflows/rework/rework.yaml", REWORK_YAML)
+    sample.run("rework", "--live", "--run-id", RUN_ID)
+
+    rejected = sample.run_command("reject", RUN_ID, "add tests")
+    approved = sample.run_command("approve", RUN_ID)
+
+    assert rejected.stdout.splitlines()[-1] == "run r1: paused at g__ok"
+    assert approved.exit_code == 0, approved.output
+    assert approved.stdout.splitlines()[-1] == "run r1: done"
+    decisions = [(r["gate_id"], r["choice"]) for r in sample.records() if r["event"] == "decision"]
+    assert decisions == [("r1:g__ok:1", "reject"), ("r1:g__ok:2", "approve")]
+    assert len(sample.fakes.calls("make")) == 2
+
+
 def test_ignores_modules_planted_in_hub_when_hub_step_node_runs(sample: SampleRun) -> None:
     marker = sample.hub / "planted-ran"
     write(sample.hub, "typer/__init__.py", f"open({str(marker)!r}, 'w').close()\n")
@@ -950,3 +1066,112 @@ def test_spawns_no_child_and_records_nothing_when_fixtures_run(
     assert result.exit_code == 0, result.output
     assert not (hub / ".agent-runs").exists()
     assert not (tmp_path / "xdg").exists()
+
+
+# AGH-228: read-only nodes checked through git status; includes snapshotted for resume.
+READ_ONLY_YAML = """\
+version: 1
+name: look
+revision: 1
+nodes:
+  - id: look
+    type: script
+    runtime: sh
+    script: look.sh
+    mutates_checkout: false
+"""
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"),
+    [
+        ("printf ok\n", (0, "ok", None)),
+        ("echo x > ../demo-api/made.txt\n", (1, "failed", "config")),
+    ],
+)
+def test_checks_git_status_around_a_read_only_node_when_run_live(
+    sample: SampleRun, script: str, expected: tuple[int, str, str | None]
+) -> None:
+    write(sample.hub, "workflows/sample/look.yaml", READ_ONLY_YAML)
+    write(sample.hub, "workflows/sample/scripts/look.sh", script)
+
+    result = sample.run("look", "--live", "--run-id", "l1")
+
+    [end] = [r for r in sample.records("l1") if r["event"] == "step_end"]
+    assert (result.exit_code, end["status"], end["failure_kind"]) == expected, end["detail"]
+
+
+MAIN_WITH_BLOCK = """\
+version: 1
+name: main
+revision: 1
+nodes:
+  - id: blk
+    type: include
+    include: block
+    with: {issue: CHILD}
+"""
+BLOCK_YAML = """\
+version: 1
+name: block
+revision: 1
+inputs:
+  issue: {required: true}
+nodes:
+  - id: plan
+    type: agent
+    prompt_file: block.md
+  - id: gate
+    type: shell
+    command: [make, check]
+    depends_on: [plan]
+"""
+
+
+def test_resumes_an_included_block_from_the_snapshot_when_a_run_with_an_include_failed(
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(sample.hub, "workflows/sample/main.yaml", MAIN_WITH_BLOCK)
+    write(sample.hub, "workflows/sample/block.yaml", BLOCK_YAML)
+    write(sample.hub, "workflows/sample/prompts/block.md", "Block for $INPUTS.issue\n")
+    monkeypatch.setenv("FAKE_MAKE_EXIT", "1")
+    assert sample.run("main", "--live", "--run-id", "m1").exit_code == 1
+    snapshot = sample.hub / ".agent-runs" / "workflows" / "m1" / "snapshot"
+    assert json.loads((snapshot / "includes" / "block.json").read_text())["name"] == "block"
+    (sample.hub / "workflows/sample/block.yaml").unlink()
+    monkeypatch.setenv("FAKE_MAKE_EXIT", "0")
+
+    result = sample.run("--resume", "m1")
+
+    assert result.exit_code == 0, result.output
+    [plan] = sample.fakes.calls("claude")
+    assert plan["argv"][1] == "Block for CHILD\n"
+    assert sample.ends("m1")[2:] == [("blk__plan", "skipped"), ("blk__gate", "ok")]
+
+
+GROUP_YAML = """\
+version: 1
+name: rounds
+revision: 1
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 1
+    until_when: $w.output == 'x'
+    nodes:
+      - id: w
+        type: agent
+        prompt_file: body.md
+"""
+
+
+def test_snapshots_a_body_prompt_file_when_a_group_runs_live(sample: SampleRun) -> None:
+    write(sample.hub, "workflows/sample/rounds.yaml", GROUP_YAML)
+    write(sample.hub, "workflows/sample/prompts/body.md", "Round after $LOOP_PREV.w.output\n")
+
+    sample.run("rounds", "--live", "--run-id", "g1")
+
+    snapshot = sample.hub / ".agent-runs" / "workflows" / "g1" / "snapshot"
+    assert (snapshot / "prompts" / "body.md").is_file()
+    [round_one] = sample.fakes.calls("claude")
+    assert round_one["argv"][1] == "Round after \n"

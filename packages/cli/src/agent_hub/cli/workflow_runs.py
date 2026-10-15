@@ -1,7 +1,8 @@
 """A workflow run's record and events, for ``hub workflow run`` (ADR 0032).
 
 A run lives in ``<hub>/.agent-runs/workflows/<run>/``: ``snapshot/`` holds the document as
-``workflow.json`` and the prompts and scripts its nodes name, copied at start, so a resume runs
+``workflow.json``, each workflow it includes as ``includes/<name>.json``, and the prompts and
+scripts its nodes name, copied at start, so a resume runs
 what the run started with (``content_hash`` is ``sha256:`` over those files, each framed by its
 path and length); ``records.jsonl`` holds one JSON line per start, resume, step start, step end
 (with its output and detail), retry, gate (its rendered message, choices and due time), gate
@@ -22,7 +23,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -37,19 +38,23 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event_store import EventStore
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.workflows.document import WorkflowDocument, parse_workflow
 from agent_hub.core.workflows.events import WorkflowEvents
 from agent_hub.core.workflows.failures import RetryRecord
 from agent_hub.core.workflows.gates import GateAnswer, GateForm, OpenGate, gate_id
+from agent_hub.core.workflows.includes import IncludeResolver
 from agent_hub.core.workflows.nodes import AgentNode, LoopNode, ScriptNode
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import GateRequest, RunEnd, StepEnd, StepStart
-from agent_hub.core.workflows.run_state import RunState
+from agent_hub.core.workflows.run_state import HeldGroup, RunState
 from agent_hub.core.workflows.substitution import NodeResult
 from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, resolve_pack_file
 
 RUNS_ROOT: Final = Path(".agent-runs", "workflows")
 SNAPSHOT: Final = "snapshot"
 DOCUMENT: Final = "workflow.json"
+INCLUDES: Final = "includes"
+INCLUDE_NAME: Final = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 RECORDS: Final = "records.jsonl"
 LOCK: Final = "lock"
 MAX_SNAPSHOT_FILE_BYTES: Final = 1 << 20
@@ -102,12 +107,20 @@ def run_lock(folder: Path) -> Iterator[None]:
 
 
 def snapshot_run(
-    folder: Path, *, document: JsonValue, plan: WorkflowPlan, pack_root: Path
+    folder: Path,
+    *,
+    document: JsonValue,
+    plan: WorkflowPlan,
+    pack_root: Path,
+    includes: Mapping[str, JsonValue] | None = None,
 ) -> tuple[Path, str]:
     """Write the run's snapshot; its pack root and content hash. Each pack file is read once
-    and at most ``MAX_SNAPSHOT_FILE_BYTES``."""
+    and at most ``MAX_SNAPSHOT_FILE_BYTES``; each included workflow is kept as
+    ``includes/<name>.json`` (``snapshot_includes`` resolves them on resume)."""
     snapshot = folder / SNAPSHOT
     files = {DOCUMENT: json.dumps(document, sort_keys=True).encode()}
+    for name, included in (includes or {}).items():
+        files[f"{INCLUDES}/{name}.json"] = json.dumps(included, sort_keys=True).encode()
     for pack_folder, relative in sorted(set(_pack_files(plan))):
         name = f"{pack_folder}/{relative}"
         try:
@@ -148,8 +161,23 @@ def snapshot_hash(snapshot: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
+def snapshot_includes(snapshot: Path) -> IncludeResolver:
+    """Resolve an include from the run's snapshot: the workflow as the run started with it."""
+
+    def resolve(name: str) -> WorkflowDocument | None:
+        path = snapshot / INCLUDES / f"{name}.json"
+        if not INCLUDE_NAME.fullmatch(name) or not path.is_file():
+            return None
+        try:
+            return parse_workflow(json.loads(path.read_bytes()))
+        except (OSError, ValueError) as error:
+            raise WorkflowRunError(f"cannot read the snapshot of {name}: {error}") from None
+
+    return resolve
+
+
 def _pack_files(plan: WorkflowPlan) -> Iterator[tuple[PackFolder, str]]:
-    for node in plan.document.nodes:
+    for node in plan.all_nodes():
         if isinstance(node, AgentNode | LoopNode) and node.prompt_file is not None:
             yield "prompts", node.prompt_file
         elif isinstance(node, ScriptNode):
@@ -212,10 +240,13 @@ def prior_state(records: list[Record]) -> RunState:
     attempts: dict[str, int] = {}
     sessions: dict[str, str] = {}
     gates: dict[str, OpenGate] = {}
+    groups: dict[str, HeldGroup] = {}
     for record in records:
         node, event = record.get("node"), record.get("event")
         if event == "sessions" and isinstance(given := record.get("sessions"), dict):
             sessions = {key: value for key, value in given.items() if isinstance(value, str)}
+        if event == "held" and isinstance(held := record.get("groups"), dict):
+            groups = {key: group for key, value in held.items() if (group := _held(value))}
         if not isinstance(node, str) or not isinstance(attempt := record.get("attempt"), int):
             continue
         attempts[node] = max(attempts.get(node, 0), attempt)
@@ -223,11 +254,51 @@ def prior_state(records: list[Record]) -> RunState:
             gates[node] = OpenGate(attempt, _instant(record.get("due")))
         elif event == "step_end":
             gates.pop(node, None)
+            groups.pop(node, None)
         state = _STATES.get(str(record.get("status")))
         if event == "step_end" and state and record.get("skip_cause") != "prior_success":
             output = record.get("output") if state == "completed" else None
             nodes[node] = NodeResult(state, output)  # type: ignore[arg-type]
-    return RunState(nodes, attempts, sessions, gates)
+    return RunState(nodes, attempts, sessions, gates, groups)
+
+
+def held_record(state: RunState) -> Record:
+    """The ``held`` record of a paused run: each group paused inside an iteration."""
+    groups: dict[str, JsonValue] = {
+        group_id: {
+            "attempt": held.attempt,
+            "iteration": held.iteration,
+            "previous": _results(held.previous),
+            "current": _results(held.current),
+        }
+        for group_id, held in state.groups.items()
+    }
+    return {"event": "held", "groups": groups}
+
+
+def _results(results: Mapping[str, NodeResult]) -> JsonValue:
+    return {
+        node: {"state": result.state, "output": result.output} for node, result in results.items()
+    }
+
+
+def _held(value: JsonValue) -> HeldGroup | None:
+    if not isinstance(value, dict):
+        return None
+    attempt, iteration = value.get("attempt"), value.get("iteration")
+    if not isinstance(attempt, int) or not isinstance(iteration, int):
+        return None
+    return HeldGroup(
+        attempt, iteration, _parsed(value.get("previous")), _parsed(value.get("current"))
+    )
+
+
+def _parsed(value: JsonValue) -> dict[str, NodeResult]:
+    results: dict[str, NodeResult] = {}
+    for node, result in (value if isinstance(value, dict) else {}).items():
+        if isinstance(result, dict) and result.get("state") in _STATES.values():
+            results[node] = NodeResult(result["state"], result.get("output"))  # type: ignore[arg-type]
+    return results
 
 
 def _instant(value: JsonValue) -> datetime | None:
