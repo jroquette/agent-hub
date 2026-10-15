@@ -1182,7 +1182,7 @@
       },
       "CreateAgentSession": {
         "additionalProperties": false,
-        "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).",
+        "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).\n``screenshot`` goes with the first prompt as an image, so it needs one.",
         "properties": {
           "fork": {
             "default": false,
@@ -1232,6 +1232,16 @@
               }
             ],
             "title": "Resume Session Id"
+          },
+          "screenshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Screenshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "workdir_id": {
             "pattern": "^[0-9a-f]{16}$",
@@ -5715,6 +5725,28 @@
           "ended_at"
         ],
         "title": "RunStep",
+        "type": "object"
+      },
+      "Screenshot": {
+        "additionalProperties": false,
+        "description": "A PNG of the screen sent with the first prompt, base64-encoded; its decoded size and\nsignature are checked by ``decode_screenshot`` (413, 422).",
+        "properties": {
+          "data": {
+            "minLength": 1,
+            "title": "Data",
+            "type": "string"
+          },
+          "media_type": {
+            "const": "image/png",
+            "title": "Media Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_type",
+          "data"
+        ],
+        "title": "Screenshot",
         "type": "object"
       },
       "SearchHit": {

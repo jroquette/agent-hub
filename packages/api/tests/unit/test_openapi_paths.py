@@ -184,3 +184,26 @@ def test_documents_problem_responses_when_document_built(api_settings: ApiSettin
         for operation in path_item.values():
             assert {"4XX", "5XX"} <= set(operation["responses"]), operation["operationId"]
             assert "422" not in operation["responses"], operation["operationId"]
+
+
+def test_keeps_paths_when_screenshot_added(api_settings: ApiSettings) -> None:
+    # AC-260.15: the screenshot is a field of the create body; no path is added or removed.
+    assert document_paths(create_app(api_settings)) == (
+        SPEC_PATHS
+        | CLARITY_SPEC_PATHS
+        | TICKET_SPEC_PATHS
+        | SKILL_SPEC_PATHS
+        | AGENT_SESSION_SPEC_PATHS
+        | WORKFLOW_PATHS
+        | RUN_COMMAND_PATHS
+    )
+
+
+def test_documents_screenshot_when_create_schema_read(api_settings: ApiSettings) -> None:
+    schemas = create_app(api_settings).openapi()["components"]["schemas"]
+
+    screenshot = schemas["CreateAgentSession"]["properties"]["screenshot"]
+    refs = [option.get("$ref") for option in screenshot["anyOf"]]
+    assert "#/components/schemas/Screenshot" in refs
+    # Pydantic writes a one-value Literal as ``const`` (the plan said ``enum: ["image/png"]``).
+    assert schemas["Screenshot"]["properties"]["media_type"]["const"] == "image/png"

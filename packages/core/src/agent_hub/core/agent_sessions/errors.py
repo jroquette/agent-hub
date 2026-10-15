@@ -155,3 +155,21 @@ class StoreSequenceError(AgentHubError):
         self.expected = expected
         self.got = got
         super().__init__(f"agent session {agent_session_id}: expected seq {expected}, got {got}")
+
+
+class InvalidScreenshotError(AgentHubError):
+    """The screenshot is not valid base64 or not a PNG (422); ``reason`` is fixed text, never
+    the data."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"invalid screenshot: {reason}")
+
+
+class ScreenshotTooLargeError(AgentHubError):
+    """The decoded screenshot is over the byte limit (413)."""
+
+    def __init__(self, *, size: int, limit: int) -> None:
+        self.size = size
+        self.limit = limit
+        super().__init__(f"screenshot of {size} bytes is over the {limit} byte limit")

@@ -5,6 +5,8 @@ One ``ClaudeSDKClient`` per handle, in streaming-input mode, pointed at the ``cl
 (``message_mapping``) into the handle's queue; ``PermissionBridge`` puts the permission requests
 there too. ``events`` drains that queue until ``Exited``.
 
+- ``send`` passes text as it is; with images it sends one streaming-input user message whose
+  content is the image blocks, then the text (built inside the call, never kept).
 - ``interrupt`` sends the CLI's interrupt, then denies what is parked; the turn's
   ``TurnResult`` (``ABORTED_TERMINAL_REASON``) follows from the CLI.
 - ``close`` (idempotent): interrupt when a turn runs (at most ``INTERRUPT_SECONDS``), deny every
@@ -19,12 +21,13 @@ there too. ``events`` drains that queue until ``Exited``.
 """
 
 import asyncio
+import base64
 import os
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -47,6 +50,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverError,
     DriverEvent,
     DriverHandle,
+    DriverImage,
     Exited,
     PastSession,
     PermissionMode,
@@ -90,6 +94,31 @@ class _Session:
         if isinstance(event, Exited):
             self.exited = True
         self.queue.put_nowait(event)
+
+
+def _user_message(text: str, images: tuple[DriverImage, ...]) -> dict[str, Any]:
+    """One stream-json user message: the image blocks first, then the text."""
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.media_type,
+                "data": base64.b64encode(image.data).decode("ascii"),
+            },
+        }
+        for image in images
+    ]
+    blocks.append({"type": "text", "text": text})
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": blocks},
+        "parent_tool_use_id": None,
+    }
+
+
+async def _single(message: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+    yield message
 
 
 def _failure(error: Exception, *, limit: int) -> tuple[str, int]:
@@ -157,12 +186,18 @@ class ClaudeSdkSessionDriver:
         session.reader = asyncio.create_task(self._read(session))
         return handle
 
-    async def send(self, handle: DriverHandle, text: str) -> None:
-        """Send a user message; the CLI queues it behind a running turn."""
+    async def send(
+        self, handle: DriverHandle, text: str, *, images: tuple[DriverImage, ...] = ()
+    ) -> None:
+        """Send a user message (images first, then text); the CLI queues it behind a running
+        turn."""
         session = self._open(handle)
         session.turns += 1
         try:
-            await session.client.query(text)
+            if images:
+                await session.client.query(_single(_user_message(text, images)))
+            else:
+                await session.client.query(text)
         except CLIConnectionError as lost:
             session.turns -= 1
             raise SessionTerminalError(handle, status="ended") from lost

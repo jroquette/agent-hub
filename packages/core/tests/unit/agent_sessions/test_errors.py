@@ -1,8 +1,10 @@
 from agent_hub.core.agent_sessions.errors import (
     AgentSessionNotFoundError,
+    InvalidScreenshotError,
     LiveLimitError,
     LogFullError,
     MessageTooLargeError,
+    ScreenshotTooLargeError,
     StoreSequenceError,
 )
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
@@ -20,3 +22,10 @@ def test_names_limits_when_raised() -> None:
     assert "Resume" in str(LogFullError("s-1"))
     assert MessageTooLargeError(size=70_000, limit=65_536).limit == 65_536
     assert StoreSequenceError("s-1", expected=3, got=5).expected == 3
+
+
+def test_names_reason_and_sizes_when_screenshot_refused() -> None:
+    too_large = ScreenshotTooLargeError(size=6_000_000, limit=5_242_880)
+
+    assert (too_large.size, too_large.limit) == (6_000_000, 5_242_880)
+    assert InvalidScreenshotError("not a PNG").reason == "not a PNG"
