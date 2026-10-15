@@ -72,7 +72,7 @@ from agent_hub.core.workflows.engine import (
     run_workflow,
     start_inputs,
 )
-from agent_hub.core.workflows.events import WorkflowEvents
+from agent_hub.core.workflows.events import WorkflowEvents, issue_key
 from agent_hub.core.workflows.nodes import ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import RunEnd
@@ -323,10 +323,9 @@ def _execute(
 
 
 def _issue(inputs: dict[str, JsonValue]) -> str | None:
-    """The run's ``issue`` input, when the workflow declares one and it is given: its events
-    carry it, so hub web finds an issue's live run."""
-    issue = inputs.get("issue")
-    return issue if isinstance(issue, str) and issue else None
+    """The run's ``issue`` input when it is a tracker key: its events carry it, so hub web
+    finds an issue's live run."""
+    return issue_key(inputs.get("issue"))
 
 
 def _events(
