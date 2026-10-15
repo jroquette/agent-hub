@@ -467,8 +467,15 @@ def test_reads_hub_workflows_when_hub_has_a_pack(tmp_path: Path) -> None:
 
     files = list(workflow_source_of(str(tmp_path)).workflow_files())
 
-    hub_files = [item for item in files if isinstance(item, WorkflowFile)]
+    read = [item for item in files if isinstance(item, WorkflowFile)]
+    hub_files = [item for item in read if item.origin == "hub"]
     assert [(item.file, item.origin) for item in hub_files] == [("workflows/mine/ship.yaml", "hub")]
+    # The rest are the shipped packs (issue-to-pr), shown under <builtin>/, never as the hub's.
+    assert all(
+        item.origin == "builtin" and item.file.startswith("<builtin>/")
+        for item in read
+        if item not in hub_files
+    )
 
 
 class _OneHub:
