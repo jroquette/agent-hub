@@ -26,9 +26,26 @@ def test_serializes_failure_when_run_failed() -> None:
     assert document["failure"]["failing_event_id"] == EVENT_ID
 
 
-def test_rejects_step_when_key_unknown() -> None:
+def test_keeps_node_id_when_step_key_is_namespaced() -> None:
     step = {
-        "key": "deploy",
+        "key": "review__lint",
+        "attempt": 1,
+        "max_attempts": 1,
+        "status": "skipped",
+        "started_at": "2026-10-09T00:00:00Z",
+        "ended_at": None,
+        "skip_cause": "upstream_failed",
+    }
+
+    document = json.loads(a_run(steps=(step,)).model_dump_json())
+
+    assert document["steps"][0]["key"] == "review__lint"
+    assert document["steps"][0]["kind"] is None
+
+
+def test_rejects_step_when_key_empty() -> None:
+    step = {
+        "key": "",
         "attempt": 1,
         "max_attempts": 1,
         "status": "ok",

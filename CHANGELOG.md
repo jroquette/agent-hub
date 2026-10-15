@@ -27,6 +27,21 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `.agent-runs/workflows/<run>/` with a snapshot of its document, prompts and scripts, and its events go to the
   event database. `--resume RUN` continues a failed run on its snapshot, reusing what completed; `--abandon RUN` ends
   it cancelled. It makes no tracker write (AGH-221).
+- Workflow runs read any workflow engine run: steps keep their node ids (`a__b` inside an include) with `skipped`,
+  `failure_kind` and `skip_cause`; a run has `status`, `outcome`, `revision` and `content_hash`, and its latest
+  `run.end` decides how a resumed run ended. `GET /api/v1/workflow-runs` filters by `workflow` and `failure_kind`;
+  `hub run` runs read as before (AGH-225).
+- `GET /api/v1/workflows` lists each project's workflows (source `hub` or `builtin`) and the files that do not load;
+  `GET /api/v1/workflows/{project}/{name}` gives a workflow's document and its layers (AGH-225).
+- `hub step worktree|verdict|commits|pr|report` run `hub run`'s stages one at a time and print one JSON object each (the
+  worktree and the repo's target, the session's verdict, the branch's commits, the PR's url, the delivery), for the issue-to-pr
+  workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
+  tracker (AGH-223).
+- `GET /api/v1/sessions` and `GET /api/v1/sessions/{session_id}` carry the Live tile fields (`waiting_reason`,
+  `last_action`, `last_tool`, `needs_you_problem`, `failing_notice`, and `sparkline_60s` until the session ends), derived
+  by the same code as the Live tiles, so a sessions list can show what Live shows (AGH-236).
+- `GET /api/v1/agent-sessions` and `GET /api/v1/agent-sessions/{id}` carry `observed_session_id`, the observed
+  session's id once its twin has been observed, else `null`, so a list can show a driven session once (AGH-236).
 - A workflow node of type `include` copies in another workflow of the same pack at load: its nodes become
   `<include id>__<id>`, `with:` fills its `inputs`, the include's `depends_on`/`when`/`trigger_rule` go to the block's
   roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels and 512 nodes, no
@@ -37,6 +52,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The workflow engine runs a layer's nodes concurrently (at most 4 attempts at once in a run), each recorded as it
   ends; Ctrl-C stops the running children. A `mutates_checkout: false` node never shares a layer with one that may change the checkout, and fails
   `config` when its attempt changes `git status` (AGH-228).
+
+### Changed
+
+- The chat of a session `hub web` drives is one fixed-height column: the header (title, status, cost, actions) and the
+  composer stay on screen and only the transcript scrolls. It opens at the latest message, or at the oldest permission
+  still waiting, follows the reply while you are at the bottom, stops when you scroll up, and offers "Jump to latest ·
+  N new" (or End); Send brings you back to the bottom (AGH-237).
+- The chat streams smoothly: replies render once per frame with a caret, long transcripts open fast, a "Claude is
+  working · <tool>" row shows while a turn runs, Stop works while a permission waits, Esc in the empty composer stops
+  the turn, and "Turn interrupted" follows its result (AGH-238).
 
 ### Fixed
 

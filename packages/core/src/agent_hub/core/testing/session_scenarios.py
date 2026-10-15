@@ -8,15 +8,21 @@ fold does not depend on arrival order.
 
 import random
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.workflows.events import WorkflowEvents
+from agent_hub.core.workflows.failures import FailureKind
+from agent_hub.core.workflows.ports import RunEnd, RunStatus, SkipCause, StepEnd, StepStart
 
 SCENARIO_START = datetime(2026, 10, 9, 14, 0, 0, tzinfo=UTC)
 SCENARIO_MODEL = "claude-opus-5-5"
 RUN_WORKFLOW = "issue-to-pr"
+WORKFLOW_HASH = "sha256:" + "ab" * 32
 
 type ToolUse = tuple[str, dict[str, JsonValue]]
 
@@ -411,6 +417,65 @@ def a_run_events(
             },
         )
     return events
+
+
+@dataclass(frozen=True)
+class NodeVisit:
+    """One node attempt of an engine run; ``running`` has a start and no end, ``skipped`` the
+    reverse."""
+
+    node: str
+    status: Literal["ok", "failed", "skipped", "running"] = "ok"
+    failure_kind: FailureKind | None = None
+    skip_cause: SkipCause | None = None
+    origin: str | None = None
+
+
+def a_workflow_run_events(  # noqa: PLR0913 -- one keyword per part of a run a test varies
+    visits: Sequence[NodeVisit],
+    *,
+    run: str = "5e6f7a8b",
+    workflow: str = "ship",
+    project: str = "demo",
+    status: RunStatus | None = None,
+    outcome: JsonValue = None,
+    end_index: int = 0,
+    start: datetime = SCENARIO_START,
+) -> list[Event]:
+    """The events the workflow engine emits for ``visits``, a minute apart, then a ``run.end``
+    when ``status`` is given (its ``reason`` the last failed node)."""
+    recorder = WorkflowEvents(
+        project=project,
+        run_id=run,
+        workflow=workflow,
+        revision=3,
+        content_hash=WORKFLOW_HASH,
+        end_index=end_index,
+        repo="demo-api",
+    )
+    attempts: dict[str, int] = {}
+    failed: str | None = None
+    for minute, visit in enumerate(visits):
+        at = start + timedelta(minutes=minute)
+        attempt = attempts[visit.node] = attempts.get(visit.node, 0) + 1
+        if visit.status != "skipped":
+            recorder.step_started(StepStart(visit.node, attempt, at))
+        if visit.status != "running":
+            failed = visit.node if visit.status == "failed" else failed
+            ended = StepEnd(
+                visit.node,
+                attempt,
+                visit.status,
+                at + timedelta(seconds=30),
+                failure_kind=visit.failure_kind,
+                skip_cause=visit.skip_cause,
+                origin=visit.origin,
+            )
+            recorder.step_ended(ended)
+    if status is not None:
+        at = start + timedelta(minutes=len(visits))
+        recorder.run_ended(RunEnd(status, at, outcome=outcome, reason=failed))
+    return recorder.events
 
 
 def learning_events(
