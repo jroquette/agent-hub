@@ -11,7 +11,7 @@ import os
 import signal
 import subprocess
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import IO, NamedTuple
 
@@ -55,8 +55,10 @@ def run_child(
     output_limit: int | None = None,
     stdout_path: Path | None = None,
     on_start: Callable[[int], None] | None = None,
+    stdin: bytes | None = None,
 ) -> ChildResult:
-    """Run ``argv`` in ``cwd`` with exactly ``env``; stdin is empty, both streams are captured.
+    """Run ``argv`` in ``cwd`` with exactly ``env``; stdin is empty (``stdin``: those bytes, read
+    from a temporary file, so no pipe can block), both streams are captured.
 
     With ``own_session`` (by default: when there is a ``timeout``) the child runs in a new session
     and a timeout kills its whole group; without it, the child stays in the caller's group, where
@@ -75,25 +77,59 @@ def run_child(
     ``FileNotFoundError``) when the tool cannot start.
     """
     new_session = timeout is not None if own_session is None else own_session
-    if output_limit is not None:
-        return _run_to_files(
+    if stdout_path is not None and output_limit is None:
+        msg = "stdout_path needs output_limit"
+        raise ValueError(msg)
+    with _stdin_file(stdin) as given:
+        if output_limit is not None:
+            return _run_to_files(
+                argv,
+                cwd=cwd,
+                env=env,
+                timeout=timeout,
+                new_session=new_session,
+                limit=output_limit,
+                stdout_path=stdout_path,
+                on_start=on_start,
+                stdin=given,
+            )
+        return _run_piped(
             argv,
             cwd=cwd,
             env=env,
             timeout=timeout,
             new_session=new_session,
-            limit=output_limit,
-            stdout_path=stdout_path,
             on_start=on_start,
+            stdin=given,
         )
-    if stdout_path is not None:
-        msg = "stdout_path needs output_limit"
-        raise ValueError(msg)
+
+
+@contextlib.contextmanager
+def _stdin_file(data: bytes | None) -> Iterator[IO[bytes] | int]:
+    if data is None:
+        yield subprocess.DEVNULL
+        return
+    with tempfile.TemporaryFile() as file:
+        file.write(data)
+        file.seek(0)
+        yield file
+
+
+def _run_piped(
+    argv: Sequence[str],
+    *,
+    cwd: Path | str,
+    env: Mapping[str, str],
+    timeout: float | None,
+    new_session: bool,
+    on_start: Callable[[int], None] | None,
+    stdin: IO[bytes] | int,
+) -> ChildResult:
     with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
         list(argv),
         cwd=cwd,
         env=dict(env),
-        stdin=subprocess.DEVNULL,
+        stdin=stdin,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=new_session,
@@ -132,13 +168,14 @@ def _run_to_files(
     limit: int,
     stdout_path: Path | None,
     on_start: Callable[[int], None] | None,
+    stdin: IO[bytes] | int,
 ) -> ChildResult:
     with _stdout_file(stdout_path) as stdout, tempfile.TemporaryFile() as stderr:
         with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
             list(argv),
             cwd=cwd,
             env=dict(env),
-            stdin=subprocess.DEVNULL,
+            stdin=stdin,
             stdout=stdout,
             stderr=stderr,
             start_new_session=new_session,
