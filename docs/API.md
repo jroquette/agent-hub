@@ -336,32 +336,43 @@ of its `workflows/` and the built-ins, stat only) is unchanged. A problem never 
 
 Four POST routes start and stop workflow engine runs (AC-213.19, ADR 0032 decision 4). Each runs the hub that serves
 the web as a child (`python -I -m agent_hub.cli workflow run …`, argv only, in the hub folder), with the server's
-environment minus `LINEAR_API_KEY`, plus `AGENT_HUB_ROOT` and `AGENT_HUB_DB` (the server's store), so the run's events,
-written by the child through `IngestEvents`, are the ones `GET /workflow-runs` folds. The routes track no status: it
-comes from those events.
+environment minus `LINEAR_API_KEY`, plus `AGENT_HUB_ROOT` and `AGENT_HUB_DB` (the server's store, absolute), so the
+run's events, written by the child through `IngestEvents`, are the ones `GET /workflow-runs` folds. The routes track
+no status: it comes from those events.
 
-- `POST /api/v1/workflow-runs` with `{project, workflow, inputs, live}` → 202 `RunAccepted` (`run_id`, `project`,
-  `action`) and `Location: /api/v1/workflow-runs/{run_id}`. The run id is minted first (8 hex digits, the CLI's
-  pattern). `inputs` (at most 64, names `^[a-z][a-z0-9_]*$`, strings up to 16,384 characters without NUL, finite
-  numbers, booleans) must fit the workflow's `inputs` (422 `workflow-run-invalid-inputs`). A workflow that declares an
-  `issue` input has one live run per issue: a run folded `running`, or a child the server started that has not
-  ended yet, refuses a second (409 `workflow-run-live-run`, with `run_id`). `issue-to-pr` is refused (409
-  `workflow-run-tracker-workflow`): its tracker writes need `LINEAR_API_KEY`, which no child gets; use `hub run`.
+- `POST /api/v1/workflow-runs` with `{project, workflow, inputs}` → 202 `RunAccepted` (`run_id`, `project`,
+  `action`) and `Location: /api/v1/workflow-runs/{run_id}`. A web start is always live (`--live`); a dry run belongs
+  to the CLI (`hub workflow run NAME` without `--live`), and a `live` member is refused like any unknown one (422).
+  The run id is minted first (8 hex digits, the CLI's pattern). `inputs` (at most 64, names `^[a-z][a-z0-9_]*$`,
+  strings up to 16,384 characters without NUL, finite numbers, booleans) must fit the workflow's `inputs` (422
+  `workflow-run-invalid-inputs`). `issue-to-pr` is refused (409 `workflow-run-tracker-workflow`): its tracker writes
+  need `LINEAR_API_KEY`, which no child gets; use `hub run`.
+- **One live run per issue.** A run's issue is its `issue` input when the workflow declares one and the value is a
+  tracker key (`^[A-Z][A-Z0-9]{0,9}-[0-9]{1,9}$`); only then do its events carry `issue`. A run folded `running`, or
+  a child the server started that has not ended, refuses another start or resume of that issue (409
+  `workflow-run-live-run`, with `run_id`). A start and a resume take one lock from that check through the launch.
 - `POST /api/v1/workflow-runs/{run_id}/cancel` → 202: SIGINT to the child's process group (the CLI kills its node
-  children), SIGKILL after 10 s, then `--abandon`, so the run ends `cancelled`. Only a child this server started is
-  signalled: while the server holds it unreaped, or, after a restart, while its process still has the start time its
-  pid file records (`/proc` on Linux, else `ps`); otherwise 409 `workflow-run-not-running`.
+  children), SIGKILL after 10 s, then `--abandon`, so the run ends `cancelled` (a failed abandon is logged). Only a
+  child this server started is signalled: while the server holds it unreaped, or, after a restart, while its process
+  still has the start time its pid file records (`/proc` on Linux, else `ps`); otherwise 409
+  `workflow-run-not-running`.
 - `POST /api/v1/workflow-runs/{run_id}/resume` → 202 (a detached `--resume` child) and
   `POST /api/v1/workflow-runs/{run_id}/abandon` → 200 (waits for `--abandon`, at most 60 s). Both refuse a run that
-  ended `done` or `cancelled` (409 `workflow-run-ended`), whose child still runs (409 `workflow-run-in-use`), or that
-  is not an engine run (409 `workflow-run-not-engine-run`); the CLI refusing is 409 `workflow-run-refused`, and a child
-  that cannot start or finish is 502 `workflow-run-launch-failed`. Problems never quote the CLI's output.
+  ended `done` or `cancelled` (409 `workflow-run-ended`), whose child still runs or whose run lock another
+  `hub workflow run` holds (409 `workflow-run-in-use`), or that is not an engine run (409
+  `workflow-run-not-engine-run`); the CLI refusing is 409 `workflow-run-refused`. Of two concurrent launches of one run,
+  one answers 409 `workflow-run-in-use`. At most 8 children started from the web run at once (409
+  `workflow-run-too-many-runs`). A child that cannot start or finish is 502 `workflow-run-launch-failed`. Problems
+  never quote the CLI's output.
 
-A started child runs in its own session with stdin empty and both streams in `<hub>/.agent-runs/web/<run>.log`; its
-pid file `<hub>/.agent-runs/web/<run>.pid` (pid, start time, issue) is created exclusively, owner-only, never through
-a link, and removed when the child ends. `run_id` in a path must match `^[a-z0-9][a-z0-9-]{0,31}$` (else 400). All
-four are strict writes ([Local security](#local-security)) and need the launch cookie, like the agent-session
-writes; with `AGENT_HUB_IN_CONTAINER=1` they answer 404 `urn:agent-hub:problem:run-control-off`.
+A started child runs in its own session with stdin empty and both streams appended to
+`<hub>/.agent-runs/web/<run>.log`; its pid file `<hub>/.agent-runs/web/<run>.pid` (pid, start time, issue) is created
+exclusively, owner-only, never through a link, and removed when the child ends. A pid file whose process is gone or
+started at another time is removed when the folder is next read (at most 64 files); one whose start time cannot be
+read is kept, counted live and never signalled. A `.agent-runs/web` that is a link is refused (502). `run_id` in a path
+must match `^[a-z0-9][a-z0-9-]{0,31}$` (else 400). All four are strict writes ([Local security](#local-security)) and
+need the launch cookie, like the agent-session writes; with `AGENT_HUB_IN_CONTAINER=1` they answer 404
+`urn:agent-hub:problem:run-control-off`.
 
 ## Local security
 

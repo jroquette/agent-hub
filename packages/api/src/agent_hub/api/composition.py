@@ -110,7 +110,7 @@ from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_reads import SkillUsageSource
 from agent_hub.core.tracker.tracker_reader import TrackerReader
-from agent_hub.core.workflows.launch import ControlWorkflowRun, StartWorkflowRun
+from agent_hub.core.workflows.launch import ControlWorkflowRun, RunGuard, StartWorkflowRun
 from agent_hub.core.workflows.workflow_reads import ListedWorkflowSource, ReadWorkflows
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
@@ -593,10 +593,12 @@ def build_app(
         events, reader, hub_of=facts.hub_of, availability=CachedAvailability(changes.availability)
     )
     workflows = ReadWorkflows(hubs, workflow_source_of)
-    launcher = None
+    guard = None
     if not settings.sessions_off:
         env: Mapping[str, str] = os.environ if environ is None else environ
         launcher = ProcessRunLauncher(db_path=settings.db_path, environ=env)
+        # One guard for both, so a start and a resume of one issue never race.
+        guard = RunGuard(events, launcher)
     ports = ApiPorts(
         event_read_models=events,
         hub_read_models=hubs,
@@ -616,8 +618,8 @@ def build_app(
         cloud_sessions=None if sessions is None else sessions.cloud,
         agent_session_links=None if sessions is None else sessions.links,
         workflow_reads=workflows,
-        run_starts=None if launcher is None else StartWorkflowRun(workflows, events, launcher),
-        run_control=None if launcher is None else ControlWorkflowRun(hubs, events, launcher),
+        run_starts=None if guard is None else StartWorkflowRun(workflows, guard),
+        run_control=None if guard is None else ControlWorkflowRun(hubs, guard),
     )
     return create_app(
         settings,

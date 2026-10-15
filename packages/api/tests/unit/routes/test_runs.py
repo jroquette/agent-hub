@@ -11,6 +11,7 @@ from agent_hub.core.workflows.document import parse_workflow
 from agent_hub.core.workflows.launch import (
     ControlWorkflowRun,
     LaunchSpec,
+    RunGuard,
     RunLaunchError,
     StartWorkflowRun,
 )
@@ -100,7 +101,7 @@ class Launcher:
     def start(self, spec: LaunchSpec) -> None:
         self._call("start", spec.inputs)
 
-    def resume(self, hub_path: str, run_id: str) -> None:
+    def resume(self, hub_path: str, run_id: str, *, issue: str | None) -> None:
         self._call("resume", run_id)
 
     def abandon(self, hub_path: str, run_id: str) -> None:
@@ -118,16 +119,17 @@ class Launcher:
 def commands(wired: Any) -> Any:
     launcher = Launcher()
     plans = Plans()
+    guard = RunGuard(wired.events, launcher)
     wired.wire(
-        run_starts=StartWorkflowRun(plans, wired.events, launcher, mint=lambda: "run-1"),
-        run_control=ControlWorkflowRun(plans, wired.events, launcher),
+        run_starts=StartWorkflowRun(plans, guard, mint=lambda: "run-1"),
+        run_control=ControlWorkflowRun(plans, guard),
     )
     wired.launcher = launcher
     return wired
 
 
 def test_starts_run_with_location_when_body_fits(commands: Any) -> None:
-    body = {"project": "demo", "workflow": "fix", "inputs": {"issue": "DEM-7"}, "live": True}
+    body = {"project": "demo", "workflow": "fix", "inputs": {"issue": "DEM-7"}}
 
     response = commands.client.post("/api/v1/workflow-runs", json=body, headers=OWN)
 
@@ -142,6 +144,7 @@ def test_starts_run_with_location_when_body_fits(commands: Any) -> None:
     [
         ({"project": "demo", "workflow": "fix"}, 422, "invalid-inputs"),
         ({"project": "demo", "workflow": "fix", "extra": 1}, 422, None),
+        ({"project": "demo", "workflow": "fix", "live": False}, 422, None),
         ({"project": "demo", "workflow": "issue-to-pr"}, 409, "tracker-workflow"),
         ({"project": "demo", "workflow": "nope"}, 404, None),
     ],
