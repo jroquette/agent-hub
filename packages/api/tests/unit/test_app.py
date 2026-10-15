@@ -21,6 +21,7 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/hubs"): {"path": "/home/demo/demo-hub"},
     ("post", "/api/v1/learnings/{learning_id}/accept"): {"target": "learnings/"},
     ("post", "/api/v1/learnings/{learning_id}/reject"): {"reason": "Duplicate of another note"},
+    ("post", "/api/v1/approvals/{approval_id}/decision"): {"decision": "approve"},
     ("post", "/api/v1/agent-sessions"): {"project": "demo", "workdir_id": "0123456789abcdef"},
     ("post", "/api/v1/agent-sessions/cloud"): {
         "project": "demo",
