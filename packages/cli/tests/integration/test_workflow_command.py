@@ -416,6 +416,7 @@ def test_writes_snapshot_and_events_when_run_live(sample: SampleRun, tmp_path: P
     assert layered(starts) == ["plan", "implement", "gate", {"status", "pr"}, "report"]
     (end,) = [event for event in stored if event.type == "run.end"]
     assert (end.payload["status"], end.payload["outcome"]) == ("done", True)
+    assert {event.payload.get("issue") for event in stored} == {"DEM-1"}
 
 
 def test_prints_what_would_run_when_not_live(sample: SampleRun) -> None:

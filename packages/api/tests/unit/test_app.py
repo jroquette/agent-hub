@@ -36,6 +36,11 @@ BODIES: dict[tuple[str, str], object] = {
     # Bodiless agent-session writes still send JSON (the access rules want it).
     ("post", "/api/v1/agent-sessions/{agent_session_id}/interrupt"): {},
     ("post", "/api/v1/agent-sessions/{agent_session_id}/close"): {},
+    # The run commands are strict writes: JSON even when bodiless.
+    ("post", "/api/v1/workflow-runs"): {"project": "demo", "workflow": "fix"},
+    ("post", "/api/v1/workflow-runs/{run_id}/cancel"): {},
+    ("post", "/api/v1/workflow-runs/{run_id}/resume"): {},
+    ("post", "/api/v1/workflow-runs/{run_id}/abandon"): {},
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
@@ -50,6 +55,9 @@ AGENT_SESSION_ID = "01929a4e-7a11-7c00-8a00-00000000a001"
 
 def _concrete(path: str) -> str:
     path = path.replace("{agent_session_id}", AGENT_SESSION_ID)
+    # Run commands take the CLI's run ids only.
+    if path.endswith(("/cancel", "/resume", "/abandon")):
+        path = path.replace("{run_id}", "run-1")
     names = ("hub_id", "project", "session_id", "run_id", "approval_id", "learning_id", "slug")
     for name in (*names, "request_id", "cloud_id"):
         path = path.replace(f"{{{name}}}", f"{name}-1")
