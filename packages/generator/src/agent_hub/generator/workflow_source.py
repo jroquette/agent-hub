@@ -3,8 +3,11 @@
 Each file the discovery read is a ``WorkflowFile`` with its origin (hub or built-in), each
 problem a ``LoadProblem`` keyed ``$``. A file is shown relative to the hub, a built-in's as
 ``<builtin>/<pack>/<file>``, so no absolute path of the installed package is shown.
+``fingerprint`` lists the two roots stat-only (each entry's path, size and mtime, two levels
+deep, a link's target), so a reader can reuse what it planned while nothing changed.
 """
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Final
@@ -13,9 +16,12 @@ from agent_hub.core.hub_config.problems import ROOT_PATH
 from agent_hub.core.workflows.catalog import LoadProblem, WorkflowFile
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
+    HUB_WORKFLOWS,
     WORKFLOW_SUFFIXES,
     discover_workflows,
 )
+
+type Stat = tuple[str, int, int]
 
 # How a built-in's file is shown: it lives in the installed package, not in the hub.
 BUILTIN_PREFIX: Final = "<builtin>"
@@ -46,9 +52,30 @@ class DiscoveredWorkflowSource:
                 shown = self._shown(found.path)
                 yield WorkflowFile(shown, found.name, found.document, found.lines, found.origin)
 
+    def fingerprint(self) -> tuple[Stat, ...]:
+        """Each entry of the hub's ``workflows/`` and the built-ins, packs included."""
+        return (*_stats(self.root / HUB_WORKFLOWS, depth=2), *_stats(self.builtin_root, depth=2))
+
     def _shown(self, path: Path) -> str:
         if path.is_relative_to(self.root):
             return path.relative_to(self.root).as_posix()
         if path.is_relative_to(self.builtin_root):
             return f"{BUILTIN_PREFIX}/{path.relative_to(self.builtin_root).as_posix()}"
         return str(path)
+
+
+def _stats(folder: Path, *, depth: int) -> Iterator[Stat]:
+    try:
+        with os.scandir(folder) as listing:
+            entries = sorted(listing, key=lambda entry: entry.name)
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            stat = entry.stat()
+        except OSError:
+            yield (entry.path, -1, -1)
+            continue
+        yield (entry.path, stat.st_size, stat.st_mtime_ns)
+        if depth > 1 and entry.is_dir(follow_symlinks=False):
+            yield from _stats(Path(entry.path), depth=depth - 1)

@@ -50,3 +50,19 @@ def test_keeps_one_name_when_only_given(tmp_path: Path) -> None:
     items = DiscoveredWorkflowSource(hub, only="lint", builtin_root=builtin).workflow_files()
 
     assert [_shown(item) for item in items] == [("workflows/mine/lint.yaml", "hub")]
+
+
+def test_changes_fingerprint_when_a_workflow_file_changes(tmp_path: Path) -> None:
+    hub, builtin = tmp_path / "hub", tmp_path / "builtin"
+    _workflow(hub / "workflows", "mine", "ship")
+    builtin.mkdir()
+    source = DiscoveredWorkflowSource(hub, builtin_root=builtin)
+
+    first = source.fingerprint()
+    same = source.fingerprint()
+    _workflow(hub / "workflows", "mine", "ship", text=_SHELL + "description: longer\n")
+    edited = source.fingerprint()
+    _workflow(hub / "workflows", "mine", "lint")
+
+    assert first == same
+    assert len({first, edited, source.fingerprint()}) == 3

@@ -23,6 +23,9 @@ class Hubs:
 
 
 class Files:
+    def fingerprint(self) -> object:
+        return 1
+
     def workflow_files(self) -> Iterable[WorkflowFile | LoadProblem]:
         return [
             WorkflowFile("<builtin>/base/ship.yaml", "ship", SHIP, origin="builtin"),
@@ -87,3 +90,34 @@ def test_answers_not_implemented_when_workflow_reads_not_wired(wired: Any) -> No
     response = wired.client.get("/api/v1/workflows")
 
     assert response.status_code == 501
+
+
+class RecordingReads:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def list_workflows(self, scope: Any) -> Any:
+        self.calls.append("list")
+        raise AssertionError(scope)
+
+    def get_workflow(self, project: str, name: str) -> Any:
+        self.calls.append("get")
+        raise AssertionError((project, name))
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"/api/v1/workflows/{'p' * 201}/ship",
+        f"/api/v1/workflows/demo/{'n' * 201}",
+        f"/api/v1/workflows?project={'p' * 201}",
+    ],
+)
+def test_refuses_parameter_when_over_200_characters(wired: Any, path: str) -> None:
+    recording = RecordingReads()
+    wired.wire(workflow_reads=recording)
+
+    response = wired.client.get(path)
+
+    assert response.status_code == 400
+    assert recording.calls == []

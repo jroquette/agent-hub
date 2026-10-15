@@ -2,12 +2,15 @@
 
 ``ReadWorkflows`` reads each hub's workflows on request through a ``WorkflowSource`` per hub
 (``source_of``, the generator's discovery: the hub's ``workflows/``, then the built-ins) and
-``check_workflows``, so an edited file shows on the next request; nothing is cached or stored.
+``check_workflows``, so an edited file shows on the next request. Each hub's read is kept with
+the source's listing fingerprint (path, size and mtime of each file) and reused while it is
+unchanged; nothing is stored.
 A file that does not load is a problem of the list, never an item, and its detail is not found.
 A list scoped to an unknown project is empty; a detail of one raises ``EntityNotFoundError``.
 """
 
-from collections.abc import Callable, Iterable, Iterator
+import threading
+from collections.abc import Callable, Hashable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -73,6 +76,15 @@ class WorkflowCatalogView(ViewModel):
     problems: tuple[WorkflowProblemView, ...]
 
 
+class ListedWorkflowSource(WorkflowSource, Protocol):
+    def fingerprint(self) -> Hashable:
+        """A value that changes whenever a workflow file may have changed (stat only)."""
+        ...
+
+
+type _Read = tuple[WorkflowCatalog, dict[str, WorkflowOrigin]]
+
+
 class ProjectHubs(Protocol):
     def project_hubs(self) -> Iterable[tuple[str, str]]:
         """Each valid registered project and its hub folder, the first registered of a name."""
@@ -102,9 +114,11 @@ class _Listed:
 class ReadWorkflows:
     """``WorkflowReads`` over the registered hubs and a ``WorkflowSource`` per hub folder."""
 
-    def __init__(self, hubs: ProjectHubs, source_of: Callable[[str], WorkflowSource]) -> None:
+    def __init__(self, hubs: ProjectHubs, source_of: Callable[[str], ListedWorkflowSource]) -> None:
         self._hubs = hubs
         self._source_of = source_of
+        self._memo: dict[str, tuple[Hashable, _Read]] = {}
+        self._guard = threading.Lock()
 
     def list_workflows(self, scope: Scope) -> WorkflowCatalogView:
         items: list[WorkflowSummary] = []
@@ -148,10 +162,19 @@ class ReadWorkflows:
             **_summary(project, plan, origins).model_dump(), layers=layers, document=document
         )
 
-    def _read(self, hub_path: str) -> tuple[WorkflowCatalog, dict[str, WorkflowOrigin]]:
-        files = tuple(self._source_of(hub_path).workflow_files())
+    def _read(self, hub_path: str) -> _Read:
+        source = self._source_of(hub_path)
+        mark = source.fingerprint()
+        with self._guard:
+            found = self._memo.get(hub_path)
+        if found is not None and found[0] == mark:
+            return found[1]
+        files = tuple(source.workflow_files())
         origins = {item.stem: item.origin for item in _workflow_files(files)}
-        return check_workflows(_Listed(files)), origins
+        read = check_workflows(_Listed(files)), origins
+        with self._guard:
+            self._memo[hub_path] = (mark, read)
+        return read
 
 
 def _workflow_files(files: Iterable[WorkflowFile | LoadProblem]) -> Iterator[WorkflowFile]:

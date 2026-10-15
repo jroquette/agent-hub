@@ -105,8 +105,7 @@ from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_reads import SkillUsageSource
 from agent_hub.core.tracker.tracker_reader import TrackerReader
-from agent_hub.core.workflows.catalog import WorkflowSource
-from agent_hub.core.workflows.workflow_reads import ReadWorkflows
+from agent_hub.core.workflows.workflow_reads import ListedWorkflowSource, ReadWorkflows
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
@@ -372,7 +371,7 @@ def ticket_snapshots(
     return CachedTicketSnapshots(TicketReaders(facts, environ=env, reader=reader), clock=clock)
 
 
-def workflow_source_of(hub_path: str) -> WorkflowSource:
+def workflow_source_of(hub_path: str) -> ListedWorkflowSource:
     """The workflows of the hub at ``hub_path``: its ``workflows/``, then the built-ins."""
     return DiscoveredWorkflowSource(Path(hub_path))
 
