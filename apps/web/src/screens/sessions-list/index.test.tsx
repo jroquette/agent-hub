@@ -286,7 +286,6 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
     const workdirs = view.requests.find((r) => new URL(r.url).pathname === `${AGENT}/workdirs`);
     expect(new URL(workdirs?.url ?? "").searchParams.get("project")).toBe("agent-hub");
   });
-
 });
 
 /** Observed rows plus a twin of driven session A; driven B..F have no twin (AC-234.8). */
@@ -336,7 +335,9 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(within(table("Live")).getByText("Fix the build")).toBeInTheDocument();
     expect(within(table("Waiting")).getByText("Approve me")).toBeInTheDocument();
     expect(within(table("Ended or failed")).getByText("Broke")).toBeInTheDocument();
-    const idle = within(table("Idle")).getAllByText(/idle$/).map((node) => node.textContent);
+    const idle = within(table("Idle"))
+      .getAllByText(/idle$/)
+      .map((node) => node.textContent);
     expect(idle).toEqual(["Newer idle", "Older idle"]);
     expect(screen.getByRole("button", { name: "Waiting · 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Live · 3" })).toBeInTheDocument();

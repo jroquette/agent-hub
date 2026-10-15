@@ -267,9 +267,11 @@ test("Agent session started from Sessions survives a reload while waiting and af
   // beforeEach traded the token for the cookie; the address keeps no token.
   await expect(page).not.toHaveURL(/token=/);
   await page.goto("/sessions");
-  const driven = page.getByRole("region", { name: "Driven from hub web" });
+  // AGH-244 (AC-234.8): no driven region; New session sits in the page header.
+  const header = page.getByRole("heading", { level: 1, name: "Sessions" }).locator("..");
   await page.getByLabel("Start sessions in").selectOption("demo");
-  await driven.getByRole("button", { name: "New session" }).click();
+  await expect(page.getByRole("region", { name: "Driven from hub web" })).toHaveCount(0);
+  await header.getByRole("button", { name: "New session" }).click();
   const dialog = page.getByRole("dialog", { name: "New session" });
   await dialog.getByLabel("First prompt (optional)").fill(AGENT_PROMPT);
   await dialog.getByRole("button", { name: "Start session" }).click();
