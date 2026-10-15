@@ -368,3 +368,25 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
     </section>
   );
 }
+
+/** Posts a request's answer by its id; without it a card is read-only. */
+export type AnswerPermission =
+  ((requestId: string, answer: PermissionAnswer) => Promise<unknown> | undefined) | undefined;
+
+/** The card of `request` in the transcript, answering through `onAnswerPermission`. */
+export function RequestCard({
+  request,
+  onAnswerPermission,
+}: {
+  request: PermissionView;
+  onAnswerPermission: AnswerPermission;
+}) {
+  return (
+    <PermissionCard
+      request={request}
+      onAnswer={
+        onAnswerPermission ? (answer) => onAnswerPermission(request.requestId, answer) : undefined
+      }
+    />
+  );
+}
