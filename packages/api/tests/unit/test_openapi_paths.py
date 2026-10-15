@@ -2,6 +2,7 @@ from agent_hub.api.app import create_app
 from agent_hub.api.openapi_paths import (
     AGENT_SESSION_PATHS,
     CLARITY_PATHS,
+    GATE_PATHS,
     P2_PATHS,
     RUN_COMMAND_PATHS,
     SERVED_PATHS,
@@ -121,6 +122,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | AGENT_SESSION_PATHS
         | WORKFLOW_PATHS
         | RUN_COMMAND_PATHS
+        | GATE_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -136,6 +138,7 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | AGENT_SESSION_PATHS
         | WORKFLOW_PATHS
         | RUN_COMMAND_PATHS
+        | GATE_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -157,6 +160,15 @@ def test_lists_run_command_paths_when_document_built(api_settings: ApiSettings) 
         ("post", "/api/v1/workflow-runs/{run_id}/resume"),
         ("post", "/api/v1/workflow-runs/{run_id}/abandon"),
     } == RUN_COMMAND_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_lists_gate_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-213.18: today's paths plus a workflow gate's read and its decision, and nothing else.
+    assert {
+        ("get", "/api/v1/approvals/{approval_id}/gate"),
+        ("post", "/api/v1/approvals/{approval_id}/decision"),
+    } == GATE_PATHS
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
