@@ -1,6 +1,6 @@
 import "./sessions-list.css";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -55,11 +55,13 @@ import {
   useProjects,
   useResumable,
   useSectionPages,
+  useTileStreamInvalidation,
   useWorkdirs,
   type Session,
 } from "./queries";
 import { SECTIONS, sectionCount, sectionQueries } from "./sections";
 import { SessionSection, useCollapsed } from "./SessionSection";
+import { useScrollAnchor } from "./useScrollAnchor";
 
 const COLUMNS_KEY = "ah.sessions.columns";
 const DENSITY_KEY = "ah.sessions.density";
@@ -721,6 +723,16 @@ export function SessionsListScreen() {
   const queries = useMemo(() => sectionQueries(params, scope, anchor), [params, scope, anchor]);
   const sections = useSectionPages(queries);
   const [collapsed, toggleCollapsed] = useCollapsed();
+  useTileStreamInvalidation(
+    scope,
+    SECTIONS.filter((section) => queries[section.id] !== null).map((section) => ({
+      id: section.id,
+      collapsed: collapsed.has(section.id),
+      refetch: sections[section.id].refetch,
+    })),
+  );
+  const screenRef = useRef<HTMLDivElement>(null);
+  useScrollAnchor(screenRef);
   const projects = useProjects();
   const [selected, setSelected] = useState<string[]>([]);
   const [columns, setColumns] = useState(storedColumns);
@@ -1106,7 +1118,7 @@ export function SessionsListScreen() {
   );
 
   return (
-    <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
+    <div style={{ padding: "16px 32px 40px" }} className="ah-stack" ref={screenRef}>
       <div className="ah-row ah-wrap" style={{ gap: 8 }}>
         <h1 className="ah-h1">Sessions</h1>
         {collector.state === "offline" && (

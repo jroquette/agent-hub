@@ -7,6 +7,8 @@
 /* Status sections (spec 14): a header button collapses each one. */
 .sl-sections {
   gap: var(--space-4);
+  /* useScrollAnchor keeps the reader's row in place; the browser's own anchoring would double it. */
+  overflow-anchor: none;
 }
 .sl-section-head {
   margin: 0 0 var(--space-2);
