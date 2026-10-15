@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import {
   AppLink,
@@ -12,7 +12,7 @@ import {
 } from "../../components";
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
-import { NodePanel, WorkflowGraph } from "./WorkflowGraph";
+import { NodePanel, useNodeParam, WorkflowGraph } from "./WorkflowGraph";
 import { useWorkflow, useWorkflows, type WorkflowDetail, type WorkflowSummary } from "./queries";
 
 /* Workflows (plan 6.3, AC-213.15): the catalog with the files that do not load, and one
@@ -170,20 +170,9 @@ function documentNode(workflow: WorkflowDetail, id: string): DocNode | undefined
 }
 
 function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
-  const [params, setParams] = useSearchParams();
+  const node = useNodeParam();
   const nodes = workflow.layers.flat();
-  const selected = nodes.find((node) => node.id === params.get("node")) ?? null;
-  const select = (id: string | null) => {
-    setParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        if (id === null) next.delete("node");
-        else next.set("node", id);
-        return next;
-      },
-      { replace: true },
-    );
-  };
+  const selected = nodes.find((n) => n.id === node.nodeId) ?? null;
   const written = selected ? documentNode(workflow, selected.id) : undefined;
   return (
     <Page>
@@ -214,14 +203,13 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
           alignItems: "start",
         }}
       >
-        <WorkflowGraph layers={workflow.layers} selected={selected?.id ?? null} onSelect={select} />
+        <WorkflowGraph
+          layers={workflow.layers}
+          selected={selected?.id ?? null}
+          onSelect={node.open}
+        />
         {selected && (
-          <NodePanel
-            id={selected.id}
-            onClose={() => {
-              select(null);
-            }}
-          >
+          <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
             <dl className="ah-small" style={{ margin: 0, display: "grid", gap: 6 }}>
               <dt className="ah-subtle">Type</dt>
               <dd style={{ margin: 0 }}>{selected.type}</dd>
@@ -248,7 +236,7 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
         <h2 className="ah-h3" style={{ margin: 0 }}>
           Document
         </h2>
-        <span className="ah-small ah-subtle">As written in the file, read-only.</span>
+        <span className="ah-small ah-subtle">The parsed document (JSON), read-only.</span>
         <JsonViewer value={workflow.document} maxHeight={480} />
       </section>
     </Page>

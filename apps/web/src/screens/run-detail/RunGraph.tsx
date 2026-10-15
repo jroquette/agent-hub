@@ -1,4 +1,4 @@
-import { useSearchParams } from "react-router";
+import { useMemo } from "react";
 
 import { AppLink, Banner, Skeleton, StatusBadge, Time } from "../../components";
 import { fmtDuration } from "../../lib/format";
@@ -9,7 +9,7 @@ import {
   shortRunId,
 } from "../runs-list/model";
 import type { WorkflowRun } from "../runs-list/queries";
-import { NodePanel, WorkflowGraph } from "../workflows/WorkflowGraph";
+import { NodePanel, useNodeParam, WorkflowGraph } from "../workflows/WorkflowGraph";
 import { useWorkflow } from "../workflows/queries";
 import { nodeState, nodeSummary, runLayers, STATE_LOOK, type RunNode } from "./graph";
 
@@ -94,23 +94,13 @@ function NodeFacts({ node, now }: { node: RunNode; now: number }) {
 
 /** An engine run's graph (plan 6.4): the declared nodes with the run's state on each. */
 export function RunGraph({ run, now }: { run: WorkflowRun; now: number }) {
-  const [params, setParams] = useSearchParams();
+  const node = useNodeParam();
   const workflow = useWorkflow(run.project, run.workflow);
+  const declared = workflow.isSuccess ? workflow.data.layers : null;
+  // The clock re-renders a live run each second; the layers change only with its steps.
+  const layers = useMemo(() => runLayers(run, declared), [run, declared]);
   if (workflow.isPending) return <Skeleton height={160} />;
-  const layers = runLayers(run, workflow.isSuccess ? workflow.data.layers : null);
-  const nodes = layers.flat();
-  const selected = nodes.find((node) => node.id === params.get("node")) ?? null;
-  const select = (id: string | null) => {
-    setParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        if (id === null) next.delete("node");
-        else next.set("node", id);
-        return next;
-      },
-      { replace: true },
-    );
-  };
+  const selected = layers.flat().find((n) => n.id === node.nodeId) ?? null;
   const revision = workflow.data?.revision;
   return (
     <div className="ah-stack" style={{ gap: 8 }}>
@@ -137,17 +127,12 @@ export function RunGraph({ run, now }: { run: WorkflowRun; now: number }) {
           label="Run graph"
           layers={layers}
           selected={selected?.id ?? null}
-          onSelect={select}
+          onSelect={node.open}
           state={nodeState}
           detail={nodeSummary}
         />
         {selected && (
-          <NodePanel
-            id={selected.id}
-            onClose={() => {
-              select(null);
-            }}
-          >
+          <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
             <NodeFacts node={selected} now={now} />
           </NodePanel>
         )}
