@@ -56,6 +56,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   (restored after a reload), has focus on open unless a permission waits, ignores Enter while an IME composes (and on
   touch screens Enter is a new line); a message shows "Sending…" at once, and "Queued: Claude reads it after this
   turn" when sent during a running turn (AGH-239).
+- Chat tool cards read running, waiting for you, done, error or denied (icon and text), with a call's permission card
+  right under it; output over 10,000 characters is cut with "Show all (N characters)", consecutive calls group as
+  "Explored · 3 Read, 2 Grep" (open while one waits for you or failed), and thinking reads "Thought for N s" (AGH-240).
 
 ### Fixed
 
