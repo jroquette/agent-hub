@@ -800,3 +800,66 @@ def test_splits_a_wide_layer_in_linear_work_when_read_only_and_writing_nodes_alt
 
     assert len(plan.layers) == 2
     assert len(calls) <= 2 * len(nodes)
+
+
+class WakingClock(FakeClock):
+    """A clock whose backoff really waits, and wakes as soon as the run stops."""
+
+    def sleep(self, delay: timedelta, stop: threading.Event | None = None) -> None:
+        super().sleep(delay)
+        if stop is not None:
+            stop.wait(delay.total_seconds())
+
+
+def test_starts_no_attempt_after_an_interrupt_when_a_parallel_layer_is_stopped() -> None:
+    interrupted = threading.Event()
+    late: list[str] = []
+
+    class Stopping(ScriptedRunner):
+        def run(self, call: NodeCall) -> NodeReply:
+            if interrupted.is_set():
+                late.append(call.node.id)
+            if call.node.id == "a":
+                threading.Event().wait(0.1)
+                raise KeyboardInterrupt
+            if call.node.id == "r":
+                raise fails("transient")
+            threading.Event().wait(0.02)
+            return super().run(call)
+
+    body = [shell(f"b{index}") for index in range(4)]
+    group = a_group(*body, max_iterations=3, until_when="$b0.output == 'never'")
+    plan = plan_of(shell("a"), shell("b"), shell("c"), group, shell("r", retry={"delay": "2s"}))
+    ports = EnginePorts(
+        Stopping(),
+        ListRecorder(),
+        WakingClock(),
+        KeysOutputs(),
+        lambda: 0.5,
+        interrupt=interrupted.set,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_workflow(plan, {}, ports)
+
+    assert interrupted.is_set()
+    assert late == []
+
+
+def test_splits_a_wide_layer_in_linear_work_when_many_agents_resume_one_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    fits = plan_module._Batch.fits
+
+    def counted(batch: object, node: object) -> bool:
+        calls.append(1)
+        return fits(batch, node)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(plan_module._Batch, "fits", counted)
+    resumers = [agent(f"a{i}", "plan", context={"resume": "plan"}) for i in range(2000)]
+
+    plan = plan_of(agent("plan"), *resumers)
+
+    assert len(plan.layers) == 1 + len(resumers)
+    assert len(calls) <= 2 * len(resumers)

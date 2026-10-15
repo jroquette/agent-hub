@@ -26,6 +26,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Event
 from typing import Final
 
 import typer
@@ -330,5 +331,8 @@ class SystemClock:
     def now(self) -> datetime:
         return now()
 
-    def sleep(self, delay: timedelta) -> None:
-        time.sleep(delay.total_seconds())
+    def sleep(self, delay: timedelta, stop: Event | None = None) -> None:
+        if stop is None:
+            time.sleep(delay.total_seconds())
+        else:
+            stop.wait(delay.total_seconds())
