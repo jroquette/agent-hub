@@ -125,7 +125,7 @@ describe("SlashMenu (slash-menu)", () => {
 
     await userEvent.type(box, "/nothing{Enter}");
 
-    expect(screen.getByText("No commands")).toBeInTheDocument();
+    expect(screen.getByText("No commands", { selector: "p" })).toBeVisible();
     expect(names()).toEqual([]);
     expect(box).toHaveValue("/nothing");
     expect(props.onSend).not.toHaveBeenCalled();
@@ -143,6 +143,33 @@ describe("SlashMenu (slash-menu)", () => {
     expect(box).toHaveValue("/compact");
     await userEvent.keyboard("{Enter}");
     expect(props.onSend).toHaveBeenCalledWith("/compact");
+  });
+
+  it("announces the menu opening, its match count and No commands, once per change", async () => {
+    const { box, container } = open();
+    const live = container.querySelector<HTMLElement>("[aria-live=polite].ah-sr");
+    if (!live) throw new Error("no live region");
+    expect(live).toHaveAttribute("aria-atomic", "true");
+    expect(live).toHaveTextContent(/^$/);
+
+    await userEvent.type(box, "/");
+    expect(live).toHaveTextContent(/^4 commands$/);
+    await userEvent.type(box, "r");
+    expect(live).toHaveTextContent(/^3 commands$/);
+
+    const changes: MutationRecord[] = [];
+    const watch = new MutationObserver((records) => changes.push(...records));
+    watch.observe(live, { subtree: true, childList: true, characterData: true });
+    await userEvent.type(box, "e{ArrowDown}");
+    expect(changes.concat(watch.takeRecords())).toEqual([]);
+    watch.disconnect();
+
+    await userEvent.type(box, "v");
+    expect(live).toHaveTextContent(/^1 command$/);
+    await userEvent.type(box, "x");
+    expect(live).toHaveTextContent(/^No commands$/);
+    await userEvent.keyboard("{Escape}");
+    expect(live).toHaveTextContent(/^$/);
   });
 
   it("has no serious axe violation while open", async () => {

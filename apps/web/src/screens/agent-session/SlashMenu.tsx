@@ -18,6 +18,11 @@ export function matchCommands(commands: readonly string[], query: string): strin
   ];
 }
 
+function countText(count: number): string {
+  if (count === 0) return "No commands";
+  return count === 1 ? "1 command" : `${String(count)} commands`;
+}
+
 /**
  * The `/` menu's state for a composer holding `text` (AC-234.28): open while the text is one
  * `/word`, until Esc closes it for that word. The composer keeps focus; the active option is
@@ -75,6 +80,11 @@ export function useSlashMenu(
 
   return {
     onKeyDown,
+    /**
+     * For a polite live region: the open menu's match count, or "No commands"; empty when closed.
+     * It changes with the count only, so typing within the same matches stays silent.
+     */
+    announcement: open ? countText(options.length) : "",
     /** For the textarea: the listbox it controls and its active option. */
     inputProps: {
       "aria-autocomplete": "list" as const,
