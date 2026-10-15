@@ -23,7 +23,8 @@ _SESSION = "the implementing session"
 
 
 class SessionReply(BaseModel):
-    """What the implementing ``claude -p`` reported: its result text, cost and turns."""
+    """What the implementing ``claude -p`` reported: its result text, cost, turns and session
+    (``None`` when the result names none; a workflow agent node resumes it)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -32,6 +33,7 @@ class SessionReply(BaseModel):
     result: str
     cost_usd: float
     turns: int | None
+    session_id: str | None = None
 
 
 class OutcomeKind(StrEnum):
@@ -66,13 +68,14 @@ def parse_session_output(text: str) -> SessionReply:
         return SessionReply(
             is_error=True, subtype=None, result=text[-MAX_RAW_TAIL_CHARS:], cost_usd=0.0, turns=None
         )
-    result, subtype = value.get("result"), value.get("subtype")
+    result, subtype, session = value.get("result"), value.get("subtype"), value.get("session_id")
     return SessionReply(
         is_error=value.get("is_error") is True,
         subtype=subtype if isinstance(subtype, str) else None,
         result=result if isinstance(result, str) else "",
         cost_usd=_number(value.get("total_cost_usd")),
         turns=_count(value.get("num_turns")),
+        session_id=session if isinstance(session, str) and session else None,
     )
 
 
