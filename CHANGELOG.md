@@ -32,10 +32,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
   tracker (AGH-223).
 - The built-in `issue-to-pr` workflow (inputs `issue`, `repo`, `issue_text`) takes one issue to a PR as `hub run` does:
-  `hub step worktree`, an implementing loop in the worktree with `hub run`'s prompt (its verdict now a JSON line with
-  `done`), `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's
-  outcome. Its fixtures (delivered, no commit, blocked, error, gate failure, PR failure) run in `hub workflow test`.
-  Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured repo (AGH-223).
+  `hub step worktree`, one implementing session in the worktree with `hub run`'s prompt, `hub step verdict`,
+  `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's outcome;
+  no node retries. Its fixtures (delivered, no commit, blocked, dirty tree, error, gate failure, PR failure) run in
+  `hub workflow test`. Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured
+  repo (AGH-223).
 
 ### Fixed
 

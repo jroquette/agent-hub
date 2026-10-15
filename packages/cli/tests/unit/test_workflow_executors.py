@@ -405,12 +405,17 @@ def test_runs_claude_in_worktree_as_hub_run_does_when_agent_node_has_cwd(
     assert child.calls[0]["cwd"] == worktree.resolve()
 
 
-def test_fails_config_when_agent_cwd_leaves_hub_and_repos(tmp_path: Path, pack: Path) -> None:
+@pytest.mark.parametrize("cwd", ["/etc", "..", "../demo-api/../..", "../demo-api/out"])
+def test_fails_config_when_agent_cwd_leaves_hub_and_repos(
+    tmp_path: Path, pack: Path, cwd: str
+) -> None:
+    (tmp_path / "demo-api").mkdir()
+    (tmp_path / "demo-api" / "out").symlink_to(tmp_path / "elsewhere")
     child = FakeChild()
     spec = {**AGENT, "cwd": "../demo-api"}
 
     with pytest.raises(NodeFailedError) as raised:
-        executors(tmp_path, pack, child).run(call(spec, prompt="Go.", cwd="/etc"))
+        executors(tmp_path, pack, child).run(call(spec, prompt="Go.", cwd=cwd))
 
     assert raised.value.kind == "config"
     assert child.calls == []

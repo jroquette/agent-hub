@@ -2,7 +2,28 @@
 workflow: issue-to-pr
 inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
 stubs:
-  worktree: {output: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk, hub: /ws/hub, hub_name: hub, check: make check, prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}}}
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target:
+        path: /ws/demo-api/.claude/worktrees/dem-1
+        branch: jdoe/dem-1
+        base: origin/trunk
+        default_branch: trunk
+        github: acme/demo-api
+        gate: make check
+        conventions:
+          branch: "{prefix}{issue_lower}"
+          commit_title: "{type}({scope}): {summary} ({ISSUE})"
+          pr_title: "{type}({scope}): {summary} ({ISSUE})"
+          titles_configured: false
+          pr_title_explicit: false
   implement: {fail: exec_failed}
 expect: {status: failed}
 failed: [implement]
