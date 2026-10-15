@@ -88,7 +88,11 @@ def fact_key(event: Event) -> str | None:
         return None if run is None or step is None else f"{match_type}:{run}:{step}:{attempt}"
     if match_type == EventType.RUN_END:
         run = _text(payload.get("run"))
-        return None if run is None else f"run.end:{run}"
+        if run is None:
+            return None
+        # A workflow engine run ends once more per resume, each end its own fact (ADR 0032).
+        index = engine_end_index(run, event.source_id)
+        return f"run.end:{run}" if index is None else f"run.end:{run}:{index}"
     if match_type in {EventType.GATE_REQUEST, EventType.GATE_RESULT}:
         gate_id = _text(payload.get("gate_id"))
         return None if gate_id is None else f"{match_type}:{gate_id}"
@@ -97,6 +101,21 @@ def fact_key(event: Event) -> str | None:
         proposal = _text(payload.get("proposal"))
         return None if proposal is None else f"{match_type}:{proposal}"
     return None
+
+
+# An engine run ends at most once per resume; a longer number is not an engine end (and
+# ``int`` refuses digit runs past 4300).
+MAX_END_INDEX_DIGITS = 9
+
+
+def engine_end_index(run: str, source_id: str) -> int | None:
+    """``n`` when ``source_id`` is a workflow engine's ``<run>:run:<n>:end``, else None."""
+    prefix, suffix = f"{run}:run:", ":end"
+    if not (source_id.startswith(prefix) and source_id.endswith(suffix)):
+        return None
+    index = source_id[len(prefix) : len(source_id) - len(suffix)]
+    is_index = 0 < len(index) <= MAX_END_INDEX_DIGITS and index.isascii() and index.isdecimal()
+    return int(index) if is_index else None
 
 
 def usage_key(event: Event) -> str | None:

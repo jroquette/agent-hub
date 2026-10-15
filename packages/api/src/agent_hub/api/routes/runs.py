@@ -17,6 +17,7 @@ from agent_hub.core.readmodels.filters import RunFilter
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.runner.run_record import Stage
 from agent_hub.core.runs.workflow_run import WorkflowRun
+from agent_hub.core.workflows.failures import FailureKind
 
 router = APIRouter(tags=["runs"], responses=PROBLEM_RESPONSES)
 
@@ -34,6 +35,8 @@ def list_runs(  # noqa: PLR0913 -- one keyword per documented filter of the endp
     failure_stage: Stage | None = None,
     mode: Literal["live", "dry_run"] | None = None,
     issue: TextParam = None,
+    workflow: TextParam = None,
+    failure_kind: FailureKind | None = None,
     cursor: CursorParam = None,
     limit: LimitParam = DEFAULT_LIMIT,
 ) -> Page[WorkflowRun]:
@@ -47,6 +50,8 @@ def list_runs(  # noqa: PLR0913 -- one keyword per documented filter of the endp
         failure_stage=failure_stage,
         mode=mode,
         issue=issue,
+        workflow=workflow,
+        failure_kind=failure_kind,
         cursor=cursor,
         limit=limit,
     )

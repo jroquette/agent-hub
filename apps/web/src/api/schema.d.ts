@@ -1769,6 +1769,20 @@ export interface components {
       /** Pin */
       pin: string | null;
     };
+    /** @enum {string} */
+    FailureKind:
+      | "transient"
+      | "timeout"
+      | "rate_limited"
+      | "overloaded"
+      | "exec_failed"
+      | "output_contract"
+      | "max_iterations"
+      | "unknown"
+      | "config"
+      | "auth"
+      | "cancelled"
+      | "fatal";
     /**
      * FeatureDetail
      * @description A feature with its acceptance criteria rows, its records (D3) and every eval.
@@ -3041,6 +3055,7 @@ export interface components {
       /** Diagnosis Comment Url */
       diagnosis_comment_url?: string | null;
       failing_event_id: components["schemas"]["EventId"] | null;
+      failure_kind?: components["schemas"]["FailureKind"] | null;
       /** Reason */
       reason: string | null;
       stage: components["schemas"]["Stage"];
@@ -3063,6 +3078,8 @@ export interface components {
        */
       result: "passed" | "failed";
     };
+    /** @enum {string} */
+    RunStatus: "done" | "failed" | "cancelled";
     /**
      * RunStep
      * @description One step attempt, keyed ``(key, attempt)``; a loop back into verify is attempt 2.
@@ -3071,7 +3088,9 @@ export interface components {
       /** Attempt */
       attempt: number;
       ended_at: components["schemas"]["ApiTimestamp"] | null;
+      failure_kind?: components["schemas"]["FailureKind"] | null;
       key: components["schemas"]["StepKey"];
+      kind?: components["schemas"]["StepKind"] | null;
       /** Max Attempts */
       max_attempts: number;
       /** Reason */
@@ -3081,6 +3100,7 @@ export interface components {
        * @default []
        */
       session_ids: string[];
+      skip_cause?: components["schemas"]["SkipCause"] | null;
       started_at: components["schemas"]["ApiTimestamp"];
       status: components["schemas"]["StepStatus"];
     };
@@ -3572,6 +3592,13 @@ export interface components {
        */
       truncated: boolean;
     };
+    /** @enum {string} */
+    SkipCause:
+      | "upstream_failed"
+      | "upstream_skipped"
+      | "condition"
+      | "condition_parse_error"
+      | "prior_success";
     /**
      * SourceStatus
      * @description When a source last sent an event, and whether that is recent enough.
@@ -3638,8 +3665,9 @@ export interface components {
       /** Title */
       title: string;
     };
+    StepKey: string;
     /** @enum {string} */
-    StepKey: "pick" | "worktree" | "implement" | "verify" | "pr";
+    StepKind: "agent" | "shell" | "script" | "loop" | "loop_group" | "approval" | "wait" | "halt";
     /**
      * StepProgress
      * @description How much of a step is done: ``done`` of ``total`` (tickets, ACs, reviews).
@@ -3653,7 +3681,7 @@ export interface components {
     /** @enum {string} */
     StepState: "done" | "partial" | "current" | "pending" | "skipped" | "unknown" | "blocked";
     /** @enum {string} */
-    StepStatus: "running" | "ok" | "failed";
+    StepStatus: "running" | "ok" | "failed" | "skipped";
     /** @enum {string} */
     StepTag: "gate" | "agent" | "command" | "script" | "human";
     /**
@@ -3940,10 +3968,14 @@ export interface components {
     };
     /**
      * WorkflowRun
-     * @description A run folded from executor events (D9, D16): the first ``run.end`` wins.
+     * @description A run folded from executor events (D9, D16): the first ``run.end`` wins, the highest
+     *     ``n`` for an engine run. ``stage`` is issue-to-pr's machine (another workflow's live run is
+     *     ``PICKED``); ``status`` and ``outcome`` hold for every workflow.
      */
     WorkflowRun: {
       caps: components["schemas"]["RunCaps"] | null;
+      /** Content Hash */
+      content_hash?: string | null;
       /** Cost Source */
       cost_source?: ("sessions" | "executor") | null;
       cost_usd: components["schemas"]["Money"] | null;
@@ -3968,12 +4000,16 @@ export interface components {
       last_activity_at: components["schemas"]["ApiTimestamp"];
       /** Mode */
       mode: ("live" | "dry_run") | null;
+      /** Outcome */
+      outcome?: boolean | string | null;
       /** Pr Url */
       pr_url?: string | null;
       /** Project */
       project: string;
       /** Repo */
       repo: string | null;
+      /** Revision */
+      revision?: number | null;
       /**
        * Session Ids
        * @default []
@@ -3986,11 +4022,14 @@ export interface components {
       sources_missing: components["schemas"]["EventSource"][];
       stage: components["schemas"]["Stage"];
       started_at: components["schemas"]["ApiTimestamp"];
+      /** @default running */
+      status: components["schemas"]["WorkflowRunStatus"];
       /** Steps */
       steps: components["schemas"]["RunStep"][];
       /** Workflow */
       workflow: string;
     };
+    WorkflowRunStatus: "running" | components["schemas"]["RunStatus"];
   };
   responses: never;
   parameters: never;
@@ -6404,6 +6443,8 @@ export interface operations {
         failure_stage?: components["schemas"]["Stage"] | null;
         mode?: ("live" | "dry_run") | null;
         issue?: string | null;
+        workflow?: string | null;
+        failure_kind?: components["schemas"]["FailureKind"] | null;
         cursor?: string | null;
         limit?: number;
       };

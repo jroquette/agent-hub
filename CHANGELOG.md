@@ -27,6 +27,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `.agent-runs/workflows/<run>/` with a snapshot of its document, prompts and scripts, and its events go to the
   event database. `--resume RUN` continues a failed run on its snapshot, reusing what completed; `--abandon RUN` ends
   it cancelled. It makes no tracker write (AGH-221).
+- Workflow runs read any workflow engine run: steps keep their node ids (`a__b` inside an include) with `skipped`,
+  `failure_kind` and `skip_cause`; a run has `status`, `outcome`, `revision` and `content_hash`, and its latest
+  `run.end` decides how a resumed run ended. `GET /api/v1/workflow-runs` filters by `workflow` and `failure_kind`;
+  `hub run` runs read as before (AGH-225).
 
 ### Fixed
 
