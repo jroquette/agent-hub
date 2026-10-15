@@ -35,8 +35,8 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 | `type` | Keys | What happens |
 |---|---|---|
 | `agent` | `prompt` or `prompt_file` (one), `with`, `model`, `limits`, `context`, `cwd` | one `claude -p` session, with the hub's settings and plugin |
-| `shell` | `command` (argv list), `cwd`, `env` | runs the program, never through a shell; exit 0 passes |
-| `script` | `runtime` (`sh` or `python`), `script`, `args`, `cwd`, `env` | `sh <file>` or `uv run <file>`; exit 0 passes |
+| `shell` | `command` (argv list), `cwd`, `env`, `stdin` | runs the program, never through a shell; exit 0 passes |
+| `script` | `runtime` (`sh` or `python`), `script`, `args`, `cwd`, `env`, `stdin` | `sh <file>` or `uv run <file>`; exit 0 passes |
 | `loop` | the `agent` keys, `max_iterations`, `until`, `until_field`, `until_bash`, `fresh_context` | repeats one agent turn until done |
 | `loop_group` | `nodes`, `max_iterations`, `until_bash`, `until_when` | repeats a body sub-graph until done |
 | `approval` | `message`, `decisions`, `capture_response` | pauses the run for a human decision |
@@ -48,7 +48,7 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
   names to values or `{from: <output ref>, if_skipped: <value>}`, read in a prompt as `$WITH.<name>`. `model` is a
   `hub.json` → `models.tiers` tier (default `medium`); `limits` is `{max_turns, max_cost_usd}` (default 40 and 3.0);
   `context` is `fresh` (default) or `{resume: <upstream agent node id>}`. A `cwd` (an agent's may be a reference) stays
-  in the hub or a repo, else `config`; in a repo an agent runs as `hub run`'s session (hub and other repos attached).
+  in the hub or a repo (else `config`); there an agent runs as `hub run`'s. `stdin`: a literal or one whole reference.
 - No child gets `LINEAR_API_KEY`. Agents run with `session_env`, other commands with `untrusted_env`; `env` adds no
   token. A `hub step` node (`command[0:2]` is `[hub, step]`) runs the engine's own hub with `child_env`, refuses `env`
   and a referenced `cwd`, and narrows per call (`push_env` only for fetch, push, gh). Tracker writes (ADR 0030) are the
@@ -82,14 +82,14 @@ origin node, carried down the chain), `condition`, `condition_parse_error`, or `
 
 References are `$INPUTS.<name>`, `$<node>.output`, `$<node>.output.<path>` (dot segments, `.0` for an array item; a
 path needs the producer's `output_format`), `$LOOP_PREV…` and `$WITH.<name>`, in prompts, `command`, `args`, `cwd`,
-`env`, `with`, `until_bash`, `wait.until`, `message` and `reason`, resolved in one pass (never rescanned). An
+`env`, `stdin`, `with`, `until_bash`, `wait.until`, `message` and `reason`, resolved in one pass (never rescanned). An
 undeclared input or a path outside the producer's schema is a load error; a failed producer fails the node (`config`).
 Values render as canonical text: strings as is, numbers and booleans as JSON, null as empty, objects and arrays as
 compact JSON with sorted keys. In argv a reference fills a whole element, never `command[0]` nor a `-c` script, else a
 load error; a script gets values only as positional parameters: `[sh, -c, 'gh pr view "$1"', sh, $pr.output.url]`. The
-output is the agent's final message or the command's stdout (≤ 512 KiB). With `output_format` (JSON Schema 2020-12,
-checked by the core port `OutputValidator`) it must be one matching JSON value, else `output_contract`. Outputs,
-rendered text and human answers live in the run's record under `.agent-runs/`, never in events.
+output is the command's stdout (≤ 512 KiB) or the agent's final message (≤ 1 MiB, as is a `stdin`). With
+`output_format` (JSON Schema 2020-12, via core's `OutputValidator`) it must be one matching JSON value, else
+`output_contract`. Outputs, rendered text and answers stay in the run's record (`.agent-runs/`), never in events.
 
 A run is `running` or `paused`, then ends `done`, `failed` (a node failed after its retries) or `cancelled` (`halt`,
 cancel, abandon). The outcome is apart: `outcome_field`'s JSON value (boolean or string) on the completed `returns`

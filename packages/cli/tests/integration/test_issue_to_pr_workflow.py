@@ -100,7 +100,7 @@ def test_prints_declared_output_when_steps_run(
     target: list[str] = []
     steps = {
         "worktree": ("worktree", *issue),
-        "verdict": ("verdict", "--", "Done."),
+        "verdict": ("verdict",),
         "commits": ("commits", "--target"),
         "pr": ("pr", "--issue", "DEM-1", "--summary", "Adds it.", "--target"),
         "report": ("report", "--status", "done", "--commits", "1", "--pr", "https://x/1"),
@@ -117,3 +117,17 @@ def test_prints_declared_output_when_steps_run(
             (worktree / "change.txt").write_text("change\n")
             workspace.git(worktree, "add", "change.txt")
             workspace.git(worktree, *identity, "commit", "-q", "-m", "feat(api): it (DEM-1)")
+
+
+def test_shows_stdin_when_dry_run_prints_verdict_node(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    # issue_text is the parent's to fill (from the tracker); a dry run reads no tracker.
+    given = ("--input", "issue=DEM-1", "--input", "repo=demo-api")
+
+    result = run_command(demo_workspace.hub, "workflow", "run", "issue-to-pr", *given)
+
+    assert result.exit_code == 0, result.output
+    assert "would run: verdict (shell): hub step verdict   stdin: $implement.output" in (
+        result.stdout.splitlines()
+    )

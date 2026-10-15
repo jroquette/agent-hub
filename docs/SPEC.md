@@ -179,8 +179,8 @@ failure exits 1. No child gets `LINEAR_API_KEY`, and only the push and `gh` get 
 
 `hub step` runs one stage of `hub run` for the issue-to-pr workflow (ADR 0032) and prints one JSON object: `worktree
 --issue --repo` makes or keeps the worktree as `hub run` does and prints its path, the prompt's texts and the repo's
-`target` (branch, base, GitHub repo, gate, conventions) read from `hub.json` before the session; `verdict REPLY` reads
-the session's reply as `hub run` does (done, or blocked with its question); `commits --target` and `pr --issue
+`target` (branch, base, GitHub repo, gate, conventions) read from `hub.json` before the session; `verdict` reads
+the session's reply on stdin as `hub run` does (done, or blocked, with its question); `commits --target` and `pr --issue
 --target [--summary]` take that target back (a path outside the workspace exits 2) and never read `hub.json` again;
 `report` computes the delivery (`delivered`, `no_changes`, `blocked`, `failed`) from the other steps' outputs. A
 failure is one `hub step <name>: <reason>` stderr line and exit 1. No step reads or writes the tracker; only the
