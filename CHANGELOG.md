@@ -34,6 +34,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   output (`{decision}`, `{at}`, `{text}`, `{choice, text}`) is readable from `when:`. `hub workflow test` stubs gates
   with `{decision, text}`, `{text}`, `{choice}` or `{}`; without a stub the run pauses (`expect.status: paused`)
   (AGH-230).
+- `hub workflow approve|reject|respond RUN [NODE] [TEXT]` decide a paused run's open gate (`respond` takes
+  `--choice` for a declared decision or option) and resume the run. One decision per gate: a second, a gate that is
+  not open or an answer the gate does not take is refused. The text stays in the run's record; the event database
+  gets a `control_plane` `gate.result`, so Approvals shows the gate decided (AGH-230).
 
 ### Fixed
 

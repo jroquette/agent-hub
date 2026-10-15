@@ -21,6 +21,8 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli import workflow_command, workflow_runs
 from agent_hub.cli.main import app
+from agent_hub.core.approvals.fold_approvals import fold_approvals
+from agent_hub.core.events.event_query import EventQuery
 from agent_hub.storage.event_store import open_event_store
 
 CHECK_YAML = """\
@@ -270,6 +272,9 @@ class SampleRun:
 
     def run(self, *args: str) -> Result:
         return run(self.hub, "run", *args)
+
+    def run_command(self, *args: str) -> Result:
+        return run(self.hub, *args)
 
     def records(self, run_id: str = RUN_ID) -> list[dict[str, Any]]:
         path = self.hub / ".agent-runs" / "workflows" / run_id / "records.jsonl"
@@ -529,6 +534,95 @@ def test_pauses_again_then_runs_on_when_resumed_before_and_after_a_decision(
         (1, {"decision": "approve", "text": "go"})
     ]
     assert [call["argv"] for call in sample.fakes.calls("make")] == [["check"]]
+
+
+def test_approves_the_gate_and_resumes_the_run_when_approve_names_the_paused_run(
+    sample: SampleRun, tmp_path: Path
+) -> None:
+    gated(sample)
+
+    result = sample.run_command("approve", RUN_ID, "looks good")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[0] == "run r1: ship approve"
+    assert result.stdout.splitlines()[-1] == "run r1: done"
+    [decision] = [r for r in sample.records() if r["event"] == "decision"]
+    assert (decision["gate_id"], decision["choice"], decision["text"]) == (
+        "r1:ship:1",
+        "approve",
+        "looks good",
+    )
+    assert [call["argv"] for call in sample.fakes.calls("make")] == [["check"]]
+    stored = open_event_store(tmp_path / "events.db")
+    [answer] = [event for event in stored.read_all() if event.type == "gate.result"]
+    assert (answer.source, answer.session, answer.payload["result"]) == (
+        "control_plane",
+        "run:r1",
+        "approved",
+    )
+    assert "looks good" not in json.dumps([event.payload for event in stored.read_all()])
+    approval = fold_approvals(stored.query(EventQuery(limit=1000)).items)["r1:ship:1"]
+    assert approval.status == "approved"
+
+
+def test_skips_the_guarded_node_and_refuses_another_decision_when_reject_ends_the_run(
+    sample: SampleRun,
+) -> None:
+    gated(sample)
+
+    result = sample.run_command("reject", RUN_ID, "ship")
+    again = sample.run_command("approve", RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert ("build", "skipped") in sample.ends()
+    assert sample.fakes.calls("make") == []
+    assert again.exit_code == 1
+    assert "already ended done" in again.stderr
+
+
+def test_refuses_without_resuming_when_respond_misses_the_approval_decision(
+    sample: SampleRun,
+) -> None:
+    gated(sample)
+
+    result = sample.run_command("respond", RUN_ID, "why not")
+
+    assert result.exit_code == 1
+    assert "needs a decision: one of approve, reject" in result.stderr
+    assert not [r for r in sample.records() if r["event"] == "decision"]
+
+
+WAIT_YAML = """\
+version: 1
+name: waits
+revision: 1
+nodes:
+  - id: ask
+    type: wait
+    attention: Which colour?
+    options: [{id: red, label: Red}, {id: blue, label: Blue}]
+  - id: nap
+    type: wait
+    duration: 2h
+    depends_on: [ask]
+"""
+
+
+def test_answers_the_wait_and_pauses_on_the_timer_when_respond_gives_an_option(
+    sample: SampleRun,
+) -> None:
+    write(sample.hub, "workflows/waits/waits.yaml", WAIT_YAML)
+    sample.run("waits", "--live", "--run-id", RUN_ID)
+
+    result = sample.run_command("respond", RUN_ID, "ask", "dark", "--choice", "blue")
+    timer = sample.run_command("respond", RUN_ID, "now")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[-1].startswith("run r1: paused at nap until ")
+    ask = [r for r in sample.records() if r.get("node") == "ask" and r["event"] == "step_end"]
+    assert ask[0]["output"] == {"choice": "blue", "text": "dark"}
+    assert timer.exit_code == 1
+    assert "a timed wait takes no answer" in timer.stderr
 
 
 def test_ignores_modules_planted_in_hub_when_hub_step_node_runs(sample: SampleRun) -> None:
