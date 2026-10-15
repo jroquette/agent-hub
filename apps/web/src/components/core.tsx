@@ -17,13 +17,22 @@ import { Icon, type IconName } from "./Icon";
 /** A phase whose actions ship later; its controls render disabled with this tag (D21). */
 export type Phase = "P3" | "P4";
 
-/** Copies text; clipboard access may be refused, which is not an error for the user. */
-export function copyText(text: string): void {
+/**
+ * Copies text and resolves whether the clipboard took it: false when there is no clipboard (plain
+ * http is not a secure context, or an old browser) or the write is refused. Never rejects.
+ */
+export async function writeClipboard(text: string): Promise<boolean> {
   try {
-    void navigator.clipboard.writeText(text).catch(() => undefined);
+    await navigator.clipboard.writeText(text);
+    return true;
   } catch {
-    // No clipboard (insecure context or old browser).
+    return false;
   }
+}
+
+/** Copies text without waiting for the outcome, for controls that do not report it. */
+export function copyText(text: string): void {
+  void writeClipboard(text);
 }
 
 /** Shows a "copied" state for 1.5 s after `mark()`. */
@@ -160,27 +169,47 @@ export function Button({
 export interface CopyButtonProps {
   /** What is copied, read when pressed. */
   text: string;
-  /** The accessible name before copying ("Copy command"); "Copied" for 1.5 s after. */
+  /** The accessible name before copying ("Copy command"); "Copied" or "Copy failed" for 1.5 s after. */
   label: string;
   className?: string | undefined;
 }
-/** A small ghost "Copy" button that copies `text` and shows "Copied" for a moment. */
+/**
+ * A small ghost "Copy" button that copies `text`, then shows and announces "Copied" only when the
+ * clipboard took it, and "Copy failed" otherwise, for a moment.
+ */
 export function CopyButton({ text, label, className }: CopyButtonProps) {
-  const [copied, markCopied] = useCopied();
+  const [shown, markShown] = useCopied();
+  const [ok, setOk] = useState(true);
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+  const outcome = shown ? (ok ? "Copied" : "Copy failed") : "";
   return (
-    <Button
-      size="sm"
-      variant="ghost"
-      icon={copied ? "check" : "copy"}
-      className={className}
-      onClick={() => {
-        copyText(text);
-        markCopied();
-      }}
-      aria-label={copied ? "Copied" : label}
-    >
-      {copied ? "Copied" : "Copy"}
-    </Button>
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        icon={shown ? (ok ? "check" : "circle-alert") : "copy"}
+        className={className}
+        onClick={() => {
+          void writeClipboard(text).then((copied) => {
+            if (!mounted.current) return;
+            setOk(copied);
+            markShown();
+          });
+        }}
+        aria-label={outcome || label}
+      >
+        {outcome || "Copy"}
+      </Button>
+      <span className="ah-sr" role="status">
+        {outcome}
+      </span>
+    </>
   );
 }
 
