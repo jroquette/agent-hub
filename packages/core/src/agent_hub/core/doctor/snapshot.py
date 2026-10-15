@@ -15,6 +15,7 @@ from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH, HubLock
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.workflows.catalog import WorkflowSource
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -110,7 +111,8 @@ class DoctorSnapshot:
     else ``None``, as when no source gives one. ``remote_probes`` holds one probe per git checkout
     of ``repos``, in ``hub.json`` order, when a selected rule reads the remotes and the caller
     runs inside a Claude Code session (its commands sandboxed when the settings say so); else
-    ``None``.
+    ``None``. ``workflows`` is the hub's workflows and the built-ins, as ``hub workflow`` reads
+    them, when a selected rule reads them; else ``None``.
     """
 
     config: HubConfig | ConfigFailure
@@ -122,6 +124,7 @@ class DoctorSnapshot:
     local: LocalConfig | tuple[ConfigProblem, ...] = field(default_factory=LocalConfig)
     branch_prefix: Sourced | None = None
     remote_probes: tuple[RemoteProbe, ...] | None = None
+    workflows: WorkflowSource | None = None
 
     @property
     def hub_config(self) -> HubConfig:
