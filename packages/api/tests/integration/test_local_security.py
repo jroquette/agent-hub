@@ -6,6 +6,7 @@ import pytest
 
 from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
 from agent_hub.core.testing.read_model_builders import a_hub_view
+from agent_hub.core.workflows.gate_decisions import GateDecided, GateDecisionRequest
 
 HUB_PATH = {"path": "/home/demo/demo-hub"}
 
@@ -374,3 +375,64 @@ def test_keeps_csp_when_skills_deep_link_served(wired: Any, path: str) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert response.headers["content-security-policy"] == V0_9_0_CSP
+
+
+# A workflow gate's decision (AC-213.18) runs the CLI and resumes a run: the same strict checks.
+GATE_DECISION = "/api/v1/approvals/run-9:ok:1/decision"
+
+
+class Decisions:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, GateDecisionRequest]] = []
+
+    def __call__(self, approval_id: str, request: GateDecisionRequest) -> GateDecided:
+        self.calls.append((approval_id, request))
+        return GateDecided(
+            approval_id=approval_id, run_id="run-9", project="demo", decision=request.decision
+        )
+
+
+def _post_decision(wired: Any, body: bytes = b'{"decision": "approve"}', **headers: str) -> Any:
+    decisions = Decisions()
+    wired.wire(gate_decisions=decisions)
+    wired.gate_calls = decisions.calls
+    sent = {"Origin": OWN_ORIGIN, "Content-Type": "application/json", **headers}
+    return wired.client.post(
+        GATE_DECISION, content=body, headers={k: v for k, v in sent.items() if v}
+    )
+
+
+def test_accepts_gate_decision_when_origin_own_and_body_json(wired: Any) -> None:
+    response = _post_decision(wired, **{"Sec-Fetch-Site": "same-origin"})
+
+    assert response.status_code == 202, response.text
+    assert [approval for approval, _ in wired.gate_calls] == ["run-9:ok:1"]
+
+
+@pytest.mark.parametrize(
+    ("headers", "status", "title"),
+    [
+        ({"Origin": ""}, 403, "Forbidden origin"),
+        ({"Origin": "http://attacker.example"}, 403, "Forbidden origin"),
+        ({"Origin": "http://localhost:7420"}, 403, "Forbidden origin"),
+        ({"Sec-Fetch-Site": "cross-site"}, 403, "Forbidden fetch site"),
+        ({"Content-Type": "text/plain"}, 415, "Unsupported media type"),
+        ({"Content-Type": "application/x-www-form-urlencoded"}, 415, "Unsupported media type"),
+        ({"Host": "attacker.example", "Origin": "http://attacker.example"}, 403, "Forbidden host"),
+    ],
+)
+def test_refuses_gate_decision_without_deciding_when_request_breaks_strict_rule(
+    wired: Any, *, headers: dict[str, str], status: int, title: str
+) -> None:
+    response = _post_decision(wired, **headers)
+
+    assert response.status_code == status
+    assert response.json()["title"] == title
+    assert wired.gate_calls == []
+
+
+def test_refuses_gate_decision_without_deciding_when_body_over_cap(wired: Any) -> None:
+    response = _post_decision(wired, b"{" + b" " * MAX_BODY_BYTES + b"}")
+
+    assert response.status_code == 413
+    assert wired.gate_calls == []

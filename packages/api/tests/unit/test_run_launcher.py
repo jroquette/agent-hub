@@ -374,16 +374,20 @@ def test_refuses_removal_when_file_changes_unlocked_before_it_is_read(
 
 
 def test_answers_launch_error_and_keeps_file_when_pid_file_cannot_be_opened(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target = stale_pid_file(tmp_path)
-    target.chmod(0)
-    try:
-        with pytest.raises(RunLaunchError):
-            launcher(tmp_path).start(spec_of(tmp_path))
-        assert target.exists()
-    finally:
-        target.chmod(0o600)
+    real_open = os.open
+
+    def refuse_target(path: str | os.PathLike[str], flags: int, *args: int) -> int:
+        if os.fspath(path) == os.fspath(target):  # a file mode would not stop root
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(run_launcher.os, "open", refuse_target)
+    with pytest.raises(RunLaunchError):
+        launcher(tmp_path).start(spec_of(tmp_path))
+    assert target.exists()
 
 
 def temporaries(hub: Path) -> list[str]:
