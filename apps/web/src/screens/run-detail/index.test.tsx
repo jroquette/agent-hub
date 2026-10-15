@@ -390,6 +390,42 @@ describe("RunDetailScreen", () => {
       expect(screen.queryByRole("complementary", { name: "Node fix" })).toBeNull();
     });
 
+    it("measures the graph once while a live run's clock ticks", async () => {
+      let observers = 0;
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          constructor() {
+            observers += 1;
+          }
+          observe = vi.fn();
+          disconnect = vi.fn();
+        },
+      );
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const live = anEngineRun({
+          ended_at: null,
+          status: "running",
+          stage: "PICKED",
+          failure: null,
+        });
+        renderWithApi(<RunDetailScreen />, {
+          routes: { [`/api/v1/workflow-runs/${live.id}`]: live, [WORKFLOW]: aWorkflowDetail() },
+          path: `/runs/${live.id}`,
+          route: "/runs/:runId",
+        });
+        await screen.findByRole("group", { name: "Run graph" });
+        const before = observers;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(3000);
+        });
+        expect(observers).toBe(before);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("keeps issue-to-pr runs on their stage pipeline", async () => {
       renderRun(failedRun);
 
