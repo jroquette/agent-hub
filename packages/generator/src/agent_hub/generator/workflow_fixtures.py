@@ -20,6 +20,7 @@ import yaml
 from agent_hub.core.workflows.catalog import WorkflowFile
 from agent_hub.core.workflows.document import WorkflowLoadError, parse_workflow
 from agent_hub.core.workflows.fixtures import parse_fixture, run_fixture, skeleton_fixture
+from agent_hub.core.workflows.includes import IncludeResolver
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 
 # Private helpers of workflow_discovery, kept unrenamed while their module is in other open PRs.
@@ -28,6 +29,7 @@ from agent_hub.generator.workflow_discovery import (
     WorkflowDiscovery,
     _cause,
     _load,
+    pack_resolver,
 )
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 from agent_hub.generator.workflow_yaml import KeyPath, WorkflowFileError, WorkflowMapping
@@ -115,7 +117,7 @@ def run_fixtures(
                         FixtureRun(path=Path(item.source), workflow=None, problems=(problem,))
                     )
             elif _wanted(item.document.get("workflow"), workflows, overridden, only=only):
-                runs.append(_run_one(item, workflows))
+                runs.append(_run_one(item, workflows, pack_resolver(discovery, pack_root)))
     return tuple(runs)
 
 
@@ -143,7 +145,9 @@ def skeleton_yaml(plan: WorkflowPlan) -> Skeleton:
     return Skeleton(text=text, status=str(status))
 
 
-def _run_one(item: FixtureFile, workflows: dict[str, DiscoveredWorkflow]) -> FixtureRun:
+def _run_one(
+    item: FixtureFile, workflows: dict[str, DiscoveredWorkflow], includes: IncludeResolver
+) -> FixtureRun:
     shown = WorkflowFile(str(item.path), item.path.stem, item.document, item.lines)
     try:
         fixture = parse_fixture(item.document)
@@ -155,7 +159,7 @@ def _run_one(item: FixtureFile, workflows: dict[str, DiscoveredWorkflow]) -> Fix
         problem = f"workflow: no workflow named {fixture.workflow!r} in this pack"
         return FixtureRun(path=item.path, workflow=fixture.workflow, problems=(problem,))
     try:
-        plan = plan_workflow(parse_workflow(found.document))
+        plan = plan_workflow(parse_workflow(found.document), includes=includes)
     except WorkflowLoadError:
         problem = f"the workflow {fixture.workflow!r} does not load (hub workflow validate)"
         return FixtureRun(path=item.path, workflow=fixture.workflow, problems=(problem,))

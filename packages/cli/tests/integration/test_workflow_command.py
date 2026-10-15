@@ -143,6 +143,57 @@ def test_checks_only_the_named_workflow_when_validate_gets_a_name(hub: Path) -> 
     assert (result.exit_code, result.stdout) == (0, "check: valid (2 nodes in 2 layers)\n")
 
 
+MAIN_YAML = """\
+version: 1
+name: main
+revision: 1
+nodes:
+  - id: ci
+    type: include
+    include: check
+  - id: ship
+    type: shell
+    command: [make, ship]
+    depends_on: [ci]
+"""
+
+
+def test_expands_the_include_from_the_pack_when_validate_names_the_includer(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/main.yaml", MAIN_YAML)
+
+    result = run(hub, "validate", "main")
+
+    assert (result.exit_code, result.stdout) == (0, "main: valid (3 nodes in 3 layers)\n")
+
+
+def test_refuses_the_include_when_its_workflow_is_in_another_pack(hub: Path) -> None:
+    write(hub, "workflows/other/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/main.yaml", MAIN_YAML)
+
+    result = run(hub, "validate", "main")
+
+    assert result.exit_code == 1
+    assert (
+        result.stderr
+        == 'workflows/demo/main.yaml:7: nodes[0].include: no workflow is named "check"\n'
+    )
+
+
+def test_writes_a_skeleton_with_namespaced_stubs_when_the_workflow_includes_one(
+    hub: Path,
+) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/main.yaml", MAIN_YAML)
+
+    result = run(hub, "test", "main", "--stubs-init")
+
+    assert result.exit_code == 0, result.output
+    skeleton = (hub / "workflows/demo/fixtures/main.yaml").read_text()
+    assert "ci__lint:" in skeleton
+    assert run(hub, "test", "main").exit_code == 0
+
+
 def test_exits_one_when_validate_names_no_workflow(hub: Path) -> None:
     result = run(hub, "validate", "ghost")
 
@@ -725,3 +776,32 @@ def test_spawns_no_child_and_records_nothing_when_fixtures_run(
     assert result.exit_code == 0, result.output
     assert not (hub / ".agent-runs").exists()
     assert not (tmp_path / "xdg").exists()
+
+
+# AGH-228: a loop group body's prompt file is part of the run's snapshot.
+GROUP_YAML = """\
+version: 1
+name: rounds
+revision: 1
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 1
+    until_when: $w.output == 'x'
+    nodes:
+      - id: w
+        type: agent
+        prompt_file: body.md
+"""
+
+
+def test_snapshots_a_body_prompt_file_when_a_group_runs_live(sample: SampleRun) -> None:
+    write(sample.hub, "workflows/sample/rounds.yaml", GROUP_YAML)
+    write(sample.hub, "workflows/sample/prompts/body.md", "Round after $LOOP_PREV.w.output\n")
+
+    sample.run("rounds", "--live", "--run-id", "g1")
+
+    snapshot = sample.hub / ".agent-runs" / "workflows" / "g1" / "snapshot"
+    assert (snapshot / "prompts" / "body.md").is_file()
+    [round_one] = sample.fakes.calls("claude")
+    assert round_one["argv"][1] == "Round after \n"

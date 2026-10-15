@@ -1,0 +1,260 @@
+{
+ "calls": [
+  [
+   "get_issue",
+   "DEM-1"
+  ],
+  [
+   "move_state",
+   "DEM-1",
+   "In Review"
+  ],
+  [
+   "remove_label",
+   "DEM-1",
+   "agent-failed"
+  ],
+  [
+   "comment",
+   "DEM-1",
+   "Run <run> opened https://github.com/acme/demo-api/pull/99. Adds the synthetic change."
+  ]
+ ],
+ "events": [
+  [
+   "step.start",
+   "pick",
+   {
+    "attempt": 1,
+    "caps": {
+     "budget": 3.0,
+     "max_turns": 40,
+     "model": "sonnet",
+     "transport": "api"
+    },
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PICKED"
+   }
+  ],
+  [
+   "step.end",
+   "pick",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PICKED",
+    "status": "ok"
+   }
+  ],
+  [
+   "step.start",
+   "worktree",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "WORKTREE"
+   }
+  ],
+  [
+   "step.end",
+   "worktree",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "WORKTREE",
+    "status": "ok"
+   }
+  ],
+  [
+   "step.start",
+   "implement",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "IMPLEMENTING"
+   }
+  ],
+  [
+   "step.end",
+   "implement",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "IMPLEMENTING",
+    "status": "ok"
+   }
+  ],
+  [
+   "step.start",
+   "verify",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "VERIFYING"
+   }
+  ],
+  [
+   "gate.result",
+   "verify",
+   {
+    "attempt": 1,
+    "command": "make check",
+    "gate_id": "<run>:verify:1",
+    "issue": "DEM-1",
+    "kind": "check",
+    "mode": "live",
+    "repo": "demo-api",
+    "result": "passed",
+    "run": "<run>"
+   }
+  ],
+  [
+   "step.end",
+   "verify",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "VERIFYING",
+    "status": "ok"
+   }
+  ],
+  [
+   "step.start",
+   "pr",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PR_OPEN"
+   }
+  ],
+  [
+   "step.end",
+   "pr",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PR_OPEN",
+    "status": "ok"
+   }
+  ],
+  [
+   "run.end",
+   null,
+   {
+    "cost_usd": 0.42,
+    "issue": "DEM-1",
+    "mode": "live",
+    "outcome": "delivered",
+    "pr_url": "https://github.com/acme/demo-api/pull/99",
+    "repo": "demo-api",
+    "run": "<run>",
+    "status": "done"
+   }
+  ]
+ ],
+ "exit_code": 0,
+ "records": [
+  {
+   "budget": 3.0,
+   "event": "picked",
+   "issue": "DEM-1",
+   "live": true,
+   "max_turns": 40,
+   "model": "sonnet",
+   "repo": "demo-api",
+   "state": "PICKED",
+   "transport": "api"
+  },
+  {
+   "event": "worktree_ready",
+   "issue": "DEM-1",
+   "live": true,
+   "path": "<ws>/demo-api/.claude/worktrees/dem-1",
+   "repo": "demo-api",
+   "state": "WORKTREE"
+  },
+  {
+   "cost_usd": 0.42,
+   "event": "agent_finished",
+   "issue": "DEM-1",
+   "live": true,
+   "repo": "demo-api",
+   "state": "IMPLEMENTING",
+   "subtype": "success",
+   "turns": 3,
+   "verdict": {
+    "status": "done",
+    "summary": "Adds the synthetic change.",
+    "tests": "make check-fast"
+   }
+  },
+  {
+   "commits": [
+    "feat(api): synthetic change (DEM-1)"
+   ],
+   "event": "commits",
+   "issue": "DEM-1",
+   "live": true,
+   "repo": "demo-api",
+   "state": "IMPLEMENTING"
+  },
+  {
+   "event": "gate_ok",
+   "gate": "make check",
+   "issue": "DEM-1",
+   "live": true,
+   "repo": "demo-api",
+   "state": "VERIFYING"
+  },
+  {
+   "event": "pr_open",
+   "issue": "DEM-1",
+   "live": true,
+   "repo": "demo-api",
+   "state": "PR_OPEN",
+   "url": "https://github.com/acme/demo-api/pull/99"
+  },
+  {
+   "event": "reported",
+   "failed_stage": null,
+   "issue": "DEM-1",
+   "live": true,
+   "ok": true,
+   "outcome": "delivered",
+   "pr": "https://github.com/acme/demo-api/pull/99",
+   "repo": "demo-api",
+   "state": "REPORTED",
+   "total_cost_usd": 0.42
+  }
+ ]
+}

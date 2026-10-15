@@ -26,7 +26,7 @@ from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 from agent_hub.generator.workflow_yaml import WorkflowFileError, load_workflow_bytes
 
 SAMPLES = Path(__file__).parents[3] / "core" / "tests" / "data"
-SAMPLE_PACKS = ("conditions", "contracts", "joins", "loops")
+SAMPLE_PACKS = ("conditions", "contracts", "includes", "joins", "loops")
 WORKFLOW = (
     "version: 1\nname: demo\nrevision: 1\nnodes:\n  - id: a\n    type: shell\n    command: [make]\n"
 )
