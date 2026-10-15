@@ -828,6 +828,20 @@ def test_carries_agent_session_id_when_link_known_agent_session_link() -> None:
     assert one.agent_session_id == "a-1"
 
 
+def test_drops_permission_reason_when_link_stops_waiting_at_same_mark() -> None:
+    links = {("demo", "s-web"): AgentSessionLink(agent_session_id="a-1", waiting=True)}
+    service = _linked_service(links)
+
+    before = service.get_session("s-web").waiting_reason
+    links[("demo", "s-web")] = AgentSessionLink(agent_session_id="a-1")
+    after = service.get_session("s-web").waiting_reason
+    listed = {s.id: s for s in service.list_sessions(SessionFilter()).items}
+
+    assert before == "Permission prompt"
+    assert after is None
+    assert listed["s-web"].waiting_reason is None
+
+
 def test_shows_waiting_tile_when_permission_pending_agent_session_link() -> None:
     links = {("demo", "s-web"): AgentSessionLink(agent_session_id="a-1", waiting=True)}
     service = _linked_service(links)
