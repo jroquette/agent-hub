@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -6,6 +6,7 @@ import {
   aProjectSummary,
   aSession,
   aSessionLabel,
+  aSessionsByStatus,
   anId,
   at,
   renderWithApi,
@@ -17,7 +18,7 @@ function named(name: string) {
 }
 
 const routes = {
-  "/api/v1/sessions": aPage([
+  "/api/v1/sessions": aSessionsByStatus([
     aSession({
       id: anId(1, "ffff0001"),
       label: named("a,b"),
@@ -92,7 +93,11 @@ describe("SessionsListScreen controls", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: "Remove filter Cost from $2" }));
     expect(router.state.location.search).not.toContain("cost_min");
-    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
+    fireEvent.click(
+      within(screen.getByRole("table", { name: "Waiting sessions" })).getByRole("button", {
+        name: /^Cost/,
+      }),
+    );
     expect(router.state.location.search).toContain("sort=-cost");
     fireEvent.click(screen.getByRole("button", { name: "30 d" }));
     expect(router.state.location.search).toContain("period=30+d");
@@ -103,7 +108,8 @@ describe("SessionsListScreen controls", () => {
       routes,
       path: "/sessions?outcome=error",
     });
-    await screen.findByText("/waiter");
+    // An outcome asks only the Ended section.
+    await screen.findByText("/a,b");
 
     fireEvent.click(screen.getByRole("button", { name: "Unsaved view" }));
     fireEvent.click(screen.getByRole("button", { name: /Guard denials/ }));
@@ -112,12 +118,12 @@ describe("SessionsListScreen controls", () => {
     expect(router.state.location.search).not.toContain("outcome");
     fireEvent.click(screen.getByRole("button", { name: "Columns" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Repo" }));
-    expect(screen.queryByRole("columnheader", { name: "Repo" })).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("columnheader", { name: "Repo" })).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
-    expect(screen.getByRole("columnheader", { name: "Repo" })).toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader", { name: "Repo" }).length).toBeGreaterThan(0);
     expect(await screen.findByText("Ended")).toBeInTheDocument();
-    expect(screen.getByText("Waiting")).toBeInTheDocument();
-    expect(screen.getByText("Idle")).toBeInTheDocument();
+    expect(await screen.findByText("Waiting")).toBeInTheDocument();
+    expect(await screen.findByText("Idle")).toBeInTheDocument();
   });
 
   it("widens the period and shows all time from the empty states", async () => {

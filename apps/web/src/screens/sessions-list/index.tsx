@@ -40,7 +40,6 @@ import {
   badDecimal,
   chipsOf,
   periodOf,
-  queryOf,
   sortOf,
   type Period,
 } from "./filters";
@@ -54,10 +53,12 @@ import {
   useCreateAgentSession,
   useProjects,
   useResumable,
-  useSessionPages,
+  useSectionPages,
   useWorkdirs,
   type Session,
 } from "./queries";
+import { SECTIONS, sectionCount, sectionQueries } from "./sections";
+import { SessionSection, useCollapsed } from "./SessionSection";
 
 const COLUMNS_KEY = "ah.sessions.columns";
 const DENSITY_KEY = "ah.sessions.density";
@@ -716,8 +717,9 @@ export function SessionsListScreen() {
   const now = useNow(1000);
   const collector = useCollectorState();
   const [anchor] = useState(() => Date.now());
-  const query = useMemo(() => queryOf(params, scope, anchor), [params, scope, anchor]);
-  const pages = useSessionPages(query);
+  const queries = useMemo(() => sectionQueries(params, scope, anchor), [params, scope, anchor]);
+  const sections = useSectionPages(queries);
+  const [collapsed, toggleCollapsed] = useCollapsed();
   const projects = useProjects();
   const [selected, setSelected] = useState<string[]>([]);
   const [columns, setColumns] = useState(storedColumns);
@@ -747,8 +749,18 @@ export function SessionsListScreen() {
     setCostDraft({ min: "", max: "" });
   };
 
-  const rows = (pages.data?.pages ?? []).flatMap((page) => page.items);
-  const total = pages.data?.pages[0]?.total_estimate ?? 0;
+  const asked = SECTIONS.flatMap((section) => {
+    if (queries[section.id] === null) return [];
+    const pages = sections[section.id];
+    const rows = (pages.data?.pages ?? []).flatMap((page) => page.items);
+    // AGH-244 adds the section's driven rows without an observed twin here (P-e).
+    const count = sectionCount(pages.data?.pages[0]?.total_estimate ?? 0);
+    return [{ ...section, pages, rows, count }];
+  });
+  const rows = asked.flatMap((section) => section.rows);
+  const total = asked.reduce((sum, section) => sum + section.count, 0);
+  const pending = asked.some((section) => section.pages.isPending);
+  const hasNextPage = asked.some((section) => section.pages.hasNextPage);
   const period: Period = periodOf(params);
   const sort = sortOf(params);
   const chips = chipsOf(params);
@@ -930,39 +942,85 @@ export function SessionsListScreen() {
     });
   }
 
-  const countLine = pages.isPending
+  const countLine = pending
     ? "Loading sessions…"
-    : `Showing ${fmtInt(rows.length)}${pages.hasNextPage ? ` of ~${fmtInt(total)}` : ""} · ${period === "All" ? "all time" : period} · ${String(projectCount)} ${projectCount === 1 ? "project" : "projects"}`;
+    : `Showing ${fmtInt(rows.length)}${hasNextPage ? ` of ~${fmtInt(total)}` : ""} · ${period === "All" ? "all time" : period} · ${String(projectCount)} ${projectCount === 1 ? "project" : "projects"}`;
   const compareOk = selected.length === 2;
-  const neverAny = !filtered && rows.length === 0 && !pages.isPending;
+  const allEmpty =
+    !pending && asked.every((section) => !section.pages.error && section.rows.length === 0);
+  const neverAny = !filtered && allEmpty;
 
-  let table: ReactNode;
-  if (pages.error) {
-    table = (
-      <div className="ah-stack" style={{ gap: 8 }}>
-        <ProblemError
-          title="Could not load sessions"
-          detail={pages.error.detail}
-          status={pages.error.status}
-          type={pages.error.type}
-          instance={pages.error.instance}
-          onRetry={() => {
-            void pages.refetch();
-          }}
-        />
-        <div>
-          <Button size="sm" variant="ghost" icon="x" onClick={clearFilters}>
+  const empty = neverAny ? (
+    <EmptyState
+      icon="square-terminal"
+      title="No sessions yet."
+      action={
+        period === "All" ? undefined : (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              update({ period: "All" });
+            }}
+          >
+            Show all time
+          </Button>
+        )
+      }
+    >
+      Each Claude Code session in a registered hub is listed here after its first event.
+    </EmptyState>
+  ) : (
+    <EmptyState
+      icon="list-filter"
+      title="No sessions match these filters."
+      action={
+        <div className="ah-row" style={{ gap: 8 }}>
+          <Button icon="x" onClick={clearFilters}>
             Clear filters
           </Button>
+          {period !== "30 d" && period !== "All" && (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                update({ period: "30 d" });
+              }}
+            >
+              Widen to 30 d
+            </Button>
+          )}
         </div>
-      </div>
-    );
-  } else {
-    table = (
+      }
+    />
+  );
+
+  const sectionBody = ({ title, pages, rows: sectionRows, count }: (typeof asked)[number]) => {
+    if (pages.error) {
+      return (
+        <div className="ah-stack" style={{ gap: 8 }}>
+          <ProblemError
+            title={`Could not load ${title.toLowerCase()} sessions`}
+            detail={pages.error.detail}
+            status={pages.error.status}
+            type={pages.error.type}
+            instance={pages.error.instance}
+            onRetry={() => {
+              void pages.refetch();
+            }}
+          />
+          <div>
+            <Button size="sm" variant="ghost" icon="x" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    const keys = new Set(sectionRows.map((s) => s.id));
+    return (
       <DataTable
-        caption="Sessions"
+        caption={`${title} sessions`}
         columns={tableColumns}
-        rows={rows}
+        rows={sectionRows}
         rowKey={(s) => s.id}
         loading={pages.isPending}
         density={density === "compact" ? "compact" : undefined}
@@ -976,67 +1034,24 @@ export function SessionsListScreen() {
           update({ sort: sort === desc ? def.sort : desc === "-started_at" ? null : desc });
         }}
         selectable
-        selected={selected}
+        selected={selected.filter((id) => keys.has(id))}
         onSelect={(id) => {
           setSelected(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
         }}
         onSelectAll={(checked) => {
-          setSelected(checked ? rows.map((s) => s.id) : []);
+          const others = selected.filter((id) => !keys.has(id));
+          setSelected(checked ? [...others, ...keys] : others);
         }}
         onRowClick={(s) => {
           void navigate(`/sessions/${encodeURIComponent(s.id)}`);
         }}
-        empty={
-          neverAny ? (
-            <EmptyState
-              icon="square-terminal"
-              title="No sessions yet."
-              action={
-                period === "All" ? undefined : (
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      update({ period: "All" });
-                    }}
-                  >
-                    Show all time
-                  </Button>
-                )
-              }
-            >
-              Each Claude Code session in a registered hub is listed here after its first event.
-            </EmptyState>
-          ) : (
-            <EmptyState
-              icon="list-filter"
-              title="No sessions match these filters."
-              action={
-                <div className="ah-row" style={{ gap: 8 }}>
-                  <Button icon="x" onClick={clearFilters}>
-                    Clear filters
-                  </Button>
-                  {period !== "30 d" && period !== "All" && (
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        update({ period: "30 d" });
-                      }}
-                    >
-                      Widen to 30 d
-                    </Button>
-                  )}
-                </div>
-              }
-            />
-          )
-        }
         footer={
-          rows.length > 0 ? (
+          sectionRows.length > 0 ? (
             <>
               <span>
                 {pages.hasNextPage
-                  ? `Showing ${fmtInt(rows.length)} of ~${fmtInt(total)}`
-                  : `Showing all ${fmtInt(rows.length)}`}
+                  ? `Showing ${fmtInt(sectionRows.length)} of ~${fmtInt(count)}`
+                  : `Showing all ${fmtInt(sectionRows.length)}`}
               </span>
               {pages.hasNextPage && (
                 <Button
@@ -1058,7 +1073,35 @@ export function SessionsListScreen() {
         }
       />
     );
-  }
+  };
+
+  // Empty sections are hidden; when all are, one empty state shows (spec 14).
+  const body = allEmpty ? (
+    empty
+  ) : (
+    <div className="ah-stack sl-sections">
+      {asked
+        .filter(
+          (section) =>
+            section.pages.isPending || section.pages.error !== null || section.rows.length > 0,
+        )
+        .map((section) => (
+          <SessionSection
+            key={section.id}
+            id={section.id}
+            title={section.title}
+            count={section.pages.isPending ? null : section.count}
+            approximate={section.pages.hasNextPage}
+            collapsed={collapsed.has(section.id)}
+            onToggle={() => {
+              toggleCollapsed(section.id);
+            }}
+          >
+            {sectionBody(section)}
+          </SessionSection>
+        ))}
+    </div>
+  );
 
   return (
     <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
@@ -1193,7 +1236,7 @@ export function SessionsListScreen() {
           />
         </div>
         <div className="ah-grow sl-table" style={{ minWidth: 0 }}>
-          {table}
+          {body}
         </div>
       </div>
     </div>
