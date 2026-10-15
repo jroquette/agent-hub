@@ -76,3 +76,4 @@ License: Apache-2.0.
 - [0030. Run outcomes in the tracker and in `hub run`'s exit code](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0030-run-outcomes-in-the-tracker.md): `docs/adr/0030-run-outcomes-in-the-tracker.md`
 - [0031. Driving Claude Code sessions from the app](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0031-driving-claude-code-sessions-from-the-app.md): `docs/adr/0031-driving-claude-code-sessions-from-the-app.md`
 - [0032. A graph workflow engine and format](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0032-workflow-engine.md): `docs/adr/0032-workflow-engine.md`
+- [0033. One Sessions screen grouped by status, and the chat's interaction model](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0033-sessions-and-chat-interaction-model.md): `docs/adr/0033-sessions-and-chat-interaction-model.md`
