@@ -317,6 +317,8 @@ describe("AgentSessionScreen (jump-to-latest)", () => {
 
     expect(scrolled.top).toBe(600);
     expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
+    // The button went away: focus moved to the transcript, not to <body>.
+    expect(scroller).toHaveFocus();
     scrollUp(scroller);
     expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
   });

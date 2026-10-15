@@ -179,6 +179,8 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
         <JumpToLatest
           unseen={unseen}
           onJump={() => {
+            // The button goes away once pinned: keep keyboard focus in the chat, not on <body>.
+            scroller.current?.focus({ preventScroll: true });
             follow.pin("smooth");
           }}
         />
