@@ -49,6 +49,9 @@ export function useDecideGate(id: string) {
     onSettled: () => {
       void client.invalidateQueries({ queryKey: apiKey("/api/v1/approvals") });
       void client.invalidateQueries({ queryKey: apiKey("/api/v1/approvals/{approval_id}", path) });
+      void client.invalidateQueries({
+        queryKey: apiKey("/api/v1/approvals/{approval_id}/gate", path),
+      });
       void client.invalidateQueries({ queryKey: apiKey("/api/v1/workflow-runs") });
     },
   });

@@ -70,6 +70,34 @@ describe("GateDecision", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("keeps the choices disabled and refetches the gate after a decision is recorded", async () => {
+    const { requests } = renderGate({ [GATE]: aGate(), [DECIDE]: DECIDED });
+
+    const decide = await card();
+    await userEvent.click(within(decide).getByRole("button", { name: "Approve" }));
+
+    await screen.findByRole("status");
+    for (const button of within(decide).getAllByRole("button")) expect(button).toBeDisabled();
+    await waitFor(() => {
+      const gets = requests.filter((r) => r.method === "GET" && new URL(r.url).pathname === GATE);
+      expect(gets.length).toBeGreaterThan(1);
+    });
+  });
+
+  it("returns focus to the choice and caps the text when the dialog closes", async () => {
+    renderGate({ [GATE]: aGate({ text: "optional" }) });
+
+    const choice = within(await card()).getByRole("button", { name: "Reject" });
+    await userEvent.click(choice);
+    expect(screen.getByRole("textbox", { name: "Reason (optional)" })).toHaveAttribute(
+      "maxlength",
+      "16384",
+    );
+    await userEvent.keyboard("{Escape}");
+
+    expect(choice).toHaveFocus();
+  });
+
   it("asks for an optional reason in a dialog when the gate captures a response", async () => {
     const { requests } = renderGate({ [GATE]: aGate({ text: "optional" }), [DECIDE]: DECIDED });
 

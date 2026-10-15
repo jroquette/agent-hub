@@ -3,6 +3,7 @@ import { useApi } from "../../lib/api";
 import { GateDecision } from "../approvals/GateDecision";
 import type { Approval } from "../approvals/queries";
 import type { WorkflowRun } from "../runs-list/queries";
+import { useNodeParam } from "../workflows/WorkflowGraph";
 
 /* A running engine run's open gates (AC-213.18): the Approvals decision card for each gate a
  * person answers, so a waiting node is decided where the run is watched. */
@@ -12,7 +13,9 @@ export function gateNode(gateId: string): string {
   return gateId.split(":")[1] ?? gateId;
 }
 
-/** The run's open gates a person answers, while it runs (one query, shared by its readers). */
+/** The run's open gates a person answers, while it runs (one query, shared by its readers).
+ * The first 200 open human gates of the project are read: a run holds a few, and a project far
+ * fewer than 200 at once, so the bound is accepted rather than a session filter on the API. */
 export function useOpenGates(run: WorkflowRun): Approval[] {
   const running = run.status === "running";
   const open = useApi(
@@ -32,8 +35,12 @@ export function gateOf(gates: readonly Approval[], nodeId: string): Approval | u
   });
 }
 
+/** The run's open gates, but the one the open node panel shows: one decision card a gate. */
 export function OpenGates({ run }: { run: WorkflowRun }) {
-  const gates = useOpenGates(run);
+  const { nodeId } = useNodeParam();
+  const open = useOpenGates(run);
+  const shown = nodeId === null ? undefined : gateOf(open, nodeId);
+  const gates = open.filter((gate) => gate !== shown);
   if (gates.length === 0) return null;
   return (
     <section

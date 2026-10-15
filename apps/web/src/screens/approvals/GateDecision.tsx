@@ -99,7 +99,12 @@ function TextDialog({ choice, required, pending, error, onConfirm, onCancel }: T
       const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)];
       const head = items[0];
       const tail = items[items.length - 1];
-      if (!head || !tail) return;
+      if (!head || !tail) {
+        // Every control is off while the request runs: focus stays on the dialog itself.
+        event.preventDefault();
+        node.focus();
+        return;
+      }
       if (event.shiftKey && document.activeElement === head) {
         event.preventDefault();
         tail.focus();
@@ -121,6 +126,7 @@ function TextDialog({ choice, required, pending, error, onConfirm, onCancel }: T
         className="ah-dialog"
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         aria-labelledby={titleId}
         aria-busy={pending}
       >
@@ -214,7 +220,8 @@ export function GateDecision({ approvalId }: { approvalId: string }) {
               key={choice.id ?? "respond"}
               variant={look?.variant ?? "default"}
               icon={look?.icon ?? "message-square"}
-              disabled={decide.isPending}
+              // After a success the choices stay off until the refetched gate closes the card.
+              disabled={decide.isPending || decide.isSuccess}
               onClick={() => {
                 decide.reset();
                 if (takesText) setAsking(choice);
