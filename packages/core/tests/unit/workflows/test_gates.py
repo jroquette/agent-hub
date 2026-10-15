@@ -1,5 +1,6 @@
 """The ``approval`` and ``wait`` gates: a pause, its request, and the answer that ends it."""
 
+import threading
 from collections.abc import Mapping
 from datetime import timedelta
 
@@ -17,6 +18,7 @@ from agent_hub.core.testing.workflow_fakes import (
 )
 from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.gates import GateAnswer, OpenGate, answer_problem, gate_id
+from agent_hub.core.workflows.ports import NodeCall, NodeReply
 from agent_hub.core.workflows.run_state import RunReport, RunState
 from agent_hub.core.workflows.substitution import NodeResult
 
@@ -368,3 +370,28 @@ def test_pauses_again_without_rerunning_the_iteration_when_resumed_before_an_ans
     assert sorted(runner.ran()) == ["g__side", "g__work"]
     assert recorder.starts == []
     assert again.state.groups == first.state.groups
+
+
+def test_opens_no_gate_after_an_interrupt_when_a_parallel_layer_is_stopped() -> None:
+    interrupted = threading.Event()
+
+    class Stopping(ScriptedRunner):
+        def run(self, call: NodeCall) -> NodeReply:
+            if call.node.id == "a":
+                threading.Event().wait(0.05)
+                raise KeyboardInterrupt
+            threading.Event().wait(0.2)
+            return super().run(call)
+
+    gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["work"]}
+    group = REWORK | {"nodes": [shell("work"), gate]}
+    recorder = ListRecorder()
+    ports = EnginePorts(
+        Stopping(), recorder, FakeClock(), KeysOutputs(), lambda: 0.5, interrupt=interrupted.set
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_workflow(a_plan(shell("a"), group), {}, ports)
+
+    assert interrupted.is_set()
+    assert recorder.gates == []
