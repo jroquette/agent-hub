@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   aPage,
+  aProblem,
   aProjectSummary,
   aSession,
   aSessionLabel,
@@ -27,6 +28,8 @@ const one = (n: number, status: "waiting" | "live" | "ended") =>
 /** `GET /sessions` answering from `data` as it is when asked, so a test can change it. */
 interface Data {
   current: ReturnType<typeof one>[];
+  /** A section whose next answer is a problem. */
+  fail?: string | undefined;
   /** The cursor every first page answers with, and the page it opens. */
   next?: string;
   more?: ReturnType<typeof one>[];
@@ -38,6 +41,7 @@ function routes(data: Data): ApiRoutes {
       const url = new URL(request.url);
       if (url.searchParams.get("cursor")) return aPage(data.more ?? []);
       const status = url.searchParams.get("status");
+      if (status === data.fail) return aProblem();
       return aPage(
         data.current.filter((s) => s.status === status),
         { next_cursor: data.next ?? null },
@@ -215,6 +219,49 @@ describe("SessionsListScreen no-jump", () => {
     expect(statusesAsked(requests, before)).toEqual(["ended", "idle", "live", "waiting"]);
   });
 
+  it("does not refetch the sections when the project changes the agent list", async () => {
+    const { requests, router } = render({ current: [one(2, "live")] });
+    await screen.findByText("/s2");
+    vi.useFakeTimers();
+    await act(() => router.navigate("/sessions?scope=loki-trader"));
+    await act(() => vi.advanceTimersByTimeAsync(100)); // the new scope's lists load
+    const before = requests.length;
+    await act(() => vi.advanceTimersByTimeAsync(2_000));
+    expect(statusesAsked(requests, before)).toEqual([]);
+  });
+
+  it("refetches a section skipped while loading more at the next 2 s edge, not at once", async () => {
+    const { requests, stream } = render({
+      current: [one(3, "ended")],
+      next: "e2",
+      more: [one(9, "ended")],
+    });
+    await screen.findByText("/s3");
+    const release = hold((url) => url.searchParams.get("cursor") === "e2");
+    const more = screen.getByRole("button", { name: "Load more" });
+    fireEvent.click(more);
+    await waitFor(() => {
+      expect(more).toBeDisabled(); // the screen knows Ended is loading more
+    });
+    vi.useFakeTimers();
+    stream(STREAM).emit("tile.upsert", { id: anId(3), group: "ended_recently" });
+    await act(() => vi.advanceTimersByTimeAsync(2_000)); // Ended is loading more: skipped
+    const skipped = requests.length;
+    // Refetches of Ended's first page (the held Load more is logged when it is let through).
+    const refetched = () =>
+      statusesAsked(
+        requests.slice(skipped).filter((r) => !new URL(r.url).searchParams.has("cursor")),
+        0,
+      );
+    release();
+    await act(() => vi.advanceTimersByTimeAsync(0)); // the Load more settles
+    await act(() => vi.advanceTimersByTimeAsync(1_999));
+    expect(refetched()).toEqual([]);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    // One throttled tick, 2 s after the last: every open section, Ended among them.
+    expect(refetched()).toEqual(["ended", "idle", "live", "waiting"]);
+  });
+
   it("does not cancel a Load more in flight when a refetch is due", async () => {
     const { stream } = render({ current: [one(3, "ended")], next: "e2", more: [one(9, "ended")] });
     await screen.findByText("/s3");
@@ -314,38 +361,66 @@ describe("SessionsListScreen no-jump", () => {
     expect(scroller.scrollTop).toBe(ROW + 10);
   });
 
-  it("does not correct the scroll for a collapse or a sort the reader made", async () => {
-    const data = {
-      current: [one(1, "live"), one(2, "live"), one(3, "ended"), one(4, "ended"), one(5, "ended")],
-    };
+  it("does not correct the scroll for a sort or a collapse the reader made", async () => {
+    const ended = [3, 4, 5, 6, 7, 8].map((n) => one(n, "ended"));
+    const data = { current: [one(1, "live"), one(2, "live"), ...ended], sorted: [] as number[] };
     render(data);
-    await screen.findByText("/s5");
+    await screen.findByText("/s8");
+    layOutRows();
+    const scroller = screen.getByTestId("scroller");
+    scroller.scrollTop = 3 * ROW + 10; // /s4 first, then /s5
+    fireEvent.scroll(scroller);
+    await nextFrame();
+
+    // The sort sends /s4 to the end of Ended; /s5 moves up a row with its neighbour.
+    data.current = [
+      one(1, "live"),
+      one(2, "live"),
+      ...[3, 5, 6, 7, 8, 4].map((n) => one(n, "ended")),
+    ];
+    const table = screen.getByRole("table", { name: "Ended or failed sessions" });
+    fireEvent.click(within(table).getByRole("button", { name: /^Cost/ }));
+    await waitFor(() => {
+      expect(screen.getAllByText(/^\/s[3-8]$/).at(-1)).toHaveTextContent("/s4");
+    });
+    expect(scroller.scrollTop).toBe(3 * ROW + 10);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Live/ }));
+    expect(screen.getByRole("button", { name: /^Live/ })).toHaveAttribute("aria-expanded", "false");
+    expect(scroller.scrollTop).toBe(3 * ROW + 10);
+  });
+
+  it("clears every armed section once its refetch is over, answered or failed", async () => {
+    const ended = [3, 4, 5, 6].map((n) => one(n, "ended"));
+    const data: Data = { current: [one(1, "waiting"), one(2, "live"), ...ended] };
+    const { stream } = render(data);
+    await screen.findByText("/s6");
     layOutRows();
     const scroller = screen.getByTestId("scroller");
     scroller.scrollTop = 3 * ROW + 10; // /s4 first
     fireEvent.scroll(scroller);
     await nextFrame();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Live/ }));
-    expect(screen.getByRole("button", { name: /^Live/ })).toHaveAttribute("aria-expanded", "false");
-    expect(scroller.scrollTop).toBe(3 * ROW + 10);
-
-    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
-    data.current = [
-      one(1, "live"),
-      one(2, "live"),
-      one(5, "ended"),
-      one(4, "ended"),
-      one(3, "ended"),
-    ];
-    fireEvent.click(within(ended).getByRole("button", { name: /^Cost/ }));
+    // Waiting and Live answer together; Ended's refetch fails.
+    data.fail = "ended";
+    await change(stream(STREAM), "tile.upsert", { id: anId(2), group: "live" });
     await waitFor(() => {
-      expect(screen.getAllByText(/^\/s[345]$/).map((cell) => cell.textContent)).toEqual([
-        "/s5",
-        "/s4",
-        "/s3",
-      ]);
+      expect(screen.getByText(/Could not load ended/)).toBeInTheDocument();
     });
+    data.fail = undefined;
+    // The reader's sort: every section reloads, with rows above /s4 that shift it.
+    data.current = [
+      one(9, "waiting"),
+      one(1, "waiting"),
+      one(2, "live"),
+      one(8, "live"),
+      one(10, "ended"),
+      ...ended,
+    ];
+    const live = screen.getByRole("table", { name: "Live sessions" });
+    fireEvent.click(within(live).getByRole("button", { name: /^Cost/ }));
+    await screen.findByText("/s10");
+    await screen.findByText("/s8");
     expect(scroller.scrollTop).toBe(3 * ROW + 10);
   });
 
