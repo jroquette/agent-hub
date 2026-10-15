@@ -56,6 +56,27 @@ describe("MessageMeta (message-meta)", () => {
     expect(screen.getByText("1 min ago")).toHaveAttribute("datetime", at(0));
   });
 
+  it("moves the label on the wall-clock minute, not a minute after mounting (AC-234.22)", () => {
+    vi.useFakeTimers({ now: Date.parse(at(30)) });
+    render(<MessageMeta at={at(0)} text="x" />);
+    expect(screen.getByText("just now")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(30_000 - 1);
+    });
+    expect(screen.getByText("just now")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(screen.getByText("1 min ago")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(screen.getByText("2 min ago")).toBeInTheDocument();
+  });
+
   it("copies the raw markdown when Copy is pressed", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
@@ -76,7 +97,6 @@ describe("MessageMeta (message-meta)", () => {
 
   it("refreshes every time on one shared minute timer, not one per message", () => {
     vi.useFakeTimers({ now: Date.parse(at(0)) });
-    const setInterval = vi.spyOn(globalThis, "setInterval");
     render(
       <>
         <MessageMeta at={at(-5)} text="a" />
@@ -85,14 +105,14 @@ describe("MessageMeta (message-meta)", () => {
       </>,
     );
     expect(screen.getAllByText("just now")).toHaveLength(3);
-    expect(setInterval).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
 
     act(() => {
       vi.advanceTimersByTime(60_000);
     });
 
     expect(screen.getAllByText("1 min ago")).toHaveLength(3);
-    expect(setInterval).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
   });
 
   it("reveals the row on hover and focus, and always shows it without hover", () => {
