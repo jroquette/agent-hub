@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- The chat of a session `hub web` drives is one fixed-height column: the header (title, status, cost, actions) and the
+  composer stay on screen and only the transcript scrolls. It opens at the latest message, or at the oldest permission
+  still waiting, follows the reply while you are at the bottom, stops when you scroll up, and offers "Jump to latest ·
+  N new" (or End); Send brings you back to the bottom (AGH-237).
+
 ### Fixed
 
 - Releases are annotated tags again. The tags `v0.9.0` to `v0.14.0` were pushed as lightweight tags, so `release.yml`
