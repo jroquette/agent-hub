@@ -1,0 +1,7 @@
+# implement ends on its second turn; polish says POLISHED on its first.
+workflow: loops
+stubs:
+  implement: [{output: {done: false}}, {output: {done: true}}]
+  polish: {text: "all tidy\nPOLISHED"}
+expect: {status: done}
+reached: [implement, polish]
