@@ -42,6 +42,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   by the same code as the Live tiles, so a sessions list can show what Live shows (AGH-236).
 - `GET /api/v1/agent-sessions` and `GET /api/v1/agent-sessions/{id}` carry `observed_session_id`, the observed
   session's id once its twin has been observed, else `null`, so a list can show a driven session once (AGH-236).
+- A workflow node of type `include` copies in another workflow of the same pack at load: its nodes become
+  `<include id>__<id>`, `with:` fills its `inputs`, the include's `depends_on`/`when`/`trigger_rule` go to the block's
+  roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels and 512 nodes, no
+  cycles. A block's prompt files read its own inputs and nodes. Fixtures stub the namespaced ids (AGH-228).
+- A `loop_group` node repeats a body of nodes until its `until_when` holds or its `until_bash` exits 0, at most
+  `max_iterations` times; body steps are recorded as `<group>__<id>`, `$LOOP_PREV.<id>.output` reads the previous
+  iteration, and `$<group>.output.<id>` reads the last one (AGH-228).
 
 ### Changed
 
@@ -52,13 +59,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The chat streams smoothly: replies render once per frame with a caret, long transcripts open fast, a "Claude is
   working · <tool>" row shows while a turn runs, Stop works while a permission waits, Esc in the empty composer stops
   the turn, and "Turn interrupted" follows its result (AGH-238).
-- A workflow node of type `include` copies in another workflow of the same pack at load: its nodes become
-  `<include id>__<id>`, `with:` fills its `inputs`, the include's `depends_on`/`when`/`trigger_rule` go to the block's
-  roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels and 512 nodes, no
-  cycles. A block's prompt files read its own inputs and nodes. Fixtures stub the namespaced ids (AGH-228).
-- A `loop_group` node repeats a body of nodes until its `until_when` holds or its `until_bash` exits 0, at most
-  `max_iterations` times; body steps are recorded as `<group>__<id>`, `$LOOP_PREV.<id>.output` reads the previous
-  iteration, and `$<group>.output.<id>` reads the last one (AGH-228).
 
 ### Fixed
 
