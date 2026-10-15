@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
+  aPage,
   aProblem,
+  aRun,
   aWorkflowCatalog,
   aWorkflowDetail,
   aWorkflowSummary,
@@ -35,6 +37,7 @@ const fix = aWorkflowDetail({
 
 function routes(extra: ApiRoutes = {}): ApiRoutes {
   return {
+    "/api/v1/workflow-runs": aPage([aRun({ id: "a1b2c3d4", workflow: "fix" })]),
     [LIST]: aWorkflowCatalog({
       items: [
         aWorkflowSummary({ name: "fix", description: "Fixes an issue." }),
@@ -61,7 +64,7 @@ async function chooseFix(dialog: HTMLElement) {
   await waitFor(() => {
     expect(within(picker).getAllByRole("option").length).toBeGreaterThan(1);
   });
-  await userEvent.selectOptions(picker, "agent-hub/fix");
+  await userEvent.selectOptions(picker, "agent-hub / fix");
   await within(dialog).findByRole("textbox", { name: /^issue/ });
 }
 
@@ -92,6 +95,33 @@ describe("StartRun", () => {
     expect(within(dialog).getByRole("spinbutton", { name: /^ratio/ })).toHaveValue(null);
     expect(within(dialog).getByRole("checkbox", { name: /^strict/ })).toBeChecked();
     expect(within(dialog).getByRole("button", { name: "Start run" })).toBeDisabled();
+  });
+
+  it("waits until the new run reports before opening it", async () => {
+    let lists = 0;
+    const { router } = renderStart({
+      [START]: ACCEPTED,
+      "/api/v1/workflow-runs": () => {
+        lists += 1;
+        return aPage(lists < 2 ? [] : [aRun({ id: "a1b2c3d4", workflow: "fix" })]);
+      },
+    });
+    const dialog = await openDialog();
+    await chooseFix(dialog);
+    await userEvent.type(within(dialog).getByRole("textbox", { name: /^issue/ }), "DEM-7");
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start run" }));
+
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(
+      "Started. Waiting for the run's first event…",
+    );
+    expect(router.state.location.pathname).toBe("/runs");
+    await waitFor(
+      () => {
+        expect(router.state.location.pathname).toBe("/runs/a1b2c3d4");
+      },
+      { timeout: 4000 },
+    );
   });
 
   it("starts the run with typed inputs and opens it", async () => {
@@ -131,6 +161,36 @@ describe("StartRun", () => {
 
     expect(within(dialog).getByRole("button", { name: "Start run" })).toBeDisabled();
     expect(within(dialog).getByText("tries must be a whole number.")).toBeInTheDocument();
+  });
+
+  it("keeps the start off while an integer input is beyond a safe whole number", async () => {
+    renderStart();
+    const dialog = await openDialog();
+    await chooseFix(dialog);
+    await userEvent.type(within(dialog).getByRole("textbox", { name: /^issue/ }), "DEM-7");
+    const tries = within(dialog).getByRole("spinbutton", { name: /^tries/ });
+
+    await userEvent.clear(tries);
+    await userEvent.type(tries, "9007199254740993");
+
+    expect(within(dialog).getByRole("button", { name: "Start run" })).toBeDisabled();
+    expect(
+      within(dialog).getByText("tries must be a whole number up to 2^53."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps every field off while the start is sent", async () => {
+    renderStart({ [START]: "pending" });
+    const dialog = await openDialog();
+    await chooseFix(dialog);
+    await userEvent.type(within(dialog).getByRole("textbox", { name: /^issue/ }), "DEM-7");
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start run" }));
+
+    await within(dialog).findByText("Starting the run…");
+    expect(within(dialog).getByRole("textbox", { name: /^issue/ })).toBeDisabled();
+    expect(within(dialog).getByRole("checkbox", { name: /^strict/ })).toBeDisabled();
+    expect(dialog).toHaveFocus();
   });
 
   it("shows the API's reason and keeps the dialog when the start is refused", async () => {

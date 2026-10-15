@@ -75,6 +75,8 @@ function useRunCommand(runId: string) {
     onSettled: () => {
       void client.invalidateQueries({ queryKey: apiKey("/api/v1/workflow-runs/{run_id}", path) });
       void client.invalidateQueries({ queryKey: apiKey("/api/v1/workflow-runs") });
+      // A cancel or abandon closes the run's open gates.
+      void client.invalidateQueries({ queryKey: apiKey("/api/v1/approvals") });
     },
   });
 }
