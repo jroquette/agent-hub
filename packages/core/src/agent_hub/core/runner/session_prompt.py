@@ -72,7 +72,7 @@ _STEPS = """You are implementing issue {issue} in this worktree ({repo}, branch 
 1. The issue is at the end of this message. Read it and the repo's AGENTS.md. Follow its conventions
    and definition of done. If the issue references a plan or spec under {hub_name}/brain/features/
    (readable at {hub}/brain/features/), read it fully and implement exactly the tasks listed for
-   this slice, in order. If the issue {sensitive}has an open question, STOP and reply
+   this slice, in order. If the issue {sensitive} an open question, STOP and reply
    `BLOCKED: <reason>` without editing anything.
 2. TDD: write the failing test first when behaviour changes; then the smallest change that makes it
    pass. Never weaken or delete an existing assertion.
@@ -108,10 +108,13 @@ def implementing_prompt(
     blank: the repo has none, and step 3 names ``full_gate``, its ``check``, instead); ``prefix``
     the issue prefix (``DEM-``); ``commit_title`` the repo's effective commit title pattern.
     """
-    guarded = (
-        f"touches a file matching {', '.join(sensitive)} (needs an approved plan) or "
-        if sensitive
-        else ""
+    parts = prompt_parts(
+        sensitive=sensitive,
+        fast_gate=fast_gate,
+        full_gate=full_gate,
+        issue_id=issue.id,
+        prefix=prefix,
+        commit_title=commit_title,
     )
     steps = _STEPS.format(
         issue=issue.id,
@@ -119,12 +122,37 @@ def implementing_prompt(
         branch=branch,
         hub=hub,
         hub_name=hub_name,
-        sensitive=guarded,
-        gate_step=_gate_step(fast_gate, full_gate),
-        commit_shape=_commit_shape(commit_title, issue_id=issue.id, prefix=prefix),
+        sensitive=parts["guard"],
+        gate_step=parts["gate_step"],
+        commit_shape=parts["commit_shape"],
         verdict=_VERDICT_SHAPE,
     )
     return f"{steps}\n{issue_block(issue)}\n\n{ISSUE_END}\n"
+
+
+def prompt_parts(
+    *,
+    sensitive: Sequence[str],
+    fast_gate: str | None,
+    full_gate: str,
+    issue_id: str,
+    prefix: str,
+    commit_title: str = DEFAULT_COMMIT_TITLE,
+) -> dict[str, str]:
+    """The steps' texts that depend on the hub and the repo: ``guard`` (step 1's verb before
+    "an open question", naming the sensitive paths when there are any), ``gate_step`` (step 3)
+    and ``commit_shape`` (step 4). ``hub step worktree`` prints them for the issue-to-pr
+    workflow's prompt."""
+    guard = (
+        f"touches a file matching {', '.join(sensitive)} (needs an approved plan) or has"
+        if sensitive
+        else "has"
+    )
+    return {
+        "guard": guard,
+        "gate_step": _gate_step(fast_gate, full_gate),
+        "commit_shape": _commit_shape(commit_title, issue_id=issue_id, prefix=prefix),
+    }
 
 
 def _gate_step(fast_gate: str | None, full_gate: str) -> str:
