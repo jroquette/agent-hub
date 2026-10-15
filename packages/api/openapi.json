@@ -2197,6 +2197,105 @@
           }
         ]
       },
+      "GateChoice": {
+        "additionalProperties": false,
+        "description": "A decision or option a person may pick, with its label.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "GateChoice",
+        "type": "object"
+      },
+      "GateDecided": {
+        "additionalProperties": false,
+        "description": "What a decision did: the gate's approval, its run and project, and the answer's id.",
+        "properties": {
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "run_id",
+          "project",
+          "decision"
+        ],
+        "title": "GateDecided",
+        "type": "object"
+      },
+      "GateDecisionRequest": {
+        "additionalProperties": false,
+        "description": "The body of ``POST /approvals/{id}/decision``: a decision or option id and/or a text.",
+        "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "title": "GateDecisionRequest",
+        "type": "object"
+      },
+      "GateForm": {
+        "enum": [
+          "decision",
+          "choice",
+          "text",
+          "timer"
+        ],
+        "type": "string"
+      },
       "GoldenPath": {
         "additionalProperties": false,
         "description": "The feature's steps in their fixed order; ``phase`` is the first step neither done nor\nskipped (``shipped`` when all are).",
@@ -7356,6 +7455,14 @@
         "title": "SummaryLine",
         "type": "object"
       },
+      "TextUse": {
+        "enum": [
+          "off",
+          "optional",
+          "required"
+        ],
+        "type": "string"
+      },
       "TicketEdge": {
         "additionalProperties": false,
         "description": "A \"blocked by\" edge to the ticket ``ref`` (a row's ``ref`` or an external issue id).",
@@ -8239,6 +8346,62 @@
           "document"
         ],
         "title": "WorkflowDetail",
+        "type": "object"
+      },
+      "WorkflowGate": {
+        "additionalProperties": false,
+        "description": "An open gate a person answers: where it is and what answers it.",
+        "properties": {
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "choices": {
+            "items": {
+              "$ref": "#/components/schemas/GateChoice"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "form": {
+            "$ref": "#/components/schemas/GateForm"
+          },
+          "node": {
+            "title": "Node",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "text": {
+            "$ref": "#/components/schemas/TextUse"
+          },
+          "workflow": {
+            "title": "Workflow",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "run_id",
+          "project",
+          "workflow",
+          "node",
+          "attempt",
+          "form",
+          "choices",
+          "text"
+        ],
+        "title": "WorkflowGate",
         "type": "object"
       },
       "WorkflowNodeView": {
@@ -9980,6 +10143,126 @@
           }
         },
         "summary": "Get Approval",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/{approval_id}/decision": {
+      "post": {
+        "description": "Record a person's answer to an open workflow gate, then resume its run; its events tell\nthe rest.",
+        "operationId": "decide_gate_api_v1_approvals__approval_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GateDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GateDecided"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Decide Gate",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/{approval_id}/gate": {
+      "get": {
+        "description": "What answers an open workflow gate: its decisions or options and whether it takes text.",
+        "operationId": "get_gate_api_v1_approvals__approval_id__gate_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowGate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Gate",
         "tags": [
           "approvals"
         ]

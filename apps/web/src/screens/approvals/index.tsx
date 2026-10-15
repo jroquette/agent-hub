@@ -35,7 +35,14 @@ import {
   waitedSeconds,
   waitText,
 } from "./model";
-import { useApproval, useApprovals, type Approval, type ApprovalKind } from "./queries";
+import { GateDecision } from "./GateDecision";
+import {
+  isWorkflowGate,
+  useApproval,
+  useApprovals,
+  type Approval,
+  type ApprovalKind,
+} from "./queries";
 
 function KindChip({ kind }: { kind: ApprovalKind }) {
   return (
@@ -335,7 +342,16 @@ function Detail({ item }: { item: Approval }) {
           </div>
         )}
       </div>
-      {open && (
+      {open && isWorkflowGate(item) && (
+        <div className="ah-approval-foot">
+          <div className="ah-approve-hint ah-grow">
+            <Icon name="workflow" size="sm" style={{ marginTop: 2 }} />
+            <span>Deciding here records your answer and resumes the run.</span>
+          </div>
+          <GateDecision approvalId={item.id} />
+        </div>
+      )}
+      {open && !isWorkflowGate(item) && (
         <div className="ah-approval-foot">
           <div className="ah-approve-hint ah-grow">
             <Icon name="square-terminal" size="sm" style={{ marginTop: 2 }} />
