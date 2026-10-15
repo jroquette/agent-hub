@@ -339,3 +339,33 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
     expect(top.value).toBe(1984);
   });
 });
+
+describe("Transcript (sending-feedback)", () => {
+  it("shows a sent message as Sending… and a queued one with when Claude reads it", () => {
+    show([
+      { type: "record", record: aLogRecord("user.message", { seq: 1 }) },
+      { type: "record", record: aLogRecord("user.message", { seq: 2, body: { text: "Also" } }) },
+      { type: "sending", key: "s-1", text: "One more" },
+    ]);
+
+    const sending = screen.getByText("One more").closest(".as-msg");
+    expect(sending).toHaveTextContent("Sending…");
+    expect(screen.getByText("Also").closest(".as-msg")).toHaveTextContent(
+      "Queued: Claude reads it after this turn",
+    );
+    expect(screen.getByText("Run the tests.").closest(".as-msg")).not.toHaveTextContent("Queued");
+  });
+
+  it("keeps a Sending… bubble out of the live log, just after it (a11y)", () => {
+    show([
+      { type: "record", record: aLogRecord("user.message", { seq: 1 }) },
+      { type: "sending", key: "s-1", text: "One more" },
+    ]);
+
+    const log = screen.getByRole("log", { name: "Conversation" });
+    const sending = screen.getByText("One more");
+    expect(log).not.toContainElement(sending);
+    expect(log.compareDocumentPosition(sending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(log).getByText("Run the tests.")).toBeInTheDocument();
+  });
+});
