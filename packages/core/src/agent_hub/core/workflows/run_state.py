@@ -31,14 +31,26 @@ class NodeEnd:
 
 
 @dataclass(frozen=True)
+class HeldGroup:
+    """A ``loop_group`` paused inside an iteration: its attempt, that iteration, the results of
+    the iteration before (``$LOOP_PREV``) and the body nodes this one already ended."""
+
+    attempt: int
+    iteration: int
+    previous: Mapping[str, NodeResult] = field(default_factory=dict)
+    current: Mapping[str, NodeResult] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class RunState:
     """What a run leaves for its resume: each node's result, its attempts, agent sessions and
-    the gates it paused on."""
+    the gates it paused on, with the groups paused around one."""
 
     nodes: Mapping[str, NodeResult] = field(default_factory=dict)
     attempts: Mapping[str, int] = field(default_factory=dict)
     sessions: Mapping[str, str] = field(default_factory=dict)
     gates: Mapping[str, OpenGate] = field(default_factory=dict)
+    groups: Mapping[str, HeldGroup] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

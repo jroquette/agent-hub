@@ -57,6 +57,7 @@ from agent_hub.cli.workflow_runs import (
     append_record,
     drop_torn_tail,
     ends_of,
+    held_record,
     make_run,
     prior_state,
     read_records,
@@ -350,6 +351,7 @@ def _execute(
     report = run_workflow(plan, inputs, ports, prior=prior)
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
     if report.status == "paused":
+        append_record(folder, held_record(report.state))
         gate = report.state.gates.get(report.reason or "")
         due = "" if gate is None or gate.due is None else f" until {gate.due.isoformat()}"
         typer.echo(f"run {folder.name}: paused at {report.reason}{due}")

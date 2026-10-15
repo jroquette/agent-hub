@@ -45,7 +45,7 @@ from agent_hub.core.workflows.includes import IncludeResolver
 from agent_hub.core.workflows.nodes import AgentNode, LoopNode, ScriptNode
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import GateRequest, RunEnd, StepEnd, StepStart
-from agent_hub.core.workflows.run_state import RunState
+from agent_hub.core.workflows.run_state import HeldGroup, RunState
 from agent_hub.core.workflows.substitution import NodeResult
 from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, resolve_pack_file
 
@@ -238,10 +238,13 @@ def prior_state(records: list[Record]) -> RunState:
     attempts: dict[str, int] = {}
     sessions: dict[str, str] = {}
     gates: dict[str, OpenGate] = {}
+    groups: dict[str, HeldGroup] = {}
     for record in records:
         node, event = record.get("node"), record.get("event")
         if event == "sessions" and isinstance(given := record.get("sessions"), dict):
             sessions = {key: value for key, value in given.items() if isinstance(value, str)}
+        if event == "held" and isinstance(held := record.get("groups"), dict):
+            groups = {key: group for key, value in held.items() if (group := _held(value))}
         if not isinstance(node, str) or not isinstance(attempt := record.get("attempt"), int):
             continue
         attempts[node] = max(attempts.get(node, 0), attempt)
@@ -249,11 +252,51 @@ def prior_state(records: list[Record]) -> RunState:
             gates[node] = OpenGate(attempt, _instant(record.get("due")))
         elif event == "step_end":
             gates.pop(node, None)
+            groups.pop(node, None)
         state = _STATES.get(str(record.get("status")))
         if event == "step_end" and state and record.get("skip_cause") != "prior_success":
             output = record.get("output") if state == "completed" else None
             nodes[node] = NodeResult(state, output)  # type: ignore[arg-type]
-    return RunState(nodes, attempts, sessions, gates)
+    return RunState(nodes, attempts, sessions, gates, groups)
+
+
+def held_record(state: RunState) -> Record:
+    """The ``held`` record of a paused run: each group paused inside an iteration."""
+    groups: dict[str, JsonValue] = {
+        group_id: {
+            "attempt": held.attempt,
+            "iteration": held.iteration,
+            "previous": _results(held.previous),
+            "current": _results(held.current),
+        }
+        for group_id, held in state.groups.items()
+    }
+    return {"event": "held", "groups": groups}
+
+
+def _results(results: Mapping[str, NodeResult]) -> JsonValue:
+    return {
+        node: {"state": result.state, "output": result.output} for node, result in results.items()
+    }
+
+
+def _held(value: JsonValue) -> HeldGroup | None:
+    if not isinstance(value, dict):
+        return None
+    attempt, iteration = value.get("attempt"), value.get("iteration")
+    if not isinstance(attempt, int) or not isinstance(iteration, int):
+        return None
+    return HeldGroup(
+        attempt, iteration, _parsed(value.get("previous")), _parsed(value.get("current"))
+    )
+
+
+def _parsed(value: JsonValue) -> dict[str, NodeResult]:
+    results: dict[str, NodeResult] = {}
+    for node, result in (value if isinstance(value, dict) else {}).items():
+        if isinstance(result, dict) and result.get("state") in _STATES.values():
+            results[node] = NodeResult(result["state"], result.get("output"))  # type: ignore[arg-type]
+    return results
 
 
 def _instant(value: JsonValue) -> datetime | None:
