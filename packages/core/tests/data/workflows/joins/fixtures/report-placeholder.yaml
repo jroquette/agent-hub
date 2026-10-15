@@ -1,0 +1,9 @@
+# No stub for the all_done report: it gets a placeholder that fits its output_format, which
+# never sets the outcome.
+workflow: joins
+stubs:
+  lint: {fail: exec_failed}
+  test: {fail: exec_failed}
+expect: {status: failed, outcome: null}
+failed: [lint, test]
+reached: [lint, test, report]

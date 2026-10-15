@@ -1,0 +1,6 @@
+# number 0 reaches the halt: the run ends cancelled and nothing after it runs.
+workflow: contracts
+stubs:
+  open-pr: {output: {url: "https://example.test/pr/0", number: 0}}
+expect: {status: cancelled}
+reached: [open-pr, no-pr]
