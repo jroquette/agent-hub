@@ -75,7 +75,9 @@ nodes:
     type: shell
     description: The session's reply read as hub run reads it - done, or blocked with a question.
     depends_on: [implement]
-    command: [hub, step, verdict, --, $implement.output]
+    command: [hub, step, verdict]
+    # On stdin: a reply may be longer than one argument holds, or hold NUL.
+    stdin: $implement.output
     retry: {max_attempts: 0}
     output_format:
       type: object
@@ -104,15 +106,18 @@ nodes:
   - id: verify
     type: shell
     description: >-
-      The repo's gate (its check) on the commits, without the GitHub tokens; its stdout then its
-      stderr go to stderr, so a failure's detail reads as hub run's.
+      The repo's gate (its check) on the commits, without the GitHub tokens and without positional
+      parameters; its stdout, then the last 64 KiB of its stderr, go to stderr, so a failure's
+      detail reads as hub run's; the exit is the gate's.
     depends_on: [commits]
     when: "$commits.output.count > 0 && $commits.output.dirty == false"
     cwd: $worktree.output.path
     command:
       - bash
       - -c
-      - '{ e=$(eval "$1" 2>&1 1>&3 3>&-); c=$?; } 3>&2; printf %s "$e" >&2; exit $c'
+      - >-
+        c=$1; shift; { e=$(eval "$c" 2>&1 1>&3 3>&- | tail -c 65536; exit "${PIPESTATUS[0]}");
+        s=$?; } 3>&2; printf %s "$e" >&2; exit $s
       - bash
       - $worktree.output.check
     retry: {max_attempts: 0}
