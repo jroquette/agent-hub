@@ -1,14 +1,34 @@
-# Delivered: the session asks for a second turn, then commits; the gate passes and the PR opens.
+# Delivered: the session commits; the gate passes and the PR opens.
 workflow: issue-to-pr
 inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
 stubs:
-  worktree: {output: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk, hub: /ws/hub, hub_name: hub, check: make check, prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}}}
-  implement:
-    - {output: {done: false}}
-    - {output: {done: true, status: done, summary: Adds the change., tests: make check-fast}}
-  commits: {output: {count: 1, subjects: ["feat(api): change (DEM-1)"], summary: Adds the change.}}
-  verify: {text: ok}
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target:
+        path: /ws/demo-api/.claude/worktrees/dem-1
+        branch: jdoe/dem-1
+        base: origin/trunk
+        default_branch: trunk
+        github: acme/demo-api
+        gate: make check
+        conventions:
+          branch: "{prefix}{issue_lower}"
+          commit_title: "{type}({scope}): {summary} ({ISSUE})"
+          pr_title: "{type}({scope}): {summary} ({ISSUE})"
+          titles_configured: false
+          pr_title_explicit: false
+  implement: {text: "Done.\n{\"status\": \"done\", \"summary\": \"Adds the change.\"}"}
+  verdict: {output: {status: done, summary: Adds the change., question: ""}}
+  commits: {output: {count: 1, subjects: ["feat(api): change (DEM-1)"], summary: Adds the change., dirty: false}}
+  verify: {text: ""}
   pr: {output: {url: "https://github.com/acme/demo-api/pull/99", found: false, summary: Adds the change., title_unmatched: null}}
   report: {output: {delivery: delivered, stage: "", reason: "", question: "", pr: "https://github.com/acme/demo-api/pull/99", summary: Adds the change.}}
 expect: {status: done, outcome: delivered}
-reached: [worktree, implement, commits, verify, pr, report]
+reached: [worktree, implement, verdict, commits, verify, pr, report]
