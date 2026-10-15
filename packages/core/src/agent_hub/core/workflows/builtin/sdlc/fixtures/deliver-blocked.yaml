@@ -1,5 +1,5 @@
 # The session is blocked on an open question: the rounds end at once, with no check or review;
-# no PR opens and the delivery is blocked with the question.
+# no PR opens (the branch's commit is not shipped) and the delivery is blocked with the question.
 workflow: deliver
 inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
 stubs:
@@ -15,7 +15,7 @@ stubs:
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   rounds__implement: {text: "BLOCKED: which endpoint?"}
   rounds__verdict: {output: {status: blocked, summary: "", question: "which endpoint?"}}
-  commits: {output: {count: 0, subjects: [], summary: "", dirty: false}}
+  commits: {output: {count: 1, subjects: ["feat(api): start (DEM-1)"], summary: Starts the change., dirty: false}}
   report: {output: {delivery: blocked, stage: implementing, reason: "the implementing session stopped: which endpoint?", question: "which endpoint?", pr: "", summary: ""}}
 expect: {status: done, outcome: blocked}
 reached: [worktree, rounds, rounds__implement, rounds__verdict, commits, report]
