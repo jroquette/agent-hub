@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 
 import { cx } from "../lib/cx";
 import { fmtDuration } from "../lib/format";
-import { Button, IconButton, AppLink, PathText, copyText, useCopied } from "./core";
+import { IconButton, AppLink, PathText, CopyButton, copyText } from "./core";
 import { Icon, type IconName } from "./Icon";
 import { DerivedLabel, ExpiredContent, RedactionChip } from "./status";
 
@@ -16,7 +16,6 @@ export interface CodeBlockProps {
   wrap?: boolean | undefined;
 }
 export function CodeBlock({ code, prompt = "$", label, noCopy, wrap }: CodeBlockProps) {
-  const [copied, markCopied] = useCopied();
   return (
     <div className="ah-code" role={label ? "group" : undefined} aria-label={label}>
       {prompt && <span className="ah-code-prompt">{prompt}</span>}
@@ -24,20 +23,7 @@ export function CodeBlock({ code, prompt = "$", label, noCopy, wrap }: CodeBlock
       <pre style={wrap ? { whiteSpace: "pre-wrap" } : undefined} tabIndex={wrap ? undefined : 0}>
         {code}
       </pre>
-      {!noCopy && (
-        <Button
-          size="sm"
-          variant="ghost"
-          icon={copied ? "check" : "copy"}
-          onClick={() => {
-            copyText(code);
-            markCopied();
-          }}
-          aria-label={copied ? "Copied" : "Copy command"}
-        >
-          {copied ? "Copied" : "Copy"}
-        </Button>
-      )}
+      {!noCopy && <CopyButton text={code} label="Copy command" />}
     </div>
   );
 }

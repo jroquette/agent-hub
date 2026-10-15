@@ -104,6 +104,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Chat tool cards read running, waiting for you, done, error or denied (icon and text), with a call's permission card
   right under it; output over 10,000 characters is cut with "Show all (N characters)", consecutive calls group as
   "Explored · 3 Read, 2 Grep" (open while one waits for you or failed), and thinking reads "Thought for N s" (AGH-240).
+- Chat messages show when they were written ("3 min ago", the full date and time on hover) and a Copy button for
+  their raw Markdown, on hover or focus (always on touch screens); Markdown code blocks show their language and a Copy
+  button, and wide tables scroll sideways in their own region (AGH-241).
 
 ### Fixed
 
