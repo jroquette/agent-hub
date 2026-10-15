@@ -368,6 +368,62 @@ def test_shows_ten_names_then_a_count_when_the_cycle_is_long() -> None:
     assert message == f"a cycle runs through the nodes {names} and 2 more"
 
 
+GATE = {"id": "ok", "type": "approval", "message": "Ship?"}
+
+
+@pytest.mark.parametrize(
+    ("nodes", "key"),
+    [
+        (
+            (
+                shell("a"),
+                GATE | {"depends_on": ["a"]},
+                {"id": "nap", "type": "wait", "duration": "1h", "depends_on": ["a"]},
+            ),
+            "nodes[2]",
+        ),
+        (
+            (
+                {
+                    "id": "g",
+                    "type": "loop_group",
+                    "max_iterations": 2,
+                    "until_when": "$ok.output.decision == 'approve'",
+                    "nodes": [GATE],
+                },
+                {"id": "nap", "type": "wait", "duration": "1h"},
+            ),
+            "nodes[1]",
+        ),
+        (
+            (
+                {
+                    "id": "g",
+                    "type": "loop_group",
+                    "max_iterations": 2,
+                    "until_when": "$ok.output.decision == 'approve'",
+                    "nodes": [GATE, {"id": "ask", "type": "wait", "attention": "Why?"}],
+                },
+            ),
+            "nodes[0].nodes[1]",
+        ),
+    ],
+)
+def test_refuses_two_suspendable_nodes_when_neither_is_upstream_of_the_other(
+    nodes: tuple[dict[str, object], ...], key: str
+) -> None:
+    [(found, message)] = problems_of(*nodes)
+
+    assert found == key
+    assert "no order between" in message
+
+
+def test_accepts_two_suspendable_nodes_when_one_depends_on_the_other() -> None:
+    nap = {"id": "nap", "type": "wait", "duration": "1h", "depends_on": ["ok"]}
+
+    assert plan_of(GATE, nap).layers == (("ok",), ("nap",))
+
+
 def test_refuses_reference_when_agent_cwd_names_unknown_node() -> None:
     node = {"id": "a", "type": "loop", "prompt": "Go.", "max_iterations": 1, "until": "DONE"}
 

@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Profiler } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -39,6 +39,14 @@ function routes(overrides: ApiRoutes = {}): ApiRoutes {
     ...overrides,
   };
 }
+
+// The composer keeps drafts in this browser (and saves one on unmount): no test sees another's.
+beforeEach(() => {
+  window.localStorage.clear();
+});
+afterEach(() => {
+  window.localStorage.clear();
+});
 
 /** Markdown renders (each one parses its source). */
 const parses = vi.hoisted(() => ({ count: 0 }));
@@ -548,6 +556,26 @@ describe("AgentSessionScreen (composer)", () => {
     });
   });
 
+  it("focuses the composer on open", async () => {
+    renderChat();
+
+    expect(await screen.findByRole("textbox", { name: "Message Claude" })).toHaveFocus();
+  });
+
+  it("leaves focus alone on open while a permission is pending", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          open_permission: aPermissionRequest({ request_id: "req-2", summary: "ls" }),
+        }),
+      }),
+    );
+
+    await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+    expect(screen.getByRole("textbox", { name: "Message Claude" })).not.toHaveFocus();
+  });
+
   it("interrupts with an empty JSON body only while a turn runs", async () => {
     const view = renderChat(
       routes({ [`POST ${SESSION}/interrupt`]: anAgentSession({ status: "idle" }) }),
@@ -634,6 +662,71 @@ describe("AgentSessionScreen (composer)", () => {
       "polite",
     );
     expect(await seriousViolations(view.container)).toEqual([]);
+  });
+});
+
+describe("AgentSessionScreen (sending-feedback)", () => {
+  it("shows Sending… until the echoed record, which reads Queued while the turn runs", async () => {
+    const view = renderChat(routes({ [`POST ${SESSION}/messages`]: { seq: 4 } }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "Also lint{Enter}");
+
+    const log = screen.getByRole("log", { name: "Conversation" });
+    const bubble = { selector: ".as-msg *" };
+    expect(within(log).queryByText("Also lint")).toBeNull();
+    expect(screen.getByText("Also lint", bubble).closest(".as-msg")).toHaveTextContent("Sending…");
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit(
+          "record.user.message",
+          aLogRecord("user.message", { seq: 4, body: { text: "Also lint" } }),
+          "4",
+        );
+    });
+    expect(screen.getAllByText("Also lint", bubble)).toHaveLength(1);
+    expect(screen.queryByText("Sending…", bubble)).toBeNull();
+    expect(within(log).getByText("Also lint").closest(".as-msg")).toHaveTextContent(
+      "Queued: Claude reads it after this turn",
+    );
+  });
+
+  it("shows a message once when its record arrives before the answer to its POST", async () => {
+    const view = renderChat(routes({ [`POST ${SESSION}/messages`]: "pending" }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "Also lint{Enter}");
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit(
+          "record.user.message",
+          aLogRecord("user.message", { seq: 4, body: { text: "Also lint" } }),
+          "4",
+        );
+    });
+
+    const bubbles = [...view.container.querySelectorAll(".as-msg")];
+    expect(bubbles.filter((bubble) => bubble.textContent.includes("Also lint"))).toHaveLength(1);
+    expect(bubbles.filter((bubble) => bubble.textContent.includes("Sending…"))).toEqual([]);
+  });
+
+  it("removes the Sending… bubble and keeps the text when the send fails", async () => {
+    renderChat(routes({ [`POST ${SESSION}/messages`]: aProblem({ status: 409, title: "Busy" }) }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "Also lint{Enter}");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Busy");
+    expect(screen.queryByText("Sending…")).toBeNull();
+    expect(box).toHaveValue("Also lint");
   });
 });
 
