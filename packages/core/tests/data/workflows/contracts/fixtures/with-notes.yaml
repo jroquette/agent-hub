@@ -1,0 +1,8 @@
+workflow: contracts
+stubs:
+  open-pr: {output: {url: "https://example.test/pr/101", number: 101}}
+  notes: {text: "release notes"}
+  comment: {text: commented}
+  report: {output: {merged: false}}
+expect: {status: done, outcome: false}
+reached: [open-pr, notes, comment, report]

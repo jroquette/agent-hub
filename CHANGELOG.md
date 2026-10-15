@@ -11,6 +11,17 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub workflow list` and `hub workflow validate [NAME]` load and plan the hub's `workflows/<pack>/` files (YAML through
+  the strict loader, or JSON), then the built-ins, against the graph workflow format (ADR 0032): unknown keys, unknown
+  or non-upstream node references, argv references that are not a whole element, cycles and a bad
+  `returns`/`outcome_field` are reported as `<file>:<line>: <key>: <message>`, exit 1 (AGH-218).
+- `hub workflow test [NAME]` dry-runs each pack's `fixtures/*.yaml` through the workflow engine with stubbed node
+  results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
+  `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
+  `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
+
 ### Changed
 
 - The chat of a session `hub web` drives is one fixed-height column: the header (title, status, cost, actions) and the
