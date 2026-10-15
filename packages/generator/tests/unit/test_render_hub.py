@@ -145,6 +145,26 @@ DESIGN_PATHS = (
     "workflows/issue-to-pr/fixtures/pr-failure.yaml",
     "workflows/issue-to-pr/issue-to-pr.yaml",
     "workflows/issue-to-pr/prompts/implement.md",
+    "workflows/sdlc/deliver.yaml",
+    "workflows/sdlc/fixtures/deliver-blocked.yaml",
+    "workflows/sdlc/fixtures/deliver-check-error.yaml",
+    "workflows/sdlc/fixtures/deliver-check-red.yaml",
+    "workflows/sdlc/fixtures/deliver-green.yaml",
+    "workflows/sdlc/fixtures/deliver-lens-failed.yaml",
+    "workflows/sdlc/fixtures/deliver-max-rounds.yaml",
+    "workflows/sdlc/fixtures/deliver-no-changes.yaml",
+    "workflows/sdlc/fixtures/deliver-pr-failure.yaml",
+    "workflows/sdlc/fixtures/deliver-rework.yaml",
+    "workflows/sdlc/fixtures/review-fail.yaml",
+    "workflows/sdlc/fixtures/review-lens-failed.yaml",
+    "workflows/sdlc/fixtures/review-pass.yaml",
+    "workflows/sdlc/prompts/implement.md",
+    "workflows/sdlc/prompts/quality-lens.md",
+    "workflows/sdlc/prompts/spec-lens.md",
+    "workflows/sdlc/review.yaml",
+    "workflows/sdlc/scripts/check.py",
+    "workflows/sdlc/scripts/feedback.py",
+    "workflows/sdlc/scripts/verdict.py",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
 # folder name.
@@ -749,6 +769,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
+        "workflows/sdlc/scripts",
     }
 
 
