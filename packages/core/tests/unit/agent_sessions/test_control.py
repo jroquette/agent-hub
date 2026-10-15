@@ -1,7 +1,7 @@
 import asyncio
 import threading
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from datetime import timedelta
 from typing import Unpack
 
@@ -52,9 +52,12 @@ from agent_hub.core.agent_sessions.limits import KIB, SessionLimits
 from agent_hub.core.agent_sessions.permission_policy import CLOSED_MESSAGE, TIMEOUT_MESSAGE
 from agent_hub.core.agent_sessions.records import LogRecord, StatusFrame
 from agent_hub.core.agent_sessions.store import AgentSessionFields
+from agent_hub.core.readmodels.event_read_models import FoldedEventReadModels
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL, Rig
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
+from agent_hub.core.testing.fakes import InMemoryEventStore
 from agent_hub.core.testing.session_driver_fakes import Hold, InMemorySessionDriver
+from agent_hub.core.testing.session_scenarios import a_session_events
 
 type MakeRig = Callable[..., Rig]
 
@@ -947,3 +950,88 @@ async def test_agrees_on_idle_when_running_write_slow_after_permission_timeout(
     assert store.get(session_id).status == AgentSessionStatus.IDLE
     assert (await rig.control.snapshot(session_id)).status == AgentSessionStatus.IDLE
     assert statuses == [AgentSessionStatus.RUNNING, AgentSessionStatus.IDLE]
+
+
+class ObservedSessions:
+    """The observed sessions' ids by project, as the session read models would know them."""
+
+    def __init__(self) -> None:
+        self.ids: set[tuple[str, str]] = set()
+        self.calls = 0
+
+    def observed(self, pairs: Iterable[tuple[str, str]]) -> frozenset[tuple[str, str]]:
+        self.calls += 1
+        return frozenset(pair for pair in pairs if pair in self.ids)
+
+
+class MarkCountingStore(InMemoryEventStore):
+    """An event store counting the high-water marks read (one per read-model snapshot)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.marks = 0
+
+    def high_water_mark(self) -> int:
+        self.marks += 1
+        return super().high_water_mark()
+
+
+async def test_fills_observed_session_id_when_twin_observed(make_rig: MakeRig) -> None:
+    observed = ObservedSessions()
+    rig = make_rig(observed_sessions=observed)
+    twin, alone = await rig.create(), await rig.create()
+    assert twin.claude_session_id is not None
+    observed.ids.add(("demo", twin.claude_session_id))
+
+    listed = {
+        item.id: item for item in (await rig.control.list_sessions(project=None, status=None)).items
+    }
+    live = await rig.control.snapshot(twin.id)
+    await rig.control.close(twin.id)
+    stored = await rig.control.snapshot(twin.id)
+
+    assert listed[twin.id].observed_session_id == twin.claude_session_id
+    assert listed[alone.id].observed_session_id is None
+    assert live.observed_session_id == twin.claude_session_id
+    assert stored.observed_session_id == twin.claude_session_id
+    assert (await rig.control.snapshot(alone.id)).observed_session_id is None
+
+
+async def test_leaves_observed_session_id_empty_when_no_lookup_given(
+    make_rig: MakeRig,
+) -> None:
+    rig = make_rig()
+    created = await rig.create()
+
+    assert (await rig.control.snapshot(created.id)).observed_session_id is None
+
+
+async def test_reads_one_snapshot_when_listing_twinned_sessions(make_rig: MakeRig) -> None:
+    events = MarkCountingStore()
+    read_models = FoldedEventReadModels(events, now=lambda: START + timedelta(hours=1))
+    rig = make_rig(observed_sessions=read_models)
+    created = [await rig.create() for _ in range(3)]
+    for session in created:
+        assert session.claude_session_id is not None
+        events.append(a_session_events(session.claude_session_id, start=START, ended=False))
+    # A first list folds the events (its fold reads the mark again); the next one is warm.
+    await rig.control.list_sessions(project=None, status=None)
+    events.marks = 0
+
+    listed = (await rig.control.list_sessions(project=None, status=None)).items
+
+    assert events.marks == 1
+    assert {item.observed_session_id for item in listed} == {
+        session.claude_session_id for session in created
+    }
+
+
+async def test_skips_twin_lookup_when_reading_log_page(make_rig: MakeRig) -> None:
+    observed = ObservedSessions()
+    rig = make_rig(observed_sessions=observed)
+    created = await rig.create()
+
+    page = await rig.control.events(created.id, after=0, limit=10)
+
+    assert observed.calls == 0
+    assert page.next_after is None

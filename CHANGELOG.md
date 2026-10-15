@@ -37,6 +37,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   worktree and the repo's target, the session's verdict, the branch's commits, the PR's url, the delivery), for the issue-to-pr
   workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
   tracker (AGH-223).
+- `GET /api/v1/sessions` and `GET /api/v1/sessions/{session_id}` carry the Live tile fields (`waiting_reason`,
+  `last_action`, `last_tool`, `needs_you_problem`, `failing_notice`, and `sparkline_60s` until the session ends), derived
+  by the same code as the Live tiles, so a sessions list can show what Live shows (AGH-236).
+- `GET /api/v1/agent-sessions` and `GET /api/v1/agent-sessions/{id}` carry `observed_session_id`, the observed
+  session's id once its twin has been observed, else `null`, so a list can show a driven session once (AGH-236).
 - The built-in `issue-to-pr` workflow (inputs `issue`, `repo`, `issue_text`) takes one issue to a PR as `hub run` does:
   `hub step worktree`, one implementing session in the worktree with `hub run`'s prompt, `hub step verdict`,
   `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's outcome;
@@ -45,6 +50,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   repo; shell and script nodes take an optional `stdin`, a literal or one whole reference written to the child (at
   most 1 MiB, as an agent's reply, `hub run`'s session cap), which carries the reply to `hub step verdict`; the dry
   run shows it (AGH-223).
+
+### Changed
+
+- The chat of a session `hub web` drives is one fixed-height column: the header (title, status, cost, actions) and the
+  composer stay on screen and only the transcript scrolls. It opens at the latest message, or at the oldest permission
+  still waiting, follows the reply while you are at the bottom, stops when you scroll up, and offers "Jump to latest ·
+  N new" (or End); Send brings you back to the bottom (AGH-237).
+- The chat streams smoothly: replies render once per frame with a caret, long transcripts open fast, a "Claude is
+  working · <tool>" row shows while a turn runs, Stop works while a permission waits, Esc in the empty composer stops
+  the turn, and "Turn interrupted" follows its result (AGH-238).
 
 ### Fixed
 
