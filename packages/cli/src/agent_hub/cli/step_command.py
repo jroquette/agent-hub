@@ -9,7 +9,7 @@ does, before the session, and prints the repo's facts as ``target`` (the worktre
 GitHub repo, gate and conventions); ``commits`` and ``pr`` take that object back as
 ``--target`` and never read ``hub.json`` again, which the session could have edited. A target
 whose path leaves the workspace is refused. ``verdict`` reads the session's reply as ``hub run``
-does (``session_outcome``).
+does (``session_outcome``), from stdin.
 
 Tokens are narrowed per call from the caller's environment, as in ``hub run``: git's reads, the
 worktree add and the repo's setup script get ``untrusted_env``; only the fetch, the push and
@@ -22,6 +22,7 @@ parent's (``hub workflow run``, ``hub run``).
 import json
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Final, NoReturn
@@ -44,7 +45,12 @@ from agent_hub.cli.pr_steps import (
 )
 from agent_hub.cli.run_children import CHILD_HIDDEN, RunChildren, push_env, untrusted_env, without
 from agent_hub.cli.run_command import refuse_usage
-from agent_hub.cli.run_steps import HOOKS_OFF, WORKTREE_GIT_TIMEOUT, bounded_child
+from agent_hub.cli.run_steps import (
+    HOOKS_OFF,
+    SESSION_OUTPUT_LIMIT,
+    WORKTREE_GIT_TIMEOUT,
+    bounded_child,
+)
 from agent_hub.cli.ship_steps import ship_child, step_timeouts
 from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
 from agent_hub.core.hub_config.conventions import EffectiveConventions
@@ -62,6 +68,8 @@ from agent_hub.core.runner.verdict import (
 COMMAND: Final = "step"
 NO_COMMIT: Final = "no commit on the branch (the session reported done or gave no verdict)"
 NO_PR: Final = "no PR was opened for the commits"
+# The most of a reply read: the session's output cap (``run_steps.SESSION_OUTPUT_LIMIT``).
+MAX_REPLY_BYTES: Final = SESSION_OUTPUT_LIMIT
 UNCOMMITTED: Final = "uncommitted changes in the worktree"
 TARGET_TEXTS: Final = ("branch", "base", "default_branch", "github", "gate")
 STOPPED: Final = "the implementing session stopped: "
@@ -132,8 +140,10 @@ def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
 
 
 @step_app.command("verdict")
-def verdict(reply: Annotated[str, typer.Argument(help="The session's final message.")]) -> None:
-    """Read the session's reply as hub run does: done, or blocked with its question."""
+def verdict() -> None:
+    """Read the session's reply on stdin as hub run does: done, or blocked with its question."""
+    # On stdin, not as an argument: a reply may be longer than one argument holds, or hold NUL.
+    reply = sys.stdin.buffer.read(MAX_REPLY_BYTES).decode(errors="replace")
     outcome = session_outcome(
         SessionReply(is_error=False, subtype=None, result=reply, cost_usd=0.0, turns=None)
     )
