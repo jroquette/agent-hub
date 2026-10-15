@@ -1,0 +1,8 @@
+# notes skips on its condition: the binding reads if_skipped and report still runs.
+workflow: contracts
+stubs:
+  open-pr: {output: {url: "https://example.test/pr/7", number: 7}}
+  comment: {text: commented}
+  report: {output: {merged: true}}
+expect: {status: done, outcome: true}
+reached: [open-pr, comment, report]
