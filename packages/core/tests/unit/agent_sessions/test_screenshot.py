@@ -31,7 +31,33 @@ def test_raises_too_large_when_decoded_over_limit() -> None:
         decode_screenshot(_screenshot(png), limit=len(png) - 1)
 
     assert (raised.value.size, raised.value.limit) == (len(png), len(png) - 1)
-    assert MAX_SCREENSHOT_BYTES == 5 * 1024 * 1024
+    assert MAX_SCREENSHOT_BYTES == 3_932_160
+
+
+def test_keeps_base64_within_api_image_limit_when_decoded_at_cap() -> None:
+    assert len(base64.b64encode(b"\x00" * MAX_SCREENSHOT_BYTES)) <= 5 * 1024 * 1024
+
+
+def test_accepts_screenshot_when_decoded_size_exactly_at_cap() -> None:
+    png = a_png_bytes()
+    at_cap = png + b"\x00" * (MAX_SCREENSHOT_BYTES - len(png))
+
+    image = decode_screenshot(_screenshot(at_cap))
+
+    assert len(image.data) == MAX_SCREENSHOT_BYTES
+
+
+def test_raises_too_large_when_decoded_size_one_byte_over_cap() -> None:
+    png = a_png_bytes()
+    over_cap = png + b"\x00" * (MAX_SCREENSHOT_BYTES + 1 - len(png))
+
+    with pytest.raises(ScreenshotTooLargeError) as raised:
+        decode_screenshot(_screenshot(over_cap))
+
+    assert (raised.value.size, raised.value.limit) == (
+        MAX_SCREENSHOT_BYTES + 1,
+        MAX_SCREENSHOT_BYTES,
+    )
 
 
 @pytest.mark.parametrize("data", ["not base64!", "iVBORw0KGgo", "aGk=\n", "aGk\u00e9"])

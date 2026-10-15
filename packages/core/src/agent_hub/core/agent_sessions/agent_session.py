@@ -6,6 +6,7 @@ redacted in the stored record). A cloud start is a row of the same table (``kind
 shown as a ``CloudSession``.
 """
 
+from collections.abc import Iterator
 from enum import StrEnum
 from typing import Annotated, Final, Literal
 
@@ -178,6 +179,12 @@ class Screenshot(ViewModel):
 
     media_type: Literal["image/png"]
     data: str = Field(min_length=1)
+
+    # The repr shows only the media type and the length: a log line or a traceback never
+    # prints the data.
+    def __repr_args__(self) -> Iterator[tuple[str, object]]:
+        yield "media_type", self.media_type
+        yield "chars", len(self.data)
 
 
 class CreateAgentSession(ViewModel):

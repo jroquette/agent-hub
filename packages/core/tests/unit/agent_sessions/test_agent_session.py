@@ -112,3 +112,18 @@ def test_accepts_screenshot_when_prompt_given() -> None:
     )
 
     assert request.screenshot == Screenshot(media_type="image/png", data=PNG_DATA)
+
+
+def test_shows_only_media_type_and_length_when_screenshot_repr_printed() -> None:
+    data = "iVBORw0KGgoSECRETPIXELS"
+    request = CreateAgentSession(
+        project="demo",
+        workdir_id=WORKDIR_ID,
+        prompt="What is on this screen?",
+        screenshot=Screenshot(media_type="image/png", data=data),
+    )
+
+    assert repr(request.screenshot) == f"Screenshot(media_type='image/png', chars={len(data)})"
+    for shown in (repr(request), str(request)):
+        assert data not in shown
+        assert "SECRET" not in shown
