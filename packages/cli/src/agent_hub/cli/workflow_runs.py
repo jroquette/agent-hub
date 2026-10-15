@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Event
-from typing import Final
+from typing import Final, get_args
 
 import typer
 
@@ -41,13 +41,13 @@ from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.document import WorkflowDocument, parse_workflow
 from agent_hub.core.workflows.events import WorkflowEvents
-from agent_hub.core.workflows.failures import RetryRecord
+from agent_hub.core.workflows.failures import FailureKind, RetryRecord
 from agent_hub.core.workflows.gates import GateAnswer, GateForm, OpenGate, gate_id
 from agent_hub.core.workflows.includes import IncludeResolver
 from agent_hub.core.workflows.nodes import AgentNode, LoopNode, ScriptNode
 from agent_hub.core.workflows.plan import WorkflowPlan
-from agent_hub.core.workflows.ports import GateRequest, RunEnd, StepEnd, StepStart
-from agent_hub.core.workflows.run_state import HeldGroup, RunState
+from agent_hub.core.workflows.ports import GateRequest, RunEnd, SkipCause, StepEnd, StepStart
+from agent_hub.core.workflows.run_state import HeldGroup, NodeEnd, RunState
 from agent_hub.core.workflows.substitution import NodeResult
 from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, resolve_pack_file
 
@@ -64,6 +64,8 @@ RUN_ID_PATTERN: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 UNAVAILABLE: Final = "hub workflow run: event store unavailable"
 _STATES: Final = {"ok": "completed", "failed": "failed", "skipped": "skipped"}
 _FORMS: Final = frozenset({"decision", "choice", "text", "timer"})
+_SKIP_CAUSES: Final = frozenset(get_args(SkipCause.__value__))
+_FAILURE_KINDS: Final = frozenset(get_args(FailureKind.__value__))
 
 type Record = dict[str, JsonValue]
 
@@ -270,7 +272,7 @@ def held_record(state: RunState) -> Record:
             "attempt": held.attempt,
             "iteration": held.iteration,
             "previous": _results(held.previous),
-            "current": _results(held.current),
+            "current": {node: _end(end) for node, end in held.current.items()},
         }
         for group_id, held in state.groups.items()
     }
@@ -283,14 +285,33 @@ def _results(results: Mapping[str, NodeResult]) -> JsonValue:
     }
 
 
+def _end(end: NodeEnd) -> JsonValue:
+    """A body node's end as the ``held`` record keeps it: result, failure kind, skip cause."""
+    record: dict[str, JsonValue] = {"state": end.result.state, "output": end.result.output}
+    optional = {"failure_kind": end.failure_kind, "skip_cause": end.cause, "origin": end.origin}
+    return record | {key: value for key, value in optional.items() if value is not None}
+
+
 def _held(value: JsonValue) -> HeldGroup | None:
     if not isinstance(value, dict):
         return None
     attempt, iteration = value.get("attempt"), value.get("iteration")
     if not isinstance(attempt, int) or not isinstance(iteration, int):
         return None
-    return HeldGroup(
-        attempt, iteration, _parsed(value.get("previous")), _parsed(value.get("current"))
+    given = value.get("current")
+    raw = given if isinstance(given, dict) else {}
+    ends = {node: NodeEnd(result, *_ending(raw[node])) for node, result in _parsed(raw).items()}
+    return HeldGroup(attempt, iteration, _parsed(value.get("previous")), ends)
+
+
+def _ending(value: JsonValue) -> tuple[SkipCause | None, str | None, FailureKind | None]:
+    """A held end's skip cause, origin and failure kind; an unknown value reads as none."""
+    given = value if isinstance(value, dict) else {}
+    cause, origin, kind = given.get("skip_cause"), given.get("origin"), given.get("failure_kind")
+    return (
+        cause if cause in _SKIP_CAUSES else None,  # type: ignore[return-value]
+        origin if isinstance(origin, str) else None,
+        kind if kind in _FAILURE_KINDS else None,
     )
 
 

@@ -33,12 +33,13 @@ class NodeEnd:
 @dataclass(frozen=True)
 class HeldGroup:
     """A ``loop_group`` paused inside an iteration: its attempt, that iteration, the results of
-    the iteration before (``$LOOP_PREV``) and the body nodes this one already ended."""
+    the iteration before (``$LOOP_PREV``) and how this one's body nodes already ended (kind and
+    cause included, so the group ends as it would have without the pause)."""
 
     attempt: int
     iteration: int
     previous: Mapping[str, NodeResult] = field(default_factory=dict)
-    current: Mapping[str, NodeResult] = field(default_factory=dict)
+    current: Mapping[str, NodeEnd] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
