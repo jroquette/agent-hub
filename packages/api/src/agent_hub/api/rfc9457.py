@@ -316,8 +316,8 @@ def _run_conflict_problem(error: RunConflictError) -> Problem:
 
 def _run_launch_problem(_: RunLaunchError) -> Problem:
     members: dict[str, JsonValue] = {"type": f"{WORKFLOW_RUN_PROBLEM_PREFIX}launch-failed"}
-    detail = "hub workflow run could not be started or did not finish; nothing was changed."
-    return Problem(502, "Could not run hub workflow run", detail, members)
+    detail = "The hub workflow command could not be started or did not finish; nothing was changed."
+    return Problem(502, "Could not run the hub workflow command", detail, members)
 
 
 def _resume_after_decision_problem(_: ResumeAfterDecisionError) -> Problem:
