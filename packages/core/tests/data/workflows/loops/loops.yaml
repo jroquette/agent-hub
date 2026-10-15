@@ -1,0 +1,23 @@
+version: 1
+name: loops
+description: An implement loop until a field says done, then a check loop until a command passes.
+revision: 1
+nodes:
+  - id: implement
+    type: loop
+    prompt: Implement the next step.
+    max_iterations: 3
+    until_field: done
+    output_format:
+      type: object
+      properties:
+        done: {type: boolean}
+      required: [done]
+  - id: polish
+    type: loop
+    prompt: Polish until the checks pass.
+    depends_on: [implement]
+    max_iterations: 5
+    until: POLISHED
+    until_bash: [make, check]
+    fresh_context: true

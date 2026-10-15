@@ -1,0 +1,11 @@
+workflow: joins
+stubs:
+  lint: {text: ok}
+  test: {text: ok}
+  all-green: {text: ok}
+  any-green: {text: ok}
+  none-red: {text: ok}
+  after-all-green: {text: ok}
+  report: {output: {delivery: delivered}}
+expect: {status: done, outcome: delivered}
+reached: [lint, test, all-green, any-green, none-red, after-all-green, report]
