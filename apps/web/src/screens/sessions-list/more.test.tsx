@@ -121,9 +121,15 @@ describe("SessionsListScreen controls", () => {
     expect(screen.queryAllByRole("columnheader", { name: "Repo" })).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
     expect(screen.getAllByRole("columnheader", { name: "Repo" }).length).toBeGreaterThan(0);
-    expect(await screen.findByText("Ended")).toBeInTheDocument();
-    expect(await screen.findByText("Waiting")).toBeInTheDocument();
-    expect(await screen.findByText("Idle")).toBeInTheDocument();
+    // Each section shows its own rows; a lookup inside one table stays cheap while others load.
+    for (const [section, badge] of [
+      ["Ended or failed", "Ended"],
+      ["Waiting", "Waiting"],
+      ["Idle", "Idle"],
+    ] as const) {
+      const table = await screen.findByRole("table", { name: `${section} sessions` });
+      expect(await within(table).findByText(badge)).toBeInTheDocument();
+    }
   });
 
   it("widens the period and shows all time from the empty states", async () => {
