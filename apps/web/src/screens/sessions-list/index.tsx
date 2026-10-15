@@ -47,7 +47,13 @@ import {
 } from "./filters";
 import { CloudSessions, DrivenBanner, NewSessionControl, useDriving } from "./DrivenControls";
 import { rowHref, withDriven } from "./drivenRows";
-import { useProjects, useSectionPages, useTileStreamInvalidation, type Session } from "./queries";
+import {
+  useAgentSessions,
+  useProjects,
+  useSectionPages,
+  useSectionRefresh,
+  type Session,
+} from "./queries";
 import { SECTIONS, placeDriven, sectionCount, sectionQueries, type SectionId } from "./sections";
 import { SessionSection, useCollapsed } from "./SessionSection";
 import { useScrollAnchor } from "./useScrollAnchor";
@@ -617,16 +623,25 @@ export function SessionsListScreen() {
   const queries = useMemo(() => sectionQueries(params, scope, anchor), [params, scope, anchor]);
   const sections = useSectionPages(queries);
   const [collapsed, toggleCollapsed] = useCollapsed();
-  useTileStreamInvalidation(
-    scope,
-    SECTIONS.filter((section) => queries[section.id] !== null).map((section) => ({
-      id: section.id,
-      collapsed: collapsed.has(section.id),
-      refetch: sections[section.id].refetch,
-    })),
-  );
+  // The same query as the driven rows' list: its poll also refreshes the sections (AC-234.9).
+  const agentsUpdatedAt = useAgentSessions(scope).dataUpdatedAt;
+  const askedIds = SECTIONS.map((section) => section.id).filter((id) => queries[id] !== null);
   const screenRef = useRef<HTMLDivElement>(null);
-  useScrollAnchor(screenRef);
+  const arm = useScrollAnchor(
+    screenRef,
+    Object.fromEntries(askedIds.map((id) => [id, sections[id].dataUpdatedAt])),
+  );
+  useSectionRefresh(
+    scope,
+    askedIds.map((id) => ({
+      id,
+      collapsed: collapsed.has(id),
+      fetching: sections[id].isFetching,
+      refetch: sections[id].refetch,
+    })),
+    agentsUpdatedAt,
+    arm,
+  );
   const projects = useProjects();
   const driving = useDriving(
     scope,

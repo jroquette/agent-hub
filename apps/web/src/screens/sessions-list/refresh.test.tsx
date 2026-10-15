@@ -27,14 +27,17 @@ const one = (n: number, status: "waiting" | "live" | "ended") =>
 /** `GET /sessions` answering from `data` as it is when asked, so a test can change it. */
 interface Data {
   current: ReturnType<typeof one>[];
-  /** The cursor every first page answers with. */
+  /** The cursor every first page answers with, and the page it opens. */
   next?: string;
+  more?: ReturnType<typeof one>[];
 }
 
 function routes(data: Data): ApiRoutes {
   return {
     [SESSIONS]: (request: Request) => {
-      const status = new URL(request.url).searchParams.get("status");
+      const url = new URL(request.url);
+      if (url.searchParams.get("cursor")) return aPage(data.more ?? []);
+      const status = url.searchParams.get("status");
       return aPage(
         data.current.filter((s) => s.status === status),
         { next_cursor: data.next ?? null },
@@ -100,7 +103,32 @@ function layOutRows(headers = false) {
 
 /** Lets a scroll's measurement (one per animation frame) run. */
 const nextFrame = () =>
-  act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  act(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      }),
+  );
+
+/** Holds the GETs `matches` picks until the returned release is called; others answer at once. */
+function hold(matches: (url: URL) => boolean): () => void {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const base = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!base) throw new Error("fetch is not stubbed");
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (matches(new URL(request.url))) await held;
+    return base(request);
+  });
+  return () => {
+    release();
+  };
+}
 
 /** Sends one stream change and lets the 2 s throttle pass at once. */
 async function change(source: FakeEventSource, type: string, data: unknown) {
@@ -180,6 +208,7 @@ describe("SessionsListScreen no-jump", () => {
         predicate: (query) => JSON.stringify(query.queryKey).includes("/api/v1/agent-sessions"),
       }),
     );
+    await act(() => vi.advanceTimersByTimeAsync(0)); // the poll's answer commits
     await act(() => vi.advanceTimersByTimeAsync(1_999));
     expect(statusesAsked(requests, before)).toEqual([]);
     await act(() => vi.advanceTimersByTimeAsync(1));
@@ -187,21 +216,9 @@ describe("SessionsListScreen no-jump", () => {
   });
 
   it("does not cancel a Load more in flight when a refetch is due", async () => {
-    const { stream } = render({ current: [one(3, "ended")], next: "e2" });
+    const { stream } = render({ current: [one(3, "ended")], next: "e2", more: [one(9, "ended")] });
     await screen.findByText("/s3");
-    let release = () => undefined as void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const base = vi.mocked(globalThis.fetch).getMockImplementation();
-    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
-      const request = input instanceof Request ? input : new Request(input, init);
-      if (new URL(request.url).searchParams.get("cursor") !== "e2") return base!(request);
-      await held;
-      return new Response(JSON.stringify(aPage([one(9, "ended")])), {
-        headers: { "content-type": "application/json" },
-      });
-    });
+    const release = hold((url) => url.searchParams.get("cursor") === "e2");
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     await change(stream(STREAM), "tile.upsert", { id: anId(3), group: "ended_recently" });
     release();
@@ -357,6 +374,27 @@ describe("SessionsListScreen no-jump", () => {
     });
 
     expect(scroller.scrollTop).toBe(ROW + 10); // /s4 kept its offset; /s3 moved down
+  });
+
+  it("holds focus on the old header until the moved row arrives in its new section", async () => {
+    const data = { current: [one(1, "live"), one(2, "live"), one(3, "ended")] };
+    const { stream } = render(data);
+    await screen.findByText("/s1");
+    (screen.getByText("/s1").closest("tr") as HTMLElement).focus();
+    const release = hold((url) => url.searchParams.get("status") === "ended");
+
+    data.current = [one(2, "live"), one(3, "ended"), one(1, "ended")];
+    await change(stream(STREAM), "tile.upsert", { id: anId(1), group: "ended_recently" });
+    await waitFor(() => {
+      expect(screen.queryByText("/s1")).toBeNull(); // Live answered; Ended has not yet
+    });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Live/ }));
+
+    release();
+    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(within(ended).getByText("/s1").closest("tr"));
+    });
   });
 
   it("does not move focus to a header far from the viewport", async () => {
