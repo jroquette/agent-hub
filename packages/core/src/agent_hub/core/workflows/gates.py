@@ -29,7 +29,13 @@ from agent_hub.core.workflows.nodes import (
     WaitNode,
     duration_seconds,
 )
-from agent_hub.core.workflows.substitution import NodeRef, SubstitutionError, echo, find_refs
+from agent_hub.core.workflows.substitution import (
+    LoopPrevRef,
+    NodeRef,
+    SubstitutionError,
+    echo,
+    find_refs,
+)
 
 type GateKind = Literal["approval", "wait"]
 type GateForm = Literal["decision", "choice", "text", "timer"]
@@ -122,13 +128,13 @@ def wait_due(node: GateNode, rendered: str, now: datetime) -> datetime | None:
 
 def reject_cancels(node: GateNode, nodes: Sequence[Node]) -> bool:
     """Whether a ``reject`` of ``node`` cancels the run: an approval with the default decisions
-    whose decision no ``when:`` or ``until_when`` reads."""
+    whose decision no ``when:`` or ``until_when`` reads (``$<gate>`` or ``$LOOP_PREV.<gate>``)."""
     if not isinstance(node, ApprovalNode) or "decisions" in node.model_fields_set:
         return False
-    wanted = NodeRef(node.id, ("decision",))
+    wanted = {NodeRef(node.id, ("decision",)), LoopPrevRef(node.id, ("decision",))}
     for other in nodes:
         for text in (other.when, getattr(other, "until_when", None)):
-            if isinstance(text, str) and wanted in _refs(text):
+            if isinstance(text, str) and wanted.intersection(_refs(text)):
                 return False
     return True
 

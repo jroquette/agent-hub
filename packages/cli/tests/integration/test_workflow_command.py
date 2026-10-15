@@ -630,6 +630,26 @@ def test_reworks_the_iteration_when_a_body_approval_is_rejected_then_approved(
     assert [(r["attempt"], r["status"]) for r in group] == [(1, "ok")]
 
 
+def test_fails_the_group_with_the_body_kind_when_a_paused_iteration_resumes(
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_MAKE_EXIT", "1")
+    body = REWORK_YAML.replace("command: [make, check]", "command: [sh, -c, 'exit 0']")
+    body += "      - id: bad\n        type: shell\n        command: [make, check]\n"
+    write(sample.hub, "workflows/rework/rework.yaml", body)
+    paused = sample.run("rework", "--live", "--run-id", RUN_ID)
+    decision = {"event": "decision", "node": "g__ok", "attempt": 1, "choice": "approve"}
+    workflow_runs.append_record(run_path(sample), decision)
+
+    result = sample.run("--resume", RUN_ID)
+
+    assert paused.stdout.splitlines()[-1] == "run r1: paused at g__ok"
+    assert result.stdout.splitlines()[-1] == "run r1: failed"
+    assert [call["argv"] for call in sample.fakes.calls("make")] == [["check"]]
+    group = [r for r in sample.records() if r.get("node") == "g" and r["event"] == "step_end"]
+    assert [(r["status"], r["failure_kind"]) for r in group] == [("failed", "exec_failed")]
+
+
 def test_ignores_modules_planted_in_hub_when_hub_step_node_runs(sample: SampleRun) -> None:
     marker = sample.hub / "planted-ran"
     write(sample.hub, "typer/__init__.py", f"open({str(marker)!r}, 'w').close()\n")
