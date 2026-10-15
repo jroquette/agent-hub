@@ -150,6 +150,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   answer a focused tool card (`g a` still goes to Approvals and never allows), plain Alt+Enter still sends, Shift+Esc focuses the composer, ArrowUp in an empty composer recalls your last prompt, and a new
   permission card never takes focus from a composer holding text; the shortcut sheet has a Chat group, and the chat
   has no serious axe violation in any state (AGH-242).
+- Sessions groups its table into Waiting, Live, Idle and Ended or failed sections, each with its own count, table
+  and "Load more", and one shared sort applied within each section; a header button collapses a section (remembered
+  in this browser), empty sections are hidden, a section past 100 rows scrolls in its own window, a status facet
+  shows only its section, and the period now filters only Ended or failed (the count line says so), so a running
+  session older than the period still shows (AGH-243).
 
 ### Fixed
 
