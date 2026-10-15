@@ -14,8 +14,11 @@ Each recorder call also becomes events (``core.workflows.events``) appended thro
 stderr line, then the run goes on without events.
 """
 
+import contextlib
+import fcntl
 import hashlib
 import json
+import os
 import re
 import time
 from collections.abc import Callable, Iterator
@@ -39,12 +42,15 @@ from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import RunEnd, StepEnd, StepStart
 from agent_hub.core.workflows.run_state import RunState
 from agent_hub.core.workflows.substitution import NodeResult
-from agent_hub.generator.workflow_discovery import PackFolder, resolve_pack_file
+from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, resolve_pack_file
 
 RUNS_ROOT: Final = Path(".agent-runs", "workflows")
 SNAPSHOT: Final = "snapshot"
 DOCUMENT: Final = "workflow.json"
 RECORDS: Final = "records.jsonl"
+LOCK: Final = "lock"
+MAX_SNAPSHOT_FILE_BYTES: Final = 1 << 20
+MAX_RECORDS_BYTES: Final = 64 << 20
 RUN_ID_PATTERN: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 UNAVAILABLE: Final = "hub workflow run: event store unavailable"
 _STATES: Final = {"ok": "completed", "failed": "failed", "skipped": "skipped"}
@@ -60,26 +66,82 @@ def run_folder(hub: Path, run_id: str) -> Path:
     return hub / RUNS_ROOT / run_id
 
 
-def snapshot_run(
-    folder: Path, *, document: JsonValue, plan: WorkflowPlan, pack_root: Path
-) -> tuple[Path, str]:
-    """Make the run's folder and its snapshot; the snapshot's pack root and content hash."""
-    snapshot = folder / SNAPSHOT
+def make_run(folder: Path) -> None:
+    """Make the run's folder; refused when the run already exists."""
     try:
         folder.mkdir(parents=True)
     except FileExistsError:
         raise WorkflowRunError(f"the run {folder.name} already exists") from None
+    except OSError as error:
+        raise WorkflowRunError(f"cannot make the run {folder.name}: {error}") from None
+
+
+@contextlib.contextmanager
+def run_lock(folder: Path) -> Iterator[None]:
+    """Hold ``<run>/lock`` (an exclusive ``flock``) for the block; refused while another
+    process holds it. The lock file is opened without following a link."""
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        descriptor = os.open(folder / LOCK, flags, 0o600)
+    except OSError as error:
+        raise WorkflowRunError(f"cannot lock the run {folder.name}: {error}") from None
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise WorkflowRunError(
+                f"the run {folder.name} is in use by another hub workflow run"
+            ) from None
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def snapshot_run(
+    folder: Path, *, document: JsonValue, plan: WorkflowPlan, pack_root: Path
+) -> tuple[Path, str]:
+    """Write the run's snapshot; its pack root and content hash. Each pack file is read once
+    and at most ``MAX_SNAPSHOT_FILE_BYTES``."""
+    snapshot = folder / SNAPSHOT
     files = {DOCUMENT: json.dumps(document, sort_keys=True).encode()}
-    for pack_folder, relative in _pack_files(plan):
-        source = resolve_pack_file(pack_root, pack_folder, relative)
-        files[f"{pack_folder}/{relative}"] = source.read_bytes()
+    for pack_folder, relative in sorted(set(_pack_files(plan))):
+        name = f"{pack_folder}/{relative}"
+        try:
+            source = resolve_pack_file(pack_root, pack_folder, relative)
+            with source.open("rb") as file:
+                data = file.read(MAX_SNAPSHOT_FILE_BYTES + 1)
+        except (PackPathError, OSError) as error:
+            raise WorkflowRunError(f"cannot copy {name}: {error}") from None
+        if len(data) > MAX_SNAPSHOT_FILE_BYTES:
+            raise WorkflowRunError(f"{name} is larger than {MAX_SNAPSHOT_FILE_BYTES} bytes")
+        files[name] = data
+    try:
+        for name, data in files.items():
+            target = snapshot / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+    except OSError as error:
+        raise WorkflowRunError(f"cannot write the run's snapshot: {error}") from None
+    return snapshot, snapshot_hash(snapshot)
+
+
+def snapshot_hash(snapshot: Path) -> str:
+    """``sha256:`` over the snapshot's files in name order, each as ``<name>\\0<len>\\0<bytes>``;
+    a link in it is refused."""
     digest = hashlib.sha256()
-    for name in sorted(files):
-        target = snapshot / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(files[name])
-        digest.update(f"{name}\0{len(files[name])}\0".encode() + files[name])
-    return snapshot, f"sha256:{digest.hexdigest()}"
+    try:
+        paths = sorted(
+            path for path in snapshot.rglob("*") if path.is_symlink() or not path.is_dir()
+        )
+        for path in paths:
+            if path.is_symlink() or not path.is_file():
+                raise WorkflowRunError(f"the snapshot holds a link or a special file: {path.name}")
+            data = path.read_bytes()
+            name = path.relative_to(snapshot).as_posix()
+            digest.update(f"{name}\0{len(data)}\0".encode() + data)
+    except OSError as error:
+        raise WorkflowRunError(f"cannot read the run's snapshot: {error}") from None
+    return f"sha256:{digest.hexdigest()}"
 
 
 def _pack_files(plan: WorkflowPlan) -> Iterator[tuple[PackFolder, str]]:
@@ -91,11 +153,27 @@ def _pack_files(plan: WorkflowPlan) -> Iterator[tuple[PackFolder, str]]:
 
 
 def read_records(folder: Path) -> list[Record]:
+    """The run's records; a last line without its newline (a torn write) is left out. A file
+    past ``MAX_RECORDS_BYTES``, or a line that is not one JSON object, is refused."""
     try:
-        lines = (folder / RECORDS).read_text(encoding="utf-8").splitlines()
-        return [json.loads(line) for line in lines if line]
-    except (OSError, ValueError) as error:
+        with (folder / RECORDS).open("rb") as file:
+            data = file.read(MAX_RECORDS_BYTES + 1)
+    except OSError as error:
         raise WorkflowRunError(f"cannot read the run {folder.name}: {error}") from None
+    if len(data) > MAX_RECORDS_BYTES:
+        raise WorkflowRunError(f"cannot read the run {folder.name}: its record is too large")
+    lines = data.split(b"\n")
+    records: list[Record] = []
+    # The last item follows the last newline: empty, or a line cut short.
+    for line in lines[:-1]:
+        try:
+            value = json.loads(line)
+        except ValueError:
+            value = None
+        if not isinstance(value, dict):
+            raise WorkflowRunError(f"cannot read the run {folder.name}: a record is not an object")
+        records.append(value)
+    return records
 
 
 def append_record(folder: Path, record: Record) -> None:
