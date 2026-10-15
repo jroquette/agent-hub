@@ -81,6 +81,19 @@ def test_reads_zero_cost_when_fields_missing_or_wrong_type() -> None:
     assert reply == SessionReply(is_error=True, subtype=None, result="", cost_usd=0.0, turns=None)
 
 
+def test_reads_session_id_when_result_names_one() -> None:
+    text = json.dumps({"is_error": False, "result": "ok", "session_id": "abc-123"})
+
+    assert parse_session_output(text).session_id == "abc-123"
+
+
+@pytest.mark.parametrize("session", [None, 7, ""])
+def test_leaves_session_id_none_when_result_gives_no_text(session: object) -> None:
+    text = json.dumps({"is_error": False, "result": "ok", "session_id": session})
+
+    assert parse_session_output(text).session_id is None
+
+
 def test_keeps_tail_when_output_not_json() -> None:
     text = "x" * 3_000 + "the end"
 

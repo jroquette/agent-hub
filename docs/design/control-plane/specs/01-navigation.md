@@ -16,12 +16,13 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 /approvals                          Approvals inbox                                  P2 read-only · P4 actions
 └ /approvals/:approvalId            Approval detail (side panel over the inbox)      P2 · P4 actions
 
-/live                               Live sessions                                    P2 · P4 pause/cancel
-    ?group=repo|run|agent|flat
+/live                               redirect (replace) to /sessions?view=grid        ADR 0033
+    ?group=repo|run|workflow → within=; group=flat and unknown params dropped; scope (project) kept
 
-/sessions                           Sessions list                                    P2 · P3 compare
-    ?project=&repo=&agent=&outcome=&workflow=&from=&to=&cost_min=&cost_max=
-    &file=&tool=&guard_denial=1&has_decisions=1&view=:savedViewId&sort=-started_at
+/sessions                           Sessions (grid or table, status sections)        P2 · P3 compare
+    ?view=grid|table&within=repo|run|workflow
+    &scope=&period=&repo=&agent=&status=&outcome=&workflow=&cost_min=&cost_max=
+    &file=&tool=&guard_denial=1&sort=-started_at   (saved views are filter sets, not a param)
 ├ /sessions/:id                     Session detail (default tab = timeline)          P2
 │   ?tab=timeline&event=:eventId&types=tool.call,decision&q=&errors=1&follow=1&axis=time|turn&lane=:subSessionId
 │   ?tab=files&path=:repoRelativePath&repo=:repo                                       P2
@@ -30,6 +31,8 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 │   ?tab=cost&by=turn|subagent                                                        P2
 │   ?tab=raw&event=:eventId&source=                                                   P2
 └ /sessions/compare?a=:id&b=:id     Compare two sessions                             P3
+
+/agent-sessions/:id                 Chat of a driven session (full page, ADR 0031/0033)   P2
 
 /runs                               Workflow runs list                               P2
     ?project=&repo=&stage=&outcome=&failure_stage=&mode=live|dry-run
@@ -96,8 +99,7 @@ Route rules:
 │ ⌂ Portf.  │                                                                                     │
 │ ✓ Approv 2│                                                                                     │
 │ OBSERVE   │                         page content                                                │
-│ ◉ Live  ●3│                                                                                     │
-│ ≡ Sessions│                                                                                     │
+│ ≡ Sess. ●3│                                                                                     │
 │ ⇶ Runs    │                                                                                     │
 │ UNDERSTAND│                                                                                     │
 │ ◫ Knowl.  │                                                                                     │
@@ -124,8 +126,7 @@ Groups appear in this order with `caption` style group labels in `text-subtle`. 
 |---|---|---|---|---|---|---|
 | Overview | Portfolio | `layout-dashboard` | `/` | none | none | P2 |
 | Overview | Approvals | `stamp` | `/approvals` | Count of open approvals in scope, `StatusBadge` waiting variant (amber number on `waiting-soft`) | `approvals_open` from `GET /events/stream` event `counts`; initial from `GET /approvals?scope=` `total` | P2 |
-| Observe | Live sessions | `radio` | `/live` | Count of live + waiting sessions, number in `live` with the pulse dot (`dur-pulse`, one dot per item, not per session) | `live_sessions` from `GET /events/stream` `counts`; initial from `GET /live-sessions?scope=` | P2 |
-| Observe | Sessions | `list` | `/sessions` | none | none | P2 |
+| Observe | Sessions | `list` | `/sessions` | Count of non-ended observed sessions, number in `live` with the pulse dot (`dur-pulse`, one dot per item, not per session); accessible name "Sessions, 3 live" | `live_sessions` from `GET /events/stream` `counts` (driven sessions count through their observed twin only) | P2 · ADR 0033 |
 | Observe | Workflow runs | `git-pull-request-arrow` | `/runs` | Failed runs since last visit, small `failed` number, only when > 0 | `failed_runs_since_seen` from `counts` | P2 |
 | Understand | Knowledge | `brain` | `/knowledge/brain` | Learnings awaiting triage, neutral `text-muted` number | `learnings_proposed` from `counts` | P3 |
 | Understand | Features | `flag` | `/features` | none | none | P2 |
@@ -145,7 +146,7 @@ picker does (the route is declared before `/knowledge/:section`, so it is not th
 detail's breadcrumb is Portfolio › project › Skills › name.
 
 Badge rules:
-- At most one number per item, max "99+". Numbers are tabular (`figure` style). Badges never animate except the Live pulse dot, which stops under `prefers-reduced-motion` (static dot).
+- At most one number per item, max "99+". Numbers are tabular (`figure` style). Badges never animate except the Sessions pulse dot, which stops under `prefers-reduced-motion` (static dot).
 - Badges follow the scope switcher: with scope `agent-hub`, Approvals counts only agent-hub approvals.
 - Badges are not alarms: no colour for counts that are routine (ready issues, learnings). Only waiting (amber) and failure/error (red) get colour, so colour keeps its meaning (alarm fatigue).
 - The accessible name includes the count: "Approvals, 2 waiting".
@@ -182,7 +183,7 @@ Result groups, in this fixed order (empty groups hidden):
 | Files | repo-relative paths touched by any session | `packages/core/.../brain_memory_rule.py` · touched in 4 sessions | `/sessions?file=…` |
 | Agents | `plugin:name` | `hub-workflow:evaluator` · 12 sessions this week | `/sessions?agent=…` |
 | Brain notes | title and path under `brain/` (P3; before P3 they open the hub file link) | `brain/learnings/gotchas/testing.md` | `/knowledge/brain?path=…` |
-| Screens and actions | sidebar items, settings sections, "Toggle theme", "Switch to UTC" | Live sessions `g l` | route or action |
+| Screens and actions | sidebar items, settings sections, "Toggle theme", "Switch to UTC" | Sessions `g s` (only Sessions: no Live sessions entry) | route or action |
 
 Ranking (within a group, then the groups above are ordered as listed but an exact match always wins the first row):
 1. Exact id or exact issue key match: score 1.0, pinned top.
@@ -273,7 +274,7 @@ Shortcuts are listed in the `ShortcutSheet` (`?`). Two-key sequences start with 
 | `Esc` | Close the topmost layer: palette → dialog → popover → side panel → clear selection | Never navigates |
 | `g p` | Portfolio | |
 | `g a` | Approvals | |
-| `g l` | Live sessions | |
+| `g l` | Sessions, grid view (`/sessions?view=grid`; alias kept from the retired Live sessions) | |
 | `g s` | Sessions | |
 | `g r` | Workflow runs | |
 | `g k` | Knowledge | P3 |
@@ -293,7 +294,7 @@ Shortcuts are listed in the `ShortcutSheet` (`?`). Two-key sequences start with 
 
 | Keys | Action |
 |---|---|
-| `j` / `k` | Next / previous row (focus ring on row) |
+| `j` / `k` | Next / previous row (focus ring on row); on Sessions, next / previous tile or row across status sections |
 | `Enter` / `o` | Open focused row |
 | `x` | Select row (multi-select where supported; compare 2 in Sessions is P3) |
 | `Shift J` / `Shift K` | Extend selection |
@@ -321,13 +322,15 @@ Shortcuts are listed in the `ShortcutSheet` (`?`). Two-key sequences start with 
 | `n` / `Shift N` | Next / previous search match |
 | `a` | Toggle time axis wall-clock ⇄ turn |
 
-### Live sessions
+### Sessions
 
 | Keys | Action |
 |---|---|
-| Arrow keys | Move focus across tiles (grid navigation, `role=grid`) |
-| `Enter` | Open focused tile's session with follow tail on |
-| `v` | Cycle grouping: project › repo → run → agent → flat |
+| `v` | Toggle grid / table view |
+| `Enter` / `o` | Open the focused tile or row (the chat for a driven session) |
+
+The Live sessions screen and its keys are retired ([ADR 0033](../../../adr/0033-sessions-and-chat-interaction-model.md));
+the chat's own keys are in [agent-sessions.md](../../agent-sessions.md#chat-behaviour).
 
 ### Learnings triage (P3)
 
@@ -348,7 +351,7 @@ Shortcuts are listed in the `ShortcutSheet` (`?`). Two-key sequences start with 
 
 | Choice | Principle (brief §7) |
 |---|---|
-| Five question-shaped top destinations (Portfolio, Live, Sessions/timeline, Knowledge, Workflows) inside five groups that read as a verb sequence (Overview → Observe → Understand → Improve → Hub) | Shneiderman mantra: overview first (Portfolio), zoom and filter (lists, scope), details on demand (Session detail, Raw) |
+| Five question-shaped top destinations (Portfolio, Sessions, Session timeline, Knowledge, Workflows) inside five groups that read as a verb sequence (Overview → Observe → Understand → Improve → Hub) | Shneiderman mantra: overview first (Portfolio), zoom and filter (lists, scope), details on demand (Session detail, Raw) |
 | Sidebar with ≤ 13 visible items, grouped, with labels always visible when expanded | Hick–Hyman: choice time grows with log of options, grouping cuts the effective set to ~3 per group; recognition over recall (Nielsen #6) |
 | Command palette accepts ids, issue keys, file paths and screen names | Recognition over recall for people who know an id; information scent (Pirolli and Card) for people who know only a fragment |
 | Badges only on items that may need a person (Approvals, failed runs, doctor errors); routine counts neutral | Alarm fatigue (Sendelbach and Funk); pre-attentive colour reserved for exceptions (Healey and Enns) |
@@ -373,4 +376,4 @@ Shortcuts are listed in the `ShortcutSheet` (`?`). Two-key sequences start with 
 ## Responsive
 
 - 1280×800 laptop: sidebar collapsed to 56 px by default (below 1360 px), top bar keeps all items; the search field shrinks to an `IconButton` `search` with `⌘K` hint below 1200 px. Breadcrumbs collapse middle crumbs.
-- Mobile (< 640 px), glance routes only (`/live`, `/approvals`, `/sessions/:id` header): sidebar becomes a bottom tab bar with four items (Portfolio, Approvals with badge, Live with count, Search). The top bar keeps scope switcher and collector pill (dot only, label in tooltip). Other routes render a simplified read-only page with "Best viewed on a larger screen" note under the title. Targets ≥ 44 px on touch (above the 24 px `control-sm` floor). Keyboard shortcuts are not advertised on touch.
+- Mobile (< 640 px), glance routes only (`/sessions?view=grid`, `/approvals`, `/sessions/:id` header; `/live` redirects to the first): sidebar becomes a bottom tab bar with four items (Portfolio, Approvals with badge, Sessions with live count, Search). The top bar keeps scope switcher and collector pill (dot only, label in tooltip). Other routes render a simplified read-only page with "Best viewed on a larger screen" note under the title. Targets ≥ 44 px on touch (above the 24 px `control-sm` floor). Keyboard shortcuts are not advertised on touch.
