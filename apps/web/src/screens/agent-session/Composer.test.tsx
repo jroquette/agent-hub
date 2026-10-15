@@ -168,7 +168,7 @@ describe("Composer (stop)", () => {
     const { box } = open({ status: "waiting_permission", onInterrupt });
 
     await userEvent.type(box, "{Escape}{Escape}");
-    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await userEvent.click(screen.getByRole("button", { name: "Stopping…" }));
     expect(onInterrupt).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -177,6 +177,26 @@ describe("Composer (stop)", () => {
     });
     await userEvent.type(box, "{Escape}");
     expect(onInterrupt).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a pending interrupt on a disabled Stopping… button until it answers", async () => {
+    let done: (value?: unknown) => void = () => undefined;
+    const onInterrupt = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          done = resolve;
+        }),
+    );
+    open({ status: "running", onInterrupt });
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+    await act(async () => {
+      done();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
   });
 
   it.each([

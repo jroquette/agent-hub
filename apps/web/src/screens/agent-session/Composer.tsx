@@ -41,7 +41,7 @@ function problemText(error: unknown, what: string): string {
 /**
  * The message box of a session (D10, AC-165.45): Enter sends, Shift+Enter starts a new line. Stop,
  * or Esc in the empty box, interrupts while a turn runs or waits on a permission (AC-234.21), once
- * until that interrupt answers. The mode and model selectors post settings.
+ * until that interrupt answers, with Stop disabled and reading "Stopping…" meanwhile. The mode and model selectors post settings.
  */
 export function Composer({
   status,
@@ -57,6 +57,8 @@ export function Composer({
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  // Shown, not only guarded: a POST that never settles leaves a visibly pending Stop.
+  const [stoppingShown, setStoppingShown] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
   const stopping = useRef(false);
@@ -89,8 +91,10 @@ export function Composer({
   const stop = () => {
     if (!canStop || stopping.current) return;
     stopping.current = true;
+    setStoppingShown(true);
     run(onInterrupt, "stop the turn", () => {
       stopping.current = false;
+      setStoppingShown(false);
     });
   };
 
@@ -197,8 +201,8 @@ export function Composer({
             ? `Too long: ${String(Math.ceil(size / 1024))} KiB of ${String(Math.floor(maxBytes / 1024))} KiB`
             : "Enter to send, Shift+Enter for a new line"}
         </span>
-        <Button icon="circle-stop" disabled={!canStop} onClick={stop}>
-          Stop
+        <Button icon="circle-stop" disabled={!canStop || stoppingShown} onClick={stop}>
+          {stoppingShown ? "Stopping…" : "Stop"}
         </Button>
         <Button type="submit" variant="primary" icon="arrow-up" disabled={!canSend}>
           {sending ? "Sending…" : "Send"}
