@@ -345,3 +345,9 @@ def test_passes_attempt_when_agent_hub_run_session_retried() -> None:
     env = session_env({}, repo="demo-api", issue_id="DEM-1", run_id="1a2b3c4d", attempt=2)
 
     assert env["AGENT_HUB_ATTEMPT"] == "2"
+
+
+def test_sets_given_step_when_session_env_built_for_workflow_node() -> None:
+    env = session_env({}, repo="", issue_id="", run_id="1a2b3c4d", attempt=3, step="lint__fix")
+
+    assert (env["AGENT_HUB_STEP"], env["AGENT_HUB_ATTEMPT"]) == ("lint__fix", "3")
