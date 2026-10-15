@@ -4,10 +4,11 @@ A run lives in ``<hub>/.agent-runs/workflows/<run>/``: ``snapshot/`` holds the d
 ``workflow.json`` and the prompts and scripts its nodes name, copied at start, so a resume runs
 what the run started with (``content_hash`` is ``sha256:`` over those files, each framed by its
 path and length); ``records.jsonl`` holds one JSON line per start, resume, step start, step end
-(with its output and detail), retry, end and the agent sessions left. A resume rebuilds the
-engine's ``RunState`` from those lines. The subfolder keeps these lines out of the dated
-``.agent-runs/<date>.jsonl`` files that ``hub run`` writes and the retro and ``hub collect --runs``
-read as issue-to-pr records.
+(with its output and detail), retry, gate (its rendered message, choices and due time), gate
+decision (the answer's text), end and the agent sessions left. A resume rebuilds the engine's
+``RunState`` from those lines, and its gates' answers from the decision lines. The subfolder
+keeps these lines out of the dated ``.agent-runs/<date>.jsonl`` files that ``hub run`` writes and
+the retro and ``hub collect --runs`` read as issue-to-pr records.
 
 Each recorder call also becomes events (``core.workflows.events``) appended through
 ``IngestEvents`` to the database ``hub collect`` uses, failing open as ``hub run``'s are: one
@@ -37,9 +38,10 @@ from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.events import WorkflowEvents
 from agent_hub.core.workflows.failures import RetryRecord
+from agent_hub.core.workflows.gates import GateAnswer, OpenGate, gate_id
 from agent_hub.core.workflows.nodes import AgentNode, LoopNode, ScriptNode
 from agent_hub.core.workflows.plan import WorkflowPlan
-from agent_hub.core.workflows.ports import RunEnd, StepEnd, StepStart
+from agent_hub.core.workflows.ports import GateRequest, RunEnd, StepEnd, StepStart
 from agent_hub.core.workflows.run_state import RunState
 from agent_hub.core.workflows.substitution import NodeResult
 from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, resolve_pack_file
@@ -203,10 +205,11 @@ def append_record(folder: Path, record: Record) -> None:
 
 def prior_state(records: list[Record]) -> RunState:
     """The state a run left: each node's last result (a reuse keeps the one reused), the last
-    attempt of each node, and the sessions it recorded last."""
+    attempt of each node, the sessions it recorded last, and the gates no step end closed."""
     nodes: dict[str, NodeResult] = {}
     attempts: dict[str, int] = {}
     sessions: dict[str, str] = {}
+    gates: dict[str, OpenGate] = {}
     for record in records:
         node, event = record.get("node"), record.get("event")
         if event == "sessions" and isinstance(given := record.get("sessions"), dict):
@@ -214,11 +217,45 @@ def prior_state(records: list[Record]) -> RunState:
         if not isinstance(node, str) or not isinstance(attempt := record.get("attempt"), int):
             continue
         attempts[node] = max(attempts.get(node, 0), attempt)
+        if event == "gate":
+            gates[node] = OpenGate(attempt, _instant(record.get("due")))
+        elif event == "step_end":
+            gates.pop(node, None)
         state = _STATES.get(str(record.get("status")))
         if event == "step_end" and state and record.get("skip_cause") != "prior_success":
             output = record.get("output") if state == "completed" else None
             nodes[node] = NodeResult(state, output)  # type: ignore[arg-type]
-    return RunState(nodes, attempts, sessions)
+    return RunState(nodes, attempts, sessions, gates)
+
+
+def _instant(value: JsonValue) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
+class RecordedAnswers:
+    """The ``GateAnswers`` of a run: its ``decision`` records, by node and attempt."""
+
+    def __init__(self, records: list[Record]) -> None:
+        self.answers: dict[tuple[str, int], GateAnswer] = {}
+        for record in records:
+            node, attempt = record.get("node"), record.get("attempt")
+            if record.get("event") != "decision" or not isinstance(node, str):
+                continue
+            if isinstance(attempt, int):
+                choice, text = record.get("choice"), record.get("text")
+                self.answers.setdefault(
+                    (node, attempt),
+                    GateAnswer(
+                        choice if isinstance(choice, str) else None,
+                        text if isinstance(text, str) else None,
+                    ),
+                )
+
+    def answer(self, node: str, attempt: int) -> GateAnswer | None:
+        return self.answers.get((node, attempt))
 
 
 def ends_of(records: list[Record]) -> list[Record]:
@@ -285,6 +322,23 @@ class RecordedRun:
         delay = retry.delay.total_seconds()
         record: Record = {"event": "retry", "node": node, "attempt": retry.attempt}
         self._record({**record, "kind": retry.kind, "delay_s": delay})
+
+    def gate_requested(self, request: GateRequest) -> None:
+        due = None if request.due is None else request.due.isoformat()
+        record: Record = {"event": "gate", "node": request.node, "attempt": request.attempt}
+        self._record(
+            record
+            | {
+                "gate_id": gate_id(self.folder.name, request.node, request.attempt),
+                "kind": request.kind,
+                "form": request.form,
+                "choices": list(request.choices),
+                "message": request.text,
+                "due": due,
+            }
+        )
+        self.events.gate_requested(request)
+        self.sink.flush(self.events)
 
     def run_ended(self, end: RunEnd) -> None:
         record: Record = {"event": "end", "status": end.status, "outcome": end.outcome}

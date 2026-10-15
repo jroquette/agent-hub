@@ -11,8 +11,11 @@ exits 2. Nothing is written and no network is used.
 ``run NAME [--input name=value]...`` prints each node a run would start, layer by layer; with
 ``--live`` the engine runs it through ``workflow_executors`` (``--run-id`` names the run, else a
 fresh id), recording it with ``workflow_runs``. ``--resume RUN`` continues a failed or unended run
-on its snapshot, reusing what completed; ``--abandon RUN`` ends it ``cancelled``. A run that ends
-``done`` exits 0, any other end 1; a bad input exits 2. It makes no tracker write: issue-to-pr's
+on its snapshot, reusing what completed; ``--abandon RUN`` ends it ``cancelled``. A run that
+reaches an ``approval`` or ``wait`` without its answer or time pauses there (``run <id>: paused at
+<node>``, exit 0); its resume takes the gate up again, and pauses again until the gate's decision
+is recorded or its time has come. A run that ends ``done`` exits 0, any other end 1; a bad input
+exits 2. It makes no tracker write: issue-to-pr's
 writes stay ``hub run``'s.
 ``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
 engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
@@ -45,6 +48,7 @@ from agent_hub.cli.workflow_runs import (
     RUN_ID_PATTERN,
     SNAPSHOT,
     EventSink,
+    RecordedAnswers,
     RecordedRun,
     SystemClock,
     WorkflowRunError,
@@ -249,6 +253,7 @@ def _continue(hub: Path, folder: Path) -> int:
         content_hash=str(header.get("content_hash")),
         prior=prior_state(records),
         end_index=len(ends_of(records)),
+        answers=RecordedAnswers(records),
     )
 
 
@@ -293,6 +298,7 @@ def _execute(
     content_hash: str,
     prior: RunState | None = None,
     end_index: int = 0,
+    answers: RecordedAnswers | None = None,
 ) -> int:
     config = load_hub_config_or_exit(hub / FILE_LABEL)
     header: dict[str, JsonValue] = {
@@ -313,9 +319,21 @@ def _execute(
         environ=os.environ,
         hub_program=own_hub_program(),
     )
-    ports = EnginePorts(runner, recorder, SystemClock(), JsonSchemaOutputs(), _JITTER.random)
+    ports = EnginePorts(
+        runner,
+        recorder,
+        SystemClock(),
+        JsonSchemaOutputs(),
+        _JITTER.random,
+        answers or RecordedAnswers([]),
+    )
     report = run_workflow(plan, inputs, ports, prior=prior)
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
+    if report.status == "paused":
+        gate = report.state.gates.get(report.reason or "")
+        due = "" if gate is None or gate.due is None else f" until {gate.due.isoformat()}"
+        typer.echo(f"run {folder.name}: paused at {report.reason}{due}")
+        return 0
     outcome = "" if report.outcome is None else f", outcome {report.outcome}"
     typer.echo(f"run {folder.name}: {report.status}{outcome}")
     return 0 if report.status == "done" else 1
