@@ -1642,6 +1642,23 @@
         "title": "ExternalPlugin",
         "type": "object"
       },
+      "FailureKind": {
+        "enum": [
+          "transient",
+          "timeout",
+          "rate_limited",
+          "overloaded",
+          "exec_failed",
+          "output_contract",
+          "max_iterations",
+          "unknown",
+          "config",
+          "auth",
+          "cancelled",
+          "fatal"
+        ],
+        "type": "string"
+      },
       "FeatureDetail": {
         "additionalProperties": false,
         "description": "A feature with its acceptance criteria rows, its records (D3) and every eval.",
@@ -2366,7 +2383,7 @@
           },
           "hook": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
+              "$ref": "#/components/schemas/JsonValue-Input"
             },
             "title": "Hook",
             "type": "object"
@@ -2723,7 +2740,7 @@
         "title": "ItemKind",
         "type": "string"
       },
-      "JsonValue": {},
+      "JsonValue-Input": {},
       "Learning": {
         "additionalProperties": false,
         "description": "A learning; ``text`` is its title (120 characters at most, redacted).\n\n``target`` is deprecated (it names the inbox note); ``note_path`` says so explicitly (L12).\n``state`` is ``None`` until read with the hub. ``summary`` is the note's first paragraph,\nread on request; ``note_unavailable`` and ``actions_unavailable`` give the reason the note\ncannot be read or the learning cannot be accepted or rejected here.",
@@ -3649,7 +3666,7 @@
           },
           "body": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
+              "$ref": "#/components/schemas/pydantic__types__JsonValue"
             },
             "title": "Body",
             "type": "object"
@@ -3858,7 +3875,7 @@
             "anyOf": [
               {
                 "additionalProperties": {
-                  "$ref": "#/components/schemas/JsonValue"
+                  "$ref": "#/components/schemas/pydantic__types__JsonValue"
                 },
                 "type": "object"
               },
@@ -4586,7 +4603,7 @@
             "type": "integer"
           },
           "rule": {
-            "$ref": "#/components/schemas/JsonValue"
+            "$ref": "#/components/schemas/pydantic__types__JsonValue"
           }
         },
         "required": [
@@ -5448,6 +5465,16 @@
               }
             ]
           },
+          "failure_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FailureKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reason": {
             "anyOf": [
               {
@@ -5527,6 +5554,14 @@
         "title": "RunGateResult",
         "type": "object"
       },
+      "RunStatus": {
+        "enum": [
+          "done",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
       "RunStep": {
         "additionalProperties": false,
         "description": "One step attempt, keyed ``(key, attempt)``; a loop back into verify is attempt 2.",
@@ -5546,8 +5581,28 @@
               }
             ]
           },
+          "failure_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FailureKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "key": {
             "$ref": "#/components/schemas/StepKey"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "max_attempts": {
             "minimum": 1.0,
@@ -5572,6 +5627,16 @@
             },
             "title": "Session Ids",
             "type": "array"
+          },
+          "skip_cause": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkipCause"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "started_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
@@ -6956,6 +7021,16 @@
         "title": "SkillStructure",
         "type": "object"
       },
+      "SkipCause": {
+        "enum": [
+          "upstream_failed",
+          "upstream_skipped",
+          "condition",
+          "condition_parse_error",
+          "prior_success"
+        ],
+        "type": "string"
+      },
       "SourceStatus": {
         "additionalProperties": false,
         "description": "When a source last sent an event, and whether that is recent enough.",
@@ -7097,12 +7172,19 @@
         "type": "object"
       },
       "StepKey": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "StepKind": {
         "enum": [
-          "pick",
-          "worktree",
-          "implement",
-          "verify",
-          "pr"
+          "agent",
+          "shell",
+          "script",
+          "loop",
+          "loop_group",
+          "approval",
+          "wait",
+          "halt"
         ],
         "type": "string"
       },
@@ -7144,7 +7226,8 @@
         "enum": [
           "running",
           "ok",
-          "failed"
+          "failed",
+          "skipped"
         ],
         "type": "string"
       },
@@ -7529,7 +7612,7 @@
           },
           "payload": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
+              "$ref": "#/components/schemas/pydantic__types__JsonValue"
             },
             "title": "Payload",
             "type": "object"
@@ -7966,9 +8049,193 @@
         "title": "WorkdirList",
         "type": "object"
       },
+      "WorkflowCatalogView": {
+        "additionalProperties": false,
+        "description": "The workflows that load, by project then name, and every problem found.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowProblemView"
+            },
+            "title": "Problems",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "problems"
+        ],
+        "title": "WorkflowCatalogView",
+        "type": "object"
+      },
+      "WorkflowDetail": {
+        "additionalProperties": false,
+        "description": "A workflow's layers (in run order, nodes in declaration order) and its document as\nwritten (keys left out are not filled in).",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "document": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+            },
+            "title": "Document",
+            "type": "object"
+          },
+          "layer_count": {
+            "title": "Layer Count",
+            "type": "integer"
+          },
+          "layers": {
+            "items": {
+              "items": {
+                "$ref": "#/components/schemas/WorkflowNodeView"
+              },
+              "type": "array"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_count": {
+            "title": "Node Count",
+            "type": "integer"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/WorkflowOrigin"
+          }
+        },
+        "required": [
+          "project",
+          "name",
+          "description",
+          "revision",
+          "source",
+          "node_count",
+          "layer_count",
+          "layers",
+          "document"
+        ],
+        "title": "WorkflowDetail",
+        "type": "object"
+      },
+      "WorkflowNodeView": {
+        "additionalProperties": false,
+        "description": "A node as the graph shows it: its id, type and the nodes it waits for.",
+        "properties": {
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Depends On",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "depends_on"
+        ],
+        "title": "WorkflowNodeView",
+        "type": "object"
+      },
+      "WorkflowOrigin": {
+        "enum": [
+          "hub",
+          "builtin"
+        ],
+        "type": "string"
+      },
+      "WorkflowProblemView": {
+        "additionalProperties": false,
+        "description": "Why a file of a project's hub is not a workflow: ``file`` is hub-relative (a built-in's\nstarts ``<builtin>/``), ``line`` is 1-based when known, ``key`` is ``$`` for the file.",
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "file",
+          "line",
+          "key",
+          "message"
+        ],
+        "title": "WorkflowProblemView",
+        "type": "object"
+      },
       "WorkflowRun": {
         "additionalProperties": false,
-        "description": "A run folded from executor events (D9, D16): the first ``run.end`` wins.",
+        "description": "A run folded from executor events (D9, D16): the first ``run.end`` wins, the highest\n``n`` for an engine run. ``stage`` is issue-to-pr's machine (another workflow's live run is\n``PICKED``); ``status`` and ``outcome`` hold for every workflow.",
         "properties": {
           "caps": {
             "anyOf": [
@@ -7979,6 +8246,17 @@
                 "type": "null"
               }
             ]
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
           },
           "cost_source": {
             "anyOf": [
@@ -8091,6 +8369,20 @@
             ],
             "title": "Mode"
           },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
           "pr_url": {
             "anyOf": [
               {
@@ -8117,6 +8409,17 @@
             ],
             "title": "Repo"
           },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
           "session_ids": {
             "default": [],
             "items": {
@@ -8138,6 +8441,10 @@
           },
           "started_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowRunStatus",
+            "default": "running"
           },
           "steps": {
             "items": {
@@ -8169,7 +8476,101 @@
         ],
         "title": "WorkflowRun",
         "type": "object"
-      }
+      },
+      "WorkflowRunStatus": {
+        "anyOf": [
+          {
+            "const": "running",
+            "type": "string"
+          },
+          {
+            "$ref": "#/components/schemas/RunStatus"
+          }
+        ]
+      },
+      "WorkflowSummary": {
+        "additionalProperties": false,
+        "description": "A workflow of a project's hub, and where it comes from (``source``).",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "layer_count": {
+            "title": "Layer Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_count": {
+            "title": "Node Count",
+            "type": "integer"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/WorkflowOrigin"
+          }
+        },
+        "required": [
+          "project",
+          "name",
+          "description",
+          "revision",
+          "source",
+          "node_count",
+          "layer_count"
+        ],
+        "title": "WorkflowSummary",
+        "type": "object"
+      },
+      "agent_hub__core__json_form__JsonValue": {
+        "anyOf": [
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+            },
+            "type": "object"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+            },
+            "type": "array"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "pydantic__types__JsonValue": {}
     }
   },
   "info": {
@@ -12243,6 +12644,40 @@
           },
           {
             "in": "query",
+            "name": "workflow",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workflow"
+            }
+          },
+          {
+            "in": "query",
+            "name": "failure_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/FailureKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Failure Kind"
+            }
+          },
+          {
+            "in": "query",
             "name": "cursor",
             "required": false,
             "schema": {
@@ -12433,6 +12868,134 @@
         "summary": "Stream Run",
         "tags": [
           "streams"
+        ]
+      }
+    },
+    "/api/v1/workflows": {
+      "get": {
+        "description": "The workflows of every (or one) project, and the files that do not load.",
+        "operationId": "list_workflows_api_v1_workflows_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowCatalogView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Workflows",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{project}/{name}": {
+      "get": {
+        "description": "One workflow: its document and its layers.",
+        "operationId": "get_workflow_api_v1_workflows__project___name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Workflow",
+        "tags": [
+          "workflows"
         ]
       }
     }
