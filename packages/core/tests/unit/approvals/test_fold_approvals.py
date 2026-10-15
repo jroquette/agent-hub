@@ -189,3 +189,57 @@ def test_folds_same_approvals_when_events_shuffled() -> None:
 
     for seed in range(30):
         assert fold_approvals(shuffled([*events, events[1]], seed)) == expected
+
+
+def _run_gate(*follow_ups: Event) -> list[Event]:
+    request = an_event(
+        type="gate.request",
+        session="run:r1",
+        source="executor",
+        step="ship",
+        timestamp=_at(0),
+        source_id="r1:ship:1:gate.request",
+        payload={"run": "r1", "attempt": 1, "gate_id": "r1:ship:1", "kind": "human_gate"},
+    )
+    return [request, *follow_ups]
+
+
+def _run_event(kind: str, minutes: float, **payload: object) -> Event:
+    return an_event(
+        type=kind,
+        session="run:r1",
+        source="executor",
+        step="ship" if kind == "step.end" else None,
+        timestamp=_at(minutes),
+        payload={"run": "r1", **payload},
+    )
+
+
+@pytest.mark.parametrize(
+    "closing",
+    [
+        _run_event("run.end", 3, status="cancelled", outcome=None),
+        _run_event("step.end", 3, attempt=2, status="skipped", skip_cause="upstream_failed"),
+        _run_event("step.end", 3, attempt=1, status="failed", failure_kind="config"),
+    ],
+)
+def test_declines_inferred_when_a_workflow_gate_closes_without_a_decision(closing: Event) -> None:
+    approval = fold_approvals(as_stored(_run_gate(closing)))["r1:ship:1"]
+
+    assert (approval.status, approval.decided, approval.inferred) == ("declined", True, True)
+
+
+def test_stays_open_when_a_workflow_gate_has_no_decision_and_its_run_goes_on() -> None:
+    other = an_event(
+        type="step.end",
+        session="run:r1",
+        source="executor",
+        step="lint",
+        timestamp=_at(3),
+        payload={"run": "r1", "attempt": 1, "status": "ok"},
+    )
+
+    approval = fold_approvals(as_stored(_run_gate(other)), hub_paths={"demo": "/hub"})["r1:ship:1"]
+
+    assert approval.status == "open"
+    assert approval.how_to_decide == "cd /hub && hub workflow approve|reject|respond r1"

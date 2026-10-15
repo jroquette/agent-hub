@@ -625,6 +625,72 @@ def test_answers_the_wait_and_pauses_on_the_timer_when_respond_gives_an_option(
     assert "a timed wait takes no answer" in timer.stderr
 
 
+def test_refuses_to_approve_without_recording_when_another_process_holds_the_run_lock(
+    sample: SampleRun,
+) -> None:
+    gated(sample)
+    before = run_path(sample, "records.jsonl").read_text()
+    descriptor = os.open(run_path(sample, "lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = sample.run_command("approve", RUN_ID)
+    finally:
+        os.close(descriptor)
+
+    assert result.exit_code == 1
+    assert "is in use by another hub workflow run" in result.stderr
+    assert run_path(sample, "records.jsonl").read_text() == before
+
+
+def test_takes_the_first_decision_when_the_record_holds_two_for_one_gate(
+    sample: SampleRun,
+) -> None:
+    gated(sample)
+    first = {"event": "decision", "node": "ship", "attempt": 1, "choice": "reject"}
+    workflow_runs.append_record(run_path(sample), first)
+    workflow_runs.append_record(run_path(sample), first | {"choice": "approve"})
+
+    result = sample.run("--resume", RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    ship = [r for r in sample.records() if r.get("node") == "ship" and r["event"] == "step_end"]
+    assert ship[0]["output"] == {"decision": "reject", "text": ""}
+    assert sample.fakes.calls("make") == []
+
+
+def test_refuses_to_approve_and_closes_the_gate_when_the_paused_run_was_abandoned(
+    sample: SampleRun, tmp_path: Path
+) -> None:
+    gated(sample)
+    abandoned = sample.run("--abandon", RUN_ID)
+
+    result = sample.run_command("approve", RUN_ID)
+
+    assert abandoned.exit_code == 0, abandoned.output
+    assert result.exit_code == 1
+    assert "already ended cancelled" in result.stderr
+    stored = open_event_store(tmp_path / "events.db")
+    approval = fold_approvals(stored.query(EventQuery(limit=1000)).items)["r1:ship:1"]
+    assert (approval.status, approval.inferred) == ("declined", True)
+    assert approval.how_to_decide is not None
+    assert approval.how_to_decide.endswith("hub workflow approve|reject|respond r1")
+
+
+def test_warns_with_the_command_and_still_resumes_when_approve_finds_no_event_store(
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gated(sample)
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("")
+    monkeypatch.setenv("AGENT_HUB_DB", str(blocker / "events.db"))
+
+    result = sample.run_command("approve", RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert "hub workflow approve: event store unavailable" in result.stderr
+    assert [r["choice"] for r in sample.records() if r["event"] == "decision"] == ["approve"]
+
+
 def test_ignores_modules_planted_in_hub_when_hub_step_node_runs(sample: SampleRun) -> None:
     marker = sample.hub / "planted-ran"
     write(sample.hub, "typer/__init__.py", f"open({str(marker)!r}, 'w').close()\n")
