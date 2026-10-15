@@ -111,6 +111,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   sort and "Load more"; a header button collapses a section (remembered in this browser), empty sections are hidden,
   a status facet shows only its section, and the period now filters only Ended or failed, so a running session older
   than the period still shows (AGH-243).
+- Sessions' status sections refresh live as sessions change (at most every 2 s), without moving your scroll position
+  or losing the focused row when it moves to another section (AGH-243).
 
 ### Fixed
 
