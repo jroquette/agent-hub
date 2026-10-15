@@ -77,6 +77,7 @@ async function change(source: FakeEventSource, type: string, data: unknown) {
   vi.useFakeTimers();
   source.emit(type, data);
   await act(() => vi.advanceTimersByTimeAsync(2_000));
+  await act(() => vi.advanceTimersByTimeAsync(100)); // the refetch answers and commits
   vi.useRealTimers();
 }
 
