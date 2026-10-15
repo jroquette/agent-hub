@@ -417,6 +417,7 @@ describe("RunDetailScreen", () => {
         });
         await screen.findByRole("group", { name: "Run graph" });
         const before = observers;
+        expect(before).toBeGreaterThan(0);
         await act(async () => {
           await vi.advanceTimersByTimeAsync(3000);
         });
