@@ -115,13 +115,18 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **Composer.** Grows up to 40% of the viewport. The draft is saved to `ah.chat.draft.<id>` in the browser after
   500 ms (not above 64 KiB), restored on reload, cleared once a send is accepted. It has focus on open unless a
   permission is pending and keeps it after Send. Enter does not send during IME composition or within 500 ms after
-  `compositionend`; under `pointer: coarse` Enter is a newline. A send shows a "Sending…" bubble until the echoed
+  `compositionend` or with Ctrl/Cmd+Alt (the allow chord; plain Alt+Enter sends); under `pointer: coarse` Enter is a
+  newline. A send shows a "Sending…" bubble until the echoed
   record replaces it; during a running turn it reads "Queued: Claude reads it after this turn".
 - **`/` menu.** `/` at the start of the composer lists the `init` record's slash commands and skills (at most 200,
   strings of at most 100 characters, de-duplicated; else "No commands"); typing filters, arrows move, Enter or Tab
-  inserts, Esc closes, and Enter never sends while it is open.
-- **Keys.** Ctrl/Cmd+Alt+Enter allows once and Ctrl/Cmd+Alt+Backspace denies the oldest pending permission (inert
-  when none; the buttons carry `aria-keyshortcuts`); `a` / `d` do the same while a permission card has focus;
+  inserts, Esc closes, and Enter never sends while it is open. A polite live region announces its match count
+  ("3 commands") or "No commands" when it opens and when the count changes.
+- **Keys.** Ctrl/Cmd+Alt+Enter allows once and Ctrl/Cmd+Alt+Backspace denies the oldest pending tool permission
+  (inert when none, or when the oldest is a question or a plan; those buttons carry `aria-keyshortcuts`); `a` / `d` do
+  the same while a tool permission card has focus, except as the second key of a `g` sequence (`g a` goes to
+  Approvals). The chords do nothing on a key repeat, during IME composition, when the `/` menu took the key or while a
+  modal (`aria-modal`) is open;
   Shift+Esc focuses the composer; ArrowUp in an empty composer recalls the last prompt sent. The shortcut sheet has a
   "Chat" group. A new pending card never takes focus from a composer holding text.
 - **Accessibility.** No serious or critical axe violation in any state (empty, streaming, waiting, detached, menu
