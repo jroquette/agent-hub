@@ -29,8 +29,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=…`, and the one AGH-136 added
   (`TICKET_PATHS`): `GET /features/{project}/{slug}/tickets` ([Feature tickets](#feature-tickets)), and the three
   AGH-164 added (`SKILL_PATHS`, all GET): `/projects/{project}/skills`, `/projects/{project}/skills/{kind}/{source}/{name}`
-  and `/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` ([Skills](#skills)). A test fails on
-  any other path.
+  and `/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` ([Skills](#skills)), and the two AGH-225
+  added (`WORKFLOW_PATHS`, both GET): `/workflows` and `/workflows/{project}/{name}` ([Workflows](#workflows)). A test
+  fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -295,6 +296,22 @@ Items and files are addressed by ids the server issues (`file_id` is 16 hex char
 hub-relative path), never by a client path. Bounds: 500 items per kind, 200 bundled files per skill, 2,000 hooks,
 256 KiB per file, 16 MiB read per catalog; past one, `truncated` is `true` with a notice and an over-cap file carries
 the diagnostic `too_large`.
+
+## Workflows
+
+Two read-only GET routes serve the registered hubs' workflows, read from their files on request through the
+generator's discovery (the hub's `workflows/<pack>/` files, then the built-ins; a hub workflow overrides a built-in of
+its name) and never stored.
+
+- `GET /api/v1/workflows[?project=…]` → `WorkflowCatalogView`: `items` (each with `project`, `name`, `description`,
+  `revision`, `source` `hub` or `builtin`, `node_count`, `layer_count`), by project then name, and `problems` (each
+  with `project`, hub-relative `file` (a built-in's starts `<builtin>/`), `line` or `null`, `key` (`$` for the whole
+  file) and `message`), one per file that does not load or plan. A project scope that names no project is empty.
+- `GET /api/v1/workflows/{project}/{name}` → `WorkflowDetail`: the summary fields, `layers` (in run order, each a list
+  of nodes `{id, type, depends_on, description}` in declaration order) and `document` (the file's content as written,
+  keys left out not filled in). An unknown project is a 404 (entity `project`); an unknown workflow, or one listed as a
+  problem, is a 404 (entity `workflow`, id `<project>/<name>`). A parameter over 200 characters is a 400. The routes
+  answer 501 only in a build where the workflow reads are not wired.
 
 ## Local security
 

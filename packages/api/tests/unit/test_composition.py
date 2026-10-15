@@ -28,6 +28,7 @@ from agent_hub.api.composition import (
     hub_read_models,
     ticket_snapshots,
     web_url,
+    workflow_source_of,
 )
 from agent_hub.api.settings import ApiSettings
 from agent_hub.api.ticket_snapshots import REQUEST_TIMEOUT_SECONDS
@@ -68,6 +69,8 @@ from agent_hub.core.testing.tracker_reader_fakes import (
     InMemoryTrackerReader,
     a_seeded_issue_board,
 )
+from agent_hub.core.workflows.catalog import WorkflowFile
+from agent_hub.core.workflows.workflow_reads import ReadWorkflows
 from agent_hub.storage.agent_session_store import open_agent_session_store
 from agent_hub.storage.event_store import open_event_store
 
@@ -446,6 +449,25 @@ def test_wires_control_cloud_and_links_when_sessions_on(tmp_path: Path) -> None:
     assert isinstance(ports.agent_sessions, AgentSessionControl)
     assert isinstance(ports.cloud_sessions, CloudSessions)
     assert isinstance(ports.agent_session_links, AgentSessionLinks)
+
+
+def test_wires_workflow_reads_when_app_built(tmp_path: Path) -> None:
+    app = _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
+
+    assert isinstance(app.state.ports.workflow_reads, ReadWorkflows)
+
+
+def test_reads_hub_workflows_when_hub_has_a_pack(tmp_path: Path) -> None:
+    pack = tmp_path / "workflows" / "mine"
+    pack.mkdir(parents=True)
+    (pack / "ship.yaml").write_text(
+        "version: 1\nname: ship\nrevision: 1\nnodes:\n  - {id: a, type: shell, command: [x]}\n"
+    )
+
+    files = list(workflow_source_of(str(tmp_path)).workflow_files())
+
+    hub_files = [item for item in files if isinstance(item, WorkflowFile)]
+    assert [(item.file, item.origin) for item in hub_files] == [("workflows/mine/ship.yaml", "hub")]
 
 
 def test_ends_unfinished_sessions_when_app_starts(tmp_path: Path) -> None:
