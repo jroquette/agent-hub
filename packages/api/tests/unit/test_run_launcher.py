@@ -5,7 +5,9 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -316,3 +318,94 @@ def test_skips_pid_path_when_it_is_a_folder(tmp_path: Path) -> None:
     (web(tmp_path) / "run-1.pid").mkdir(parents=True)
 
     assert launcher(tmp_path).live_runs(str(tmp_path)) == {}
+
+
+def stale_pid_file(hub: Path) -> Path:
+    pid_file(hub, "run-1", OLD)  # this process, another start time: judged stale
+    return web(hub) / "run-1.pid"
+
+
+def test_refuses_removal_when_path_is_replaced_by_locked_file_after_it_was_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = stale_pid_file(tmp_path)
+    data = target.read_bytes()
+    real_locked_as = run_launcher._locked_as  # noqa: SLF001
+    writers: list[int] = []
+
+    def replace_then_lock(descriptor: int, before: bytes) -> bool:
+        # The old inode is open; another launcher replaces the path with its own locked file.
+        target.unlink()
+        writer = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fcntl.flock(writer, fcntl.LOCK_EX)
+        os.write(writer, data)
+        writers.append(writer)
+        return real_locked_as(descriptor, before)
+
+    monkeypatch.setattr(run_launcher, "_locked_as", replace_then_lock)
+    try:
+        with pytest.raises(RunConflictError) as caught:
+            launcher(tmp_path).start(spec_of(tmp_path))
+        assert caught.value.code == "in_use"
+        assert target.exists()
+        assert os.fstat(writers[0]).st_ino == target.stat().st_ino
+    finally:
+        for writer in writers:
+            os.close(writer)
+
+
+def test_refuses_removal_when_file_changes_unlocked_before_it_is_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = stale_pid_file(tmp_path)
+    real_locked_as = run_launcher._locked_as  # noqa: SLF001
+
+    def rewrite_then_lock(descriptor: int, before: bytes) -> bool:
+        target.write_text('{"pid": 2, "started": "new"}')  # same inode, no lock
+        return real_locked_as(descriptor, before)
+
+    monkeypatch.setattr(run_launcher, "_locked_as", rewrite_then_lock)
+
+    with pytest.raises(RunConflictError) as caught:
+        launcher(tmp_path).start(spec_of(tmp_path))
+
+    assert caught.value.code == "in_use"
+    assert target.read_text() == '{"pid": 2, "started": "new"}'
+
+
+def test_answers_launch_error_and_keeps_file_when_pid_file_cannot_be_opened(
+    tmp_path: Path,
+) -> None:
+    target = stale_pid_file(tmp_path)
+    target.chmod(0)
+    try:
+        with pytest.raises(RunLaunchError):
+            launcher(tmp_path).start(spec_of(tmp_path))
+        assert target.exists()
+    finally:
+        target.chmod(0o600)
+
+
+def temporaries(hub: Path) -> list[str]:
+    return sorted(path.name for path in web(hub).glob(".run-1.pid.*"))
+
+
+def test_leaves_no_temporary_file_when_launch_succeeds_or_fails(tmp_path: Path) -> None:
+    web(tmp_path).mkdir(parents=True)
+    quick = ProcessRunLauncher(
+        db_path=tmp_path / "db", environ={}, program=[sys.executable, "-c", "pass"]
+    )
+    quick.start(spec_of(tmp_path))
+    assert temporaries(tmp_path) == []
+
+    with pytest.raises(FileExistsError):
+        run_launcher._create_locked(web(tmp_path) / "run-1.pid")  # noqa: SLF001
+    assert temporaries(tmp_path) == []
+
+    deadline = time.monotonic() + 10
+    while (web(tmp_path) / "run-1.pid").exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    with pytest.raises(RunLaunchError):
+        launcher(tmp_path).start(spec_of(tmp_path))  # the program does not exist
+    assert temporaries(tmp_path) == []
+    assert not (web(tmp_path) / "run-1.pid").exists()
