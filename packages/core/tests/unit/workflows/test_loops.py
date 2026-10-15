@@ -543,3 +543,32 @@ def test_refuses_the_include_when_a_group_body_takes_the_expansion_past_the_cap(
     assert (
         str(caught.value) == f"nodes[{crossing}].include: the expanded workflow passes {cap} nodes"
     )
+
+
+def test_records_body_stdin_and_agent_cwd_in_the_body_scope_when_a_group_is_planned() -> None:
+    worker = {"id": "w", "type": "agent", "prompt": "Go", "cwd": "$b0.output", "depends_on": ["b0"]}
+    group = a_group(
+        body_shell("b0"),
+        body_shell("b1", "b0", command=["cat"], stdin="$b0.output"),
+        worker,
+        until_when="$b0.output == 'x'",
+    )
+
+    [planned] = a_plan(group, inputs={"mode": {"default": "off"}}).document.nodes
+
+    body = {node.id: node for node in planned.nodes}  # type: ignore[union-attr]
+    assert body["g__b1"].stdin == "$g__b0.output"
+    assert body["g__w"].cwd == "$g__b0.output"
+
+
+def test_places_a_body_stdin_problem_on_the_body_node_when_it_is_not_a_whole_reference() -> None:
+    group = a_group(
+        body_shell("b0"),
+        body_shell("b1", "b0", command=["cat"], stdin="x $b0.output"),
+        until_when="$b0.output == 'x'",
+    )
+
+    assert (
+        "nodes[0].nodes[1].stdin",
+        "a reference fills the whole stdin, or none is used",
+    ) in group_problems(group)

@@ -1,0 +1,258 @@
+{
+ "calls": [
+  [
+   "get_issue",
+   "DEM-1"
+  ],
+  [
+   "add_label",
+   "DEM-1",
+   "agent-failed"
+  ],
+  [
+   "comment",
+   "DEM-1",
+   "Run <run> failed at PR_OPEN. Diagnosis: gh pr create failed: gh: synthetic failure"
+  ]
+ ],
+ "events": [
+  [
+   "step.start",
+   "pick",
+   {
+    "attempt": 1,
+    "caps": {
+     "budget": 3.0,
+     "max_turns": 40,
+     "model": "sonnet",
+     "transport": "api"
+    },
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PICKED"
+   }
+  ],
+  [
+   "step.end",
+   "pick",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PICKED",
+    "status": "ok"
+   }
+  ],
+  [
+   "step.start",
+   "worktree",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "WORKTREE"
+   }
+  ],
+  [
+   "step.end",
+   "worktree",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "WORKTREE",
+    "status": "ok"
+   }
+  ],
+  [
+   "step.start",
+   "implement",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "IMPLEMENTING"
+   }
+  ],
+  [
+   "step.end",
+   "implement",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "IMPLEMENTING",
+    "status": "ok"
+   }
+  ],
+  [
+   "step.start",
+   "verify",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "VERIFYING"
+   }
+  ],
+  [
+   "gate.result",
+   "verify",
+   {
+    "attempt": 1,
+    "command": "make check",
+    "gate_id": "<run>:verify:1",
+    "issue": "DEM-1",
+    "kind": "check",
+    "mode": "live",
+    "repo": "demo-api",
+    "result": "passed",
+    "run": "<run>"
+   }
+  ],
+  [
+   "step.end",
+   "verify",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "VERIFYING",
+    "status": "ok"
+   }
+  ],
+  [
+   "step.start",
+   "pr",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PR_OPEN"
+   }
+  ],
+  [
+   "step.end",
+   "pr",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "reason": "gh pr create failed: gh: synthetic failure",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PR_OPEN",
+    "status": "failed"
+   }
+  ],
+  [
+   "run.end",
+   null,
+   {
+    "cost_usd": 0.42,
+    "issue": "DEM-1",
+    "mode": "live",
+    "outcome": "failed",
+    "reason": "gh pr create failed: gh: synthetic failure",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PR_OPEN",
+    "status": "failed"
+   }
+  ]
+ ],
+ "exit_code": 1,
+ "records": [
+  {
+   "budget": 3.0,
+   "event": "picked",
+   "issue": "DEM-1",
+   "live": true,
+   "max_turns": 40,
+   "model": "sonnet",
+   "repo": "demo-api",
+   "state": "PICKED",
+   "transport": "api"
+  },
+  {
+   "event": "worktree_ready",
+   "issue": "DEM-1",
+   "live": true,
+   "path": "<ws>/demo-api/.claude/worktrees/dem-1",
+   "repo": "demo-api",
+   "state": "WORKTREE"
+  },
+  {
+   "cost_usd": 0.42,
+   "event": "agent_finished",
+   "issue": "DEM-1",
+   "live": true,
+   "repo": "demo-api",
+   "state": "IMPLEMENTING",
+   "subtype": "success",
+   "turns": 3,
+   "verdict": {
+    "status": "done",
+    "summary": "Adds the synthetic change.",
+    "tests": "make check-fast"
+   }
+  },
+  {
+   "commits": [
+    "feat(api): synthetic change (DEM-1)"
+   ],
+   "event": "commits",
+   "issue": "DEM-1",
+   "live": true,
+   "repo": "demo-api",
+   "state": "IMPLEMENTING"
+  },
+  {
+   "event": "gate_ok",
+   "gate": "make check",
+   "issue": "DEM-1",
+   "live": true,
+   "repo": "demo-api",
+   "state": "VERIFYING"
+  },
+  {
+   "event": "failed",
+   "issue": "DEM-1",
+   "live": true,
+   "reason": "gh pr create failed: gh: synthetic failure",
+   "repo": "demo-api",
+   "stage": "PR_OPEN",
+   "state": "PR_OPEN"
+  },
+  {
+   "event": "reported",
+   "failed_stage": "PR_OPEN",
+   "issue": "DEM-1",
+   "live": true,
+   "ok": true,
+   "outcome": "failed",
+   "pr": "",
+   "repo": "demo-api",
+   "state": "REPORTED",
+   "total_cost_usd": 0.42
+  }
+ ]
+}

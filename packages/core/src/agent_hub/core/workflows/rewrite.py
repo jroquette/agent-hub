@@ -127,6 +127,8 @@ def _agent_update(node: AgentNode | LoopNode, rewrite: Rewrite) -> dict[str, obj
     if isinstance(node.context, ResumeContext):
         target = rewrite.resume(node.context.resume, ("context", "resume"))
         update["context"] = ResumeContext(resume=target)
+    if node.cwd is not None:
+        update["cwd"] = rewrite.text(("cwd",), node.cwd)
     if isinstance(node, LoopNode) and node.until_bash is not None:
         update["until_bash"] = _argv(("until_bash",), node.until_bash, rewrite)
     return update
@@ -153,6 +155,8 @@ def _command_update(node: ShellNode | ScriptNode, rewrite: Rewrite) -> dict[str,
         update["args"] = _argv(("args",), node.args, rewrite)
     if node.cwd is not None:
         update["cwd"] = rewrite.text(("cwd",), node.cwd)
+    if node.stdin is not None:
+        update["stdin"] = rewrite.text(("stdin",), node.stdin)
     return update
 
 
