@@ -17,6 +17,7 @@ import { ApiProblem } from "../../lib/api";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { sessionControlUnavailable } from "../sessions-list/AgentSessionList";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
+import { OldestPendingContext } from "./PermissionCard";
 import { CostMeter } from "./CostMeter";
 import {
   isTerminal,
@@ -257,12 +258,15 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           <TodoList items={state.todos} />
         </div>
       </header>
-      <Transcript
-        state={state}
-        onAnswerPermission={ended ? undefined : commands.answer}
-        scrollerRef={setScroller}
-        follow={follow}
-      />
+      {/* The chords answer the oldest pending request: its card names them (AC-234.29). */}
+      <OldestPendingContext.Provider value={pending[0]}>
+        <Transcript
+          state={state}
+          onAnswerPermission={ended ? undefined : commands.answer}
+          scrollerRef={setScroller}
+          follow={follow}
+        />
+      </OldestPendingContext.Provider>
       <footer className="as-footer">
         <div className="as-column">
           <Composer
