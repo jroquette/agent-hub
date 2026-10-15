@@ -14,6 +14,8 @@ folds the second lens in. The budget keeps the next round's prompt far below its
 (128 KiB). Text that is not JSON exits 2.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import sys
