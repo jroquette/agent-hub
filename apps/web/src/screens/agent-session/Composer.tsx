@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "../../components";
 import { ApiProblem } from "../../lib/api";
@@ -8,6 +8,8 @@ import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./trans
 export const MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan"];
 /** The user message limit's default (L3: 64 KiB of UTF-8). */
 export const DEFAULT_MESSAGE_MAX_BYTES = 64 * 1024;
+/** The composer grows with its text up to this share of the viewport, then scrolls (AC-234.26). */
+const MAX_HEIGHT_SHARE = 0.4;
 
 export interface SettingsChange {
   mode?: PermissionMode;
@@ -59,6 +61,7 @@ export function Composer({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+  const box = useRef<HTMLTextAreaElement | null>(null);
   const stopping = useRef(false);
   const inputId = useId();
   const hintId = useId();
@@ -75,6 +78,15 @@ export function Composer({
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
+
+  useLayoutEffect(() => {
+    const element = box.current;
+    if (!element) return;
+    const max = Math.floor(window.innerHeight * MAX_HEIGHT_SHARE);
+    element.style.height = "auto";
+    element.style.height = `${String(Math.min(element.scrollHeight, max))}px`;
+    element.style.overflowY = element.scrollHeight > max ? "auto" : "hidden";
+  }, [text]);
 
   const run = (action: () => Promise<unknown> | undefined, what: string, done?: () => void) => {
     setError(null);
@@ -131,6 +143,7 @@ export function Composer({
       </label>
       <textarea
         id={inputId}
+        ref={box}
         className="ah-input as-composer-input"
         rows={3}
         value={text}
