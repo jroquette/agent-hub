@@ -75,6 +75,6 @@ describe("status sections (filters-both-views)", () => {
 
   it("counts a section from its query's total plus its driven rows without a twin", () => {
     expect(sectionCount(1233)).toBe(1233);
-    expect(sectionCount(4, [{}, {}])).toBe(6);
+    expect(sectionCount(4, { added: 2, removed: 1 })).toBe(5);
   });
 });
