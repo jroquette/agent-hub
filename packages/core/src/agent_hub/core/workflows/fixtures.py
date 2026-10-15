@@ -15,6 +15,7 @@ from typing import Annotated, Final
 
 from pydantic import Discriminator, Field, JsonValue, StrictStr, Tag, ValidationError
 
+# Private helpers of document.py, kept unrenamed while their module is in other open PRs.
 from agent_hub.core.workflows.document import (
     WorkflowLoadError,
     WorkflowProblem,

@@ -11,7 +11,8 @@ exits 2. Nothing is written and no network is used.
 ``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
 engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
 warnings indented, then a count; a failed fixture exits 1. ``--stubs-init`` writes NAME's
-skeleton fixture to ``<pack>/fixtures/<NAME>.yaml``, never over an existing file.
+skeleton fixture to ``<pack>/fixtures/<NAME>.yaml``, never over an existing file nor through a
+linked folder, and notes when the skeleton's own dry run did not end ``done``.
 """
 
 import os
@@ -146,7 +147,7 @@ def test_workflows(
     if name is not None and not runs:
         fail(f"no fixture for the workflow {name!r} in its pack's {FIXTURES}/")
     for fixture_run in runs:
-        where = _shown_fixture(root, fixture_run.path)
+        where = shown_text(_shown_fixture(root, fixture_run.path))
         typer.echo(f"{where}: {'FAILED' if fixture_run.problems else 'ok'}")
         for problem in fixture_run.problems:
             typer.echo(f"  {shown_text(problem)}")
@@ -168,20 +169,38 @@ def _write_skeleton(root: Path, discovery: WorkflowDiscovery, name: str | None) 
     if found.origin != "hub":
         fail(f"{name!r} is a built-in workflow; its fixtures ship with it")
     try:
-        plan = plan_workflow(parse_workflow(found.document))
-        text = skeleton_yaml(plan)
+        skeleton = skeleton_yaml(plan_workflow(parse_workflow(found.document)))
     except (WorkflowLoadError, WorkflowEngineError) as error:
         fail(f"{_shown_fixture(root, found.path)}: {error}")
-    target = found.pack_root / FIXTURES / f"{name}{FIXTURE_SUFFIX}"
+    target = _skeleton_target(root, found.pack_root, name)
     try:
-        target.parent.mkdir(exist_ok=True)
         with target.open("x", encoding="utf-8") as file:
-            file.write(text)
+            file.write(skeleton.text)
     except FileExistsError:
         fail(f"{_shown_fixture(root, target)} already exists; it is not overwritten")
     except OSError as error:
         fail(f"{_shown_fixture(root, target)}: {error.strerror or error}")
     typer.echo(f"wrote {_shown_fixture(root, target)}")
+    if skeleton.status != "done":
+        typer.echo(
+            f"note: its own dry run ended {skeleton.status}; fill in the stubs the placeholders"
+            " could not satisfy"
+        )
+
+
+def _skeleton_target(root: Path, pack_root: Path, name: str) -> Path:
+    """``<pack>/fixtures/<name>.yaml``, its folder made and checked: not a link, inside the pack."""
+    folder = pack_root / FIXTURES
+    if folder.is_symlink():
+        fail(f"{_shown_fixture(root, folder)} is a link; nothing is written")
+    try:
+        folder.mkdir(exist_ok=True)
+        inside = folder.resolve(strict=True).is_relative_to(pack_root.resolve(strict=True))
+    except OSError as error:
+        fail(f"{_shown_fixture(root, folder)}: {error.strerror or error}")
+    if not inside or not folder.is_dir():
+        fail(f"{_shown_fixture(root, folder)} is not a folder inside its pack; nothing is written")
+    return folder / f"{name}{FIXTURE_SUFFIX}"
 
 
 def _shown_fixture(root: Path, path: Path) -> str:

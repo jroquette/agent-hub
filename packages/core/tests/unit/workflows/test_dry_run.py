@@ -1,4 +1,4 @@
-"""The dry run: the real engine over stubbed node results, in memory."""
+"""The dry run: the real engine over stubbed node results, in memory (AC-213.11)."""
 
 from collections.abc import Mapping
 from typing import Any
@@ -9,6 +9,8 @@ from pydantic import ValidationError
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.testing.workflow_fakes import KeysOutputs, a_plan
 from agent_hub.core.workflows.dry_run import (
+    MAX_PLACEHOLDER_ITEMS,
+    PLACEHOLDER_BUDGET,
     DryRunReport,
     Stub,
     Stubs,
@@ -249,3 +251,29 @@ def test_gives_a_stub_that_completes_the_node_when_a_skeleton_is_asked(
     [planned] = a_plan(node).document.nodes
 
     assert skeleton_stub(planned) == stub
+
+
+def test_caps_the_items_when_min_items_is_past_the_cap() -> None:
+    schema: dict[str, JsonValue] = {
+        "type": "array",
+        "items": {"type": "boolean"},
+        "minItems": MAX_PLACEHOLDER_ITEMS + 1,
+    }
+
+    assert placeholder(schema) == [False] * MAX_PLACEHOLDER_ITEMS
+
+
+def test_gives_minimal_values_when_the_schema_is_past_the_node_budget() -> None:
+    # The root takes one node and each property two (the array and its item): property
+    # ``PLACEHOLDER_BUDGET // 2`` is the first one past the budget, so it is the minimal [].
+    names = [f"p{index:04}" for index in range(PLACEHOLDER_BUDGET // 2 + 1)]
+    item: JsonValue = {"type": "array", "items": {"type": "string"}, "minItems": 1}
+    schema: dict[str, JsonValue] = {
+        "type": "object",
+        "properties": dict.fromkeys(names, item),
+        "required": list(names),
+    }
+
+    value = placeholder(schema)
+
+    assert value == {**{name: ["TODO"] for name in names[:-1]}, names[-1]: []}
