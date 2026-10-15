@@ -193,6 +193,7 @@ export function DataTable<Row>({
                   <tr
                     key={key}
                     data-index={index}
+                    data-key={key}
                     aria-rowindex={virtual ? index + 2 : undefined}
                     aria-selected={chosen.has(key) || undefined}
                     onClick={() => onRowClick?.(row)}

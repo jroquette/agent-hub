@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -9,6 +9,7 @@ import {
   anId,
   renderWithApi,
   type ApiRoutes,
+  type FakeEventSource,
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
 
@@ -58,8 +59,25 @@ function layOutRows() {
     const rows = [...document.querySelectorAll("tr[data-key]")];
     const index = rows.indexOf(this);
     const top = this === scroller ? 0 : index < 0 ? 0 : index * ROW - scroller.scrollTop;
-    return { top, bottom: top + ROW, left: 0, right: 0, height: ROW, width: 0, x: 0, y: top } as DOMRect;
+    return {
+      top,
+      bottom: top + ROW,
+      left: 0,
+      right: 0,
+      height: ROW,
+      width: 0,
+      x: 0,
+      y: top,
+    } as DOMRect;
   });
+}
+
+/** Sends one stream change and lets the 2 s throttle pass at once. */
+async function change(source: FakeEventSource, type: string, data: unknown) {
+  vi.useFakeTimers();
+  source.emit(type, data);
+  await act(() => vi.advanceTimersByTimeAsync(2_000));
+  vi.useRealTimers();
 }
 
 afterEach(() => {
@@ -120,12 +138,40 @@ describe("SessionsListScreen no-jump", () => {
     const anchor = () => screen.getByText("/s3").closest("tr") as Element;
     expect(anchor().getBoundingClientRect().top).toBe(-10);
 
-    data.current = [one(5, "live"), one(6, "live"), one(1, "live"), one(7, "ended"), ...data.current.slice(1)];
-    stream(STREAM).emit("tile.upsert", { id: anId(5), group: "live" });
-    await screen.findByText("/s7", undefined, { timeout: 3_000 });
+    data.current = [
+      one(5, "live"),
+      one(6, "live"),
+      one(1, "live"),
+      one(7, "ended"),
+      ...data.current.slice(1),
+    ];
+    await change(stream(STREAM), "tile.upsert", { id: anId(5), group: "live" });
+    await screen.findByText("/s7");
 
     expect(anchor().getBoundingClientRect().top).toBe(-10);
     expect(scroller.scrollTop).toBe(5 * ROW + 10);
+  });
+
+  it("anchors on the next visible row when the first one moves to another section", async () => {
+    const data = { current: [one(1, "live"), one(2, "ended"), one(3, "ended"), one(4, "ended")] };
+    const { stream } = render(data);
+    await screen.findByText("/s4");
+    layOutRows();
+    const scroller = screen.getByTestId("scroller");
+    scroller.scrollTop = ROW + 10; // /s2 first, then /s3
+    fireEvent.scroll(scroller);
+
+    data.current = [
+      one(1, "live"),
+      one(2, "live"),
+      one(5, "ended"),
+      one(3, "ended"),
+      one(4, "ended"),
+    ];
+    await change(stream(STREAM), "tile.upsert", { id: anId(2), group: "live" });
+    await screen.findByText("/s5");
+
+    expect(scroller.scrollTop).toBe(2 * ROW + 10); // /s3 kept its offset; /s2 moved
   });
 
   it("does not move a reader at the very top", async () => {
@@ -136,39 +182,54 @@ describe("SessionsListScreen no-jump", () => {
     const scroller = screen.getByTestId("scroller");
 
     data.current = [one(5, "waiting"), ...data.current];
-    stream(STREAM).emit("tile.upsert", { id: anId(5), group: "waiting" });
-    await screen.findByText("/s5", undefined, { timeout: 3_000 });
+    await change(stream(STREAM), "tile.upsert", { id: anId(5), group: "waiting" });
+    await screen.findByText("/s5");
 
     expect(scroller.scrollTop).toBe(0);
   });
 
   it("keeps focus on the row by key when it moves to another section, else on its section header", async () => {
     const data = { current: [one(1, "live"), one(2, "live"), one(4, "live"), one(3, "ended")] };
-    const { stream } = render(data);
+    const { requests, stream } = render(data);
     await screen.findByText("/s1");
     (screen.getByText("/s1").closest("tr") as HTMLElement).focus();
 
     data.current = [one(2, "live"), one(4, "live"), one(3, "ended"), one(1, "ended")];
-    stream(STREAM).emit("tile.upsert", { id: anId(1), group: "ended_recently" });
-    await waitFor(
-      () => {
-        expect(document.activeElement).toBe(screen.getByText("/s1").closest("tr"));
-      },
-      { timeout: 3_000 },
-    );
-    expect(screen.getByText("/s1").closest("table")).toBe(
-      screen.getByRole("table", { name: "Ended or failed sessions" }),
-    );
+    await change(stream(STREAM), "tile.upsert", { id: anId(1), group: "ended_recently" });
+    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
+    await waitFor(() => {
+      expect(screen.getByText("/s1").closest("table")).toBe(ended);
+    });
+    expect(document.activeElement).toBe(screen.getByText("/s1").closest("tr"));
 
     (screen.getByText("/s2").closest("tr") as HTMLElement).focus();
     data.current = [one(4, "live"), one(3, "ended"), one(1, "ended")]; // /s2 is gone
-    stream(STREAM).emit("tile.remove", { id: anId(2) });
-    await waitFor(
-      () => {
-        expect(screen.queryByText("/s2")).toBeNull();
-      },
-      { timeout: 3_000 },
-    );
+    await change(stream(STREAM), "tile.remove", { id: anId(2) });
+    await waitFor(() => {
+      expect(screen.queryByText("/s2")).toBeNull();
+    });
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Live/ }));
+    const sent = requests.length;
+
+    // Focus on a control inside a row stays on it.
+    const check = within(screen.getByText("/s4").closest("tr") as HTMLElement).getByRole(
+      "checkbox",
+    );
+    check.focus();
+    await change(stream(STREAM), "tile.upsert", { id: anId(4), group: "live" });
+    await waitFor(() => {
+      expect(requests.length).toBeGreaterThan(sent);
+    });
+    expect(document.activeElement).toBe(check);
+
+    // Focus the reader moved out of the list is left where they put it.
+    (screen.getByText("/s4").closest("tr") as HTMLElement).focus();
+    (document.activeElement as HTMLElement).blur();
+    data.current = [one(3, "ended"), one(1, "ended")];
+    await change(stream(STREAM), "tile.remove", { id: anId(4) });
+    await waitFor(() => {
+      expect(screen.queryByText("/s4")).toBeNull();
+    });
+    expect(document.activeElement).toBe(document.body);
   });
 });
