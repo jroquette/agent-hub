@@ -18,6 +18,7 @@ from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
+from agent_hub.core.workflows.catalog import check_workflows
 from agent_hub.generator.doctor_snapshot import build_doctor_snapshot
 
 RUNNING = "4.5.6"
@@ -82,6 +83,7 @@ def test_reads_nothing_when_no_rule_selected(hub_root: Path) -> None:
     assert snapshot.repos == ()
     assert snapshot.base_hooks is None
     assert snapshot.branch_prefix is None
+    assert snapshot.workflows is None
     assert called == []
 
 
@@ -156,3 +158,31 @@ def test_skips_prefix_injected_when_local_file_invalid(hub_root: Path) -> None:
     assert snapshot.branch_prefix is None
     assert snapshot.local == problems
     assert called == []
+
+
+def test_reads_hub_workflows_when_workflows_rule_selected(hub_root: Path) -> None:
+    # AGH-227: `workflows.valid` reads the hub's packs and the built-ins through the source.
+    config = a_config()
+    pack = hub_root / "workflows" / "demo"
+    pack.mkdir(parents=True)
+    (pack / "lint.yaml").write_text(
+        "version: 1\nname: lint\nrevision: 1\nnodes:\n  - id: a\n    type: shell\n"
+        "    command: ['true']\n    promt: x\n",
+        encoding="utf-8",
+    )
+
+    snapshot = build_doctor_snapshot(
+        str(hub_root),
+        config=config,
+        running=RUNNING,
+        selection=every_rule(config),
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+
+    assert snapshot.workflows is not None
+    catalog = check_workflows(snapshot.workflows)
+    assert "issue-to-pr" in [plan.document.name for plan in catalog.plans]
+    assert [(file, where) for file, _, where, _ in catalog.problems] == [
+        ("workflows/demo/lint.yaml", "nodes[0].promt")
+    ]

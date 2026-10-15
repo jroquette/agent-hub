@@ -228,6 +228,9 @@
         },
         "sandbox.workflow": {
           "$ref": "#/$defs/RuleSettings"
+        },
+        "workflows.valid": {
+          "$ref": "#/$defs/RuleSettings"
         }
       },
       "title": "DoctorRules",
