@@ -131,6 +131,12 @@
 .as-working {
   margin: 0 auto var(--space-4);
 }
+.as-working.as-working-idle {
+  margin-bottom: 0;
+}
+.as-working.as-working-idle::before {
+  content: none;
+}
 .as-working::before {
   content: "";
   display: inline-block;

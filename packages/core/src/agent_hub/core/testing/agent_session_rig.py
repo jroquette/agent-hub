@@ -10,6 +10,7 @@ from agent_hub.core.agent_sessions.agent_session import AgentSession, CreateAgen
 from agent_hub.core.agent_sessions.control import AgentSessionControl
 from agent_hub.core.agent_sessions.driver import DriverHandle, PastSession
 from agent_hub.core.agent_sessions.limits import SessionLimits
+from agent_hub.core.agent_sessions.links import ObservedSessionLookup
 from agent_hub.core.agent_sessions.records import LogRecord
 from agent_hub.core.agent_sessions.workdirs import ResolvedWorkdir, WorkdirListing
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
@@ -88,8 +89,10 @@ def build_rig(
     past_sessions: Sequence[PastSession] = (),
     driver: InMemorySessionDriver | None = None,
     store: InMemoryAgentSessionStore | None = None,
+    observed_sessions: ObservedSessionLookup | None = None,
 ) -> Rig:
-    """A rig; ``replies`` script the fake driver per user message."""
+    """A rig; ``replies`` script the fake driver per user message; ``observed_sessions`` says
+    which Claude sessions have an observed twin."""
     fake = driver or InMemorySessionDriver(replies=replies, past_sessions=past_sessions)
     store = store or InMemoryAgentSessionStore()
     clock = Clock()
@@ -100,5 +103,6 @@ def build_rig(
         limits=limits or SessionLimits(),
         clock=clock,
         environment_extra={"AGENT_HUB_WEB_URL": WEB_URL},
+        observed_sessions=observed_sessions,
     )
     return Rig(control=control, driver=fake, store=store, clock=clock)
