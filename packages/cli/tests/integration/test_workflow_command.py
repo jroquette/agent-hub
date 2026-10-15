@@ -509,6 +509,9 @@ def test_resumes_when_last_record_line_is_torn(
     result = sample.run("--resume", RUN_ID)
 
     assert result.exit_code == 0, result.output
+    again = sample.run("--abandon", RUN_ID)
+    assert again.exit_code == 1
+    assert "already ended done" in again.stderr
 
 
 def test_refuses_resume_when_a_record_line_is_not_an_object(

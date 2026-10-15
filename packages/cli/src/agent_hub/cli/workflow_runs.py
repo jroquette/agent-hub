@@ -176,6 +176,22 @@ def read_records(folder: Path) -> list[Record]:
     return records
 
 
+def drop_torn_tail(folder: Path) -> None:
+    """Cut ``records.jsonl`` back to its last newline, so the next record starts on a line of
+    its own after a torn write. Called under the run's lock, before the first append."""
+    try:
+        with (folder / RECORDS).open("r+b") as file:
+            size = file.seek(0, os.SEEK_END)
+            start = max(0, size - MAX_RECORDS_BYTES)
+            file.seek(start)
+            data = file.read()
+            if data.endswith(b"\n") or not data:
+                return
+            file.truncate(start + data.rfind(b"\n") + 1)
+    except OSError as error:
+        raise WorkflowRunError(f"cannot repair the run {folder.name}: {error}") from None
+
+
 def append_record(folder: Path, record: Record) -> None:
     line = {"ts": now().isoformat(timespec="seconds"), **record}
     try:
