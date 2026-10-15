@@ -100,7 +100,6 @@ type SortKey = tuple[CursorKeyPart, ...]
 RECENT = timedelta(days=7)
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 DAYS_IN_PERIOD = 7
-_IN_FLIGHT_DONE = frozenset({Stage.REPORTED, Stage.FAILED})
 _SEARCH_ORDER: Mapping[SearchKind, int] = {
     "session": 0,
     "run": 1,
@@ -683,7 +682,7 @@ class FoldedEventReadModels:
         runs = [run for run in snapshot.runs.values() if run.project == project]
         in_flight: dict[Stage, int] = {}
         for run in runs:
-            if run.stage not in _IN_FLIGHT_DONE:
+            if run.status == "running":
                 in_flight[run.stage] = in_flight.get(run.stage, 0) + 1
         now = snapshot.now
         return ProjectActivity(
@@ -983,14 +982,17 @@ def _timeline(events: Sequence[StoredEvent]) -> list[TimelineEvent]:
 
 def _run_matches(run: WorkflowRun, wanted: RunFilter) -> bool:
     failure_stage = None if run.failure is None else run.failure.stage
+    failure_kind = None if run.failure is None else run.failure.failure_kind
     checks = (
         _in_scope(run.project, wanted),
         wanted.repo is None or run.repo == wanted.repo,
         wanted.stage is None or run.stage == wanted.stage,
-        wanted.outcome != "done" or (run.stage == Stage.REPORTED and run.failure is None),
+        wanted.outcome != "done" or run.status == "done",
         wanted.outcome != "failed" or run.failure is not None,
         wanted.failure_stage is None or failure_stage == wanted.failure_stage,
         wanted.mode is None or run.mode == wanted.mode,
+        wanted.workflow is None or run.workflow == wanted.workflow,
+        wanted.failure_kind is None or failure_kind == wanted.failure_kind,
         wanted.issue is None or (run.issue is not None and run.issue.key == wanted.issue),
     )
     return all(checks)

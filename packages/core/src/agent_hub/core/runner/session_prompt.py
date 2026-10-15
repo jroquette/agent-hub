@@ -108,10 +108,13 @@ def implementing_prompt(
     blank: the repo has none, and step 3 names ``full_gate``, its ``check``, instead); ``prefix``
     the issue prefix (``DEM-``); ``commit_title`` the repo's effective commit title pattern.
     """
-    guarded = (
-        f"touches a file matching {', '.join(sensitive)} (needs an approved plan) or "
-        if sensitive
-        else ""
+    parts = prompt_parts(
+        sensitive=sensitive,
+        fast_gate=fast_gate,
+        full_gate=full_gate,
+        issue_id=issue.id,
+        prefix=prefix,
+        commit_title=commit_title,
     )
     steps = _STEPS.format(
         issue=issue.id,
@@ -119,12 +122,36 @@ def implementing_prompt(
         branch=branch,
         hub=hub,
         hub_name=hub_name,
-        sensitive=guarded,
-        gate_step=_gate_step(fast_gate, full_gate),
-        commit_shape=_commit_shape(commit_title, issue_id=issue.id, prefix=prefix),
+        sensitive=parts["guard"],
+        gate_step=parts["gate_step"],
+        commit_shape=parts["commit_shape"],
         verdict=_VERDICT_SHAPE,
     )
     return f"{steps}\n{issue_block(issue)}\n\n{ISSUE_END}\n"
+
+
+def prompt_parts(
+    *,
+    sensitive: Sequence[str],
+    fast_gate: str | None,
+    full_gate: str,
+    issue_id: str,
+    prefix: str,
+    commit_title: str = DEFAULT_COMMIT_TITLE,
+) -> dict[str, str]:
+    """The steps' texts that depend on the hub and the repo: ``guard`` (the sensitive paths'
+    clause of step 1, empty without any), ``gate_step`` (step 3) and ``commit_shape`` (step 4).
+    ``hub step worktree`` prints them for the issue-to-pr workflow's prompt."""
+    guard = (
+        f"touches a file matching {', '.join(sensitive)} (needs an approved plan) or "
+        if sensitive
+        else ""
+    )
+    return {
+        "guard": guard,
+        "gate_step": _gate_step(fast_gate, full_gate),
+        "commit_shape": _commit_shape(commit_title, issue_id=issue_id, prefix=prefix),
+    }
 
 
 def _gate_step(fast_gate: str | None, full_gate: str) -> str:

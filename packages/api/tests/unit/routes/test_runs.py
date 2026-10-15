@@ -23,6 +23,22 @@ def test_maps_filters_when_runs_listed(wired: Any) -> None:
     ]
 
 
+def test_maps_workflow_and_failure_kind_when_runs_filtered_by_them(wired: Any) -> None:
+    response = wired.client.get(
+        "/api/v1/workflow-runs", params={"workflow": "ship", "failure_kind": "timeout"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert wired.events.calls == [("list_runs", RunFilter(workflow="ship", failure_kind="timeout"))]
+
+
+def test_refuses_failure_kind_when_kind_unknown(wired: Any) -> None:
+    response = wired.client.get("/api/v1/workflow-runs", params={"failure_kind": "boom"})
+
+    assert response.status_code == 400
+    assert wired.events.calls == []
+
+
 def test_maps_run_when_run_requested(wired: Any) -> None:
     wired.events.runs.append(a_run())
 
