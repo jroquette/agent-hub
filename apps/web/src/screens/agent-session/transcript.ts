@@ -537,7 +537,11 @@ function applyResult(state: TranscriptState, record: LogRecord): TranscriptState
         : null,
     turns: state.meter.turns + 1,
   };
-  const next = { ...state, meter, streaming: false, interrupted: false };
+  // A turn's end closes a bubble no text record replaced (an interrupt cut it short).
+  const entries = state.entries.map((entry) =>
+    entry.kind === "assistant" && entry.streaming ? { ...entry, streaming: false } : entry,
+  );
+  const next = { ...state, entries, meter, streaming: false, interrupted: false };
   const reason = str(body, "terminal_reason");
   if (state.interrupted || reason?.startsWith("aborted"))
     return notice(next, record.seq, "Turn interrupted", "warning");
