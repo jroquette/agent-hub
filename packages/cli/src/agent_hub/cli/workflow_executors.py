@@ -10,8 +10,15 @@ read from the pack's ``prompts/`` and rendered against the attempt's references.
 
 A ``shell`` node runs its rendered argv, never through a shell; a ``script`` node runs
 ``sh <file>`` or ``uv run <file>`` from the pack's ``scripts/``, its ``args`` after the file. The
-output is stdout, at most ``MAX_OUTPUT_BYTES``. The cwd is the node's ``cwd`` (relative to the
-hub), else the hub.
+output is stdout, at most ``MAX_OUTPUT_BYTES``: the child writes to a temporary file and only
+its last bytes are read back, so the memory is bounded, not the disk; past the cap the node fails
+once the child ends (``run_child`` has no early stop). The cwd is the node's ``cwd`` (relative
+to the hub), else the hub; its real path must stay in the hub or in one of its repos.
+
+Every child runs in a session of its own, so a timeout or Ctrl-C kills its whole group, and the
+group is killed again once the child ends: nothing it left in the background outlives the
+attempt, and a retry never runs beside an earlier copy. A session id from claude or a record is
+passed to ``--resume`` only when it matches ``SESSION_ID``.
 
 Environments: an agent gets ``session_env`` (its step is the node id as recorded, its attempt the
 run-wide one), a ``hub step`` node runs this hub's own executable with ``child_env`` (hub step
@@ -21,7 +28,11 @@ code (``kind_for_exit``), a timeout, claude's ``is_error`` field, or a child tha
 (``config``); never from message text.
 """
 
+import contextlib
 import json
+import os
+import re
+import signal
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,6 +73,8 @@ MAX_OUTPUT_BYTES: Final = 512 * 1024
 AGENT_EFFORT: Final = "medium"
 # Kept from a failed child's stderr for the run's record (never for events).
 MAX_DETAIL_CHARS: Final = 1_500
+# A session id ``--resume`` may get: no leading dash, no space or shell character.
+SESSION_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 SCRIPT_RUNNERS: Final[Mapping[str, tuple[str, ...]]] = {"sh": ("sh",), "python": ("uv", "run")}
 
 type ChildRunner = Callable[..., ChildResult]
@@ -95,7 +108,7 @@ class WorkflowExecutors:
 
     def until_exit(self, argv: Sequence[str], call: NodeCall) -> int:
         result = self._spawn(
-            argv, env=untrusted_env(self.environ), cwd=self.hub, timeout=_timeout(call.node)
+            argv, env=untrusted_env(self.environ), cwd=self._cwd(None), timeout=_timeout(call.node)
         )
         return result.returncode
 
@@ -118,6 +131,8 @@ class WorkflowExecutors:
             denied_tools=SESSION_DENIED_TOOLS,
         )
         if call.resume_session is not None:
+            if not SESSION_ID.fullmatch(call.resume_session):
+                raise NodeFailedError("config", "the session to resume has an unsafe id")
             argv += ["--resume", call.resume_session]
         inputs = call.context.inputs
         env = session_env(
@@ -131,7 +146,7 @@ class WorkflowExecutors:
         result = self._spawn(
             argv,
             env=env,
-            cwd=self.hub,
+            cwd=self._cwd(None),
             timeout=_timeout(node, default=SESSION_TIMEOUT),
             output_limit=SESSION_OUTPUT_LIMIT,
         )
@@ -142,7 +157,9 @@ class WorkflowExecutors:
         text = reply.result
         if node.output_format is not None and (value := last_json_line(text)) is not None:
             text = json.dumps(value)
-        return NodeReply(_bounded(text.encode(errors="surrogatepass")), reply.session_id)
+        session = reply.session_id
+        safe = session if session is not None and SESSION_ID.fullmatch(session) else None
+        return NodeReply(_bounded(text.encode(errors="surrogatepass")), safe)
 
     def _prompt_file(self, call: NodeCall, node: AgentNode | LoopNode) -> str:
         path = self._pack_file("prompts", node.prompt_file or "")
@@ -173,7 +190,14 @@ class WorkflowExecutors:
             raise NodeFailedError("config", str(error)) from None
 
     def _cwd(self, given: str | None) -> Path:
-        return self.hub if given is None else self.hub / given
+        """The real path of ``given`` (relative to the hub); ``config`` unless it stays in the
+        hub or one of its repos."""
+        hub = self.hub.resolve()
+        path = hub if given is None else (hub / given).resolve()
+        roots = (hub, *((hub.parent / repo.dir).resolve() for repo in self.config.repos))
+        if not any(path.is_relative_to(root) for root in roots):
+            raise NodeFailedError("config", "the cwd leaves the hub and its repos")
+        return path
 
     def _spawn(
         self,
@@ -184,20 +208,27 @@ class WorkflowExecutors:
         timeout: float,
         output_limit: int = MAX_OUTPUT_BYTES + 1,
     ) -> ChildResult:
+        groups: list[int] = []
         try:
             return self.child(
                 argv,
                 cwd=cwd,
                 env=env,
                 timeout=timeout,
-                own_session=False,
+                own_session=True,
                 output_limit=output_limit,
+                on_start=groups.append,
             )
         except ChildTimedOutError as error:
             raise NodeFailedError("timeout", str(error)) from None
         except OSError as error:
             detail = f"{argv[0]} could not start: {error.strerror or type(error).__name__}"
             raise NodeFailedError("config", detail) from None
+        finally:
+            for group in groups:
+                # The leader has ended; what it left running ends with it.
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(group, signal.SIGKILL)
 
 
 def _timeout(node: ExecutableNode, *, default: float = GATE_TIMEOUT) -> float:
