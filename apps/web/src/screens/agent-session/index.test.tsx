@@ -673,7 +673,9 @@ describe("AgentSessionScreen (sending-feedback)", () => {
     await userEvent.type(box, "Also lint{Enter}");
 
     const log = screen.getByRole("log", { name: "Conversation" });
-    expect(within(log).getByText("Also lint").closest(".as-msg")).toHaveTextContent("Sending…");
+    const bubble = { selector: ".as-msg *" };
+    expect(within(log).queryByText("Also lint")).toBeNull();
+    expect(screen.getByText("Also lint", bubble).closest(".as-msg")).toHaveTextContent("Sending…");
     await waitFor(() => {
       expect(posts(view.requests, "/messages")).toHaveLength(1);
     });
@@ -686,8 +688,8 @@ describe("AgentSessionScreen (sending-feedback)", () => {
           "4",
         );
     });
-    expect(within(log).getAllByText("Also lint")).toHaveLength(1);
-    expect(within(log).queryByText("Sending…")).toBeNull();
+    expect(screen.getAllByText("Also lint", bubble)).toHaveLength(1);
+    expect(screen.queryByText("Sending…", bubble)).toBeNull();
     expect(within(log).getByText("Also lint").closest(".as-msg")).toHaveTextContent(
       "Queued: Claude reads it after this turn",
     );
