@@ -120,6 +120,24 @@
   align-self: flex-start;
   position: relative;
 }
+/* The action row (AC-234.22): shown on hover or keyboard focus, always without hover. */
+.as-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.as-msg:hover .as-meta,
+.as-msg:focus-within .as-meta {
+  opacity: 1;
+}
+@media (hover: none) {
+  .as-meta {
+    opacity: 1;
+  }
+}
 .as-md > :first-child {
   margin-top: 0;
 }
@@ -161,6 +179,9 @@
   .as-caret,
   .as-working::before {
     animation: none;
+  }
+  .as-meta {
+    transition: none;
   }
 }
 .as-stored {

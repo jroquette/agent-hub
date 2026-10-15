@@ -2,7 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { aDeltaFrame, aLogRecord } from "../../testing/builders";
+import { aDeltaFrame, aLogRecord, at } from "../../testing/builders";
 import { seriousViolations } from "../../testing/axe";
 import { CostMeter } from "./CostMeter";
 import { TodoList } from "./TodoList";
@@ -654,5 +654,55 @@ describe("Transcript (sending-feedback)", () => {
     expect(log).not.toContainElement(sending);
     expect(log.compareDocumentPosition(sending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(log).getByText("Run the tests.")).toBeInTheDocument();
+  });
+});
+
+describe("Transcript (message-meta)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const reply = (seq: number, text: string): StreamItem => ({
+    type: "record",
+    record: aLogRecord("text", { seq, body: { block: 0, text } }),
+  });
+
+  it("gives your messages and Claude's replies a time and Copy, not a streaming reply (AC-234.22)", () => {
+    const user = aLogRecord("user.message", { seq: 1 });
+    const text = aLogRecord("text", { seq: 2, body: { block: 0, text: "Done **now**." } });
+    show([
+      { type: "record", record: user },
+      { type: "record", record: text },
+      { type: "delta", delta: aDeltaFrame({ after_seq: 2, block: 1, index: 0, text: "More" }) },
+    ]);
+
+    const [done, streaming] = screen.getAllByRole("article", { name: "Claude" });
+    if (!done) throw new Error("no finished reply");
+    expect(done.querySelector("time")).toHaveAttribute("datetime", text.at);
+    expect(within(done).getByRole("button", { name: "Copy message" })).toBeVisible();
+    expect(streaming?.querySelector(".as-meta")).toBeNull();
+    const mine = screen.getByText("Run the tests.").closest<HTMLElement>(".as-msg");
+    if (!mine) throw new Error("no message");
+    expect(mine.querySelector("time")).toHaveAttribute("datetime", user.at);
+    expect(within(mine).getByRole("button", { name: "Copy message" })).toBeInTheDocument();
+  });
+
+  it("re-renders no Markdown when the minute ticks", () => {
+    // At 14:01:30 the minute clock reads 14:01:00: the first reply (14:00:01) is 59 s old, "just now";
+    // the 14:02:00 tick makes it 119 s old, which reads "2 min ago".
+    vi.useFakeTimers({ now: Date.parse(at(90)) });
+    show([reply(1, "One"), reply(2, "Two")]);
+    const [first] = screen.getAllByRole("article", { name: "Claude" });
+    if (!first) throw new Error("no reply");
+    const label = () => first.querySelector("time")?.textContent;
+    expect(label()).toBe("just now");
+    renders.markdown = 0;
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(label()).toBe("2 min ago");
+    expect(renders.markdown).toBe(0);
   });
 });
