@@ -1,0 +1,147 @@
+# A checkout's review by two lenses side by side, then one verdict (ADR 0032). Each lens is one
+# session that follows the hub's own reviewer agent (spec-reviewer, quality-reviewer) and ends with
+# the review JSON `hub validate-output review` checks, which its output_format states. A lens only
+# reads: mutates_checkout false, so an attempt that changes git status fails it. The verdict
+# script joins the two: PASS only when both pass, the run's outcome. Publishing is the run's
+# record: each review and the verdict stay there (.agent-runs/workflows/<run>/), nothing else is
+# written, and hub workflow run prints the outcome.
+version: 1
+name: review
+description: The spec and quality lenses on a checkout, then one verdict.
+revision: 1
+inputs:
+  issue:
+    required: true
+    description: The ticket the change is for, <team>-<n>.
+  path:
+    required: true
+    description: The checkout to review, from the hub (a repo or one of its worktrees).
+  base:
+    default: origin/main
+    description: The ref the change is reviewed from.
+  task:
+    default: all
+    description: The plan task under review; all for the whole branch.
+  round:
+    type: integer
+    default: 1
+    description: The review round, from 1.
+returns: verdict
+outcome_field: verdict
+nodes:
+  - id: spec
+    type: agent
+    description: The spec lens - the hub's spec-reviewer agent on the checkout; read only.
+    prompt_file: lens.md
+    cwd: $INPUTS.path
+    mutates_checkout: false
+    with:
+      agent: spec-reviewer
+      reviewer: spec
+      ticket: $INPUTS.issue
+      task: $INPUTS.task
+      round: $INPUTS.round
+      base: $INPUTS.base
+      spec: ""
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [schema, reviewer, ticket, task, round, commit, verdict, findings]
+      properties:
+        schema: {type: string, const: agent-hub/review/1}
+        reviewer: {type: string, enum: [spec, quality]}
+        ticket: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
+        task: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+        round: {type: integer, minimum: 1, maximum: 9999}
+        commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+        verdict: {type: string, enum: [PASS, FAIL]}
+        findings:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, kind, severity, path, line, acs, what, expected]
+            properties:
+              id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"}
+              kind:
+                type: string
+                enum: [missing, extra, test, assertion, contract, invariant, security, idempotency, quality]
+              severity: {type: string, enum: [blocking, minor]}
+              path: {type: string, minLength: 1, maxLength: 512, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              line:
+                anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
+              acs:
+                type: array
+                maxItems: 50
+                items: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+              what: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              expected: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+  - id: quality
+    type: agent
+    description: The quality lens - the hub's quality-reviewer agent on the checkout; read only.
+    prompt_file: lens.md
+    cwd: $INPUTS.path
+    mutates_checkout: false
+    with:
+      agent: quality-reviewer
+      reviewer: quality
+      ticket: $INPUTS.issue
+      task: $INPUTS.task
+      round: $INPUTS.round
+      base: $INPUTS.base
+      spec: ""
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [schema, reviewer, ticket, task, round, commit, verdict, findings]
+      properties:
+        schema: {type: string, const: agent-hub/review/1}
+        reviewer: {type: string, enum: [spec, quality]}
+        ticket: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
+        task: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+        round: {type: integer, minimum: 1, maximum: 9999}
+        commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+        verdict: {type: string, enum: [PASS, FAIL]}
+        findings:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, kind, severity, path, line, acs, what, expected]
+            properties:
+              id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"}
+              kind:
+                type: string
+                enum: [missing, extra, test, assertion, contract, invariant, security, idempotency, quality]
+              severity: {type: string, enum: [blocking, minor]}
+              path: {type: string, minLength: 1, maxLength: 512, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              line:
+                anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
+              acs:
+                type: array
+                maxItems: 50
+                items: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+              what: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              expected: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+  - id: verdict
+    type: script
+    description: The lenses' verdicts joined - PASS only when both pass.
+    depends_on: [spec, quality]
+    runtime: python
+    script: verdict.py
+    args: [--spec, $spec.output.verdict, --quality, $quality.output.verdict]
+    output_format:
+      type: object
+      properties:
+        verdict: {type: string, enum: [PASS, FAIL]}
+        lenses:
+          type: object
+          properties:
+            spec: {type: string, enum: [PASS, FAIL]}
+            quality: {type: string, enum: [PASS, FAIL]}
+          required: [spec, quality]
+      required: [verdict, lenses]

@@ -1,0 +1,262 @@
+# One issue to a PR through review rounds (ADR 0032): the worktree, then up to three rounds of an
+# implementing session, the repo's check and, once it passes, the review pack's two lenses and
+# their verdict; then the commits, the PR and the delivery, as issue-to-pr makes them (hub step).
+# The check script turns a red check into data the next round reads; the round ends the group
+# when the verdict is PASS, and the third round without one fails it (max_iterations): no PR.
+# The lenses are inline, as a loop group's body holds no include: same prompt, scripts and
+# output_format as review.yaml. Unlike issue-to-pr (hub run's parity workflow), deliver has no
+# tracker side: issue_text is an input, and nothing reads or writes the tracker.
+version: 1
+name: deliver
+description: One issue to a PR, implemented and reviewed in rounds until the check and both reviewers pass.
+revision: 1
+inputs:
+  issue:
+    required: true
+    description: The tracker issue, <team>-<n>.
+  repo:
+    required: true
+    description: The repo to change, its dir in hub.json.
+  issue_text:
+    required: true
+    description: The issue as text, the task to do; deliver reads no tracker.
+returns: report
+outcome_field: delivery
+nodes:
+  - id: worktree
+    type: shell
+    description: Make (or keep) the issue's worktree from a fresh fetch; print the repo's target.
+    command: [hub, step, worktree, --issue, $INPUTS.issue, --repo, $INPUTS.repo]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        branch: {type: string}
+        base: {type: string}
+        hub: {type: string}
+        hub_name: {type: string}
+        check: {type: string}
+        prompt:
+          type: object
+          properties:
+            gate_step: {type: string}
+            commit_shape: {type: string}
+          required: [gate_step, commit_shape]
+        target: {type: object}
+      required: [path, branch, base, hub, hub_name, check, prompt, target]
+
+  - id: rounds
+    type: loop_group
+    description: Implement, check, review - again until the verdict is PASS, three rounds at most.
+    depends_on: [worktree]
+    max_iterations: 3
+    until_when: "$verdict.output.verdict == 'PASS'"
+    nodes:
+      - id: implement
+        type: agent
+        description: The implementing session, resumed each round with the last round's results.
+        prompt_file: implement.md
+        cwd: $worktree.output.path
+        retry: {max_attempts: 0}
+
+      - id: check
+        type: script
+        description: The repo's check on the round's work; a red check is data, not a failure.
+        depends_on: [implement]
+        runtime: python
+        script: check.py
+        args: [$worktree.output.check, $LOOP_PREV.check.output.round]
+        cwd: $worktree.output.path
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            passed: {type: boolean}
+            exit_code: {type: integer}
+            round: {type: integer, minimum: 1}
+            tail: {type: string}
+          required: [passed, exit_code, round, tail]
+
+      - id: spec
+        type: agent
+        description: The spec lens - the hub's spec-reviewer agent on the round's commits; read only.
+        depends_on: [check]
+        when: "$check.output.passed == true"
+        prompt_file: lens.md
+        cwd: $worktree.output.path
+        mutates_checkout: false
+        with:
+          agent: spec-reviewer
+          reviewer: spec
+          ticket: $INPUTS.issue
+          task: $INPUTS.issue
+          round: $check.output.round
+          base: $worktree.output.base
+          spec: $INPUTS.issue_text
+        output_format:
+          type: object
+          additionalProperties: false
+          required: [schema, reviewer, ticket, task, round, commit, verdict, findings]
+          properties:
+            schema: {type: string, const: agent-hub/review/1}
+            reviewer: {type: string, enum: [spec, quality]}
+            ticket: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
+            task: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+            round: {type: integer, minimum: 1, maximum: 9999}
+            commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+            verdict: {type: string, enum: [PASS, FAIL]}
+            findings:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, kind, severity, path, line, acs, what, expected]
+                properties:
+                  id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"}
+                  kind:
+                    type: string
+                    enum: [missing, extra, test, assertion, contract, invariant, security, idempotency, quality]
+                  severity: {type: string, enum: [blocking, minor]}
+                  path: {type: string, minLength: 1, maxLength: 512, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  line:
+                    anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
+                  acs:
+                    type: array
+                    maxItems: 50
+                    items: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+                  what: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  expected: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+      - id: quality
+        type: agent
+        description: The quality lens - the hub's quality-reviewer agent on the round's commits; read only.
+        depends_on: [check]
+        when: "$check.output.passed == true"
+        prompt_file: lens.md
+        cwd: $worktree.output.path
+        mutates_checkout: false
+        with:
+          agent: quality-reviewer
+          reviewer: quality
+          ticket: $INPUTS.issue
+          task: $INPUTS.issue
+          round: $check.output.round
+          base: $worktree.output.base
+          spec: $INPUTS.issue_text
+        output_format:
+          type: object
+          additionalProperties: false
+          required: [schema, reviewer, ticket, task, round, commit, verdict, findings]
+          properties:
+            schema: {type: string, const: agent-hub/review/1}
+            reviewer: {type: string, enum: [spec, quality]}
+            ticket: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
+            task: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+            round: {type: integer, minimum: 1, maximum: 9999}
+            commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+            verdict: {type: string, enum: [PASS, FAIL]}
+            findings:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, kind, severity, path, line, acs, what, expected]
+                properties:
+                  id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"}
+                  kind:
+                    type: string
+                    enum: [missing, extra, test, assertion, contract, invariant, security, idempotency, quality]
+                  severity: {type: string, enum: [blocking, minor]}
+                  path: {type: string, minLength: 1, maxLength: 512, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  line:
+                    anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
+                  acs:
+                    type: array
+                    maxItems: 50
+                    items: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+                  what: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  expected: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+      - id: verdict
+        type: script
+        description: The lenses' verdicts joined - PASS only when both pass.
+        depends_on: [spec, quality]
+        runtime: python
+        script: verdict.py
+        args: [--spec, $spec.output.verdict, --quality, $quality.output.verdict]
+        output_format:
+          type: object
+          properties:
+            verdict: {type: string, enum: [PASS, FAIL]}
+            lenses:
+              type: object
+              properties:
+                spec: {type: string, enum: [PASS, FAIL]}
+                quality: {type: string, enum: [PASS, FAIL]}
+              required: [spec, quality]
+          required: [verdict, lenses]
+
+  - id: commits
+    type: shell
+    description: The commits on the branch, and whether a tracked change sits beside them.
+    depends_on: [rounds]
+    command: [hub, step, commits, --target, $worktree.output.target]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        count: {type: integer, minimum: 0}
+        subjects: {type: array, items: {type: string}}
+        summary: {type: string}
+        dirty: {type: boolean}
+      required: [count, subjects, summary, dirty]
+
+  - id: pr
+    type: shell
+    description: Push the branch and open its PR, or find the one open.
+    depends_on: [commits]
+    when: "$commits.output.count > 0 && $commits.output.dirty == false"
+    command: [hub, step, pr, --issue, $INPUTS.issue, --target, $worktree.output.target]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        url: {type: string}
+        found: {type: boolean}
+        summary: {type: string}
+        title_unmatched: {type: [string, "null"]}
+      required: [url, found, summary, title_unmatched]
+
+  - id: report
+    type: shell
+    description: The run's delivery, from what the steps printed (no tracker write).
+    depends_on: [commits, pr]
+    trigger_rule: none_failed_min_one_success
+    command:
+      - hub
+      - step
+      - report
+      - --status
+      - done
+      - --commits
+      - $commits.output.count
+      - --dirty
+      - $commits.output.dirty
+      - --pr
+      - $pr.output.url
+      - --summary
+      - $pr.output.summary
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        delivery: {type: string, enum: [delivered, no_changes, blocked, failed]}
+        stage: {type: string}
+        reason: {type: string}
+        question: {type: string}
+        pr: {type: string}
+        summary: {type: string}
+      required: [delivery, stage, reason, question, pr, summary]

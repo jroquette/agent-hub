@@ -71,6 +71,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `workflows/issue-to-pr/` to follow the built-in again (AGH-227).
 - `hub doctor` rule `workflows.valid` (error): every workflow of the hub's `workflows/` and the built-ins loads and
   plans, as `hub workflow validate` checks them, one finding per problem at its file and line (AGH-227).
+- Built-in pack `sdlc`, seeded into hubs next to `issue-to-pr`: `review` runs the spec and quality lenses (the hub's
+  reviewer agents, read-only, each replying with the review JSON `hub validate-output review` checks) side by side,
+  then a verdict (PASS only when both pass, the run's outcome); `deliver` takes an issue (`issue`, `repo`,
+  `issue_text`) through up to three rounds of implement, the repo's check and that review, then the commits, the PR and
+  the delivery as `issue-to-pr` makes them, with no tracker read or write. `hub workflow test` takes several names,
+  and a dry `hub workflow run` lists a loop group's body under it (AGH-229).
 
 ### Changed
 
