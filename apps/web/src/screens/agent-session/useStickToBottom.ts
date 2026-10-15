@@ -20,12 +20,22 @@ export function prefersReducedMotion(): boolean {
   );
 }
 
+/** Keys that scroll a container up; pressed in the transcript they mean "stop following". */
+const UP_KEYS = new Set(["PageUp", "ArrowUp", "Home"]);
+
+/** The event comes from a text field or a select, whose keys are its own. */
+export const isEditable = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+
 const distanceToBottom = (element: HTMLElement) =>
   element.scrollHeight - element.scrollTop - element.clientHeight;
 
 /**
  * Keeps a scroll container at its bottom while the reader is there (AC-234.17, .18): "at the
- * bottom" comes from the scroll position (within `threshold`), a scroll up detaches, a
+ * bottom" comes from the scroll position (within `threshold`), a scroll up detaches, and so
+ * does an explicit move up (an upward wheel or swipe, PageUp/ArrowUp/Home) at once, even within
+ * the threshold, until the reader scrolls down again; a
  * ResizeObserver re-pins when the content or the container changes size, and the position is
  * written at most once per animation frame. Takes the element (from a callback ref), so it
  * attaches when the scroller mounts after a loading state. It starts at the bottom.
@@ -39,6 +49,8 @@ export function useStickToBottom(
   const frame = useRef<number | null>(null);
   const scheduled = useRef(false);
   const lastTop = useRef(0);
+  /** The reader asked to go up: the threshold no longer re-attaches until they scroll down. */
+  const goingUp = useRef(false);
 
   const follow = useCallback((value: boolean) => {
     following.current = value;
@@ -59,14 +71,40 @@ export function useStickToBottom(
   useEffect(() => {
     if (!scroller) return undefined;
     lastTop.current = scroller.scrollTop;
+    const detach = () => {
+      goingUp.current = true;
+      follow(false);
+    };
     const onScroll = () => {
       const top = scroller.scrollTop;
-      if (distanceToBottom(scroller) <= threshold) follow(true);
+      if (top > lastTop.current) goingUp.current = false;
+      if (!goingUp.current && distanceToBottom(scroller) <= threshold) follow(true);
       // Only a move up detaches: a smooth scroll down passes through "far" on its way.
       else if (top < lastTop.current) follow(false);
       lastTop.current = top;
     };
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) detach();
+    };
+    let touchY: number | null = null;
+    const onTouchStart = (event: TouchEvent) => {
+      touchY = event.touches[0]?.clientY ?? null;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const y = event.touches[0]?.clientY;
+      if (y === undefined) return;
+      // A finger moving down scrolls the content up.
+      if (touchY !== null && y > touchY) detach();
+      touchY = y;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (UP_KEYS.has(event.key) && !isEditable(event.target)) detach();
+    };
     scroller.addEventListener("scroll", onScroll, { passive: true });
+    scroller.addEventListener("wheel", onWheel, { passive: true });
+    scroller.addEventListener("touchstart", onTouchStart, { passive: true });
+    scroller.addEventListener("touchmove", onTouchMove, { passive: true });
+    scroller.addEventListener("keydown", onKeyDown);
     const observer =
       typeof ResizeObserver === "function"
         ? new ResizeObserver(() => {
@@ -80,6 +118,10 @@ export function useStickToBottom(
     if (following.current) scheduleWrite();
     return () => {
       scroller.removeEventListener("scroll", onScroll);
+      scroller.removeEventListener("wheel", onWheel);
+      scroller.removeEventListener("touchstart", onTouchStart);
+      scroller.removeEventListener("touchmove", onTouchMove);
+      scroller.removeEventListener("keydown", onKeyDown);
       observer?.disconnect();
       if (scheduled.current && frame.current !== null) cancelAnimationFrame(frame.current);
       scheduled.current = false;
@@ -88,6 +130,7 @@ export function useStickToBottom(
 
   const pin = useCallback(
     (behavior: "smooth" | "instant" = "instant") => {
+      goingUp.current = false;
       follow(true);
       if (!scroller) return;
       if (

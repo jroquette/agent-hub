@@ -14,7 +14,7 @@ import {
   type TranscriptEntry,
   type TranscriptState,
 } from "./transcript";
-import type { StickToBottom } from "./useStickToBottom";
+import { isEditable, type StickToBottom } from "./useStickToBottom";
 
 export interface TranscriptProps {
   state: TranscriptState;
@@ -26,10 +26,6 @@ export interface TranscriptProps {
   /** The chat's stick-to-bottom state; without it the transcript only renders. */
   follow?: StickToBottom | undefined;
 }
-
-const isEditable = (target: EventTarget) =>
-  target instanceof HTMLElement &&
-  (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 
 /** Space left above a permission card the chat opens on. */
 const OPEN_MARGIN_PX = 16;
