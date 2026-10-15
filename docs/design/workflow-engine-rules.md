@@ -3,7 +3,7 @@
 ## Purpose
 
 The rules of the workflow engine that [workflow-schema.md](workflow-schema.md) states in short: how an `include` is
-expanded and how the run reads the files of an included node. The format itself is the schema's contract; the reasons
+expanded, how the run reads the files of an included node, and how a loop group's body runs. The format itself is the schema's contract; the reasons
 are in [ADR 0032](../adr/0032-workflow-engine.md).
 
 ## Contract
@@ -35,6 +35,19 @@ are in [ADR 0032](../adr/0032-workflow-engine.md).
   the node `config`.
 - A run snapshots each workflow it includes (`includes/<name>.json`, covered by `content_hash`); a resume plans them
   from the snapshot.
+
+### Loop group bodies
+
+- A body holds no `include` or `loop_group`. Its ids are new to the document (an included group's, to its own block)
+  and its `depends_on` stay inside it; a body node reads body nodes upstream of it and outer nodes upstream of the
+  group, and `$LOOP_PREV.<body id>` any body node. Body ids are recorded as `<group>__<id>`, prompt files included.
+- Each iteration runs the body's layers; each body visit takes the node's next attempt, counted over the run.
+- A failed body node does not stop the iteration, so `all_done` body nodes still run; then the group fails with that
+  node's failure kind. A halt in a body ends the group `cancelled`.
+- Otherwise `until_when` (over the iteration's outputs), then `until_bash` (exit 0) end the group; past
+  `max_iterations` it fails `max_iterations`. A group is never retried. A completed group is reused whole on resume.
+- Without `fresh_context` (the default) a body agent resumes its own session of the previous iteration.
+- A group's body counts toward the 512-node cap of an expansion.
 
 ## Invariants
 
