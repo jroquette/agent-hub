@@ -36,7 +36,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's outcome;
   no node retries. Its fixtures (delivered, no commit, blocked, dirty tree, error, gate failure, PR failure) run in
   `hub workflow test`. Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured
-  repo (AGH-223).
+  repo; shell and script nodes take an optional `stdin`, a literal or one whole reference written to the child (at
+  most 512 KiB), which carries the session's reply to `hub step verdict` (AGH-223).
 
 ### Fixed
 

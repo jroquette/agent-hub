@@ -91,7 +91,7 @@ def test_prints_declared_output_when_steps_run(
     target: list[str] = []
     steps = {
         "worktree": ("worktree", *issue),
-        "verdict": ("verdict", "--", "Done."),
+        "verdict": ("verdict",),
         "commits": ("commits", "--target"),
         "pr": ("pr", "--issue", "DEM-1", "--summary", "Adds it.", "--target"),
         "report": ("report", "--status", "done", "--commits", "1", "--pr", "https://x/1"),
