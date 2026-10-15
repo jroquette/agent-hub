@@ -44,9 +44,10 @@ Next steps:
 This output is for a folder where `git init` already ran; in a folder without `.git`, a `git init` step follows `cd`.
 
 > [!IMPORTANT]
-> agent-hub is **experimental** (0.x, Phase 2 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
-> work and are tested; the web control plane is read-only (it watches, it does not act yet). The repository is
-> public: installing needs no credential.
+> agent-hub is **experimental** (0.x, Phase 4 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
+> work and are tested. The web control plane watches your sessions and runs, and acts where you ask it to: it starts,
+> cancels, resumes and abandons workflow runs, decides their gates, drives Claude sessions and turns learnings into
+> hub pull requests. The repository is public: installing needs no credential.
 
 ## Contents
 
@@ -55,6 +56,7 @@ This output is for a folder where `git init` already ran; in a folder without `.
 - [How it works](#-how-it-works)
 - [Quick Start](#-quick-start)
 - [Run the control plane](#-run-the-control-plane)
+- [Workflows](#-workflows)
 - [Daily workflow](#-daily-workflow)
 - [Usage guide](#-usage-guide)
 - [Configuration](#-configuration)
@@ -238,6 +240,29 @@ A hub sends events once its release has the sensor (`plugin/hub-workflow/hooks/e
 `platform.version` in its `hub.json` and run `./hub sync`. `make connect` tells you when a hub needs it. The design
 and its safety rules: [ADR 0022](docs/adr/0022-container-packaging.md); the guide for other projects:
 [docs/USING.md](docs/USING.md).
+
+## 🔀 Workflows
+
+A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folder whose nodes (`agent`, `shell`,
+`script`, `loop`, `loop_group`, `include`, `approval`, `wait`, `halt`) depend on each other and run in layers
+([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
+seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
+review in a loop until green, then the PR; `review`: parallel lenses, a synthesis, a publish). A hub's own file
+overrides a built-in of the same name.
+
+```bash
+./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
+./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..."  # dry: what would run
+./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
+./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
+./hub workflow approve <run>                 # or reject / respond: decide a paused gate, then resume
+./hub workflow test                          # every pack's fixtures, in memory (hub make check runs it)
+```
+
+In `hub web`, the Workflows screen shows each workflow's graph; Workflow runs › Start run starts one live from a form
+built from its `inputs:`; Run detail shows the run's graph with each node's state, decides a waiting gate, and
+cancels, resumes or abandons the run. Approvals lists every gate waiting for a person. Details:
+[docs/USING.md](docs/USING.md#run-the-control-plane).
 
 ## 🔄 Daily workflow
 
