@@ -193,6 +193,10 @@ export function Composer({
       }}
     >
       {slash.menu}
+      {/* A textbox's activedescendant is not announced everywhere: the menu says what it holds. */}
+      <span className="ah-sr" aria-live="polite" aria-atomic="true">
+        {slash.announcement}
+      </span>
       <label htmlFor={inputId} className="ah-sr">
         Message Claude
       </label>
