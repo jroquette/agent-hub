@@ -363,8 +363,9 @@ function StartRunDialog({ scope, onClose }: { scope: string | null; onClose: () 
           )}
         </div>
         <div className="ah-dialog-foot">
+          {/* Once started, the run goes on: this only closes the dialog. */}
           <Button disabled={start.isPending} onClick={onClose}>
-            Cancel
+            {started ? "Close" : "Cancel"}
           </Button>
           <Button variant="primary" icon="play" disabled={!ready} onClick={submit}>
             Start run
