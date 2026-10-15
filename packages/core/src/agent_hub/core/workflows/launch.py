@@ -95,6 +95,11 @@ class RunLaunchError(AgentHubError):
     """The child could not be started or did not finish its command (answers 502)."""
 
 
+class DecisionUnknownError(RunLaunchError):
+    """A gate's decision child did not finish in time: it may have recorded the decision
+    (answers 502; the gate or a resume tells)."""
+
+
 @dataclass(frozen=True)
 class LaunchSpec:
     """A live run to start: its id, hub folder, workflow, the inputs given and its issue."""

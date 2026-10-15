@@ -30,7 +30,7 @@ option) and/or TEXT. The decision and its text go to the run's record, a ``contr
 ``gate.result`` to the events; a gate that is not open, already decided or cannot take the
 answer is refused (exit 1). ``decide RUN --gate GATE`` (hidden: hub web's decisions) records one
 decision for that exact open gate, ``--choice`` and the text read from stdin with ``--text-stdin``
-(UTF-8, at most 64 KiB), where ``--where`` (``web`` by default) says, and does not resume the run.
+(UTF-8, at most 64 KiB), as taken in ``web``, and does not resume the run.
 
 ``test [NAME]...`` dry-runs each fixture of the discovered packs (or the NAMEs', each file once)
 in memory through the engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line
@@ -288,16 +288,11 @@ def decide(
     text_stdin: Annotated[
         bool, typer.Option("--text-stdin", help="Read the answer's text from stdin.")
     ] = False,
-    where: Annotated[
-        str, typer.Option("--where", help="Where the decision was taken (cli or web).")
-    ] = "web",
 ) -> None:
     """Record one decision for the open gate GATE of a paused run, without resuming it (hub
     web's decisions: the text comes on stdin, never in argv)."""
     if gate_id.split(":", 1)[0] != run_id:
         raise typer.BadParameter(f"give a gate of run {run_id}", param_hint="--gate")
-    if where not in _WHERE:
-        raise typer.BadParameter(f"use one of {', '.join(_WHERE)}", param_hint="--where")
     hub = _decision_hub(run_id)
     try:
         text = _stdin_text() if text_stdin else None
@@ -309,12 +304,9 @@ def decide(
             if gate is None:
                 raise GateDecisionError(f"no open gate {gate_id}")
             answer = GateAnswer(choice, text)
-            _record_decision("decide", hub, book=book, gate=gate, answer=answer, where=where)
+            _record_decision("decide", hub, book=book, gate=gate, answer=answer, where="web")
     except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
         fail(f"hub workflow decide: {error}")
-
-
-_WHERE: Final = ("cli", "web")
 
 
 def _decision_hub(run_id: str) -> Path:

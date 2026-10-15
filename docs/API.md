@@ -400,12 +400,15 @@ A paused engine run's `approval` or attention `wait` is an open `human_gate` app
   bytes in UTF-8. An answer the gate cannot take is 422 `workflow-run-invalid-inputs` (no decision or an undeclared
   one, an option for a text wait, a blank text where one is required, a text where `text` is `off`). Under the run
   commands' lock the run is refused as a resume would be (409 `workflow-run-ended`, `-in-use`, `-live-run`). Then the
-  server runs `hub workflow decide <run> --gate <gate_id> --where web [--choice <id>] [--text-stdin]` and waits for
-  it (at most 60 s): the CLI's `DecideGate` records the decision in the run's record under its lock and sends a
+  server runs `hub workflow decide <run> --gate <gate_id> [--choice <id>] [--text-stdin]` and waits for it (at
+  most 60 s): the CLI's `DecideGate` records the decision in the run's record under its lock and sends a
   `control_plane` `gate.result` (where `web`), and the text goes on the child's stdin, never in argv. The CLI
   refusing (the gate closed or was decided meanwhile, the run in use) is 409 `workflow-run-refused` and nothing
-  resumes; otherwise the run resumes in a detached child as `POST /workflow-runs/{run_id}/resume` does. A resume that
-  cannot start answers 502 `workflow-run-resume-failed` with the decision kept: resume the run to continue.
+  resumes; otherwise the run resumes in a detached child as `POST /workflow-runs/{run_id}/resume` does. A
+  `hub workflow decide` that cannot start answers 502 `workflow-run-launch-failed` (nothing recorded); one that
+  outlasts the 60 s answers 502 `workflow-run-decision-unknown`, since it may have recorded the decision before it
+  was stopped (the approval, or a resume, tells). A resume that cannot start answers 502
+  `workflow-run-resume-failed` with the decision kept: resume the run to continue.
 
 The decision is a strict write that needs the launch cookie, like the run commands; with `AGENT_HUB_IN_CONTAINER=1`
 it answers 404 `urn:agent-hub:problem:run-control-off`.

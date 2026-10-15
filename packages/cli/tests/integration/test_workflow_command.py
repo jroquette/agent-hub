@@ -819,6 +819,19 @@ def test_refuses_without_recording_when_decide_cannot_answer_the_gate(
     assert not [r for r in sample.records() if r["event"] == "decision"]
 
 
+def test_records_text_when_decide_reads_exactly_the_cap(sample: SampleRun) -> None:
+    gated(sample)
+    text = "é" * 32768  # 65536 bytes in UTF-8
+
+    result = decided(
+        sample, "--gate", "r1:ship:1", "--choice", "approve", "--text-stdin", text=text
+    )
+
+    assert result.exit_code == 0, result.output
+    [decision] = [r for r in sample.records() if r["event"] == "decision"]
+    assert decision["text"] == text
+
+
 def test_refuses_second_decision_when_decide_meets_a_decided_gate(sample: SampleRun) -> None:
     gated(sample)
     decided(sample, "--gate", "r1:ship:1", "--choice", "approve")

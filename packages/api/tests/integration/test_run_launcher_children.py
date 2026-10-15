@@ -14,12 +14,18 @@ from typing import Any
 
 import pytest
 
+from agent_hub.api import run_launcher
 from agent_hub.api.run_launcher import ProcessRunLauncher
 from agent_hub.core.workflows.gates import GateAnswer
-from agent_hub.core.workflows.launch import LaunchSpec, RunConflictError, RunLaunchError
+from agent_hub.core.workflows.launch import (
+    DecisionUnknownError,
+    LaunchSpec,
+    RunConflictError,
+    RunLaunchError,
+)
 
 # Records each call (a decision's stdin too); exits 3 on --abandon or decide when told to;
-# sleeps when told to, ignoring SIGINT when told to as well.
+# sleeps when told to (a decision on its own flag), ignoring SIGINT when told to as well.
 FAKE_HUB = """#!{python}
 import json, os, signal, sys, time
 if os.environ.get("FAKE_HUB_IGNORE_INT") and "--abandon" not in sys.argv:
@@ -33,6 +39,8 @@ with open(os.environ["FAKE_HUB_CALLS"], "a") as calls:
         "db": os.environ.get("AGENT_HUB_DB"),
         "stdin": sys.stdin.read() if "decide" in sys.argv else None,
     }}) + "\\n")
+if "decide" in sys.argv and os.environ.get("FAKE_HUB_DECIDE_SLEEP"):
+    time.sleep(30)
 if "--abandon" in sys.argv or "decide" in sys.argv:
     sys.exit(3 if os.environ.get("FAKE_HUB_REFUSE") else 0)
 if os.environ.get("FAKE_HUB_SLEEP"):
@@ -321,8 +329,6 @@ def test_passes_gate_choice_and_text_on_stdin_when_decision_recorded(
         "run-1",
         "--gate",
         "run-1:ship:1",
-        "--where",
-        "web",
         "--choice",
         "reject",
         "--text-stdin",
@@ -350,6 +356,17 @@ def test_refuses_decision_when_cli_exits_non_zero(
 
     assert (caught.value.code, caught.value.run_id) == ("refused", "run-1")
     assert "decided" in caught.value.reason
+
+
+def test_reports_unknown_decision_when_cli_outlasts_deadline(
+    hub: Path, make_launcher: Callable[..., ProcessRunLauncher], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_launcher, "DECIDE_TIMEOUT_SECONDS", 0.5)
+
+    with pytest.raises(DecisionUnknownError, match="may be recorded"):
+        make_launcher(FAKE_HUB_DECIDE_SLEEP="1").decide(
+            str(hub), "run-1", gate_id="run-1:ship:1", answer=GateAnswer("approve")
+        )
 
 
 def test_reports_launch_error_when_decision_program_cannot_start(hub: Path, tmp_path: Path) -> None:

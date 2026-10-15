@@ -11,6 +11,7 @@ from agent_hub.core.workflows.document import parse_workflow
 from agent_hub.core.workflows.gate_decisions import DecideWorkflowGate, WorkflowGates
 from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.launch import (
+    DecisionUnknownError,
     LaunchSpec,
     RunConflictError,
     RunGuard,
@@ -83,11 +84,14 @@ class Launcher:
         self.calls: list[tuple[str, object]] = []
         self.refuse = False
         self.resume_error = False
+        self.decide_error: Exception | None = None
 
     def decide(self, hub_path: str, run_id: str, *, gate_id: str, answer: GateAnswer) -> None:
         self.calls.append(("decide", (run_id, gate_id, answer)))
         if self.refuse:
             raise RunConflictError(code="refused", reason="refused", run_id=run_id)
+        if self.decide_error is not None:
+            raise self.decide_error
 
     def resume(self, hub_path: str, run_id: str, *, issue: str | None) -> None:
         self.calls.append(("resume", run_id))
@@ -216,7 +220,25 @@ def test_answers_bad_gateway_saying_decision_kept_when_resume_cannot_start(gates
     )
 
     assert response.status_code == 502
-    assert "decision is recorded" in response.json()["detail"]
+    problem = response.json()
+    assert problem["type"] == "urn:agent-hub:problem:workflow-run-resume-failed"
+    assert "decision is recorded" in problem["detail"]
+    assert [call for call, _ in gates.launcher.calls] == ["decide", "resume"]
+
+
+def test_answers_bad_gateway_saying_decision_unknown_when_decide_times_out(gates: Any) -> None:
+    gates.launcher.decide_error = DecisionUnknownError("timed out")
+
+    response = gates.client.post(
+        f"/api/v1/approvals/{GATE_ID}/decision", json={"decision": "approve"}, headers=OWN
+    )
+
+    assert response.status_code == 502
+    problem = response.json()
+    assert problem["type"] == "urn:agent-hub:problem:workflow-run-decision-unknown"
+    assert "may be recorded" in problem["detail"]
+    assert "nothing was changed" not in problem["detail"].lower()
+    assert [call for call, _ in gates.launcher.calls] == ["decide"]
 
 
 def test_answers_conflict_when_approval_already_decided(gates: Any) -> None:
