@@ -120,7 +120,7 @@ export function lanes(run: WorkflowRun, now: number): { lanes: Lane[]; from: num
     .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at))
     .map((step) => ({
       id: `${step.key}-${String(step.attempt)}`,
-      label: `${STEP_LABEL[step.key]} #${String(step.attempt)}`,
+      label: `${STEP_LABEL[step.key] ?? step.key} #${String(step.attempt)}`,
       status: step.status,
       start: Date.parse(step.started_at),
       end: step.ended_at ? Date.parse(step.ended_at) : now,

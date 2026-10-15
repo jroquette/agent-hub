@@ -3,9 +3,10 @@
 The event store at ``settings.db_path`` (opened and upgraded here), the hook mapper and live
 transcript tail of the collector, the hub registry at ``settings.registry_path`` and the hubs'
 files read as ``hub doctor`` reads them, the read models folded on request, the change feed
-the streams wait on, and the learning reads and decisions, which open hub pull requests through
-``hub_git`` (ADR 0024). Git config stays with the caller (the CLI): ``read_git`` makes the git
-config reader of one hub folder, so the branch prefix and author match ``hub doctor``.
+the streams wait on, the learning reads and decisions, which open hub pull requests through
+``hub_git`` (ADR 0024), and the hubs' workflows (the generator's discovery). Git config stays
+with the caller (the CLI): ``read_git`` makes the git config reader of one hub folder, so the
+branch prefix and author match ``hub doctor``.
 
 The feature tickets read Linear through ``CachedTicketSnapshots`` (ADR 0025): ``TicketReaders``
 gives its reader per request, None (not connected) when ``LINEAR_API_KEY`` is unset in
@@ -23,7 +24,7 @@ import ipaddress
 import os
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -60,7 +61,7 @@ from agent_hub.collector.transcript_tail import TranscriptTail
 from agent_hub.core.agent_sessions.cloud import CloudLauncher, CloudSessions
 from agent_hub.core.agent_sessions.control import AgentSessionControl, WorkdirSource
 from agent_hub.core.agent_sessions.driver import SessionDriver
-from agent_hub.core.agent_sessions.links import AgentSessionLinks
+from agent_hub.core.agent_sessions.links import AgentSessionLinks, ObservedSessionLookup
 from agent_hub.core.agent_sessions.store import AgentSessionStore
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRequest,
@@ -104,7 +105,9 @@ from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_reads import SkillUsageSource
 from agent_hub.core.tracker.tracker_reader import TrackerReader
+from agent_hub.core.workflows.workflow_reads import ListedWorkflowSource, ReadWorkflows
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
+from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
 from agent_hub.hub_git.git_runner import GitRunner
 from agent_hub.storage.agent_session_store import open_agent_session_store
@@ -154,6 +157,17 @@ class _HubPaths:
             return self.hubs.get_project(project).hub_path
         except EntityNotFoundError, HubRegistryError:
             return None
+
+
+class _ObservedSessions:
+    """``ObservedSessionLookup`` over the event read models (D2); bound once they exist,
+    since they are built with the agent sessions' links."""
+
+    def __init__(self) -> None:
+        self.events: FoldedEventReadModels | None = None
+
+    def observed(self, pairs: Iterable[tuple[str, str]]) -> frozenset[tuple[str, str]]:
+        return frozenset() if self.events is None else self.events.observed(pairs)
 
 
 def _no_git(_keys: frozenset[str]) -> Mapping[str, str]:
@@ -368,6 +382,11 @@ def ticket_snapshots(
     return CachedTicketSnapshots(TicketReaders(facts, environ=env, reader=reader), clock=clock)
 
 
+def workflow_source_of(hub_path: str) -> ListedWorkflowSource:
+    """The workflows of the hub at ``hub_path``: its ``workflows/``, then the built-ins."""
+    return DiscoveredWorkflowSource(Path(hub_path))
+
+
 def default_brain_changes() -> BrainChangeRequests:
     """The ``hub_git`` adapter with this process's environment (``AGENT_HUB_IN_CONTAINER=1``
     makes every hub read-only)."""
@@ -415,9 +434,11 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
     driver: SessionDriver,
     launcher: CloudLauncher,
     url: str,
+    observed_sessions: ObservedSessionLookup | None = None,
 ) -> AgentSessionWiring:
     """``AgentSessionControl``, ``CloudSessions`` and ``AgentSessionLinks`` over ``driver``,
-    ``launcher`` and ``store``; the children get ``AGENT_HUB_WEB_URL=url`` (never the token)."""
+    ``launcher`` and ``store``; the children get ``AGENT_HUB_WEB_URL=url`` (never the token).
+    ``observed_sessions`` fills each agent session's ``observed_session_id``."""
     control = AgentSessionControl(
         driver,
         store,
@@ -425,6 +446,7 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
         clock=settings.clock,
         limits=settings.limits,
         environment_extra={"AGENT_HUB_WEB_URL": url},
+        observed_sessions=observed_sessions,
     )
     cloud = CloudSessions(
         launcher=launcher,
@@ -526,6 +548,7 @@ def build_app(
         running_version=settings.running_version,
         read_git=_files_only if read_git is None else read_git,
     )
+    observed = _ObservedSessions()
     sessions = _agent_sessions(
         settings,
         registry=registry,
@@ -533,6 +556,7 @@ def build_app(
         environ=environ,
         session_driver=session_driver,
         cloud_launcher=cloud_launcher,
+        observed_sessions=observed,
     )
     events = _event_read_models(
         store,
@@ -541,6 +565,7 @@ def build_app(
         label_rules_of=facts.label_rules_of,
         sessions=sessions,
     )
+    observed.events = events
     snapshots = ticket_snapshots(
         facts,
         environ=environ,
@@ -579,6 +604,7 @@ def build_app(
         agent_sessions=None if sessions is None else sessions.control,
         cloud_sessions=None if sessions is None else sessions.cloud,
         agent_session_links=None if sessions is None else sessions.links,
+        workflow_reads=ReadWorkflows(hubs, workflow_source_of),
     )
     return create_app(
         settings,
@@ -597,6 +623,7 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
     environ: Mapping[str, str] | None,
     session_driver: SessionDriver | None,
     cloud_launcher: CloudLauncher | None,
+    observed_sessions: ObservedSessionLookup,
 ) -> AgentSessionWiring | None:
     if settings.sessions_off:
         return None
@@ -614,4 +641,5 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
         driver=session_driver,
         launcher=cloud_launcher,
         url=web_url(settings),
+        observed_sessions=observed_sessions,
     )
