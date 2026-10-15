@@ -67,6 +67,7 @@ from agent_hub.cli.workflow_runs import (
     snapshot_includes,
     snapshot_run,
 )
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.catalog import (
@@ -230,9 +231,12 @@ def _begin(
 ) -> int:
     run_id, name = folder.name, plan.document.name
     header: dict[str, JsonValue] = {"event": "start", "run": run_id, "workflow": name}
-    append_record(
-        folder, {**header, "revision": plan.document.revision, "content_hash": content_hash}
-    )
+    header |= {"revision": plan.document.revision, "content_hash": content_hash}
+    _, unwatched = _checkouts(hub, load_hub_config_or_exit(hub / FILE_LABEL))
+    if unwatched:
+        # Noted once: a read-only node's git status check does not see these folders.
+        header["checkout_unwatched"] = [str(path) for path in unwatched]
+    append_record(folder, header)
     append_record(folder, {"event": "inputs", "inputs": inputs})
     return _execute(hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash)
 
@@ -334,9 +338,7 @@ def _execute(
         environ=os.environ,
         hub_program=own_hub_program(),
     )
-    # The checkouts git can read: the hub and each repo cloned next to it.
-    repos = (hub.parent / repo.dir for repo in config.repos)
-    roots = tuple(root for root in (hub, *repos) if (root / ".git").exists())
+    roots, _ = _checkouts(hub, config)
     checkout = GitCheckoutProbe(roots=roots, environ=os.environ)
     ports = EnginePorts(
         runner,
@@ -359,6 +361,13 @@ def _execute(
     outcome = "" if report.outcome is None else f", outcome {report.outcome}"
     typer.echo(f"run {folder.name}: {report.status}{outcome}")
     return 0 if report.status == "done" else 1
+
+
+def _checkouts(hub: Path, config: HubConfig) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """The hub and the repos next to it, as git checkouts (watched) and other folders (not)."""
+    folders = (hub, *(hub.parent / repo.dir for repo in config.repos))
+    watched = tuple(folder for folder in folders if (folder / ".git").exists())
+    return watched, tuple(folder for folder in folders if folder not in watched)
 
 
 def _events(

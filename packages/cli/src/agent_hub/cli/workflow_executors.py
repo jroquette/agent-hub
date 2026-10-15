@@ -35,6 +35,7 @@ import json
 import os
 import re
 import signal
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,9 +99,12 @@ class WorkflowExecutors:
     child: ChildRunner = field(default=run_child)
     # The process groups of the children running now: ``stop_children`` kills them.
     running: set[int] = field(default_factory=set)
+    # Set by ``stop_children``: no child starts after it, and one starting as it lands is killed.
+    stop: threading.Event = field(default_factory=threading.Event)
 
     def stop_children(self) -> None:
         """Kill every running child's group (a run interrupted while nodes run concurrently)."""
+        self.stop.set()
         for group in list(self.running):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(group, signal.SIGKILL)
@@ -223,7 +227,13 @@ class WorkflowExecutors:
         def started(group: int) -> None:
             groups.append(group)
             self.running.add(group)
+            if self.stop.is_set():
+                # The stop came between the check below and this start.
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(group, signal.SIGKILL)
 
+        if self.stop.is_set():
+            raise NodeFailedError("cancelled", "the run was interrupted")
         try:
             return self.child(
                 argv,
