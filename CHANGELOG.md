@@ -21,6 +21,21 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
   `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
   `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
+- Workflow `approval` and `wait` nodes. An approval (`message`, `decisions`, `capture_response`) or a wait (`duration`
+  up to 7 days, an `until` instant, or `attention` answered with text or one of `options`) pauses the run: `hub
+  workflow run` prints `run <id>: paused at <node>` and records a `gate.request` (an approval or attention wait shows
+  in Approvals). `--resume RUN` takes the same gate up again and goes on once it has its decision or its time. The
+  output (`{decision}`, `{at}`, `{text}`, `{choice, text}`) is readable from `when:`; rejecting the default decisions
+  cancels the run unless a `when:` reads the decision. An `until` is at most 7 days ahead; a timed wait ends on a
+  resume past its time. `hub workflow test` stubs gates with `{decision, text}`, `{text}`, `{choice}` or `{}`; without
+  a stub the run pauses (`expect.status: paused`). A gate in a `loop_group` body pauses its iteration, and the resume
+  goes on in it (rework: reject, fix, approve); two gates with no order between them are a load error (AGH-230).
+- `hub workflow approve|reject|respond RUN [NODE] [TEXT]` decide a paused run's open gate (`respond` takes
+  `--choice` for a declared decision or option) and resume the run. One decision per gate: a second, a gate that is
+  not open or an answer the gate does not take is refused. The text stays in the run's record; the event database
+  gets a `control_plane` `gate.result`, so Approvals shows the gate decided. A workflow gate closed without a decision
+  (run abandoned, gate skipped or failed on resume) shows declined, and its "How to decide" names these commands
+  (AGH-230).
 - `hub workflow run NAME --input name=value` prints the nodes a run would start; with `--live` it runs them: agent
   nodes as `claude -p` in the hub with its settings and plugin, shell and script nodes as programs without a shell,
   each child with a scoped environment (none gets `LINEAR_API_KEY`). The run is recorded under
@@ -48,6 +63,35 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   by the same code as the Live tiles, so a sessions list can show what Live shows (AGH-236).
 - `GET /api/v1/agent-sessions` and `GET /api/v1/agent-sessions/{id}` carry `observed_session_id`, the observed
   session's id once its twin has been observed, else `null`, so a list can show a driven session once (AGH-236).
+- The built-in `issue-to-pr` workflow (inputs `issue`, `repo`, `issue_text`) takes one issue to a PR as `hub run` does:
+  `hub step worktree`, one implementing session in the worktree with `hub run`'s prompt, `hub step verdict`,
+  `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's outcome;
+  no node retries. Its fixtures (delivered, no commit, blocked, dirty tree, error, gate failure, PR failure) run in
+  `hub workflow test`. Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured
+  repo; shell and script nodes take an optional `stdin`, a literal or one whole reference written to the child (at
+  most 1 MiB, as an agent's reply, `hub run`'s session cap), which carries the reply to `hub step verdict`; the dry
+  run shows it (AGH-223).
+- `hub workflow run issue-to-pr --live --input issue=ISSUE --input repo=REPO` gives what `hub run ISSUE --repo REPO --live`
+  gives: it reads the issue (filling `issue_text`), writes the same `.agent-runs` records and events, makes ADR 0030's
+  tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed); its runs
+  cannot be resumed or abandoned (exit 2) (AGH-223).
+- A workflow node of type `include` copies in another workflow of the same pack at load: its nodes become
+  `<include id>__<id>`, `with:` fills its `inputs`, the include's `depends_on`/`when`/`trigger_rule` go to the block's
+  roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels and 512 nodes, no
+  cycles. A block's prompt files read its own inputs and nodes. Fixtures stub the namespaced ids (AGH-228).
+- A `loop_group` node repeats a body of nodes until its `until_when` holds or its `until_bash` exits 0, at most
+  `max_iterations` times; body steps are recorded as `<group>__<id>`, `$LOOP_PREV.<id>.output` reads the previous
+  iteration, and `$<group>.output.<id>` reads the last one (AGH-228).
+- The workflow engine runs a layer's nodes concurrently (at most 4 attempts at once in a run), each recorded as it
+  ends; Ctrl-C stops the running children. A `mutates_checkout: false` node never shares a layer with one that may change the checkout, and fails
+  `config` when its attempt changes `git status` (AGH-228).
+- `hub init` and `hub sync` seed the built-in `issue-to-pr` pack into the hub once, byte for byte as shipped
+  (`workflows/issue-to-pr/`: the workflow, its prompt and its fixtures), as a whole: never into a hub whose `hub.lock`
+  already lists the pack or whose folder holds files of its own, so a later release never adds a file to the hub's
+  pack. The hub then owns its copy, which `hub run` and `hub workflow` read instead of the built-in; delete
+  `workflows/issue-to-pr/` to follow the built-in again (AGH-227).
+- `hub doctor` rule `workflows.valid` (error): every workflow of the hub's `workflows/` and the built-ins loads and
+  plans, as `hub workflow validate` checks them, one finding per problem at its file and line (AGH-227).
 
 ### Changed
 
@@ -58,6 +102,26 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The chat streams smoothly: replies render once per frame with a caret, long transcripts open fast, a "Claude is
   working · <tool>" row shows while a turn runs, Stop works while a permission waits, Esc in the empty composer stops
   the turn, and "Turn interrupted" follows its result (AGH-238).
+- `hub run --live` now runs the `issue-to-pr` workflow through the workflow engine, with its options, records, events,
+  tracker writes and exit codes unchanged: a hub's own `workflows/<pack>/issue-to-pr.yaml` replaces the built-in (it
+  must load, else exit 1, and declare the inputs `issue`, `repo`, `issue_text`, plus `start` for `--from verify`, else
+  exit 2) and is read from a copy taken at the start. `--model`, `--effort`, `--max-turns` and `--budget`, when typed,
+  win over its `implement` node's own model and limits (the built-in's are `hub run`'s defaults). A failed stage's `failed`
+  record and its `step.end` event now carry the failure kind (`failure_kind`, e.g. `exec_failed`, `timeout`). The dry
+  run is unchanged. The built-in `issue-to-pr` gains the input `start` (`verify` skips the session), runs its `hub step`
+  nodes in process as `hub run` does, and keeps the gate output's last line break (AGH-224).
+- The chat composer grows with its text up to 40% of the window, keeps an unsent draft per session in the browser
+  (restored after a reload), has focus on open unless a permission waits, ignores Enter while an IME composes (and on
+  touch screens Enter is a new line); a message shows "Sending…" at once, and "Queued: Claude reads it after this
+  turn" when sent during a running turn (AGH-239).
+- Chat tool cards read running, waiting for you, done, error or denied (icon and text), with a call's permission card
+  right under it; output over 10,000 characters is cut with "Show all (N characters)", consecutive calls group as
+  "Explored · 3 Read, 2 Grep" (open while one waits for you or failed), and thinking reads "Thought for N s" (AGH-240).
+- Chat messages show when they were written ("3 min ago", the full date and time on hover) and a Copy button for
+  their raw Markdown, on hover or focus (always on touch screens); Markdown code blocks show their language and a Copy
+  button, and wide tables scroll sideways in their own region (AGH-241).
+- A hub's `make check` also runs `./hub workflow test`, the workflow packs' fixtures, after `hub doctor` and before the
+  hub's own tests (AGH-227).
 
 ### Fixed
 

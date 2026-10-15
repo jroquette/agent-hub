@@ -366,3 +366,80 @@ def test_shows_ten_names_then_a_count_when_the_cycle_is_long() -> None:
 
     names = ", ".join(f"n{index}" for index in range(10))
     assert message == f"a cycle runs through the nodes {names} and 2 more"
+
+
+GATE = {"id": "ok", "type": "approval", "message": "Ship?"}
+
+
+@pytest.mark.parametrize(
+    ("nodes", "key"),
+    [
+        (
+            (
+                shell("a"),
+                GATE | {"depends_on": ["a"]},
+                {"id": "nap", "type": "wait", "duration": "1h", "depends_on": ["a"]},
+            ),
+            "nodes[2]",
+        ),
+        (
+            (
+                {
+                    "id": "g",
+                    "type": "loop_group",
+                    "max_iterations": 2,
+                    "until_when": "$ok.output.decision == 'approve'",
+                    "nodes": [GATE],
+                },
+                {"id": "nap", "type": "wait", "duration": "1h"},
+            ),
+            "nodes[1]",
+        ),
+        (
+            (
+                {
+                    "id": "g",
+                    "type": "loop_group",
+                    "max_iterations": 2,
+                    "until_when": "$ok.output.decision == 'approve'",
+                    "nodes": [GATE, {"id": "ask", "type": "wait", "attention": "Why?"}],
+                },
+            ),
+            "nodes[0].nodes[1]",
+        ),
+    ],
+)
+def test_refuses_two_suspendable_nodes_when_neither_is_upstream_of_the_other(
+    nodes: tuple[dict[str, object], ...], key: str
+) -> None:
+    [(found, message)] = problems_of(*nodes)
+
+    assert found == key
+    assert "no order between" in message
+
+
+def test_accepts_two_suspendable_nodes_when_one_depends_on_the_other() -> None:
+    nap = {"id": "nap", "type": "wait", "duration": "1h", "depends_on": ["ok"]}
+
+    assert plan_of(GATE, nap).layers == (("ok",), ("nap",))
+
+
+def test_refuses_reference_when_agent_cwd_names_unknown_node() -> None:
+    node = {"id": "a", "type": "loop", "prompt": "Go.", "max_iterations": 1, "until": "DONE"}
+
+    assert problems_of({**node, "cwd": "$ghost.output.path"}) == [
+        ("nodes[0].cwd", 'no node has the id "ghost"')
+    ]
+
+
+def test_refuses_stdin_reference_when_unknown_or_not_whole() -> None:
+    nodes = (
+        shell("a"),
+        shell("b", "a", stdin="$ghost.output"),
+        shell("c", "a", stdin="x $a.output"),
+    )
+
+    assert problems_of(*nodes) == [
+        ("nodes[1].stdin", 'no node has the id "ghost"'),
+        ("nodes[2].stdin", "a reference fills the whole stdin, or none is used"),
+    ]

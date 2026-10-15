@@ -186,6 +186,8 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
     if (posting.current || !onAnswer) return;
     posting.current = true;
     setSent(true);
+    // The buttons are disabled, then gone once answered: the keyboard stays on the card.
+    card.current?.focus({ preventScroll: true });
     setError(null);
     void Promise.resolve()
       .then(() => onAnswer(answer))
@@ -366,5 +368,27 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
         </div>
       )}
     </section>
+  );
+}
+
+/** Posts a request's answer by its id; without it a card is read-only. */
+export type AnswerPermission =
+  ((requestId: string, answer: PermissionAnswer) => Promise<unknown> | undefined) | undefined;
+
+/** The card of `request` in the transcript, answering through `onAnswerPermission`. */
+export function RequestCard({
+  request,
+  onAnswerPermission,
+}: {
+  request: PermissionView;
+  onAnswerPermission: AnswerPermission;
+}) {
+  return (
+    <PermissionCard
+      request={request}
+      onAnswer={
+        onAnswerPermission ? (answer) => onAnswerPermission(request.requestId, answer) : undefined
+      }
+    />
   );
 }

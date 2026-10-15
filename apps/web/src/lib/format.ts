@@ -47,7 +47,30 @@ export function fmtAgo(seconds: number): string {
   return `${String(Math.round(seconds / 86400))} d ago`;
 }
 
+/** "just now" under a minute (a minute's clock cannot say more), else as `fmtAgo`. */
+export function fmtRelative(seconds: number): string {
+  return seconds < 60 ? "just now" : fmtAgo(seconds);
+}
+
 export type TimeZoneMode = "local" | "utc";
+
+const DATE_TIME: Partial<Record<TimeZoneMode, Intl.DateTimeFormat>> = {};
+
+/** "11 Oct 2026, 14:00:05 UTC": a date and time with its zone, local or UTC (formatter cached). */
+export function fmtDateTime(value: Date | string, tz: TimeZoneMode): string {
+  const format = (DATE_TIME[tz] ??= new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+    ...(tz === "utc" ? { timeZone: "UTC" } : {}),
+  }));
+  return format.format(typeof value === "string" ? new Date(value) : value);
+}
 
 /** "14:02" (or "14:02:11") in local time or UTC. */
 export function fmtClock(value: Date | string, tz: TimeZoneMode, seconds = false): string {

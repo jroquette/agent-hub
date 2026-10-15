@@ -1543,6 +1543,12 @@ if any(tool.startswith("mcp__") for tool in allowed):
     sys.exit(0)
 mode = os.environ.get("FAKE_CLAUDE_MODE", "done")
 log("claude", tracker=False, mode=mode)
+_answer = answer
+def answer(result, **extra):
+    # FAKE_CLAUDE_PAD: that many characters first; FAKE_CLAUDE_NUL: a NUL among them.
+    pad = "x" * int(os.environ.get("FAKE_CLAUDE_PAD", "0"))
+    pad += "\\0" if os.environ.get("FAKE_CLAUDE_NUL") else ""
+    _answer(f"{pad}\\n{result}" if pad else result, **extra)
 def commit():
     # One commit per non-empty line of FAKE_CLAUDE_SUBJECTS (oldest first, so the last is the
     # newest; empty lines are skipped); unset, the one synthetic commit.
@@ -1624,6 +1630,9 @@ if os.environ.get("FAKE_MAKE_GRANDCHILD"):
 time.sleep(float(os.environ.get("FAKE_MAKE_SLEEP", "0")))
 code = int(os.environ.get("FAKE_MAKE_EXIT", "0"))
 sys.stdout.write("x" * int(os.environ.get("FAKE_MAKE_BYTES", "0")))
+if os.environ.get("FAKE_MAKE_STDOUT"):
+    # A gate that also explains itself on stdout, before its stderr line.
+    print("gate stdout line", flush=True)
 print("synthetic gate output", file=sys.stderr if code else sys.stdout)
 sys.exit(code)
 """
@@ -1687,6 +1696,7 @@ def run_workspace(
     _write_fake(bin_dir, "make", _FAKE_MAKE)
     _link_tool(bin_dir, "git", shutil.which("git"))
     _link_tool(bin_dir, "bash", shutil.which("bash"))
+    _link_tool(bin_dir, "tail", shutil.which("tail"))
     _link_tool(bin_dir, "python3", sys.executable)
     monkeypatch.setenv("PATH", str(bin_dir))
     # Each clone's origin is the repo's GitHub url, as in a real workspace; the test's global

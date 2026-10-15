@@ -412,7 +412,7 @@ def test_gives_texts_prompt_holds_when_parts_built() -> None:
     )
     prompt = " ".join(prompt_for(an_issue(), sensitive=("hub.json",)).split())
 
-    assert parts["guard"] == "touches a file matching hub.json (needs an approved plan) or "
+    assert parts["guard"] == "touches a file matching hub.json (needs an approved plan) or has"
     assert parts["gate_step"].startswith("This repo has no fast gate: run its full gate")
     assert parts["commit_shape"] in prompt
     assert " ".join(parts["guard"].split()) in prompt
