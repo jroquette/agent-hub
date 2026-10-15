@@ -13,6 +13,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` can decide a paused workflow run's gate: `GET /api/v1/approvals/{id}/gate` shows its decisions or options
+  (with labels) and whether it takes a text, and `POST /api/v1/approvals/{id}/decision` (a strict write that needs
+  the launch cookie) records the answer through the new hidden `hub workflow decide RUN --gate ID` (text on stdin,
+  no resume, `gate.result` where `web`), then resumes the run detached (AGH-231).
 - `hub web` can start, cancel, resume and abandon workflow runs: `POST /api/v1/workflow-runs` and
   `/workflow-runs/{run_id}/cancel|resume|abandon` run `hub workflow run --live` as a detached child (no
   `LINEAR_API_KEY`, a pid file under `.agent-runs/web/`), keep one live run per issue across starts and resumes,

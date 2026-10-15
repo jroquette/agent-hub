@@ -110,6 +110,7 @@ from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_reads import SkillUsageSource
 from agent_hub.core.tracker.tracker_reader import TrackerReader
+from agent_hub.core.workflows.gate_decisions import DecideWorkflowGate, WorkflowGates
 from agent_hub.core.workflows.launch import ControlWorkflowRun, RunGuard, StartWorkflowRun
 from agent_hub.core.workflows.workflow_reads import ListedWorkflowSource, ReadWorkflows
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
@@ -593,6 +594,7 @@ def build_app(
         events, reader, hub_of=facts.hub_of, availability=CachedAvailability(changes.availability)
     )
     workflows = ReadWorkflows(hubs, workflow_source_of)
+    gates = WorkflowGates(events, hubs, workflows)
     guard = None
     if not settings.sessions_off:
         env: Mapping[str, str] = os.environ if environ is None else environ
@@ -620,6 +622,8 @@ def build_app(
         workflow_reads=workflows,
         run_starts=None if guard is None else StartWorkflowRun(workflows, guard),
         run_control=None if guard is None else ControlWorkflowRun(hubs, guard),
+        workflow_gates=gates,
+        gate_decisions=None if guard is None else DecideWorkflowGate(gates, guard),
     )
     return create_app(
         settings,
