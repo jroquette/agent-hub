@@ -1217,3 +1217,116 @@ def test_accepts_project_link_when_name_unique(
     paths = sorted(link.path for link in added)
     assert plan.changes == tuple(SyncChange(path=path, verb=Verb.CREATED) for path in paths)
     assert written_paths(plan) == [*paths, HUB_LOCK_PATH]
+
+
+# AGH-227: a built-in workflow pack is seeded as a unit, only into a hub that never had it.
+PACK = "workflows/demo"
+PACK_FILES = (f"{PACK}/demo.yaml", f"{PACK}/fixtures/done.yaml")
+NEW_PACK_FILE = f"{PACK}/fixtures/new.yaml"
+PACK_FOLDERS = ("workflows", PACK, f"{PACK}/fixtures")
+
+
+def pack_file(path: str) -> RenderedFile:
+    return RenderedFile(
+        path=path,
+        content=b"pack\n",
+        executable=False,
+        kind=Kind.GENERIC,
+        ownership=Ownership.SEEDED,
+        module=None,
+    )
+
+
+def with_pack(a_rendered_hub: HubFactory, *paths: str) -> RenderedHub:
+    return a_rendered_hub(files=(*a_rendered_hub().files, *(pack_file(p) for p in paths)))
+
+
+def test_skips_new_pack_file_when_lock_holds_the_pack(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    old = with_pack(a_rendered_hub, *PACK_FILES)
+    rendered = with_pack(a_rendered_hub, *PACK_FILES, NEW_PACK_FILE)
+    tree = synced_tree(old) | dict.fromkeys(PACK_FOLDERS, FolderEntry())
+
+    plan = planned(rendered, a_lock(old, config), tree)
+
+    assert plan.changes == ()
+    assert written_paths(plan) == [HUB_LOCK_PATH]
+    assert plan.folders == ()
+    assert plan.lock.files[NEW_PACK_FILE] == seeded_entry()
+
+
+def test_skips_new_pack_file_when_hub_deleted_its_pack(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    old = with_pack(a_rendered_hub, *PACK_FILES)
+    rendered = with_pack(a_rendered_hub, *PACK_FILES, NEW_PACK_FILE)
+    tree = without(synced_tree(old), *PACK_FILES)
+
+    plan = planned(rendered, a_lock(old, config), tree)
+
+    assert plan.changes == ()
+    assert written_paths(plan) == [HUB_LOCK_PATH]
+
+
+def test_writes_nothing_into_pack_when_folder_exists_without_lock_entries(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = with_pack(a_rendered_hub, *PACK_FILES)
+    lock = a_lock(rendered, config, files=dict.fromkeys(PACK_FILES))
+    mine = FileEntry(executable=False, content=b"ours\n")
+    tree = without(synced_tree(rendered), *PACK_FILES) | {
+        "workflows": FolderEntry(),
+        PACK: FolderEntry(),
+        f"{PACK}/mine.yaml": mine,
+    }
+
+    plan = planned(rendered, lock, tree)
+
+    assert plan.changes == ()
+    assert written_paths(plan) == [HUB_LOCK_PATH]
+
+
+def test_completes_pack_when_an_interrupted_seed_left_only_render_bytes(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = with_pack(a_rendered_hub, *PACK_FILES)
+    lock = a_lock(rendered, config, files=dict.fromkeys(PACK_FILES))
+    first = FileEntry(executable=False, content=b"pack\n")
+    tree = without(synced_tree(rendered), *PACK_FILES) | {
+        **dict.fromkeys(PACK_FOLDERS, FolderEntry()),
+        PACK_FILES[0]: first,
+    }
+
+    plan = planned(rendered, lock, tree)
+
+    assert plan.changes == (SyncChange(path=PACK_FILES[1], verb=Verb.CREATED),)
+
+
+def test_writes_nothing_into_pack_when_a_seeded_path_holds_other_bytes(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = with_pack(a_rendered_hub, *PACK_FILES)
+    lock = a_lock(rendered, config, files=dict.fromkeys(PACK_FILES))
+    own = FileEntry(executable=False, content=b"our own workflow\n")
+    tree = without(synced_tree(rendered), *PACK_FILES) | {
+        **dict.fromkeys(PACK_FOLDERS[:2], FolderEntry()),
+        PACK_FILES[0]: own,
+    }
+
+    plan = planned(rendered, lock, tree)
+
+    assert plan.changes == ()
+
+
+def test_seeds_whole_pack_when_folder_and_lock_entries_absent(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = with_pack(a_rendered_hub, *PACK_FILES)
+    lock = a_lock(rendered, config, files=dict.fromkeys(PACK_FILES))
+
+    plan = planned(rendered, lock, without(synced_tree(rendered), *PACK_FILES))
+
+    assert plan.changes == tuple(SyncChange(path=p, verb=Verb.CREATED) for p in PACK_FILES)
+    assert written_paths(plan) == [*PACK_FILES, HUB_LOCK_PATH]
+    assert plan.folders == PACK_FOLDERS

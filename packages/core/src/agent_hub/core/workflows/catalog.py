@@ -9,7 +9,7 @@ records the line of each key path, so a problem is placed on the line of its nea
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, NamedTuple, Protocol
+from typing import Final, Literal, NamedTuple, Protocol
 
 from agent_hub.core.workflows.document import (
     Loc,
@@ -21,6 +21,8 @@ from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 
 # Where a workflow comes from: the hub's ``workflows/``, or the built-ins (ADR 0032).
 type WorkflowOrigin = Literal["hub", "builtin"]
+# The hub's folder of workflow packs, ``workflows/<pack>/``.
+HUB_WORKFLOWS_FOLDER: Final = "workflows"
 
 
 class LoadProblem(NamedTuple):

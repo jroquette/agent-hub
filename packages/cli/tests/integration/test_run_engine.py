@@ -339,3 +339,21 @@ def test_names_entry_point_in_warning_when_workflow_run_title_unmatched(
     warnings = [line for line in result.stderr.splitlines() if "does not match" in line]
     assert len(warnings) == 1
     assert warnings[0].startswith("hub workflow run: warning: ")
+
+
+def test_runs_builtin_when_hub_deleted_its_seeded_pack(
+    run_workspace: Workspace, run_command: CommandRunner, tracked: Any
+) -> None:
+    # AGH-227: deleting the seeded pack makes the hub follow the built-in again.
+    hub = run_workspace.workspace.hub
+    assert (hub / "workflows" / "issue-to-pr" / "issue-to-pr.yaml").is_file()
+    shutil.rmtree(hub / "workflows" / "issue-to-pr")
+
+    result = run_command(hub, *LIVE)
+    tested = run_command(hub, "workflow", "test", "issue-to-pr")
+
+    assert result.exit_code == 0, result.output
+    assert records(hub)[-1]["outcome"] == "delivered"
+    assert tested.exit_code == 0, tested.output
+    assert "<builtin>/issue-to-pr/fixtures/done.yaml: ok" in tested.stdout
+    assert "workflows/issue-to-pr/" not in tested.stdout.replace("<builtin>/issue-to-pr/", "")

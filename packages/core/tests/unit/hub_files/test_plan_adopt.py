@@ -879,3 +879,24 @@ def test_returns_same_plan_when_inputs_repeat(a_rendered_hub: HubFactory) -> Non
     assert first == again
     assert [listed.path for listed in first.listed] == [LINK, FILE]
     assert [problem.path for problem in first.conflicts] == [".claude/agents/X.md", SEEDED_LINK]
+
+
+# AGH-227: adopt neither creates nor records the missing files of a pack the hub already holds.
+PACK = "workflows/demo"
+PACK_FILES = (f"{PACK}/demo.yaml", f"{PACK}/fixtures/done.yaml")
+
+
+def test_creates_nothing_in_pack_when_hub_holds_its_folder(a_rendered_hub: HubFactory) -> None:
+    rendered = a_rendered_hub(files=(*a_rendered_hub().files, *map(seeded_file, PACK_FILES)))
+    own = FileEntry(executable=False, content=b"ours\n")
+    tree = without(hand_made_tree(rendered), *PACK_FILES) | {
+        "workflows": FolderEntry(),
+        PACK: FolderEntry(),
+        PACK_FILES[0]: own,
+    }
+
+    plan = adopted(rendered, tree)
+
+    assert PACK_FILES[1] not in written_paths(plan)
+    assert PACK_FILES[1] not in changed_paths(plan)
+    assert SyncChange(path=PACK_FILES[0], verb=Verb.RECORDED) in plan.changes
