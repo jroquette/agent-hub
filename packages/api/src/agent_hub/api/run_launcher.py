@@ -203,17 +203,27 @@ class ProcessRunLauncher:
             if path in held:
                 continue
             state = self._state(record) if time.monotonic() < deadline else "unknown"
-            if state == "stale":
-                self._drop_stale(path, record)
-            else:
+            if state != "stale":
                 live[path.stem] = record.issue
+            elif (kept := self._drop_stale(path, record)) is not None:
+                live[path.stem] = kept[0]
         return live
 
-    def _drop_stale(self, path: Path, record: _PidFile) -> None:
-        """Remove a pid file judged stale, unless it changed since (a new child's) or is held."""
+    def _drop_stale(self, path: Path, record: _PidFile) -> tuple[str | None] | None:
+        """Remove a pid file judged stale and return None; when it is held or changed since (a
+        new child's), keep it and return its issue, so the run is reported live."""
         with self._guard:
-            if path not in self._children and _read_pid_file(path) == record:
+            child = self._children.get(path)
+            if child is not None:
+                return (child.issue,)
+            data = _pid_bytes(path)
+            if data is None:
+                return None
+            current = _parse_pid_file(data)
+            if current == record:
                 path.unlink(missing_ok=True)
+                return None
+            return (None if current is None else current.issue,)
 
     def _finish_cancel(
         self, hub_path: str, run_id: str, *, pid: int, alive: Callable[[], bool]
@@ -267,8 +277,9 @@ class ProcessRunLauncher:
         folder = _web_folder(Path(hub_path))
         pid_path = folder / f"{run_id}.pid"
         # Judged outside the lock (it may run ps); under it, a file that changed is in use.
-        before = _read_pid_file(pid_path)
-        judged = None if before is None else self._state(before)
+        before = _pid_bytes(pid_path)
+        record = _parse_pid_file(before)
+        judged = None if record is None else self._state(record)
         with self._guard:
             self._refuse_busy(pid_path, run_id, before=before, judged=judged)
             if probe:
@@ -276,18 +287,20 @@ class ProcessRunLauncher:
             if len(self._children) >= self._max_children:
                 reason = f"{self._max_children} runs started from hub web are still running"
                 raise RunConflictError(code="too_many_runs", reason=reason)
-            # Nothing live is named by it (checked above): a stale file, a link or junk.
+            # It reads as judged and names nothing live: a stale file, a link or junk.
             pid_path.unlink(missing_ok=True)
             child = self._spawn_registered(hub_path, pid_path, argv, issue=issue)
         threading.Thread(target=self._reap, args=(pid_path, child), daemon=True).start()
 
     def _refuse_busy(
-        self, pid_path: Path, run_id: str, *, before: _PidFile | None, judged: PidState | None
+        self, pid_path: Path, run_id: str, *, before: bytes | None, judged: PidState | None
     ) -> None:
+        """409 ``in_use`` when the run's child is held, when the pid file reads otherwise than
+        when it was judged (an empty file another process just made included), or when it
+        names a process not judged stale."""
         busy = pid_path in self._children
-        record = _read_pid_file(pid_path)
-        state = judged if record == before else "unknown"
-        if busy or (record is not None and state != "stale"):
+        changed = _pid_bytes(pid_path) != before
+        if busy or changed or (judged is not None and judged != "stale"):
             reason = "the run's child is still running"
             raise RunConflictError(code="in_use", reason=reason, run_id=run_id)
 
@@ -395,16 +408,36 @@ def _pid_files(folder: Path) -> Iterator[tuple[Path, _PidFile]]:
             yield path, record
 
 
-def _read_pid_file(path: Path) -> _PidFile | None:
+_UNREADABLE: Final = b"\0unreadable"
+
+
+def _pid_bytes(path: Path) -> bytes | None:
+    """A pid file's bytes (one past the cap at most), None when absent; a link or a file that
+    cannot be opened reads as one marker, never followed."""
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        with os.fdopen(descriptor, "rb") as file:
-            data = json.loads(file.read(MAX_PID_FILE_BYTES))
-    except OSError, ValueError:
+    except FileNotFoundError:
         return None
-    if not isinstance(data, dict):
+    except OSError:
+        return _UNREADABLE
+    with os.fdopen(descriptor, "rb") as file:
+        return file.read(MAX_PID_FILE_BYTES + 1)
+
+
+def _read_pid_file(path: Path) -> _PidFile | None:
+    return _parse_pid_file(_pid_bytes(path))
+
+
+def _parse_pid_file(data: bytes | None) -> _PidFile | None:
+    if data is None or len(data) > MAX_PID_FILE_BYTES:
         return None
-    pid, started, issue = data.get("pid"), data.get("started"), data.get("issue")
+    try:
+        parsed = json.loads(data)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    pid, started, issue = parsed.get("pid"), parsed.get("started"), parsed.get("issue")
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
         return None
     if not isinstance(started, str):

@@ -4,12 +4,15 @@ import json
 import os
 import signal
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from agent_hub.api.run_launcher import MAX_CHILDREN, MAX_PID_FILES, ProcessRunLauncher
-from agent_hub.core.workflows.launch import LaunchSpec, RunLaunchError
+from agent_hub.api import run_launcher
+from agent_hub.api.run_launcher import MAX_CHILDREN, MAX_PID_FILES, ProcessRunLauncher, _Child
+from agent_hub.core.workflows.launch import LaunchSpec, RunConflictError, RunLaunchError
 
 STARTED = "Thu Oct 15 09:00:00 2026"
 
@@ -130,3 +133,122 @@ def test_scans_first_sixty_four_pid_files_when_folder_holds_more(tmp_path: Path)
 
     assert len(live) == 64
     assert "run-064" not in live
+
+
+# The safeguards around start times read outside the lock (F4): ``started_of`` hooks change or
+# hold a pid file while it is being judged, as another launch or hub web could.
+OLD = "Thu Jan  1 00:00:00 1970"
+
+
+def hooked(tmp_path: Path, hook: Callable[[int], str | None]) -> ProcessRunLauncher:
+    return ProcessRunLauncher(
+        db_path=tmp_path / "db",
+        environ={},
+        program=[str(tmp_path / "never-run")],
+        started_of=hook,
+    )
+
+
+def web(hub: Path) -> Path:
+    return hub / ".agent-runs" / "web"
+
+
+def test_keeps_and_reports_file_when_it_changes_while_judged_stale(tmp_path: Path) -> None:
+    pid_file(tmp_path, "run-1", OLD)
+
+    def rewrite(_pid: int) -> str:
+        # Judged stale (another start time), while a new child's record replaces the file.
+        pid_file(tmp_path, "run-1", "Fri Oct 16 10:00:00 2026", issue="DEM-8")
+        return STARTED
+
+    live = hooked(tmp_path, rewrite).live_runs(str(tmp_path))
+
+    assert (web(tmp_path) / "run-1.pid").exists()
+    assert live == {"run-1": "DEM-8"}
+
+
+def test_keeps_and_reports_file_when_it_is_held_while_judged_stale(tmp_path: Path) -> None:
+    pid_file(tmp_path, "run-1", OLD, issue="DEM-7")
+    owner: list[ProcessRunLauncher] = []
+
+    def hold(_pid: int) -> str:
+        owner[0]._children[web(tmp_path) / "run-1.pid"] = _Child(  # noqa: SLF001
+            process=None,  # type: ignore[arg-type]
+            issue="DEM-7",
+            ended_read=-1,
+        )
+        return STARTED
+
+    owner.append(hooked(tmp_path, hold))
+    live = owner[0].live_runs(str(tmp_path))
+
+    assert (web(tmp_path) / "run-1.pid").exists()
+    assert live == {"run-1": "DEM-7"}
+
+
+def spec_of(hub: Path) -> LaunchSpec:
+    return LaunchSpec(
+        run_id="run-1", project="demo", hub_path=str(hub), workflow="fix", inputs={}, issue=None
+    )
+
+
+def test_refuses_launch_when_file_changes_after_it_was_judged(tmp_path: Path) -> None:
+    pid_file(tmp_path, "run-1", OLD)
+
+    def rewrite(_pid: int) -> str:
+        pid_file(tmp_path, "run-1", "Fri Oct 16 10:00:00 2026")
+        return STARTED  # the old record is judged stale; the file now names another child
+
+    with pytest.raises(RunConflictError) as caught:
+        hooked(tmp_path, rewrite).start(spec_of(tmp_path))
+
+    assert caught.value.code == "in_use"
+    assert (web(tmp_path) / "run-1.pid").exists()
+
+
+def test_refuses_launch_when_empty_file_appears_after_none_was_judged(tmp_path: Path) -> None:
+    web(tmp_path).mkdir(parents=True)
+    target = web(tmp_path) / "run-1.pid"
+    real_bytes = run_launcher._pid_bytes  # noqa: SLF001
+    calls: list[Path] = []
+
+    def read_then_create(path: Path) -> bytes | None:
+        found = real_bytes(path)
+        if path == target and not calls:
+            calls.append(path)
+            target.touch()  # another process just made it, not yet written
+        return found
+
+    probe = launcher(tmp_path)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(run_launcher, "_pid_bytes", read_then_create)
+        with pytest.raises(RunConflictError) as caught:
+            probe.start(spec_of(tmp_path))
+
+    assert caught.value.code == "in_use"
+    assert target.exists()
+
+
+def test_reads_start_times_within_budget_then_keeps_rest_live_when_scan_is_slow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for index in range(5):
+        pid_file(tmp_path, f"run-{index}", OLD)
+    clock = [0.0]
+    reads: list[int] = []
+
+    def slow(_pid: int) -> str:
+        reads.append(_pid)
+        clock[0] += 1.0  # each read takes one second
+        return STARTED  # every file is stale
+
+    monkeypatch.setattr(run_launcher, "SCAN_BUDGET_SECONDS", 2.5)
+    monkeypatch.setattr(
+        run_launcher, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda _: None)
+    )
+
+    live = hooked(tmp_path, slow).live_runs(str(tmp_path))
+
+    assert len(reads) == 3
+    assert live == {"run-3": None, "run-4": None}
+    assert sorted(path.name for path in web(tmp_path).iterdir()) == ["run-3.pid", "run-4.pid"]
