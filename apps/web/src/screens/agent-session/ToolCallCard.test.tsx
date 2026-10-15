@@ -197,7 +197,7 @@ describe("ToolCallCard (tool-cards) long output", () => {
   it("cuts a structured result over 10,000 characters as text and Show all brings the rest", async () => {
     await expand(structured(10_001));
 
-    const pre = screen.getByText(/^\{\s+"data": "x+$/);
+    const pre = screen.getByText(/^\{\s+"data": "x+"$/);
     expect(pre.tagName).toBe("PRE");
     expect(pre.textContent).toHaveLength(10_000);
     await userEvent.click(screen.getByRole("button", { name: "Show all (10,001 characters)" }));
