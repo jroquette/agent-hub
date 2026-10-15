@@ -64,6 +64,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The workflow engine runs a layer's nodes concurrently (at most 4 attempts at once in a run), each recorded as it
   ends; Ctrl-C stops the running children. A `mutates_checkout: false` node never shares a layer with one that may change the checkout, and fails
   `config` when its attempt changes `git status` (AGH-228).
+- `hub init` and `hub sync` seed the built-in `issue-to-pr` pack into the hub once, byte for byte as shipped
+  (`workflows/issue-to-pr/`: the workflow, its prompt and its fixtures), as a whole: never into a hub whose `hub.lock`
+  already lists the pack or whose folder holds files of its own, so a later release never adds a file to the hub's
+  pack. The hub then owns its copy, which `hub run` and `hub workflow` read instead of the built-in; delete
+  `workflows/issue-to-pr/` to follow the built-in again (AGH-227).
+- `hub doctor` rule `workflows.valid` (error): every workflow of the hub's `workflows/` and the built-ins loads and
+  plans, as `hub workflow validate` checks them, one finding per problem at its file and line (AGH-227).
 
 ### Changed
 
@@ -86,6 +93,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   (restored after a reload), has focus on open unless a permission waits, ignores Enter while an IME composes (and on
   touch screens Enter is a new line); a message shows "Sending…" at once, and "Queued: Claude reads it after this
   turn" when sent during a running turn (AGH-239).
+- A hub's `make check` also runs `./hub workflow test`, the workflow packs' fixtures, after `hub doctor` and before the
+  hub's own tests (AGH-227).
 
 ### Fixed
 

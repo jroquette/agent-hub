@@ -93,6 +93,8 @@ class FakeHub:
     lock: LockState | None = field(default_factory=LockAbsent)
     local: LocalConfig | tuple[ConfigProblem, ...] = field(default_factory=LocalConfig)
     files: dict[str, bytes] = field(default_factory=dict)
+    # The folders directly under ``workflows/`` the doctor snapshot lists.
+    folders: tuple[str, ...] = ()
     now: bytes | UnreadHubFile = MISSING
     agents_md_lines: dict[str, int] = field(default_factory=dict)
     features: tuple[FeatureFolder, ...] = ()
@@ -171,6 +173,7 @@ class FakeHubFileReader:
             base_hooks=None,
             repos=(),
             local=local,
+            workflow_folders=hub.folders,
         )
 
     def modified_times(self, hub_path: str, paths: Sequence[str]) -> tuple[int | None, ...]:
