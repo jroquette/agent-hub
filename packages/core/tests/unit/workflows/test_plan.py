@@ -283,10 +283,14 @@ def test_refuses_returns_when_it_names_no_node() -> None:
 @pytest.mark.parametrize(
     ("command", "index", "ending"),
     [
-        (["$a.output", "x"], 0, "a reference cannot be the program"),
-        (["sh", "-c", "$a.output"], 2, "pass it as a positional parameter"),
-        (["bash", "-lc", "$a.output", "bash"], 2, "pass it as a positional parameter"),
-        (["sh", "-e", "-c", "-x", "$a.output"], 4, "pass it as a positional parameter"),
+        (["$a.output", "x"], 0, "not the program"),
+        (["sh", "-c", "$a.output"], 2, "pass it after the script"),
+        (["bash", "-lc", "$a.output", "bash"], 2, "pass it after the script"),
+        (
+            ["sh", "-e", "-c", "-x", "$a.output"],
+            2,
+            "the element right after -c is the literal script",
+        ),
     ],
 )
 def test_refuses_argv_reference_when_it_is_the_program_or_a_script(
