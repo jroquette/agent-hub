@@ -5,7 +5,8 @@
  * text and no script or `on*` attribute can reach the page. Links go through `resolveBrainLink`:
  * notes of the same brain route inside the app (handed to `onBrainLink` when given), http(s) URLs
  * open in a new tab, paths leaving the brain and anything else render as plain text. Images render
- * as links, never as `<img>`. Inputs over the bounds render as text.
+ * as links, never as `<img>`. Inputs over the bounds render as text. A code block carries its
+ * language (as text) and a Copy button; a table scrolls sideways in its own region (AC-234.23).
  *
  * A skill body (AGH-164) passes `localLink`, asked first for every relative link (a bundled file of
  * the skill opens in the page; null falls back to the rules above, so text without a note), and
@@ -23,6 +24,7 @@ import {
   type BrainLink,
 } from "../lib/brainLinks";
 import { cx } from "../lib/cx";
+import { CopyButton } from "./core";
 
 /** The largest note formatted; a larger one shows as plain text (the API's 256 KiB note bound). */
 export const MAX_MARKDOWN_BYTES = 256 * 1024;
@@ -604,10 +606,24 @@ function renderBlock(block: Block, key: number, ctx: Ctx, tight = false, top = f
         <p key={key}>{renderInline(parseInline(block.text, 0), ctx)}</p>
       );
     case "code":
+      // The info string is shown as text only (AC-234.23); Copy copies the code, not the label.
       return (
-        <pre key={key} className="ah-md-pre">
-          <code data-lang={block.lang || undefined}>{block.text}</code>
-        </pre>
+        <div
+          key={key}
+          className="ah-md-code"
+          role="group"
+          aria-label={block.lang ? `${block.lang} code` : "Code"}
+        >
+          <div className="ah-md-code-head">
+            {block.lang && <span className="ah-md-lang">{block.lang}</span>}
+            <CopyButton text={block.text} label="Copy code" className="ah-md-copy" />
+          </div>
+          {/* A block that scrolls sideways must be reachable by the keyboard (axe). */}
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+          <pre className="ah-md-pre" tabIndex={0}>
+            <code data-lang={block.lang || undefined}>{block.text}</code>
+          </pre>
+        </div>
       );
     case "quote":
       return (
@@ -631,7 +647,9 @@ function renderBlock(block: Block, key: number, ctx: Ctx, tight = false, top = f
     }
     case "table":
       return (
-        <div key={key} className="ah-md-table">
+        // A wide table scrolls in its own keyboard-reachable region, not the page (axe).
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+        <div key={key} className="ah-md-table" role="region" aria-label="Table" tabIndex={0}>
           <table className="ah-table">
             <thead>
               <tr>

@@ -3,7 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
-import { aPage, aProblem, aRun, at, renderWithApi, type ApiRoutes } from "../../testing/builders";
+import {
+  aPage,
+  aProblem,
+  aRun,
+  anEngineRun,
+  at,
+  renderWithApi,
+  type ApiRoutes,
+} from "../../testing/builders";
 import { RunsListScreen } from ".";
 
 const failed = aRun({
@@ -163,11 +171,51 @@ describe("RunsListScreen", () => {
     expect(router.state.location.search).not.toContain("outcome");
   });
 
+  it("filters by workflow and failure kind through the URL and the API", async () => {
+    const user = userEvent.setup();
+    const { router, requests } = renderWithApi(<RunsListScreen />, {
+      routes: { "/api/v1/workflow-runs": aPage([done, anEngineRun()]) },
+      path: "/runs",
+    });
+
+    const rail = await screen.findByRole("complementary", { name: "Filters" });
+    await waitFor(() => {
+      expect(within(rail).getByRole("group", { name: "Workflow" })).toHaveTextContent(
+        "feature-flow",
+      );
+    });
+    const workflows = within(rail).getByRole("group", { name: "Workflow" });
+    expect(within(workflows).getByRole("checkbox", { name: /issue-to-pr/ })).toBeInTheDocument();
+    await user.click(within(workflows).getByRole("checkbox", { name: /feature-flow/ }));
+    expect(router.state.location.search).toContain("workflow=feature-flow");
+
+    const kinds = within(rail).getByRole("group", { name: "Failure kind" });
+    await user.click(within(kinds).getByRole("checkbox", { name: /Timeout/ }));
+    expect(router.state.location.search).toContain("failure_kind=timeout");
+    await waitFor(() => {
+      expect(
+        requests.some(
+          (r) => r.url.includes("workflow=feature-flow") && r.url.includes("failure_kind=timeout"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("ignores a failure kind the API does not know", async () => {
+    const { requests } = renderWithApi(<RunsListScreen />, {
+      routes,
+      path: "/runs?failure_kind=bogus",
+    });
+
+    await screen.findByText("Guard bypass");
+    expect(requests.some((r) => r.url.includes("failure_kind"))).toBe(false);
+  });
+
   it("offers Clear filters when the filters exclude every run", async () => {
     const user = userEvent.setup();
     const { router } = renderWithApi(<RunsListScreen />, {
       routes: { "/api/v1/workflow-runs": aPage([]) },
-      path: "/runs?stage=VERIFYING&repo=agent-hub&mode=live&failure_stage=VERIFYING&outcome=done",
+      path: "/runs?stage=VERIFYING&repo=agent-hub&mode=live&failure_stage=VERIFYING&outcome=done&workflow=x&failure_kind=timeout",
     });
 
     expect(await screen.findByText("No runs match these filters.")).toBeInTheDocument();

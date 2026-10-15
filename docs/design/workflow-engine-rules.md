@@ -64,6 +64,12 @@ together. The format is the schema's contract; the reasons are in [ADR 0032](../
 - Ctrl-C stops the run: no attempt, retry or group iteration starts after it, a retry's backoff wakes, and the
   running children's process groups are killed.
 
+### Gates
+
+- A gate in a concurrent layer lets its siblings finish, then the run pauses; a body gate holds its group's
+  iteration open (the resume goes on in it, with the body nodes it ended and `$LOOP_PREV`); two suspendable nodes (a
+  gate, or a group whose body holds one) with no order between them are a load error. After Ctrl-C no gate opens.
+
 ## Invariants
 
 - Expansion is deterministic and bounded: the same documents give the same expanded graph.

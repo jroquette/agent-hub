@@ -1,4 +1,5 @@
-"""Fakes for the workflow engine's ports: scripted nodes, a clock that never sleeps, a recorder.
+"""Fakes for the workflow engine's ports: scripted nodes, a clock that never sleeps, a recorder,
+gate answers.
 
 ``ScriptedRunner`` answers each node from a list, one item per attempt: a ``NodeReply``, a
 string (the reply's text) or an exception to raise. ``KeysOutputs`` checks only an
@@ -13,8 +14,16 @@ from threading import Event
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.document import parse_workflow
 from agent_hub.core.workflows.failures import NodeFailedError, RetryRecord
+from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
-from agent_hub.core.workflows.ports import NodeCall, NodeReply, RunEnd, StepEnd, StepStart
+from agent_hub.core.workflows.ports import (
+    GateRequest,
+    NodeCall,
+    NodeReply,
+    RunEnd,
+    StepEnd,
+    StepStart,
+)
 
 START = datetime(2026, 10, 15, 9, 0, tzinfo=UTC)
 
@@ -93,6 +102,7 @@ class ListRecorder:
     ends: list[StepEnd] = field(default_factory=list)
     retries: list[tuple[str, RetryRecord]] = field(default_factory=list)
     run_ends: list[RunEnd] = field(default_factory=list)
+    gates: list[GateRequest] = field(default_factory=list)
 
     def step_started(self, start: StepStart) -> None:
         self.starts.append(start)
@@ -106,6 +116,19 @@ class ListRecorder:
     def run_ended(self, end: RunEnd) -> None:
         self.run_ends.append(end)
 
+    def gate_requested(self, request: GateRequest) -> None:
+        self.gates.append(request)
+
     def end_of(self, node: str) -> StepEnd:
         """The last end recorded for ``node``."""
         return [end for end in self.ends if end.node == node][-1]
+
+
+@dataclass
+class AnswerBook:
+    """The ``GateAnswers`` of a test: an answer per ``(node, attempt)``."""
+
+    answers: Mapping[tuple[str, int], GateAnswer] = field(default_factory=dict)
+
+    def answer(self, node: str, attempt: int) -> GateAnswer | None:
+        return self.answers.get((node, attempt))

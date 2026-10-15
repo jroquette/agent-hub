@@ -2,7 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { aDeltaFrame, aLogRecord } from "../../testing/builders";
+import { aDeltaFrame, aLogRecord, at } from "../../testing/builders";
 import { seriousViolations } from "../../testing/axe";
 import { CostMeter } from "./CostMeter";
 import { TodoList } from "./TodoList";
@@ -77,7 +77,7 @@ describe("Transcript (transcript)", () => {
     show(scripted());
 
     expect(screen.getByText("Check the failing test first.")).not.toBeVisible();
-    expect(screen.getByText("Thinking").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Thought for 1 s").closest("details")).not.toHaveAttribute("open");
   });
 
   it("expands a tool call to its diff and result when clicked and collapses it again", async () => {
@@ -280,9 +280,12 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
   });
 
   it("renders 2,000 entries in under a second and a delta re-renders only the streaming entry", () => {
-    const runFrame = manualFrames();
+    manualFrames();
     const state = longState(delta(0, "Wor"));
     expect(state.entries).toHaveLength(2002);
+    // A first mount warms the module and JIT caches up, so the budget times the render alone.
+    render(<Transcript state={state} />).unmount();
+    const runFrame = manualFrames();
 
     const started = performance.now();
     const view = render(<Transcript state={state} />);
@@ -305,6 +308,77 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
     expect(screen.getAllByRole("article", { name: "Claude" })[0]?.parentElement).toHaveClass(
       "as-settled",
     );
+  });
+
+  it("first renders from the tool call an attached pending card shows under (tool-cards)", () => {
+    manualFrames();
+    const request = aLogRecord("permission.request", {
+      seq: 2002,
+      body: { request_id: "t301", tool: "Bash", request_kind: "tool", summary: "ls" },
+    });
+
+    render(<Transcript state={longState({ type: "record", record: request })} />);
+
+    // t301 is entry 302 of 2,002; its card leaves its own place for the call's.
+    expect(screen.getByRole("log").children).toHaveLength(2002 - 302 - 1);
+    const card = document.querySelector("[data-request-id='t301']");
+    expect(card?.closest(".as-entry")?.querySelector(".as-tool")).toHaveTextContent("ls");
+  });
+
+  it("keeps a run's node when its earlier calls join it a frame later (tool-cards)", () => {
+    const runFrame = manualFrames();
+    const items: StreamItem[] = [{ type: "record", record: aLogRecord("text", { seq: 1 }) }];
+    for (let seq = 2; seq < 2 + FIRST_ENTRIES + 100; seq += 1) {
+      items.push({
+        type: "record",
+        record: aLogRecord("tool.call", {
+          seq,
+          body: { tool_use_id: `t${String(seq)}`, name: "Read", input: { file_path: "a" } },
+        }),
+      });
+    }
+
+    render(<Transcript state={items.reduce(reduceTranscript, initialTranscript())} />);
+    const log = screen.getByRole("log");
+    const head = within(log).getByRole("button", { name: /^Explored/ });
+    expect(head).toHaveTextContent(`Explored · ${String(FIRST_ENTRIES)} Read`);
+    expect(log.children).toHaveLength(1);
+    runFrame();
+
+    expect(log.children).toHaveLength(2);
+    expect(within(log).getByRole("button", { name: /^Explored/ })).toBe(head);
+    expect(head).toHaveTextContent(`Explored · ${String(FIRST_ENTRIES + 100)} Read`);
+  });
+
+  it("first renders at most FIRST_ENTRIES calls of a long run that waits for you (tool-cards)", () => {
+    const runFrame = manualFrames();
+    const items: StreamItem[] = [{ type: "record", record: aLogRecord("text", { seq: 1 }) }];
+    for (let seq = 2; seq < 2002; seq += 1) {
+      items.push({
+        type: "record",
+        record: aLogRecord("tool.call", {
+          seq,
+          body: { tool_use_id: `t${String(seq)}`, name: "Bash", input: { command: "ls" } },
+        }),
+      });
+    }
+    const request = aLogRecord("permission.request", {
+      seq: 2002,
+      body: { request_id: "t2001", tool: "Bash", request_kind: "tool", summary: "ls" },
+    });
+    items.push({ type: "record", record: request });
+
+    render(<Transcript state={items.reduce(reduceTranscript, initialTranscript())} />);
+    const log = screen.getByRole("log");
+    const head = within(log).getByRole("button", { name: /^Explored/ });
+    const card = document.querySelector("[data-request-id='t2001']");
+    expect(log.querySelectorAll(".as-tool").length).toBeLessThanOrEqual(FIRST_ENTRIES);
+    expect(card).not.toBeNull();
+    runFrame();
+
+    expect(log.querySelectorAll(".as-tool")).toHaveLength(2000);
+    expect(within(log).getByRole("button", { name: /^Explored/ })).toBe(head);
+    expect(document.querySelector("[data-request-id='t2001']")).toBe(card);
   });
 
   it("first renders from the oldest pending card and keeps it in view as earlier entries come", () => {
@@ -340,6 +414,219 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
   });
 });
 
+describe("Transcript (tool-cards) attached permission", () => {
+  const call = (seq: number, id: string, name = "Bash"): StreamItem => ({
+    type: "record",
+    record: aLogRecord("tool.call", {
+      seq,
+      body: { tool_use_id: id, name, input: { command: "make check" } },
+    }),
+  });
+  const ask = (seq: number, id: string): StreamItem => ({
+    type: "record",
+    record: aLogRecord("permission.request", {
+      seq,
+      body: { request_id: id, tool: "Bash", request_kind: "tool", summary: "make check" },
+    }),
+  });
+  const text = (seq: number): StreamItem => ({
+    type: "record",
+    record: aLogRecord("text", { seq, body: { block: 0, text: "Between" } }),
+  });
+
+  it("renders the permission card directly under its tool call, which reads Waiting for you", () => {
+    show([call(1, "toolu_9"), text(2), ask(3, "toolu_9")]);
+
+    const head = screen.getByRole("button", { name: "Bash make check (Waiting for you)" });
+    const entry = head.closest(".as-entry");
+    const card = document.querySelector("[data-request-id='toolu_9']");
+    expect(card?.closest(".as-entry")).toBe(entry);
+    expect(head.closest(".as-tool")?.nextElementSibling).toBe(card);
+    expect(screen.getByRole("log").children).toHaveLength(2);
+  });
+
+  it("keeps a permission with no matching call where it arrived", () => {
+    show([call(1, "toolu_9"), text(2), ask(3, "req-other")]);
+
+    const log = screen.getByRole("log");
+    expect(log.children).toHaveLength(3);
+    expect(log.lastElementChild?.querySelector("[data-request-id='req-other']")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Bash make check (Running)" })).toBeInTheDocument();
+  });
+
+  it("groups consecutive calls with no text between them; text starts a new run", () => {
+    show([call(1, "a", "Read"), call(2, "b", "Grep"), call(3, "c", "Read"), text(4), call(5, "d")]);
+
+    const log = screen.getByRole("log");
+    expect(log.children).toHaveLength(3);
+    expect(within(log).getByRole("button", { name: "Explored · 2 Read, 1 Grep" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(log.lastElementChild).toHaveTextContent("Bash");
+  });
+
+  it("opens a group whose call waits for you, its card under the call, where the chat opens", () => {
+    const state = [
+      call(1, "a", "Read"),
+      call(2, "b"),
+      ask(3, "b"),
+      call(4, "c", "Read"),
+      text(5),
+      ask(6, "req-later"),
+    ].reduce(reduceTranscript, initialTranscript());
+    // Each card its own offset: opening on the wrong one lands elsewhere.
+    const offsets: Record<string, number> = { b: 400, "req-later": 900 };
+    vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return offsets[this.dataset.requestId ?? ""] ?? 0;
+    });
+    const top = { value: 0 };
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation((value) => {
+      top.value = value;
+    });
+
+    render(
+      <Transcript state={state} follow={{ atBottom: false, pin: vi.fn(), release: vi.fn() }} />,
+    );
+
+    const log = screen.getByRole("log");
+    expect(log.children).toHaveLength(3);
+    expect(within(log).getByRole("button", { name: /^Explored · 2 Read, 1 Bash/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    const head = screen.getByRole("button", { name: /Bash make check \(Waiting for you\)/ });
+    expect(head.closest(".as-tool")?.nextElementSibling).toHaveAttribute("data-request-id", "b");
+    expect(top.value).toBe(384);
+    vi.restoreAllMocks();
+  });
+
+  it("keeps an expanded first call, the same node with the focus, when a second call joins it", async () => {
+    const one = [call(1, "a")].reduce(reduceTranscript, initialTranscript());
+    const { rerender } = render(<Transcript state={one} />);
+    const head = screen.getByRole("button", { name: "Bash make check (Running)" });
+    await userEvent.click(head);
+    expect(head).toHaveAttribute("aria-expanded", "true");
+
+    rerender(<Transcript state={reduceTranscript(one, call(2, "b", "Read"))} />);
+
+    expect(screen.getByRole("button", { name: /^Explored · 1 Bash, 1 Read/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getAllByRole("button", { name: "Bash make check (Running)" })).toEqual([head]);
+    expect(head).toHaveAttribute("aria-expanded", "true");
+    expect(head).toHaveFocus();
+  });
+
+  it("keeps a pending card and the focus in its message when a second call joins its run", async () => {
+    const one = [call(1, "a"), ask(2, "a")].reduce(reduceTranscript, initialTranscript());
+    const answer = vi.fn();
+    const { rerender } = render(<Transcript state={one} onAnswerPermission={answer} />);
+    const card = document.querySelector("[data-request-id='a']");
+    const message = screen.getByRole("textbox", { name: /Message to Claude if you deny/ });
+    await userEvent.click(message);
+
+    rerender(
+      <Transcript
+        state={reduceTranscript(one, call(3, "b", "Read"))}
+        onAnswerPermission={answer}
+      />,
+    );
+
+    expect(document.querySelector("[data-request-id='a']")).toBe(card);
+    expect(message).toHaveFocus();
+  });
+
+  it("reads a subagent's call Waiting for you while its permission is open, its card where it arrived", () => {
+    const nested: StreamItem = {
+      type: "record",
+      record: aLogRecord("tool.call", {
+        seq: 2,
+        body: {
+          tool_use_id: "n1",
+          name: "Bash",
+          input: { command: "ls" },
+          parent_tool_use_id: "t1",
+        },
+      }),
+    };
+    show([call(1, "t1", "Task"), nested, text(3), ask(4, "n1")]);
+
+    const calls = screen.getByRole("list", { name: "Calls made by Task" });
+    expect(within(calls).getByRole("button", { name: "Bash ls (Waiting for you)" })).toBeVisible();
+    const log = screen.getByRole("log");
+    expect(log.lastElementChild?.querySelector("[data-request-id='n1']")).not.toBeNull();
+  });
+
+  it("re-renders no grouped call when text streams below the group", () => {
+    const grouped = [call(1, "a", "Read"), call(2, "b", "Read")].reduce(
+      reduceTranscript,
+      initialTranscript(),
+    );
+    const { rerender } = render(<Transcript state={grouped} />);
+    screen.getByRole("button", { name: /^Explored/ }).click();
+    const streaming = reduceTranscript(grouped, {
+      type: "delta",
+      delta: aDeltaFrame({ after_seq: 2, block: 0, index: 0, text: "Hi" }),
+    });
+    rerender(<Transcript state={streaming} />);
+
+    renders.tool = 0;
+    rerender(
+      <Transcript
+        state={reduceTranscript(streaming, {
+          type: "delta",
+          delta: aDeltaFrame({ after_seq: 2, block: 0, index: 1, text: " there" }),
+        })}
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: /^Read/ })).toHaveLength(2);
+    expect(renders.tool).toBe(0);
+  });
+});
+
+describe("Transcript (thinking) duration", () => {
+  const thinking = (at: string): StreamItem => ({
+    type: "record",
+    record: aLogRecord("thinking", { seq: 3, at }),
+  });
+  const before: StreamItem = {
+    type: "record",
+    record: aLogRecord("user.message", { seq: 2, at: "2026-01-01T10:00:00.000Z" }),
+  };
+
+  it.each([
+    [
+      "from the previous record's time",
+      [before, thinking("2026-01-01T10:00:07.400Z")],
+      "Thought for 7 s",
+    ],
+    ["at least a second", [before, thinking("2026-01-01T10:00:00.200Z")], "Thought for 1 s"],
+    ["without a previous record", [thinking("2026-01-01T10:00:07.000Z")], "Thinking"],
+    ["when the times run backwards", [before, thinking("2026-01-01T09:59:00.000Z")], "Thinking"],
+  ] as const)("reads the thinking time %s", (_, items, label) => {
+    show([...items]);
+
+    expect(document.querySelector(".as-thinking summary")).toHaveTextContent(
+      new RegExp(`^${label}$`),
+    );
+  });
+
+  it("counts from the previous record, not from text deltas after it", () => {
+    show([
+      before,
+      { type: "delta", delta: aDeltaFrame({ after_seq: 2, index: 0, text: "Hm" }) },
+      thinking("2026-01-01T10:00:03.000Z"),
+    ]);
+
+    expect(screen.getByText("Thought for 3 s")).toBeInTheDocument();
+  });
+});
+
 describe("Transcript (sending-feedback)", () => {
   it("shows a sent message as Sending… and a queued one with when Claude reads it", () => {
     show([
@@ -367,5 +654,55 @@ describe("Transcript (sending-feedback)", () => {
     expect(log).not.toContainElement(sending);
     expect(log.compareDocumentPosition(sending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(log).getByText("Run the tests.")).toBeInTheDocument();
+  });
+});
+
+describe("Transcript (message-meta)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const reply = (seq: number, text: string): StreamItem => ({
+    type: "record",
+    record: aLogRecord("text", { seq, body: { block: 0, text } }),
+  });
+
+  it("gives your messages and Claude's replies a time and Copy, not a streaming reply (AC-234.22)", () => {
+    const user = aLogRecord("user.message", { seq: 1 });
+    const text = aLogRecord("text", { seq: 2, body: { block: 0, text: "Done **now**." } });
+    show([
+      { type: "record", record: user },
+      { type: "record", record: text },
+      { type: "delta", delta: aDeltaFrame({ after_seq: 2, block: 1, index: 0, text: "More" }) },
+    ]);
+
+    const [done, streaming] = screen.getAllByRole("article", { name: "Claude" });
+    if (!done) throw new Error("no finished reply");
+    expect(done.querySelector("time")).toHaveAttribute("datetime", text.at);
+    expect(within(done).getByRole("button", { name: "Copy message" })).toBeVisible();
+    expect(streaming?.querySelector(".as-meta")).toBeNull();
+    const mine = screen.getByText("Run the tests.").closest<HTMLElement>(".as-msg");
+    if (!mine) throw new Error("no message");
+    expect(mine.querySelector("time")).toHaveAttribute("datetime", user.at);
+    expect(within(mine).getByRole("button", { name: "Copy message" })).toBeInTheDocument();
+  });
+
+  it("re-renders no Markdown when the minute ticks", () => {
+    // At 14:01:30 the minute clock reads 14:01:00: the first reply (14:00:01) is 59 s old, "just now";
+    // the 14:02:00 tick makes it 119 s old, which reads "2 min ago".
+    vi.useFakeTimers({ now: Date.parse(at(90)) });
+    show([reply(1, "One"), reply(2, "Two")]);
+    const [first] = screen.getAllByRole("article", { name: "Claude" });
+    if (!first) throw new Error("no reply");
+    const label = () => first.querySelector("time")?.textContent;
+    expect(label()).toBe("just now");
+    renders.markdown = 0;
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(label()).toBe("2 min ago");
+    expect(renders.markdown).toBe(0);
   });
 });

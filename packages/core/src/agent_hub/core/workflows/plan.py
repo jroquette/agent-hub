@@ -7,9 +7,10 @@ that node's ``output_format``; argv lists follow ``check_argv`` (a whole element
 program nor a ``-c`` script); a ``stdin`` is a literal or one whole reference; a hub step node's
 ``cwd`` holds none; ``context.resume`` names an
 upstream agent; and ``returns``/``outcome_field`` name a node and a required boolean or enum
-string of its output. The layers are then split where nodes may not run concurrently: a read-only
-node (``mutates_checkout: false``) never shares one with a node that may change the checkout, and
-two agents resuming one session never share one.
+string of its output; two suspendable nodes (a gate, or a group whose body holds one) are
+ordered, one upstream of the other. The layers are then split where nodes may not run
+concurrently: a read-only node (``mutates_checkout: false``) never shares one with a node that
+may change the checkout, and two agents resuming one session never share one.
 
 A ``loop_group``'s body is planned the same way inside the group: its ids unique and new to the
 document, its ``depends_on`` inside the body, no cycle. A body node reads body nodes upstream of
@@ -43,6 +44,7 @@ from agent_hub.core.workflows.nodes import (
     Node,
     ScriptNode,
     ShellNode,
+    WaitNode,
     required_property,
 )
 from agent_hub.core.workflows.rewrite import SEPARATOR
@@ -62,6 +64,8 @@ from agent_hub.core.workflows.substitution import (
 
 # An approval's output is ``{decision}`` (plus ``text``), whatever its schema.
 _APPROVAL_FIELDS: Final = frozenset({"decision", "text"})
+# A wait's output is ``{at}``, ``{text}`` or ``{choice, text}``.
+_WAIT_FIELDS: Final = frozenset({"at", "text", "choice"})
 # A cycle message names at most this many nodes, then how many more.
 _MAX_CYCLE_NAMES: Final = 10
 
@@ -119,6 +123,7 @@ def _plan(document: WorkflowDocument) -> WorkflowPlan:
         *_resume_problems(graph, nodes),
         *_outcome_problems(document),
         *_group_problems(graph),
+        *_unordered_gates(nodes, graph.upstream),
     ]
     if problems:
         raise WorkflowLoadError(problems)
@@ -316,6 +321,33 @@ def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
         yield from _reference_problems(inside, body, (*where, "nodes"))
         yield from _resume_problems(inside, body, (*where, "nodes"))
         yield from _reference_problems(inside, [group], where, until=True)
+        yield from _unordered_gates(body, upstream, where)
+
+
+def _suspendable(node: Node) -> bool:
+    """A gate, or a group whose body holds one: a node that may pause the run."""
+    if isinstance(node, LoopGroupNode):
+        return any(_suspendable(body) for body in node.nodes)
+    return isinstance(node, ApprovalNode | WaitNode)
+
+
+def _unordered_gates(
+    nodes: Sequence[Node], upstream: _Upstream, where: Loc = ()
+) -> Iterator[WorkflowProblem]:
+    """Two suspendable nodes with no order between them: a run holds one open gate at most."""
+    seen: list[str] = []
+    for index, node in enumerate(nodes):
+        if not _suspendable(node):
+            continue
+        for earlier in seen:
+            if not (upstream.contains(earlier, node.id) or upstream.contains(node.id, earlier)):
+                message = (
+                    f"the suspendable nodes {echo(earlier)} and {echo(node.id)} have no order"
+                    " between them: one must depend on the other"
+                )
+                yield WorkflowProblem((*where, "nodes", index), message)
+                break
+        seen.append(node.id)
 
 
 def _recorded(document: WorkflowDocument, layers: tuple[tuple[str, ...], ...]) -> WorkflowPlan:
@@ -512,8 +544,17 @@ def _texts(node: Node) -> Iterator[tuple[Loc, str]]:
         if node.stdin is not None:
             yield ("stdin",), node.stdin
         yield from ((("env", name), value) for name, value in node.env.items())
-    elif isinstance(node, ApprovalNode):
+    else:
+        yield from _gate_texts(node)
+
+
+def _gate_texts(node: Node) -> Iterator[tuple[Loc, str]]:
+    """An approval's message, a wait's ``until`` or ``attention``, a halt's reason."""
+    if isinstance(node, ApprovalNode):
         yield ("message",), node.message
+    elif isinstance(node, WaitNode):
+        texts = {"until": node.until, "attention": node.attention}
+        yield from (((key,), text) for key, text in texts.items() if text is not None)
     elif isinstance(node, HaltNode):
         yield ("reason",), node.reason
 
@@ -555,6 +596,8 @@ def _strings(value: JsonValue) -> Iterator[str]:
 def _has_path(producer: Node, segments: Sequence[str]) -> bool:
     if isinstance(producer, ApprovalNode):
         return len(segments) == 1 and segments[0] in _APPROVAL_FIELDS
+    if isinstance(producer, WaitNode):
+        return len(segments) == 1 and segments[0] in _WAIT_FIELDS
     if isinstance(producer, LoopGroupNode):
         # The output maps body id → that body node's output.
         body = {node.id: node for node in producer.nodes}
