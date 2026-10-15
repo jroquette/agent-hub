@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 
 import { Button } from "../../components";
 import { ApiProblem } from "../../lib/api";
+import { useSlashMenu } from "./SlashMenu";
 import { useDraft } from "./useDraft";
 import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./transcript";
 
@@ -35,6 +36,8 @@ export interface ComposerProps {
   /** Called as a message goes out: the chat pins the transcript to its bottom (AC-234.18). */
   onSending?: (() => void) | undefined;
   maxBytes?: number | undefined;
+  /** What the `/` menu lists: the session's slash commands and skills (AC-234.28). */
+  commands?: readonly string[] | undefined;
   /** The session whose draft this browser keeps (`ah.chat.draft.<id>`); none keeps nothing. */
   draftId?: string | null | undefined;
   /** Take focus on open (the chat asks unless a permission is pending, AC-234.26). */
@@ -67,6 +70,7 @@ export function Composer({
   onSending,
   maxBytes = DEFAULT_MESSAGE_MAX_BYTES,
   disabledReason,
+  commands = [],
   draftId = null,
   focusOnOpen = false,
 }: ComposerProps) {
@@ -97,6 +101,7 @@ export function Composer({
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
 
   const focusBox = () => box.current?.focus({ preventScroll: true });
+  const slash = useSlashMenu(text, commands, setText);
   // On open only: a permission that arrives later never takes focus away from here.
   const focusOnMount = useRef(focusOnOpen);
   useEffect(() => {
@@ -174,6 +179,7 @@ export function Composer({
         send();
       }}
     >
+      {slash.menu}
       <label htmlFor={inputId} className="ah-sr">
         Message Claude
       </label>
@@ -187,6 +193,7 @@ export function Composer({
         disabled={reason !== null}
         aria-describedby={hintId}
         aria-invalid={tooLong}
+        {...slash.inputProps}
         onChange={(event) => {
           setText(event.target.value);
         }}
@@ -199,7 +206,9 @@ export function Composer({
         }}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || composing.current) return;
-          // Esc stops only from an empty box (no menu exists yet): typed text keeps its Esc.
+          // The open `/` menu takes its keys first: Esc closes it, Enter inserts, never sends.
+          if (slash.onKeyDown(event)) return;
+          // Esc stops only from an empty box: typed text keeps its Esc.
           if (event.key === "Escape" && text === "" && canStop) {
             event.preventDefault();
             stop();

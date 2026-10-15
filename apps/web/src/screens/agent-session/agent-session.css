@@ -175,6 +175,37 @@
   background: var(--accent);
   animation: as-blink 1s steps(2) infinite;
 }
+/* The `/` menu opens above the composer (AC-234.28). */
+.as-slash {
+  position: absolute;
+  bottom: calc(100% + var(--space-1));
+  left: 0;
+  right: 0;
+  z-index: var(--z-popover);
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-popover);
+}
+.as-slash-list {
+  padding: var(--space-1);
+}
+.as-slash-option {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.as-slash-option:hover,
+.as-slash-active {
+  background: var(--accent-soft);
+}
+.as-slash-empty {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+}
 @media (prefers-reduced-motion: reduce) {
   .as-caret,
   .as-working::before {
@@ -433,6 +464,7 @@
   margin: 0;
 }
 .as-composer {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
