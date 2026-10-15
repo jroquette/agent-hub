@@ -1,10 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
 import type { components } from "../../api/schema";
-import { Button } from "../../components";
-import { apiKey, apiPost, type ApiProblem } from "../../lib/api";
+import { AppLink, Button } from "../../components";
+import { apiKey, apiPost, useApi, type ApiProblem } from "../../lib/api";
 import { useModalFocus } from "../../lib/modalFocus";
 import { useWorkflow, useWorkflows } from "../workflows/queries";
 
@@ -18,6 +18,9 @@ type InputValue = string | number | boolean;
 
 /** Workflows the web cannot start: their tracker writes need the parent `hub run`. */
 const TRACKER_WORKFLOWS = new Set(["issue-to-pr"]);
+/** How often, and how long, the dialog looks for the started run's first event. */
+const REPORT_POLL_MS = 1_000;
+export const REPORT_WAIT_MS = 30_000;
 /** The longest text input the API takes (one argv element). */
 export const MAX_INPUT_CHARS = 16_384;
 
@@ -56,9 +59,15 @@ function initialValue(spec: InputSpec): string | boolean {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
 
-/** The value sent for one input, or a problem; `undefined` leaves an optional input out. */
-function parsed(spec: InputSpec, raw: string | boolean): InputValue | undefined | Error {
+/** The value sent for one input, or a problem; `undefined` leaves an optional input out. A
+ * number field the browser could not parse (`badInput`) reads as empty: it is a problem. */
+function parsed(
+  spec: InputSpec,
+  raw: string | boolean,
+  bad = false,
+): InputValue | undefined | Error {
   if (spec.type === "boolean") return raw === true;
+  if (bad) return new Error(`${spec.name} must be a number.`);
   const text = String(raw);
   if (text.trim() === "") {
     return spec.required ? new Error(`${spec.name} is required.`) : undefined;
@@ -68,6 +77,9 @@ function parsed(spec: InputSpec, raw: string | boolean): InputValue | undefined 
   if (!Number.isFinite(number)) return new Error(`${spec.name} must be a number.`);
   if (spec.type === "integer" && !Number.isInteger(number)) {
     return new Error(`${spec.name} must be a whole number.`);
+  }
+  if (spec.type === "integer" && !Number.isSafeInteger(number)) {
+    return new Error(`${spec.name} must be a whole number up to 2^53.`);
   }
   return number;
 }
@@ -86,12 +98,14 @@ function InputField({
   spec,
   value,
   error,
+  disabled,
   onChange,
 }: {
   spec: InputSpec;
   value: string | boolean;
   error: string | null;
-  onChange: (value: string | boolean) => void;
+  disabled: boolean;
+  onChange: (value: string | boolean, bad: boolean) => void;
 }) {
   const field = useId();
   const hint = useId();
@@ -108,9 +122,10 @@ function InputField({
             id={field}
             type="checkbox"
             checked={value === true}
+            disabled={disabled}
             aria-describedby={described || undefined}
             onChange={(event) => {
-              onChange(event.target.checked);
+              onChange(event.target.checked, false);
             }}
           />
           {label}
@@ -127,10 +142,11 @@ function InputField({
             step={spec.type === "integer" ? 1 : "any"}
             maxLength={spec.type === "string" ? MAX_INPUT_CHARS : undefined}
             value={String(value)}
+            disabled={disabled}
             aria-invalid={error ? true : undefined}
             aria-describedby={described || undefined}
             onChange={(event) => {
-              onChange(event.target.value);
+              onChange(event.target.value, event.target.validity.badInput);
             }}
           />
         </>
@@ -149,26 +165,70 @@ function InputField({
   );
 }
 
+/**
+ * The started run, once its child's first event lists it: Run detail only knows a run from its
+ * events, so opening it before then would answer 404. Polls the runs list (never the run itself)
+ * until it is there, or until REPORT_WAIT_MS passed (`late`).
+ */
+function useReported(
+  started: RunAccepted | null,
+  workflow: string,
+): { ready: boolean; late: boolean } {
+  const [late, setLate] = useState(false);
+  const runs = useApi(
+    "/api/v1/workflow-runs",
+    { query: { project: started?.project ?? null, workflow, limit: 50 } },
+    { enabled: started !== null && !late, refetchInterval: REPORT_POLL_MS },
+  );
+  useEffect(() => {
+    if (started === null) return;
+    const timer = setTimeout(() => {
+      setLate(true);
+    }, REPORT_WAIT_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [started]);
+  const ready = started !== null && (runs.data?.items ?? []).some((r) => r.id === started.run_id);
+  return { ready, late };
+}
+
 function StartRunDialog({ scope, onClose }: { scope: string | null; onClose: () => void }) {
   const catalog = useWorkflows(scope);
   const start = useStartRun();
   const navigate = useNavigate();
-  const [chosen, setChosen] = useState("");
+  const [started, setStarted] = useState<RunAccepted | null>(null);
+  const [chosen, setChosen] = useState<{ project: string; name: string } | null>(null);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [bad, setBad] = useState<Record<string, boolean>>({});
   const dialog = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const pickerId = useId();
   useModalFocus(dialog, { locked: start.isPending, onEscape: onClose });
 
   const startable = (catalog.data?.items ?? []).filter((w) => !TRACKER_WORKFLOWS.has(w.name));
-  const [project = "", name = ""] = chosen ? chosen.split("/") : [];
-  const detail = useWorkflow(project, name, chosen !== "");
+  const project = chosen?.project ?? "";
+  const name = chosen?.name ?? "";
+  const picked = chosen ? startable.findIndex((w) => w.project === project && w.name === name) : -1;
+  const detail = useWorkflow(project, name, chosen !== null);
   const specs = detail.isSuccess ? inputSpecs(detail.data.document) : [];
   const valueOf = (spec: InputSpec) => values[spec.name] ?? initialValue(spec);
-  const results = specs.map((spec) => [spec, parsed(spec, valueOf(spec))] as const);
+  const results = specs.map(
+    (spec) => [spec, parsed(spec, valueOf(spec), bad[spec.name] === true)] as const,
+  );
   const invalid = results.some(([, result]) => result instanceof Error);
-  const ready = chosen !== "" && detail.isSuccess && !invalid && !start.isPending;
+  const busy = start.isPending || started !== null;
+  const ready = chosen !== null && detail.isSuccess && !invalid && !busy;
+  const reported = useReported(started, name);
+  const runPath = started ? `/runs/${encodeURIComponent(started.run_id)}` : null;
+
+  useEffect(() => {
+    if (reported.ready && runPath) {
+      onClose();
+      void navigate(runPath);
+    }
+  }, [reported.ready, runPath, onClose, navigate]);
 
   const submit = () => {
     const inputs: Record<string, InputValue> = {};
@@ -179,8 +239,7 @@ function StartRunDialog({ scope, onClose }: { scope: string | null; onClose: () 
       { project, workflow: name, inputs },
       {
         onSuccess: (accepted) => {
-          onClose();
-          void navigate(`/runs/${encodeURIComponent(accepted.run_id)}`);
+          setStarted(accepted);
         },
       },
     );
@@ -213,18 +272,24 @@ function StartRunDialog({ scope, onClose }: { scope: string | null; onClose: () 
             <select
               id={pickerId}
               className="ah-input"
-              value={chosen}
-              disabled={start.isPending}
+              value={picked < 0 ? "" : String(picked)}
+              disabled={busy}
               onChange={(event) => {
-                setChosen(event.target.value);
+                const next = startable[Number(event.target.value)];
+                setChosen(
+                  event.target.value === "" || !next
+                    ? null
+                    : { project: next.project, name: next.name },
+                );
                 setValues({});
                 setTouched({});
+                setBad({});
                 start.reset();
               }}
             >
               <option value="">Choose a workflow…</option>
-              {startable.map((w) => (
-                <option key={`${w.project}/${w.name}`} value={`${w.project}/${w.name}`}>
+              {startable.map((w, index) => (
+                <option key={JSON.stringify([w.project, w.name])} value={String(index)}>
                   {`${w.project} / ${w.name}`}
                 </option>
               ))}
@@ -253,9 +318,11 @@ function StartRunDialog({ scope, onClose }: { scope: string | null; onClose: () 
                   ? result.message
                   : null
               }
-              onChange={(value) => {
+              disabled={busy}
+              onChange={(value, unparsed) => {
                 setValues((current) => ({ ...current, [spec.name]: value }));
                 setTouched((current) => ({ ...current, [spec.name]: true }));
+                setBad((current) => ({ ...current, [spec.name]: unparsed }));
               }}
             />
           ))}
@@ -263,6 +330,20 @@ function StartRunDialog({ scope, onClose }: { scope: string | null; onClose: () 
             <span role="status" className="ah-small">
               Starting the run…
             </span>
+          )}
+          {started && !reported.late && (
+            <span role="status" className="ah-small">
+              Started. Waiting for the run&apos;s first event…
+            </span>
+          )}
+          {started && reported.late && runPath && (
+            <div role="alert" className="ah-stack ah-small" style={{ gap: 4 }}>
+              <span>
+                The run has not reported in {REPORT_WAIT_MS / 1000} s. Its child&apos;s output is in{" "}
+                <code className="ah-mono">.agent-runs/web/{started.run_id}.log</code> in the hub.
+              </span>
+              <AppLink href={runPath}>Open the run anyway</AppLink>
+            </div>
           )}
           {start.isError && (
             <div

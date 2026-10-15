@@ -36,6 +36,16 @@ export function useModalFocus(
     };
   }, [dialog]);
 
+  // A control disabled while focused (the clicked confirm) drops focus to the page: take it back,
+  // so the Tab trap and the Escape lock still hold.
+  useEffect(() => {
+    const node = dialog.current;
+    const active = document.activeElement;
+    const lost =
+      !node?.contains(active) || (active instanceof HTMLElement && active.matches(":disabled"));
+    if (locked && node && lost) node.focus();
+  }, [dialog, locked]);
+
   useEffect(() => {
     const node = dialog.current;
     if (!node) return;
