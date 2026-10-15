@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -167,6 +167,60 @@ describe("WorkflowDetailScreen", () => {
     expect(
       await screen.findByRole("heading", { name: "Workflow feature-flow not found" }),
     ).toBeInTheDocument();
+  });
+
+  it("draws edges in content coordinates when the graph is scrolled sideways", async () => {
+    // Content x of each node (all at top 4, 40 high); the graph is scrolled 400 px right.
+    const contentX: Record<string, number> = { plan: 4, build: 220, docs: 220, review: 436 };
+    const scrollLeft = 400;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const id = this.getAttribute("data-node-id");
+      const x = id === null ? undefined : contentX[id];
+      if (x === undefined) return new DOMRect(100, 50, 600, 300);
+      const top = id === "docs" ? 104 : 54;
+      return new DOMRect(100 + x - scrollLeft, top, 168, 40);
+    });
+    vi.spyOn(Element.prototype, "scrollLeft", "get").mockReturnValue(scrollLeft);
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockReturnValue(0);
+    vi.spyOn(Element.prototype, "scrollWidth", "get").mockReturnValue(1200);
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(300);
+    const { container } = renderDetail();
+
+    await screen.findByRole("group", { name: "Workflow graph" });
+    await waitFor(() => {
+      expect(container.querySelector('[data-edge="plan→docs"]')).toHaveAttribute(
+        "d",
+        "M 172 24 C 196 24, 196 74, 220 74",
+      );
+    });
+    const svg = container.querySelector("svg[data-edges]");
+    expect(svg).toHaveAttribute("width", "1200");
+    expect(svg).toHaveAttribute("height", "300");
+  });
+
+  it("gives focus back to the list row that opened the panel", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(await screen.findByRole("button", { name: "List" }));
+    const table = screen.getByRole("table", { name: "Nodes in run order" });
+    const row = within(table).getByText("docs").closest("tr");
+    if (!row) throw new Error("No docs row");
+    row.focus();
+    await user.keyboard("{Enter}");
+
+    const panel = await screen.findByRole("complementary", { name: "Node docs" });
+    await user.click(within(panel).getByRole("button", { name: "Close" }));
+    expect(row).toHaveFocus();
+  });
+
+  it("leaves focus alone when a node is opened by the URL", async () => {
+    renderDetail(aWorkflowDetail(), "?node=plan");
+
+    const panel = await screen.findByRole("complementary", { name: "Node plan" });
+    expect(panel).not.toContainElement(document.activeElement as HTMLElement);
   });
 
   it("has no serious a11y violations with a node open (a11y)", async () => {
