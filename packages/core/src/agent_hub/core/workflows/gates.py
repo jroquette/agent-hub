@@ -8,17 +8,28 @@ approval's decision id), ``choice`` (an attention wait's option id), ``text`` (a
 without options) or ``timer`` (``duration`` or ``until``: no person answers it).
 
 The output is ``{decision}`` (plus ``text`` under ``capture_response``), ``{at}``, ``{text}`` or
-``{choice, text}``; ``when:`` and ``until_when`` read it like any other output.
+``{choice, text}``; ``when:`` and ``until_when`` read it like any other output. A ``reject`` of an
+approval with the default decisions cancels the run, unless a ``when:`` or ``until_when`` reads
+its decision (the workflow then routes the reject itself). An ``until`` is at most 7 days after
+the gate opens.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import JsonValue
-from agent_hub.core.workflows.nodes import ApprovalNode, GateNode, WaitNode, duration_seconds
-from agent_hub.core.workflows.substitution import echo
+from agent_hub.core.workflows.nodes import (
+    MAX_DURATION_SECONDS,
+    ApprovalNode,
+    GateNode,
+    Node,
+    WaitNode,
+    duration_seconds,
+)
+from agent_hub.core.workflows.substitution import NodeRef, SubstitutionError, echo, find_refs
 
 type GateKind = Literal["approval", "wait"]
 type GateForm = Literal["decision", "choice", "text", "timer"]
@@ -103,7 +114,30 @@ def wait_due(node: GateNode, rendered: str, now: datetime) -> datetime | None:
     if due is None or due.tzinfo is None:
         msg = f"until {echo(rendered)} is not an ISO-8601 instant with an offset"
         raise GateError(msg)
+    if due - now > timedelta(seconds=MAX_DURATION_SECONDS):
+        msg = f"until {echo(rendered)} is more than 7 days after the gate opened"
+        raise GateError(msg)
     return due
+
+
+def reject_cancels(node: GateNode, nodes: Sequence[Node]) -> bool:
+    """Whether a ``reject`` of ``node`` cancels the run: an approval with the default decisions
+    whose decision no ``when:`` or ``until_when`` reads."""
+    if not isinstance(node, ApprovalNode) or "decisions" in node.model_fields_set:
+        return False
+    wanted = NodeRef(node.id, ("decision",))
+    for other in nodes:
+        for text in (other.when, getattr(other, "until_when", None)):
+            if isinstance(text, str) and wanted in _refs(text):
+                return False
+    return True
+
+
+def _refs(text: str) -> list[object]:
+    try:
+        return list(find_refs(text))
+    except SubstitutionError:
+        return []
 
 
 def answer_problem(form: GateForm, choices: tuple[str, ...], answer: GateAnswer) -> str | None:

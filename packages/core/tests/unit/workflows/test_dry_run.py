@@ -219,14 +219,14 @@ def test_pauses_on_the_first_gate_when_it_has_no_stub() -> None:
 def test_answers_each_gate_from_its_stub_when_every_gate_has_one() -> None:
     report = run(
         a_plan(*GATES),
-        ok={"decision": "reject", "text": "tests"},
+        ok={"decision": "approve", "text": "tests"},
         nap={},
         ask={"text": "because"},
         pick={"choice": "red"},
     )
 
     assert report.run.status == "done"
-    assert output_of(report, "ok") == {"decision": "reject", "text": "tests"}
+    assert output_of(report, "ok") == {"decision": "approve", "text": "tests"}
     assert output_of(report, "nap") == {"at": "2000-01-01T00:00:00+00:00"}
     assert output_of(report, "ask") == {"text": "because"}
     assert output_of(report, "pick") == {"choice": "red", "text": ""}
