@@ -193,14 +193,35 @@ describe("Transcript (streaming-batch) working row", () => {
   it.each([
     ["a running tool", [running, call], "Claude is working · Edit"],
     ["a finished tool", [running, call, result], "Claude is working"],
-    ["streaming text", [running, call, result, delta], null],
-    ["an idle session", [call], null],
-    ["a waiting permission", [{ type: "status", status: { status: "waiting_permission" } }], null],
+    ["streaming text", [running, call, result, delta], ""],
+    ["an idle session", [call], ""],
+    ["a waiting permission", [{ type: "status", status: { status: "waiting_permission" } }], ""],
   ] as const)("shows the working row for %s only while running with no text", (_, items, text) => {
     render(<Transcript state={items.reduce(reduceTranscript, initialTranscript())} />);
 
-    if (text === null) expect(row()).toBeNull();
-    else expect(row()).toHaveTextContent(new RegExp(`^${text}$`));
+    expect(row()).toHaveTextContent(new RegExp(`^${text}$`));
+  });
+
+  it("keeps one status region mounted while live and changes only its text (a11y)", () => {
+    const idle: StreamItem = { type: "status", status: { status: "idle" } };
+    const ended: StreamItem = { type: "status", status: { status: "ended" } };
+    const steps = [[idle], [running], [delta], [idle]].reduce<StreamItem[][]>(
+      (acc, items) => [...acc, [...(acc.at(-1) ?? []), ...items]],
+      [],
+    );
+    const at = (items: StreamItem[]) => items.reduce(reduceTranscript, initialTranscript());
+    const { rerender } = render(<Transcript state={at(steps[0] ?? [])} />);
+    const region = row();
+
+    const texts = steps.map((items) => {
+      rerender(<Transcript state={at(items)} />);
+      expect(row()).toBe(region);
+      return row()?.textContent;
+    });
+    rerender(<Transcript state={at([...(steps.at(-1) ?? []), ended])} />);
+
+    expect(texts).toEqual(["", "Claude is working", "", ""]);
+    expect(row()).toBeNull();
   });
 
   it("shows a caret on the streaming bubble only", () => {
