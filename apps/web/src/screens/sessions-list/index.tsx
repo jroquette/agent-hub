@@ -1,6 +1,6 @@
 import "./sessions-list.css";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -19,8 +19,10 @@ import {
   SavedViewMenu,
   SegmentedControl,
   SessionLabel,
+  Skeleton,
   StatusBadge,
   Tooltip,
+  VIRTUAL_THRESHOLD,
   type DataTableColumn,
   type Facet,
   type Status,
@@ -40,7 +42,6 @@ import {
   badDecimal,
   chipsOf,
   periodOf,
-  queryOf,
   sortOf,
   type Period,
 } from "./filters";
@@ -54,12 +55,18 @@ import {
   useCreateAgentSession,
   useProjects,
   useResumable,
-  useSessionPages,
+  useSectionPages,
+  useTileStreamInvalidation,
   useWorkdirs,
   type Session,
 } from "./queries";
+import { SECTIONS, sectionCount, sectionQueries } from "./sections";
+import { SessionSection, useCollapsed } from "./SessionSection";
+import { useScrollAnchor } from "./useScrollAnchor";
 
 const COLUMNS_KEY = "ah.sessions.columns";
+/** A section past VIRTUAL_THRESHOLD rows scrolls inside this height (as the learnings table). */
+const SECTION_MAX_HEIGHT = 640;
 const DENSITY_KEY = "ah.sessions.density";
 const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
 /** The session's issue: the label's (S1), else the run's. */
@@ -116,12 +123,26 @@ function zeroSubtle(value: number, danger = false): ReactNode {
   );
 }
 
+/** A session's duration; only a running one reads the second clock, so a tick re-renders just its cell. */
+function Elapsed({ session }: { session: Session }) {
+  return session.ended_at ? (
+    fmtDuration((Date.parse(session.ended_at) - Date.parse(session.started_at)) / 1000)
+  ) : (
+    <RunningFor start={session.started_at} />
+  );
+}
+
+function RunningFor({ start }: { start: string }) {
+  const now = useNow(1000);
+  return fmtDuration((now - Date.parse(start)) / 1000);
+}
+
 interface ColumnDef {
   id: string;
   label: string;
   on: boolean;
   sort?: "started_at" | "last_activity_at" | "cost" | undefined;
-  column: (ctx: { now: number; tz: "local" | "utc" }) => DataTableColumn<Session>;
+  column: (ctx: { tz: "local" | "utc" }) => DataTableColumn<Session>;
 }
 
 const COLUMN_DEFS: ColumnDef[] = [
@@ -146,14 +167,11 @@ const COLUMN_DEFS: ColumnDef[] = [
     id: "duration",
     label: "Duration",
     on: true,
-    column: ({ now }) => ({
+    column: () => ({
       id: "duration",
       label: "Duration",
       align: "right",
-      render: (s) =>
-        fmtDuration(
-          ((s.ended_at ? Date.parse(s.ended_at) : now) - Date.parse(s.started_at)) / 1000,
-        ),
+      render: (s) => <Elapsed session={s} />,
     }),
   },
   {
@@ -359,7 +377,7 @@ const COMFORTABLE: ColumnDef[] = [
     label: "Started",
     on: true,
     sort: "started_at",
-    column: ({ now, tz }) => ({
+    column: ({ tz }) => ({
       id: "started",
       label: "Started",
       sortable: true,
@@ -370,9 +388,7 @@ const COMFORTABLE: ColumnDef[] = [
             {fmtClock(s.started_at, tz)}
           </span>
           <span className="ah-small ah-subtle">
-            {fmtDuration(
-              ((s.ended_at ? Date.parse(s.ended_at) : now) - Date.parse(s.started_at)) / 1000,
-            )}
+            <Elapsed session={s} />
           </span>
         </div>
       ),
@@ -708,16 +724,33 @@ function AgentSessionsPanel({
   );
 }
 
+/** The stale stamp while the collector is offline; its second clock re-renders only this stamp. */
+function OfflineStamp({ tz }: { tz: "local" | "utc" }) {
+  const collector = useCollectorState();
+  return collector.state === "offline" ? (
+    <AsOfStamp stale time={fmtClock(collector.asOf, tz)} source="collector heartbeat" />
+  ) : null;
+}
+
 export function SessionsListScreen() {
   const [params, setParams] = useSearchParams();
   const [scope] = useScope();
   const navigate = useNavigate();
   const { tz } = usePreferences();
-  const now = useNow(1000);
-  const collector = useCollectorState();
   const [anchor] = useState(() => Date.now());
-  const query = useMemo(() => queryOf(params, scope, anchor), [params, scope, anchor]);
-  const pages = useSessionPages(query);
+  const queries = useMemo(() => sectionQueries(params, scope, anchor), [params, scope, anchor]);
+  const sections = useSectionPages(queries);
+  const [collapsed, toggleCollapsed] = useCollapsed();
+  useTileStreamInvalidation(
+    scope,
+    SECTIONS.filter((section) => queries[section.id] !== null).map((section) => ({
+      id: section.id,
+      collapsed: collapsed.has(section.id),
+      refetch: sections[section.id].refetch,
+    })),
+  );
+  const screenRef = useRef<HTMLDivElement>(null);
+  useScrollAnchor(screenRef);
   const projects = useProjects();
   const [selected, setSelected] = useState<string[]>([]);
   const [columns, setColumns] = useState(storedColumns);
@@ -747,16 +780,29 @@ export function SessionsListScreen() {
     setCostDraft({ min: "", max: "" });
   };
 
-  const rows = (pages.data?.pages ?? []).flatMap((page) => page.items);
-  const total = pages.data?.pages[0]?.total_estimate ?? 0;
+  const asked = SECTIONS.flatMap((section) => {
+    if (queries[section.id] === null) return [];
+    const pages = sections[section.id];
+    const rows = (pages.data?.pages ?? []).flatMap((page) => page.items);
+    // AGH-244 adds the section's driven rows without an observed twin here (P-e).
+    const count = sectionCount(pages.data?.pages[0]?.total_estimate ?? 0);
+    return [{ ...section, pages, rows, count }];
+  });
+  const rows = asked.flatMap((section) => section.rows);
+  const total = asked.reduce((sum, section) => sum + section.count, 0);
+  const pending = asked.some((section) => section.pages.isPending);
+  const hasNextPage = asked.some((section) => section.pages.hasNextPage);
   const period: Period = periodOf(params);
   const sort = sortOf(params);
   const chips = chipsOf(params);
-  const visible =
-    density === "compact"
-      ? COLUMN_DEFS.filter((def) => columns.has(def.id) && !(def.id === "project" && scope))
-      : COMFORTABLE.filter((def) => !(def.id === "project" && scope));
-  const tableColumns = visible.map((def) => def.column({ now, tz }));
+  const visible = useMemo(
+    () =>
+      density === "compact"
+        ? COLUMN_DEFS.filter((def) => columns.has(def.id) && !(def.id === "project" && scope))
+        : COMFORTABLE.filter((def) => !(def.id === "project" && scope)),
+    [density, columns, scope],
+  );
+  const tableColumns = useMemo(() => visible.map((def) => def.column({ tz })), [visible, tz]);
   const sortColumn = visible.find((def) => def.sort === sort.replace("-", ""));
   const projectCount = new Set(rows.map((s) => s.project)).size;
   const filtered = chips.some((chip) => chip.key !== "period");
@@ -930,41 +976,92 @@ export function SessionsListScreen() {
     });
   }
 
-  const countLine = pages.isPending
+  const countLine = pending
     ? "Loading sessions…"
-    : `Showing ${fmtInt(rows.length)}${pages.hasNextPage ? ` of ~${fmtInt(total)}` : ""} · ${period === "All" ? "all time" : period} · ${String(projectCount)} ${projectCount === 1 ? "project" : "projects"}`;
+    : `Showing ${fmtInt(rows.length)}${hasNextPage ? ` of ~${fmtInt(total)}` : ""} · Ended: ${period === "All" ? "all time" : `last ${period}`} · ${String(projectCount)} ${projectCount === 1 ? "project" : "projects"}`;
   const compareOk = selected.length === 2;
-  const neverAny = !filtered && rows.length === 0 && !pages.isPending;
+  const allEmpty =
+    !pending && asked.every((section) => !section.pages.error && section.rows.length === 0);
+  const neverAny = !filtered && allEmpty;
 
-  let table: ReactNode;
-  if (pages.error) {
-    table = (
-      <div className="ah-stack" style={{ gap: 8 }}>
-        <ProblemError
-          title="Could not load sessions"
-          detail={pages.error.detail}
-          status={pages.error.status}
-          type={pages.error.type}
-          instance={pages.error.instance}
-          onRetry={() => {
-            void pages.refetch();
-          }}
-        />
-        <div>
-          <Button size="sm" variant="ghost" icon="x" onClick={clearFilters}>
+  const empty = neverAny ? (
+    <EmptyState
+      icon="square-terminal"
+      title="No sessions yet."
+      action={
+        period === "All" ? undefined : (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              update({ period: "All" });
+            }}
+          >
+            Show all time
+          </Button>
+        )
+      }
+    >
+      Each Claude Code session in a registered hub is listed here after its first event.
+    </EmptyState>
+  ) : (
+    <EmptyState
+      icon="list-filter"
+      title="No sessions match these filters."
+      action={
+        <div className="ah-row" style={{ gap: 8 }}>
+          <Button icon="x" onClick={clearFilters}>
             Clear filters
           </Button>
+          {period !== "30 d" && period !== "All" && (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                update({ period: "30 d" });
+              }}
+            >
+              Widen to 30 d
+            </Button>
+          )}
         </div>
-      </div>
-    );
-  } else {
-    table = (
+      }
+    />
+  );
+
+  const sectionBody = ({ title, pages, rows: sectionRows, count }: (typeof asked)[number]) => {
+    if (pages.error) {
+      return (
+        <div className="ah-stack" style={{ gap: 8 }}>
+          <ProblemError
+            title={`Could not load ${title.toLowerCase()} sessions`}
+            detail={pages.error.detail}
+            status={pages.error.status}
+            type={pages.error.type}
+            instance={pages.error.instance}
+            onRetry={() => {
+              void pages.refetch();
+            }}
+          />
+          <div>
+            <Button size="sm" variant="ghost" icon="x" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    // A light placeholder: four skeleton tables at once made role queries crawl under coverage.
+    if (pages.isPending) return <Skeleton lines={2} />;
+    const keys = new Set(sectionRows.map((s) => s.id));
+    // Past the threshold a section scrolls in its own window, so only the rows in view render.
+    const bounded = sectionRows.length > VIRTUAL_THRESHOLD;
+    return (
       <DataTable
-        caption="Sessions"
+        caption={`${title} sessions`}
+        maxHeight={bounded ? SECTION_MAX_HEIGHT : undefined}
+        scrollLabel={bounded ? `Scrollable ${title.toLowerCase()} sessions` : undefined}
         columns={tableColumns}
-        rows={rows}
+        rows={sectionRows}
         rowKey={(s) => s.id}
-        loading={pages.isPending}
         density={density === "compact" ? "compact" : undefined}
         sort={
           sortColumn ? { id: sortColumn.id, dir: sort.startsWith("-") ? "desc" : "asc" } : undefined
@@ -976,69 +1073,27 @@ export function SessionsListScreen() {
           update({ sort: sort === desc ? def.sort : desc === "-started_at" ? null : desc });
         }}
         selectable
-        selected={selected}
+        selected={selected.filter((id) => keys.has(id))}
         onSelect={(id) => {
           setSelected(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
         }}
         onSelectAll={(checked) => {
-          setSelected(checked ? rows.map((s) => s.id) : []);
+          const others = selected.filter((id) => !keys.has(id));
+          setSelected(checked ? [...others, ...keys] : others);
         }}
         onRowClick={(s) => {
           void navigate(`/sessions/${encodeURIComponent(s.id)}`);
         }}
-        empty={
-          neverAny ? (
-            <EmptyState
-              icon="square-terminal"
-              title="No sessions yet."
-              action={
-                period === "All" ? undefined : (
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      update({ period: "All" });
-                    }}
-                  >
-                    Show all time
-                  </Button>
-                )
-              }
-            >
-              Each Claude Code session in a registered hub is listed here after its first event.
-            </EmptyState>
-          ) : (
-            <EmptyState
-              icon="list-filter"
-              title="No sessions match these filters."
-              action={
-                <div className="ah-row" style={{ gap: 8 }}>
-                  <Button icon="x" onClick={clearFilters}>
-                    Clear filters
-                  </Button>
-                  {period !== "30 d" && period !== "All" && (
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        update({ period: "30 d" });
-                      }}
-                    >
-                      Widen to 30 d
-                    </Button>
-                  )}
-                </div>
-              }
-            />
-          )
-        }
         footer={
-          rows.length > 0 ? (
+          sectionRows.length > 0 ? (
             <>
               <span>
                 {pages.hasNextPage
-                  ? `Showing ${fmtInt(rows.length)} of ~${fmtInt(total)}`
-                  : `Showing all ${fmtInt(rows.length)}`}
+                  ? `Showing ${fmtInt(sectionRows.length)} of ~${fmtInt(count)}`
+                  : `Showing all ${fmtInt(sectionRows.length)}`}
               </span>
-              {pages.hasNextPage && (
+              {/* On placeholder pages TanStack would refetch page 1, not the next one. */}
+              {pages.hasNextPage && !pages.isPlaceholderData && (
                 <Button
                   size="sm"
                   disabled={pages.isFetchingNextPage}
@@ -1058,15 +1113,47 @@ export function SessionsListScreen() {
         }
       />
     );
-  }
+  };
+
+  // Empty sections are hidden; when all are, one empty state shows (spec 14).
+  const body = allEmpty ? (
+    empty
+  ) : (
+    <div className="ah-stack sl-sections">
+      {asked
+        .filter(
+          (section) =>
+            section.pages.isPending || section.pages.error !== null || section.rows.length > 0,
+        )
+        .map((section) => (
+          <SessionSection
+            key={section.id}
+            id={section.id}
+            title={section.title}
+            // No count while loading, or when the query failed before returning any page.
+            count={
+              section.pages.isPending || (section.pages.error && !section.pages.data)
+                ? null
+                : section.count
+            }
+            approximate={section.pages.hasNextPage}
+            updating={section.pages.isPlaceholderData}
+            collapsed={collapsed.has(section.id)}
+            onToggle={() => {
+              toggleCollapsed(section.id);
+            }}
+          >
+            {sectionBody(section)}
+          </SessionSection>
+        ))}
+    </div>
+  );
 
   return (
-    <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
+    <div style={{ padding: "16px 32px 40px" }} className="ah-stack" ref={screenRef}>
       <div className="ah-row ah-wrap" style={{ gap: 8 }}>
         <h1 className="ah-h1">Sessions</h1>
-        {collector.state === "offline" && (
-          <AsOfStamp stale time={fmtClock(collector.asOf, tz)} source="collector heartbeat" />
-        )}
+        <OfflineStamp tz={tz} />
         <span className="ah-grow" />
         <SavedViewMenu
           views={VIEWS.map((view) => ({ name: view.name }))}
@@ -1193,7 +1280,7 @@ export function SessionsListScreen() {
           />
         </div>
         <div className="ah-grow sl-table" style={{ minWidth: 0 }}>
-          {table}
+          {body}
         </div>
       </div>
     </div>
