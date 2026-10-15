@@ -1,9 +1,86 @@
 /* Agent-session chat (D10); colours come from the design tokens only. */
+/* A fixed-height column (AC-234.16): header and composer stay put, only the transcript scrolls. */
+.as-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.as-column {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 960px;
+  margin-inline: auto;
+  padding-inline: var(--space-8);
+}
+.as-header {
+  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  padding: var(--space-4) 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.as-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.as-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.as-scroll:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.as-jump {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-3);
+  transform: translateX(-50%);
+  z-index: var(--z-sticky);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font: 500 12px/16px var(--font-sans);
+  box-shadow: var(--shadow-popover);
+  cursor: pointer;
+}
+.as-jump:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.as-footer {
+  flex: none;
+  padding: var(--space-2) 0 var(--space-4);
+  background: var(--bg);
+}
 .as-transcript {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-4) 0;
+  padding-block: var(--space-4);
+}
+.as-entry {
+  display: flex;
+  flex-direction: column;
+}
+.as-settled {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
 }
 .as-empty {
   margin: 0;
@@ -48,8 +125,28 @@
     opacity: 0;
   }
 }
+.as-working {
+  margin: 0 auto var(--space-4);
+}
+.as-working.as-working-idle {
+  margin-bottom: 0;
+}
+.as-working.as-working-idle::before {
+  content: none;
+}
+.as-working::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: var(--accent);
+  animation: as-blink 1s steps(2) infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-  .as-caret {
+  .as-caret,
+  .as-working::before {
     animation: none;
   }
 }
@@ -283,7 +380,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  cursor: pointer;
+}
+.as-todos details[open] > .as-todos-head {
   margin-bottom: 4px;
+}
+.as-todos ul {
+  max-height: 160px;
+  overflow-y: auto;
 }
 .as-todos ul {
   list-style: none;
