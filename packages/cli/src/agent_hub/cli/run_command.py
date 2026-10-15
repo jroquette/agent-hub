@@ -15,6 +15,7 @@ import contextlib
 import math
 import os
 from enum import StrEnum
+from pathlib import Path
 from typing import Annotated, Final
 
 import typer
@@ -135,30 +136,59 @@ def run(
     hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
     hub_config = load_hub_config_or_exit(hub / FILE_LABEL)
     refuse_usage(context, hub_config, issue=issue, repo=repo)
-    effective, prefix = effective_with_prefix_or_fail(context, hub_config, home=hub)
-    # hub.json with the developer's local values over it: the transport may be theirs.
-    config = effective.config
-    missing = missing_key_line(config, os.environ, command=COMMAND)
-    if missing is not None:
-        fail(missing)
-    typer.echo(transport_line(config), err=True)
+    children, client = run_setup(context, hub_config, hub=hub, issue=issue, repo=repo)
     if context.get_parameter_source("model") is ParameterSource.DEFAULT:
         # Not given: the tier's model, the default itself while hub.json sets none (AGH-180).
         model = hub_config.models.model_for(RUN_TIER)
     options = RunOptions(
         live=live, max_turns=max_turns, budget=budget, model=model, start=start, effort=effort
     )
-    client = resolve_tracker_client(config, os.environ, hub_root=hub)
-    children = RunChildren(config=config, hub=hub, repo=repo, issue_id=issue, branch_prefix=prefix)
     if not options.live:
         picked = _read_issue_or_exit(client, issue, log=None)
         _refuse_incomplete_brief(picked, issue, log=None)
         _print_dry_run(children, picked, options=options, run_id=new_run_id())
         return
+    live_run = begin_live_run(children, client, options=options, run_id=new_run_id())
+    raise typer.Exit(live_run.run())
+
+
+def run_setup(
+    context: typer.Context,
+    hub_config: HubConfig,
+    *,
+    hub: Path,
+    issue: str,
+    repo: str,
+    command: str = COMMAND,
+) -> tuple[RunChildren, TrackerClient]:
+    """The run's children and tracker client: ``hub.json`` with the developer's local values
+    over it (the transport may be theirs) and their branch prefix; exit 1 without the key."""
+    effective, prefix = effective_with_prefix_or_fail(context, hub_config, home=hub)
+    config = effective.config
+    missing = missing_key_line(config, os.environ, command=command)
+    if missing is not None:
+        fail(missing)
+    typer.echo(transport_line(config), err=True)
+    client = resolve_tracker_client(config, os.environ, hub_root=hub)
+    children = RunChildren(config=config, hub=hub, repo=repo, issue_id=issue, branch_prefix=prefix)
+    return children, client
+
+
+def begin_live_run(
+    children: RunChildren,
+    client: TrackerClient,
+    *,
+    options: RunOptions,
+    run_id: str,
+    prefix: str = _PREFIX,
+) -> LiveRun:
+    """A live run past its ``picked`` record: the issue read once and its brief checked (exit 1
+    otherwise, each recorded as ``failed``)."""
     if os.environ.get(NESTED_VARIABLE):
         typer.echo(NESTED_NOTE, err=True)
+    issue, hub, config = children.issue_id, children.hub, children.config
     # A live run records from the read on, so a failed read leaves its "failed" record.
-    log = RunLog(hub=hub, run_id=new_run_id(), issue_id=issue, repo=repo)
+    log = RunLog(hub=hub, run_id=run_id, issue_id=issue, repo=children.repo)
     picked = _read_issue_or_exit(client, issue, log=log)
     _refuse_incomplete_brief(picked, issue, log=log)
     try:
@@ -170,8 +200,8 @@ def run(
         )
         log.record("picked", data)
     except RunLogError as error:
-        fail(f"{_PREFIX}: {error}")
-    live_run = LiveRun(
+        fail(f"{prefix}: {error}")
+    return LiveRun(
         children=children,
         options=options,
         issue=picked,
@@ -180,7 +210,6 @@ def run(
         environ=os.environ,
         cost_usd=tracker_cost(client),
     )
-    raise typer.Exit(live_run.run())
 
 
 def _read_issue_or_exit(client: TrackerClient, issue_id: str, *, log: RunLog | None) -> Issue:
