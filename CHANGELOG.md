@@ -107,6 +107,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Chat messages show when they were written ("3 min ago", the full date and time on hover) and a Copy button for
   their raw Markdown, on hover or focus (always on touch screens); Markdown code blocks show their language and a Copy
   button, and wide tables scroll sideways in their own region (AGH-241).
+- The chat is complete for the keyboard and screen readers: `/` at the start of a message lists the session's slash
+  commands and skills (filter as you type, arrows, Enter or Tab inserts, Esc closes; Enter never sends while it is
+  open); Ctrl/Cmd+Alt+Enter allows and Ctrl/Cmd+Alt+Backspace denies the oldest waiting permission, `a` / `d` answer
+  a focused card, Shift+Esc focuses the composer, ArrowUp in an empty composer recalls your last prompt, and a new
+  permission card never takes focus from a composer holding text; the shortcut sheet has a Chat group, and the chat
+  has no serious axe violation in any state (AGH-242).
 
 ### Fixed
 
