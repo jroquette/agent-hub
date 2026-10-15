@@ -475,19 +475,27 @@ class _Run:
         self, node: ExecutableNode, attempt: int, *, iteration: int, resume: str | None
     ) -> NodeCall:
         context = self._node_context(node)
+        cwd = render(node.cwd, context) if node.cwd is not None else None
         if isinstance(node, ShellNode | ScriptNode):
             argv = (
                 render_argv(node.command, context)
                 if isinstance(node, ShellNode)
                 else [render(arg, context) for arg in node.args]
             )
-            cwd = render(node.cwd, context) if node.cwd is not None else None
             env = {name: render(value, context) for name, value in node.env.items()}
-            return NodeCall(node, attempt, context, iteration, tuple(argv), cwd, env)
+            stdin = render(node.stdin, context) if node.stdin is not None else None
+            return NodeCall(node, attempt, context, iteration, tuple(argv), cwd, env, stdin=stdin)
         prompt = render(node.prompt, context) if node.prompt is not None else None
         scope = self.plan.scopes.get(node.id, RefScope())
         return NodeCall(
-            node, attempt, context, iteration, prompt=prompt, resume_session=resume, scope=scope
+            node,
+            attempt,
+            context,
+            iteration,
+            cwd=cwd,
+            prompt=prompt,
+            resume_session=resume,
+            scope=scope,
         )
 
     def _context(self, node: Node) -> RefContext:

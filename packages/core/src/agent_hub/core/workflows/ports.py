@@ -48,6 +48,8 @@ class NodeCall:
     prompt: str | None = None
     resume_session: str | None = None
     scope: RefScope = field(default_factory=RefScope)
+    # A shell or script node's rendered ``stdin``.
+    stdin: str | None = None
 
 
 @dataclass(frozen=True)

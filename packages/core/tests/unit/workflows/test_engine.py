@@ -1079,3 +1079,33 @@ def test_visits_no_later_body_layer_when_the_stop_lands_in_a_group_body() -> Non
 
     ends = ports.recorder.ends  # type: ignore[attr-defined]
     assert [end.node for end in ends] == ["g__b0"]
+
+
+def test_renders_cwd_when_agent_node_reads_upstream_path() -> None:
+    plan = plan_of(
+        shell("tree", output_format={"type": "object", "properties": {"path": {"type": "string"}}}),
+        agent("work", "tree", cwd="$tree.output.path"),
+    )
+    runner = ScriptedRunner({"tree": ['{"path": "/ws/api/.claude/worktrees/agh-1"}']})
+
+    Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    assert runner.calls[1].cwd == "/ws/api/.claude/worktrees/agh-1"
+
+
+def test_renders_stdin_when_shell_node_reads_upstream_output() -> None:
+    plan = plan_of(
+        agent("plan", output_format=OBJECT),
+        shell("read", "plan", stdin="$plan.output"),
+        shell("fixed", stdin="literal\x00text"),
+    )
+    runner = ScriptedRunner({"plan": ['{"ok": true, "delivery": "b"}']})
+
+    Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    stdins = {call.node.id: call.stdin for call in runner.calls}
+    assert stdins == {
+        "plan": None,
+        "read": '{"delivery":"b","ok":true}',
+        "fixed": "literal\x00text",
+    }
