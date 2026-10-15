@@ -140,6 +140,9 @@ export interface ToolCallCardProps {
   defaultOpen?: boolean | undefined;
   /** The permission asked for this call, when one was. */
   request?: PermissionView | undefined;
+  /** Every permission by request id (= the call's id): a subagent's call reads Waiting for you
+   * while its permission is open; its card stays where it arrived. */
+  requests?: Readonly<Record<string, PermissionView>> | undefined;
 }
 
 /** A collapsible tool call (D10): name, short input, status; input or diff and result on expand. */
@@ -149,6 +152,7 @@ export function ToolCallCard({
   calls,
   defaultOpen = false,
   request,
+  requests,
 }: ToolCallCardProps) {
   const [open, setOpen] = useState(defaultOpen);
   const bodyId = useId();
@@ -192,7 +196,13 @@ export function ToolCallCard({
         <ul className="as-tool-nested" aria-label={`Calls made by ${tool.name}`}>
           {nested.map((child) => (
             <li key={child.id}>
-              <ToolCallCard tool={child} tools={tools} calls={calls} />
+              <ToolCallCard
+                tool={child}
+                tools={tools}
+                calls={calls}
+                request={requests?.[child.id]}
+                requests={requests}
+              />
             </li>
           ))}
         </ul>

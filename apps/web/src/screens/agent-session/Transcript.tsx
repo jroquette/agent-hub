@@ -315,6 +315,7 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
                     items={items}
                     tools={state.tools}
                     calls={state.children}
+                    requests={state.permissions}
                     onAnswerPermission={onAnswerPermission}
                   />
                 </div>
