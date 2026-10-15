@@ -139,7 +139,15 @@ export type TranscriptEntry =
       lastDelta: number;
       redacted: boolean;
     }
-  | { kind: "thinking"; key: string; seq: number; text: string; redacted: boolean }
+  | {
+      kind: "thinking";
+      key: string;
+      seq: number;
+      text: string;
+      redacted: boolean;
+      /** Whole seconds from the previous record to this one, null when unknown (AC-234.25). */
+      seconds: number | null;
+    }
   | { kind: "tool"; key: string; toolId: string }
   | { kind: "permission"; key: string; requestId: string }
   | { kind: "notice"; key: string; seq: number; tone: NoticeTone; text: string };
@@ -158,6 +166,8 @@ export interface TranscriptState {
   mode: PermissionMode | null;
   slashCommands: string[];
   lastSeq: number;
+  /** When the last record was written: a thinking block's start. */
+  lastAt: string | null;
   /** A text block is streaming (its bubble is open). */
   streaming: boolean;
   /** An interrupt was recorded: the turn's result reads "Turn interrupted" (AC-234.21). */
@@ -184,6 +194,7 @@ export function initialTranscript(): TranscriptState {
     mode: null,
     slashCommands: [],
     lastSeq: 0,
+    lastAt: null,
     streaming: false,
     interrupted: false,
     reset: null,
@@ -287,6 +298,17 @@ export function ruleLabel(rule: unknown): string {
   const type = str(r, "type") ?? "rule";
   const value = str(r, "mode") ?? str(r, "behavior") ?? "";
   return value ? `${type} ${value}` : type;
+}
+
+/** Where a tool call stands (AC-234.24). */
+export type ToolState = "running" | "waiting" | "done" | "error" | "denied";
+
+/** A call's state from its result and the permission asked for it (by `tool_use_id`): an open
+ * request waits for you, a denied one reads denied whatever result the CLI then sent. */
+export function toolState(tool: ToolView, request?: PermissionView): ToolState {
+  if (request?.decision?.decision === "deny") return "denied";
+  if (tool.result === null) return request?.decision === null ? "waiting" : "running";
+  return tool.result.isError ? "error" : "done";
 }
 
 /* ---------- Diffs ---------- */
@@ -632,6 +654,12 @@ function applySend(state: TranscriptState, item: SendItem): TranscriptState {
   }
 }
 
+/** Whole seconds (at least 1) between two record times; null when unknown or backwards. */
+function thoughtSeconds(start: string | null, end: string): number | null {
+  const ms = start === null ? NaN : Date.parse(end) - Date.parse(start);
+  return Number.isFinite(ms) && ms >= 0 ? Math.max(1, Math.round(ms / 1000)) : null;
+}
+
 /**
  * Drops the send a user.message record echoes: the one with its seq or, since core publishes the
  * record before the POST answers with that seq, the oldest unanswered send of the same text.
@@ -644,7 +672,7 @@ function withoutEcho(sending: SendingView[], seq: number, text: string): Sending
 
 function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState {
   if (record.seq <= state.lastSeq) return state;
-  const s = { ...state, lastSeq: record.seq };
+  const s = { ...state, lastSeq: record.seq, lastAt: record.at };
   const body = record.body;
   switch (record.kind) {
     case "user.message": {
@@ -675,6 +703,7 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
         seq: record.seq,
         text,
         redacted: isRedacted(text),
+        seconds: thoughtSeconds(state.lastAt, record.at),
       });
     }
     case "tool.call":
