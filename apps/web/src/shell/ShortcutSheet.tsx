@@ -36,16 +36,17 @@ export const SHORTCUTS: readonly { title: string; rows: readonly [string, string
     ],
   },
   {
-    // An agent session's chat (AC-234.29); Ctrl is Cmd on a Mac.
+    // An agent session's chat (AC-234.29): `/` at the start of the message, the oldest
+    // pending request; Ctrl is Cmd on a Mac.
     title: "Chat",
     rows: [
-      ["Commands (at the start of the message)", "/"],
-      ["Allow the oldest request", "Ctrl Alt ↵"],
-      ["Deny the oldest request", "Ctrl Alt ⌫"],
-      ["Allow / deny the focused request", "a d"],
-      ["Focus the message box", "Shift Esc"],
-      ["Recall the last prompt", "↑"],
-      ["Stop the turn (empty message box)", "Esc"],
+      ["Commands", "/"],
+      ["Allow oldest", "Ctrl Alt ↵"],
+      ["Deny oldest", "Ctrl Alt ⌫"],
+      ["Allow / deny focused", "a d"],
+      ["Focus message", "Shift Esc"],
+      ["Recall last prompt", "↑"],
+      ["Stop (empty box)", "Esc"],
     ],
   },
 ];
