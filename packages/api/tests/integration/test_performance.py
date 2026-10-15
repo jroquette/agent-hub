@@ -174,7 +174,8 @@ def test_answers_session_page_within_budget_when_each_row_holds_two_thousand_eve
     composed: Any,
 ) -> None:
     # Each read follows an append to another session, as above: the snapshot is folded again,
-    # while each large row's fold and tile fields are reused (keyed by its events).
+    # while each large row's fold and tile fields are reused (keyed by its events). The composed
+    # clock is frozen, as in the budgets above; a moving clock refolds every session today.
     tools = tuple(("Bash", {"command": f"make t{i % 50}"}) for i in range(999))
     failed = frozenset(range(0, len(tools), 7))
     for number in range(PAGE_SESSIONS):
