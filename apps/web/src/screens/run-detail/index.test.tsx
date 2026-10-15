@@ -152,6 +152,22 @@ describe("RunDetailScreen", () => {
     );
   });
 
+  it("names an engine node's lane by its id when the step has no label", async () => {
+    renderRun(
+      aRun({
+        workflow: "ship",
+        steps: [step("build", 1, 0, 30, "ok"), step("review__lint", 1, 30, 30, "skipped")],
+      }),
+    );
+
+    const gantt = await screen.findByRole("list", { name: "Steps over time" });
+    const lanes = within(gantt).getAllByRole("listitem");
+    expect(lanes.map((lane) => lane.textContent.split(/\d/)[0])).toEqual([
+      "build #",
+      "review__lint #",
+    ]);
+  });
+
   it("opens the gate log, caps, tracker and PR tabs", async () => {
     const user = userEvent.setup();
     const { router } = renderRun(failedRun);
