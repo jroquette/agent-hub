@@ -9,7 +9,7 @@ records the line of each key path, so a problem is placed on the line of its nea
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import NamedTuple, Protocol
+from typing import Literal, NamedTuple, Protocol
 
 from agent_hub.core.workflows.document import (
     Loc,
@@ -18,6 +18,9 @@ from agent_hub.core.workflows.document import (
     parse_workflow,
 )
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
+
+# Where a workflow comes from: the hub's ``workflows/``, or the built-ins (ADR 0032).
+type WorkflowOrigin = Literal["hub", "builtin"]
 
 
 class LoadProblem(NamedTuple):
@@ -31,12 +34,14 @@ class LoadProblem(NamedTuple):
 
 @dataclass(frozen=True)
 class WorkflowFile:
-    """A workflow file as read: its shown name, stem, parsed content and the line of each key."""
+    """A workflow file as read: its shown name, stem, parsed content, the line of each key and
+    where it comes from."""
 
     file: str
     stem: str
     content: object
     lines: Mapping[Loc, int] = field(default_factory=lambda: MappingProxyType({}))
+    origin: WorkflowOrigin = "hub"
 
     def line_of(self, loc: Loc) -> int | None:
         """The line of ``loc``, or of its nearest enclosing key the loader recorded."""
