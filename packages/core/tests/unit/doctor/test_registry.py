@@ -28,6 +28,7 @@ RELEASED_IDS = (
     "config.stop_gate",
     "brain.memory",
     "sandbox.workflow",
+    "workflows.valid",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.
@@ -56,6 +57,7 @@ DESIGN_SEVERITIES = {
     "config.stop_gate": Severity.WARNING,
     "brain.memory": Severity.WARNING,
     "sandbox.workflow": Severity.ERROR,
+    "workflows.valid": Severity.ERROR,
 }
 
 

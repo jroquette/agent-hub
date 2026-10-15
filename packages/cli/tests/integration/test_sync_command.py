@@ -1719,3 +1719,40 @@ def test_exits_one_when_adapter_meets_planted_ancestor(
     [(copy, copy_before)] = outside
     assert tree_digest(copy) == copy_before
     assert (demo_hub / "hub.lock").read_bytes() == lock
+
+
+# AGH-227: a workflow pack is seeded whole, only into a hub that never had it.
+PACK = "workflows/issue-to-pr"
+
+
+def test_creates_no_new_pack_file_when_lock_holds_the_pack(
+    demo_hub: Path, run_sync: SyncRunner, *, tree_digest: TreeDigest
+) -> None:
+    # As if a new release added fixtures/done.yaml to a pack this hub already has.
+    new = f"{PACK}/fixtures/done.yaml"
+    (demo_hub / new).unlink()
+    lock: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    del lock["files"][new]
+    (demo_hub / "hub.lock").write_bytes(dump_json(lock))
+    before = tree_digest(demo_hub)
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "updated hub.lock\n", "")
+    assert not (demo_hub / new).exists()
+    after = tree_digest(demo_hub)
+    assert after.pop("hub.lock") != before.pop("hub.lock")
+    assert after == before
+
+
+def test_leaves_pack_deleted_when_lock_keeps_its_entries(
+    demo_hub: Path, run_sync: SyncRunner, *, tree_digest: TreeDigest
+) -> None:
+    shutil.rmtree(demo_hub / PACK)
+    before = tree_digest(demo_hub)
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+    assert not (demo_hub / PACK).exists()
+    assert tree_digest(demo_hub) == before

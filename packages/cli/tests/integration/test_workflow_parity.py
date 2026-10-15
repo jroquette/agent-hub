@@ -287,8 +287,9 @@ def test_refuses_run_when_hub_issue_to_pr_lacks_inputs(
     hub = run_workspace.workspace.hub
     monkeypatch.setenv("COLUMNS", "200")
     monkeypatch.setattr(run_module, "resolve_tracker_client", Resolve(run_tracker))
+    # The hub's seeded copy (AGH-227), its document replaced.
     pack = hub / "workflows" / "issue-to-pr"
-    pack.mkdir(parents=True)
+    pack.mkdir(parents=True, exist_ok=True)
     (pack / "issue-to-pr.yaml").write_text(
         "version: 1\nname: issue-to-pr\nrevision: 1\n"
         "inputs: {issue: {required: true}, repo: {required: true}}\n"
