@@ -25,6 +25,7 @@ recorded. Abandon waits for the CLI. Nothing here polls a run's status: it comes
 """
 
 import contextlib
+import errno
 import fcntl
 import json
 import logging
@@ -322,9 +323,9 @@ class ProcessRunLauncher:
             log_path = pid_path.with_suffix(".log")
             process = self._spawn(hub_path, log_path, argv, ended_write=ended_write)
         except BaseException:
+            pid_path.unlink(missing_ok=True)  # while still locked, so no one takes it half-made
             os.close(pid_file)
             os.close(ended_read)
-            pid_path.unlink(missing_ok=True)
             raise
         finally:
             os.close(ended_write)
@@ -446,13 +447,14 @@ def _create_locked(pid_path: Path) -> int:
     temporary = pid_path.with_name(f".{pid_path.name}.{secrets.token_hex(4)}")
     descriptor = os.open(temporary, _NEW_FILE, PRIVATE_MODE)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        os.link(temporary, pid_path, follow_symlinks=False)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            os.link(temporary, pid_path, follow_symlinks=False)
+        finally:
+            temporary.unlink(missing_ok=True)
     except BaseException:
-        os.close(descriptor)
+        os.close(descriptor)  # even when the temporary name could not be removed
         raise
-    finally:
-        temporary.unlink(missing_ok=True)
     return descriptor
 
 
@@ -462,14 +464,9 @@ def _remove_unheld(pid_path: Path, before: bytes | None, run_id: str) -> None:
     if before is None:
         return
     busy = RunConflictError(code="in_use", reason="the run's pid file is in use", run_id=run_id)
+    descriptor = _open_unfollowed(pid_path, busy)
     try:
-        descriptor = os.open(pid_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    except FileNotFoundError:
-        raise busy from None
-    except OSError:
-        descriptor = None  # a link: nothing writes through it
-    try:
-        if descriptor is not None and not _locked_as(descriptor, before):
+        if descriptor is not None and not _same_locked(descriptor, pid_path, before):
             raise busy
         pid_path.unlink()
     except FileNotFoundError:
@@ -479,6 +476,32 @@ def _remove_unheld(pid_path: Path, before: bytes | None, run_id: str) -> None:
     finally:
         if descriptor is not None:
             os.close(descriptor)
+
+
+def _open_unfollowed(pid_path: Path, busy: RunConflictError) -> int | None:
+    """The pid file opened without following a link; None for a link (``ELOOP``: nothing
+    writes through one), ``busy`` when it is gone, 502 for any other error."""
+    try:
+        return os.open(pid_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        raise busy from None
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            return None
+        raise RunLaunchError(f"cannot open the run's pid file: {error.strerror}") from None
+
+
+def _same_locked(descriptor: int, pid_path: Path, before: bytes) -> bool:
+    """Whether the opened file is free of its writer's lock (now ours), reads ``before`` and is
+    still the file at ``pid_path`` (same device and inode: not replaced since it was opened)."""
+    if not _locked_as(descriptor, before):
+        return False
+    try:
+        current = os.lstat(pid_path)
+    except FileNotFoundError:
+        return False
+    opened = os.fstat(descriptor)
+    return (opened.st_dev, opened.st_ino) == (current.st_dev, current.st_ino)
 
 
 def _locked_as(descriptor: int, before: bytes) -> bool:
