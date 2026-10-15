@@ -1,7 +1,10 @@
 """The engine: layers, trigger rules, skip causes, retries, outputs, resume, status, outcome."""
 
-from collections.abc import Mapping
+import dataclasses
+import threading
+from collections.abc import Callable, Mapping
 from datetime import timedelta
+from typing import Any
 
 import pytest
 
@@ -13,10 +16,17 @@ from agent_hub.core.testing.workflow_fakes import (
     ScriptedRunner,
     a_plan,
 )
-from agent_hub.core.workflows.engine import EnginePorts, WorkflowEngineError, run_workflow
+from agent_hub.core.workflows import engine as engine_module
+from agent_hub.core.workflows import plan as plan_module
+from agent_hub.core.workflows.engine import (
+    MAX_PARALLEL,
+    EnginePorts,
+    WorkflowEngineError,
+    run_workflow,
+)
 from agent_hub.core.workflows.failures import NodeFailedError, RetryRecord
 from agent_hub.core.workflows.plan import WorkflowPlan
-from agent_hub.core.workflows.ports import NodeReply
+from agent_hub.core.workflows.ports import CheckoutProbe, NodeCall, NodeReply
 from agent_hub.core.workflows.run_state import RunReport, RunState
 from agent_hub.core.workflows.substitution import NodeResult
 
@@ -60,11 +70,21 @@ class Run:
         *,
         inputs: Mapping[str, JsonValue] | None = None,
         prior: RunState | None = None,
+        checkout: CheckoutProbe | None = None,
+        max_parallel: int = MAX_PARALLEL,
     ) -> None:
         self.runner = runner or ScriptedRunner()
         self.recorder = ListRecorder()
         self.clock = FakeClock()
-        ports = EnginePorts(self.runner, self.recorder, self.clock, KeysOutputs(), lambda: 0.5)
+        ports = EnginePorts(
+            self.runner,
+            self.recorder,
+            self.clock,
+            KeysOutputs(),
+            lambda: 0.5,
+            checkout,
+            max_parallel,
+        )
         self.report: RunReport = run_workflow(plan, inputs or {}, ports, prior=prior)
 
     def status_of(self, node: str) -> tuple[str, str | None, str | None, str | None]:
@@ -76,12 +96,14 @@ def fails(kind: str = "exec_failed") -> NodeFailedError:
     return NodeFailedError(kind, "boom")  # type: ignore[arg-type]
 
 
-def test_runs_layers_in_order_one_node_at_a_time_when_graph_has_layers() -> None:
+def test_runs_layers_in_order_when_graph_has_layers() -> None:
     plan = plan_of(shell("c", "a", "b"), shell("a"), shell("b"), shell("d", "c"))
 
     run = Run(plan)
 
-    assert run.runner.ran() == ["a", "b", "c", "d"]
+    # a and b share a layer and run concurrently; their records keep declaration order.
+    assert sorted(run.runner.ran()[:2]) == ["a", "b"]
+    assert run.runner.ran()[2:] == ["c", "d"]
     assert [start.node for start in run.recorder.starts] == ["a", "b", "c", "d"]
     assert run.report.status == "done"
 
@@ -152,7 +174,8 @@ def test_runs_later_layers_when_a_node_fails() -> None:
 
     run = Run(plan, ScriptedRunner({"a": [fails()]}))
 
-    assert run.runner.ran() == ["a", "b", "c"]
+    assert sorted(run.runner.ran()[:2]) == ["a", "b"]
+    assert run.runner.ran()[2] == "c"
     assert run.report.status == "failed"
     assert run.report.reason == "a"
 
@@ -458,7 +481,7 @@ def test_ends_the_step_unknown_and_the_run_failed_when_a_port_raises() -> None:
 
     assert run.status_of("a") == ("failed", None, None, "unknown")
     assert run.recorder.end_of("a").detail == "OSError"
-    assert run.runner.ran() == ["a", "b"]
+    assert sorted(run.runner.ran()) == ["a", "b"]
     assert [end.status for end in run.recorder.run_ends] == ["failed"]
     assert run.report.state.attempts == {"a": 1, "b": 1}
 
@@ -550,7 +573,7 @@ def test_fails_the_node_and_ends_the_run_when_jitter_raises() -> None:
     ports = EnginePorts(runner, recorder, FakeClock(), KeysOutputs(), broken)
     report = run_workflow(plan, {}, ports)
 
-    assert runner.ran() == ["a", "b"]
+    assert sorted(runner.ran()) == ["a", "b"]
     assert (report.status, report.reason) == ("failed", "a")
     assert [end.status for end in recorder.run_ends] == ["failed"]
     assert recorder.retries == []
@@ -571,6 +594,491 @@ def test_fails_the_node_and_ends_the_run_when_the_clock_cannot_sleep() -> None:
     assert runner.ran() == ["a"]
     assert report.status == "failed"
     assert [end.status for end in recorder.run_ends] == ["failed"]
+
+
+# Concurrent layers (task 8.3): threads, declaration-order records, the checkout check.
+
+
+class GatedRunner(ScriptedRunner):
+    """``first`` answers only once ``second`` has run: they can only both end concurrently."""
+
+    def __init__(self, first: str, second: str, wait: float = 5.0) -> None:
+        super().__init__()
+        self.first, self.second, self.wait = first, second, wait
+        self.second_ran = threading.Event()
+
+    def run(self, call: NodeCall) -> NodeReply:
+        if call.node.id == self.first and not self.second_ran.wait(timeout=self.wait):
+            raise TimeoutError
+        try:
+            return super().run(call)
+        finally:
+            if call.node.id == self.second:
+                self.second_ran.set()
+
+
+def test_records_each_node_as_it_ends_when_parallel_nodes_end_out_of_order() -> None:
+    runner = GatedRunner("a", "b")
+
+    run = Run(plan_of(shell("a"), shell("b"), shell("c", "a", "b")), runner)
+
+    assert runner.ran() == ["b", "a", "c"]
+    assert {start.node for start in run.recorder.starts[:2]} == {"a", "b"}
+    assert [end.node for end in run.recorder.ends] == ["b", "a", "c"]
+    assert run.report.status == "done"
+
+
+def test_runs_one_node_at_a_time_when_a_parallel_layer_holds_a_halt() -> None:
+    halt = {"id": "stop", "type": "halt", "reason": "Stop."}
+
+    run = Run(plan_of(halt, shell("b")))
+
+    assert run.runner.ran() == []
+    assert run.report.status == "cancelled"
+
+
+def test_runs_one_node_at_a_time_when_parallel_is_bounded_to_one() -> None:
+    runner = GatedRunner("a", "b", wait=0.05)
+
+    run = Run(plan_of(shell("a"), shell("b")), runner, max_parallel=1)
+
+    assert run.status_of("a") == ("failed", None, None, "unknown")
+    assert run.recorder.end_of("a").detail == "TimeoutError"
+    assert run.status_of("b") == ("ok", None, None, None)
+
+
+class Checkout:
+    """A checkout probe answering from a list, one status per call."""
+
+    def __init__(self, *statuses: str) -> None:
+        self.statuses = list(statuses)
+
+    def status(self) -> str:
+        return self.statuses.pop(0)
+
+
+def run_read_only(checkout: CheckoutProbe | None) -> Run:
+    return Run(plan_of(shell("r", mutates_checkout=False)), checkout=checkout)
+
+
+def test_passes_a_read_only_node_when_the_checkout_status_is_unchanged() -> None:
+    run = run_read_only(Checkout(" M a.py", " M a.py"))
+
+    assert run.status_of("r") == ("ok", None, None, None)
+
+
+def test_fails_config_without_retry_when_a_read_only_node_changes_the_checkout() -> None:
+    run = run_read_only(Checkout("", "?? new.py"))
+
+    assert run.status_of("r") == ("failed", None, None, "config")
+    assert "mutates_checkout" in run.recorder.end_of("r").detail
+    assert run.report.status == "failed"
+
+
+def test_fails_config_when_a_read_only_node_runs_without_a_checkout_probe() -> None:
+    run = run_read_only(None)
+
+    assert run.status_of("r") == ("failed", None, None, "config")
+
+
+def test_splits_a_parallel_layer_when_read_only_and_writing_nodes_share_it() -> None:
+    plan = plan_of(
+        shell("r1", mutates_checkout=False), shell("w"), shell("r2", mutates_checkout=False)
+    )
+
+    assert plan.layers == (("r1", "r2"), ("w",))
+
+
+def test_splits_a_parallel_layer_when_two_agents_resume_one_session() -> None:
+    plan = plan_of(
+        agent("plan"),
+        agent("a", "plan", context={"resume": "plan"}),
+        agent("b", "plan", context={"resume": "plan"}),
+        agent("c", "plan"),
+    )
+
+    assert plan.layers == (("plan",), ("a", "c"), ("b",))
+
+
+def test_names_the_first_failed_node_in_declaration_order_when_parallel_nodes_fail() -> None:
+    runner = GatedRunner("a", "b")
+    runner.replies = {"a": [fails()], "b": [fails()]}
+
+    run = Run(plan_of(shell("a"), shell("b")), runner)
+
+    assert (run.report.status, run.report.reason) == ("failed", "a")
+
+
+def a_group(*body: dict[str, object], **keys: object) -> dict[str, object]:
+    group = {"id": "g", "type": "loop_group", "max_iterations": 1, "nodes": list(body)}
+    return group | {"until_when": "$INPUTS.mode == 'off'"} | keys
+
+
+def test_runs_one_node_at_a_time_when_a_parallel_layer_holds_a_group_with_a_halt() -> None:
+    halt = {"id": "stop", "type": "halt", "reason": "Stop."}
+
+    run = Run(plan_of(a_group(halt), shell("b")))
+
+    assert run.runner.ran() == []
+    assert run.report.status == "cancelled"
+
+
+def test_splits_a_parallel_layer_when_a_group_reads_and_a_node_writes() -> None:
+    plan = plan_of(shell("w"), a_group(shell("r", mutates_checkout=False)))
+
+    assert plan.layers == (("w",), ("g",))
+
+
+class Counting(ScriptedRunner):
+    """Keeps the most calls that ran at once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lock = threading.Lock()
+        self.active = self.most = 0
+
+    def run(self, call: NodeCall) -> NodeReply:
+        with self.lock:
+            self.active += 1
+            self.most = max(self.most, self.active)
+        try:
+            threading.Event().wait(0.05)
+            return super().run(call)
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+def test_runs_at_most_the_bound_at_once_when_parallel_groups_nest() -> None:
+    runner = Counting()
+    body = [shell(f"b{index}") for index in range(4)]
+    plan = plan_of(*(shell(f"n{index}") for index in range(6)), a_group(*body))
+
+    Run(plan, runner)
+
+    assert len(runner.calls) == 10
+    assert runner.most == MAX_PARALLEL
+
+
+def test_interrupts_running_nodes_when_a_parallel_layer_is_interrupted() -> None:
+    stopped = threading.Event()
+
+    class Interrupted(ScriptedRunner):
+        def run(self, call: NodeCall) -> NodeReply:
+            if call.node.id == "a":
+                raise KeyboardInterrupt
+            if not stopped.wait(timeout=5):
+                raise TimeoutError
+            return super().run(call)
+
+    ports = EnginePorts(
+        Interrupted(),
+        ListRecorder(),
+        FakeClock(),
+        KeysOutputs(),
+        lambda: 0.5,
+        interrupt=stopped.set,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_workflow(plan_of(shell("a"), shell("b")), {}, ports)
+
+    assert stopped.is_set()
+
+
+def test_splits_a_wide_layer_in_linear_work_when_read_only_and_writing_nodes_alternate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    find = plan_module._Skips.find
+
+    def counted(skips: object, index: int) -> int:
+        calls.append(1)
+        return find(skips, index)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(plan_module._Skips, "find", counted)
+    nodes = [shell(f"n{i}", mutates_checkout=bool(i % 2)) for i in range(4000)]
+
+    plan = plan_of(*nodes)
+
+    assert len(plan.layers) == 2
+    assert len(calls) <= 2 * len(nodes)
+
+
+class WakingClock(FakeClock):
+    """A clock whose backoff really waits, and wakes as soon as the run stops."""
+
+    def sleep(self, delay: timedelta, stop: threading.Event | None = None) -> None:
+        super().sleep(delay)
+        if stop is not None:
+            stop.wait(delay.total_seconds())
+
+
+def test_starts_no_attempt_after_an_interrupt_when_a_parallel_layer_is_stopped() -> None:
+    interrupted = threading.Event()
+    late: list[str] = []
+
+    class Stopping(ScriptedRunner):
+        def run(self, call: NodeCall) -> NodeReply:
+            if interrupted.is_set():
+                late.append(call.node.id)
+            if call.node.id == "a":
+                threading.Event().wait(0.1)
+                raise KeyboardInterrupt
+            if call.node.id == "r":
+                raise fails("transient")
+            threading.Event().wait(0.02)
+            return super().run(call)
+
+    body = [shell(f"b{index}") for index in range(4)]
+    group = a_group(*body, max_iterations=3, until_when="$b0.output == 'never'")
+    plan = plan_of(shell("a"), shell("b"), shell("c"), group, shell("r", retry={"delay": "2s"}))
+    ports = EnginePorts(
+        Stopping(),
+        ListRecorder(),
+        WakingClock(),
+        KeysOutputs(),
+        lambda: 0.5,
+        interrupt=interrupted.set,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_workflow(plan, {}, ports)
+
+    assert interrupted.is_set()
+    assert late == []
+
+
+def test_splits_a_wide_layer_in_linear_work_when_many_agents_resume_one_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    find = plan_module._Skips.find
+
+    def counted(skips: object, index: int) -> int:
+        calls.append(1)
+        return find(skips, index)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(plan_module._Skips, "find", counted)
+    resumers = [agent(f"a{i}", "plan", context={"resume": "plan"}) for i in range(2000)]
+
+    plan = plan_of(agent("plan"), *resumers)
+
+    assert len(plan.layers) == 1 + len(resumers)
+    assert len(calls) <= 2 * len(resumers)
+
+
+def test_splits_in_linear_work_when_readers_follow_session_writers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    made: list[plan_module._Skips] = []
+
+    class Counted(plan_module._Skips):
+        def __init__(self) -> None:
+            super().__init__()
+            made.append(self)
+
+    monkeypatch.setattr(plan_module, "_Skips", Counted)
+    readers = [agent(f"r{i}", "plan", mutates_checkout=False) for i in range(500)]
+    writers = [agent(f"w{i}", "plan", context={"resume": "plan"}) for i in range(1000)]
+    # Each second reader of a session skips every writer batch to a batch of its own kind.
+    pairs = [
+        agent(
+            f"p{i}",
+            "plan",
+            "s" + str(i // 2),
+            mutates_checkout=False,
+            context={"resume": f"s{i // 2}"},
+        )
+        for i in range(1000)
+    ]
+    sessions = [agent(f"s{i}") for i in range(500)]
+
+    plan = plan_of(agent("plan"), *sessions, *readers, *writers, *pairs)
+
+    placed = len(readers) + len(writers) + len(pairs)
+    assert sum(len(layer) for layer in plan.layers) == 1 + len(sessions) + placed
+    assert sum(skips.hops for skips in made) <= 4 * placed
+
+
+# One test per stop point: node ``k`` raises Ctrl-C once ``fire`` is set, at a known step of
+# another node; ``late`` holds every attempt that starts after the interrupt.
+
+
+class Stops:
+    """The events of one stop test, and a runner that answers through them."""
+
+    def __init__(self) -> None:
+        self.fire, self.interrupted = threading.Event(), threading.Event()
+        self.late: list[str] = []
+
+    def ports(self, runner: ScriptedRunner, clock: FakeClock | None = None) -> EnginePorts:
+        return EnginePorts(
+            runner,
+            ListRecorder(),
+            clock or FakeClock(),
+            KeysOutputs(),
+            lambda: 0.5,
+            interrupt=self.interrupted.set,
+        )
+
+    def runner(self, answer: Callable[[NodeCall], NodeReply | None]) -> ScriptedRunner:
+        stops = self
+
+        class Answering(ScriptedRunner):
+            def run(self, call: NodeCall) -> NodeReply:
+                if stops.interrupted.is_set():
+                    stops.late.append(call.node.id)
+                if call.node.id == "k":
+                    stops.fire.wait(5)
+                    raise KeyboardInterrupt
+                reply = answer(call)
+                return super().run(call) if reply is None else reply
+
+        return Answering()
+
+    def run(self, plan: WorkflowPlan, ports: EnginePorts) -> EnginePorts:
+        with pytest.raises(KeyboardInterrupt):
+            run_workflow(plan, {}, ports)
+        assert self.interrupted.is_set()
+        return ports
+
+
+def signalling(waiting: threading.Event) -> type:
+    """A ``BoundedSemaphore`` that sets ``waiting`` when an acquire has to wait."""
+    bounded = threading.BoundedSemaphore
+
+    class Signalling(bounded):  # type: ignore[misc, valid-type]
+        def acquire(self, blocking: bool = True, timeout: float | None = None) -> bool:  # noqa: FBT001, FBT002
+            if super().acquire(blocking=False):
+                return True
+            waiting.set()
+            return super().acquire(blocking, timeout)
+
+        __enter__ = acquire
+
+    return Signalling
+
+
+class RaisingClock(FakeClock):
+    """k's backoff holds no permit: it raises Ctrl-C once another node waits for one."""
+
+    def __init__(self, waiting: threading.Event) -> None:
+        super().__init__()
+        self.waiting = waiting
+
+    def sleep(self, delay: timedelta, stop: threading.Event | None = None) -> None:
+        self.waiting.wait(5)
+        raise KeyboardInterrupt
+
+
+class Holding(ScriptedRunner):
+    """k fails once (into its backoff); h1 and h2 hold the two permits until the interrupt."""
+
+    def __init__(self, stops: Stops) -> None:
+        super().__init__()
+        self.stops = stops
+        self.holding = {"h1": threading.Event(), "h2": threading.Event()}
+
+    def run(self, call: NodeCall) -> NodeReply:
+        if self.stops.interrupted.is_set():
+            self.stops.late.append(call.node.id)
+        if call.node.id == "k":
+            raise fails("transient")
+        if call.node.id in self.holding:
+            self.holding[call.node.id].set()
+            self.stops.interrupted.wait(5)
+        return super().run(call)
+
+
+def test_starts_no_attempt_when_the_stop_lands_while_a_node_waits_for_its_permit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stops, waiting = Stops(), threading.Event()
+    runner = Holding(stops)
+    step = engine_module._Run._step
+
+    def ordered(run: Any, node: Any, attempt: Any) -> Any:
+        if node.id == "x":  # x asks for a permit only once h1 and h2 hold both
+            for event in runner.holding.values():
+                event.wait(5)
+        return step(run, node, attempt)
+
+    monkeypatch.setattr(threading, "BoundedSemaphore", signalling(waiting))
+    monkeypatch.setattr(engine_module._Run, "_step", ordered)
+    plan = plan_of(shell("k"), shell("h1"), shell("h2"), shell("x"))
+    ports = stops.ports(runner, RaisingClock(waiting))
+
+    stops.run(plan, dataclasses.replace(ports, max_parallel=2))
+
+    assert stops.late == []
+
+
+def test_schedules_no_retry_when_the_stop_lands_before_a_backoff() -> None:
+    stops = Stops()
+
+    def answer(call: NodeCall) -> NodeReply | None:
+        stops.fire.set()
+        stops.interrupted.wait(5)
+        raise fails("transient")
+
+    ports = stops.run(plan_of(shell("k"), shell("r")), stops.ports(stops.runner(answer)))
+
+    assert ports.recorder.retries == []  # type: ignore[attr-defined]
+    assert ports.clock.sleeps == []  # type: ignore[attr-defined]
+
+
+def test_starts_no_attempt_when_the_stop_lands_during_a_backoff() -> None:
+    stops = Stops()
+
+    class Firing(FakeClock):
+        def sleep(self, delay: timedelta, stop: threading.Event | None = None) -> None:
+            super().sleep(delay)
+            stops.fire.set()
+            stops.interrupted.wait(5)
+
+    tried: list[str] = []
+
+    def answer(call: NodeCall) -> NodeReply | None:
+        tried.append(call.node.id)
+        raise fails("transient")
+
+    stops.run(plan_of(shell("k"), shell("r")), stops.ports(stops.runner(answer), Firing()))
+
+    assert tried == ["r"]
+    assert stops.late == []
+
+
+def body_firing(stops: Stops) -> Callable[[NodeCall], NodeReply | None]:
+    def answer(call: NodeCall) -> NodeReply | None:
+        if call.node.id == "g__b0":
+            stops.fire.set()
+            stops.interrupted.wait(5)
+        return None
+
+    return answer
+
+
+def test_runs_no_until_bash_or_iteration_when_the_stop_lands_in_a_group_body() -> None:
+    stops = Stops()
+    runner = stops.runner(body_firing(stops))
+    group = a_group(shell("b0"), max_iterations=3, until_when=None, until_bash=["true"])
+    del group["until_when"]
+
+    stops.run(plan_of(shell("k"), group), stops.ports(runner))
+
+    assert runner.until_calls == []
+    assert runner.ran() == ["g__b0"]
+
+
+def test_visits_no_later_body_layer_when_the_stop_lands_in_a_group_body() -> None:
+    stops = Stops()
+    group = a_group(shell("b0"), shell("b1", "b0", when=NEVER))
+
+    ports = stops.run(plan_of(shell("k"), group), stops.ports(stops.runner(body_firing(stops))))
+
+    ends = ports.recorder.ends  # type: ignore[attr-defined]
+    assert [end.node for end in ends] == ["g__b0"]
 
 
 def test_renders_cwd_when_agent_node_reads_upstream_path() -> None:

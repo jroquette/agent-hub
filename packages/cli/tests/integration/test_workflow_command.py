@@ -308,6 +308,19 @@ REPORT_SH = 'printf \'{"delivered": true, "url": "%s"}\' "$1"\n'
 RUN_ID = "r1"
 
 
+def layered(items: list[Any]) -> list[Any]:
+    """``items`` with the sample's one concurrent layer (``status``, ``pr``) as a set."""
+    concurrent = [
+        i
+        for i, item in enumerate(items)
+        if str(item[0] if isinstance(item, tuple) else item) in {"status", "pr"}
+    ]
+    if len(concurrent) != 2 or concurrent[1] != concurrent[0] + 1:
+        return items
+    first = concurrent[0]
+    return [*items[:first], set(items[first : first + 2]), *items[first + 2 :]]
+
+
 class SampleRun:
     """The DEMO hub with the ``sample`` pack, and the calls its fakes logged."""
 
@@ -351,12 +364,12 @@ def test_runs_sample_pack_end_to_end_when_run_live(sample: SampleRun) -> None:
 
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines()[-1] == "run r1: done, outcome True"
-    assert sample.ends() == [
+    # status and pr share a layer: they run concurrently and record as they end.
+    assert layered(sample.ends()) == [
         ("plan", "ok"),
         ("implement", "ok"),
         ("gate", "ok"),
-        ("status", "ok"),
-        ("pr", "ok"),
+        {("status", "ok"), ("pr", "ok")},
         ("report", "ok"),
     ]
     end = sample.records()[-2]
@@ -394,14 +407,8 @@ def test_writes_snapshot_and_events_when_run_live(sample: SampleRun, tmp_path: P
     assert start["content_hash"].startswith("sha256:")
     stored = open_event_store(tmp_path / "events.db").read_all()
     assert {event.session for event in stored} == {"run:r1"}
-    assert [event.step for event in stored if event.type == "step.start"] == [
-        "plan",
-        "implement",
-        "gate",
-        "status",
-        "pr",
-        "report",
-    ]
+    starts = [event.step for event in stored if event.type == "step.start"]
+    assert layered(starts) == ["plan", "implement", "gate", {"status", "pr"}, "report"]
     (end,) = [event for event in stored if event.type == "run.end"]
     assert (end.payload["status"], end.payload["outcome"]) == ("done", True)
 
@@ -439,10 +446,9 @@ def test_fails_run_and_skips_dependants_when_gate_fails(
 
     assert result.exit_code == 1
     assert result.stdout.splitlines()[-1] == "run r1: failed"
-    assert sample.ends()[2:] == [
+    assert layered(sample.ends())[2:] == [
         ("gate", "failed"),
-        ("status", "skipped"),
-        ("pr", "skipped"),
+        {("status", "skipped"), ("pr", "skipped")},
         ("report", "skipped"),
     ]
     gate = [r for r in sample.records() if r.get("node") == "gate"][-1]
@@ -778,7 +784,87 @@ def test_spawns_no_child_and_records_nothing_when_fixtures_run(
     assert not (tmp_path / "xdg").exists()
 
 
-# AGH-228: a loop group body's prompt file is part of the run's snapshot.
+# AGH-228: read-only nodes checked through git status; includes snapshotted for resume.
+READ_ONLY_YAML = """\
+version: 1
+name: look
+revision: 1
+nodes:
+  - id: look
+    type: script
+    runtime: sh
+    script: look.sh
+    mutates_checkout: false
+"""
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"),
+    [
+        ("printf ok\n", (0, "ok", None)),
+        ("echo x > ../demo-api/made.txt\n", (1, "failed", "config")),
+    ],
+)
+def test_checks_git_status_around_a_read_only_node_when_run_live(
+    sample: SampleRun, script: str, expected: tuple[int, str, str | None]
+) -> None:
+    write(sample.hub, "workflows/sample/look.yaml", READ_ONLY_YAML)
+    write(sample.hub, "workflows/sample/scripts/look.sh", script)
+
+    result = sample.run("look", "--live", "--run-id", "l1")
+
+    [end] = [r for r in sample.records("l1") if r["event"] == "step_end"]
+    assert (result.exit_code, end["status"], end["failure_kind"]) == expected, end["detail"]
+
+
+MAIN_WITH_BLOCK = """\
+version: 1
+name: main
+revision: 1
+nodes:
+  - id: blk
+    type: include
+    include: block
+    with: {issue: CHILD}
+"""
+BLOCK_YAML = """\
+version: 1
+name: block
+revision: 1
+inputs:
+  issue: {required: true}
+nodes:
+  - id: plan
+    type: agent
+    prompt_file: block.md
+  - id: gate
+    type: shell
+    command: [make, check]
+    depends_on: [plan]
+"""
+
+
+def test_resumes_an_included_block_from_the_snapshot_when_a_run_with_an_include_failed(
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(sample.hub, "workflows/sample/main.yaml", MAIN_WITH_BLOCK)
+    write(sample.hub, "workflows/sample/block.yaml", BLOCK_YAML)
+    write(sample.hub, "workflows/sample/prompts/block.md", "Block for $INPUTS.issue\n")
+    monkeypatch.setenv("FAKE_MAKE_EXIT", "1")
+    assert sample.run("main", "--live", "--run-id", "m1").exit_code == 1
+    snapshot = sample.hub / ".agent-runs" / "workflows" / "m1" / "snapshot"
+    assert json.loads((snapshot / "includes" / "block.json").read_text())["name"] == "block"
+    (sample.hub / "workflows/sample/block.yaml").unlink()
+    monkeypatch.setenv("FAKE_MAKE_EXIT", "0")
+
+    result = sample.run("--resume", "m1")
+
+    assert result.exit_code == 0, result.output
+    [plan] = sample.fakes.calls("claude")
+    assert plan["argv"][1] == "Block for CHILD\n"
+    assert sample.ends("m1")[2:] == [("blk__plan", "skipped"), ("blk__gate", "ok")]
+
+
 GROUP_YAML = """\
 version: 1
 name: rounds
@@ -805,3 +891,15 @@ def test_snapshots_a_body_prompt_file_when_a_group_runs_live(sample: SampleRun) 
     assert (snapshot / "prompts" / "body.md").is_file()
     [round_one] = sample.fakes.calls("claude")
     assert round_one["argv"][1] == "Round after \n"
+
+
+def test_notes_the_unwatched_checkouts_on_the_start_record_when_one_is_not_a_repository(
+    sample: SampleRun,
+) -> None:
+    write(sample.hub, "workflows/sample/look.yaml", READ_ONLY_YAML)
+    write(sample.hub, "workflows/sample/scripts/look.sh", "printf ok\n")
+
+    sample.run("look", "--live", "--run-id", "l2")
+
+    start = sample.records("l2")[0]
+    assert start["checkout_unwatched"] == [str(sample.hub)]

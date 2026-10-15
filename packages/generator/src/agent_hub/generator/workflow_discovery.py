@@ -123,18 +123,33 @@ def discover_workflows(
     )
 
 
-def pack_resolver(discovery: WorkflowDiscovery, pack_root: Path) -> IncludeResolver:
-    """Resolve an include by name among the workflows of the pack at ``pack_root``; a document
-    that does not parse raises ``WorkflowLoadError``."""
-    found = {
-        workflow.name: workflow
+def pack_documents(discovery: WorkflowDiscovery, pack_root: Path) -> dict[str, WorkflowMapping]:
+    """The raw documents of the pack at ``pack_root``, by name: what an include may name."""
+    return {
+        workflow.name: workflow.document
         for workflow in (*discovery.overridden, *discovery.workflows)
         if workflow.pack_root == pack_root
     }
 
+
+def pack_resolver(
+    discovery: WorkflowDiscovery,
+    pack_root: Path,
+    *,
+    used: dict[str, WorkflowMapping] | None = None,
+) -> IncludeResolver:
+    """Resolve an include by name among the workflows of the pack at ``pack_root``; a document
+    that does not parse raises ``WorkflowLoadError``. ``used`` collects each document resolved
+    (a run's snapshot keeps them)."""
+    found = pack_documents(discovery, pack_root)
+
     def resolve(name: str) -> WorkflowDocument | None:
-        workflow = found.get(name)
-        return None if workflow is None else parse_workflow(workflow.document)
+        document = found.get(name)
+        if document is None:
+            return None
+        if used is not None:
+            used[name] = document
+        return parse_workflow(document)
 
     return resolve
 

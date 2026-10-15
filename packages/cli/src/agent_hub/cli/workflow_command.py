@@ -46,6 +46,7 @@ from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, shown_command, without
 from agent_hub.cli.run_log import new_run_id, now
+from agent_hub.cli.workflow_checkout import GitCheckoutProbe
 from agent_hub.cli.workflow_delivery import (
     ISSUE_TEXT,
     ISSUE_TO_PR,
@@ -72,6 +73,7 @@ from agent_hub.cli.workflow_runs import (
     run_folder,
     run_lock,
     snapshot_hash,
+    snapshot_includes,
     snapshot_run,
 )
 from agent_hub.core.hub_config.model import HubConfig
@@ -91,7 +93,7 @@ from agent_hub.core.workflows.engine import (
 from agent_hub.core.workflows.events import WorkflowEvents
 from agent_hub.core.workflows.nodes import ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
-from agent_hub.core.workflows.ports import RunEnd
+from agent_hub.core.workflows.ports import RunEnd, RunRecorder
 from agent_hub.core.workflows.run_state import RunState
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
@@ -109,6 +111,7 @@ from agent_hub.generator.workflow_fixtures import (
 )
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
+from agent_hub.generator.workflow_yaml import WorkflowMapping
 
 COMMAND: Final = "workflow"
 _PREFIX: Final = "hub workflow run"
@@ -217,6 +220,7 @@ def _start(
     run_id: str | None,
 ) -> int:
     plan, found = discovered(hub, name)
+    included = _included(hub, found)
     values = _given_values(plan, given)
     delivery = name == ISSUE_TO_PR
     # A hub's own issue-to-pr overrides the built-in: the parent needs its inputs to run it.
@@ -236,7 +240,11 @@ def _start(
         parent = None
         try:
             pack, content_hash = snapshot_run(
-                folder, document=dict(found.document), plan=plan, pack_root=found.pack_root
+                folder,
+                document=dict(found.document),
+                plan=plan,
+                pack_root=found.pack_root,
+                includes=included,
             )
             if delivery:
                 # After the snapshot, so the picked record names a run that can start.
@@ -275,12 +283,37 @@ def run_delivery(
     config = load_hub_config_or_exit(hub / FILE_LABEL)
     runner = _executors(hub, config, run_id=parent.live.log.run_id, pack=pack, parent=parent)
     recorder = parent.recorder(None)
-    ports = EnginePorts(runner, recorder, SystemClock(), JsonSchemaOutputs(), _JITTER.random)
+    ports = _ports(runner, recorder, None)
     try:
         report = run_workflow(plan, inputs, ports)
     except RunLogError as error:
         return parent.live.stop_on_log_error(error)
     return parent.finish(report)
+
+
+def _ports(
+    runner: WorkflowExecutors, recorder: RunRecorder, checkout: GitCheckoutProbe | None
+) -> EnginePorts:
+    return EnginePorts(
+        runner,
+        recorder,
+        SystemClock(),
+        JsonSchemaOutputs(),
+        _JITTER.random,
+        checkout,
+        # In-process hub steps share this process's streams: they never run side by side.
+        max_parallel=runner.max_parallel,
+        interrupt=runner.stop_children,
+    )
+
+
+def _included(hub: Path, found: DiscoveredWorkflow) -> dict[str, WorkflowMapping]:
+    """Each workflow ``found`` includes, as read: the run's snapshot keeps them for a resume."""
+    included: dict[str, WorkflowMapping] = {}
+    discovery = discover_workflows(hub, builtin_root=BUILTIN_WORKFLOWS)
+    resolver = pack_resolver(discovery, found.pack_root, used=included)
+    plan_workflow(parse_workflow(found.document), includes=resolver)
+    return included
 
 
 def _executors(
@@ -309,9 +342,12 @@ def _begin(
 ) -> int:
     run_id, name = folder.name, plan.document.name
     header: dict[str, JsonValue] = {"event": "start", "run": run_id, "workflow": name}
-    append_record(
-        folder, {**header, "revision": plan.document.revision, "content_hash": content_hash}
-    )
+    header |= {"revision": plan.document.revision, "content_hash": content_hash}
+    _, unwatched = _checkouts(hub, load_hub_config_or_exit(hub / FILE_LABEL))
+    if unwatched:
+        # Noted once: a read-only node's git status check does not see these folders.
+        header["checkout_unwatched"] = [str(path) for path in unwatched]
+    append_record(folder, header)
     append_record(folder, {"event": "inputs", "inputs": inputs})
     return _execute(
         hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash, parent=parent
@@ -334,7 +370,8 @@ def _continue(hub: Path, folder: Path) -> int:
         )
     try:
         document = (folder / SNAPSHOT / DOCUMENT).read_bytes()
-        plan = plan_workflow(parse_workflow(_json(document)))
+        includes = snapshot_includes(folder / SNAPSHOT)
+        plan = plan_workflow(parse_workflow(_json(document)), includes=includes)
     except (OSError, WorkflowLoadError) as error:
         raise WorkflowRunError(f"cannot load the run's snapshot: {error}") from None
     inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
@@ -408,7 +445,9 @@ def _execute(
     )
     runner = _executors(hub, config, run_id=folder.name, pack=pack, parent=parent)
     recorder = recorded if parent is None else parent.recorder(recorded)
-    ports = EnginePorts(runner, recorder, SystemClock(), JsonSchemaOutputs(), _JITTER.random)
+    roots, _ = _checkouts(hub, config)
+    checkout = GitCheckoutProbe(roots=roots, environ=os.environ)
+    ports = _ports(runner, recorder, checkout)
     try:
         report = run_workflow(plan, inputs, ports, prior=prior)
     except RunLogError as error:
@@ -423,6 +462,13 @@ def _execute(
     if parent is not None:
         return parent.finish(report)
     return 0 if report.status == "done" else 1
+
+
+def _checkouts(hub: Path, config: HubConfig) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """The hub and the repos next to it, as git checkouts (watched) and other folders (not)."""
+    folders = (hub, *(hub.parent / repo.dir for repo in config.repos))
+    watched = tuple(folder for folder in folders if (folder / ".git").exists())
+    return watched, tuple(folder for folder in folders if folder not in watched)
 
 
 def _events(
