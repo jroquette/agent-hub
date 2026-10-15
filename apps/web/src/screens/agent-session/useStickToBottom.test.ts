@@ -115,6 +115,68 @@ describe("useStickToBottom (stick to bottom)", () => {
     expect(scroller.element.scrollTop).toBe(575);
   });
 
+  it.each([
+    ["an upward wheel", () => new WheelEvent("wheel", { deltaY: -4 })],
+    ["PageUp", () => new KeyboardEvent("keydown", { key: "PageUp", bubbles: true })],
+    ["ArrowUp", () => new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })],
+    ["Home", () => new KeyboardEvent("keydown", { key: "Home", bubbles: true })],
+  ])("detaches at once on %s, even within the threshold while content grows", (_, event) => {
+    const scroller = aScroller();
+    const { result } = renderHook(() => useStickToBottom(scroller.element));
+    flushFrames();
+
+    act(() => {
+      scroller.element.dispatchEvent(event());
+    });
+    scroller.userScroll(596); // A slow scroll up: 4 px, well within 24 px of the bottom.
+    grow(scroller, 50);
+    flushFrames();
+
+    expect(result.current.atBottom).toBe(false);
+    expect(scroller.element.scrollTop).toBe(596);
+
+    scroller.userScroll(650); // Scrolling back down to the bottom re-attaches.
+    expect(result.current.atBottom).toBe(true);
+  });
+
+  it("detaches at once on a swipe that scrolls the content up", () => {
+    const scroller = aScroller();
+    const { result } = renderHook(() => useStickToBottom(scroller.element));
+    flushFrames();
+    const touch = (type: string, clientY: number) => {
+      const event = new Event(type);
+      Object.defineProperty(event, "touches", { value: [{ clientY }] });
+      act(() => {
+        scroller.element.dispatchEvent(event);
+      });
+    };
+
+    touch("touchstart", 100);
+    touch("touchmove", 90); // Finger up: the content scrolls down, nothing changes.
+    expect(result.current.atBottom).toBe(true);
+    touch("touchmove", 110); // Finger down: the content scrolls up.
+    scroller.userScroll(590);
+    grow(scroller, 50);
+    flushFrames();
+
+    expect(result.current.atBottom).toBe(false);
+    expect(scroller.element.scrollTop).toBe(590);
+  });
+
+  it("detaches after the reader scrolls up, and new content no longer moves it", () => {
+    const scroller = aScroller();
+    const { result } = renderHook(() => useStickToBottom(scroller.element));
+    flushFrames();
+
+    scroller.userScroll(300);
+    expect(result.current.atBottom).toBe(false);
+    grow(scroller, 200);
+    flushFrames();
+
+    expect(scroller.element.scrollTop).toBe(300);
+    expect(result.current.atBottom).toBe(false);
+  });
+
   it("re-attaches and scrolls to the bottom when pin() is called", () => {
     const scroller = aScroller();
     const { result } = renderHook(() => useStickToBottom(scroller.element));
