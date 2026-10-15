@@ -147,6 +147,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   in this browser), empty sections are hidden, a section past 100 rows scrolls in its own window, a status facet
   shows only its section, and the period now filters only Ended or failed (the count line says so), so a running
   session older than the period still shows (AGH-243).
+- Sessions' status sections refresh live as sessions change (at most every 2 s), without moving your scroll position
+  or losing the focused row when it moves to another section (AGH-243).
 
 ### Fixed
 

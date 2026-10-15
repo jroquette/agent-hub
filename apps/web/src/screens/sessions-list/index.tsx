@@ -1,6 +1,6 @@
 import "./sessions-list.css";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -45,22 +45,18 @@ import {
   sortOf,
   type Period,
 } from "./filters";
-import { AgentSessionList, agentSessionHref, sessionControlUnavailable } from "./AgentSessionList";
-import { CloudPanel } from "./CloudPanel";
-import { NewSessionDialog } from "./NewSessionDialog";
+import { CloudSessions, DrivenBanner, NewSessionControl, useDriving } from "./DrivenControls";
+import { rowHref, withDriven } from "./drivenRows";
 import {
-  useAgentCapabilities,
   useAgentSessions,
-  useCloudSessions,
-  useCreateAgentSession,
   useProjects,
-  useResumable,
   useSectionPages,
-  useWorkdirs,
+  useSectionRefresh,
   type Session,
 } from "./queries";
-import { SECTIONS, sectionCount, sectionQueries } from "./sections";
+import { SECTIONS, placeDriven, sectionCount, sectionQueries, type SectionId } from "./sections";
 import { SessionSection, useCollapsed } from "./SessionSection";
+import { useScrollAnchor } from "./useScrollAnchor";
 
 const COLUMNS_KEY = "ah.sessions.columns";
 /** A section past VIRTUAL_THRESHOLD rows scrolls inside this height (as the learnings table). */
@@ -609,119 +605,6 @@ function currentView(params: URLSearchParams): string {
   return view?.name ?? "Unsaved view";
 }
 
-/** Sessions: "Which sessions happened, and which one do I need to look at?" (spec 14). */
-/**
- * The sessions `hub web` drives (AGH-165): the list with its waiting highlight, "New session"
- * (then the chat view), the cloud panel, and why control is unavailable (401, container, 503).
- */
-function AgentSessionsPanel({
-  scope,
-  projects,
-}: {
-  scope: string | null;
-  projects: readonly string[];
-}) {
-  const navigate = useNavigate();
-  const [chosen, setChosen] = useState<string | null>(null);
-  const [dialog, setDialog] = useState(false);
-  const [resumeFor, setResumeFor] = useState<string | null>(null);
-  const project =
-    scope ?? (chosen !== null && projects.includes(chosen) ? chosen : null) ?? projects[0] ?? null;
-  const list = useAgentSessions(scope);
-  const capabilities = useAgentCapabilities();
-  const problem = list.error ?? capabilities.error;
-  const caps = capabilities.data;
-  const canDrive = caps !== undefined && sessionControlUnavailable(problem, caps) === null;
-  const workdirs = useWorkdirs(project, canDrive);
-  const resumable = useResumable(dialog ? project : null, dialog ? resumeFor : null);
-  const cloudSessions = useCloudSessions(project, canDrive && caps.cloud);
-  const create = useCreateAgentSession();
-  const folders = workdirs.data?.items;
-
-  return (
-    <div className="ah-stack" style={{ gap: 12 }}>
-      <AgentSessionList
-        sessions={list.data?.items ?? []}
-        problem={problem}
-        capabilities={caps}
-        onNewSession={
-          canDrive && folders
-            ? () => {
-                create.reset();
-                setDialog(true);
-              }
-            : undefined
-        }
-        onRetry={() => {
-          void list.refetch();
-          void capabilities.refetch();
-        }}
-      />
-      {canDrive && !scope && projects.length > 1 && (
-        <label className="ah-row ah-small" style={{ gap: 6 }}>
-          <span className="ah-subtle">Start sessions in</span>
-          <select
-            className="ah-input as-select"
-            value={project ?? ""}
-            onChange={(event) => {
-              setChosen(event.target.value);
-            }}
-          >
-            {projects.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {workdirs.error && canDrive && (
-        <ProblemError
-          title="Could not list the working folders"
-          detail={workdirs.error.detail}
-          status={workdirs.error.status}
-          onRetry={() => {
-            void workdirs.refetch();
-          }}
-          compact
-        />
-      )}
-      {canDrive && project !== null && folders && (
-        <details>
-          <summary className="ah-small">Cloud sessions</summary>
-          <CloudPanel
-            key={project}
-            capabilities={caps}
-            sessions={cloudSessions.data?.items ?? []}
-          />
-        </details>
-      )}
-      {dialog && canDrive && project !== null && folders && (
-        <NewSessionDialog
-          project={project}
-          workdirs={folders}
-          capabilities={caps}
-          resumable={resumable.data?.items}
-          onWorkdirChange={setResumeFor}
-          pending={create.isPending}
-          error={create.error}
-          onSubmit={(body) => {
-            create.mutate(body, {
-              onSuccess: (created) => {
-                setDialog(false);
-                void navigate(agentSessionHref(created.id));
-              },
-            });
-          }}
-          onCancel={() => {
-            setDialog(false);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
 /** The stale stamp while the collector is offline; its second clock re-renders only this stamp. */
 function OfflineStamp({ tz }: { tz: "local" | "utc" }) {
   const collector = useCollectorState();
@@ -730,6 +613,7 @@ function OfflineStamp({ tz }: { tz: "local" | "utc" }) {
   ) : null;
 }
 
+/** Sessions: "Which sessions happened, and which one do I need to look at?" (spec 14). */
 export function SessionsListScreen() {
   const [params, setParams] = useSearchParams();
   const [scope] = useScope();
@@ -739,7 +623,30 @@ export function SessionsListScreen() {
   const queries = useMemo(() => sectionQueries(params, scope, anchor), [params, scope, anchor]);
   const sections = useSectionPages(queries);
   const [collapsed, toggleCollapsed] = useCollapsed();
+  // The same query as the driven rows' list: its poll also refreshes the sections (AC-234.9).
+  const agentsUpdatedAt = useAgentSessions(scope).dataUpdatedAt;
+  const askedIds = SECTIONS.map((section) => section.id).filter((id) => queries[id] !== null);
+  const screenRef = useRef<HTMLDivElement>(null);
+  const arm = useScrollAnchor(
+    screenRef,
+    Object.fromEntries(askedIds.map((id) => [id, sections[id].dataUpdatedAt])),
+  );
+  useSectionRefresh(
+    scope,
+    askedIds.map((id) => ({
+      id,
+      collapsed: collapsed.has(id),
+      fetching: sections[id].isFetching,
+      refetch: sections[id].refetch,
+    })),
+    agentsUpdatedAt,
+    arm,
+  );
   const projects = useProjects();
+  const driving = useDriving(
+    scope,
+    (projects.data?.items ?? []).map((project) => project.name),
+  );
   const [selected, setSelected] = useState<string[]>([]);
   const [columns, setColumns] = useState(storedColumns);
   const [density, setDensity] = useState(() =>
@@ -768,21 +675,34 @@ export function SessionsListScreen() {
     setCostDraft({ min: "", max: "" });
   };
 
+  const chips = chipsOf(params);
+  const observed = Object.fromEntries(
+    SECTIONS.map(({ id }) => [id, (sections[id].data?.pages ?? []).flatMap((page) => page.items)]),
+  ) as Record<SectionId, Session[]>;
+  // A driven session without a twin has none of the observed fields a filter (beyond status and period) reads.
+  const narrowed = chips.some((chip) => chip.key !== "period" && chip.key !== "status");
+  const driven = (driving.list.data?.items ?? []).filter(
+    (a) => Boolean(a.observed_session_id) || !narrowed,
+  );
+  const placed = placeDriven(
+    observed,
+    driven,
+    new Set(SECTIONS.filter(({ id }) => queries[id] !== null).map(({ id }) => id)),
+  );
   const asked = SECTIONS.flatMap((section) => {
     if (queries[section.id] === null) return [];
     const pages = sections[section.id];
-    const rows = (pages.data?.pages ?? []).flatMap((page) => page.items);
-    // AGH-244 adds the section's driven rows without an observed twin here (P-e).
-    const count = sectionCount(pages.data?.pages[0]?.total_estimate ?? 0);
+    const { rows } = placed[section.id];
+    const count = sectionCount(pages.data?.pages[0]?.total_estimate ?? 0, placed[section.id]);
     return [{ ...section, pages, rows, count }];
   });
-  const rows = asked.flatMap((section) => section.rows);
+  const rows = asked.flatMap((section) => observed[section.id]);
+  const shown = asked.reduce((sum, section) => sum + section.rows.length, 0);
   const total = asked.reduce((sum, section) => sum + section.count, 0);
   const pending = asked.some((section) => section.pages.isPending);
   const hasNextPage = asked.some((section) => section.pages.hasNextPage);
   const period: Period = periodOf(params);
   const sort = sortOf(params);
-  const chips = chipsOf(params);
   const visible = useMemo(
     () =>
       density === "compact"
@@ -790,7 +710,10 @@ export function SessionsListScreen() {
         : COMFORTABLE.filter((def) => !(def.id === "project" && scope)),
     [density, columns, scope],
   );
-  const tableColumns = useMemo(() => visible.map((def) => def.column({ tz })), [visible, tz]);
+  const tableColumns = useMemo(
+    () => visible.map((def) => withDriven(def.column({ tz }), tz)),
+    [visible, tz],
+  );
   const sortColumn = visible.find((def) => def.sort === sort.replace("-", ""));
   const projectCount = new Set(rows.map((s) => s.project)).size;
   const filtered = chips.some((chip) => chip.key !== "period");
@@ -966,7 +889,7 @@ export function SessionsListScreen() {
 
   const countLine = pending
     ? "Loading sessions…"
-    : `Showing ${fmtInt(rows.length)}${hasNextPage ? ` of ~${fmtInt(total)}` : ""} · Ended: ${period === "All" ? "all time" : `last ${period}`} · ${String(projectCount)} ${projectCount === 1 ? "project" : "projects"}`;
+    : `Showing ${fmtInt(shown)}${hasNextPage ? ` of ~${fmtInt(total)}` : ""} · Ended: ${period === "All" ? "all time" : `last ${period}`} · ${String(projectCount)} ${projectCount === 1 ? "project" : "projects"}`;
   const compareOk = selected.length === 2;
   const allEmpty =
     !pending && asked.every((section) => !section.pages.error && section.rows.length === 0);
@@ -1070,7 +993,7 @@ export function SessionsListScreen() {
           setSelected(checked ? [...others, ...keys] : others);
         }}
         onRowClick={(s) => {
-          void navigate(`/sessions/${encodeURIComponent(s.id)}`);
+          void navigate(rowHref(s));
         }}
         footer={
           sectionRows.length > 0 ? (
@@ -1080,7 +1003,8 @@ export function SessionsListScreen() {
                   ? `Showing ${fmtInt(sectionRows.length)} of ~${fmtInt(count)}`
                   : `Showing all ${fmtInt(sectionRows.length)}`}
               </span>
-              {pages.hasNextPage && (
+              {/* On placeholder pages TanStack would refetch page 1, not the next one. */}
+              {pages.hasNextPage && !pages.isPlaceholderData && (
                 <Button
                   size="sm"
                   disabled={pages.isFetchingNextPage}
@@ -1124,6 +1048,7 @@ export function SessionsListScreen() {
                 : section.count
             }
             approximate={section.pages.hasNextPage}
+            updating={section.pages.isPlaceholderData}
             collapsed={collapsed.has(section.id)}
             onToggle={() => {
               toggleCollapsed(section.id);
@@ -1136,7 +1061,7 @@ export function SessionsListScreen() {
   );
 
   return (
-    <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
+    <div style={{ padding: "16px 32px 40px" }} className="ah-stack" ref={screenRef}>
       <div className="ah-row ah-wrap" style={{ gap: 8 }}>
         <h1 className="ah-h1">Sessions</h1>
         <OfflineStamp tz={tz} />
@@ -1183,11 +1108,9 @@ export function SessionsListScreen() {
           }}
           options={PERIODS}
         />
+        <NewSessionControl driving={driving} />
       </div>
-      <AgentSessionsPanel
-        scope={scope}
-        projects={(projects.data?.items ?? []).map((project) => project.name)}
-      />
+      <DrivenBanner driving={driving} />
       <div className="ah-row ah-wrap" style={{ gap: 12, minHeight: 28 }}>
         <span className="ah-muted">{countLine}</span>
         <span className="ah-grow" />
@@ -1265,8 +1188,9 @@ export function SessionsListScreen() {
             }}
           />
         </div>
-        <div className="ah-grow sl-table" style={{ minWidth: 0 }}>
+        <div className="ah-grow sl-table ah-stack" style={{ minWidth: 0 }}>
           {body}
+          <CloudSessions driving={driving} />
         </div>
       </div>
     </div>

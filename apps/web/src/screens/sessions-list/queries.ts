@@ -4,9 +4,11 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 import type { components } from "../../api/schema";
 import { apiGet, apiKey, apiPost, useApi, type ApiParams, type ApiProblem } from "../../lib/api";
+import { openStream } from "../../lib/sse";
 import type { SectionId } from "./sections";
 
 export type Session = components["schemas"]["Session"];
@@ -48,6 +50,86 @@ export function useSectionPages(queries: Record<SectionId, SessionQuery | null>)
     idle: useSessionPages(queries.idle),
     ended: useSessionPages(queries.ended),
   };
+}
+
+/** The live-tile stream of `project` (null: all); Live patches its tiles from it, Sessions refetches. */
+export function tileStreamUrl(project: string | null): string {
+  return `/api/v1/live-sessions/stream${project ? `?project=${encodeURIComponent(project)}` : ""}`;
+}
+
+/** Sections refetch at most this often on stream changes (AC-234.9). */
+export const STREAM_REFETCH_MS = 2_000;
+
+/** A section asked for: collapsed or busy ones are not refetched, only marked to catch up later. */
+export interface SectionTarget {
+  id: SectionId;
+  collapsed: boolean;
+  /** A fetch (e.g. Load more) is running: refetching now would cancel it. */
+  fetching: boolean;
+  refetch: (options: { cancelRefetch: boolean }) => unknown;
+}
+
+/**
+ * Refetches the open sections on tile-stream changes and when the agent-list poll brings data
+ * (`agentsUpdatedAt`), at most once per STREAM_REFETCH_MS on the trailing edge (a burst is one
+ * refetch). A tile does not say which section it left, so every open section refetches; a
+ * collapsed or fetching one refetches once it is open and idle. `onRefetch` gets the sections
+ * asked, before they are. The stream keeps no state, so its messages never re-render the screen.
+ */
+export function useSectionRefresh(
+  project: string | null,
+  targets: readonly SectionTarget[],
+  agentsUpdatedAt: number,
+  onRefetch: (ids: SectionId[]) => void,
+): void {
+  const latest = useRef({ targets, onRefetch });
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const missed = useRef(new Set<SectionId>());
+  const refetch = (ids: SectionTarget[]) => {
+    if (ids.length === 0) return;
+    latest.current.onRefetch(ids.map((target) => target.id));
+    for (const target of ids) void target.refetch({ cancelRefetch: false });
+  };
+  const schedule = useRef(() => {
+    if (timer.current !== undefined) return;
+    timer.current = setTimeout(() => {
+      timer.current = undefined;
+      const due = latest.current.targets.filter((target) => {
+        const later = target.collapsed || target.fetching;
+        if (later) missed.current.add(target.id);
+        return !later;
+      });
+      refetch(due);
+    }, STREAM_REFETCH_MS);
+  });
+  useEffect(() => {
+    latest.current = { targets, onRefetch };
+    refetch(
+      targets.filter(
+        (target) => !target.collapsed && !target.fetching && missed.current.delete(target.id),
+      ),
+    );
+  });
+  const seen = useRef(agentsUpdatedAt);
+  useEffect(() => {
+    if (seen.current !== 0 && agentsUpdatedAt !== seen.current) schedule.current();
+    seen.current = agentsUpdatedAt;
+  }, [agentsUpdatedAt]);
+  useEffect(() => {
+    const changed = () => {
+      schedule.current();
+    };
+    const close = openStream(
+      tileStreamUrl(project),
+      { "tile.upsert": changed, "tile.remove": changed, reset: changed },
+      () => undefined,
+    );
+    return () => {
+      close();
+      clearTimeout(timer.current);
+      timer.current = undefined;
+    };
+  }, [project]);
 }
 
 /** The registered projects, for the Project facet. */

@@ -15,7 +15,7 @@ import {
 } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
-import { sessionControlUnavailable } from "../sessions-list/AgentSessionList";
+import { sessionControlUnavailable } from "../sessions-list/control";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
 import { CostMeter } from "./CostMeter";
