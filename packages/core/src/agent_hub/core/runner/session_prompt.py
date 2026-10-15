@@ -72,7 +72,7 @@ _STEPS = """You are implementing issue {issue} in this worktree ({repo}, branch 
 1. The issue is at the end of this message. Read it and the repo's AGENTS.md. Follow its conventions
    and definition of done. If the issue references a plan or spec under {hub_name}/brain/features/
    (readable at {hub}/brain/features/), read it fully and implement exactly the tasks listed for
-   this slice, in order. If the issue {sensitive}has an open question, STOP and reply
+   this slice, in order. If the issue {sensitive} an open question, STOP and reply
    `BLOCKED: <reason>` without editing anything.
 2. TDD: write the failing test first when behaviour changes; then the smallest change that makes it
    pass. Never weaken or delete an existing assertion.
@@ -139,13 +139,14 @@ def prompt_parts(
     prefix: str,
     commit_title: str = DEFAULT_COMMIT_TITLE,
 ) -> dict[str, str]:
-    """The steps' texts that depend on the hub and the repo: ``guard`` (the sensitive paths'
-    clause of step 1, empty without any), ``gate_step`` (step 3) and ``commit_shape`` (step 4).
-    ``hub step worktree`` prints them for the issue-to-pr workflow's prompt."""
+    """The steps' texts that depend on the hub and the repo: ``guard`` (step 1's verb before
+    "an open question", naming the sensitive paths when there are any), ``gate_step`` (step 3)
+    and ``commit_shape`` (step 4). ``hub step worktree`` prints them for the issue-to-pr
+    workflow's prompt."""
     guard = (
-        f"touches a file matching {', '.join(sensitive)} (needs an approved plan) or "
+        f"touches a file matching {', '.join(sensitive)} (needs an approved plan) or has"
         if sensitive
-        else ""
+        else "has"
     )
     return {
         "guard": guard,

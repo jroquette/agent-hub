@@ -1,0 +1,11 @@
+# The repo's gate fails on the commits: no PR, the run fails with no outcome.
+workflow: issue-to-pr
+inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
+stubs:
+  worktree: {output: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk, hub: /ws/hub, hub_name: hub, check: make check, prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}}}
+  implement: {output: {done: true, status: done, summary: Adds the change.}}
+  commits: {output: {count: 1, subjects: ["feat(api): change (DEM-1)"], summary: Adds the change.}}
+  verify: {fail: exec_failed}
+expect: {status: failed}
+failed: [verify]
+reached: [worktree, implement, commits, verify]

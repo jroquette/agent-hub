@@ -1,0 +1,137 @@
+# hub run's stages as a workflow (ADR 0032): the worktree, the implementing session in it, the
+# commits, the repo's gate, the PR, then the delivery (ADR 0030). A failed node fails the run and
+# skips the report (no outcome: the delivery is failed); no_changes and blocked end it done.
+# No node writes the tracker: the parent does, from run.end's outcome.
+version: 1
+name: issue-to-pr
+description: One tracker issue to a PR, as hub run takes it.
+revision: 1
+inputs:
+  issue:
+    required: true
+    description: The tracker issue, <team>-<n>.
+  repo:
+    required: true
+    description: The repo to change, its dir in hub.json.
+  issue_text:
+    required: true
+    description: The issue as a fenced block of untrusted text, read from the tracker by the parent.
+returns: report
+outcome_field: delivery
+nodes:
+  - id: worktree
+    type: shell
+    description: Make (or keep) the issue's worktree from a fresh fetch.
+    command: [hub, step, worktree, --issue, $INPUTS.issue, --repo, $INPUTS.repo]
+    timeout: 2h
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        branch: {type: string}
+        base: {type: string}
+        hub: {type: string}
+        hub_name: {type: string}
+        check: {type: string}
+        prompt:
+          type: object
+          properties:
+            guard: {type: string}
+            gate_step: {type: string}
+            commit_shape: {type: string}
+          required: [guard, gate_step, commit_shape]
+      required: [path, branch, base, hub, hub_name, check, prompt]
+
+  - id: implement
+    type: loop
+    description: The implementing session, in the worktree, until its verdict says done.
+    depends_on: [worktree]
+    prompt_file: implement.md
+    cwd: $worktree.output.path
+    max_iterations: 3
+    until_field: done
+    output_format:
+      type: object
+      properties:
+        done: {type: boolean}
+        status: {type: string, enum: [done, blocked]}
+        summary: {type: string}
+        tests: {type: string}
+      required: [done]
+
+  - id: commits
+    type: shell
+    description: The commits on the branch; with any, no tracked change beside them.
+    depends_on: [implement]
+    when: "$implement.output.status != 'blocked'"
+    command: [hub, step, commits, --issue, $INPUTS.issue, --repo, $INPUTS.repo]
+    output_format:
+      type: object
+      properties:
+        count: {type: integer, minimum: 0}
+        subjects: {type: array, items: {type: string}}
+        summary: {type: string}
+      required: [count, subjects, summary]
+
+  - id: verify
+    type: shell
+    description: The repo's gate (its check) on the commits, without the GitHub tokens.
+    depends_on: [commits]
+    when: "$commits.output.count > 0"
+    cwd: $worktree.output.path
+    command: [bash, -c, 'eval "$1"', bash, $worktree.output.check]
+    timeout: 30m
+
+  - id: pr
+    type: shell
+    description: Push the branch and open its PR, or find the one open.
+    depends_on: [verify]
+    command:
+      - hub
+      - step
+      - pr
+      - --issue
+      - $INPUTS.issue
+      - --repo
+      - $INPUTS.repo
+      - --summary
+      - $implement.output.summary
+    timeout: 30m
+    output_format:
+      type: object
+      properties:
+        url: {type: string}
+        found: {type: boolean}
+        summary: {type: string}
+        title_unmatched: {type: [string, "null"]}
+      required: [url, found, summary, title_unmatched]
+
+  - id: report
+    type: shell
+    description: The run's delivery, from what the steps printed (no tracker write).
+    depends_on: [implement, commits, verify, pr]
+    trigger_rule: none_failed_min_one_success
+    command:
+      - hub
+      - step
+      - report
+      - --status
+      - $implement.output.status
+      - --question
+      - $implement.output.summary
+      - --commits
+      - $commits.output.count
+      - --pr
+      - $pr.output.url
+      - --summary
+      - $pr.output.summary
+    output_format:
+      type: object
+      properties:
+        delivery: {type: string, enum: [delivered, no_changes, blocked, failed]}
+        stage: {type: string}
+        reason: {type: string}
+        question: {type: string}
+        pr: {type: string}
+        summary: {type: string}
+      required: [delivery, stage, reason, question, pr, summary]

@@ -230,6 +230,8 @@ class _AgentKeys(_Executable):
     model: Tier = "medium"
     limits: Limits = Field(default_factory=Limits)
     context: Context = "fresh"
+    # The session's folder (the hub when absent), contained as a shell node's ``cwd``.
+    cwd: Text | None = None
 
     @model_validator(mode="after")
     def _one_prompt(self) -> Self:
