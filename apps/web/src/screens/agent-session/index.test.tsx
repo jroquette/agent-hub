@@ -5,9 +5,12 @@ import { join } from "node:path";
 import { Profiler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AppShell } from "../../shell/AppShell";
 import { seriousViolations } from "../../testing/axe";
 import {
   aCapabilities,
+  aPage,
+  aProjectSummary,
   aDeltaFrame,
   aLogRecord,
   aPermissionRequest,
@@ -791,6 +794,66 @@ describe("AgentSessionScreen (chat-shortcuts)", () => {
     expect(await bodyOf(posts(view.requests, "/permissions/req-1")[0])).toEqual({
       decision: "allow",
     });
+  });
+
+  it("leaves the chords to the open command palette", async () => {
+    const view = renderWithApi(
+      <AppShell>
+        <AgentSessionScreen />
+      </AppShell>,
+      {
+        routes: {
+          ...routes({
+            [SESSION]: anAgentSession({
+              status: "waiting_permission",
+              last_seq: 3,
+              open_permission: aPermissionRequest({ request_id: "req-2" }),
+            }),
+            [`POST ${SESSION}/permissions/req-2`]: anAgentSession({ status: "running" }),
+          }),
+          "/api/v1/projects": aPage([aProjectSummary()]),
+        },
+        path: `/agent-sessions/${ID}`,
+        route: "/agent-sessions/:agentSessionId",
+      },
+    );
+    await cards();
+    fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Command palette" });
+    const input = within(palette).getByRole("combobox");
+
+    fireEvent.keyDown(input, { key: "Backspace", metaKey: true, altKey: true });
+    await act(() => Promise.resolve());
+
+    expect(posts(view.requests, "/permissions/req-2")).toHaveLength(0);
+  });
+
+  it("leaves Ctrl+Alt+Enter to the open slash menu", async () => {
+    const view = twoPending();
+    await cards();
+    await userEvent.type(box(), "/");
+    expect(screen.getByRole("listbox", { name: "Commands" })).toBeInTheDocument();
+
+    fireEvent.keyDown(box(), { key: "Enter", ctrlKey: true, altKey: true });
+    await act(() => Promise.resolve());
+
+    expect(posts(view.requests, "/permissions/req-1")).toHaveLength(0);
+  });
+
+  it("ignores a repeated or composing chord", async () => {
+    const view = twoPending();
+    await cards();
+
+    fireEvent.keyDown(document.body, { key: "Enter", ctrlKey: true, altKey: true, repeat: true });
+    fireEvent.keyDown(document.body, {
+      key: "Backspace",
+      metaKey: true,
+      altKey: true,
+      isComposing: true,
+    });
+    await act(() => Promise.resolve());
+
+    expect(view.requests.filter((r) => r.method === "POST")).toHaveLength(0);
   });
 
   it("focuses the composer on Shift+Esc without stopping the turn", async () => {
