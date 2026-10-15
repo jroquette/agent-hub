@@ -1,7 +1,9 @@
-"""hub web's run launcher without a child: pid files, links, input text (AC-213.19)."""
+"""hub web's run launcher over pid files: states, links, signals, input text (AC-213.19)."""
 
 import json
 import os
+import signal
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -29,11 +31,55 @@ def pid_file(hub: Path, run_id: str, started: str, *, issue: str | None = None) 
     (folder / f"{run_id}.pid").write_text(json.dumps(record))
 
 
-def test_lists_run_when_pid_file_process_has_recorded_start(tmp_path: Path) -> None:
+def test_lists_run_and_drops_stale_file_when_pid_files_scanned(tmp_path: Path) -> None:
     pid_file(tmp_path, "run-1", STARTED, issue="DEM-7")
     pid_file(tmp_path, "run-2", "Thu Jan  1 00:00:00 1970")
 
     assert launcher(tmp_path).live_runs(str(tmp_path)) == {"run-1": "DEM-7"}
+    assert not (tmp_path / ".agent-runs" / "web" / "run-2.pid").exists()
+
+
+def test_counts_but_never_signals_process_when_start_time_unreadable(tmp_path: Path) -> None:
+    # A live process (this one) whose start time cannot be read: maybe ours, so kept.
+    pid_file(tmp_path, "run-1", STARTED, issue="DEM-7")
+    unreadable = ProcessRunLauncher(
+        db_path=tmp_path / "db", environ={}, program=["never-run"], started_of=lambda _: None
+    )
+
+    assert unreadable.live_runs(str(tmp_path)) == {"run-1": "DEM-7"}
+    assert unreadable.cancel(str(tmp_path), "run-1") is False
+    assert (tmp_path / ".agent-runs" / "web" / "run-1.pid").exists()
+
+
+def test_signals_group_when_pid_file_process_has_recorded_start(tmp_path: Path) -> None:
+    child = subprocess.Popen(["sleep", "30"], start_new_session=True)  # noqa: S607
+    try:
+        record = {"pid": child.pid, "started": STARTED, "issue": None}
+        folder = tmp_path / ".agent-runs" / "web"
+        folder.mkdir(parents=True)
+        (folder / "run-1.pid").write_text(json.dumps(record))
+        owner = ProcessRunLauncher(
+            db_path=tmp_path / "db",
+            environ={},
+            program=[str(tmp_path / "never-run")],
+            started_of=lambda pid: STARTED if pid == child.pid and child.poll() is None else None,
+            grace=0.2,
+        )
+
+        assert owner.cancel(str(tmp_path), "run-1") is True
+        assert child.wait(timeout=10) == -signal.SIGINT
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_refuses_cancel_when_web_runs_folder_is_link(tmp_path: Path) -> None:
+    (tmp_path / ".agent-runs").mkdir()
+    (tmp_path / "out").mkdir()
+    (tmp_path / ".agent-runs" / "web").symlink_to(tmp_path / "out")
+
+    with pytest.raises(RunLaunchError, match="not a folder of the hub"):
+        launcher(tmp_path).cancel(str(tmp_path), "run-1")
 
 
 @pytest.mark.parametrize("content", ["", "{", '{"pid": true, "started": "x"}', '{"pid": 1}'])
@@ -65,7 +111,6 @@ def test_refuses_start_when_web_runs_folder_is_link(tmp_path: Path) -> None:
         hub_path=str(hub),
         workflow="fix",
         inputs={},
-        live=False,
         issue=None,
     )
 
