@@ -106,6 +106,10 @@ function GraphCanvas<N extends GraphNode>({
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
     observer.observe(root);
+    // A node that reflows (a longer state line) moves its edges without resizing the root.
+    root.querySelectorAll("[data-node-id]").forEach((el) => {
+      observer.observe(el);
+    });
     return () => {
       observer.disconnect();
     };
@@ -299,7 +303,9 @@ export function useNodeParam(): {
     [setParams],
   );
   const open = (id: string) => {
-    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const active = document.activeElement;
+    // Safari leaves focus on the body after a mouse click: fall back to the node then.
+    opener.current = active instanceof HTMLElement && active !== document.body ? active : null;
     setOpenedByUser(true);
     setNode(id);
   };
