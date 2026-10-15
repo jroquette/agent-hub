@@ -1117,7 +1117,12 @@ export function SessionsListScreen() {
             key={section.id}
             id={section.id}
             title={section.title}
-            count={section.pages.isPending ? null : section.count}
+            // No count while loading, or when the query failed before returning any page.
+            count={
+              section.pages.isPending || (section.pages.error && !section.pages.data)
+                ? null
+                : section.count
+            }
             approximate={section.pages.hasNextPage}
             collapsed={collapsed.has(section.id)}
             onToggle={() => {
