@@ -23,7 +23,7 @@ import ipaddress
 import os
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -163,8 +163,8 @@ class _ObservedSessions:
     def __init__(self) -> None:
         self.events: FoldedEventReadModels | None = None
 
-    def is_observed(self, project: str, session_id: str) -> bool:
-        return self.events is not None and self.events.is_observed(project, session_id)
+    def observed(self, pairs: Iterable[tuple[str, str]]) -> frozenset[tuple[str, str]]:
+        return frozenset() if self.events is None else self.events.observed(pairs)
 
 
 def _no_git(_keys: frozenset[str]) -> Mapping[str, str]:
