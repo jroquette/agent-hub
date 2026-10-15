@@ -38,6 +38,8 @@ export interface DataTableProps<Row> {
   empty?: ReactNode;
   footer?: ReactNode;
   maxHeight?: number | undefined;
+  /** Names the bounded scroll region (with `maxHeight`) for assistive tech. */
+  scrollLabel?: string | undefined;
   density?: "compact" | undefined;
   caption?: string | undefined;
 }
@@ -63,6 +65,7 @@ export function DataTable<Row>({
   empty,
   footer,
   maxHeight,
+  scrollLabel,
   density,
   caption,
 }: DataTableProps<Row>) {
@@ -105,6 +108,8 @@ export function DataTable<Row>({
         // A bounded scroll region is focusable so keyboard users can scroll it.
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
         tabIndex={maxHeight ? 0 : undefined}
+        role={maxHeight && scrollLabel ? "region" : undefined}
+        aria-label={maxHeight ? scrollLabel : undefined}
       >
         <table className="ah-table" aria-rowcount={virtual ? rows.length + 1 : undefined}>
           {caption && <caption className="ah-sr">{caption}</caption>}
