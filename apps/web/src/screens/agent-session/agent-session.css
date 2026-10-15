@@ -95,6 +95,9 @@
   align-self: flex-end;
   align-items: flex-end;
 }
+.as-msg-pending .as-bubble {
+  border: 1px dashed var(--border);
+}
 .as-bubble {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
