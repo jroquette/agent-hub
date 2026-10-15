@@ -1,6 +1,7 @@
 """Starting, cancelling, resuming and abandoning runs from hub web (AC-213.19)."""
 
-from collections.abc import Iterable, Mapping
+import threading
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 import pytest
@@ -21,6 +22,8 @@ from agent_hub.core.workflows.launch import (
     RunInputError,
     StartRunRequest,
     StartWorkflowRun,
+    argv_text,
+    launch_inputs,
     new_run_id,
 )
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
@@ -330,3 +333,94 @@ def test_resumes_when_only_the_run_itself_folds_running() -> None:
     control(launcher, engine_run()).resume("run-9")
 
     assert launcher.calls == [("resume", ("/hubs/demo", "run-9"))]
+
+
+@pytest.mark.parametrize(
+    ("value", "text"), [(True, "true"), (False, "false"), (2, "2"), (0.5, "0.5"), ("a=b", "a=b")]
+)
+def test_writes_cli_text_when_input_typed(value: Any, text: str) -> None:
+    assert argv_text(value) == text
+
+
+def test_refuses_inputs_when_argv_text_passes_cap() -> None:
+    wide = {
+        "version": 1,
+        "name": "wide",
+        "revision": 1,
+        "inputs": {f"i{n}": {"type": "string"} for n in range(16)},
+        "nodes": [{"id": "work", "type": "shell", "command": ["make"]}],
+    }
+    plan = plan_workflow(parse_workflow(wide))
+    # 15 full inputs, then one that brings the argv text to 262,145 bytes (the cap plus one).
+    given = {f"i{n}": "x" * 16_384 for n in range(15)}
+    used = sum(len(f"{k}={v}") for k, v in given.items())
+    given["i15"] = "x" * (256 * 1024 + 1 - used - len("i15="))
+
+    with pytest.raises(RunInputError, match="more than 262144 bytes"):
+        launch_inputs(plan, given)
+    given["i15"] = given["i15"][:-1]
+    assert launch_inputs(plan, given)["i15"] == given["i15"]
+
+
+class RacingLauncher(Launcher):
+    """Holds the first ``live_runs`` caller until a second caller arrives (at most 0.5 s): with
+    the guard's lock the second never arrives in time; without it both see nothing live."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.arrived = threading.Event()
+        self.seen = 0
+        self.count_guard = threading.Lock()
+
+    def live_runs(self, hub_path: str) -> Mapping[str, str | None]:
+        with self.count_guard:
+            self.seen += 1
+            first = self.seen == 1
+        live = dict(self.live)  # read before waiting, as a slow read model would
+        if first:
+            self.arrived.wait(0.5)
+        else:
+            self.arrived.set()
+        return live
+
+
+def race(*commands: Callable[[], object]) -> list[str]:
+    outcomes: list[str] = []
+
+    def run(command: Callable[[], object]) -> None:
+        try:
+            command()
+            outcomes.append("launched")
+        except RunConflictError as error:
+            outcomes.append(error.code)
+
+    threads = [threading.Thread(target=run, args=(command,)) for command in commands]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return sorted(outcomes)
+
+
+def test_launches_once_when_two_starts_of_issue_race() -> None:
+    launcher = RacingLauncher()
+    guard = RunGuard(Runs(), launcher)  # type: ignore[arg-type]
+    ids = iter(["run-1", "run-2"])
+    starts = StartWorkflowRun(Plans(), guard, mint=lambda: next(ids))
+    request = StartRunRequest(project="demo", workflow="fix", inputs={"issue": "DEM-7"})
+
+    assert race(lambda: starts(request), lambda: starts(request)) == ["launched", "live_run"]
+    assert len(launcher.calls) == 1
+
+
+def test_launches_once_when_start_and_resume_of_issue_race() -> None:
+    launcher = RacingLauncher()
+    guard = RunGuard(Runs(engine_run(status="failed")), launcher)  # type: ignore[arg-type]
+    starts = StartWorkflowRun(Plans(), guard, mint=lambda: "run-1")
+    control = ControlWorkflowRun(Plans(), guard)
+    request = StartRunRequest(project="demo", workflow="fix", inputs={"issue": "DEM-7"})
+
+    outcomes = race(lambda: starts(request), lambda: control.resume("run-9"))
+
+    assert outcomes == ["launched", "live_run"]
+    assert len(launcher.calls) == 1

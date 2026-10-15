@@ -38,12 +38,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
 
-from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.launch import (
     RUN_ID_PATTERN,
     LaunchSpec,
     RunConflictError,
     RunLaunchError,
+    argv_text,
 )
 
 WEB_RUNS: Final = Path(".agent-runs", "web")
@@ -58,6 +58,7 @@ MAX_CHILDREN: Final = 8
 ABANDON_TIMEOUT_SECONDS: Final = 60.0
 GRACE_SECONDS: Final = 10.0
 _POLL_SECONDS: Final = 0.2
+SCAN_BUDGET_SECONDS: Final = 2.0
 LOGGER = logging.getLogger("agent_hub.api")
 
 type PidState = Literal["ours", "stale", "unknown"]
@@ -88,15 +89,6 @@ def process_started(pid: int) -> str | None:
         return None
     started = done.stdout.decode(errors="replace").strip()
     return started if done.returncode == 0 and started else None
-
-
-def input_text(value: JsonValue) -> str:
-    """An input as ``--input`` takes it: ``true``/``false``, a number, or the text itself."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, float):
-        return repr(value)
-    return str(value)
 
 
 @dataclass
@@ -142,7 +134,7 @@ class ProcessRunLauncher:
         argv = [*self._program, "workflow", "run", spec.workflow, "--run-id", spec.run_id]
         argv.append("--live")
         for name, value in spec.inputs.items():
-            argv += ["--input", f"{name}={input_text(value)}"]
+            argv += ["--input", f"{name}={argv_text(value)}"]
         self._detach(spec.hub_path, spec.run_id, argv, issue=spec.issue)
 
     def resume(self, hub_path: str, run_id: str, *, issue: str | None) -> None:
@@ -203,20 +195,25 @@ class ProcessRunLauncher:
         if folder is None:
             return {}
         with self._guard:
-            live = {
-                path.stem: child.issue
-                for path, child in self._children.items()
-                if path.parent == folder
-            }
-            for path, record in _pid_files(folder):
-                if path.stem in live:
-                    continue
-                state = self._state(record)
-                if state == "stale":
-                    path.unlink(missing_ok=True)
-                else:
-                    live[path.stem] = record.issue
+            held = {p: c.issue for p, c in self._children.items() if p.parent == folder}
+        live = {path.stem: issue for path, issue in held.items()}
+        # Start times are read outside the lock, within a budget: past it, a file is unknown.
+        deadline = time.monotonic() + SCAN_BUDGET_SECONDS
+        for path, record in _pid_files(folder):
+            if path in held:
+                continue
+            state = self._state(record) if time.monotonic() < deadline else "unknown"
+            if state == "stale":
+                self._drop_stale(path, record)
+            else:
+                live[path.stem] = record.issue
         return live
+
+    def _drop_stale(self, path: Path, record: _PidFile) -> None:
+        """Remove a pid file judged stale, unless it changed since (a new child's) or is held."""
+        with self._guard:
+            if path not in self._children and _read_pid_file(path) == record:
+                path.unlink(missing_ok=True)
 
     def _finish_cancel(
         self, hub_path: str, run_id: str, *, pid: int, alive: Callable[[], bool]
@@ -269,8 +266,11 @@ class ProcessRunLauncher:
     ) -> None:
         folder = _web_folder(Path(hub_path))
         pid_path = folder / f"{run_id}.pid"
+        # Judged outside the lock (it may run ps); under it, a file that changed is in use.
+        before = _read_pid_file(pid_path)
+        judged = None if before is None else self._state(before)
         with self._guard:
-            self._refuse_busy(pid_path, run_id)
+            self._refuse_busy(pid_path, run_id, before=before, judged=judged)
             if probe:
                 _probe_run_lock(Path(hub_path), run_id)
             if len(self._children) >= self._max_children:
@@ -281,10 +281,13 @@ class ProcessRunLauncher:
             child = self._spawn_registered(hub_path, pid_path, argv, issue=issue)
         threading.Thread(target=self._reap, args=(pid_path, child), daemon=True).start()
 
-    def _refuse_busy(self, pid_path: Path, run_id: str) -> None:
+    def _refuse_busy(
+        self, pid_path: Path, run_id: str, *, before: _PidFile | None, judged: PidState | None
+    ) -> None:
         busy = pid_path in self._children
         record = _read_pid_file(pid_path)
-        if busy or (record is not None and self._state(record) != "stale"):
+        state = judged if record == before else "unknown"
+        if busy or (record is not None and state != "stale"):
             reason = "the run's child is still running"
             raise RunConflictError(code="in_use", reason=reason, run_id=run_id)
 
