@@ -20,11 +20,12 @@ the workflow must declare ``issue``, ``repo`` and ``issue_text``, and ``--resume
 ``--abandon`` of such a run exits 2. ``hub run --live`` is that run (``run_delivery``), without
 a workflow folder: ``hub run``'s records are its only record.
 
-``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
-engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
-warnings indented, then a count; a failed fixture exits 1. ``--stubs-init`` writes NAME's
-skeleton fixture to ``<pack>/fixtures/<NAME>.yaml``, never over an existing file nor through a
-linked folder, and notes when the skeleton's own dry run did not end ``done``.
+``test [NAME]...`` dry-runs each fixture of the discovered packs (or the NAMEs', each file once)
+in memory through the engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line
+each, its problems and warnings indented, then a count; a failed fixture, or a NAME with none,
+exits 1. ``--stubs-init`` writes one NAME's skeleton fixture to ``<pack>/fixtures/<NAME>.yaml``,
+never over an existing file nor through a linked folder, and notes when the skeleton's own dry
+run did not end ``done``.
 """
 
 import json
@@ -106,6 +107,7 @@ from agent_hub.generator.workflow_discovery import (
 from agent_hub.generator.workflow_fixtures import (
     FIXTURE_SUFFIX,
     FIXTURES,
+    FixtureRun,
     run_fixtures,
     skeleton_yaml,
 )
@@ -569,7 +571,9 @@ def _problem_line(problem: LoadProblem) -> str:
 
 @workflow_app.command("test")
 def test_workflows(
-    name: Annotated[str | None, typer.Argument(help="Run only this workflow's fixtures.")] = None,
+    names: Annotated[
+        list[str] | None, typer.Argument(help="Run only these workflows' fixtures.")
+    ] = None,
     *,
     stubs_init: Annotated[
         bool, typer.Option("--stubs-init", help="Write a skeleton fixture for NAME.")
@@ -578,12 +582,13 @@ def test_workflows(
     """Run each pack's fixtures/*.yaml in memory, no child or event; exit 1 on a failure."""
     root = hub_root_or_exit(os.environ, command="workflow")
     discovery = discover_workflows(root, builtin_root=BUILTIN_WORKFLOWS)
+    wanted = list(dict.fromkeys(names or ()))
     if stubs_init:
-        _write_skeleton(root, discovery, name)
+        if len(names or ()) > 1:
+            fail("--stubs-init needs one workflow name")
+        _write_skeleton(root, discovery, wanted[0] if wanted else None)
         return
-    runs = run_fixtures(discovery, only=name)
-    if name is not None and not runs:
-        fail(f"no fixture for the workflow {name!r} in its pack's {FIXTURES}/")
+    runs = _fixture_runs(discovery, wanted)
     for fixture_run in runs:
         where = shown_text(_shown_fixture(root, fixture_run.path))
         typer.echo(f"{where}: {'FAILED' if fixture_run.problems else 'ok'}")
@@ -596,6 +601,21 @@ def test_workflows(
     typer.echo(f"{len(runs)} {noun}: {len(runs) - failed} passed, {failed} failed")
     if failed:
         raise typer.Exit(FAILURE)
+
+
+def _fixture_runs(discovery: WorkflowDiscovery, names: list[str]) -> list[FixtureRun]:
+    """Every fixture's run, or those of ``names``, each file once; exit 1 on a name with none."""
+    if not names:
+        return list(run_fixtures(discovery))
+    runs: list[FixtureRun] = []
+    for name in names:
+        named = run_fixtures(discovery, only=name)
+        if not named:
+            fail(f"no fixture for the workflow {name!r} in its pack's {FIXTURES}/")
+        # Two names of one pack share its unreadable fixtures: each file runs once.
+        seen = {run.path for run in runs}
+        runs.extend(item for item in named if item.path not in seen)
+    return runs
 
 
 def _write_skeleton(root: Path, discovery: WorkflowDiscovery, name: str | None) -> None:
