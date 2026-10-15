@@ -14,7 +14,8 @@ stubs:
       prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   rounds__implement: {text: Adds the change.}
+  rounds__verdict: {output: {status: done, summary: Changes the code., question: ""}}
   rounds__check: {fail: exec_failed}
 expect: {status: failed}
 failed: [rounds__check, rounds]
-reached: [worktree, rounds, rounds__implement, rounds__check]
+reached: [worktree, rounds, rounds__implement, rounds__verdict, rounds__check]

@@ -1,10 +1,11 @@
 # A checkout's review by two lenses side by side, then one verdict (ADR 0032). Each lens is one
-# session that follows the hub's own reviewer agent (spec-reviewer, quality-reviewer) and ends with
-# the review JSON `hub validate-output review` checks, which its output_format states. A lens only
-# reads: mutates_checkout false, so an attempt that changes git status fails it. The verdict
-# script joins the two: PASS only when both pass, the run's outcome. Publishing is the run's
-# record: each review and the verdict stay there (.agent-runs/workflows/<run>/), nothing else is
-# written, and hub workflow run prints the outcome.
+# session with the pack's own reviewer prompt (prompts/spec-lens.md, quality-lens.md, adapted
+# from the hub's spec-reviewer and quality-reviewer agents; nothing read from the checkout can
+# change them) and ends with the review JSON `hub validate-output review` checks, which its
+# output_format states. A lens is mutates_checkout false: an attempt that changes the checkout's
+# git status fails it (HEAD itself is not compared). The verdict script joins the two: PASS only
+# when both pass, the run's outcome. Publishing is the run's record: each review and the verdict
+# stay there (.agent-runs/workflows/<run>/), and hub workflow run prints the outcome.
 version: 1
 name: review
 description: The spec and quality lenses on a checkout, then one verdict.
@@ -26,23 +27,24 @@ inputs:
     type: integer
     default: 1
     description: The review round, from 1.
+  spec:
+    default: ""
+    description: What the change is meant to do, as untrusted text; blank, the commits' messages.
 returns: verdict
 outcome_field: verdict
 nodes:
   - id: spec
     type: agent
-    description: The spec lens - the hub's spec-reviewer agent on the checkout; read only.
-    prompt_file: lens.md
+    description: The spec lens on the commits; it must leave the checkout's git status as it was.
+    prompt_file: spec-lens.md
     cwd: $INPUTS.path
     mutates_checkout: false
     with:
-      agent: spec-reviewer
-      reviewer: spec
       ticket: $INPUTS.issue
       task: $INPUTS.task
       round: $INPUTS.round
       base: $INPUTS.base
-      spec: ""
+      spec: $INPUTS.spec
     output_format:
       type: object
       additionalProperties: false
@@ -80,18 +82,16 @@ nodes:
 
   - id: quality
     type: agent
-    description: The quality lens - the hub's quality-reviewer agent on the checkout; read only.
-    prompt_file: lens.md
+    description: The quality lens on the commits; it must leave the checkout's git status as it was.
+    prompt_file: quality-lens.md
     cwd: $INPUTS.path
     mutates_checkout: false
     with:
-      agent: quality-reviewer
-      reviewer: quality
       ticket: $INPUTS.issue
       task: $INPUTS.task
       round: $INPUTS.round
       base: $INPUTS.base
-      spec: ""
+      spec: $INPUTS.spec
     output_format:
       type: object
       additionalProperties: false

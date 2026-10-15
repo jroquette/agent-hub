@@ -113,7 +113,7 @@ highest n) carries `status`, `outcome`, `reason`, `revision` and `content_hash` 
 
 ### Dry run and fixtures
 
-`hub workflow test [name]` runs each `fixtures/*.yaml` of a pack in memory: no child, network, tracker write or event.
+`hub workflow test [name]...` runs each `fixtures/*.yaml` of a pack in memory: no child, network, tracker write or event.
 
 ```yaml
 workflow: issue-to-pr
