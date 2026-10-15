@@ -370,7 +370,9 @@ A started child runs in its own session with stdin empty and both streams append
 exclusively, owner-only, never through a link, and removed when the child ends. A pid file whose process is gone or
 started at another time is removed when the folder is next read (at most 64 files, start times read outside the
 launcher's lock within a 2 s budget); one whose start time cannot be read in time is kept, counted live and never
-signalled. A `.agent-runs/web` that is a link is refused (502). `run_id` in a path
+signalled. A file that changes or is taken by a new child while it is judged is kept and counted live, and a launch
+whose pid file reads otherwise than when it was judged (an empty file just made included) answers 409
+`workflow-run-in-use`. A `.agent-runs/web` that is a link is refused (502). `run_id` in a path
 must match `^[a-z0-9][a-z0-9-]{0,31}$` (else 400). All four are strict writes ([Local security](#local-security)) and
 need the launch cookie, like the agent-session writes; with `AGENT_HUB_IN_CONTAINER=1` they answer 404
 `urn:agent-hub:problem:run-control-off`.
