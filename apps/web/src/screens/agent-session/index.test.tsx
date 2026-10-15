@@ -553,6 +553,26 @@ describe("AgentSessionScreen (composer)", () => {
     });
   });
 
+  it("focuses the composer on open", async () => {
+    renderChat();
+
+    expect(await screen.findByRole("textbox", { name: "Message Claude" })).toHaveFocus();
+  });
+
+  it("leaves focus alone on open while a permission is pending", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          open_permission: aPermissionRequest({ request_id: "req-2", summary: "ls" }),
+        }),
+      }),
+    );
+
+    await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+    expect(screen.getByRole("textbox", { name: "Message Claude" })).not.toHaveFocus();
+  });
+
   it("interrupts with an empty JSON body only while a turn runs", async () => {
     const view = renderChat(
       routes({ [`POST ${SESSION}/interrupt`]: anAgentSession({ status: "idle" }) }),
