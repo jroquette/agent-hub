@@ -139,6 +139,11 @@ def run(
     """Run a workflow, or resume or abandon a run of one."""
     if [name, resume, abandon].count(None) != 2:
         raise typer.BadParameter("give one of NAME, --resume RUN or --abandon RUN")
+    for option, value in (("--run-id", run_id), ("--resume", resume), ("--abandon", abandon)):
+        # A run id names a folder and is the events' session: checked before anything runs.
+        if value is not None and not RUN_ID_PATTERN.fullmatch(value):
+            hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
+            raise typer.BadParameter(hint, param_hint=option)
     root = hub_root_or_exit(os.environ, command=COMMAND)
     hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
     try:
@@ -164,8 +169,6 @@ def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | 
         _print_plan(plan)
         return 0
     run_id = run_id or new_run_id()
-    if not RUN_ID_PATTERN.fullmatch(run_id):
-        raise typer.BadParameter("use 1 to 32 of a-z 0-9 -, starting with a letter or digit")
     folder = run_folder(hub, run_id)
     pack, content_hash = snapshot_run(
         folder, document=dict(found.document), plan=plan, pack_root=found.pack_root
@@ -211,8 +214,6 @@ def _abandon(hub: Path, run_id: str) -> None:
 
 def _ended_check(hub: Path, run_id: str) -> tuple[Path, list[dict[str, JsonValue]]]:
     """The run's folder and records; refused when it already ended done or cancelled."""
-    if not RUN_ID_PATTERN.fullmatch(run_id):
-        raise WorkflowRunError(f"no run {shown_path(run_id)}")
     folder = run_folder(hub, run_id)
     records = read_records(folder)
     ends = ends_of(records)
