@@ -196,6 +196,12 @@ def test_cards_valid_projects_with_activity_when_listed() -> None:
     assert activity.asked == ["demo"]
 
 
+def test_lists_project_hubs_when_valid_hubs_registered() -> None:
+    models, _, _ = read_models({DEMO: a_demo_hub(), OTHER: a_demo_hub()}, DEMO, OTHER)
+
+    assert list(models.project_hubs()) == [("demo", DEMO)]
+
+
 def test_details_project_when_known() -> None:
     hub = a_demo_hub()
     hub.hub_json = hub_json_bytes(pin="0.1.0")

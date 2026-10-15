@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from click import unstyle
 from typer.testing import Result
 
 from agent_hub.cli import run_command as run_module
@@ -122,7 +123,9 @@ def test_refuses_from_verify_when_hub_issue_to_pr_lacks_start(
     result = run_command(hub, *LIVE, "--from", "verify")
 
     assert result.exit_code == 2, result.output
-    assert "--from verify needs the input start in issue-to-pr" in " ".join(result.stderr.split())
+    assert "--from verify needs the input start in issue-to-pr" in " ".join(
+        unstyle(result.stderr).split()
+    )
     assert tracked.calls == []
 
 

@@ -7,7 +7,16 @@ from agent_hub.core.runner.run_record import Stage
 from agent_hub.core.runs.fold_run import fold_runs
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.read_model_builders import a_session
-from agent_hub.core.testing.session_scenarios import a_run_events, as_stored, shuffled
+from agent_hub.core.testing.session_scenarios import (
+    SCENARIO_START,
+    WORKFLOW_HASH,
+    NodeVisit,
+    a_run_events,
+    a_workflow_run_events,
+    as_stored,
+    shuffled,
+)
+from agent_hub.core.workflows.ports import RunStatus
 
 
 def test_keys_steps_by_step_and_attempt_when_verify_loops_and_fails() -> None:
@@ -202,3 +211,135 @@ def test_leaves_delivery_unset_when_run_in_flight() -> None:
     run = fold_runs(as_stored(a_run_events()[:5]))["1a2b3c4d"]
 
     assert run.delivery is None
+
+
+def test_derives_status_and_issue_to_pr_kinds_when_run_is_legacy() -> None:
+    done = fold_runs(as_stored(a_run_events()))["1a2b3c4d"]
+    failed = fold_runs(as_stored(a_run_events(fails=True)))["1a2b3c4d"]
+    running = fold_runs(as_stored(a_run_events()[:5]))["1a2b3c4d"]
+
+    assert (done.status, failed.status, running.status) == ("done", "failed", "running")
+    assert [(step.key, step.kind) for step in done.steps] == [
+        ("pick", None),
+        ("worktree", "shell"),
+        ("implement", "loop"),
+        ("verify", "shell"),
+        ("pr", "shell"),
+    ]
+    assert (done.outcome, done.revision, done.content_hash) == (None, None, None)
+    assert failed.failure is not None
+    assert failed.failure.failure_kind is None
+
+
+def test_keeps_node_ids_and_causes_when_engine_run_fails() -> None:
+    visits = [
+        NodeVisit("build"),
+        NodeVisit("review__lint", "failed", failure_kind="exec_failed"),
+        NodeVisit("review__lint", "failed", failure_kind="exec_failed"),
+        NodeVisit("deploy", "skipped", skip_cause="upstream_failed", origin="review__lint"),
+    ]
+    events = as_stored(a_workflow_run_events(visits, status="failed"))
+
+    run = fold_runs(events)["5e6f7a8b"]
+
+    assert [
+        (step.key, step.attempt, step.status, step.failure_kind, step.skip_cause)
+        for step in run.steps
+    ] == [
+        ("build", 1, "ok", None, None),
+        ("review__lint", 1, "failed", "exec_failed", None),
+        ("review__lint", 2, "failed", "exec_failed", None),
+        ("deploy", 1, "skipped", None, "upstream_failed"),
+    ]
+    assert {step.kind for step in run.steps} == {None}
+    assert run.steps[-1].reason == "review__lint"
+    assert (run.workflow, run.status, run.stage) == ("ship", "failed", Stage.FAILED)
+    assert (run.revision, run.content_hash) == (3, WORKFLOW_HASH)
+    assert run.failure is not None
+    assert (run.failure.stage, run.failure.failure_kind) == (Stage.FAILED, "exec_failed")
+    assert run.failure.reason == "review__lint"
+    assert (run.outcome, run.delivery) == (None, "failed")
+
+
+def test_takes_highest_run_end_when_engine_run_resumed() -> None:
+    first = a_workflow_run_events(
+        [NodeVisit("build", "failed", failure_kind="config")], status="failed"
+    )
+    later = SCENARIO_START + timedelta(hours=1)
+    ends = [a_workflow_run_events([], status="failed", end_index=n, start=later)[0] for n in (2, 9)]
+    final = a_workflow_run_events([], status="done", outcome=True, end_index=10, start=later)
+    final = [final[0].model_copy(update={"timestamp": later + timedelta(minutes=5)})]
+    events = as_stored([*first, *ends, *final])
+
+    for seed in range(10):
+        run = fold_runs(shuffled(events, seed))["5e6f7a8b"]
+
+        assert (run.status, run.outcome, run.failure) == ("done", True, None)
+        assert run.ended_at == later + timedelta(minutes=5)
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome", "delivery"),
+    [
+        ("done", None, None),
+        ("cancelled", None, None),
+        ("failed", None, "failed"),
+        ("done", False, None),
+        ("done", "no_changes", "no_changes"),
+    ],
+)
+def test_maps_outcome_by_status_when_engine_run_ends(
+    status: RunStatus, *, outcome: bool | str | None, delivery: str | None
+) -> None:
+    visits = [NodeVisit("build", "failed" if status == "failed" else "ok")]
+    events = as_stored(a_workflow_run_events(visits, status=status, outcome=outcome))
+
+    run = fold_runs(events)["5e6f7a8b"]
+
+    assert (run.status, run.outcome, run.delivery) == (status, outcome, delivery)
+    assert run.stage == (Stage.FAILED if status == "failed" else Stage.REPORTED)
+    assert (run.failure is None) == (status != "failed")
+
+
+def test_derives_stage_and_kinds_when_engine_runs_issue_to_pr() -> None:
+    visits = [NodeVisit("worktree"), NodeVisit("implement", "running")]
+    running = a_workflow_run_events(visits, workflow="issue-to-pr")
+    other = a_workflow_run_events(visits, run="9c0d1e2f", workflow="implement")
+    visits = [NodeVisit("worktree"), NodeVisit("implement"), NodeVisit("pr"), NodeVisit("report")]
+    done = a_workflow_run_events(
+        visits, run="3a4b5c6d", workflow="issue-to-pr", status="done", outcome="delivered"
+    )
+
+    runs = fold_runs(as_stored([*running, *other, *done]))
+
+    assert runs["5e6f7a8b"].stage == Stage.IMPLEMENTING
+    assert [step.kind for step in runs["5e6f7a8b"].steps] == ["shell", "loop"]
+    assert runs["9c0d1e2f"].stage == Stage.PICKED
+    assert [step.kind for step in runs["9c0d1e2f"].steps] == [None, None]
+    assert runs["3a4b5c6d"].steps[-1].kind == "shell"
+    assert (runs["3a4b5c6d"].stage, runs["3a4b5c6d"].delivery) == (Stage.REPORTED, "delivered")
+
+
+def test_keeps_pinned_document_when_run_starts_with_skipped_node() -> None:
+    visits = [NodeVisit("gate", "skipped", skip_cause="condition"), NodeVisit("build")]
+    events = as_stored(a_workflow_run_events(visits, status="done"))
+
+    run = fold_runs(events)["5e6f7a8b"]
+
+    assert (run.revision, run.content_hash) == (3, WORKFLOW_HASH)
+
+
+def test_runs_again_when_engine_run_resumed_after_its_last_end() -> None:
+    first = a_workflow_run_events([NodeVisit("build", "failed")], status="failed")
+    later = SCENARIO_START + timedelta(hours=1)
+    resumed = a_workflow_run_events([NodeVisit("deploy", "running")], start=later)
+    ended = a_workflow_run_events(
+        [], status="done", end_index=1, start=later + timedelta(minutes=5)
+    )
+
+    running = fold_runs(as_stored([*first, *resumed]))["5e6f7a8b"]
+    done = fold_runs(as_stored([*first, *resumed, *ended]))["5e6f7a8b"]
+
+    assert (running.status, running.ended_at, running.failure) == ("running", None, None)
+    assert running.delivery is None
+    assert (done.status, done.ended_at) == ("done", later + timedelta(minutes=5))
