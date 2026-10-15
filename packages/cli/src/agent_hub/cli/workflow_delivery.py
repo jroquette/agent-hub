@@ -52,7 +52,7 @@ from agent_hub.core.runner.verdict import SessionReply, session_outcome
 from agent_hub.core.workflows.failures import RetryRecord
 from agent_hub.core.workflows.nodes import AgentNode, Limits, LoopNode
 from agent_hub.core.workflows.plan import WorkflowPlan
-from agent_hub.core.workflows.ports import RunEnd, StepEnd, StepStart
+from agent_hub.core.workflows.ports import GateRequest, RunEnd, StepEnd, StepStart
 from agent_hub.core.workflows.run_state import RunReport
 
 # The workflow whose parent this is, named as the built-in names it (the smallest marker).
@@ -261,6 +261,10 @@ class DeliveryRecorder:
     def run_ended(self, end: RunEnd) -> None:
         if self.inner is not None:
             self.inner.run_ended(end)
+
+    def gate_requested(self, request: GateRequest) -> None:
+        if self.inner is not None:
+            self.inner.gate_requested(request)
 
 
 def _text(output: Output, key: str) -> str:

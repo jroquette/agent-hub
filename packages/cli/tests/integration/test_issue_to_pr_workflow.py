@@ -53,7 +53,8 @@ def test_validates_and_passes_every_fixture_when_pack_tested(
     assert validated.stdout == "issue-to-pr: valid (7 nodes in 7 layers)\n"
     assert tested.exit_code == 0, tested.output
     for outcome in OUTCOMES:
-        assert f"<builtin>/issue-to-pr/fixtures/{outcome}.yaml: ok" in tested.stdout
+        # The hub's seeded copy shadows the built-in (AGH-227).
+        assert f"workflows/issue-to-pr/fixtures/{outcome}.yaml: ok" in tested.stdout
     assert tested.stdout.endswith("8 fixtures: 8 passed, 0 failed\n")
 
 

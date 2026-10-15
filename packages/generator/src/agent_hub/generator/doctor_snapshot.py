@@ -9,7 +9,8 @@ inside it nothing is followed). The branch prefix needs git in the developer's m
 which stays with the caller: it passes ``branch_prefix``, called only when a rule reads the
 developer identity and the local file is valid. The remote probes (AGH-134) run git against the
 network, also the caller's: it passes ``remote_probes`` only from a Claude Code session, called
-only when a rule reads the remotes.
+only when a rule reads the remotes. The workflows are the hub's and the built-ins, read as
+``hub workflow`` reads them, when a rule reads them (AGH-227).
 """
 
 import os
@@ -36,6 +37,8 @@ from agent_hub.generator.built_json import base_hooks_block
 from agent_hub.generator.doctor_tree import read_checkout, read_doctor_tree
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.hub_tree import read_root_entry
+from agent_hub.generator.workflow_discovery import HUB_WORKFLOWS
+from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 
 # The developer's effective branch prefix and its source, or None when no source gives one.
 type BranchPrefixReader = Callable[[], Sourced | None]
@@ -64,6 +67,8 @@ def build_doctor_snapshot(
     if Read.DEVELOPER_IDENTITY in reads and isinstance(local, LocalConfig) and branch_prefix:
         prefix = branch_prefix()
     probes = remote_probes() if Read.REMOTES in reads and remote_probes else None
+    workflows = DiscoveredWorkflowSource(Path(root)) if Read.WORKFLOWS in reads else None
+    packs = pack_folders(root) if workflows is not None else ()
     return DoctorSnapshot(
         config=config,
         running_version=running,
@@ -74,7 +79,19 @@ def build_doctor_snapshot(
         local=local,
         branch_prefix=prefix,
         remote_probes=probes,
+        workflows=workflows,
+        workflow_folders=packs,
     )
+
+
+def pack_folders(root: str) -> tuple[str, ...]:
+    """``workflows/<pack>`` for each folder directly under ``workflows/`` (links not followed)."""
+    try:
+        with os.scandir(os.path.join(root, HUB_WORKFLOWS)) as listing:
+            names = sorted(e.name for e in listing if e.is_dir(follow_symlinks=False))
+    except OSError:
+        return ()
+    return tuple(f"{HUB_WORKFLOWS}/{name}" for name in names)
 
 
 def repo_checkouts(root: str, config: HubConfig) -> tuple[RepoFiles, ...]:

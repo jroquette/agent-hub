@@ -28,7 +28,7 @@ import {
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
-import { modeLabel } from "./transcript";
+import { modeLabel, pendingPermissions } from "./transcript";
 import { useStickToBottom } from "./useStickToBottom";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
@@ -216,11 +216,13 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             mode={mode}
             model={model}
             models={models}
-            onSend={commands.send}
+            onSend={(text) => transcript.send(text, commands.send)}
             onInterrupt={commands.interrupt}
             onSettings={commands.settings}
             onSending={follow.pin}
             maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
+            draftId={agentSessionId}
+            focusOnOpen={pendingPermissions(state).length === 0}
             disabledReason={cloud ? "A cloud session is driven from claude.ai." : null}
           />
         </div>

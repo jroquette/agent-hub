@@ -10,17 +10,19 @@ from typing import Any
 
 import pytest
 
-from agent_hub.cli import workflow_executors
+from agent_hub.cli import workflow_command, workflow_executors
 from agent_hub.cli.child_process import ChildResult
 from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.run_children import RunChildren, RunOptions
 from agent_hub.cli.workflow_executors import MAX_OUTPUT_BYTES, WorkflowExecutors
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_models_document, an_issue
-from agent_hub.core.testing.workflow_fakes import a_plan
+from agent_hub.core.testing.workflow_fakes import ListRecorder, a_plan
+from agent_hub.core.workflows.engine import MAX_PARALLEL
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.nodes import ExecutableNode
 from agent_hub.core.workflows.ports import NodeCall
+from agent_hub.core.workflows.scope import RefScope, ScopeStep
 from agent_hub.core.workflows.substitution import NodeResult, RefContext
 
 GITHUB_VALUE = "g" * 8
@@ -382,6 +384,21 @@ def test_kills_child_group_when_interrupted(
     assert killed == [4242]
 
 
+def test_renders_prompt_file_through_the_call_scope_when_the_node_was_included(
+    tmp_path: Path, pack: Path
+) -> None:
+    (pack / "prompts" / "fix.md").write_text("Fix $INPUTS.issue after $prep.output\n")
+    child = FakeChild([claude_result("ok")])
+    spec = {"id": "c__fix", "type": "agent", "prompt_file": "fix.md"}
+    scope = RefScope((ScopeStep({"prep": "c__prep"}, {"issue": "CHILD"}, hermetic=True),))
+    context = RefContext({"issue": "MAIN"}, {"c__prep": NodeResult("completed", "P")})
+    the_node = node({**spec, "id": "fix"}).model_copy(update={"id": "c__fix"})
+
+    executors(tmp_path, pack, child).run(NodeCall(the_node, 1, context, scope=scope))
+
+    assert child.calls[0]["argv"][2] == "Fix CHILD after P\n"
+
+
 def test_runs_claude_in_worktree_as_hub_run_does_when_agent_node_has_cwd(
     tmp_path: Path, pack: Path
 ) -> None:
@@ -474,3 +491,16 @@ def test_bounds_agent_reply_at_session_cap_when_claude_answers(
         with pytest.raises(NodeFailedError) as raised:
             executors(tmp_path, pack, child).run(call(AGENT, prompt="Go."))
         assert raised.value.kind == "output_contract"
+
+
+def test_runs_one_attempt_at_a_time_when_hub_steps_run_in_process(
+    tmp_path: Path, pack: Path
+) -> None:
+    in_process = dataclasses.replace(
+        executors(tmp_path, pack, FakeChild()), hub_steps=lambda *_: "{}"
+    )
+
+    ports = workflow_command._ports(in_process, ListRecorder(), None)
+
+    assert ports.max_parallel == 1
+    assert executors(tmp_path, pack, FakeChild()).max_parallel == MAX_PARALLEL

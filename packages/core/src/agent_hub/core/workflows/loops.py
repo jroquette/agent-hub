@@ -5,14 +5,20 @@ reply's last non-blank line, trimmed, equals it), ``until_field`` (that output p
 exactly ``true``), ``until_bash`` (exit 0, run through the ``NodeRunner``). A turn past
 ``max_iterations`` that met none fails ``max_iterations``. Without ``fresh_context`` each turn
 resumes the previous turn's session. The loop's output is its last turn's.
+
+A ``loop_group`` repeats a body sub-graph; ``record_body`` gives its body the ids the run records,
+``<group>__<id>``, and rewrites the references to them (the engine runs the group).
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.workflows.document import Loc
 from agent_hub.core.workflows.failures import NodeFailedError
-from agent_hub.core.workflows.nodes import LoopNode
+from agent_hub.core.workflows.nodes import LoopGroupNode, LoopNode
+from agent_hub.core.workflows.rewrite import SEPARATOR, Rewrite, map_node
+from agent_hub.core.workflows.substitution import LoopPrevRef, NodeRef, Ref, spell
 
 
 @dataclass(frozen=True)
@@ -68,3 +74,46 @@ def check_turn(node: LoopNode, iteration: int, turn: Turn, *, done: bool) -> Non
 def next_session(node: LoopNode, turn: Turn) -> str | None:
     """The session the next turn resumes: none under ``fresh_context``."""
     return None if node.fresh_context else turn.session
+
+
+class _Recorded(Rewrite):
+    """A body's ids, and references to them, as the run records them."""
+
+    def __init__(self, group: LoopGroupNode) -> None:
+        self.prefix = f"{group.id}{SEPARATOR}"
+        self.body = frozenset(node.id for node in group.nodes)
+
+    def reference(self, loc: Loc, ref: Ref, spelling: str) -> str:
+        if isinstance(ref, NodeRef | LoopPrevRef) and ref.node in self.body:
+            return spell(type(ref)(self.prefix + ref.node, ref.path))
+        return spelling
+
+    def ids(self, targets: Sequence[str]) -> tuple[str, ...]:
+        return tuple(self.prefix + target for target in targets)
+
+    def resume(self, target: str, loc: Loc) -> str:
+        return self.prefix + target if target in self.body else target
+
+
+def record_body(group: LoopGroupNode) -> LoopGroupNode:
+    """``group`` with its body ids recorded as ``<group>__<id>``, references included."""
+    recorded = _Recorded(group)
+    update: dict[str, object] = {
+        "nodes": tuple(
+            map_node(node, recorded).model_copy(update={"id": recorded.prefix + node.id})
+            for node in group.nodes
+        )
+    }
+    if group.until_when is not None:
+        update["until_when"] = recorded.text(("until_when",), group.until_when)
+    if group.until_bash is not None:
+        update["until_bash"] = tuple(
+            recorded.text(("until_bash", index), element)
+            for index, element in enumerate(group.until_bash)
+        )
+    return group.model_copy(update=update)
+
+
+def local_id(group: LoopGroupNode, recorded: str) -> str:
+    """The body id ``recorded`` stands for: ``<group>__<id>`` without its group."""
+    return recorded.removeprefix(f"{group.id}{SEPARATOR}")

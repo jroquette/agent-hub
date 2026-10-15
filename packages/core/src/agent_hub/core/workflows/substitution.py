@@ -23,7 +23,7 @@ must be a whole element, never the program nor a ``-c`` script (``check_argv``).
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -166,6 +166,24 @@ def render(template: str, context: RefContext) -> str:
         last = end
     parts.append(template[last:])
     return "".join(parts)
+
+
+def rewrite_refs(template: str, replace: Callable[[Ref, str], str]) -> str:
+    """Replace each reference by ``replace(ref, spelling)``, in one pass; ``$$`` stays ``$$``."""
+    parts: list[str] = []
+    last = 0
+    for start, end, ref in _scan(template):
+        parts.append(template[last:start])
+        parts.append(template[start:end] if ref is None else replace(ref, template[start:end]))
+        last = end
+    parts.append(template[last:])
+    return "".join(parts)
+
+
+def spell(ref: NodeRef | LoopPrevRef) -> str:
+    """The spelling of a node reference: ``$<node>.output[.path]``, or its ``$LOOP_PREV`` form."""
+    start = "$LOOP_PREV." if isinstance(ref, LoopPrevRef) else "$"
+    return f"{start}{ref.node}.output" + "".join(f".{segment}" for segment in ref.path)
 
 
 def check_argv(argv: Sequence[str]) -> list[ArgvProblem]:

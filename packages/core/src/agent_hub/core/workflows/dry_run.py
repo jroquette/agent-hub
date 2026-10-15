@@ -9,23 +9,37 @@ A single stub answers every attempt and iteration of its node; a list answers th
 reached node with no stub, or whose list ran out, fails ``config`` and is listed as missing,
 except under an ``all_done`` join: it gets a placeholder that fits its ``output_format``
 (``skeleton_stub``), is listed as tolerated, and never sets the outcome. ``until_bash`` reads
-the iteration's ``until_exit`` (default 0, done). ``approval`` and ``wait`` pause in the engine
-(AGH-230); until then a plan holding one is refused as a real run refuses it.
+the iteration's ``until_exit`` (default 0, done); a ``loop_group``'s ``until_bash`` has no stub
+and reads 0, so a group that loops in a fixture ends through ``until_when``. An ``approval`` or
+``wait`` takes its answer from its stub (``{decision, text}``, ``{text}``, ``{choice}``, or ``{}``
+to end a timed wait); with no stub, or a list that ran out, it pauses the run (``paused``), as a
+real run waits for a person.
 """
 
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from threading import Event
 from typing import Final, Self
 
 from pydantic import JsonValue, StrictInt, StrictStr, model_validator
 
 from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.failures import FailureKind, NodeFailedError, RetryRecord
-from agent_hub.core.workflows.nodes import ExecutableNode, LoopNode, Node, WorkflowObject
+from agent_hub.core.workflows.gates import GateAnswer, GateError
+from agent_hub.core.workflows.nodes import (
+    ApprovalNode,
+    ExecutableNode,
+    KebabId,
+    LoopNode,
+    Node,
+    WaitNode,
+    WorkflowObject,
+)
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import (
+    GateRequest,
     NodeCall,
     NodeReply,
     OutputValidator,
@@ -42,6 +56,7 @@ PLACEHOLDER_TEXT: Final = "TODO"
 MAX_PLACEHOLDER_ITEMS: Final = 3
 PLACEHOLDER_BUDGET: Final = 1000
 _ANSWERS: Final = frozenset({"output", "text", "fail"})
+_GATE_CHOICES: Final = frozenset({"decision", "choice"})
 _SCALARS: Final[Mapping[str, JsonValue]] = {
     "boolean": False,
     "integer": 0,
@@ -53,19 +68,32 @@ _SCALARS: Final[Mapping[str, JsonValue]] = {
 
 class Stub(WorkflowObject):
     """One attempt's answer: ``output`` (a value), ``text`` (the raw reply) or ``fail`` (a kind);
-    ``until_exit`` is a loop iteration's ``until_bash`` exit."""
+    ``until_exit`` is a loop iteration's ``until_bash`` exit. A gate's answer is ``{decision,
+    text}`` (an approval), ``{text}`` or ``{choice, text}`` (an attention wait), or ``{}``."""
 
     output: JsonValue = None
     text: StrictStr | None = None
     fail: FailureKind | None = None
     until_exit: StrictInt | None = None
+    decision: KebabId | None = None
+    choice: KebabId | None = None
 
     @model_validator(mode="after")
     def _one_answer(self) -> Self:
-        if len(_ANSWERS & self.model_fields_set) != 1:
+        given = self.model_fields_set
+        if given & _GATE_CHOICES:
+            if len(given & _GATE_CHOICES) > 1 or given - _GATE_CHOICES - {"text"}:
+                msg = "give one of 'decision' or 'choice', with at most a 'text'"
+                raise ValueError(msg)
+        elif given and len(_ANSWERS & given) != 1:
             msg = "give exactly one of 'output', 'text' or 'fail'"
             raise ValueError(msg)
         return self
+
+    @property
+    def is_gate_answer(self) -> bool:
+        """Whether this stub can answer a gate: a choice, a lone text or nothing."""
+        return not self.model_fields_set - _GATE_CHOICES - {"text"}
 
 
 type Stubs = Stub | tuple[Stub, ...]
@@ -95,12 +123,22 @@ def dry_run(
 ) -> DryRunReport:
     """Run ``plan`` with ``inputs`` through the engine, each node answered from ``stubs``.
 
-    Raises ``WorkflowEngineError`` when the engine refuses the run (inputs, an approval node).
+    Raises ``WorkflowEngineError`` when the engine refuses the run (its inputs).
     """
     runner, recorder = _StubRunner(stubs), _MemoryRecorder()
-    ports = EnginePorts(runner, recorder, _StillClock(), outputs, lambda: 0.0)
+    # One node at a time: nothing waits in memory, and the stubs' records keep one order.
+    ports = EnginePorts(
+        runner,
+        recorder,
+        _StillClock(),
+        outputs,
+        lambda: 0.0,
+        _StillCheckout(),
+        max_parallel=1,
+        gates=runner,
+    )
     report = run_workflow(plan, inputs, ports)
-    order = [node.id for node in plan.document.nodes]
+    order = [node.id for node in plan.all_nodes()]
     returns = plan.document.returns
     return DryRunReport(
         run=report,
@@ -116,7 +154,14 @@ def dry_run(
 
 def skeleton_stub(node: Node) -> dict[str, JsonValue]:
     """A stub that completes ``node``: a placeholder output that fits its ``output_format`` (a
-    loop's ``until_field`` set), a loop's ``until`` text, else ``TODO``."""
+    loop's ``until_field`` set), a loop's ``until`` text, a gate's first decision or option (a
+    ``TODO`` text, or ``{}``), else ``TODO``."""
+    if isinstance(node, ApprovalNode):
+        return {"decision": node.decisions[0].id}
+    if isinstance(node, WaitNode):
+        if node.options is not None:
+            return {"choice": node.options[0].id}
+        return {} if node.attention is None else {"text": PLACEHOLDER_TEXT}
     schema = getattr(node, "output_format", None)
     if schema is not None:
         value = placeholder(schema)
@@ -196,7 +241,8 @@ def _failed(report: RunReport, node: str) -> bool:
 
 
 class _StubRunner:
-    """The ``NodeRunner`` of a dry run: each call takes the node's next stub."""
+    """The ``NodeRunner`` and ``GateAnswers`` of a dry run: each call takes the node's next
+    stub."""
 
     def __init__(self, stubs: Mapping[str, Stubs]) -> None:
         self.stubs = stubs
@@ -204,6 +250,14 @@ class _StubRunner:
         self.current: dict[str, Stub] = {}
         self.missing: dict[str, None] = {}
         self.tolerated: dict[str, None] = {}
+
+    def answer(self, node: str, attempt: int) -> GateAnswer | None:
+        stub = self._next(node)
+        if stub is None:
+            return None
+        if not stub.is_gate_answer:
+            raise GateError("a gate's stub is a decision, a choice, a text or {}")
+        return GateAnswer(stub.decision or stub.choice, stub.text)
 
     def run(self, call: NodeCall) -> NodeReply:
         node = call.node
@@ -230,6 +284,8 @@ class _StubRunner:
 
 
 def _reply(node: ExecutableNode, stub: Stub) -> NodeReply:
+    if not _ANSWERS & stub.model_fields_set:
+        raise NodeFailedError("config", "this node's stub needs 'output', 'text' or 'fail'")
     if stub.fail is not None:
         raise NodeFailedError(stub.fail, "a stubbed failure")
     if stub.text is not None:
@@ -237,6 +293,13 @@ def _reply(node: ExecutableNode, stub: Stub) -> NodeReply:
     if node.output_format is not None:
         return NodeReply(json.dumps(stub.output, allow_nan=False))
     return NodeReply(canonical_text(stub.output))
+
+
+class _StillCheckout:
+    """No checkout changes in memory: a read-only node always passes its check."""
+
+    def status(self) -> str:
+        return ""
 
 
 class _StillClock:
@@ -248,7 +311,7 @@ class _StillClock:
     def now(self) -> datetime:
         return self.current
 
-    def sleep(self, delay: timedelta) -> None:
+    def sleep(self, delay: timedelta, stop: Event | None = None) -> None:
         self.current += delay
 
 
@@ -267,4 +330,7 @@ class _MemoryRecorder:
         pass
 
     def run_ended(self, end: RunEnd) -> None:
+        pass
+
+    def gate_requested(self, request: GateRequest) -> None:
         pass
