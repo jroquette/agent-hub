@@ -24,7 +24,16 @@ type CommandRunner = Callable[..., Result]
 type Workspace = Any
 
 PACK = BUILTIN_WORKFLOWS / "issue-to-pr"
-OUTCOMES = ("done", "no-commit", "blocked", "dirty", "error", "gate-failure", "pr-failure")
+OUTCOMES = (
+    "done",
+    "no-commit",
+    "blocked",
+    "dirty",
+    "error",
+    "gate-failure",
+    "pr-failure",
+    "from-verify",
+)
 
 
 def node_formats() -> dict[str, Any]:
@@ -45,7 +54,7 @@ def test_validates_and_passes_every_fixture_when_pack_tested(
     assert tested.exit_code == 0, tested.output
     for outcome in OUTCOMES:
         assert f"<builtin>/issue-to-pr/fixtures/{outcome}.yaml: ok" in tested.stdout
-    assert tested.stdout.endswith("7 fixtures: 7 passed, 0 failed\n")
+    assert tested.stdout.endswith("8 fixtures: 8 passed, 0 failed\n")
 
 
 @pytest.mark.parametrize("sensitive", [(), ("hub.json", "docs/adr")])

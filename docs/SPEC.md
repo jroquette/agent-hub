@@ -136,8 +136,12 @@ input brief (`Problem`, `Why`, `Why now`, `Outcome`, `Invariants`, `Acceptance c
 a live run's `failed` record at stage `PICKED`; otherwise (dry run by default: it prints every command and tracker
 write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
 `gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
-`tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. The
-report follows the run's outcome ([ADR 0030](adr/0030-run-outcomes-in-the-tracker.md)): a run that ended with no commit
+`tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. A live
+run is the `issue-to-pr` workflow run through the engine ([ADR 0032](adr/0032-workflow-engine.md), AGH-224): the hub's
+own `workflows/<pack>/issue-to-pr.yaml` when present (it must load, else exit 1, and declare the inputs the run fills,
+else exit 2), else the built-in; `--from verify` is its `start` input, and `--model`, `--effort`, `--max-turns` and
+`--budget` are its `implement` node's. A failed stage's `failed` record and `step.end` event carry its `failure_kind`
+(AGH-179); the dry run loads no workflow. The report follows the run's outcome ([ADR 0030](adr/0030-run-outcomes-in-the-tracker.md)): a run that ended with no commit
 gets a comment and no label and exits 0; a run whose session stopped for a human gets the blocked label
 (`tracker.blocked_label`, else `tracker.failed_label`) and a comment with its question and exits 3; a failed run gets
 the failed label and a diagnosis and exits 1, as does any run whose tracker write fails. A run that did not fail

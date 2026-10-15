@@ -28,6 +28,12 @@ narrows it per call), any other command ``untrusted_env`` plus its ``env``, whic
 token. No child gets ``LINEAR_API_KEY``. A failure's kind comes from where it happened: the exit
 code (``kind_for_exit``), a timeout, claude's ``is_error`` field, or a child that cannot start
 (``config``); never from message text.
+
+The issue-to-pr parent (``hub run``) runs every child as ``hub run`` does: its ``hub step`` nodes
+in process (``hub_steps``), the others in the caller's process group (``in_session`` false), a
+timeout killing the child alone; its ``implement`` node takes ``session``'s model, effort and caps
+(``hub run``'s flags) over the node's. The default timeouts are ``run_steps``' constants, read at
+call time.
 """
 
 import contextlib
@@ -40,16 +46,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
+from agent_hub.cli import run_steps
 from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.run_children import (
+    IMPLEMENT_STEP,
     SESSION_DENIED_TOOLS,
     SESSION_HIDDEN,
+    RunOptions,
     child_env,
     session_env,
     untrusted_env,
 )
-from agent_hub.cli.run_steps import GATE_TIMEOUT, SESSION_OUTPUT_LIMIT, SESSION_TIMEOUT
+from agent_hub.cli.run_steps import SESSION_OUTPUT_LIMIT
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.session_prompt import (
     IMPLEMENTING_TOOLS,
@@ -99,11 +108,16 @@ class WorkflowExecutors:
     child: ChildRunner = field(default=run_child)
     # Each agent node's last ``claude`` result (cost, turns, verdict), for issue-to-pr's records.
     replies: dict[str, SessionReply] = field(default_factory=dict)
+    hub_steps: Callable[[Sequence[str]], str] | None = None
+    in_session: bool = True
+    session: RunOptions | None = None
 
     def run(self, call: NodeCall) -> NodeReply:
         node = call.node
         if isinstance(node, AgentNode | LoopNode):
             return self._agent(call, node)
+        if isinstance(node, ShellNode) and node.is_hub_step and self.hub_steps is not None:
+            return NodeReply(_bounded(self.hub_steps(call.argv[2:]).encode()))
         argv, env = self._command(call)
         result = self._spawn(argv, env=env, cwd=self._cwd(call.cwd), timeout=_timeout(node))
         if (kind := kind_for_exit(result.returncode)) is not None:
@@ -128,12 +142,13 @@ class WorkflowExecutors:
         folders = (str(self.hub),) if home is not None else ()
         others = (r for r in repos if r is not home)
         gated = (home,) if home is not None else repos
+        caps = self.session if node.id == IMPLEMENT_STEP else None
         argv = implementing_argv(
             prompt=prompt,
-            max_turns=node.limits.max_turns,
-            budget=node.limits.max_cost_usd,
-            model=self.config.models.model_for(node.model),
-            effort=AGENT_EFFORT,
+            max_turns=node.limits.max_turns if caps is None else caps.max_turns,
+            budget=node.limits.max_cost_usd if caps is None else caps.budget,
+            model=self.config.models.model_for(node.model) if caps is None else caps.model,
+            effort=AGENT_EFFORT if caps is None else caps.effort,
             add_dirs=(*folders, *(str(self.hub.parent / repo.dir) for repo in others)),
             tools=(
                 *IMPLEMENTING_TOOLS,
@@ -158,7 +173,7 @@ class WorkflowExecutors:
             argv,
             env=env,
             cwd=cwd,
-            timeout=_timeout(node, default=SESSION_TIMEOUT),
+            timeout=_timeout(node, default=run_steps.SESSION_TIMEOUT),
             output_limit=SESSION_OUTPUT_LIMIT,
         )
         reply = parse_session_output(result.stdout.decode(errors="replace"))
@@ -230,9 +245,10 @@ class WorkflowExecutors:
                 cwd=cwd,
                 env=env,
                 timeout=timeout,
-                own_session=True,
+                own_session=self.in_session,
                 output_limit=output_limit,
-                on_start=groups.append,
+                # A child in the caller's group leads no group of its own to kill.
+                on_start=groups.append if self.in_session else None,
             )
         except ChildTimedOutError as error:
             raise NodeFailedError("timeout", str(error)) from None
@@ -246,8 +262,10 @@ class WorkflowExecutors:
                     os.killpg(group, signal.SIGKILL)
 
 
-def _timeout(node: ExecutableNode, *, default: float = GATE_TIMEOUT) -> float:
-    return float(duration_seconds(node.timeout)) if node.timeout is not None else default
+def _timeout(node: ExecutableNode, *, default: float | None = None) -> float:
+    if node.timeout is not None:
+        return float(duration_seconds(node.timeout))
+    return run_steps.GATE_TIMEOUT if default is None else default
 
 
 def _bounded(output: bytes) -> str:
@@ -259,8 +277,9 @@ def _bounded(output: bytes) -> str:
 
 
 def _detail(argv: Sequence[str], result: ChildResult) -> str:
+    # Kept as written, its last line break too: the gate's diagnosis reads as hub run's.
     tail = result.stderr.decode(errors="replace")[-MAX_DETAIL_CHARS:]
-    return f"{argv[0]} exited {result.returncode}: {tail}".rstrip()
+    return f"{argv[0]} exited {result.returncode}: {tail}"
 
 
 def _text(value: object) -> str:
