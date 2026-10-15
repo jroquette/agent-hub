@@ -1,11 +1,13 @@
 # One issue to a PR through review rounds (ADR 0032): the worktree, then up to three rounds of an
-# implementing session, the repo's check and, once it passes, the review pack's two lenses and
-# their verdict; then the commits, the PR and the delivery, as issue-to-pr makes them (hub step).
-# The check script turns a red check into data the next round reads; the round ends the group
-# when the verdict is PASS, and the third round without one fails it (max_iterations): no PR.
-# The lenses are inline, as a loop group's body holds no include: same prompt, scripts and
-# output_format as review.yaml. Unlike issue-to-pr (hub run's parity workflow), deliver has no
-# tracker side: issue_text is an input, and nothing reads or writes the tracker.
+# implementing session, its verdict (hub step verdict, as issue-to-pr reads it), the repo's check
+# and, once it passes, the two review lenses (review.yaml's) and their verdict; then the commits,
+# the PR and the delivery, as issue-to-pr makes them (hub step). The check script turns a red
+# check into data; the feedback script folds the check and the reviews into the next round's
+# prompt within 32 KiB. The rounds end when the verdict is PASS or the session is blocked; a third
+# round without either fails the group (max_iterations): no PR. The lenses are inline, as a loop
+# group's body holds no include, and each starts afresh (context: fresh) while the implementing
+# session resumes. Unlike issue-to-pr (hub run's parity workflow), deliver has no tracker side:
+# issue_text is an input, and nothing reads or writes the tracker.
 version: 1
 name: deliver
 description: One issue to a PR, implemented and reviewed in rounds until the check and both reviewers pass.
@@ -40,9 +42,10 @@ nodes:
         prompt:
           type: object
           properties:
+            guard: {type: string}
             gate_step: {type: string}
             commit_shape: {type: string}
-          required: [gate_step, commit_shape]
+          required: [guard, gate_step, commit_shape]
         target: {type: object}
       required: [path, branch, base, hub, hub_name, check, prompt, target]
 
@@ -51,19 +54,36 @@ nodes:
     description: Implement, check, review - again until the verdict is PASS, three rounds at most.
     depends_on: [worktree]
     max_iterations: 3
-    until_when: "$verdict.output.verdict == 'PASS'"
+    until_when: "$verdict.output.status == 'blocked' || $review.output.verdict == 'PASS'"
     nodes:
       - id: implement
         type: agent
-        description: The implementing session, resumed each round with the last round's results.
+        description: The implementing session, resumed each round with the last round's feedback.
         prompt_file: implement.md
         cwd: $worktree.output.path
         retry: {max_attempts: 0}
 
+      - id: verdict
+        type: shell
+        description: The session's reply read as hub run reads it - done, or blocked with a question.
+        depends_on: [implement]
+        command: [hub, step, verdict]
+        # On stdin: a reply may be longer than one argument holds, or hold NUL.
+        stdin: $implement.output
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            status: {type: string, enum: [done, blocked]}
+            summary: {type: string}
+            question: {type: string}
+          required: [status, summary, question]
+
       - id: check
         type: script
         description: The repo's check on the round's work; a red check is data, not a failure.
-        depends_on: [implement]
+        depends_on: [verdict]
+        when: "$verdict.output.status != 'blocked'"
         runtime: python
         script: check.py
         args: [$worktree.output.check, $LOOP_PREV.check.output.round]
@@ -80,15 +100,14 @@ nodes:
 
       - id: spec
         type: agent
-        description: The spec lens - the hub's spec-reviewer agent on the round's commits; read only.
+        description: The spec lens on the commits; it must leave the checkout's git status as it was.
         depends_on: [check]
         when: "$check.output.passed == true"
-        prompt_file: lens.md
+        context: fresh
+        prompt_file: spec-lens.md
         cwd: $worktree.output.path
         mutates_checkout: false
         with:
-          agent: spec-reviewer
-          reviewer: spec
           ticket: $INPUTS.issue
           task: $INPUTS.issue
           round: $check.output.round
@@ -131,15 +150,14 @@ nodes:
 
       - id: quality
         type: agent
-        description: The quality lens - the hub's quality-reviewer agent on the round's commits; read only.
+        description: The quality lens on the commits; it must leave the checkout's git status as it was.
         depends_on: [check]
         when: "$check.output.passed == true"
-        prompt_file: lens.md
+        context: fresh
+        prompt_file: quality-lens.md
         cwd: $worktree.output.path
         mutates_checkout: false
         with:
-          agent: quality-reviewer
-          reviewer: quality
           ticket: $INPUTS.issue
           task: $INPUTS.issue
           round: $check.output.round
@@ -180,7 +198,7 @@ nodes:
                   what: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
                   expected: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
 
-      - id: verdict
+      - id: review
         type: script
         description: The lenses' verdicts joined - PASS only when both pass.
         depends_on: [spec, quality]
@@ -198,6 +216,42 @@ nodes:
                 quality: {type: string, enum: [PASS, FAIL]}
               required: [spec, quality]
           required: [verdict, lenses]
+
+      - id: notes
+        type: script
+        description: The check's result and the spec findings, for the next round (a lens not run reads empty).
+        depends_on: [check, spec]
+        trigger_rule: none_failed_min_one_success
+        runtime: python
+        script: feedback.py
+        args: [--check, $check.output]
+        stdin: $spec.output
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            check: {type: [object, "null"]}
+            findings: {type: array}
+            omitted: {type: integer, minimum: 0}
+          required: [check, findings, omitted]
+
+      - id: feedback
+        type: script
+        description: The notes and the quality findings, blocking first, within the 32 KiB budget.
+        depends_on: [notes, quality]
+        trigger_rule: none_failed_min_one_success
+        runtime: python
+        script: feedback.py
+        args: [--notes, $notes.output]
+        stdin: $quality.output
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            check: {type: [object, "null"]}
+            findings: {type: array}
+            omitted: {type: integer, minimum: 0}
+          required: [check, findings, omitted]
 
   - id: commits
     type: shell
@@ -218,7 +272,7 @@ nodes:
     type: shell
     description: Push the branch and open its PR, or find the one open.
     depends_on: [commits]
-    when: "$commits.output.count > 0 && $commits.output.dirty == false"
+    when: "$rounds.output.verdict.status != 'blocked' && $commits.output.count > 0 && $commits.output.dirty == false"
     command: [hub, step, pr, --issue, $INPUTS.issue, --target, $worktree.output.target]
     retry: {max_attempts: 0}
     output_format:
@@ -240,7 +294,9 @@ nodes:
       - step
       - report
       - --status
-      - done
+      - $rounds.output.verdict.status
+      - --question
+      - $rounds.output.verdict.question
       - --commits
       - $commits.output.count
       - --dirty

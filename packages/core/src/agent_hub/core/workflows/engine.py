@@ -32,7 +32,8 @@ body nodes still run; then the group fails with that node's kind. Otherwise ``un
 the iteration's outputs), then ``until_bash`` (exit 0, through the runner as a shell call under
 the group's id) end it, with an output mapping each body id to its output; past
 ``max_iterations`` it fails ``max_iterations``. A group is never retried. Without
-``fresh_context``, a body agent resumes its own session of the iteration before.
+``fresh_context``, a body agent resumes its own session of the iteration before, unless it sets
+``context: fresh``.
 """
 
 import json
@@ -551,8 +552,11 @@ class _Run:
         if not isinstance(node.context, str):
             return self.sessions.get(node.context.resume)
         group = self.owner.get(node.id)
-        # A group's body agent: its own session of the iteration before (popped at the start).
-        return None if group is None or group.fresh_context else self.sessions.get(node.id)
+        # A group's body agent: its own session of the iteration before (popped at the start),
+        # unless the group or the agent itself (an explicit ``context: fresh``) asks for a new one.
+        if group is None or group.fresh_context or "context" in node.model_fields_set:
+            return None
+        return self.sessions.get(node.id)
 
     def _call(
         self, node: ExecutableNode, attempt: int, *, iteration: int, resume: str | None

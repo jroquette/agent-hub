@@ -479,13 +479,28 @@
     "workflows/sdlc/deliver.yaml": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/fixtures/deliver-blocked.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/fixtures/deliver-check-error.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/deliver-check-red.yaml": {
       "ownership": "seeded"
     },
     "workflows/sdlc/fixtures/deliver-green.yaml": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/fixtures/deliver-lens-failed.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/fixtures/deliver-max-rounds.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/deliver-no-changes.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/deliver-pr-failure.yaml": {
       "ownership": "seeded"
     },
     "workflows/sdlc/fixtures/deliver-rework.yaml": {
@@ -503,13 +518,19 @@
     "workflows/sdlc/prompts/implement.md": {
       "ownership": "seeded"
     },
-    "workflows/sdlc/prompts/lens.md": {
+    "workflows/sdlc/prompts/quality-lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/prompts/spec-lens.md": {
       "ownership": "seeded"
     },
     "workflows/sdlc/review.yaml": {
       "ownership": "seeded"
     },
     "workflows/sdlc/scripts/check.py": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/scripts/feedback.py": {
       "ownership": "seeded"
     },
     "workflows/sdlc/scripts/verdict.py": {

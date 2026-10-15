@@ -1,5 +1,5 @@
-# Rework, then green: round 1 the check is red (no review), round 2 the spec lens fails it,
-# round 3 both lenses pass and the PR opens.
+# Rework, then green: round 1 the check is red, round 2 the spec lens fails it, round 3 both lenses
+# pass and the PR opens.
 workflow: deliver
 inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
 stubs:
@@ -14,12 +14,15 @@ stubs:
       prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   rounds__implement: {text: Changes the code.}
+  rounds__verdict: {output: {status: done, summary: Changes the code., question: ""}}
   rounds__check: [{output: {passed: false, exit_code: 2, round: 1, tail: "FAILED test_api\n"}}, {output: {passed: true, exit_code: 0, round: 2, tail: "ok\n"}}, {output: {passed: true, exit_code: 0, round: 3, tail: "ok\n"}}]
   rounds__spec: [{output: {schema: agent-hub/review/1, reviewer: spec, ticket: DEM-1, task: DEM-1, round: 2, commit: 0a1b2c3d, verdict: FAIL, findings: [{id: F1, kind: missing, severity: blocking, path: src/api.py, line: 12, acs: [AC-1], what: The endpoint is not added., expected: The issue's endpoint exists.}]}}, {output: {schema: agent-hub/review/1, reviewer: spec, ticket: DEM-1, task: DEM-1, round: 3, commit: 0a1b2c3d, verdict: PASS, findings: []}}]
   rounds__quality: [{output: {schema: agent-hub/review/1, reviewer: quality, ticket: DEM-1, task: DEM-1, round: 2, commit: 0a1b2c3d, verdict: PASS, findings: []}}, {output: {schema: agent-hub/review/1, reviewer: quality, ticket: DEM-1, task: DEM-1, round: 3, commit: 0a1b2c3d, verdict: PASS, findings: []}}]
-  rounds__verdict: [{output: {verdict: FAIL, lenses: {spec: FAIL, quality: PASS}}}, {output: {verdict: PASS, lenses: {spec: PASS, quality: PASS}}}]
+  rounds__review: [{output: {verdict: FAIL, lenses: {spec: FAIL, quality: PASS}}}, {output: {verdict: PASS, lenses: {spec: PASS, quality: PASS}}}]
+  rounds__notes: {output: {check: {passed: true, exit_code: 0, tail: "ok\n"}, findings: [], omitted: 0}}
+  rounds__feedback: {output: {check: {passed: true, exit_code: 0, tail: "ok\n"}, findings: [], omitted: 0}}
   commits: {output: {count: 1, subjects: ["feat(api): change (DEM-1)"], summary: Adds the change., dirty: false}}
   pr: {output: {url: "https://github.com/acme/demo-api/pull/99", found: false, summary: Adds the change., title_unmatched: null}}
   report: {output: {delivery: delivered, stage: "", reason: "", question: "", pr: "https://github.com/acme/demo-api/pull/99", summary: Adds the change.}}
 expect: {status: done, outcome: delivered}
-reached: [worktree, rounds, rounds__implement, rounds__check, rounds__spec, rounds__quality, rounds__verdict, commits, pr, report]
+reached: [worktree, rounds, rounds__implement, rounds__verdict, rounds__check, rounds__spec, rounds__quality, rounds__review, rounds__notes, rounds__feedback, commits, pr, report]
