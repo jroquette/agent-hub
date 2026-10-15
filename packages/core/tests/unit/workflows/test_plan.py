@@ -366,3 +366,24 @@ def test_shows_ten_names_then_a_count_when_the_cycle_is_long() -> None:
 
     names = ", ".join(f"n{index}" for index in range(10))
     assert message == f"a cycle runs through the nodes {names} and 2 more"
+
+
+def test_refuses_reference_when_agent_cwd_names_unknown_node() -> None:
+    node = {"id": "a", "type": "loop", "prompt": "Go.", "max_iterations": 1, "until": "DONE"}
+
+    assert problems_of({**node, "cwd": "$ghost.output.path"}) == [
+        ("nodes[0].cwd", 'no node has the id "ghost"')
+    ]
+
+
+def test_refuses_stdin_reference_when_unknown_or_not_whole() -> None:
+    nodes = (
+        shell("a"),
+        shell("b", "a", stdin="$ghost.output"),
+        shell("c", "a", stdin="x $a.output"),
+    )
+
+    assert problems_of(*nodes) == [
+        ("nodes[1].stdin", 'no node has the id "ghost"'),
+        ("nodes[2].stdin", "a reference fills the whole stdin, or none is used"),
+    ]

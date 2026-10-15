@@ -42,6 +42,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   by the same code as the Live tiles, so a sessions list can show what Live shows (AGH-236).
 - `GET /api/v1/agent-sessions` and `GET /api/v1/agent-sessions/{id}` carry `observed_session_id`, the observed
   session's id once its twin has been observed, else `null`, so a list can show a driven session once (AGH-236).
+- The built-in `issue-to-pr` workflow (inputs `issue`, `repo`, `issue_text`) takes one issue to a PR as `hub run` does:
+  `hub step worktree`, one implementing session in the worktree with `hub run`'s prompt, `hub step verdict`,
+  `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's outcome;
+  no node retries. Its fixtures (delivered, no commit, blocked, dirty tree, error, gate failure, PR failure) run in
+  `hub workflow test`. Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured
+  repo; shell and script nodes take an optional `stdin`, a literal or one whole reference written to the child (at
+  most 1 MiB, as an agent's reply, `hub run`'s session cap), which carries the reply to `hub step verdict`; the dry
+  run shows it (AGH-223).
 
 ### Changed
 
