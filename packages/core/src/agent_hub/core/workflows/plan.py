@@ -6,7 +6,9 @@ and name a declared input, a ``with`` value of its node or an upstream node, its
 that node's ``output_format``; argv lists follow ``check_argv`` (a whole element, never the
 program nor a ``-c`` script); a hub step node's ``cwd`` holds none; ``context.resume`` names an
 upstream agent; and ``returns``/``outcome_field`` name a node and a required boolean or enum
-string of its output.
+string of its output. The layers are then split where nodes may not run concurrently: a read-only
+node (``mutates_checkout: false``) never shares one with a node that may change the checkout, and
+two agents resuming one session never share one.
 
 A ``loop_group``'s body is planned the same way inside the group: its ids unique and new to the
 document, its ``depends_on`` inside the body, no cycle. A body node reads body nodes upstream of
@@ -300,14 +302,60 @@ def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
 
 
 def _recorded(document: WorkflowDocument, layers: tuple[tuple[str, ...], ...]) -> WorkflowPlan:
-    """The plan, each ``loop_group``'s body recorded as ``<group>__<id>``."""
+    """The plan, each ``loop_group``'s body recorded as ``<group>__<id>``, every layer split
+    where its nodes may not run together (``_split``)."""
+    layers = _split(layers, document.nodes)
     groups = [node for node in document.nodes if isinstance(node, LoopGroupNode)]
     if not groups:
         return WorkflowPlan(document, layers)
     recorded = {group.id: record_body(group) for group in groups}
     nodes = tuple(recorded.get(node.id, node) for node in document.nodes)
-    bodies = {group_id: _kahn_layers(group.nodes)[0] for group_id, group in recorded.items()}
+    bodies = {
+        group_id: _split(_kahn_layers(group.nodes)[0], group.nodes)
+        for group_id, group in recorded.items()
+    }
     return WorkflowPlan(document.model_copy(update={"nodes": nodes}), layers, bodies)
+
+
+def _split(
+    layers: tuple[tuple[str, ...], ...], nodes: Sequence[Node]
+) -> tuple[tuple[str, ...], ...]:
+    """Each layer as runs of nodes that may run concurrently, first fit in declaration order: a
+    read-only node (``mutates_checkout: false``) never beside one that may change the checkout,
+    and two agents never resuming one session at once."""
+    by_id = {node.id: node for node in nodes}
+    split: list[tuple[str, ...]] = []
+    for layer in layers:
+        batches: list[list[str]] = []
+        for node_id in layer:
+            node = by_id[node_id]
+            fits = (b for b in batches if not any(_clash(node, by_id[o]) for o in b))
+            batch = next(fits, None)
+            if batch is None:
+                batches.append([node_id])
+            else:
+                batch.append(node_id)
+        split.extend(tuple(batch) for batch in batches)
+    return tuple(split)
+
+
+def _clash(node: Node, other: Node) -> bool:
+    if _read_only(node) != _read_only(other):
+        return True
+    resumed = _resumed(node)
+    return resumed is not None and resumed == _resumed(other)
+
+
+def _read_only(node: Node) -> bool:
+    if isinstance(node, AgentNode | ShellNode | ScriptNode | LoopNode):
+        return not node.mutates_checkout
+    return False
+
+
+def _resumed(node: Node) -> str | None:
+    if isinstance(node, AgentNode | LoopNode) and not isinstance(node.context, str):
+        return node.context.resume
+    return None
 
 
 def _reference_problems(

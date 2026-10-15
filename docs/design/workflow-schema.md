@@ -78,8 +78,11 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 ### Running: joins, conditions, outputs, status, retry and events
 
 Kahn layers over `depends_on`, in declaration order inside a layer. A cycle, an unknown id, a reference to a node not
-upstream, or a bad `returns` or `outcome_field` is a load error. Layers run in order, in v1 one node at a time; a
-failure does not stop later layers. A node first checks its `trigger_rule` against its dependencies: `all_success`
+upstream, or a bad `returns` or `outcome_field` is a load error. A layer is split where its nodes may not run
+together: a `mutates_checkout: false` node never beside one that may change the checkout, two agents never resuming
+one session at once. Layers run in order, a layer's nodes concurrently (threads, at most 4; one at a time when it holds
+a `halt`), their records kept in declaration order; a failure does not stop later layers. A `mutates_checkout: false`
+node whose attempt changes `git status` (hub and repos) fails `config`. A node first checks its `trigger_rule` against its dependencies: `all_success`
 (default: every one completed), `one_success` (at least one), `none_failed_min_one_success` (none failed, at least one
 completed) or `all_done` (every one ended). Then `when:`: `atom (('&&' | '||') atom)*`, `&&` binding tighter, no
 parentheses or negation; an atom is `<ref> <op> <literal>` (op `==`, `!=`, `<`, `>`, `<=`, `>=`; literal `'text'`, a
@@ -155,4 +158,4 @@ out, fails the test, except an approval or wait with no stub: it pauses the run 
 
 ## Open questions
 
-- UI edits beside git; concurrent layers (`mutates_checkout`); the `content_hash` framing; the reference regex.
+- UI edits beside git; the `content_hash` framing; the reference regex.

@@ -1,5 +1,6 @@
 """The engine: layers, trigger rules, skip causes, retries, outputs, resume, status, outcome."""
 
+import threading
 from collections.abc import Mapping
 from datetime import timedelta
 
@@ -13,10 +14,15 @@ from agent_hub.core.testing.workflow_fakes import (
     ScriptedRunner,
     a_plan,
 )
-from agent_hub.core.workflows.engine import EnginePorts, WorkflowEngineError, run_workflow
+from agent_hub.core.workflows.engine import (
+    MAX_PARALLEL,
+    EnginePorts,
+    WorkflowEngineError,
+    run_workflow,
+)
 from agent_hub.core.workflows.failures import NodeFailedError, RetryRecord
 from agent_hub.core.workflows.plan import WorkflowPlan
-from agent_hub.core.workflows.ports import NodeReply
+from agent_hub.core.workflows.ports import CheckoutProbe, NodeCall, NodeReply
 from agent_hub.core.workflows.run_state import RunReport, RunState
 from agent_hub.core.workflows.substitution import NodeResult
 
@@ -60,11 +66,21 @@ class Run:
         *,
         inputs: Mapping[str, JsonValue] | None = None,
         prior: RunState | None = None,
+        checkout: CheckoutProbe | None = None,
+        max_parallel: int = MAX_PARALLEL,
     ) -> None:
         self.runner = runner or ScriptedRunner()
         self.recorder = ListRecorder()
         self.clock = FakeClock()
-        ports = EnginePorts(self.runner, self.recorder, self.clock, KeysOutputs(), lambda: 0.5)
+        ports = EnginePorts(
+            self.runner,
+            self.recorder,
+            self.clock,
+            KeysOutputs(),
+            lambda: 0.5,
+            checkout,
+            max_parallel,
+        )
         self.report: RunReport = run_workflow(plan, inputs or {}, ports, prior=prior)
 
     def status_of(self, node: str) -> tuple[str, str | None, str | None, str | None]:
@@ -76,12 +92,14 @@ def fails(kind: str = "exec_failed") -> NodeFailedError:
     return NodeFailedError(kind, "boom")  # type: ignore[arg-type]
 
 
-def test_runs_layers_in_order_one_node_at_a_time_when_graph_has_layers() -> None:
+def test_runs_layers_in_order_when_graph_has_layers() -> None:
     plan = plan_of(shell("c", "a", "b"), shell("a"), shell("b"), shell("d", "c"))
 
     run = Run(plan)
 
-    assert run.runner.ran() == ["a", "b", "c", "d"]
+    # a and b share a layer and run concurrently; their records keep declaration order.
+    assert sorted(run.runner.ran()[:2]) == ["a", "b"]
+    assert run.runner.ran()[2:] == ["c", "d"]
     assert [start.node for start in run.recorder.starts] == ["a", "b", "c", "d"]
     assert run.report.status == "done"
 
@@ -152,7 +170,8 @@ def test_runs_later_layers_when_a_node_fails() -> None:
 
     run = Run(plan, ScriptedRunner({"a": [fails()]}))
 
-    assert run.runner.ran() == ["a", "b", "c"]
+    assert sorted(run.runner.ran()[:2]) == ["a", "b"]
+    assert run.runner.ran()[2] == "c"
     assert run.report.status == "failed"
     assert run.report.reason == "a"
 
@@ -458,7 +477,7 @@ def test_ends_the_step_unknown_and_the_run_failed_when_a_port_raises() -> None:
 
     assert run.status_of("a") == ("failed", None, None, "unknown")
     assert run.recorder.end_of("a").detail == "OSError"
-    assert run.runner.ran() == ["a", "b"]
+    assert sorted(run.runner.ran()) == ["a", "b"]
     assert [end.status for end in run.recorder.run_ends] == ["failed"]
     assert run.report.state.attempts == {"a": 1, "b": 1}
 
@@ -550,7 +569,7 @@ def test_fails_the_node_and_ends_the_run_when_jitter_raises() -> None:
     ports = EnginePorts(runner, recorder, FakeClock(), KeysOutputs(), broken)
     report = run_workflow(plan, {}, ports)
 
-    assert runner.ran() == ["a", "b"]
+    assert sorted(runner.ran()) == ["a", "b"]
     assert (report.status, report.reason) == ("failed", "a")
     assert [end.status for end in recorder.run_ends] == ["failed"]
     assert recorder.retries == []
@@ -571,3 +590,116 @@ def test_fails_the_node_and_ends_the_run_when_the_clock_cannot_sleep() -> None:
     assert runner.ran() == ["a"]
     assert report.status == "failed"
     assert [end.status for end in recorder.run_ends] == ["failed"]
+
+
+# Concurrent layers (task 8.3): threads, declaration-order records, the checkout check.
+
+
+class GatedRunner(ScriptedRunner):
+    """``first`` answers only once ``second`` has run: they can only both end concurrently."""
+
+    def __init__(self, first: str, second: str, wait: float = 5.0) -> None:
+        super().__init__()
+        self.first, self.second, self.wait = first, second, wait
+        self.second_ran = threading.Event()
+
+    def run(self, call: NodeCall) -> NodeReply:
+        if call.node.id == self.first and not self.second_ran.wait(timeout=self.wait):
+            raise TimeoutError
+        try:
+            return super().run(call)
+        finally:
+            if call.node.id == self.second:
+                self.second_ran.set()
+
+
+def test_records_in_declaration_order_when_parallel_nodes_end_out_of_order() -> None:
+    runner = GatedRunner("a", "b")
+
+    run = Run(plan_of(shell("a"), shell("b"), shell("c", "a", "b")), runner)
+
+    assert runner.ran() == ["b", "a", "c"]
+    assert [start.node for start in run.recorder.starts] == ["a", "b", "c"]
+    assert [end.node for end in run.recorder.ends] == ["a", "b", "c"]
+    assert run.report.status == "done"
+
+
+def test_runs_one_node_at_a_time_when_a_parallel_layer_holds_a_halt() -> None:
+    halt = {"id": "stop", "type": "halt", "reason": "Stop."}
+
+    run = Run(plan_of(halt, shell("b")))
+
+    assert run.runner.ran() == []
+    assert run.report.status == "cancelled"
+
+
+def test_runs_one_node_at_a_time_when_parallel_is_bounded_to_one() -> None:
+    runner = GatedRunner("a", "b", wait=0.05)
+
+    run = Run(plan_of(shell("a"), shell("b")), runner, max_parallel=1)
+
+    assert run.status_of("a") == ("failed", None, None, "unknown")
+    assert run.recorder.end_of("a").detail == "TimeoutError"
+    assert run.status_of("b") == ("ok", None, None, None)
+
+
+class Checkout:
+    """A checkout probe answering from a list, one status per call."""
+
+    def __init__(self, *statuses: str) -> None:
+        self.statuses = list(statuses)
+
+    def status(self) -> str:
+        return self.statuses.pop(0)
+
+
+def run_read_only(checkout: CheckoutProbe | None) -> Run:
+    return Run(plan_of(shell("r", mutates_checkout=False)), checkout=checkout)
+
+
+def test_passes_a_read_only_node_when_the_checkout_status_is_unchanged() -> None:
+    run = run_read_only(Checkout(" M a.py", " M a.py"))
+
+    assert run.status_of("r") == ("ok", None, None, None)
+
+
+def test_fails_config_without_retry_when_a_read_only_node_changes_the_checkout() -> None:
+    run = run_read_only(Checkout("", "?? new.py"))
+
+    assert run.status_of("r") == ("failed", None, None, "config")
+    assert "mutates_checkout" in run.recorder.end_of("r").detail
+    assert run.report.status == "failed"
+
+
+def test_fails_config_when_a_read_only_node_runs_without_a_checkout_probe() -> None:
+    run = run_read_only(None)
+
+    assert run.status_of("r") == ("failed", None, None, "config")
+
+
+def test_splits_a_parallel_layer_when_read_only_and_writing_nodes_share_it() -> None:
+    plan = plan_of(
+        shell("r1", mutates_checkout=False), shell("w"), shell("r2", mutates_checkout=False)
+    )
+
+    assert plan.layers == (("r1", "r2"), ("w",))
+
+
+def test_splits_a_parallel_layer_when_two_agents_resume_one_session() -> None:
+    plan = plan_of(
+        agent("plan"),
+        agent("a", "plan", context={"resume": "plan"}),
+        agent("b", "plan", context={"resume": "plan"}),
+        agent("c", "plan"),
+    )
+
+    assert plan.layers == (("plan",), ("a", "c"), ("b",))
+
+
+def test_names_the_first_failed_node_in_declaration_order_when_parallel_nodes_fail() -> None:
+    runner = GatedRunner("a", "b")
+    runner.replies = {"a": [fails()], "b": [fails()]}
+
+    run = Run(plan_of(shell("a"), shell("b")), runner)
+
+    assert (run.report.status, run.report.reason) == ("failed", "a")
