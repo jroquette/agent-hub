@@ -9,16 +9,20 @@ from pathlib import Path
 
 import pytest
 
+from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.document import parse_workflow
-from agent_hub.core.workflows.plan import plan_workflow
+from agent_hub.core.workflows.dry_run import placeholder
+from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.generator.workflow_discovery import discover_workflows
 from agent_hub.generator.workflow_fixtures import (
+    MAX_PACK_FIXTURES,
     FixtureFile,
     FixtureRun,
     pack_fixtures,
     run_fixtures,
     skeleton_yaml,
 )
+from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 from agent_hub.generator.workflow_yaml import WorkflowFileError, load_workflow_bytes
 
 SAMPLES = Path(__file__).parents[3] / "core" / "tests" / "data"
@@ -127,7 +131,7 @@ def test_writes_yaml_that_loads_and_passes_when_a_skeleton_is_asked(hub: Path) -
     plan = plan_workflow(
         parse_workflow(load_workflow_bytes(WORKFLOW.encode(), source="w").document)
     )
-    write(hub / "workflows" / "pack" / "fixtures" / "demo.yaml", skeleton_yaml(plan))
+    write(hub / "workflows" / "pack" / "fixtures" / "demo.yaml", skeleton_yaml(plan).text)
 
     assert runs_of(hub)["demo.yaml"].problems == ()
 
@@ -153,3 +157,75 @@ def test_passes_without_warnings_when_a_sample_fixture_runs_through_the_engine(
     [run] = [run for run in run_fixtures(found) if run.path == fixture]
 
     assert (run.problems, run.warnings) == ((), ())
+
+
+def plan_of(text: str) -> WorkflowPlan:
+    return plan_workflow(parse_workflow(load_workflow_bytes(text.encode(), source="w").document))
+
+
+def test_fails_the_fixture_when_its_workflow_is_not_text(hub: Path) -> None:
+    write(hub / "workflows" / "pack" / "fixtures" / "list.yaml", "workflow: [demo]\n")
+    write(hub / "workflows" / "pack" / "fixtures" / "map.yaml", "workflow: {a: 1}\n")
+
+    runs = runs_of(hub)
+
+    assert runs["list.yaml"].problems[0] == "line 1: workflow: Input should be a valid string"
+    assert runs["map.yaml"].problems[0] == "line 1: workflow: Input should be a valid string"
+
+
+def test_reads_no_more_files_when_the_pack_is_past_the_fixture_cap(hub: Path) -> None:
+    folder = hub / "workflows" / "pack" / "fixtures"
+    for index in range(MAX_PACK_FIXTURES + 1):
+        write(folder / f"f{index:03}.yaml", PASSING)
+
+    found = pack_fixtures(hub / "workflows" / "pack")
+
+    *read, refused = found
+    assert [item.path.name for item in read] == [  # type: ignore[union-attr]
+        f"f{index:03}.yaml" for index in range(MAX_PACK_FIXTURES)
+    ]
+    assert isinstance(refused, WorkflowFileError)
+    assert (refused.source, refused.reason) == (
+        str(folder),
+        f"more than {MAX_PACK_FIXTURES} fixture files; the rest is not read",
+    )
+
+
+def test_reports_unreadable_files_only_in_the_named_pack_when_a_name_is_given(hub: Path) -> None:
+    write(hub / "workflows" / "pack" / "fixtures" / "bad.yaml", "workflow: a\nworkflow: b\n")
+    write(hub / "workflows" / "other" / "solo.yaml", WORKFLOW.replace("demo", "solo"))
+    write(hub / "workflows" / "other" / "fixtures" / "bad.yaml", "workflow: [x]\n")
+
+    assert [run.path.parent.parent.name for run in runs_of_all(hub, only="demo")] == ["pack"]
+    assert [run.path.parent.parent.name for run in runs_of_all(hub, only="solo")] == ["other"]
+
+
+def runs_of_all(hub: Path, *, only: str) -> tuple[FixtureRun, ...]:
+    return run_fixtures(discover_workflows(hub, builtin_root=hub / "no-builtins"), only=only)
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {
+            "type": "object",
+            "properties": {"n": {"type": "integer", "minimum": 1}},
+            "required": ["n"],
+        },
+        {"type": "array", "items": {"enum": ["a", "b"]}, "minItems": 2},
+        {"type": ["string", "null"], "default": "x"},
+    ],
+)
+def test_passes_the_json_schema_check_when_a_simple_schema_gets_a_placeholder(
+    schema: dict[str, JsonValue],
+) -> None:
+    JsonSchemaOutputs().check(schema, placeholder(schema))
+
+
+def test_tells_the_run_status_when_the_skeleton_dry_run_does_not_end_done() -> None:
+    broken = WORKFLOW + '    output_format: {type: string, pattern: "^ok$"}\n'
+
+    assert (skeleton_yaml(plan_of(WORKFLOW)).status, skeleton_yaml(plan_of(broken)).status) == (
+        "done",
+        "failed",
+    )

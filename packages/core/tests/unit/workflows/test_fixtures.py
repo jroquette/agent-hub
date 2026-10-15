@@ -1,4 +1,5 @@
-"""Fixtures: a dry run and what it must show (status, outcome, failed and reached sets)."""
+"""Fixtures: a dry run and what it must show (status, outcome, failed and reached sets;
+AC-213.11)."""
 
 from typing import Any
 

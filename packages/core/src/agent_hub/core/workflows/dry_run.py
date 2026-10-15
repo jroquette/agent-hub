@@ -38,6 +38,9 @@ from agent_hub.core.workflows.substitution import canonical_text
 
 DRY_RUN_START: Final = datetime(2000, 1, 1, tzinfo=UTC)
 PLACEHOLDER_TEXT: Final = "TODO"
+# Bounds of one placeholder: items per array, and schema nodes visited in all.
+MAX_PLACEHOLDER_ITEMS: Final = 3
+PLACEHOLDER_BUDGET: Final = 1000
 _ANSWERS: Final = frozenset({"output", "text", "fail"})
 _SCALARS: Final[Mapping[str, JsonValue]] = {
     "boolean": False,
@@ -127,23 +130,54 @@ def skeleton_stub(node: Node) -> dict[str, JsonValue]:
 
 def placeholder(schema: Mapping[str, JsonValue]) -> JsonValue:
     """A value meant to fit ``schema``: its ``const``, ``default`` or first ``enum``, else one per
-    ``type`` (an object's required properties, an array's ``minItems``, a number's ``minimum``)."""
-    for key in ("const", "default"):
-        if key in schema:
-            return schema[key]
-    enum = schema.get("enum")
-    if isinstance(enum, list) and enum:
-        return enum[0]
-    kind = schema.get("type")
-    if isinstance(kind, list):
-        kind = kind[0] if kind else None
-    if kind == "object":
-        return _object_placeholder(schema)
-    if kind == "array":
-        count = schema.get("minItems")
-        items = _sub_schema(schema.get("items"))
-        return [placeholder(items) for _ in range(count if type(count) is int else 0)]
-    return _scalar_placeholder(kind, schema.get("minimum"))
+    ``type``: an object's ``required`` properties, an array's ``minItems`` (at most
+    ``MAX_PLACEHOLDER_ITEMS``), a number's ``minimum``, ``false``, ``0``, ``null`` or ``TODO``.
+
+    Only those keywords are read: ``pattern``, ``minLength``, ``anyOf``/``oneOf``, ``$ref`` and
+    the rest are not, so a schema leaning on them may not accept the value. At most
+    ``PLACEHOLDER_BUDGET`` schema nodes are visited; past that an object is ``{}`` and an array
+    ``[]``.
+    """
+    return _Placeholder().value(schema)
+
+
+class _Placeholder:
+    """One ``placeholder`` call: the schema nodes it may still visit."""
+
+    def __init__(self) -> None:
+        self.left = PLACEHOLDER_BUDGET
+
+    def value(self, schema: Mapping[str, JsonValue]) -> JsonValue:
+        self.left -= 1
+        for key in ("const", "default"):
+            if key in schema:
+                return schema[key]
+        enum = schema.get("enum")
+        if isinstance(enum, list) and enum:
+            return enum[0]
+        kind = schema.get("type")
+        if isinstance(kind, list):
+            kind = kind[0] if kind else None
+        if kind == "object":
+            return {} if self.left < 0 else self._object(schema)
+        if kind == "array":
+            return [] if self.left < 0 else self._array(schema)
+        return _scalar_placeholder(kind, schema.get("minimum"))
+
+    def _object(self, schema: Mapping[str, JsonValue]) -> JsonValue:
+        properties, required = schema.get("properties"), schema.get("required")
+        known = properties if isinstance(properties, dict) else {}
+        names = required if isinstance(required, list) else []
+        return {
+            name: self.value(_sub_schema(known.get(name)))
+            for name in names
+            if isinstance(name, str)
+        }
+
+    def _array(self, schema: Mapping[str, JsonValue]) -> JsonValue:
+        count, items = schema.get("minItems"), _sub_schema(schema.get("items"))
+        wanted = min(count, MAX_PLACEHOLDER_ITEMS) if type(count) is int else 0
+        return [self.value(items) for _ in range(wanted)]
 
 
 def _scalar_placeholder(kind: JsonValue, minimum: JsonValue) -> JsonValue:
@@ -151,15 +185,6 @@ def _scalar_placeholder(kind: JsonValue, minimum: JsonValue) -> JsonValue:
     if kind in {"integer", "number"} and type(minimum) in {int, float}:
         return minimum
     return _SCALARS.get(kind, PLACEHOLDER_TEXT) if isinstance(kind, str) else PLACEHOLDER_TEXT
-
-
-def _object_placeholder(schema: Mapping[str, JsonValue]) -> JsonValue:
-    properties, required = schema.get("properties"), schema.get("required")
-    known = properties if isinstance(properties, dict) else {}
-    names = (
-        [name for name in required if isinstance(name, str)] if isinstance(required, list) else []
-    )
-    return {name: placeholder(_sub_schema(known.get(name))) for name in names}
 
 
 def _sub_schema(value: JsonValue) -> Mapping[str, JsonValue]:

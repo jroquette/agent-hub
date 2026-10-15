@@ -5,6 +5,8 @@ packs the platform ships never change what a case sees.
 """
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -320,3 +322,48 @@ def test_refuses_a_builtin_workflow_when_stubs_init_names_one(hub: Path, builtin
     assert result.exit_code == 1
     assert "is a built-in workflow" in result.stderr
     assert not (builtins / "shipped" / "fixtures").exists()
+
+
+def test_writes_nothing_outside_the_pack_when_its_fixtures_folder_is_a_link(
+    hub: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    outside = tmp_path_factory.mktemp("outside")
+    (hub / "workflows/demo/fixtures").symlink_to(outside, target_is_directory=True)
+
+    result = run(hub, "test", "check", "--stubs-init")
+
+    assert result.exit_code == 1
+    assert "workflows/demo/fixtures is a link; nothing is written" in result.stderr
+    assert list(outside.iterdir()) == []
+
+
+def test_says_how_the_skeleton_run_ended_when_it_does_not_end_done(hub: Path) -> None:
+    pattern = '    output_format: {type: string, pattern: "^ok$"}\n'
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML + pattern)
+
+    result = run(hub, "test", "check", "--stubs-init")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "wrote workflows/demo/fixtures/check.yaml",
+        "note: its own dry run ended failed; fill in the stubs the placeholders could not satisfy",
+    ]
+
+
+def test_spawns_no_child_and_records_nothing_when_fixtures_run(
+    hub: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("hub workflow test started a child process")
+
+    for module, name in [(subprocess, "Popen"), (os, "posix_spawn"), (os, "fork"), (os, "execv")]:
+        monkeypatch.setattr(module, name, refuse)
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/fixtures/green.yaml", PASSING_FIXTURE)
+
+    result = run(hub, "test")
+
+    assert result.exit_code == 0, result.output
+    assert not (hub / ".agent-runs").exists()
+    assert not (tmp_path / "xdg").exists()
