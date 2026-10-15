@@ -250,6 +250,8 @@ describe("SessionsListScreen filter-requests", () => {
     const afterPeriod = (await settled(requests, 5)).slice(4);
     expect(afterPeriod.map((url) => url.searchParams.get("status"))).toEqual(["ended"]);
     expect(afterPeriod[0]?.searchParams.has("from")).toBe(true);
+    // The period filters Ended only, and the count line says so.
+    expect(await screen.findByText(/· Ended: last 24 h ·/)).toBeInTheDocument();
 
     const repo = screen.getByRole("textbox", { name: "Repo" });
     fireEvent.change(repo, { target: { value: "demo" } });
