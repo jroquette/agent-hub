@@ -252,6 +252,7 @@ describe("AgentSessionScreen (streaming-batch)", () => {
     chat.runFrame();
 
     expect(chat.commits()).toBe(1);
+    expect(parses.count).toBeLessThanOrEqual(1);
     const bubbles = screen.getAllByRole("article", { name: "Claude" });
     expect(bubbles[1]).toHaveTextContent("a".repeat(100));
   });

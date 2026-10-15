@@ -1,13 +1,36 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { aDeltaFrame, aLogRecord } from "../../testing/builders";
 import { seriousViolations } from "../../testing/axe";
 import { CostMeter } from "./CostMeter";
 import { TodoList } from "./TodoList";
-import { Transcript } from "./Transcript";
+import { FIRST_ENTRIES, Transcript } from "./Transcript";
 import { initialTranscript, reduceTranscript, type StreamItem } from "./transcript";
+
+/** Renders of Markdown (each parses its source) and of tool cards. */
+const renders = vi.hoisted(() => ({ markdown: 0, tool: 0 }));
+vi.mock("../../components/Markdown", async (original) => {
+  const real = await original<typeof import("../../components/Markdown")>();
+  return {
+    ...real,
+    Markdown: (props: Parameters<typeof real.Markdown>[0]) => {
+      renders.markdown += 1;
+      return real.Markdown(props);
+    },
+  };
+});
+vi.mock("./ToolCallCard", async (original) => {
+  const real = await original<typeof import("./ToolCallCard")>();
+  return {
+    ...real,
+    ToolCallCard: (props: Parameters<typeof real.ToolCallCard>[0]) => {
+      renders.tool += 1;
+      return real.ToolCallCard(props);
+    },
+  };
+});
 
 /** A scripted stream: a message, thinking, two deltas, an Edit and its result, todos, a result. */
 function scripted(extra: StreamItem[] = []): StreamItem[] {
@@ -157,5 +180,141 @@ describe("Transcript (transcript)", () => {
 
     expect(screen.getByText(/No messages yet/)).toBeInTheDocument();
     expect(screen.getByRole("log")).toHaveAttribute("aria-busy", "false");
+  });
+});
+
+describe("Transcript (streaming-batch) working row", () => {
+  const running: StreamItem = { type: "status", status: { status: "running" } };
+  const call: StreamItem = { type: "record", record: aLogRecord("tool.call", { seq: 1 }) };
+  const result: StreamItem = { type: "record", record: aLogRecord("tool.result", { seq: 2 }) };
+  const delta: StreamItem = { type: "delta", delta: aDeltaFrame({ after_seq: 2, block: 1 }) };
+  const row = () => screen.queryByRole("status");
+
+  it.each([
+    ["a running tool", [running, call], "Claude is working · Edit"],
+    ["a finished tool", [running, call, result], "Claude is working"],
+    ["streaming text", [running, call, result, delta], null],
+    ["an idle session", [call], null],
+    ["a waiting permission", [{ type: "status", status: { status: "waiting_permission" } }], null],
+  ] as const)("shows the working row for %s only while running with no text", (_, items, text) => {
+    render(<Transcript state={items.reduce(reduceTranscript, initialTranscript())} />);
+
+    if (text === null) expect(row()).toBeNull();
+    else expect(row()).toHaveTextContent(new RegExp(`^${text}$`));
+  });
+
+  it("shows a caret on the streaming bubble only", () => {
+    render(<Transcript state={[running, delta].reduce(reduceTranscript, initialTranscript())} />);
+
+    const bubble = screen.getByRole("article", { name: "Claude" });
+    expect(bubble.querySelector(".as-caret")).toHaveAttribute("aria-hidden", "true");
+  });
+});
+
+// Building and fully rendering 2,000 entries takes seconds in jsdom; only the first render is timed.
+describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /** Animation frames run when the test says so. */
+  function manualFrames() {
+    let due: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => due.push(callback));
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    return () => {
+      const run = due;
+      due = [];
+      act(() => {
+        for (const callback of run) callback(0);
+      });
+    };
+  }
+
+  /** 2,000 entries: a message, a reply and a tool call per turn, then `last`. */
+  function longState(last: StreamItem) {
+    const items: StreamItem[] = [];
+    for (let seq = 1; seq < 2000; seq += 3) {
+      items.push(
+        { type: "record", record: aLogRecord("user.message", { seq }) },
+        {
+          type: "record",
+          record: aLogRecord("text", { seq: seq + 1, body: { text: `Reply ${String(seq)}` } }),
+        },
+        {
+          type: "record",
+          record: aLogRecord("tool.call", {
+            seq: seq + 2,
+            body: { tool_use_id: `t${String(seq)}`, name: "Bash", input: { command: "ls" } },
+          }),
+        },
+      );
+    }
+    return [...items, last].reduce(reduceTranscript, initialTranscript());
+  }
+  const delta = (index: number, text: string): StreamItem => ({
+    type: "delta",
+    delta: aDeltaFrame({ after_seq: 2001, block: 1, index, text }),
+  });
+
+  it("renders 2,000 entries in under a second and a delta re-renders only the streaming entry", () => {
+    const runFrame = manualFrames();
+    const state = longState(delta(0, "Wor"));
+    expect(state.entries).toHaveLength(2002);
+
+    const started = performance.now();
+    const view = render(<Transcript state={state} />);
+    expect(performance.now() - started).toBeLessThan(1000);
+    const log = screen.getByRole("log");
+    expect(log.children).toHaveLength(FIRST_ENTRIES);
+    expect(log).toHaveAttribute("aria-busy", "true");
+    runFrame();
+    expect(log.children).toHaveLength(2002);
+
+    renders.markdown = 0;
+    renders.tool = 0;
+    view.rerender(<Transcript state={reduceTranscript(state, delta(1, "king"))} />);
+
+    expect(renders).toEqual({ markdown: 1, tool: 0 });
+    const streaming = screen.getAllByRole("article", { name: "Claude" }).at(-1);
+    expect(streaming).toHaveTextContent("Working");
+    expect(streaming?.querySelector(".as-caret")).not.toBeNull();
+    expect(streaming?.parentElement).not.toHaveClass("as-settled");
+    expect(screen.getAllByRole("article", { name: "Claude" })[0]?.parentElement).toHaveClass(
+      "as-settled",
+    );
+  });
+
+  it("first renders from the oldest pending card and keeps it in view as earlier entries come", () => {
+    const runFrame = manualFrames();
+    const request = aLogRecord("permission.request", { seq: 2002 });
+    const state = longState({ type: "record", record: request });
+    const moved = { ...state, entries: [...state.entries] };
+    const card = moved.entries.pop();
+    if (!card) throw new Error("no card");
+    moved.entries.splice(100, 0, card);
+    // 10 px per entry shown; the card sits at its index, the scroller writes are recorded.
+    const shown = () => document.querySelectorAll(".as-entry").length;
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => shown() * 10);
+    vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.requestId ? (shown() - 1902) * 10 + 1000 : 0;
+    });
+    const top = { value: 0 };
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(() => top.value);
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation((value) => {
+      top.value = value;
+    });
+    const follow = { atBottom: false, pin: vi.fn(), release: vi.fn() };
+
+    render(<Transcript state={moved} follow={follow} />);
+    expect(screen.getByRole("log").children).toHaveLength(1902);
+    expect(top.value).toBe(984);
+    runFrame();
+
+    expect(screen.getByRole("log").children).toHaveLength(2002);
+    expect(top.value).toBe(1984);
   });
 });
