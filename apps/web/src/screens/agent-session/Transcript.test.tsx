@@ -325,7 +325,7 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
     expect(card?.closest(".as-entry")?.querySelector(".as-tool")).toHaveTextContent("ls");
   });
 
-  it("never starts the first render inside a run of calls, so the run keeps its node (tool-cards)", () => {
+  it("keeps a run's node when its earlier calls join it a frame later (tool-cards)", () => {
     const runFrame = manualFrames();
     const items: StreamItem[] = [{ type: "record", record: aLogRecord("text", { seq: 1 }) }];
     for (let seq = 2; seq < 2 + FIRST_ENTRIES + 100; seq += 1) {
@@ -341,12 +341,13 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
     render(<Transcript state={items.reduce(reduceTranscript, initialTranscript())} />);
     const log = screen.getByRole("log");
     const head = within(log).getByRole("button", { name: /^Explored/ });
-    expect(head).toHaveTextContent(`Explored · ${String(FIRST_ENTRIES + 100)} Read`);
+    expect(head).toHaveTextContent(`Explored · ${String(FIRST_ENTRIES)} Read`);
     expect(log.children).toHaveLength(1);
     runFrame();
 
     expect(log.children).toHaveLength(2);
     expect(within(log).getByRole("button", { name: /^Explored/ })).toBe(head);
+    expect(head).toHaveTextContent(`Explored · ${String(FIRST_ENTRIES + 100)} Read`);
   });
 
   it("first renders at most FIRST_ENTRIES calls of a long run that waits for you (tool-cards)", () => {
