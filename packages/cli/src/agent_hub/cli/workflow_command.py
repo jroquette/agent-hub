@@ -92,7 +92,7 @@ from agent_hub.core.workflows.engine import (
     start_inputs,
 )
 from agent_hub.core.workflows.events import WorkflowEvents
-from agent_hub.core.workflows.nodes import ScriptNode, ShellNode
+from agent_hub.core.workflows.nodes import Node, ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import RunEnd, RunRecorder
 from agent_hub.core.workflows.run_state import RunState
@@ -532,17 +532,24 @@ def _typed(text: str, kind: str, key: str) -> JsonValue:
 
 
 def _print_plan(plan: WorkflowPlan) -> None:
-    nodes = {node.id: node for node in plan.document.nodes}
+    """Each node a run would start, layer by layer; a group's body, indented, under it."""
+    nodes = {node.id: node for node in plan.all_nodes()}
     for layer in plan.layers:
         for node_id in layer:
-            node = nodes[node_id]
-            argv = node.command if isinstance(node, ShellNode) else ()
-            if isinstance(node, ScriptNode):
-                argv = (node.runtime, f"scripts/{node.script}", *node.args)
-            line = f"would run: {node_id} ({node.type})"
-            line = f"{line}: {shown_command(argv)}" if argv else line
-            stdin = node.stdin if isinstance(node, ShellNode | ScriptNode) else None
-            typer.echo(line if stdin is None else f"{line}   stdin: {shown_text(stdin)}")
+            typer.echo(_plan_line(nodes[node_id]))
+            for body_layer in plan.bodies.get(node_id, ()):
+                for body_id in body_layer:
+                    typer.echo(f"  {_plan_line(nodes[body_id])}")
+
+
+def _plan_line(node: Node) -> str:
+    argv = node.command if isinstance(node, ShellNode) else ()
+    if isinstance(node, ScriptNode):
+        argv = (node.runtime, f"scripts/{node.script}", *node.args)
+    line = f"would run: {node.id} ({node.type})"
+    line = f"{line}: {shown_command(argv)}" if argv else line
+    stdin = node.stdin if isinstance(node, ShellNode | ScriptNode) else None
+    return line if stdin is None else f"{line}   stdin: {shown_text(stdin)}"
 
 
 def _json(data: bytes) -> object:

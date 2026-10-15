@@ -475,6 +475,45 @@
     },
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
+    },
+    "workflows/sdlc/deliver.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/deliver-check-error.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/deliver-green.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/deliver-max-rounds.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/deliver-rework.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/review-fail.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/review-lens-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/review-pass.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/prompts/implement.md": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/prompts/lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/review.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/scripts/check.py": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/scripts/verdict.py": {
+      "ownership": "seeded"
     }
   },
   "lock_version": 1,

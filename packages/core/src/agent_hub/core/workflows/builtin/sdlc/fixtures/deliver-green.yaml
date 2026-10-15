@@ -1,0 +1,24 @@
+# The first round is green: the check passes, both lenses pass, the PR opens.
+workflow: deliver
+inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  rounds__implement: {text: Adds the change.}
+  rounds__check: {output: {passed: true, exit_code: 0, round: 1, tail: "ok\n"}}
+  rounds__spec: {output: {schema: agent-hub/review/1, reviewer: spec, ticket: DEM-1, task: DEM-1, round: 1, commit: 0a1b2c3d, verdict: PASS, findings: []}}
+  rounds__quality: {output: {schema: agent-hub/review/1, reviewer: quality, ticket: DEM-1, task: DEM-1, round: 1, commit: 0a1b2c3d, verdict: PASS, findings: []}}
+  rounds__verdict: {output: {verdict: PASS, lenses: {spec: PASS, quality: PASS}}}
+  commits: {output: {count: 1, subjects: ["feat(api): change (DEM-1)"], summary: Adds the change., dirty: false}}
+  pr: {output: {url: "https://github.com/acme/demo-api/pull/99", found: false, summary: Adds the change., title_unmatched: null}}
+  report: {output: {delivery: delivered, stage: "", reason: "", question: "", pr: "https://github.com/acme/demo-api/pull/99", summary: Adds the change.}}
+expect: {status: done, outcome: delivered}
+reached: [worktree, rounds, rounds__implement, rounds__check, rounds__spec, rounds__quality, rounds__verdict, commits, pr, report]

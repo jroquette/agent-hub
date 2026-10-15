@@ -38,6 +38,19 @@ SEEDED_PACK_FILES = (
     "issue-to-pr/fixtures/pr-failure.yaml",
     "issue-to-pr/issue-to-pr.yaml",
     "issue-to-pr/prompts/implement.md",
+    "sdlc/deliver.yaml",
+    "sdlc/fixtures/deliver-check-error.yaml",
+    "sdlc/fixtures/deliver-green.yaml",
+    "sdlc/fixtures/deliver-max-rounds.yaml",
+    "sdlc/fixtures/deliver-rework.yaml",
+    "sdlc/fixtures/review-fail.yaml",
+    "sdlc/fixtures/review-lens-failed.yaml",
+    "sdlc/fixtures/review-pass.yaml",
+    "sdlc/prompts/implement.md",
+    "sdlc/prompts/lens.md",
+    "sdlc/review.yaml",
+    "sdlc/scripts/check.py",
+    "sdlc/scripts/verdict.py",
 )
 CORE_SOURCES |= {
     f"workflows/{name}": (BUILTIN_PACKAGE, f"{BUILTIN_FOLDER}/{name}") for name in SEEDED_PACK_FILES
@@ -149,7 +162,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "scripts/mine_transcripts.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "scripts/recall_transcripts.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "scripts/retro_metrics.py": (Kind.GENERIC, Ownership.MANAGED, None),
-    # Row "`workflows/<pack>/**` (the built-in packs, `issue-to-pr`)": generic, seeded (AGH-227).
+    # Row "`workflows/<pack>/**` (the built-in packs, `issue-to-pr`, `sdlc`)": generic, seeded (AGH-227).
     **{f"workflows/{name}": (Kind.GENERIC, Ownership.SEEDED, None) for name in SEEDED_PACK_FILES},
 }
 
