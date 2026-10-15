@@ -367,7 +367,9 @@ no status: it comes from those events.
 
 A started child runs in its own session with stdin empty and both streams appended to
 `<hub>/.agent-runs/web/<run>.log`; its pid file `<hub>/.agent-runs/web/<run>.pid` (pid, start time, issue) is created
-exclusively, owner-only, never through a link, and removed when the child ends. A pid file whose process is gone or
+exclusively, owner-only, never through a link, locked by its writer until its record is written, and removed
+when the child ends. A file still locked by its writer (another `hub web` mid-launch) answers 409
+`workflow-run-in-use`; a folder named `<run>.pid` is skipped. A pid file whose process is gone or
 started at another time is removed when the folder is next read (at most 64 files, start times read outside the
 launcher's lock within a 2 s budget); one whose start time cannot be read in time is kept, counted live and never
 signalled. A file that changes or is taken by a new child while it is judged is kept and counted live, and a launch
