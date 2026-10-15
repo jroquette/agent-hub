@@ -10,7 +10,7 @@ string of its output.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Final
 
 from pydantic import JsonValue
@@ -33,6 +33,7 @@ from agent_hub.core.workflows.nodes import (
     ShellNode,
     required_property,
 )
+from agent_hub.core.workflows.scope import RefScope
 from agent_hub.core.workflows.substitution import (
     InputRef,
     LoopPrevRef,
@@ -57,6 +58,8 @@ class WorkflowPlan:
 
     document: WorkflowDocument
     layers: tuple[tuple[str, ...], ...]
+    # Each included node's reference scope, by id, for its prompt file (``scope.py``).
+    scopes: Mapping[str, RefScope] = field(default_factory=dict)
 
 
 def plan_workflow(
@@ -66,9 +69,10 @@ def plan_workflow(
     raises ``WorkflowLoadError`` naming every problem found, on the document's own nodes."""
     expansion = expand_includes(document, includes)
     try:
-        return _plan(expansion.document)
+        plan = _plan(expansion.document)
     except WorkflowLoadError as error:
         raise WorkflowLoadError([expansion.locate(p) for p in error.problems]) from None
+    return replace(plan, scopes=expansion.scopes) if expansion.scopes else plan
 
 
 def _plan(document: WorkflowDocument) -> WorkflowPlan:

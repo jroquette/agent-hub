@@ -23,8 +23,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
 - A workflow node of type `include` copies in another workflow of the same pack at load: its nodes become
   `<include id>__<id>`, `with:` fills its `inputs`, the include's `depends_on`/`when`/`trigger_rule` go to the block's
-  roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels, no cycles. Fixtures
-  stub the namespaced ids (AGH-228).
+  roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels and 512 nodes, no
+  cycles. A block's prompt files read its own inputs and nodes. Fixtures stub the namespaced ids (AGH-228).
 
 ### Fixed
 
