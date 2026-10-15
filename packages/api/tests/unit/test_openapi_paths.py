@@ -6,6 +6,7 @@ from agent_hub.api.openapi_paths import (
     SERVED_PATHS,
     SKILL_PATHS,
     TICKET_PATHS,
+    WORKFLOW_PATHS,
     document_paths,
 )
 from agent_hub.api.settings import ApiSettings
@@ -112,7 +113,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
     assert len(AGENT_SESSION_SPEC_PATHS) == 17
     assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
     assert SERVED_PATHS == (
-        P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS | AGENT_SESSION_PATHS
+        P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS | AGENT_SESSION_PATHS | WORKFLOW_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -121,8 +122,17 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
     # AC-164.11: today's paths plus the three skills reads, all GET, and nothing else.
     assert SKILL_PATHS == SKILL_SPEC_PATHS
     assert SERVED_PATHS == (
-        P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS | AGENT_SESSION_PATHS
+        P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS | AGENT_SESSION_PATHS | WORKFLOW_PATHS
     )
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_lists_workflow_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-213.15: today's paths plus the two workflow reads, both GET, and nothing else.
+    assert {
+        ("get", "/api/v1/workflows"),
+        ("get", "/api/v1/workflows/{project}/{name}"),
+    } == WORKFLOW_PATHS
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
