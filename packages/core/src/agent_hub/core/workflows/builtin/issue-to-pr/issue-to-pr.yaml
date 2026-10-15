@@ -4,6 +4,7 @@
 # report (no outcome: the delivery is failed); no_changes and blocked end it done. No node writes
 # the tracker: hub workflow run does, from run.end's outcome. start: verify (hub run --from
 # verify) skips the session and its verdict: the gate, PR and report run on the commits made.
+# The parent runs the hub step nodes in process with hub run's own per-call timeouts: no timeout.
 version: 1
 name: issue-to-pr
 description: One tracker issue to a PR, as hub run takes it.
@@ -29,7 +30,6 @@ nodes:
     description: Make (or keep) the issue's worktree from a fresh fetch; print the repo's target.
     command: [hub, step, worktree, --issue, $INPUTS.issue, --repo, $INPUTS.repo]
     retry: {max_attempts: 0}
-    timeout: 2h
     output_format:
       type: object
       properties:
@@ -144,7 +144,6 @@ nodes:
       - --summary
       - $verdict.output.summary
     retry: {max_attempts: 0}
-    timeout: 30m
     output_format:
       type: object
       properties:

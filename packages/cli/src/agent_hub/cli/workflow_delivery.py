@@ -23,9 +23,8 @@ run is never resumed nor abandoned (``hub workflow run`` exits 2 for either).
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from functools import partial
 from pathlib import Path
 from typing import Any, Final
 
@@ -44,6 +43,7 @@ from agent_hub.cli.run_steps import (
 from agent_hub.cli.step_command import run_in_process
 from agent_hub.cli.workflow_executors import AGENT_EFFORT
 from agent_hub.cli.workflow_runs import RecordedRun
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.model_tiers import RUN_TIER
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.issue_block import issue_block
@@ -70,6 +70,7 @@ NODE_STAGES: Final[Mapping[str, Stage]] = {
     "report": Stage.PR_OPEN,
 }
 _IMPLEMENT: Final = "implement"
+_PREFIX: Final = "hub workflow run"
 # A failed child's detail starts with "<program> exited <code>: " (an in-process hub step's is
 # its reason, as written).
 _EXITED: Final = re.compile(r"^.+? exited -?[0-9]+: ?")
@@ -92,20 +93,29 @@ def begin_delivery(
     children, client = run_setup(
         context, hub_config, hub=hub, issue=issue, repo=repo, command="workflow run"
     )
-    # The session's caps as the picked record names them: the implement node's (its defaults
-    # are hub run's), whatever a hub's own issue-to-pr holds.
+    start = RunStart.VERIFY if inputs.get(START) == RunStart.VERIFY else RunStart.IMPLEMENT
+    options = session_options(plan, children.config, start=start, given={})
+    live = begin_live_run(children, client, options=options, run_id=run_id)
+    return IssueToPr(live, prefix=_PREFIX)
+
+
+def session_options(
+    plan: WorkflowPlan, config: HubConfig, *, start: RunStart, given: Mapping[str, Any]
+) -> RunOptions:
+    """The implementing session's caps, as the picked record names them and the ``implement``
+    node runs with: each of ``given`` (``hub run``'s flags typed on its command line), else the
+    node's own (whose defaults are ``hub run``'s), whatever a hub's own issue-to-pr holds."""
     agents = (node for node in plan.document.nodes if isinstance(node, AgentNode | LoopNode))
     node = next((node for node in agents if node.id == _IMPLEMENT), None)
     limits, tier = (node.limits, node.model) if node is not None else (Limits(), RUN_TIER)
-    options = RunOptions(
+    return RunOptions(
         live=True,
-        max_turns=limits.max_turns,
-        budget=limits.max_cost_usd,
-        model=children.config.models.model_for(tier),
-        start=RunStart.VERIFY if inputs.get(START) == RunStart.VERIFY else RunStart.IMPLEMENT,
-        effort=AGENT_EFFORT,
+        max_turns=given.get("max_turns", limits.max_turns),
+        budget=given.get("budget", limits.max_cost_usd),
+        model=given.get("model", config.models.model_for(tier)),
+        start=start,
+        effort=given.get("effort", AGENT_EFFORT),
     )
-    return IssueToPr(begin_live_run(children, client, options=options, run_id=run_id))
 
 
 def delivery_problem(plan: WorkflowPlan, *, start: str = RunStart.IMPLEMENT) -> str | None:
@@ -123,6 +133,8 @@ class IssueToPr:
     """One issue-to-pr run's ``hub run`` side; ``replies`` is shared with the executors."""
 
     live: LiveRun
+    # The command a warning names: the entry point's.
+    prefix: str = "hub run"
     replies: dict[str, SessionReply] = field(default_factory=dict)
     outputs: dict[str, Output] = field(default_factory=dict)
     failed: dict[str, str] = field(default_factory=dict)
@@ -141,11 +153,14 @@ class IssueToPr:
         child is looked up now, not at import (the tests spy on ``run_child``)."""
         return {
             "replies": self.replies,
-            "hub_steps": partial(run_in_process, echo=typer.echo, prefix="hub run"),
+            "hub_steps": self._step,
             "in_session": False,
             "session": self.live.options,
             "child": child_process.run_child,
         }
+
+    def _step(self, arguments: Sequence[str], stdin: bytes) -> str:
+        return run_in_process(arguments, stdin=stdin, echo=typer.echo, prefix=self.prefix)
 
     def started(self, node: str) -> None:
         if node in NODE_STAGES and node != "report":
