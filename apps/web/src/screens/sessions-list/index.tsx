@@ -688,6 +688,7 @@ export function SessionsListScreen() {
     observed,
     driven,
     new Set(SECTIONS.filter(({ id }) => queries[id] !== null).map(({ id }) => id)),
+    queries.ended?.from ?? null,
   );
   const asked = SECTIONS.flatMap((section) => {
     if (queries[section.id] === null) return [];

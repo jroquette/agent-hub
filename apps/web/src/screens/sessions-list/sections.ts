@@ -61,20 +61,27 @@ export interface Placed {
  * Places the driven sessions into the asked sections. One without a twin joins its status's section,
  * newest `created_at` first, ahead of the observed rows (Q4). A twin is shown once, as its observed
  * row; when its driven session waits on a permission, that row moves to Waiting (needs-me first,
- * D3) and shows as waiting.
+ * D3) and shows as waiting. A loaded row naming a driven session makes it a twin even while the
+ * agent list still says otherwise. Ended's twinless rows start at `endedFrom`, as its query's
+ * `from` bounds `started_at` (O-4: the other sections are not bounded).
  */
 export function placeDriven(
   observed: Record<SectionId, readonly Session[]>,
   driven: readonly AgentSession[],
   asked: ReadonlySet<SectionId>,
+  endedFrom: string | null = null,
 ): Record<SectionId, Placed> {
+  const named = new Set(SECTIONS.flatMap(({ id }) => observed[id].map((s) => s.agent_session_id)));
+  const twinned = (a: AgentSession) => Boolean(a.observed_session_id) || named.has(a.id);
   const waitingTwins = new Set(
-    driven
-      .filter((a) => a.status === "waiting_permission" && a.observed_session_id)
-      .map((a) => a.id),
+    driven.filter((a) => a.status === "waiting_permission" && twinned(a)).map((a) => a.id),
   );
+  const inPeriod = (a: AgentSession) =>
+    endedFrom === null ||
+    sectionOf(a.status) !== "ended" ||
+    Date.parse(a.created_at) >= Date.parse(endedFrom);
   const twinless = driven
-    .filter((a) => !a.observed_session_id && asked.has(sectionOf(a.status)))
+    .filter((a) => !twinned(a) && asked.has(sectionOf(a.status)) && inPeriod(a))
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   const moved: Session[] = [];
   const kept = (id: SectionId) =>
