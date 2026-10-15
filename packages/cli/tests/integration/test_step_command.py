@@ -19,6 +19,7 @@ type CommandRunner = Callable[..., Result]
 type Workspace = Any
 
 ISSUE = ("--issue", "DEM-1", "--repo", "demo-api")
+PR_ISSUE = ("--issue", "DEM-1")
 PR_URL = "https://github.com/acme/demo-api/pull/99"
 SUBJECT = "feat(api): synthetic change (DEM-1)"
 KEY_VARIABLE = "LINEAR_API_KEY"
@@ -61,6 +62,11 @@ def made_worktree(run_command: CommandRunner, workspace: Workspace) -> dict[str,
     return output_of(step(run_command, workspace, "worktree", *ISSUE))
 
 
+def target_of(run_command: CommandRunner, workspace: Workspace) -> tuple[str, str]:
+    """``--target`` and the worktree's target, as the workflow passes it on."""
+    return "--target", json.dumps(made_worktree(run_command, workspace)["target"])
+
+
 class TestWorktree:
     def test_prints_path_branch_and_prompt_fields_when_worktree_made(
         self, run_workspace: Workspace, run_command: CommandRunner
@@ -78,6 +84,17 @@ class TestWorktree:
         assert output["hub"] == str(workspace.hub)
         assert set(output["prompt"]) == {"guard", "gate_step", "commit_shape"}
         assert "make check" in output["prompt"]["gate_step"]
+        assert output["target"]["path"] == str(worktree)
+        assert output["target"]["github"] == "acme/demo-api"
+        assert output["target"]["default_branch"] == "trunk"
+        assert output["target"]["gate"] == "make check"
+        assert set(output["target"]["conventions"]) == {
+            "branch",
+            "commit_title",
+            "pr_title",
+            "titles_configured",
+            "pr_title_explicit",
+        }
         assert "created" in result.stderr
         assert workspace.git(worktree, "rev-parse", "HEAD") == base
 
@@ -124,40 +141,50 @@ class TestCommits:
         self, run_workspace: Workspace, run_command: CommandRunner
     ) -> None:
         workspace = run_workspace.workspace
-        made_worktree(run_command, workspace)
+        target = target_of(run_command, workspace)
         commit(workspace, "feat(api): first (DEM-1)", SUBJECT)
 
-        output = output_of(step(run_command, workspace, "commits", *ISSUE))
+        output = output_of(step(run_command, workspace, "commits", *target))
 
         assert output["count"] == 2
         assert output["subjects"] == [SUBJECT, "feat(api): first (DEM-1)"]
         assert SUBJECT in output["summary"]
+        assert output["dirty"] is False
 
     def test_prints_zero_when_branch_has_no_commit(
         self, run_workspace: Workspace, run_command: CommandRunner
     ) -> None:
         workspace = run_workspace.workspace
-        made_worktree(run_command, workspace)
+        target = target_of(run_command, workspace)
 
-        output = output_of(step(run_command, workspace, "commits", *ISSUE))
+        output = output_of(step(run_command, workspace, "commits", *target))
 
-        assert output == {"count": 0, "subjects": [], "summary": ""}
+        assert output == {"count": 0, "subjects": [], "summary": "", "dirty": False}
 
-    def test_fails_when_tracked_change_left_beside_commits(
+    def test_says_dirty_when_tracked_change_left_beside_commits(
         self, run_workspace: Workspace, run_command: CommandRunner
     ) -> None:
         workspace = run_workspace.workspace
-        made_worktree(run_command, workspace)
+        target = target_of(run_command, workspace)
         commit(workspace, SUBJECT)
         with (worktree_of(workspace) / "synthetic_change.txt").open("a") as file:
             file.write("left behind\n")
 
-        result = step(run_command, workspace, "commits", *ISSUE)
+        output = output_of(step(run_command, workspace, "commits", *target))
 
-        assert result.exit_code == 1
-        assert result.stderr.splitlines() == [
-            "hub step commits: uncommitted changes in the worktree"
-        ]
+        assert (output["count"], output["dirty"]) == (1, True)
+
+    def test_refuses_target_when_path_leaves_workspace(
+        self, run_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+    ) -> None:
+        workspace = run_workspace.workspace
+        target = json.loads(target_of(run_command, workspace)[1])
+        target["path"] = str(tmp_path)
+
+        result = step(run_command, workspace, "commits", "--target", json.dumps(target))
+
+        assert result.exit_code == 2
+        assert "--target" in result.stderr
 
 
 class TestPr:
@@ -165,10 +192,10 @@ class TestPr:
         self, run_workspace: Workspace, run_command: CommandRunner
     ) -> None:
         workspace = run_workspace.workspace
-        made_worktree(run_command, workspace)
+        target = target_of(run_command, workspace)
         commit(workspace, SUBJECT)
 
-        result = step(run_command, workspace, "pr", *ISSUE, "--summary", "Adds it.")
+        result = step(run_command, workspace, "pr", *PR_ISSUE, *target, "--summary", "Adds it.")
 
         output = output_of(result)
         assert output == {
@@ -191,10 +218,10 @@ class TestPr:
         self, run_workspace: Workspace, run_command: CommandRunner
     ) -> None:
         workspace = run_workspace.workspace
-        made_worktree(run_command, workspace)
+        target = target_of(run_command, workspace)
         commit(workspace, SUBJECT)
 
-        output = output_of(step(run_command, workspace, "pr", *ISSUE, "--summary", ""))
+        output = output_of(step(run_command, workspace, "pr", *PR_ISSUE, *target, "--summary", ""))
 
         assert SUBJECT in output["summary"]
 
@@ -205,11 +232,11 @@ class TestPr:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         workspace = run_workspace.workspace
-        made_worktree(run_command, workspace)
+        target = target_of(run_command, workspace)
         commit(workspace, SUBJECT)
         monkeypatch.setenv("FAKE_GH_MODE", "fail")
 
-        result = step(run_command, workspace, "pr", *ISSUE, "--summary", "Adds it.")
+        result = step(run_command, workspace, "pr", *PR_ISSUE, *target, "--summary", "Adds it.")
 
         assert result.exit_code == 1
         assert result.stdout == ""
@@ -243,6 +270,15 @@ class TestReport:
                     "stage": "IMPLEMENTING",
                     "reason": "the implementing session stopped: Which API?",
                     "question": "Which API?",
+                },
+            ),
+            (
+                ("--status", "done", "--commits", "1", "--dirty", "true"),
+                {
+                    "delivery": "failed",
+                    "stage": "VERIFYING",
+                    "reason": "uncommitted changes in the worktree",
+                    "question": "",
                 },
             ),
             (
@@ -281,11 +317,48 @@ class TestReport:
         assert "--commits" in result.stderr
 
 
-def test_lists_four_steps_when_help_asked(
+class TestVerdict:
+    @pytest.mark.parametrize(
+        ("reply", "expected"),
+        [
+            (
+                'Done.\n{"status": "done", "summary": "Adds it.", "tests": "make check"}',
+                {"status": "done", "summary": "Adds it.", "question": ""},
+            ),
+            ("I made the change.", {"status": "done", "summary": "", "question": ""}),
+            ("", {"status": "done", "summary": "", "question": ""}),
+            (
+                'Stopping.\n{"status": "blocked", "summary": "needs a plan"}',
+                {"status": "blocked", "summary": "needs a plan", "question": "needs a plan"},
+            ),
+            (
+                "BLOCKED: the issue has an open question",
+                {
+                    "status": "blocked",
+                    "summary": "",
+                    "question": "BLOCKED: the issue has an open question",
+                },
+            ),
+        ],
+    )
+    def test_reads_reply_as_hub_run_does_when_verdict_asked(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        reply: str,
+        expected: dict[str, str],
+    ) -> None:
+        result = step(run_command, run_workspace.workspace, "verdict", "--", reply)
+
+        assert output_of(result) == expected
+
+
+def test_lists_five_steps_when_help_asked(
     run_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     result = step(run_command, run_workspace.workspace, "--help")
 
     assert result.exit_code == 0
-    for name in ("worktree", "commits", "pr", "report"):
+    for name in ("worktree", "commits", "pr", "report", "verdict"):
         assert name in result.stdout
