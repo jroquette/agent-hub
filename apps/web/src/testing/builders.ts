@@ -231,6 +231,57 @@ export function aRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
   };
 }
 
+/** A failed run of the engine workflow `feature-flow` (see `aWorkflowDetail`): `plan` passed,
+ * `build` failed twice (transient, then timeout), `docs` was skipped by its condition and
+ * `review` because `build` failed. */
+export function anEngineRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
+  const step = (
+    key: string,
+    attempt: number,
+    status: WorkflowRun["steps"][number]["status"],
+    extra: Partial<WorkflowRun["steps"][number]> = {},
+  ): WorkflowRun["steps"][number] => ({
+    attempt,
+    ended_at: at(attempt * 60),
+    key,
+    max_attempts: 2,
+    reason: null,
+    session_ids: [],
+    started_at: at(attempt * 60 - 50),
+    status,
+    ...extra,
+  });
+  return aRun({
+    content_hash: "sha256:5f0c2e1d",
+    ended_at: at(400),
+    failure: {
+      failing_event_id: null,
+      failure_kind: "timeout",
+      reason: "build",
+      stage: "FAILED",
+    },
+    id: "feature-flow-7",
+    issue: null,
+    revision: 3,
+    session_ids: [anId(7, "5091b986")],
+    stage: "FAILED",
+    status: "failed",
+    steps: [
+      step("plan", 1, "ok", { session_ids: [anId(7, "5091b986")], started_at: T0 }),
+      step("build", 1, "failed", { failure_kind: "transient", reason: "transient" }),
+      step("build", 2, "failed", { failure_kind: "timeout", reason: "timeout" }),
+      step("docs", 1, "skipped", { skip_cause: "condition" }),
+      step("review", 1, "skipped", {
+        ended_at: at(300),
+        skip_cause: "upstream_failed",
+        started_at: at(300),
+      }),
+    ],
+    workflow: "feature-flow",
+    ...overrides,
+  });
+}
+
 export function anApproval(overrides: Partial<Approval> = {}): Approval {
   return {
     decided: false,

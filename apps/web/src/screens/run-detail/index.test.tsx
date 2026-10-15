@@ -3,7 +3,17 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
-import { anId, aProblem, aRun, at, renderWithApi, type WorkflowRun } from "../../testing/builders";
+import {
+  anEngineRun,
+  anId,
+  aProblem,
+  aRun,
+  at,
+  aWorkflowDetail,
+  renderWithApi,
+  type ApiRoutes,
+  type WorkflowRun,
+} from "../../testing/builders";
 import { RunDetailScreen } from ".";
 
 const S1 = anId(1, "7c2e41a0");
@@ -273,6 +283,126 @@ describe("RunDetailScreen", () => {
     );
     await user.click(screen.getByRole("tab", { name: /Sessions/ }));
     expect(screen.getByText("No sessions in this run yet")).toBeInTheDocument();
+  });
+
+  describe("engine run graph", () => {
+    const engine = anEngineRun();
+    const WORKFLOW = "/api/v1/workflows/agent-hub/feature-flow";
+
+    function renderEngine(workflow: ApiRoutes[string] = aWorkflowDetail(), query = "") {
+      return renderWithApi(<RunDetailScreen />, {
+        routes: { [`/api/v1/workflow-runs/${engine.id}`]: engine, [WORKFLOW]: workflow },
+        path: `/runs/${engine.id}${query}`,
+        route: "/runs/:runId",
+      });
+    }
+
+    function nodeButton(graph: HTMLElement, id: string): HTMLElement {
+      const found = within(graph)
+        .getAllByRole("button")
+        .find((button) => button.getAttribute("data-node-id") === id);
+      if (!found) throw new Error(`No node ${id}`);
+      return found;
+    }
+
+    it("draws the declared nodes with state, attempts, skip cause and failure kind", async () => {
+      renderEngine();
+
+      const graph = await screen.findByRole("group", { name: "Run graph" });
+      expect(within(graph).getAllByRole("list")).toHaveLength(3);
+      expect(nodeButton(graph, "plan")).toHaveTextContent("Completed");
+      expect(nodeButton(graph, "build")).toHaveAttribute("data-state", "failed");
+      expect(nodeButton(graph, "build")).toHaveTextContent("Failed · attempt 2 · Timeout");
+      expect(nodeButton(graph, "docs")).toHaveTextContent("Skipped · condition false");
+      expect(nodeButton(graph, "review")).toHaveTextContent("Skipped · upstream failed");
+      expect(screen.queryByRole("list", { name: "Run stages" })).toBeNull();
+    });
+
+    it("names the failing node and its kind in the failure banner", async () => {
+      renderEngine();
+
+      const banner = await screen.findByRole("region", { name: "Failure" });
+      expect(within(banner).getByText("Failed at build · attempt 2 · Timeout")).toBeInTheDocument();
+    });
+
+    it("opens a node's panel with its reason, attempts and sessions", async () => {
+      const user = userEvent.setup();
+      renderEngine();
+
+      const graph = await screen.findByRole("group", { name: "Run graph" });
+      await user.click(nodeButton(graph, "plan"));
+
+      const panel = await screen.findByRole("complementary", { name: "Node plan" });
+      expect(panel).toHaveTextContent("attempt 1 of 2");
+      expect(panel).toHaveTextContent("Not in run events");
+      expect(within(panel).getByRole("link", { name: /5091b986/ })).toHaveAttribute(
+        "href",
+        `/sessions/${anId(7, "5091b986")}`,
+      );
+
+      await user.click(nodeButton(graph, "build"));
+      const build = await screen.findByRole("complementary", { name: "Node build" });
+      expect(build).toHaveTextContent("Timeout");
+      expect(build).toHaveTextContent("timeout");
+    });
+
+    it("says when the graph shows another revision than the run's", async () => {
+      renderEngine(aWorkflowDetail({ revision: 4 }));
+
+      expect(
+        await screen.findByText(/This run used r3; the graph shows the current r4/),
+      ).toBeInTheDocument();
+    });
+
+    it("falls back to the run's steps when the workflow cannot be read", async () => {
+      renderEngine(aProblem({ status: 404, title: "Not found" }));
+
+      const graph = await screen.findByRole("group", { name: "Run graph" });
+      expect(screen.getByText(/The workflow feature-flow could not be read/)).toBeInTheDocument();
+      expect(
+        within(graph)
+          .getAllByRole("button")
+          .map((b) => b.getAttribute("data-node-id")),
+      ).toEqual(["plan", "build", "docs", "review"]);
+    });
+
+    it("lists a loop body's steps under their group node", async () => {
+      const user = userEvent.setup();
+      const run = anEngineRun({
+        steps: [step("fix", 1, 0, 60, "ok"), step("fix__lint", 1, 10, 20, "ok")],
+      });
+      renderWithApi(<RunDetailScreen />, {
+        routes: {
+          [`/api/v1/workflow-runs/${run.id}`]: run,
+          [WORKFLOW]: aWorkflowDetail({
+            layers: [[{ id: "fix", type: "loop_group", depends_on: [], description: null }]],
+          }),
+        },
+        path: `/runs/${run.id}?node=fix`,
+        route: "/runs/:runId",
+      });
+
+      const panel = await screen.findByRole("complementary", { name: "Node fix" });
+      expect(panel).toHaveTextContent("fix__lint");
+      const graph = screen.getByRole("group", { name: "Run graph" });
+      expect(within(graph).getAllByRole("button")).toHaveLength(1);
+      await user.click(within(panel).getByRole("button", { name: "Close" }));
+      expect(screen.queryByRole("complementary", { name: "Node fix" })).toBeNull();
+    });
+
+    it("keeps issue-to-pr runs on their stage pipeline", async () => {
+      renderRun(failedRun);
+
+      await screen.findByRole("list", { name: "Run stages" });
+      expect(screen.queryByRole("group", { name: "Run graph" })).toBeNull();
+    });
+
+    it("has no serious a11y violations with a node open (a11y)", async () => {
+      const { container } = renderEngine(aWorkflowDetail(), "?node=build");
+
+      await screen.findByRole("complementary", { name: "Node build" });
+      expect(await seriousViolations(container)).toEqual([]);
+    });
   });
 
   describe("states", () => {
