@@ -107,6 +107,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Chat messages show when they were written ("3 min ago", the full date and time on hover) and a Copy button for
   their raw Markdown, on hover or focus (always on touch screens); Markdown code blocks show their language and a Copy
   button, and wide tables scroll sideways in their own region (AGH-241).
+- Sessions groups its table into Waiting, Live, Idle and Ended or failed sections, each with its own count, table,
+  sort and "Load more"; a header button collapses a section (remembered in this browser), empty sections are hidden,
+  a status facet shows only its section, and the period now filters only Ended or failed, so a running session older
+  than the period still shows (AGH-243).
 
 ### Fixed
 
