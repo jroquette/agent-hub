@@ -93,15 +93,35 @@ interface EntryProps {
   onAnswerPermission: TranscriptProps["onAnswerPermission"];
 }
 
+/** One of your messages; `note` says where it stands (sending, queued). */
+function UserMessage({
+  text,
+  note,
+  redacted = false,
+}: {
+  text: string;
+  note?: string | null;
+  redacted?: boolean;
+}) {
+  return (
+    <div className={cx("as-msg as-msg-user", note && "as-msg-pending")}>
+      <span className="ah-sr">You: </span>
+      <div className="as-bubble">{text}</div>
+      {note && <span className="ah-small ah-muted">{note}</span>}
+      {redacted && <StoredCopyLabel />}
+    </div>
+  );
+}
+
 function EntryBody({ entry, tool, tools, calls, request, onAnswerPermission }: EntryProps) {
   switch (entry.kind) {
     case "user":
       return (
-        <div className="as-msg as-msg-user">
-          <span className="ah-sr">You: </span>
-          <div className="as-bubble">{entry.text}</div>
-          {entry.redacted && <StoredCopyLabel />}
-        </div>
+        <UserMessage
+          text={entry.text}
+          note={entry.queued ? "Queued: Claude reads it after this turn" : null}
+          redacted={entry.redacted}
+        />
       );
     case "assistant":
       return <AssistantText entry={entry} />;
@@ -249,6 +269,11 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
               {...(entry.kind === "permission" && { request: state.permissions[entry.requestId] })}
               onAnswerPermission={onAnswerPermission}
             />
+          ))}
+          {state.sending.map((send) => (
+            <div key={send.key} className="as-entry">
+              <UserMessage text={send.text} note="Sending…" />
+            </div>
           ))}
         </div>
         {/* One live region stays mounted while the session lives, so its text changes are announced. */}

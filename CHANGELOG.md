@@ -52,6 +52,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The chat streams smoothly: replies render once per frame with a caret, long transcripts open fast, a "Claude is
   working · <tool>" row shows while a turn runs, Stop works while a permission waits, Esc in the empty composer stops
   the turn, and "Turn interrupted" follows its result (AGH-238).
+- The chat composer grows with its text up to 40% of the window, keeps an unsent draft per session in the browser
+  (restored after a reload), has focus on open unless a permission waits, ignores Enter while an IME composes (and on
+  touch screens Enter is a new line); a message shows "Sending…" at once, and "Queued: Claude reads it after this
+  turn" when sent during a running turn (AGH-239).
 
 ### Fixed
 
