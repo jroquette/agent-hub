@@ -37,6 +37,7 @@ import {
   runOutcome,
   stageLabel,
 } from "./model";
+import { StartRun } from "./StartRun";
 import { useRuns, type RunFilters, type Stage, type WorkflowRun } from "./queries";
 
 const PAGE = 50;
@@ -500,9 +501,7 @@ export function RunsListScreen() {
             </span>
           )}
           <span className="ah-grow" />
-          <Button variant="primary" icon="play" phase="P4">
-            Start run on an issue
-          </Button>
+          <StartRun project={scope} />
         </div>
       </div>
       <div style={{ display: "flex", gap: 24, alignItems: "flex-start", marginTop: 8 }}>
