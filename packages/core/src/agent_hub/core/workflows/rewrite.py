@@ -24,6 +24,7 @@ from agent_hub.core.workflows.nodes import (
     ResumeContext,
     ScriptNode,
     ShellNode,
+    WaitNode,
     read_only,
 )
 from agent_hub.core.workflows.substitution import (
@@ -102,6 +103,9 @@ def map_node(node: Node, rewrite: Rewrite) -> Node:
         update["message"] = rewrite.text(("message",), node.message)
     elif isinstance(node, HaltNode):
         update["reason"] = rewrite.text(("reason",), node.reason)
+    elif isinstance(node, WaitNode):
+        texts = {"until": node.until, "attention": node.attention}
+        update |= {key: rewrite.text((key,), text) for key, text in texts.items() if text}
     elif isinstance(node, LoopGroupNode):
         update |= _group_update(node, rewrite)
     return node.model_copy(update=update)

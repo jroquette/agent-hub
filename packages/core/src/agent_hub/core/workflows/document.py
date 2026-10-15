@@ -44,7 +44,7 @@ _INPUT_TYPES: dict[str, tuple[type, ...]] = {
     "number": (int, float),
     "boolean": (bool,),
 }
-_NODE_TYPES = "agent, shell, script, loop, loop_group, approval, halt, include"
+_NODE_TYPES = "agent, shell, script, loop, loop_group, approval, wait, halt, include"
 _MESSAGES = {
     "extra_forbidden": "unknown key",
     "model_type": "must be a mapping",
@@ -109,6 +109,11 @@ class WorkflowInput(WorkflowObject):
             msg = f"'default' must be of type {self.type}"
             raise ValueError(msg)
         return self
+
+    def fits(self, value: JsonValue) -> bool:
+        """Whether ``value`` is of this input's type (a boolean fits only a boolean input)."""
+        is_bool = isinstance(value, bool)
+        return is_bool == (self.type == "boolean") and isinstance(value, _INPUT_TYPES[self.type])
 
 
 class WorkflowDocument(WorkflowObject):

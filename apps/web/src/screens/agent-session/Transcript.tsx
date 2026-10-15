@@ -14,14 +14,14 @@ import {
 import { Icon, Markdown, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
 import { JumpToLatest } from "./JumpToLatest";
-import { PermissionCard, type PermissionAnswer } from "./PermissionCard";
+import { MessageMeta } from "./MessageMeta";
+import { RequestCard, type PermissionAnswer } from "./PermissionCard";
 import { StoredCopyLabel } from "./SessionStatus";
-import { ToolCallCard } from "./ToolCallCard";
+import { ToolGroup, type GroupItem } from "./ToolGroup";
 import {
   pendingPermissions,
   type NoticeTone,
   type PermissionView,
-  type ToolView,
   type TranscriptEntry,
   type TranscriptState,
 } from "./transcript";
@@ -42,12 +42,57 @@ export interface TranscriptProps {
  * the earlier ones follow a frame later (run budget: 2,000 entries render in under a second). */
 export const FIRST_ENTRIES = 300;
 
-function firstShown(state: TranscriptState): number {
-  const oldest = pendingPermissions(state)[0];
-  const card = state.entries.findIndex(
-    (entry) => entry.kind === "permission" && entry.requestId === oldest,
+/** The requests whose card shows under their tool call (matched by `tool_use_id`, AC-234.24). */
+function attachedRequests(entries: readonly TranscriptEntry[]): Set<string> {
+  const calls = new Set(entries.flatMap((entry) => (entry.kind === "tool" ? [entry.toolId] : [])));
+  return new Set(
+    entries.flatMap((entry) =>
+      entry.kind === "permission" && calls.has(entry.requestId) ? [entry.requestId] : [],
+    ),
   );
-  const tail = state.entries.length - FIRST_ENTRIES;
+}
+
+type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
+type Row =
+  { kind: "entry"; entry: TranscriptEntry } | { kind: "run"; key: string; entries: ToolEntry[] };
+
+/** What the log shows from `start` on: attached cards leave their place, and consecutive tool
+ * calls with no text between them become one run. A run is keyed by its first call in the whole
+ * list, so it keeps its node as it grows or as earlier calls join it a frame later (AC-234.24). */
+function rowsOf(entries: readonly TranscriptEntry[], attached: Set<string>, start: number): Row[] {
+  const rows: Row[] = [];
+  let key: string | null = null;
+  let run: ToolEntry[] = [];
+  const flush = () => {
+    if (key !== null && run.length > 0) rows.push({ kind: "run", key, entries: run });
+    key = null;
+    run = [];
+  };
+  entries.forEach((entry, index) => {
+    if (entry.kind === "permission" && attached.has(entry.requestId)) return;
+    if (entry.kind === "tool") {
+      key ??= entry.key;
+      if (index >= start) run.push(entry);
+      return;
+    }
+    flush();
+    if (index >= start) rows.push({ kind: "entry", entry });
+  });
+  flush();
+  return rows;
+}
+
+function firstShown(state: TranscriptState): number {
+  const { entries } = state;
+  const oldest = pendingPermissions(state)[0];
+  const attached = oldest !== undefined && attachedRequests(entries).has(oldest);
+  // An attached card shows with its tool call, so the first render starts there.
+  const card = entries.findIndex((entry) =>
+    attached
+      ? entry.kind === "tool" && entry.toolId === oldest
+      : entry.kind === "permission" && entry.requestId === oldest,
+  );
+  const tail = entries.length - FIRST_ENTRIES;
   return Math.max(0, card >= 0 ? Math.min(card, tail) : tail);
 }
 
@@ -79,6 +124,7 @@ function AssistantText({ entry }: { entry: AssistantEntry }) {
       {body}
       {entry.streaming && <span className="as-caret" aria-hidden="true" />}
       {entry.redacted && <StoredCopyLabel />}
+      {!entry.streaming && <MessageMeta at={entry.at} text={entry.text} />}
     </article>
   );
 }
@@ -86,21 +132,21 @@ function AssistantText({ entry }: { entry: AssistantEntry }) {
 interface EntryProps {
   entry: TranscriptEntry;
   /** Only what this entry shows, so a delta elsewhere leaves its props equal (memo). */
-  tool?: ToolView | undefined;
-  tools?: TranscriptState["tools"] | undefined;
-  calls?: TranscriptState["children"] | undefined;
   request?: PermissionView | undefined;
   onAnswerPermission: TranscriptProps["onAnswerPermission"];
 }
 
-/** One of your messages; `note` says where it stands (sending, queued). */
+/** One of your messages; `note` says where it stands (sending, queued). A recorded one (`at`)
+ * has the action row; one still sending does not. */
 function UserMessage({
   text,
   note,
+  at,
   redacted = false,
 }: {
   text: string;
   note?: string | null;
+  at?: string;
   redacted?: boolean;
 }) {
   return (
@@ -109,17 +155,19 @@ function UserMessage({
       <div className="as-bubble">{text}</div>
       {note && <span className="ah-small ah-muted">{note}</span>}
       {redacted && <StoredCopyLabel />}
+      {at !== undefined && <MessageMeta at={at} text={text} />}
     </div>
   );
 }
 
-function EntryBody({ entry, tool, tools, calls, request, onAnswerPermission }: EntryProps) {
+function EntryBody({ entry, request, onAnswerPermission }: EntryProps) {
   switch (entry.kind) {
     case "user":
       return (
         <UserMessage
           text={entry.text}
           note={entry.queued ? "Queued: Claude reads it after this turn" : null}
+          at={entry.at}
           redacted={entry.redacted}
         />
       );
@@ -129,24 +177,19 @@ function EntryBody({ entry, tool, tools, calls, request, onAnswerPermission }: E
       return (
         <details className="as-thinking">
           <summary>
-            <Icon name="lightbulb" size="sm" /> Thinking
+            <Icon name="lightbulb" size="sm" />{" "}
+            {entry.seconds === null ? "Thinking" : `Thought for ${String(entry.seconds)} s`}
             {entry.redacted && <StoredCopyLabel />}
           </summary>
           <div className="as-thinking-text">{entry.text}</div>
         </details>
       );
     case "tool":
-      return tool && tools && calls ? (
-        <ToolCallCard tool={tool} tools={tools} calls={calls} />
-      ) : null;
+      // A call shows in its run (ToolGroup).
+      return null;
     case "permission":
       return request ? (
-        <PermissionCard
-          request={request}
-          onAnswer={
-            onAnswerPermission ? (answer) => onAnswerPermission(entry.requestId, answer) : undefined
-          }
-        />
+        <RequestCard request={request} onAnswerPermission={onAnswerPermission} />
       ) : null;
     case "notice":
       return (
@@ -185,6 +228,9 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
     [scrollerRef],
   );
   const oldestPending = pendingPermissions(state)[0];
+  const attached = useMemo(() => attachedRequests(state.entries), [state.entries]);
+  const attachedTo = (toolId: string) =>
+    attached.has(toolId) ? state.permissions[toolId] : undefined;
   const release = follow?.release;
 
   // Opens once, on the loaded transcript (AC-234.17): at the oldest pending permission card,
@@ -257,19 +303,36 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
           {state.entries.length === 0 && (
             <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
           )}
-          {state.entries.slice(start).map((entry) => (
-            <Entry
-              key={entry.key}
-              entry={entry}
-              {...(entry.kind === "tool" && {
-                tool: state.tools[entry.toolId],
-                tools: state.tools,
-                calls: state.children,
-              })}
-              {...(entry.kind === "permission" && { request: state.permissions[entry.requestId] })}
-              onAnswerPermission={onAnswerPermission}
-            />
-          ))}
+          {rowsOf(state.entries, attached, start).map((row) => {
+            if (row.kind === "run") {
+              const items = row.entries.flatMap(({ toolId }): GroupItem[] => {
+                const tool = state.tools[toolId];
+                return tool ? [{ tool, request: attachedTo(toolId) }] : [];
+              });
+              return (
+                <div key={row.key} className="as-entry as-settled">
+                  <ToolGroup
+                    items={items}
+                    tools={state.tools}
+                    calls={state.children}
+                    requests={state.permissions}
+                    onAnswerPermission={onAnswerPermission}
+                  />
+                </div>
+              );
+            }
+            const { entry } = row;
+            return (
+              <Entry
+                key={entry.key}
+                entry={entry}
+                {...(entry.kind === "permission" && {
+                  request: state.permissions[entry.requestId],
+                })}
+                onAnswerPermission={onAnswerPermission}
+              />
+            );
+          })}
         </div>
         {/* Outside the live log: only the echoed record is announced, not its Sending… copy too. */}
         <div className="as-pending as-column">

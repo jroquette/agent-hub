@@ -30,8 +30,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   (`TICKET_PATHS`): `GET /features/{project}/{slug}/tickets` ([Feature tickets](#feature-tickets)), and the three
   AGH-164 added (`SKILL_PATHS`, all GET): `/projects/{project}/skills`, `/projects/{project}/skills/{kind}/{source}/{name}`
   and `/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` ([Skills](#skills)), and the two AGH-225
-  added (`WORKFLOW_PATHS`, both GET): `/workflows` and `/workflows/{project}/{name}` ([Workflows](#workflows)). A test
-  fails on any other path.
+  added (`WORKFLOW_PATHS`, both GET): `/workflows` and `/workflows/{project}/{name}` ([Workflows](#workflows)), and the
+  four AGH-232 added (`RUN_COMMAND_PATHS`, all POST): `/workflow-runs` and `/workflow-runs/{run_id}/cancel|resume|abandon`
+  ([Workflow run commands](#workflow-run-commands)). A test fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -331,17 +332,64 @@ of its `workflows/` and the built-ins, stat only) is unchanged. A problem never 
   problem, is a 404 (entity `workflow`, id `<project>/<name>`). A parameter over 200 characters is a 400. The routes
   answer 501 only in a build where the workflow reads are not wired.
 
+## Workflow run commands
+
+Four POST routes start and stop workflow engine runs (AC-213.19, ADR 0032 decision 4). Each runs the hub that serves
+the web as a child (`python -I -m agent_hub.cli workflow run …`, argv only, in the hub folder), with the server's
+environment minus `LINEAR_API_KEY`, plus `AGENT_HUB_ROOT` and `AGENT_HUB_DB` (the server's store, absolute), so the
+run's events, written by the child through `IngestEvents`, are the ones `GET /workflow-runs` folds. The routes track
+no status: it comes from those events.
+
+- `POST /api/v1/workflow-runs` with `{project, workflow, inputs}` → 202 `RunAccepted` (`run_id`, `project`,
+  `action`) and `Location: /api/v1/workflow-runs/{run_id}`. A web start is always live (`--live`); a dry run belongs
+  to the CLI (`hub workflow run NAME` without `--live`), and a `live` member is refused like any unknown one (422).
+  The run id is minted first (8 hex digits, the CLI's pattern). `inputs` (at most 64, names `^[a-z][a-z0-9_]*$`,
+  strings up to 16,384 characters without NUL, finite numbers, booleans, at most 262,144 bytes in all as
+  `name=value` argv text) must fit the workflow's `inputs` (422 `workflow-run-invalid-inputs`). `issue-to-pr` is refused (409 `workflow-run-tracker-workflow`): its tracker writes
+  need `LINEAR_API_KEY`, which no child gets; use `hub run`.
+- **One live run per issue.** A run's issue is its `issue` input when the workflow declares one and the value is a
+  tracker key (`^[A-Z][A-Z0-9]{0,9}-[0-9]{1,9}$`); only then do its events carry `issue`. A run folded `running`, or
+  a child the server started that has not ended, refuses another start or resume of that issue (409
+  `workflow-run-live-run`, with `run_id`). A start and a resume take one lock from that check through the launch.
+- `POST /api/v1/workflow-runs/{run_id}/cancel` → 202: SIGINT to the child's process group (the CLI kills its node
+  children), SIGKILL after 10 s, then `--abandon`, so the run ends `cancelled` (a failed abandon is logged). Only a
+  child this server started is signalled: while the server holds it unreaped, or, after a restart, while its process
+  still has the start time its pid file records (`/proc` on Linux, else `ps`); otherwise 409
+  `workflow-run-not-running`.
+- `POST /api/v1/workflow-runs/{run_id}/resume` → 202 (a detached `--resume` child) and
+  `POST /api/v1/workflow-runs/{run_id}/abandon` → 200 (waits for `--abandon`, at most 60 s). Both refuse a run that
+  ended `done` or `cancelled` (409 `workflow-run-ended`), whose child still runs or whose run lock another
+  `hub workflow run` holds (409 `workflow-run-in-use`), or that is not an engine run (409
+  `workflow-run-not-engine-run`); the CLI refusing is 409 `workflow-run-refused`. Of two concurrent launches of one run,
+  one answers 409 `workflow-run-in-use`. At most 8 children started from the web run at once (409
+  `workflow-run-too-many-runs`). A child that cannot start or finish is 502 `workflow-run-launch-failed`. Problems
+  never quote the CLI's output.
+
+A started child runs in its own session with stdin empty and both streams appended to
+`<hub>/.agent-runs/web/<run>.log`; its pid file `<hub>/.agent-runs/web/<run>.pid` (pid, start time, issue) is created
+exclusively, owner-only, never through a link, and removed when the child ends. A pid file whose process is gone or
+started at another time is removed when the folder is next read (at most 64 files, start times read outside the
+launcher's lock within a 2 s budget); one whose start time cannot be read in time is kept, counted live and never
+signalled. A file that changes or is taken by a new child while it is judged is kept and counted live, and a launch
+whose pid file reads otherwise than when it was judged (an empty file just made included) answers 409
+`workflow-run-in-use`. A `.agent-runs/web` that is a link is refused (502). `run_id` in a path
+must match `^[a-z0-9][a-z0-9-]{0,31}$` (else 400). All four are strict writes ([Local security](#local-security)) and
+need the launch cookie, like the agent-session writes; with `AGENT_HUB_IN_CONTAINER=1` they answer 404
+`urn:agent-hub:problem:run-control-off`.
+
 ## Local security
 
 `hub web` binds `127.0.0.1` only. It refuses a `Host` header other than `127.0.0.1:<port>`, `localhost:<port>` or
 `[::1]:<port>` (403, against DNS rebinding) and a `POST` or `DELETE` whose `Origin` is not its own (403); it sends no
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
-The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)); every other
-route is unchanged and needs no cookie.
+The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
+run commands need that cookie too ([Workflow run commands](#workflow-run-commands)); every other route is unchanged
+and needs no cookie.
 
-The two learning decisions, which reach the network, take a strict rule on top (`STRICT_WRITES` in
-`agent_hub/api/local_security.py`), checked before the route runs, so a refused request pushes and stores nothing:
+The two learning decisions, which reach the network, and the four workflow run commands, which start or stop
+processes, take a strict rule on top (`STRICT_WRITES` in `agent_hub/api/local_security.py`), checked before the
+route runs, so a refused request pushes, stores and starts nothing:
 
 - `Origin` is required and must equal `http://<Host>`, the server's own origin (403 "Forbidden origin" when absent or
   different);

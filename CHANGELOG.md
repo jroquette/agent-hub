@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` can start, cancel, resume and abandon workflow runs: `POST /api/v1/workflow-runs` and
+  `/workflow-runs/{run_id}/cancel|resume|abandon` run `hub workflow run --live` as a detached child (no
+  `LINEAR_API_KEY`, a pid file under `.agent-runs/web/`), keep one live run per issue across starts and resumes,
+  refuse `issue-to-pr`, and are strict writes that need the launch cookie. A run's events now carry its `issue` input
+  when it is a tracker key (AGH-232).
 - `hub workflow list` and `hub workflow validate [NAME]` load and plan the hub's `workflows/<pack>/` files (YAML through
   the strict loader, or JSON), then the built-ins, against the graph workflow format (ADR 0032): unknown keys, unknown
   or non-upstream node references, argv references that are not a whole element, cycles and a bad
@@ -21,6 +26,21 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
   `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
   `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
+- Workflow `approval` and `wait` nodes. An approval (`message`, `decisions`, `capture_response`) or a wait (`duration`
+  up to 7 days, an `until` instant, or `attention` answered with text or one of `options`) pauses the run: `hub
+  workflow run` prints `run <id>: paused at <node>` and records a `gate.request` (an approval or attention wait shows
+  in Approvals). `--resume RUN` takes the same gate up again and goes on once it has its decision or its time. The
+  output (`{decision}`, `{at}`, `{text}`, `{choice, text}`) is readable from `when:`; rejecting the default decisions
+  cancels the run unless a `when:` reads the decision. An `until` is at most 7 days ahead; a timed wait ends on a
+  resume past its time. `hub workflow test` stubs gates with `{decision, text}`, `{text}`, `{choice}` or `{}`; without
+  a stub the run pauses (`expect.status: paused`). A gate in a `loop_group` body pauses its iteration, and the resume
+  goes on in it (rework: reject, fix, approve); two gates with no order between them are a load error (AGH-230).
+- `hub workflow approve|reject|respond RUN [NODE] [TEXT]` decide a paused run's open gate (`respond` takes
+  `--choice` for a declared decision or option) and resume the run. One decision per gate: a second, a gate that is
+  not open or an answer the gate does not take is refused. The text stays in the run's record; the event database
+  gets a `control_plane` `gate.result`, so Approvals shows the gate decided. A workflow gate closed without a decision
+  (run abandoned, gate skipped or failed on resume) shows declined, and its "How to decide" names these commands
+  (AGH-230).
 - `hub workflow run NAME --input name=value` prints the nodes a run would start; with `--live` it runs them: agent
   nodes as `claude -p` in the hub with its settings and plugin, shell and script nodes as programs without a shell,
   each child with a scoped environment (none gets `LINEAR_API_KEY`). The run is recorded under
@@ -33,6 +53,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `hub run` runs read as before (AGH-225).
 - `GET /api/v1/workflows` lists each project's workflows (source `hub` or `builtin`) and the files that do not load;
   `GET /api/v1/workflows/{project}/{name}` gives a workflow's document and its layers (AGH-225).
+- `hub web` has a Workflows page (sidebar group Improve): each workflow with its source (hub or built-in), the files
+  that do not load, and a workflow's graph by layers (a column per layer, arrows for `depends_on`, a list view, a
+  keyboard-reachable node panel) with its document, read-only (AGH-226).
+- `hub web` Run detail shows an engine run as its workflow's graph: each node with its state, attempt, skip cause and
+  failure kind, and a side panel (reason, sessions, loop body steps); issue-to-pr runs keep their stage pipeline. The
+  Runs list gains Workflow and Failure kind facets (AGH-226).
 - `hub step worktree|verdict|commits|pr|report` run `hub run`'s stages one at a time and print one JSON object each (the
   worktree and the repo's target, the session's verdict, the branch's commits, the PR's url, the delivery), for the issue-to-pr
   workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
@@ -99,6 +125,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   (restored after a reload), has focus on open unless a permission waits, ignores Enter while an IME composes (and on
   touch screens Enter is a new line); a message shows "Sending…" at once, and "Queued: Claude reads it after this
   turn" when sent during a running turn (AGH-239).
+- Chat tool cards read running, waiting for you, done, error or denied (icon and text), with a call's permission card
+  right under it; output over 10,000 characters is cut with "Show all (N characters)", consecutive calls group as
+  "Explored · 3 Read, 2 Grep" (open while one waits for you or failed), and thinking reads "Thought for N s" (AGH-240).
+- Chat messages show when they were written ("3 min ago", the full date and time on hover) and a Copy button for
+  their raw Markdown, on hover or focus (always on touch screens); Markdown code blocks show their language and a Copy
+  button, and wide tables scroll sideways in their own region (AGH-241).
 - A hub's `make check` also runs `./hub workflow test`, the workflow packs' fixtures, after `hub doctor` and before the
   hub's own tests (AGH-227).
 

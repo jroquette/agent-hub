@@ -3,7 +3,11 @@
 import hashlib
 from datetime import timedelta
 
+import pytest
+
+from agent_hub.core.approvals.fold_approvals import fold_approvals
 from agent_hub.core.events.event import EventSource, EventType
+from agent_hub.core.events.event_query import EventQuery
 from agent_hub.core.events.payload_keys import kept_payload
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.testing.fakes import InMemoryEventStore
@@ -17,7 +21,8 @@ from agent_hub.core.testing.workflow_fakes import (
 from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.events import WorkflowEvents
 from agent_hub.core.workflows.failures import NodeFailedError, RetryRecord
-from agent_hub.core.workflows.ports import RunEnd, StepEnd, StepStart
+from agent_hub.core.workflows.gates import GateForm, GateKind
+from agent_hub.core.workflows.ports import GateRequest, RunEnd, StepEnd, StepStart
 
 # A real digest: redaction must keep it whole.
 HASH = "sha256:" + hashlib.sha256(b"issue-to-pr snapshot").hexdigest()
@@ -151,3 +156,70 @@ def test_stores_every_payload_whole_when_ingested() -> None:
         event.payload for event in recorder.events
     ]
     assert all(kept_payload(e.type, e.payload) == e.payload for e in recorder.events)
+
+
+def test_tags_every_event_with_issue_when_run_has_one() -> None:
+    recorder = WorkflowEvents(
+        project="demo", run_id="r1", workflow="fix", revision=1, content_hash=HASH, issue="DEM-7"
+    )
+
+    recorder.step_started(StepStart("plan", 1, START))
+    recorder.step_ended(StepEnd("plan", 1, "ok", START))
+    recorder.run_ended(RunEnd("done", START))
+
+    assert [event.payload["issue"] for event in recorder.events] == ["DEM-7"] * 3
+    assert all(kept_payload(e.type, e.payload) == e.payload for e in recorder.events)
+
+
+def test_leaves_issue_out_when_input_is_not_tracker_key() -> None:
+    recorder = WorkflowEvents(
+        project="demo", run_id="r1", workflow="fix", revision=1, content_hash=HASH, issue="dem 7"
+    )
+
+    recorder.run_ended(RunEnd("done", START))
+
+    assert "issue" not in recorder.events[0].payload
+
+
+@pytest.mark.parametrize(
+    ("kind", "form", "event_kind"),
+    [
+        ("approval", "decision", "human_gate"),
+        ("wait", "text", "human_gate"),
+        ("wait", "choice", "human_gate"),
+        ("wait", "timer", "wait"),
+    ],
+)
+def test_builds_gate_request_without_its_text_when_a_gate_opens(
+    kind: GateKind, form: GateForm, event_kind: str
+) -> None:
+    recorder = a_recorder()
+
+    recorder.gate_requested(GateRequest("ok", 2, kind, form, START, ("approve",), "Ship?"))
+
+    [event] = recorder.events
+    assert (event.type, event.source, event.step) == (
+        EventType.GATE_REQUEST,
+        EventSource.EXECUTOR,
+        "ok",
+    )
+    assert (event.source_id, event.session) == ("r1:ok:2:gate.request", "run:r1")
+    assert event.payload == {
+        "run": "r1",
+        "attempt": 2,
+        "gate_id": "r1:ok:2",
+        "kind": event_kind,
+        "name": "ok",
+    }
+
+
+def test_lists_an_open_approval_when_an_approval_request_is_folded() -> None:
+    recorder = a_recorder()
+    recorder.gate_requested(GateRequest("ok", 1, "approval", "decision", START, ("approve",)))
+    store = InMemoryEventStore()
+    IngestEvents(store).execute(recorder.events)
+
+    approvals = fold_approvals(store.query(EventQuery()).items)
+
+    approval = approvals["r1:ok:1"]
+    assert (approval.kind, approval.status, approval.session_id) == ("human_gate", "open", "run:r1")

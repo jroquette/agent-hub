@@ -18,6 +18,10 @@ The agent sessions (AGH-165, ADR 0031) run over the Claude driver and cloud laun
 extra the driver is ``UnavailableSessionDriver`` (P2). Their store is the same database's
 agent-session tables; ``SessionRuntime`` sweeps and shuts them down with the app. Inside the
 container (``settings.sessions_off``, L2) none of it is built.
+
+The workflow-run commands (AC-213.19) start ``hub workflow run`` children through
+``ProcessRunLauncher`` with ``environ`` (minus ``LINEAR_API_KEY``) and the web's database; like
+the sessions, they are not built inside the container.
 """
 
 import ipaddress
@@ -48,6 +52,7 @@ from agent_hub.api.rfc9457 import (
     hub_registry_problem,
     invalid_cursor_problem,
 )
+from agent_hub.api.run_launcher import ProcessRunLauncher
 from agent_hub.api.settings import ApiSettings, utc_now
 from agent_hub.api.static_files import WEB_DIST
 from agent_hub.api.ticket_snapshots import (
@@ -105,6 +110,7 @@ from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_reads import SkillUsageSource
 from agent_hub.core.tracker.tracker_reader import TrackerReader
+from agent_hub.core.workflows.launch import ControlWorkflowRun, RunGuard, StartWorkflowRun
 from agent_hub.core.workflows.workflow_reads import ListedWorkflowSource, ReadWorkflows
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
@@ -586,6 +592,13 @@ def build_app(
     learning_reads = ReadLearnings(
         events, reader, hub_of=facts.hub_of, availability=CachedAvailability(changes.availability)
     )
+    workflows = ReadWorkflows(hubs, workflow_source_of)
+    guard = None
+    if not settings.sessions_off:
+        env: Mapping[str, str] = os.environ if environ is None else environ
+        launcher = ProcessRunLauncher(db_path=settings.db_path, environ=env)
+        # One guard for both, so a start and a resume of one issue never race.
+        guard = RunGuard(events, launcher)
     ports = ApiPorts(
         event_read_models=events,
         hub_read_models=hubs,
@@ -604,7 +617,9 @@ def build_app(
         agent_sessions=None if sessions is None else sessions.control,
         cloud_sessions=None if sessions is None else sessions.cloud,
         agent_session_links=None if sessions is None else sessions.links,
-        workflow_reads=ReadWorkflows(hubs, workflow_source_of),
+        workflow_reads=workflows,
+        run_starts=None if guard is None else StartWorkflowRun(workflows, guard),
+        run_control=None if guard is None else ControlWorkflowRun(hubs, guard),
     )
     return create_app(
         settings,
