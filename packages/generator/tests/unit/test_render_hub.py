@@ -4635,6 +4635,7 @@ ADAPTER_MODULES = frozenset(
         "skill_files.py",
         "registered_hub_files.py",
         "workflow_discovery.py",
+        "workflow_source.py",
     }
 )
 RENDERING_MODULES = frozenset(
@@ -4652,8 +4653,6 @@ RENDERING_MODULES = frozenset(
         "workflow_outputs.py",
         # Pure: it parses bytes it is given; workflow_discovery reads the files.
         "workflow_yaml.py",
-        # No read of its own: it shapes what workflow_discovery read.
-        "workflow_source.py",
     }
 )
 

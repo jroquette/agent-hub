@@ -301,7 +301,8 @@ the diagnostic `too_large`.
 
 Two read-only GET routes serve the registered hubs' workflows, read from their files on request through the
 generator's discovery (the hub's `workflows/<pack>/` files, then the built-ins; a hub workflow overrides a built-in of
-its name) and never stored.
+its name) and never stored. A hub's read is reused while its listing fingerprint (path, size and mtime of each entry
+of its `workflows/` and the built-ins, stat only) is unchanged. A problem never names an absolute path.
 
 - `GET /api/v1/workflows[?project=…]` → `WorkflowCatalogView`: `items` (each with `project`, `name`, `description`,
   `revision`, `source` `hub` or `builtin`, `node_count`, `layer_count`), by project then name, and `problems` (each

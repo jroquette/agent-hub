@@ -38,11 +38,17 @@ class Hubs:
 
 
 class Files:
-    def __init__(self, items: tuple[WorkflowFile | LoadProblem, ...]) -> None:
+    def __init__(self, items: tuple[WorkflowFile | LoadProblem, ...], mark: object = 1) -> None:
         self.items = items
+        self.mark = mark
+        self.reads = 0
 
     def workflow_files(self) -> Iterable[WorkflowFile | LoadProblem]:
+        self.reads += 1
         return self.items
+
+    def fingerprint(self) -> object:
+        return self.mark
 
 
 def reads() -> ReadWorkflows:
@@ -114,3 +120,16 @@ def test_raises_not_found_when_workflow_or_project_unknown(
         reads().get_workflow(project, name)
 
     assert raised.value.entity == entity
+
+
+def test_reads_hub_files_once_when_listing_fingerprint_unchanged() -> None:
+    files = Files((WorkflowFile("workflows/demo/ship.yaml", "ship", SHIP),))
+    reads = ReadWorkflows(Hubs(("demo", "/hubs/demo")), lambda _hub: files)
+
+    reads.list_workflows(Scope())
+    reads.get_workflow("demo", "ship")
+    files.mark = 2
+    changed = reads.list_workflows(Scope())
+
+    assert files.reads == 2
+    assert [item.name for item in changed.items] == ["ship"]

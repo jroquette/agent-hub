@@ -47,6 +47,7 @@ from agent_hub.core.learnings.brain_change_requests import CommitAuthor
 from agent_hub.core.learnings.learning_ports import LearningHub
 from agent_hub.core.learnings.read_learnings import HUB_NOT_REGISTERED, UnavailableHub
 from agent_hub.core.projects.project_views import ProjectActivity
+from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_view import SkillUsage
 from agent_hub.core.testing.brain_fakes import FakeBrainOrigin, InMemoryBrainChangeRequests
@@ -468,6 +469,27 @@ def test_reads_hub_workflows_when_hub_has_a_pack(tmp_path: Path) -> None:
 
     hub_files = [item for item in files if isinstance(item, WorkflowFile)]
     assert [(item.file, item.origin) for item in hub_files] == [("workflows/mine/ship.yaml", "hub")]
+
+
+class _OneHub:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def project_hubs(self) -> list[tuple[str, str]]:
+        return [("demo", str(self.path))]
+
+
+def test_names_no_absolute_path_when_hub_workflows_have_problems(tmp_path: Path) -> None:
+    for pack in ("a-pack", "b-pack"):
+        (tmp_path / "workflows" / pack).mkdir(parents=True)
+        (tmp_path / "workflows" / pack / "ship.yaml").write_text("name: [")
+    reads = ReadWorkflows(_OneHub(tmp_path), workflow_source_of)
+
+    problems = reads.list_workflows(Scope()).problems
+
+    assert len(problems) == 2
+    assert all(str(tmp_path) not in f"{p.file} {p.message}" for p in problems)
+    assert all(not p.file.startswith("/") for p in problems)
 
 
 def test_ends_unfinished_sessions_when_app_starts(tmp_path: Path) -> None:
