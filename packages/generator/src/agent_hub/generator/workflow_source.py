@@ -18,6 +18,7 @@ from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
     HUB_WORKFLOWS,
     WORKFLOW_SUFFIXES,
+    DiscoveredWorkflow,
     discover_workflows,
 )
 
@@ -36,6 +37,8 @@ class DiscoveredWorkflowSource:
         self.root = root
         self.only = only
         self.builtin_root = builtin_root
+        # Each workflow the last ``workflow_files`` yielded, by name: its path and pack root.
+        self.found: dict[str, DiscoveredWorkflow] = {}
 
     def workflow_files(self) -> Iterator[WorkflowFile | LoadProblem]:
         discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
@@ -49,6 +52,7 @@ class DiscoveredWorkflowSource:
                 )
         for found in discovery.workflows:
             if self.only is None or found.name == self.only:
+                self.found[found.name] = found
                 shown = self._shown(found.path)
                 yield WorkflowFile(shown, found.name, found.document, found.lines, found.origin)
 
