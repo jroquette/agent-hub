@@ -11,7 +11,21 @@ import {
 import type { WorkflowRun } from "../runs-list/queries";
 import { NodePanel, useNodeParam, WorkflowGraph } from "../workflows/WorkflowGraph";
 import { useWorkflow } from "../workflows/queries";
+import { GateDecision } from "../approvals/GateDecision";
+import type { Approval } from "../approvals/queries";
+import { gateNode, gateOf, useOpenGates } from "./OpenGates";
 import { nodeState, nodeSummary, runLayers, STATE_LOOK, type RunNode } from "./graph";
+
+function NodeGate({ gate }: { gate: Approval }) {
+  return (
+    <div className="ah-stack" style={{ gap: 6, marginBottom: 12 }}>
+      <span className="ah-small">
+        Waiting for a decision at <span className="ah-mono">{gateNode(gate.gate_id)}</span>
+      </span>
+      <GateDecision approvalId={gate.id} />
+    </div>
+  );
+}
 
 function NodeFacts({ node, now }: { node: RunNode; now: number }) {
   const step = node.step;
@@ -96,11 +110,13 @@ function NodeFacts({ node, now }: { node: RunNode; now: number }) {
 export function RunGraph({ run, now }: { run: WorkflowRun; now: number }) {
   const node = useNodeParam();
   const workflow = useWorkflow(run.project, run.workflow);
+  const gates = useOpenGates(run);
   const declared = workflow.isSuccess ? workflow.data.layers : null;
   // The clock re-renders a live run each second; the layers change only with its steps.
   const layers = useMemo(() => runLayers(run, declared), [run, declared]);
   if (workflow.isPending) return <Skeleton height={160} />;
   const selected = layers.flat().find((n) => n.id === node.nodeId) ?? null;
+  const selectedGate = selected ? gateOf(gates, selected.id) : undefined;
   const revision = workflow.data?.revision;
   return (
     <div className="ah-stack" style={{ gap: 8 }}>
@@ -129,10 +145,13 @@ export function RunGraph({ run, now }: { run: WorkflowRun; now: number }) {
           selected={selected?.id ?? null}
           onSelect={node.open}
           state={nodeState}
-          detail={nodeSummary}
+          detail={(graphNode) =>
+            gateOf(gates, graphNode.id) ? "Waiting for a decision" : nodeSummary(graphNode)
+          }
         />
         {selected && (
           <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
+            {selectedGate && <NodeGate gate={selectedGate} />}
             <NodeFacts node={selected} now={now} />
           </NodePanel>
         )}
