@@ -14,6 +14,7 @@ import {
   aProjectSummary,
   aSession,
   aSessionLabel,
+  aSessionsByStatus,
   anId,
   at,
   renderWithApi,
@@ -55,7 +56,7 @@ function sessions() {
 
 function routes(overrides: ApiRoutes = {}): ApiRoutes {
   return {
-    [SESSIONS]: aPage(sessions(), { next_cursor: "c2" }),
+    [SESSIONS]: aSessionsByStatus(sessions(), { next_cursor: "c2" }),
     "/api/v1/projects": aPage([aProjectSummary(), aProjectSummary({ name: "loki-trader" })]),
     [AGENT]: { items: [] },
     [`${AGENT}/capabilities`]: aCapabilities(),
@@ -75,12 +76,15 @@ describe("SessionsListScreen", () => {
     renderList(routes());
 
     await screen.findByText("/evaluator");
-    const table = screen.getByRole("table", { name: "Sessions" });
-    expect(within(table).getByText("Live")).toBeInTheDocument();
-    expect(within(table).getByText("Error")).toBeInTheDocument();
-    expect(within(table).getAllByText("$1.2500")).toHaveLength(2);
-    expect(within(table).getAllByText("3")).toHaveLength(3);
-    expect(within(table).getByText("—")).toBeInTheDocument();
+    const live = screen.getByRole("table", { name: "Live sessions" });
+    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
+    const inTables = (text: string) =>
+      [live, ended].flatMap((table) => within(table).queryAllByText(text));
+    expect(within(live).getByText("Live")).toBeInTheDocument();
+    expect(within(ended).getByText("Error")).toBeInTheDocument();
+    expect(inTables("$1.2500")).toHaveLength(2);
+    expect(inTables("3")).toHaveLength(3);
+    expect(inTables("—")).toHaveLength(1);
     expect(screen.getByText(/Showing 2 of ~2 · 7 d · 1 project/)).toBeInTheDocument();
   });
 
@@ -88,18 +92,23 @@ describe("SessionsListScreen", () => {
     renderList(routes());
 
     await screen.findByText("TIP-1511 · /feature");
-    const table = screen.getByRole("table", { name: "Sessions" });
-    expect(within(table).getByText("tipple · main")).toBeInTheDocument();
-    expect(within(table).getByText("agent-hub · dev/agh-48-live-tiles")).toBeInTheDocument();
+    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
+    expect(within(ended).getByText("tipple · main")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("table", { name: "Live sessions" })).getByText(
+        "agent-hub · dev/agh-48-live-tiles",
+      ),
+    ).toBeInTheDocument();
     const headers = () =>
-      within(screen.getByRole("table", { name: "Sessions" }))
+      within(screen.getByRole("table", { name: "Live sessions" }))
         .getAllByRole("columnheader")
         .map((th) => th.textContent);
     expect(headers()).toContain("Session");
     expect(headers()).not.toContain("Agent");
     expect(
-      within(table)
-        .queryAllByText(/\bmain\b/)
+      screen
+        .getAllByRole("table")
+        .flatMap((table) => within(table).queryAllByText(/\bmain\b/))
         .map((node) => node.textContent),
     ).toEqual(["tipple · main"]);
 
@@ -111,7 +120,9 @@ describe("SessionsListScreen", () => {
 
   it("sends filters from the URL and the rail to the API", async () => {
     const { requests, router } = renderList(routes(), "/sessions?outcome=error&period=24 h");
-    await screen.findByText("/evaluator");
+    // An outcome asks only the Ended section.
+    await screen.findByText("TIP-1511 · /feature");
+    expect(screen.queryByText("/evaluator")).toBeNull();
 
     const first = new URL(requests.find((r) => new URL(r.url).pathname === SESSIONS)?.url ?? "");
     expect(first.searchParams.get("outcome")).toBe("error");
@@ -131,18 +142,19 @@ describe("SessionsListScreen", () => {
       routes({
         [SESSIONS]: (request: Request) =>
           new URL(request.url).searchParams.get("cursor") === "c2"
-            ? aPage([aSession({ id: anId(3, "aaaa0003"), label: named("third") })])
-            : aPage(sessions(), { next_cursor: "c2" }),
+            ? aPage([aSession({ id: anId(3, "aaaa0003"), label: named("third"), status: "live" })])
+            : aSessionsByStatus(sessions(), { next_cursor: "c2" })(request),
       }),
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    const live = await screen.findByRole("region", { name: /^Live/ });
+    fireEvent.click(await within(live).findByRole("button", { name: "Load more" }));
     await waitFor(() => {
       expect(requests.map((r) => r.url).join(" ")).toContain("cursor=c2");
     });
-    expect(await screen.findByText("/third")).toBeInTheDocument();
-    expect(screen.getByText("Showing all 3")).toBeInTheDocument();
+    expect(await within(live).findByText("/third")).toBeInTheDocument();
+    expect(within(live).getByText("Showing all 2")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
+    fireEvent.click(within(live).getByRole("button", { name: /^Cost/ }));
     expect(router.state.location.search).toBe("?sort=-cost");
     await waitFor(() => {
       expect(requests.some((r) => new URL(r.url).searchParams.get("sort") === "-cost")).toBe(true);
@@ -164,7 +176,7 @@ describe("SessionsListScreen", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Columns" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Model" }));
-    expect(screen.getByRole("columnheader", { name: "Model" })).toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader", { name: "Model" })).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Compact rows" }));
     expect(document.querySelector('[data-density="compact"]')).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Default" }));
@@ -202,9 +214,10 @@ describe("SessionsListScreen", () => {
         }),
       }),
     );
-    expect(await screen.findByText("Could not load sessions")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
+    // Each section reports its own error (four sections asked).
+    expect(await screen.findAllByText(/^Could not load .+ sessions$/)).toHaveLength(4);
+    expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(4);
+    expect(screen.getAllByRole("button", { name: "Clear filters" })).toHaveLength(4);
     failed.unmount();
 
     renderList(routes());

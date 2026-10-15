@@ -72,6 +72,18 @@ export function aPage<T>(items: T[], extra: { next_cursor?: string | null } = {}
   return { items, next_cursor: extra.next_cursor ?? null, total_estimate: items.length };
 }
 
+/** A `GET /sessions` route answering each `status=` query with only the sessions of that status. */
+export function aSessionsByStatus(
+  sessions: Session[],
+  extra: { next_cursor?: string | null } = {},
+) {
+  return (request: Request) => {
+    const status = new URL(request.url).searchParams.get("status");
+    const items = sessions.filter((s) => status === null || s.status === status);
+    return aPage(items, items.length > 0 ? extra : {});
+  };
+}
+
 /** What session `anId(1, "5091b986")` is about: AGH-48 in /feature (a derived label). */
 export function aSessionLabel(overrides: Partial<SessionLabel> = {}): SessionLabel {
   return {
@@ -1447,7 +1459,7 @@ export function aProblem(overrides: Partial<ProblemDetails> = {}): ProblemReply 
   });
 }
 
-/** A route's answer: a JSON body, a problem, "pending" (never answers) or a function of the request. */
+/** A route's answer: a JSON body, a problem, "pending" (never answers) or a function of the request (returning any of these). */
 export type RouteReply =
   ProblemReply | "pending" | ((request: Request) => unknown) | Record<string, unknown> | unknown[];
 
@@ -1481,13 +1493,14 @@ export function stubApi(routes: ApiRoutes): Request[] {
           ),
         );
       }
-      if (reply === "pending") return new Promise<Response>(() => undefined);
-      if (reply instanceof ProblemReply) {
+      // A function may answer per request, including with a problem or "pending".
+      const body: unknown = typeof reply === "function" ? reply(request) : reply;
+      if (body === "pending") return new Promise<Response>(() => undefined);
+      if (body instanceof ProblemReply) {
         return Promise.resolve(
-          jsonResponse(reply.body, reply.body.status, "application/problem+json"),
+          jsonResponse(body.body, body.body.status, "application/problem+json"),
         );
       }
-      const body = typeof reply === "function" ? reply(request) : reply;
       return Promise.resolve(jsonResponse(body, request.method === "POST" ? 201 : 200));
     },
   );

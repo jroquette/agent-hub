@@ -2,6 +2,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 
 import type { components } from "../../api/schema";
 import { apiGet, apiKey, apiPost, useApi, type ApiParams, type ApiProblem } from "../../lib/api";
+import type { SectionId } from "./sections";
 
 export type Session = components["schemas"]["Session"];
 type SessionPage = components["schemas"]["Page_Session_"];
@@ -10,8 +11,8 @@ export type SessionQuery = NonNullable<ApiParams<"/api/v1/sessions">["query"]>;
 /** Rows per page ("Showing 50 of ~1,240"). */
 export const PAGE_SIZE = 50;
 
-/** Sessions matching `query`, page by page; "Load more" asks for the next cursor (spec 14). */
-export function useSessionPages(query: SessionQuery) {
+/** Sessions matching `query` (null: not asked), page by page; "Load more" asks for the next cursor (spec 14). */
+export function useSessionPages(query: SessionQuery | null) {
   return useInfiniteQuery<
     SessionPage,
     ApiProblem,
@@ -19,16 +20,27 @@ export function useSessionPages(query: SessionQuery) {
     readonly unknown[],
     string | null
   >({
-    queryKey: [...apiKey("/api/v1/sessions", { query }), "pages"],
+    queryKey: [...apiKey("/api/v1/sessions", { query: query ?? {} }), "pages"],
+    enabled: query !== null,
     initialPageParam: null,
     queryFn: ({ pageParam, signal }) =>
       apiGet(
         "/api/v1/sessions",
-        { query: { ...query, limit: PAGE_SIZE, cursor: pageParam } },
+        { query: { ...(query ?? {}), limit: PAGE_SIZE, cursor: pageParam } },
         signal,
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
+}
+
+/** One paged query per status section (ADR 0033 D4); a section not asked stays idle. */
+export function useSectionPages(queries: Record<SectionId, SessionQuery | null>) {
+  return {
+    waiting: useSessionPages(queries.waiting),
+    live: useSessionPages(queries.live),
+    idle: useSessionPages(queries.idle),
+    ended: useSessionPages(queries.ended),
+  };
 }
 
 /** The registered projects, for the Project facet. */
