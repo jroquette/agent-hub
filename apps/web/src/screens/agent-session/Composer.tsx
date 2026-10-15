@@ -23,6 +23,8 @@ export interface ComposerProps {
   onSend: (text: string) => Promise<unknown> | undefined;
   onInterrupt: () => Promise<unknown> | undefined;
   onSettings: (change: SettingsChange) => Promise<unknown> | undefined;
+  /** Called as a message goes out: the chat pins the transcript to its bottom (AC-234.18). */
+  onSending?: (() => void) | undefined;
   maxBytes?: number | undefined;
   /** Why nothing can be sent (log full, control off…); the session's end is detected on its own. */
   disabledReason?: string | null | undefined;
@@ -48,6 +50,7 @@ export function Composer({
   onSend,
   onInterrupt,
   onSettings,
+  onSending,
   maxBytes = DEFAULT_MESSAGE_MAX_BYTES,
   disabledReason,
 }: ComposerProps) {
@@ -81,6 +84,7 @@ export function Composer({
 
   const send = () => {
     if (!canSend || busy.current) return;
+    onSending?.();
     busy.current = true;
     setSending(true);
     setError(null);
