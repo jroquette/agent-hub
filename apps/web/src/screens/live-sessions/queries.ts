@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiKey, useApi } from "../../lib/api";
 import { useEventStream, type StreamHealth } from "../../lib/sse";
+import { tileStreamUrl } from "../sessions-list/queries";
 
 export type LiveTile = components["schemas"]["LiveTile"];
 type TilePage = components["schemas"]["Page_LiveTile_"];
@@ -31,8 +32,7 @@ export function useLiveTiles(project: string | null): {
   const queryClient = useQueryClient();
   const query = useApi("/api/v1/live-sessions", params(project));
   const key = apiKey("/api/v1/live-sessions", params(project));
-  const url = `/api/v1/live-sessions/stream${project ? `?project=${encodeURIComponent(project)}` : ""}`;
-  const health = useEventStream(query.data ? url : null, {
+  const health = useEventStream(query.data ? tileStreamUrl(project) : null, {
     "tile.upsert": (data) => {
       if (!isTile(data)) return;
       queryClient.setQueryData<TilePage>(key, (page) => {
