@@ -345,3 +345,25 @@ def test_lists_the_failed_body_node_and_its_group_when_a_body_node_fails() -> No
 
     assert report.failed == ("g", "g__b")
     assert report.reached == ("g", "g__b")
+
+
+def test_reworks_through_the_stub_list_when_a_body_approval_rejects_then_approves() -> None:
+    group = {
+        "id": "g",
+        "type": "loop_group",
+        "max_iterations": 3,
+        "until_when": "$ok.output.decision == 'approve'",
+        "nodes": [
+            shell("work"),
+            {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["work"]},
+        ],
+    }
+
+    report = run(
+        a_plan(group),
+        g__work={"text": "x"},
+        g__ok=[{"decision": "reject"}, {"decision": "approve"}],
+    )
+
+    assert report.run.status == "done"
+    assert [step.node for step in report.steps].count("g__work") == 2

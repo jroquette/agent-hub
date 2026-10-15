@@ -6,9 +6,10 @@ and name a declared input, a ``with`` value of its node or an upstream node, its
 that node's ``output_format``; argv lists follow ``check_argv`` (a whole element, never the
 program nor a ``-c`` script); a hub step node's ``cwd`` holds none; ``context.resume`` names an
 upstream agent; and ``returns``/``outcome_field`` name a node and a required boolean or enum
-string of its output. The layers are then split where nodes may not run concurrently: a read-only
-node (``mutates_checkout: false``) never shares one with a node that may change the checkout, and
-two agents resuming one session never share one.
+string of its output; two suspendable nodes (a gate, or a group whose body holds one) are
+ordered, one upstream of the other. The layers are then split where nodes may not run
+concurrently: a read-only node (``mutates_checkout: false``) never shares one with a node that
+may change the checkout, and two agents resuming one session never share one.
 
 A ``loop_group``'s body is planned the same way inside the group: its ids unique and new to the
 document, its ``depends_on`` inside the body, no cycle. A body node reads body nodes upstream of
@@ -120,6 +121,7 @@ def _plan(document: WorkflowDocument) -> WorkflowPlan:
         *_resume_problems(graph, nodes),
         *_outcome_problems(document),
         *_group_problems(graph),
+        *_unordered_gates(nodes, graph.upstream),
     ]
     if problems:
         raise WorkflowLoadError(problems)
@@ -317,6 +319,33 @@ def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
         yield from _reference_problems(inside, body, (*where, "nodes"))
         yield from _resume_problems(inside, body, (*where, "nodes"))
         yield from _reference_problems(inside, [group], where, until=True)
+        yield from _unordered_gates(body, upstream, where)
+
+
+def _suspendable(node: Node) -> bool:
+    """A gate, or a group whose body holds one: a node that may pause the run."""
+    if isinstance(node, LoopGroupNode):
+        return any(_suspendable(body) for body in node.nodes)
+    return isinstance(node, ApprovalNode | WaitNode)
+
+
+def _unordered_gates(
+    nodes: Sequence[Node], upstream: _Upstream, where: Loc = ()
+) -> Iterator[WorkflowProblem]:
+    """Two suspendable nodes with no order between them: a run holds one open gate at most."""
+    seen: list[str] = []
+    for index, node in enumerate(nodes):
+        if not _suspendable(node):
+            continue
+        for earlier in seen:
+            if not (upstream.contains(earlier, node.id) or upstream.contains(node.id, earlier)):
+                message = (
+                    f"the suspendable nodes {echo(earlier)} and {echo(node.id)} have no order"
+                    " between them: one must depend on the other"
+                )
+                yield WorkflowProblem((*where, "nodes", index), message)
+                break
+        seen.append(node.id)
 
 
 def _recorded(document: WorkflowDocument, layers: tuple[tuple[str, ...], ...]) -> WorkflowPlan:

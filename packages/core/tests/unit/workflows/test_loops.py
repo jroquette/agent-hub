@@ -12,7 +12,7 @@ from agent_hub.core.testing.workflow_fakes import (
     a_plan,
 )
 from agent_hub.core.workflows.document import WorkflowLoadError, parse_workflow
-from agent_hub.core.workflows.engine import EnginePorts, WorkflowEngineError, run_workflow
+from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.loops import last_line
 from agent_hub.core.workflows.plan import plan_workflow
@@ -454,13 +454,17 @@ def test_reuses_the_group_without_running_its_body_when_a_run_resumes_after_it()
     assert runner.calls[0].argv == ("echo", "done")
 
 
-def test_refuses_the_run_when_a_group_body_holds_an_approval() -> None:
+def test_pauses_the_run_open_when_a_group_body_holds_an_approval() -> None:
     approval = {"id": "ok", "type": "approval", "message": "Ship?"}
     plan = a_plan(a_group(approval, until_when="$ok.output.decision == 'approve'"))
-    ports = EnginePorts(ScriptedRunner(), ListRecorder(), FakeClock(), KeysOutputs(), lambda: 0.5)
+    recorder = ListRecorder()
+    ports = EnginePorts(ScriptedRunner(), recorder, FakeClock(), KeysOutputs(), lambda: 0.5)
 
-    with pytest.raises(WorkflowEngineError, match="approval gate"):
-        run_workflow(plan, {}, ports)
+    report = run_workflow(plan, {}, ports)
+
+    assert (report.status, report.reason) == ("paused", "g__ok")
+    assert [start.node for start in recorder.starts] == ["g", "g__ok"]
+    assert recorder.ends == []
 
 
 def test_renders_a_body_prompt_file_in_the_body_scope_when_a_group_iterates() -> None:

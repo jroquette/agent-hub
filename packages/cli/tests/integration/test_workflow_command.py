@@ -588,6 +588,48 @@ def test_pauses_again_then_runs_on_when_resumed_before_and_after_a_decision(
     assert [call["argv"] for call in sample.fakes.calls("make")] == [["check"]]
 
 
+REWORK_YAML = """\
+version: 1
+name: rework
+revision: 1
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 3
+    until_when: "$ok.output.decision == 'approve'"
+    nodes:
+      - id: work
+        type: shell
+        command: [make, check]
+      - id: ok
+        type: approval
+        message: Ship?
+        capture_response: true
+        depends_on: [work]
+"""
+
+
+def test_reworks_the_iteration_when_a_body_approval_is_rejected_then_approved(
+    sample: SampleRun,
+) -> None:
+    write(sample.hub, "workflows/rework/rework.yaml", REWORK_YAML)
+    first = sample.run("rework", "--live", "--run-id", RUN_ID)
+    decision = {"event": "decision", "node": "g__ok", "choice": "reject", "text": "tests"}
+    workflow_runs.append_record(run_path(sample), decision | {"attempt": 1})
+    second = sample.run("--resume", RUN_ID)
+    workflow_runs.append_record(run_path(sample), decision | {"attempt": 2, "choice": "approve"})
+
+    third = sample.run("--resume", RUN_ID)
+
+    assert first.stdout.splitlines()[-1] == "run r1: paused at g__ok"
+    assert second.stdout.splitlines()[-1] == "run r1: paused at g__ok"
+    assert third.exit_code == 0, third.output
+    assert third.stdout.splitlines()[-1] == "run r1: done"
+    assert [call["argv"] for call in sample.fakes.calls("make")] == [["check"], ["check"]]
+    group = [r for r in sample.records() if r.get("node") == "g" and r["event"] == "step_end"]
+    assert [(r["attempt"], r["status"]) for r in group] == [(1, "ok")]
+
+
 def test_ignores_modules_planted_in_hub_when_hub_step_node_runs(sample: SampleRun) -> None:
     marker = sample.hub / "planted-ran"
     write(sample.hub, "typer/__init__.py", f"open({str(marker)!r}, 'w').close()\n")

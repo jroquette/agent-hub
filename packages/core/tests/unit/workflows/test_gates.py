@@ -299,3 +299,72 @@ def test_bounds_until_at_seven_days_when_the_gate_opens(until: str, status: str)
     assert run.report.status == status
     if status == "failed":
         assert run.recorder.end_of("gate").failure_kind == "config"
+
+
+# Gates inside a loop_group body: the iteration pauses and its resume picks it up again.
+REWORK = {
+    "id": "g",
+    "type": "loop_group",
+    "max_iterations": 3,
+    "until_when": "$ok.output.decision == 'approve'",
+    "nodes": [
+        {"id": "work", "type": "shell", "command": ["fix", "$LOOP_PREV.ok.output.text"]},
+        {"id": "side", "type": "shell", "command": ["lint"]},
+        {
+            "id": "ok",
+            "type": "approval",
+            "message": "Ship?",
+            "capture_response": True,
+            "depends_on": ["work"],
+        },
+    ],
+}
+
+
+def resumed(
+    report: RunReport, answers: Mapping[tuple[str, int], GateAnswer], runner: ScriptedRunner
+) -> tuple[RunReport, ListRecorder]:
+    recorder = ListRecorder()
+    ports = EnginePorts(
+        runner, recorder, FakeClock(), KeysOutputs(), lambda: 0.5, gates=AnswerBook(dict(answers))
+    )
+    plan = a_plan(REWORK, shell("after", "g"))
+    return run_workflow(plan, {}, ports, prior=report.state), recorder
+
+
+def test_reworks_until_approved_when_a_body_approval_is_rejected_then_approved() -> None:
+    runner = ScriptedRunner()
+    first, _ = resumed(RunReport("paused", None, None, RunState()), {}, runner)
+    rejected, middle = resumed(first, {("g__ok", 1): GateAnswer("reject", "add tests")}, runner)
+    approved, last = resumed(rejected, {("g__ok", 2): GateAnswer("approve")}, runner)
+
+    assert (first.status, first.reason) == ("paused", "g__ok")
+    assert sorted(runner.ran()[:2]) == ["g__side", "g__work"]
+    assert (rejected.status, rejected.reason) == ("paused", "g__ok")
+    assert [g.node for g in middle.gates] == ["g__ok"]
+    assert middle.gates[0].attempt == 2
+    assert approved.status == "done"
+    fixes = [call.argv for call in runner.calls if call.node.id == "g__work"]
+    assert fixes == [("fix", ""), ("fix", "add tests")]
+    assert runner.ran().count("g__side") == 2
+    assert runner.ran()[-1] == "after"
+    group_ends = [end for end in last.ends if end.node == "g"]
+    assert [(end.attempt, end.status) for end in group_ends] == [(1, "ok")]
+    assert last.end_of("g").output == {
+        "work": "",
+        "side": "",
+        "ok": {"decision": "approve", "text": ""},
+    }
+    assert [start.node for start in middle.starts].count("g") == 0
+
+
+def test_pauses_again_without_rerunning_the_iteration_when_resumed_before_an_answer() -> None:
+    runner = ScriptedRunner()
+    first, _ = resumed(RunReport("paused", None, None, RunState()), {}, runner)
+
+    again, recorder = resumed(first, {}, runner)
+
+    assert (again.status, again.reason) == ("paused", "g__ok")
+    assert sorted(runner.ran()) == ["g__side", "g__work"]
+    assert recorder.starts == []
+    assert again.state.groups == first.state.groups

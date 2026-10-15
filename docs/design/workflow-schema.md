@@ -58,10 +58,10 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
   resumes the previous iteration's session. The output is the last iteration's; past the cap it fails `max_iterations`.
 - `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's body
   outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first); the output maps body id → output.
-- `approval`: `decisions` `{id, label}` (kebab-case; default `approve`, `reject`); output `{decision}` (+ `text` with
-  `capture_response`). Rework: a `loop_group` reading the decision; an unread default `reject` ends the run `cancelled`.
-- `wait`: `duration`, `until` (ISO-8601 with offset, or a whole reference) or `attention` (text, or an `options` id),
-  ≤ 7d; output `{at}`, `{text}` or `{choice, text}`. A timed wait ends on a resume past its time; earlier, it re-pauses.
+- `approval`: `decisions` `{id, label}` (default `approve`, `reject`); output `{decision}` (+ `text` with
+  `capture_response`); rework is a `loop_group` reading it; an unread default `reject` cancels the run. Gates (and
+  groups holding one) are ordered; a body gate pauses its iteration. `wait`: `duration`, `until` (ISO-8601 + offset, or a
+  reference), `attention` (text, or an `options` id), ≤ 7d; output `{at}`, `{text}`, `{choice, text}`; ends on a resume.
 - `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with`, naming a flow of
   its pack; `with` fills its `inputs` (`$INPUTS.<name>`; in a `when:`, a reference). Nodes become `<include id>__<id>`;
   roots take its graph keys (`when:` as `A && B`, never `||`); depending on it waits on every sink, `$<include>.output`

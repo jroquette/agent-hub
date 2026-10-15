@@ -18,9 +18,12 @@ the whole run and its resumes, so no two steps share one. A failed attempt asks
 starts the loop again from its first turn. A ``halt`` ends the
 run ``cancelled``. An ``approval`` or ``wait`` node opens a gate (``gates.py``) and, until it
 has its answer or its time, pauses the run: once its layer ends, the report is ``paused``, with
-no end, and later layers wait for the resume, which takes up the same gate. Rejecting an approval
-with the default decisions ends the run ``cancelled`` like a ``halt``, unless the workflow reads
-the decision.
+no end, and later layers wait for the resume, which takes up the same gate. Planning lets at most
+one gate be open at a time (two suspendable nodes are always ordered). A gate in a ``loop_group``
+body pauses its iteration once the body layer ends; the group's step stays open, and the resume
+goes on in that iteration with the body nodes it already ended and the same ``$LOOP_PREV``.
+Rejecting an approval with the default decisions ends the run ``cancelled`` like a ``halt``,
+unless the workflow reads the decision.
 
 A ``loop_group`` is one step around its body's: each iteration runs the body's layers (body ids
 as recorded, ``<group>__<id>``, each visit a new attempt), with ``$LOOP_PREV`` reading the
@@ -94,6 +97,7 @@ from agent_hub.core.workflows.ports import (
     StepStart,
 )
 from agent_hub.core.workflows.run_state import (
+    HeldGroup,
     NodeEnd,
     RunReport,
     RunState,
@@ -144,12 +148,6 @@ def run_workflow(
     prior: RunState | None = None,
 ) -> RunReport:
     """Run ``plan`` with ``inputs``, resuming ``prior`` when given; the run's report."""
-    for group in plan.document.nodes:
-        if isinstance(group, LoopGroupNode):
-            for node in group.nodes:
-                if isinstance(node, ApprovalNode | WaitNode):
-                    msg = f"the body node {echo(node.id)} is an {node.type} gate, not run yet"
-                    raise WorkflowEngineError(msg)
     return _Run(plan, start_inputs(plan, inputs), ports, prior=prior or RunState()).execute()
 
 
@@ -188,6 +186,9 @@ class _Run:
         self.halted_by: str | None = None
         # The gate node the run pauses on, and its open gate.
         self.paused: tuple[str, OpenGate] | None = None
+        # The groups paused around that gate, and the gates a resume already took up once.
+        self.held: dict[str, HeldGroup] = {}
+        self.taken: set[str] = set()
         # Each body node's group, and each running group's previous iteration.
         self.owner = {
             body.id: node
@@ -256,7 +257,7 @@ class _Run:
     def _pause(self, node: str, gate: OpenGate) -> RunReport:
         """The report of a run stopped on an open gate: no end is recorded."""
         nodes = {**self.prior.nodes, **self.results}
-        state = RunState(nodes, self.attempts, self.sessions, {node: gate})
+        state = RunState(nodes, self.attempts, self.sessions, {node: gate}, dict(self.held))
         return RunReport("paused", None, node, state)
 
     def _end(self, node: Node, end: NodeEnd) -> None:
@@ -358,7 +359,10 @@ class _Run:
     def _gate(self, node: GateNode) -> None:
         """Take up the gate a pause left open, else open one; end the node once answered."""
         clock, recorder = self.ports.clock, self.recorder
-        held = self.prior.gates.get(node.id)
+        with self.lock:
+            # A body gate is visited once per iteration: only the first visit takes it up.
+            held = None if node.id in self.taken else self.prior.gates.get(node.id)
+            self.taken.add(node.id)
         if held is not None:
             attempt, due = held.attempt, held.due
         else:
@@ -571,11 +575,17 @@ class _Run:
         return RefContext(context.inputs, context.nodes, context.loop_prev, values)
 
     def _group(self, group: LoopGroupNode) -> None:
-        recorder, attempt = self.recorder, self._attempt(group)
-        recorder.step_started(StepStart(group.id, attempt, self.ports.clock.now()))
-        end = self._iterate(group)
+        recorder, held = self.recorder, self.prior.groups.get(group.id)
+        if held is None:
+            attempt = self._attempt(group)
+            recorder.step_started(StepStart(group.id, attempt, self.ports.clock.now()))
+        else:
+            attempt = held.attempt
+        end = self._iterate(group, attempt, held)
         with self.lock:
             self.loop_prevs.pop(group.id, None)
+        if isinstance(end, _Paused):
+            return
         if isinstance(end, NodeFailedError):
             self._record_failure(group, attempt, end)
             self._end(group, NodeEnd(NodeResult("failed"), failure_kind=end.kind))
@@ -583,17 +593,21 @@ class _Run:
         recorder.step_ended(StepEnd(group.id, attempt, "ok", self.ports.clock.now(), output=end))
         self._end(group, NodeEnd(NodeResult("completed", end)))
 
-    def _iterate(self, group: LoopGroupNode) -> JsonValue | NodeFailedError:
-        """The group's iterations: the output map once done, or why the group failed."""
+    def _iterate(
+        self, group: LoopGroupNode, attempt: int, held: HeldGroup | None
+    ) -> JsonValue | NodeFailedError | _Paused:
+        """The group's iterations: the output map once done, why the group failed, or a pause
+        (the group then held for the resume)."""
         body = {node.id: node for node in group.nodes}
-        with self.lock:
-            for node_id in body:
-                self.sessions.pop(node_id, None)
-            self.loop_prevs[group.id] = {}
-        iteration = 0
+        iteration, restored = self._start_iterations(group, held)
         while True:
             iteration += 1
-            if (failure := self._run_body(group, body, iteration)) is not None:
+            failure = self._run_body(group, body, iteration, restored=restored)
+            restored = {}
+            if isinstance(failure, _Paused):
+                self._hold(group, attempt, iteration)
+                return failure
+            if failure is not None:
                 return failure
             output = {local_id(group, n): self.results[n].output for n in body}
             try:
@@ -607,18 +621,49 @@ class _Run:
             with self.lock:
                 self.loop_prevs[group.id] = {n: self.results[n] for n in body}
 
+    def _start_iterations(
+        self, group: LoopGroupNode, held: HeldGroup | None
+    ) -> tuple[int, dict[str, NodeResult]]:
+        """The iteration before the first to run, and the body results a pause left of it."""
+        with self.lock:
+            if held is None:
+                for body in group.nodes:
+                    self.sessions.pop(body.id, None)
+                self.loop_prevs[group.id] = {}
+                return 0, {}
+            self.loop_prevs[group.id] = dict(held.previous)
+        return held.iteration - 1, dict(held.current)
+
+    def _hold(self, group: LoopGroupNode, attempt: int, iteration: int) -> None:
+        """Keep the paused iteration for the resume: what it ended, and ``$LOOP_PREV``."""
+        with self.lock:
+            current = {n.id: self.results[n.id] for n in group.nodes if n.id in self.results}
+            previous = dict(self.loop_prevs[group.id])
+        self.held[group.id] = HeldGroup(attempt, iteration, previous, current)
+
     def _run_body(
-        self, group: LoopGroupNode, body: Mapping[str, Node], iteration: int
-    ) -> NodeFailedError | None:
-        """One iteration of the body's layers; why it fails the group, if it does."""
+        self,
+        group: LoopGroupNode,
+        body: Mapping[str, Node],
+        iteration: int,
+        *,
+        restored: Mapping[str, NodeResult],
+    ) -> NodeFailedError | _Paused | None:
+        """One iteration of the body's layers, after the nodes ``restored`` from a pause; why
+        it fails the group, if it does, or a pause once a body layer leaves a gate open."""
         with self.lock:
             for node_id in body:
                 self.ends.pop(node_id, None)
                 self.results.pop(node_id, None)
+            for node_id, result in restored.items():
+                self.ends[node_id], self.results[node_id] = NodeEnd(result), result
         for layer in self.plan.bodies[group.id]:
-            self._run_layer([body[node_id] for node_id in layer])
+            if waiting := [body[node_id] for node_id in layer if node_id not in restored]:
+                self._run_layer(waiting)
             if self.halted_by is not None:
                 return NodeFailedError("cancelled", "a halt in the body ended the run")
+            if self.paused is not None:
+                return _Paused()
         failed = next((n for n in body if self.ends[n].result.state == "failed"), None)
         if failed is None:
             return None
@@ -659,6 +704,10 @@ class _Run:
             raise NodeFailedError("output_contract", "the output is not one JSON value") from None
         self.ports.outputs.check(node.output_format, value)
         return value
+
+
+class _Paused:
+    """A group iteration stopped on an open gate in its body."""
 
 
 class _LockedRecorder:
