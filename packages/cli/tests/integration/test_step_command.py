@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli.main import app
@@ -141,7 +142,7 @@ class TestWorktree:
         )
 
         assert result.exit_code == 2
-        assert "unknown repo in --repo" in result.stderr
+        assert "unknown repo in --repo" in unstyle(result.stderr)
 
 
 class TestCommits:
@@ -192,7 +193,7 @@ class TestCommits:
         result = step(run_command, workspace, "commits", "--target", json.dumps(target))
 
         assert result.exit_code == 2
-        assert "--target" in result.stderr
+        assert "--target" in unstyle(result.stderr)
 
 
 class TestPr:
@@ -322,7 +323,7 @@ class TestReport:
         result = step(run_command, run_workspace.workspace, "report", "--commits", "many")
 
         assert result.exit_code == 2
-        assert "--commits" in result.stderr
+        assert "--commits" in unstyle(result.stderr)
 
 
 class TestVerdict:

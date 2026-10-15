@@ -46,6 +46,22 @@ def test_keys_run_end_by_run_when_two_run_ends_exist() -> None:
     assert fact_key(first) == "run.end:r1"
 
 
+def test_keys_each_engine_run_end_by_index_when_source_id_numbers_it() -> None:
+    def end(source_id: str) -> str | None:
+        return fact_key(
+            an_event(type="run.end", source="executor", source_id=source_id, payload={"run": "r1"})
+        )
+
+    assert end("r1:run:0:end") == "run.end:r1:0"
+    assert end("r1:run:12:end") == "run.end:r1:12"
+    assert end("r1:run:x:end") == "run.end:r1"
+    assert end("r1:run::end") == "run.end:r1"
+    assert end("r2:run:3:end") == "run.end:r1"
+    assert end("r1:run:123456789:end") == "run.end:r1:123456789"
+    assert end("r1:run:1234567890:end") == "run.end:r1"
+    assert end("r1:run:" + "9" * 5000 + ":end") == "run.end:r1"
+
+
 def test_has_no_key_when_event_has_no_shared_identity() -> None:
     assert fact_key(an_event(type="message", payload={"role": "user"})) is None
 

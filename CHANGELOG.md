@@ -27,6 +27,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `.agent-runs/workflows/<run>/` with a snapshot of its document, prompts and scripts, and its events go to the
   event database. `--resume RUN` continues a failed run on its snapshot, reusing what completed; `--abandon RUN` ends
   it cancelled. It makes no tracker write (AGH-221).
+- Workflow runs read any workflow engine run: steps keep their node ids (`a__b` inside an include) with `skipped`,
+  `failure_kind` and `skip_cause`; a run has `status`, `outcome`, `revision` and `content_hash`, and its latest
+  `run.end` decides how a resumed run ended. `GET /api/v1/workflow-runs` filters by `workflow` and `failure_kind`;
+  `hub run` runs read as before (AGH-225).
+- `GET /api/v1/workflows` lists each project's workflows (source `hub` or `builtin`) and the files that do not load;
+  `GET /api/v1/workflows/{project}/{name}` gives a workflow's document and its layers (AGH-225).
 - `hub step worktree|verdict|commits|pr|report` run `hub run`'s stages one at a time and print one JSON object each (the
   worktree and the repo's target, the session's verdict, the branch's commits, the PR's url, the delivery), for the issue-to-pr
   workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
