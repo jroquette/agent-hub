@@ -8,6 +8,15 @@ the whole run and its resumes, so no two steps share one. A failed attempt asks
 ``retry_decision`` and waits through the ``Clock``; each retry is recorded, and a loop's retry
 starts the loop again from its first turn. A ``halt`` ends the
 run ``cancelled``. ``approval`` nodes come later: a plan holding one is refused before any step.
+
+A ``loop_group`` is one step around its body's: each iteration runs the body's layers (body ids
+as recorded, ``<group>__<id>``, each visit a new attempt), with ``$LOOP_PREV`` reading the
+iteration before (empty at first). A failed body node does not stop the iteration, so ``all_done``
+body nodes still run; then the group fails with that node's kind. Otherwise ``until_when`` (over
+the iteration's outputs), then ``until_bash`` (exit 0, through the runner as a shell call under
+the group's id) end it, with an output mapping each body id to its output; past
+``max_iterations`` it fails ``max_iterations``. A group is never retried. Without
+``fresh_context``, a body agent resumes its own session of the iteration before.
 """
 
 import json
@@ -22,6 +31,7 @@ from agent_hub.core.workflows.loops import (
     MaxIterationsError,
     Turn,
     check_turn,
+    local_id,
     next_session,
     until_met,
 )
@@ -31,6 +41,8 @@ from agent_hub.core.workflows.nodes import (
     ExecutableNode,
     FromBinding,
     HaltNode,
+    IncludeNode,
+    LoopGroupNode,
     LoopNode,
     Node,
     ScriptNode,
@@ -56,6 +68,7 @@ from agent_hub.core.workflows.run_state import (
     run_status,
     trigger_skip,
 )
+from agent_hub.core.workflows.scope import RefScope
 from agent_hub.core.workflows.substitution import (
     NodeRef,
     NodeResult,
@@ -90,7 +103,7 @@ def run_workflow(
     prior: RunState | None = None,
 ) -> RunReport:
     """Run ``plan`` with ``inputs``, resuming ``prior`` when given; the run's report."""
-    for node in plan.document.nodes:
+    for node in plan.all_nodes():
         if isinstance(node, ApprovalNode):
             msg = f"the node {echo(node.id)} is an approval, which this engine does not run yet"
             raise WorkflowEngineError(msg)
@@ -130,6 +143,14 @@ class _Run:
         self.attempts = dict(prior.attempts)
         self.sessions = dict(prior.sessions)
         self.halted_by: str | None = None
+        # Each body node's group, and each running group's previous iteration.
+        self.owner = {
+            body.id: node
+            for node in plan.document.nodes
+            if isinstance(node, LoopGroupNode)
+            for body in node.nodes
+        }
+        self.loop_prevs: dict[str, dict[str, NodeResult]] = {}
 
     def execute(self) -> RunReport:
         nodes = {node.id: node for node in self.plan.document.nodes}
@@ -168,17 +189,19 @@ class _Run:
             self._halt(node)
         elif isinstance(node, LoopNode):
             self._complete(node, self._retrying(node, lambda: self._loop_once(node)))
-        elif not isinstance(node, ApprovalNode):
+        elif isinstance(node, LoopGroupNode):
+            self._group(node)
+        elif isinstance(node, AgentNode | ShellNode | ScriptNode):
             self._complete(node, self._retrying(node, lambda: self._execute_once(node)))
 
     def _stopped_by_when(self, node: Node, expr: str) -> bool:
         """Skip or fail ``node`` by its ``when:``; whether it stopped the node."""
-        when = evaluate_when(expr, self._context())
+        when = evaluate_when(expr, self._context(node))
         if isinstance(when, WhenFail):
             attempt = self._attempt(node)
             self.ports.recorder.step_started(StepStart(node.id, attempt, self.ports.clock.now()))
             self._record_failure(node, attempt, NodeFailedError("config", str(when.error)))
-            self._end(node, NodeEnd(NodeResult("failed")))
+            self._end(node, NodeEnd(NodeResult("failed"), failure_kind="config"))
         elif isinstance(when, WhenSkip):
             self._skip(node, "condition_parse_error")
         elif not when.holds:
@@ -190,9 +213,11 @@ class _Run:
     def _reusable(self, node: Node) -> bool:
         """A node that completed before, is not ``always_run``, and has no changed ancestor."""
         before = self.prior.nodes.get(node.id)
-        if before is None or before.state != "completed":
+        if before is None or before.state != "completed" or node.id in self.owner:
             return False
-        if isinstance(node, HaltNode | ApprovalNode) or node.always_run:
+        if isinstance(node, HaltNode | ApprovalNode | IncludeNode):
+            return False
+        if not isinstance(node, LoopGroupNode) and node.always_run:
             return False
         # References reach only ancestors (planning), so an unchanged ancestry reads the same.
         return node.id not in self.stale
@@ -234,7 +259,7 @@ class _Run:
         attempt = self._attempt(node)
         recorder.step_started(StepStart(node.id, attempt, now))
         try:
-            detail = render(node.reason, self._context())
+            detail = render(node.reason, self._context(node))
         except SubstitutionError as error:
             detail = str(error)
         recorder.step_ended(StepEnd(node.id, attempt, "ok", now, detail=detail))
@@ -306,15 +331,15 @@ class _Run:
         )
         return turn, done
 
-    def _retrying(self, node: ExecutableNode, once: Callable[[], Turn]) -> Turn | None:
-        """``once`` again while ``retry_decision`` allows; ``None`` once no retry is left."""
+    def _retrying(self, node: ExecutableNode, once: Callable[[], Turn]) -> Turn | NodeFailedError:
+        """``once`` again while ``retry_decision`` allows; the last failure once none is left."""
         retries = 0
         while True:
             try:
                 return once()
             except NodeFailedError as failure:
                 if not self._wait_for_retry(node, failure, retries):
-                    return None
+                    return failure
                 retries += 1
 
     def _wait_for_retry(self, node: ExecutableNode, failure: NodeFailedError, retries: int) -> bool:
@@ -340,41 +365,58 @@ class _Run:
             return False
         return True
 
-    def _complete(self, node: ExecutableNode, turn: Turn | None) -> None:
-        if turn is None:
-            self._end(node, NodeEnd(NodeResult("failed")))
+    def _complete(self, node: ExecutableNode, turn: Turn | NodeFailedError) -> None:
+        if isinstance(turn, NodeFailedError):
+            self._end(node, NodeEnd(NodeResult("failed"), failure_kind=turn.kind))
             return
         self._end(node, NodeEnd(NodeResult("completed", turn.output)))
         if turn.session is not None:
             self.sessions[node.id] = turn.session
 
     def _resumed_session(self, node: ExecutableNode) -> str | None:
-        if isinstance(node, AgentNode | LoopNode) and not isinstance(node.context, str):
+        if not isinstance(node, AgentNode | LoopNode):
+            return None
+        if not isinstance(node.context, str):
             return self.sessions.get(node.context.resume)
-        return None
+        group = self.owner.get(node.id)
+        # A group's body agent: its own session of the iteration before (popped at the start).
+        return None if group is None or group.fresh_context else self.sessions.get(node.id)
 
     def _call(
         self, node: ExecutableNode, attempt: int, *, iteration: int, resume: str | None
     ) -> NodeCall:
         context = self._node_context(node)
+        cwd = render(node.cwd, context) if node.cwd is not None else None
         if isinstance(node, ShellNode | ScriptNode):
             argv = (
                 render_argv(node.command, context)
                 if isinstance(node, ShellNode)
                 else [render(arg, context) for arg in node.args]
             )
-            cwd = render(node.cwd, context) if node.cwd is not None else None
             env = {name: render(value, context) for name, value in node.env.items()}
-            return NodeCall(node, attempt, context, iteration, tuple(argv), cwd, env)
+            stdin = render(node.stdin, context) if node.stdin is not None else None
+            return NodeCall(node, attempt, context, iteration, tuple(argv), cwd, env, stdin=stdin)
         prompt = render(node.prompt, context) if node.prompt is not None else None
-        return NodeCall(node, attempt, context, iteration, prompt=prompt, resume_session=resume)
+        scope = self.plan.scopes.get(node.id, RefScope())
+        return NodeCall(
+            node,
+            attempt,
+            context,
+            iteration,
+            cwd=cwd,
+            prompt=prompt,
+            resume_session=resume,
+            scope=scope,
+        )
 
-    def _context(self) -> RefContext:
-        return RefContext(self.inputs, self.results)
+    def _context(self, node: Node) -> RefContext:
+        """What ``node`` reads: ``$LOOP_PREV`` inside a group (its body or its channels)."""
+        group = self.owner.get(node.id, node)
+        return RefContext(self.inputs, dict(self.results), self.loop_prevs.get(group.id))
 
     def _node_context(self, node: ExecutableNode) -> RefContext:
         """The context of an attempt: an agent's ``with`` values resolved (``$WITH``)."""
-        context = self._context()
+        context = self._context(node)
         if not isinstance(node, AgentNode | LoopNode):
             return context
         values: dict[str, JsonValue] = {}
@@ -386,7 +428,83 @@ class _Run:
             producer = context.nodes.get(ref.node) if isinstance(ref, NodeRef) else None
             skipped = producer is not None and producer.state == "skipped"
             values[name] = binding.if_skipped if skipped else resolve(ref, context, binding.from_)
-        return RefContext(context.inputs, context.nodes, with_values=values)
+        return RefContext(context.inputs, context.nodes, context.loop_prev, values)
+
+    def _group(self, group: LoopGroupNode) -> None:
+        recorder, attempt = self.ports.recorder, self._attempt(group)
+        recorder.step_started(StepStart(group.id, attempt, self.ports.clock.now()))
+        end = self._iterate(group)
+        self.loop_prevs.pop(group.id, None)
+        if isinstance(end, NodeFailedError):
+            self._record_failure(group, attempt, end)
+            self._end(group, NodeEnd(NodeResult("failed"), failure_kind=end.kind))
+            return
+        recorder.step_ended(StepEnd(group.id, attempt, "ok", self.ports.clock.now(), output=end))
+        self._end(group, NodeEnd(NodeResult("completed", end)))
+
+    def _iterate(self, group: LoopGroupNode) -> JsonValue | NodeFailedError:
+        """The group's iterations: the output map once done, or why the group failed."""
+        body = {node.id: node for node in group.nodes}
+        for node_id in body:
+            self.sessions.pop(node_id, None)
+        self.loop_prevs[group.id] = {}
+        iteration = 0
+        while True:
+            iteration += 1
+            if (failure := self._run_body(group, body, iteration)) is not None:
+                return failure
+            output = {local_id(group, n): self.results[n].output for n in body}
+            try:
+                if self._group_done(group, iteration):
+                    return output
+            except NodeFailedError as failure:
+                return failure
+            if iteration >= group.max_iterations:
+                detail = f"{group.max_iterations} iterations did not end the group"
+                return MaxIterationsError(detail, output)
+            self.loop_prevs[group.id] = {n: self.results[n] for n in body}
+
+    def _run_body(
+        self, group: LoopGroupNode, body: Mapping[str, Node], iteration: int
+    ) -> NodeFailedError | None:
+        """One iteration of the body's layers; why it fails the group, if it does."""
+        for node_id in body:
+            self.ends.pop(node_id, None)
+            self.results.pop(node_id, None)
+        for layer in self.plan.bodies[group.id]:
+            for node_id in layer:
+                self._visit(body[node_id])
+                if self.halted_by is not None:
+                    return NodeFailedError("cancelled", "a halt in the body ended the run")
+        failed = next((n for n in body if self.ends[n].result.state == "failed"), None)
+        if failed is None:
+            return None
+        kind = self.ends[failed].failure_kind or "unknown"
+        return NodeFailedError(kind, f"{failed} failed in iteration {iteration}")
+
+    def _group_done(self, group: LoopGroupNode, iteration: int) -> bool:
+        """Whether the iteration ends the group: ``until_when``, then ``until_bash``."""
+        context = self._context(group)
+        if group.until_when is not None:
+            when = evaluate_when(group.until_when, context)
+            if isinstance(when, WhenFail | WhenSkip):
+                detail = str(when.error) if isinstance(when, WhenFail) else when.detail
+                raise NodeFailedError("config", detail)
+            if when.holds:
+                return True
+        if group.until_bash is None:
+            return False
+        try:
+            argv = render_argv(group.until_bash, context)
+            check = ShellNode.model_construct(id=group.id, type="shell", command=tuple(argv))
+            call = NodeCall(check, self.attempts[group.id], context, iteration, tuple(argv))
+            return self.ports.runner.until_exit(argv, call) == 0
+        except NodeFailedError:
+            raise
+        except SubstitutionError as error:
+            raise NodeFailedError("config", str(error)) from None
+        except Exception as error:  # noqa: BLE001 - a port's unexpected error ends the group
+            raise NodeFailedError("unknown", type(error).__name__) from None
 
     def _output(self, node: ExecutableNode, text: str) -> JsonValue:
         """The text, or the one JSON value it holds checked against ``output_format``."""

@@ -10,6 +10,7 @@ from agent_hub.core.workflows.nodes import (
     ApprovalNode,
     FromBinding,
     HaltNode,
+    IncludeNode,
     LoopNode,
     Node,
     Retry,
@@ -40,6 +41,7 @@ def errors_of(raw: dict[str, object]) -> list[tuple[tuple[str | int, ...], str]]
         ),
         ({"id": "ok", "type": "approval", "message": "Ship it?"}, ApprovalNode),
         ({"id": "stop", "type": "halt", "reason": "Nothing to do"}, HaltNode),
+        ({"id": "rev", "type": "include", "include": "review", "with": {"pr": 1}}, IncludeNode),
     ],
 )
 def test_loads_the_type_model_when_node_has_its_keys(raw: dict[str, object], model: type) -> None:
@@ -75,13 +77,15 @@ def test_retries_once_on_transient_after_two_seconds_when_retry_is_empty() -> No
         {"id": "a", "type": "approval", "message": "x", "timeout": "1m"},
         {"id": "a", "type": "shell", "command": ["true"], "retry": {"max_attempts": 1, "x": 1}},
         {"id": "a", "type": "shell", "command": ["true"], "with": {}},
+        {"id": "a", "type": "include", "include": "review", "retry": {}},
+        {"id": "a", "type": "include", "include": "review", "prompt": "x"},
     ],
 )
 def test_refuses_key_when_it_is_not_in_the_type_row(raw: dict[str, object]) -> None:
     assert any(message == "Extra inputs are not permitted" for _, message in errors_of(raw))
 
 
-@pytest.mark.parametrize("node_type", ["include", "loop_group", "wait", "bash"])
+@pytest.mark.parametrize("node_type", ["wait", "bash"])
 def test_refuses_type_when_it_is_not_a_node_type_yet(node_type: str) -> None:
     [(loc, message)] = errors_of({"id": "a", "type": node_type})
 

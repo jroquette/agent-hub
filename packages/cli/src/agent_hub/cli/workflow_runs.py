@@ -145,7 +145,7 @@ def snapshot_hash(snapshot: Path) -> str:
 
 
 def _pack_files(plan: WorkflowPlan) -> Iterator[tuple[PackFolder, str]]:
-    for node in plan.document.nodes:
+    for node in plan.all_nodes():
         if isinstance(node, AgentNode | LoopNode) and node.prompt_file is not None:
             yield "prompts", node.prompt_file
         elif isinstance(node, ScriptNode):
@@ -255,12 +255,13 @@ class RecordedRun:
 
     folder: Path
     events: WorkflowEvents
-    sink: EventSink
+    # None: the events are not sent (issue-to-pr's are hub run's, from its records).
+    sink: EventSink | None
 
     def step_started(self, start: StepStart) -> None:
         self._record({"event": "step_start", "node": start.node, "attempt": start.attempt})
         self.events.step_started(start)
-        self.sink.flush(self.events)
+        self._flush()
 
     def step_ended(self, end: StepEnd) -> None:
         record: Record = {
@@ -279,7 +280,7 @@ class RecordedRun:
             f"[{end.node}] {end.status}" + (f" ({end.failure_kind})" * bool(end.failure_kind))
         )
         self.events.step_ended(end)
-        self.sink.flush(self.events)
+        self._flush()
 
     def retry_scheduled(self, node: str, retry: RetryRecord) -> None:
         delay = retry.delay.total_seconds()
@@ -290,10 +291,14 @@ class RecordedRun:
         record: Record = {"event": "end", "status": end.status, "outcome": end.outcome}
         self._record({**record, "reason": end.reason})
         self.events.run_ended(end)
-        self.sink.flush(self.events)
+        self._flush()
 
     def _record(self, record: Record) -> None:
         append_record(self.folder, record)
+
+    def _flush(self) -> None:
+        if self.sink is not None:
+            self.sink.flush(self.events)
 
 
 class SystemClock:
