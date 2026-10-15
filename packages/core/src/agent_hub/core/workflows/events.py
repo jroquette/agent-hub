@@ -94,7 +94,7 @@ class WorkflowEvents:
 
     def gate_requested(self, request: GateRequest) -> None:
         payload: dict[str, JsonValue] = {
-            "run": self.run_id,
+            **self.tagged,
             "attempt": request.attempt,
             "gate_id": gate_id(self.run_id, request.node, request.attempt),
             "kind": gate_event_kind(request.form),

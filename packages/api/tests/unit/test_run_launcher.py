@@ -1,12 +1,15 @@
 """hub web's run launcher over pid files: states, links, signals, caps (AC-213.19)."""
 
+import fcntl
 import json
 import os
 import signal
 import subprocess
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NoReturn
 
 import pytest
 
@@ -252,3 +255,64 @@ def test_reads_start_times_within_budget_then_keeps_rest_live_when_scan_is_slow(
     assert len(reads) == 3
     assert live == {"run-3": None, "run-4": None}
     assert sorted(path.name for path in web(tmp_path).iterdir()) == ["run-3.pid", "run-4.pid"]
+
+
+def test_refuses_launch_when_empty_pid_file_is_held_by_its_writer(tmp_path: Path) -> None:
+    web(tmp_path).mkdir(parents=True)
+    target = web(tmp_path) / "run-1.pid"
+    # Another hub web mid-spawn: its pid file is made and locked, the record not yet written.
+    writer = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    fcntl.flock(writer, fcntl.LOCK_EX)
+    try:
+        with pytest.raises(RunConflictError) as caught:
+            launcher(tmp_path).start(spec_of(tmp_path))
+    finally:
+        os.close(writer)
+
+    assert caught.value.code == "in_use"
+    assert target.exists()
+
+
+def test_never_spawns_second_child_when_other_launcher_holds_pid_file(tmp_path: Path) -> None:
+    spawning, release = threading.Event(), threading.Event()
+    first, second = launcher(tmp_path), launcher(tmp_path)
+    spawned: list[str] = []
+
+    def slow_spawn(*_args: object, **_kwargs: object) -> NoReturn:
+        spawned.append("first")
+        spawning.set()
+        release.wait(10)
+        raise RunLaunchError("stopped by the test")
+
+    def counted_spawn(*_args: object, **_kwargs: object) -> NoReturn:
+        spawned.append("second")
+        raise RunLaunchError("must not run")
+
+    first._spawn = slow_spawn  # type: ignore[method-assign]
+    second._spawn = counted_spawn  # type: ignore[method-assign]
+    errors: list[Exception] = []
+
+    def launch_first() -> None:
+        try:
+            first.start(spec_of(tmp_path))
+        except RunLaunchError as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=launch_first)
+    thread.start()
+    try:
+        assert spawning.wait(10)
+        with pytest.raises(RunConflictError) as caught:
+            second.start(spec_of(tmp_path))
+    finally:
+        release.set()
+        thread.join()
+
+    assert caught.value.code == "in_use"
+    assert spawned == ["first"]
+
+
+def test_skips_pid_path_when_it_is_a_folder(tmp_path: Path) -> None:
+    (web(tmp_path) / "run-1.pid").mkdir(parents=True)
+
+    assert launcher(tmp_path).live_runs(str(tmp_path)) == {}
