@@ -64,9 +64,10 @@ def tracked(run_tracker: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 def hub_pack(hub: Path, text: str | None = None) -> Path:
-    """The hub's own ``workflows/issue-to-pr/``: the built-in's copy, its document ``text``."""
+    """The hub's own ``workflows/issue-to-pr/`` (seeded by init, AGH-227): the built-in's copy,
+    its document ``text``."""
     pack = hub / "workflows" / "issue-to-pr"
-    shutil.copytree(BUILTIN_WORKFLOWS / "issue-to-pr", pack)
+    shutil.copytree(BUILTIN_WORKFLOWS / "issue-to-pr", pack, dirs_exist_ok=True)
     if text is not None:
         (pack / "issue-to-pr.yaml").write_text(text)
     return pack

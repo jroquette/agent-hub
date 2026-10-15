@@ -25,7 +25,8 @@ Kind: `generic` (same for every project), `module` (only when selected in `modul
 | `scripts/` transcript mining, recall and retro metrics | generic | managed (until Phase 2) |
 | `scripts/cloud-setup.sh`, `scripts/contract-sync.sh`, `mk/<module>.mk`, `.claude-plugin/marketplace.json` (merged with a seeded `.claude-plugin/marketplace.project.json`) | module: `cloud`, `contract-sync`, the selecting module, `marketplace` | managed (+ seeded) |
 | Worktree, brief, runner, benchmark, config-lint and feature-check scripts | generic (`bench`: module) | not generated: `hub` commands |
-| Brain content, bench cases, hub `tests/`, `workflows/` (Phase 4), run output (`.agent-runs/`), domain rules (for Loki: red-chain, Decimal, paper/testnet, kept in `AGENTS.project.md`) | project-owned | not generated |
+| `workflows/<pack>/**`: the built-in packs (`issue-to-pr`: `issue-to-pr.yaml`, `prompts/`, `fixtures/`), core package data copied byte for byte; from then on the hub's copy is the one discovery and `hub run` read ([workflow-schema.md](workflow-schema.md)), and a later release's built-in reaches the hub only if the hub removes or updates its copy | generic | seeded |
+| Brain content, bench cases, hub `tests/`, other `workflows/` packs, run output (`.agent-runs/`), domain rules (for Loki: red-chain, Decimal, paper/testnet, kept in `AGENTS.project.md`) | project-owned | not generated |
 
 Output depends only on `hub.json` (values validated or quoted: [project-config.md](project-config.md)), the platform
 version and the seeded extension inputs (`*.project.json`, `AGENTS.project.md`, entries under `plugin/<project>/`); text
@@ -177,7 +178,7 @@ report instead of block for up to 12 h. Proof: integration tests, characterizati
 | `agent_config_lint.py`, `features_check.py`; `hubconfig.py` | doctor rules ([hub-doctor.md](hub-doctor.md)); `hubconfig.py` dropped (the CLI reads `HubConfig`) | skills run `hub doctor --only features.tracker` |
 | `cloud-setup.sh` | stays a hub file, module `cloud` | sets the git identity from `hub.json`'s author (global and repo-local), else from `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL` repo-local only, else a WARN ([developer-identity.md](developer-identity.md)); checks access to the pinned tag, warms the uv cache, then fetches the repos; no access: exit 1 naming it; it cannot need the CLI |
 | `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py`, `make mine`, `make retro`; `guard.py`, `hubhooks.py`, `hooks.json`, `post_edit.py`, `stop_gate.py`, `session_start.py`, `session_end.py`, `pre_compact.py`, `event_sensor.py`, `readonly_gate.py` | stay hub files, managed | scripts: AGH-5 R12, Phase 2 redesigns them; hooks: the hooks exception, AGH-5 D9 ([ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md)) |
-| `make usage`, `make check`, `make help` | stay targets; `check` runs `hub doctor` and the hub's own tests | `usage` wraps an external cost tool until the Phase 2 cost view; hook tests move to agent-hub |
+| `make usage`, `make check`, `make help` | stay targets; `check` runs `hub doctor`, `hub workflow test` (the packs' fixtures) and the hub's own tests | `usage` wraps an external cost tool until the Phase 2 cost view; hook tests move to agent-hub |
 
 Every caller (Makefile `HUB`: `$(CURDIR)/hub` single-quoted; pre-commit `./hub doctor`; skills; `./agent`) goes through
 the managed POSIX `sh` shim `./hub`, run by its real path (a symlink elsewhere reads the link's folder): it reads
