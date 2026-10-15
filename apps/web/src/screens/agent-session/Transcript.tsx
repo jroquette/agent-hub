@@ -14,6 +14,7 @@ import {
 import { Icon, Markdown, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
 import { JumpToLatest } from "./JumpToLatest";
+import { MessageMeta } from "./MessageMeta";
 import { RequestCard, type PermissionAnswer } from "./PermissionCard";
 import { StoredCopyLabel } from "./SessionStatus";
 import { ToolGroup, type GroupItem } from "./ToolGroup";
@@ -123,6 +124,7 @@ function AssistantText({ entry }: { entry: AssistantEntry }) {
       {body}
       {entry.streaming && <span className="as-caret" aria-hidden="true" />}
       {entry.redacted && <StoredCopyLabel />}
+      {!entry.streaming && <MessageMeta at={entry.at} text={entry.text} />}
     </article>
   );
 }
@@ -134,14 +136,17 @@ interface EntryProps {
   onAnswerPermission: TranscriptProps["onAnswerPermission"];
 }
 
-/** One of your messages; `note` says where it stands (sending, queued). */
+/** One of your messages; `note` says where it stands (sending, queued). A recorded one (`at`)
+ * has the action row; one still sending does not. */
 function UserMessage({
   text,
   note,
+  at,
   redacted = false,
 }: {
   text: string;
   note?: string | null;
+  at?: string;
   redacted?: boolean;
 }) {
   return (
@@ -150,6 +155,7 @@ function UserMessage({
       <div className="as-bubble">{text}</div>
       {note && <span className="ah-small ah-muted">{note}</span>}
       {redacted && <StoredCopyLabel />}
+      {at !== undefined && <MessageMeta at={at} text={text} />}
     </div>
   );
 }
@@ -161,6 +167,7 @@ function EntryBody({ entry, request, onAnswerPermission }: EntryProps) {
         <UserMessage
           text={entry.text}
           note={entry.queued ? "Queued: Claude reads it after this turn" : null}
+          at={entry.at}
           redacted={entry.redacted}
         />
       );
