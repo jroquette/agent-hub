@@ -1135,7 +1135,12 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         )
 
         assert imported == names, folder
-    assert set(folders) == {"plugin/demo/hooks", "plugin/hub-workflow/hooks", "scripts"}
+    assert set(folders) == {
+        "plugin/demo/hooks",
+        "plugin/hub-workflow/hooks",
+        "scripts",
+        "workflows/sdlc/scripts",
+    }
 
 
 # argv: hub.json path, hub.local.json path, git's answers (JSON: config key -> output), the values
