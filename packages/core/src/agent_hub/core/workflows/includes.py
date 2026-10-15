@@ -25,7 +25,7 @@ the parent's node (an included node's problem on its ``include``, naming the nam
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final
 
 from pydantic import JsonValue
@@ -51,6 +51,7 @@ from agent_hub.core.workflows.nodes import (
     ShellNode,
     read_only,
 )
+from agent_hub.core.workflows.scope import RefScope, ScopeStep
 from agent_hub.core.workflows.substitution import (
     InputRef,
     LoopPrevRef,
@@ -70,6 +71,8 @@ type _TextMap = Callable[[Loc, str], str]
 type _Replace = Callable[[Ref, str], str]
 
 MAX_INCLUDE_DEPTH: Final = 3
+# The most nodes an expanded document may hold: a few small includes cannot grow past it.
+MAX_EXPANDED_NODES: Final = 512
 SEPARATOR: Final = "__"
 
 
@@ -88,6 +91,8 @@ class Expansion:
 
     document: WorkflowDocument
     origins: tuple[tuple[int, bool], ...]
+    # Each included node's reference scope, by its expanded id (``scope.py``).
+    scopes: Mapping[str, RefScope] = field(default_factory=dict)
 
     def locate(self, problem: WorkflowProblem) -> WorkflowProblem:
         """``problem``, found in the expanded document, on the parent node it comes from."""
@@ -104,36 +109,47 @@ class Expansion:
 
 def expand_includes(document: WorkflowDocument, resolve: IncludeResolver | None) -> Expansion:
     """``document`` with every ``include`` replaced; raises ``WorkflowLoadError``."""
-    return _expand(document, resolve, (document.name,))
+    return _expand(document, _Resolver(resolve), (document.name,))
 
 
 @dataclass(frozen=True)
 class _Block:
-    """An included workflow, expanded, and its sinks and primary sink (not namespaced)."""
+    """An included workflow, expanded, its sinks and primary sink (not namespaced), and its
+    nodes' scopes."""
 
     name: str
     document: WorkflowDocument
     sinks: tuple[str, ...]
     primary: str | None
+    scopes: Mapping[str, RefScope]
 
 
-def _expand(
-    document: WorkflowDocument, resolve: IncludeResolver | None, stack: tuple[str, ...]
-) -> Expansion:
+@dataclass
+class _Resolver:
+    """One expansion's resolver: each workflow is expanded once per depth, then reused."""
+
+    resolve: IncludeResolver | None
+    cache: dict[tuple[str, int], _Block | _IncludeError] = field(default_factory=dict)
+
+
+def _expand(document: WorkflowDocument, resolver: _Resolver, stack: tuple[str, ...]) -> Expansion:
     nodes = document.nodes
     if not any(isinstance(node, IncludeNode) for node in nodes):
         return Expansion(document, tuple((index, False) for index in range(len(nodes))))
     if problems := list(_repeated_ids(nodes)):
         raise WorkflowLoadError(problems)
-    parent = _Parent(_blocks(nodes, resolve, stack))
+    parent = _Parent(_blocks(nodes, resolver, stack))
     expanded: list[Node] = []
     origins: list[tuple[int, bool]] = []
     for index, node in enumerate(nodes):
         try:
             copies = parent.place(node)
+            if len(expanded) + len(copies) > MAX_EXPANDED_NODES:
+                message = f"the expanded workflow passes {MAX_EXPANDED_NODES} nodes"
+                raise _IncludeError(("include",) if isinstance(node, IncludeNode) else (), message)
         except _IncludeError as error:
             problems.append(WorkflowProblem(("nodes", index, *error.loc), error.message))
-            continue
+            break
         expanded.extend(copies)
         origins.extend((index, isinstance(node, IncludeNode)) for _ in copies)
     returns = document.returns
@@ -144,7 +160,9 @@ def _expand(
     if problems:
         raise WorkflowLoadError(problems)
     update = {"nodes": tuple(expanded), "returns": returns}
-    return Expansion(document.model_copy(update=update), tuple(origins))
+    step = parent.step()
+    scopes = {node.id: parent.scopes.get(node.id, RefScope()).then(step) for node in expanded}
+    return Expansion(document.model_copy(update=update), tuple(origins), scopes)
 
 
 def _repeated_ids(nodes: Sequence[Node]) -> Iterator[WorkflowProblem]:
@@ -156,14 +174,14 @@ def _repeated_ids(nodes: Sequence[Node]) -> Iterator[WorkflowProblem]:
 
 
 def _blocks(
-    nodes: Sequence[Node], resolve: IncludeResolver | None, stack: tuple[str, ...]
+    nodes: Sequence[Node], resolver: _Resolver, stack: tuple[str, ...]
 ) -> dict[str, _Block]:
     blocks: dict[str, _Block] = {}
     problems: list[WorkflowProblem] = []
     for index, node in enumerate(nodes):
         if isinstance(node, IncludeNode):
             try:
-                blocks[node.id] = _block(node.include, resolve, stack)
+                blocks[node.id] = _cached_block(node.include, resolver, stack)
             except _IncludeError as error:
                 problems.append(WorkflowProblem(("nodes", index, *error.loc), error.message))
     if problems:
@@ -171,7 +189,21 @@ def _blocks(
     return blocks
 
 
-def _block(name: str, resolve: IncludeResolver | None, stack: tuple[str, ...]) -> _Block:
+def _cached_block(name: str, resolver: _Resolver, stack: tuple[str, ...]) -> _Block:
+    key = (name, len(stack))
+    if key not in resolver.cache:
+        try:
+            resolver.cache[key] = _block(name, resolver, stack)
+        except _IncludeError as error:
+            resolver.cache[key] = error
+    found = resolver.cache[key]
+    if isinstance(found, _IncludeError):
+        raise found
+    return found
+
+
+def _block(name: str, resolver: _Resolver, stack: tuple[str, ...]) -> _Block:
+    resolve = resolver.resolve
     if resolve is None:
         raise _IncludeError(("include",), "this workflow cannot include others here")
     if name in stack:
@@ -183,14 +215,15 @@ def _block(name: str, resolve: IncludeResolver | None, stack: tuple[str, ...]) -
         found = resolve(name)
         if found is None:
             raise _IncludeError(("include",), f"no workflow is named {echo(name)}")
-        expanded = _expand(found, resolve, (*stack, name)).document
+        expansion = _expand(found, resolver, (*stack, name))
     except WorkflowLoadError as error:
         details = "; ".join(f"{problem.key}: {problem.message}" for problem in error.problems)
         raise _IncludeError(("include",), f"{echo(name)} does not load: {details}") from None
+    expanded = expansion.document
     waited = {target for node in expanded.nodes for target in node.depends_on}
     sinks = tuple(node.id for node in expanded.nodes if node.id not in waited)
     primary = expanded.returns or (sinks[0] if len(sinks) == 1 else None)
-    return _Block(name, expanded, sinks, primary)
+    return _Block(name, expanded, sinks, primary, expansion.scopes)
 
 
 class _Rewrite(ABC):
@@ -214,12 +247,27 @@ class _Parent(_Rewrite):
 
     def __init__(self, blocks: Mapping[str, _Block]) -> None:
         self.blocks = blocks
+        # The scopes of the block nodes placed so far, by expanded id.
+        self.scopes: dict[str, RefScope] = {}
 
     def place(self, node: Node) -> list[Node]:
         """``node`` as the expanded document holds it: an include's block, or a copy."""
         if isinstance(node, IncludeNode):
-            return _Inside(node, self.blocks[node.id], self).nodes()
+            inside = _Inside(node, self.blocks[node.id], self)
+            nodes = inside.nodes()
+            self.scopes |= inside.scopes()
+            return nodes
         return [_map_node(node, self)]
+
+    def step(self) -> ScopeStep:
+        """This rewrite as a scope step: an include's id to its primary sink."""
+        names = {
+            include: f"{include}{SEPARATOR}{block.primary}"
+            for include, block in self.blocks.items()
+            if block.primary is not None
+        }
+        refused = frozenset(self.blocks) - set(names)
+        return ScopeStep(names=names, refused=refused)
 
     def reference(self, loc: Loc, ref: Ref, spelling: str) -> str:
         if isinstance(ref, NodeRef | LoopPrevRef) and ref.node in self.blocks:
@@ -300,6 +348,14 @@ class _Inside(_Rewrite):
     def resume(self, target: str, loc: Loc) -> str:
         return self.prefix + target
 
+    def scopes(self) -> dict[str, RefScope]:
+        """Each block node's scope: the block's own, then this include's step."""
+        step = ScopeStep(
+            names={own: self.prefix + own for own in self.own}, inputs=self.values, hermetic=True
+        )
+        inner = self.block.scopes
+        return {self.prefix + own: inner.get(own, RefScope()).then(step) for own in self.own}
+
 
 def _input_texts(include: IncludeNode, block: _Block, parent: _Parent) -> dict[str, str]:
     """The text each ``$INPUTS.<name>`` of the block becomes: its ``with`` value or default."""
@@ -313,15 +369,20 @@ def _input_texts(include: IncludeNode, block: _Block, parent: _Parent) -> dict[s
             if spec.required:
                 message = f"the input {echo(name)} of {echo(block.name)} is required"
                 raise _IncludeError(("with",), message)
-            texts[name] = canonical_text(spec.default)
+            texts[name] = _literal(spec.default)
             continue
         value: JsonValue = include.with_[name]
         if isinstance(value, str):
             _check_with_refs(("with", name), value)
             texts[name] = parent.text(("with", name), value)
         else:
-            texts[name] = canonical_text(value)
+            texts[name] = _literal(value)
     return texts
+
+
+def _literal(value: JsonValue) -> str:
+    """A value put in place of a reference, its ``$`` escaped: it stays text, never a reference."""
+    return canonical_text(value).replace("$", "$$")
 
 
 def _check_with_refs(loc: Loc, value: str) -> None:
