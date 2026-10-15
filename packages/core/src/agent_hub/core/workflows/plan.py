@@ -21,10 +21,12 @@ from agent_hub.core.workflows.document import (
     WorkflowLoadError,
     WorkflowProblem,
 )
+from agent_hub.core.workflows.includes import IncludeResolver, expand_includes
 from agent_hub.core.workflows.nodes import (
     AgentNode,
     ApprovalNode,
     FromBinding,
+    HaltNode,
     LoopNode,
     Node,
     ScriptNode,
@@ -57,8 +59,19 @@ class WorkflowPlan:
     layers: tuple[tuple[str, ...], ...]
 
 
-def plan_workflow(document: WorkflowDocument) -> WorkflowPlan:
-    """The plan of ``document``; raises ``WorkflowLoadError`` naming every problem found."""
+def plan_workflow(
+    document: WorkflowDocument, *, includes: IncludeResolver | None = None
+) -> WorkflowPlan:
+    """The plan of ``document``, its includes expanded through ``includes`` (``includes.py``);
+    raises ``WorkflowLoadError`` naming every problem found, on the document's own nodes."""
+    expansion = expand_includes(document, includes)
+    try:
+        return _plan(expansion.document)
+    except WorkflowLoadError as error:
+        raise WorkflowLoadError([expansion.locate(p) for p in error.problems]) from None
+
+
+def _plan(document: WorkflowDocument) -> WorkflowPlan:
     nodes = document.nodes
     graph_problems = [*_repeated_ids(nodes), *_unknown_dependencies(nodes)]
     if graph_problems:
@@ -238,7 +251,7 @@ def _texts(node: Node) -> Iterator[tuple[Loc, str]]:
         yield from ((("env", name), value) for name, value in node.env.items())
     elif isinstance(node, ApprovalNode):
         yield ("message",), node.message
-    else:
+    elif isinstance(node, HaltNode):
         yield ("reason",), node.reason
 
 

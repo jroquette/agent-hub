@@ -66,6 +66,10 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
   included `inputs` (checked as at run start) and replaces `$INPUTS.<name>` there. Nodes, and references to them,
   become `<include id>__<id>`; roots inherit the include's graph keys; dependants wait for the primary sink (`returns`,
   else the single sink), read as `$<include id>.output`. Depth ≤ 3, no cycles; planning checks run after expansion.
+  An include names a workflow of its own pack (`prompt_file` and `script` are pack paths). A block reads only its own
+  nodes and inputs. Several sinks and no `returns` make `$<include id>.output` a load error. A root's `when:` joins
+  the include's as `A && B`, refused if either holds `||`; in a block's `when:` an input takes a reference, since a
+  literal put in place of a reference breaks the grammar (a load error).
 
 ### Running: joins, conditions, outputs, status, retry and events
 

@@ -41,6 +41,7 @@ from agent_hub.generator.workflow_discovery import (
     WORKFLOW_SUFFIXES,
     WorkflowDiscovery,
     discover_workflows,
+    pack_resolver,
 )
 from agent_hub.generator.workflow_fixtures import (
     FIXTURE_SUFFIX,
@@ -116,7 +117,9 @@ class _DiscoveredSource:
                 )
         for found in discovery.workflows:
             if self.only is None or found.name == self.only:
-                yield WorkflowFile(self._shown(found.path), found.name, found.document, found.lines)
+                includes = pack_resolver(discovery, found.pack_root)
+                shown = self._shown(found.path)
+                yield WorkflowFile(shown, found.name, found.document, found.lines, includes)
 
     def _shown(self, path: Path) -> str:
         if path.is_relative_to(self.root):
@@ -169,7 +172,8 @@ def _write_skeleton(root: Path, discovery: WorkflowDiscovery, name: str | None) 
     if found.origin != "hub":
         fail(f"{name!r} is a built-in workflow; its fixtures ship with it")
     try:
-        skeleton = skeleton_yaml(plan_workflow(parse_workflow(found.document)))
+        includes = pack_resolver(discovery, found.pack_root)
+        skeleton = skeleton_yaml(plan_workflow(parse_workflow(found.document), includes=includes))
     except (WorkflowLoadError, WorkflowEngineError) as error:
         fail(f"{_shown_fixture(root, found.path)}: {error}")
     target = _skeleton_target(root, found.pack_root, name)

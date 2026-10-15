@@ -21,6 +21,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
   `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
   `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
+- A workflow node of type `include` copies in another workflow of the same pack at load: its nodes become
+  `<include id>__<id>`, `with:` fills its `inputs`, the include's `depends_on`/`when`/`trigger_rule` go to the block's
+  roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels, no cycles. Fixtures
+  stub the namespaced ids (AGH-228).
 
 ### Fixed
 
