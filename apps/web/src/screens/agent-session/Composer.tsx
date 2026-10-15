@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "../../components";
 import { ApiProblem } from "../../lib/api";
+import { useDraft } from "./useDraft";
 import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./transcript";
 
 /** The modes the web offers (D5): never bypassPermissions, dontAsk or auto. */
@@ -28,6 +29,8 @@ export interface ComposerProps {
   /** Called as a message goes out: the chat pins the transcript to its bottom (AC-234.18). */
   onSending?: (() => void) | undefined;
   maxBytes?: number | undefined;
+  /** The session whose draft this browser keeps (`ah.chat.draft.<id>`); none keeps nothing. */
+  draftId?: string | null | undefined;
   /** Why nothing can be sent (log full, control off…); the session's end is detected on its own. */
   disabledReason?: string | null | undefined;
 }
@@ -56,8 +59,9 @@ export function Composer({
   onSending,
   maxBytes = DEFAULT_MESSAGE_MAX_BYTES,
   disabledReason,
+  draftId = null,
 }: ComposerProps) {
-  const [text, setText] = useState("");
+  const { text, setText, accepted } = useDraft(draftId);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
@@ -117,7 +121,7 @@ export function Composer({
       .then(() => onSend(message))
       .then(
         () => {
-          setText((current) => (current === message ? "" : current));
+          accepted(message);
         },
         (cause: unknown) => {
           setError(problemText(cause, "send the message"));

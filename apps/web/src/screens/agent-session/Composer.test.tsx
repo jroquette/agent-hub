@@ -166,6 +166,30 @@ describe("Composer (composer)", () => {
     vi.unstubAllGlobals();
   });
 
+  it("restores the session's draft and clears it once the send is accepted", async () => {
+    window.localStorage.setItem("ah.chat.draft.s-1", JSON.stringify("Saved earlier"));
+    const { box, props } = open({ draftId: "s-1" });
+
+    expect(box).toHaveValue("Saved earlier");
+    await userEvent.type(box, "{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith("Saved earlier");
+    expect(box).toHaveValue("");
+    expect(window.localStorage.getItem("ah.chat.draft.s-1")).toBeNull();
+  });
+
+  it("keeps the saved draft when the send fails", async () => {
+    window.localStorage.setItem("ah.chat.draft.s-1", JSON.stringify("Try me"));
+    const { box } = open({ draftId: "s-1", onSend: vi.fn(() => Promise.reject(new Error("x"))) });
+
+    await userEvent.type(box, "{Enter}");
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(box).toHaveValue("Try me");
+    expect(window.localStorage.getItem("ah.chat.draft.s-1")).toBe(JSON.stringify("Try me"));
+    window.localStorage.clear();
+  });
+
   it("has no serious violation (composer a11y)", async () => {
     const { container } = open({ status: "running" });
 

@@ -40,6 +40,11 @@ function routes(overrides: ApiRoutes = {}): ApiRoutes {
   };
 }
 
+// The composer keeps drafts in this browser: no test sees another's.
+afterEach(() => {
+  window.localStorage.clear();
+});
+
 /** Markdown renders (each one parses its source). */
 const parses = vi.hoisted(() => ({ count: 0 }));
 vi.mock("../../components/Markdown", async (original) => {

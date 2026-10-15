@@ -221,6 +221,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             onSettings={commands.settings}
             onSending={follow.pin}
             maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
+            draftId={agentSessionId}
             disabledReason={cloud ? "A cloud session is driven from claude.ai." : null}
           />
         </div>
