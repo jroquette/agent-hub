@@ -162,6 +162,49 @@ describe("ToolCallCard (tool-cards) long output", () => {
     expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
     expect(pre).toHaveFocus();
   });
+
+  it("counts an emoji as one character and never cuts it in half", async () => {
+    const smile = "\u{1F600}";
+    await expand(aTool({ result: { ...ok, content: `${"x".repeat(9_999)}${smile}` } }));
+
+    expect(screen.getByText(`${"x".repeat(9_999)}${smile}`).tagName).toBe("PRE");
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+  });
+
+  it("cuts after a whole emoji and counts the rest in characters", async () => {
+    const smile = "\u{1F600}";
+    await expand(aTool({ result: { ...ok, content: `${"x".repeat(9_999)}${smile}y` } }));
+
+    expect(screen.getByText(`${"x".repeat(9_999)}${smile}`).tagName).toBe("PRE");
+    expect(
+      screen.getByRole("button", { name: "Show all (10,001 characters)" }),
+    ).toBeInTheDocument();
+  });
+
+  /** A structured result whose JSON text is `length` characters. */
+  const structured = (length: number) => {
+    const pad = JSON.stringify({ data: "" }, null, 2).length;
+    return aTool({ result: { ...ok, content: { data: "x".repeat(length - pad) } } });
+  };
+
+  it("shows a structured result of 10,000 characters whole as JSON", async () => {
+    await expand(structured(10_000));
+
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+    expect(screen.getByText(/^"?x{100}/)).toBeInTheDocument();
+  });
+
+  it("cuts a structured result over 10,000 characters as text and Show all brings the rest", async () => {
+    await expand(structured(10_001));
+
+    const pre = screen.getByText(/^\{\s+"data": "x+$/);
+    expect(pre.tagName).toBe("PRE");
+    expect(pre.textContent).toHaveLength(10_000);
+    await userEvent.click(screen.getByRole("button", { name: "Show all (10,001 characters)" }));
+
+    expect(pre.textContent).toHaveLength(10_001);
+    expect(pre).toHaveFocus();
+  });
 });
 
 describe("resultText", () => {
