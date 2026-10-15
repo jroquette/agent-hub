@@ -12,7 +12,7 @@ from agent_hub.cli.collect import collect
 from agent_hub.cli.doctor_command import doctor
 from agent_hub.cli.generator import init
 from agent_hub.cli.next_command import next_command
-from agent_hub.cli.run_command import run
+from agent_hub.cli.run_engine import run
 from agent_hub.cli.setup_command import setup
 from agent_hub.cli.ship_command import ship
 from agent_hub.cli.start_command import start
