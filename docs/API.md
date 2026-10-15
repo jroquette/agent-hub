@@ -132,6 +132,20 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
   of a resource, `DELETE` removes it. The only writes are registering and removing a hub, posting hook envelopes,
   since AGH-201 the two learning decisions, and since AGH-165 the agent-session commands.
 
+## Sessions
+
+`GET /api/v1/sessions` and `GET /api/v1/sessions/{session_id}` carry, besides the folded counts, the fields a Live tile
+shows, derived on read by the same code as `GET /api/v1/live-sessions` (never stored, no new payload key). They are
+filled for the rows of the page only; every one is optional and `null` when there is nothing to say.
+
+| Field | Value |
+| --- | --- |
+| `waiting_reason` | why a `waiting` session waits (`Guard ask`, `Plan approval`, `Spec approval`, `Human gate`, `Permission prompt`); a `live` or `idle` session whose driven agent session waits on a permission request reads `Permission prompt`, as its Live tile does, and keeps its `status` |
+| `last_action` · `last_tool` | the last tool call in plain words (`Ran make check`, `Edited src/app.py`) and its tool |
+| `needs_you_problem` | the "what went wrong" line of the first problem that needs the owner |
+| `failing_notice` | the same gate or command failed 2 times in a row, or 3 tool errors in the last 5 minutes |
+| `sparkline_60s` | an empty list while the session has not ended (the web fills it from the event stream); `null` once it has ended |
+
 ## Learning decisions
 
 `POST /api/v1/learnings/{learning_id}/accept` with `{"target": "<folder or .md path under brain/>"}` (1 to 200
@@ -216,6 +230,9 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   `opus`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything else is 422 and the driver is
   not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`; without a first prompt a new
   session is `idle` with no `init` yet.
+- **Observed twin.** `GET ""` and `GET /{id}` carry `observed_session_id`: the `claude_session_id` once the hooks or
+  transcripts observed that Claude session (it is then a row of `GET /api/v1/sessions`), else `null`, so a list shows a
+  driven session once, with or without its twin. The other routes answer it `null`.
 - **Permission answers.** `always` needs `suggestion`, the index of one of the request's suggestions; a request
   carries only `addRules` suggestions with behaviour `allow` and destination `localSettings` (a `setMode`,
   `addDirectories` or other suggestion is never shown, and naming one is 422); `answers`
