@@ -406,7 +406,9 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     await screen.findByText("Fix the build");
     // Live: 120 observed, + "Fix the build", - the twin moved to Waiting; 2 rows loaded.
     expect(screen.getByRole("button", { name: "Live · ~120" })).toBeInTheDocument();
-    expect(within(table("Live")).getByText("Showing 2 of ~120")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Live · ~120" })).getByText("Showing 2 of ~120"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Waiting · 2" })).toBeInTheDocument();
     // Waiting 2 + Live 2 + Idle 2 + Ended 2 rows; 2 + 120 + 2 + 2 counted.
     expect(screen.getByText(/^Showing 8 of ~126 ·/)).toBeInTheDocument();
@@ -442,7 +444,8 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
   it("has New session in the page header, no driven region, and cloud guidance closed below the sections", async () => {
     renderList(routes({ [AGENT]: { items: [anAgentSession()] } }));
 
-    const button = await screen.findByRole("button", { name: "New session" });
+    // New session waits on three queries (list, capabilities, folders); a loaded runner needs > 1 s.
+    const button = await screen.findByRole("button", { name: "New session" }, { timeout: 5000 });
     const heading = screen.getByRole("heading", { level: 1, name: "Sessions" });
     expect(heading.parentElement).toContainElement(button);
     expect(screen.queryByRole("region", { name: "Driven from hub web" })).toBeNull();
@@ -476,13 +479,10 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     const asked = (path: string) => requests.filter((r) => new URL(r.url).pathname === path).length;
 
     expect(await screen.findByText("Could not load the agent sessions")).toBeInTheDocument();
-    const before = [asked(AGENT), asked(`${AGENT}/capabilities`)];
+    const [list, caps] = [asked(AGENT), asked(`${AGENT}/capabilities`)];
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => {
-      expect([asked(AGENT), asked(`${AGENT}/capabilities`)]).toEqual([
-        before[0] + 1,
-        before[1] + 1,
-      ]);
+      expect([asked(AGENT), asked(`${AGENT}/capabilities`)]).toEqual([list + 1, caps + 1]);
     });
   });
 });
