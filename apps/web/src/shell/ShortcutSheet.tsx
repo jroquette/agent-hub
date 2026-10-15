@@ -35,6 +35,20 @@ export const SHORTCUTS: readonly { title: string; rows: readonly [string, string
       ["This sheet", "?"],
     ],
   },
+  {
+    // An agent session's chat (AC-234.29): `/` at the start of the message, the oldest
+    // pending request; Ctrl is Cmd on a Mac.
+    title: "Chat",
+    rows: [
+      ["Commands", "/"],
+      ["Allow oldest", "Ctrl Alt ↵"],
+      ["Deny oldest", "Ctrl Alt ⌫"],
+      ["Allow / deny focused", "a d"],
+      ["Focus message", "Shift Esc"],
+      ["Recall last prompt", "↑"],
+      ["Stop (empty box)", "Esc"],
+    ],
+  },
 ];
 
 export function ShortcutSheet({ onClose }: { onClose: () => void }) {

@@ -474,3 +474,33 @@ describe("reduceTranscript (sending-feedback)", () => {
     expect(users(run([user(3)], state)).at(-1)).toEqual(["Next", false]);
   });
 });
+
+describe("reduceTranscript (init-commands)", () => {
+  const init = (body: Record<string, unknown>) =>
+    run([record("init", { seq: 1, body: { session_id: "s", ...body } })]).slashCommands;
+
+  it("lists the slash commands then the skills, each once, with a leading slash", () => {
+    expect(
+      init({ slash_commands: ["compact", "/review", "review"], skills: ["feature", "compact"] }),
+    ).toEqual(["/compact", "/review", "/feature"]);
+  });
+
+  it("drops what is not a string, empty or over 100 characters", () => {
+    const at = "a".repeat(100);
+    const over = "b".repeat(101);
+    expect(
+      init({ slash_commands: [at, over, 7, null, { name: "x" }, "", "/"], skills: "x" }),
+    ).toEqual([`/${at}`]);
+  });
+
+  it("keeps the first 200 entries", () => {
+    const names = Array.from({ length: 201 }, (_, i) => `c${String(i)}`);
+    const commands = init({ slash_commands: names.slice(0, 150), skills: names.slice(150) });
+    expect(commands).toHaveLength(200);
+    expect(commands.at(-1)).toBe("/c199");
+  });
+
+  it("has no commands when the record lists none", () => {
+    expect(init({ slash_commands: "compact" })).toEqual([]);
+  });
+});
