@@ -182,7 +182,7 @@ Transcript retention column (privacy principle): it tells the user before they c
 - Range facets: date range (calendar popover, presets), cost range (two inputs, `$` prefix, histogram behind the slider).
 - Touched file: autocomplete over paths (`PathText`), supports a glob (`packages/core/**/guard*.py`). Used tool: chips Read, Edit, Write, Bash, Grep, Glob, Agent, WebFetch, MCP (plus MCP server names).
 - Boolean facets: "Had a guard denial", "Has decisions".
-- Every filter is in the URL: `/sessions?project=agent-hub&outcome=error&file=packages/core/src/agent_hub/core/guard.py&guard_denial=1`.
+- Every filter is in the URL: `/sessions?scope=agent-hub&outcome=error&file=packages/core/src/agent_hub/core/guard.py&guard_denial=1`.
 
 **Saved views.** `SavedViewMenu` lists built-in views first:
 - "Default" (all, 7 d)
