@@ -3177,6 +3177,9 @@ export interface components {
      *
      *     ``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.
      *     ``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.
+     *     The tile fields (``waiting_reason`` to ``sparkline_60s``) are what a Live tile shows,
+     *     derived by the same code (D5); lists and the session read fill them, other reads leave them
+     *     ``null``. ``sparkline_60s`` is ``null`` once the session has ended.
      */
     Session: {
       /**
@@ -3211,6 +3214,8 @@ export interface components {
       ended_at: components["schemas"]["ApiTimestamp"] | null;
       /** Errors */
       errors: number;
+      /** Failing Notice */
+      failing_notice?: string | null;
       /** Files Touched */
       files_touched: number;
       /** Gates */
@@ -3224,11 +3229,17 @@ export interface components {
       /** Issue */
       issue?: string | null;
       label?: components["schemas"]["SessionLabel"] | null;
+      /** Last Action */
+      last_action?: string | null;
       last_activity_at: components["schemas"]["ApiTimestamp"];
+      /** Last Tool */
+      last_tool?: string | null;
       /** Learnings Proposed */
       learnings_proposed: number;
       /** Model */
       model: string | null;
+      /** Needs You Problem */
+      needs_you_problem?: string | null;
       outcome: components["schemas"]["Outcome"] | null;
       /** Parent Session Id */
       parent_session_id?: string | null;
@@ -3255,6 +3266,8 @@ export interface components {
        * @default []
        */
       sources_missing: components["schemas"]["EventSource"][];
+      /** Sparkline 60S */
+      sparkline_60s?: number[] | null;
       started_at: components["schemas"]["ApiTimestamp"];
       status: components["schemas"]["SessionStatus"];
       /** Step */
@@ -3266,6 +3279,8 @@ export interface components {
       };
       /** Turns */
       turns: number;
+      /** Waiting Reason */
+      waiting_reason?: string | null;
     };
     /**
      * SessionCost
