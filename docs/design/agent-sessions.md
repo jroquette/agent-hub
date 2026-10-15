@@ -123,7 +123,8 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   inserts, Esc closes, and Enter never sends while it is open. A polite live region announces its match count
   ("3 commands") or "No commands" when it opens and when the count changes.
 - **Keys.** Ctrl/Cmd+Alt+Enter allows once and Ctrl/Cmd+Alt+Backspace denies the oldest pending tool permission
-  (inert when none, or when the oldest is a question or a plan; those buttons carry `aria-keyshortcuts`); `a` / `d` do
+  (inert when none; a question or plan card ahead of it is skipped, and only the target's buttons carry
+  `aria-keyshortcuts`); `a` / `d` do
   the same while a tool permission card has focus, except as the second key of a `g` sequence (`g a` goes to
   Approvals). The chords do nothing on a key repeat, during IME composition, when the `/` menu took the key or while a
   modal (`aria-modal`) is open;
