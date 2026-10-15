@@ -349,6 +349,37 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
     expect(within(log).getByRole("button", { name: /^Explored/ })).toBe(head);
   });
 
+  it("first renders at most FIRST_ENTRIES calls of a long run that waits for you (tool-cards)", () => {
+    const runFrame = manualFrames();
+    const items: StreamItem[] = [{ type: "record", record: aLogRecord("text", { seq: 1 }) }];
+    for (let seq = 2; seq < 2002; seq += 1) {
+      items.push({
+        type: "record",
+        record: aLogRecord("tool.call", {
+          seq,
+          body: { tool_use_id: `t${String(seq)}`, name: "Bash", input: { command: "ls" } },
+        }),
+      });
+    }
+    const request = aLogRecord("permission.request", {
+      seq: 2002,
+      body: { request_id: "t2001", tool: "Bash", request_kind: "tool", summary: "ls" },
+    });
+    items.push({ type: "record", record: request });
+
+    render(<Transcript state={items.reduce(reduceTranscript, initialTranscript())} />);
+    const log = screen.getByRole("log");
+    const head = within(log).getByRole("button", { name: /^Explored/ });
+    const card = document.querySelector("[data-request-id='t2001']");
+    expect(log.querySelectorAll(".as-tool").length).toBeLessThanOrEqual(FIRST_ENTRIES);
+    expect(card).not.toBeNull();
+    runFrame();
+
+    expect(log.querySelectorAll(".as-tool")).toHaveLength(2000);
+    expect(within(log).getByRole("button", { name: /^Explored/ })).toBe(head);
+    expect(document.querySelector("[data-request-id='t2001']")).toBe(card);
+  });
+
   it("first renders from the oldest pending card and keeps it in view as earlier entries come", () => {
     const runFrame = manualFrames();
     const request = aLogRecord("permission.request", { seq: 2002 });
