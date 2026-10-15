@@ -447,7 +447,7 @@ replaces Live sessions and the separate list of driven sessions (design in
   the same filters, saved views and period.
 - **Status sections.** Both views group sessions as Waiting, Live, Idle, Ended or failed (failed in red text), each
   section its own paginated `GET /sessions?status=` query with its own count; the period filters the Ended section
-  only. `Session` carries the tile fields `LiveTile` has, derived on read; no new route, payload key or migration.
+  only. `Session` carries the tile fields `LiveTile` has, derived on read; no new route or migration, and the event payload allow-list does not change.
 - **Driven sessions in the same list.** A session `hub web` drives shows once: as its observed twin with a "Chat"
   badge, or, with no twin (`AgentSession.observed_session_id` null), in its own status section. Every tile and row
   has a visible Open (or Open chat, Answer) and a real link. New session is a short dialog (where and the prompt).
