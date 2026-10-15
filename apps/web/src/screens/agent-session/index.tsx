@@ -58,6 +58,11 @@ function answerButton(id: string, which: "allow" | "deny"): HTMLButtonElement | 
   return button && !button.disabled ? button : null;
 }
 
+/** Whether a modal (the command palette, the shortcut sheet, a confirm dialog) holds the keys. */
+function modalOpen(): boolean {
+  return document.querySelector('[aria-modal="true"]') !== null;
+}
+
 /**
  * The chat's keys anywhere on the page (AC-234.29): Ctrl/Cmd+Alt+Enter allows and
  * Ctrl/Cmd+Alt+Backspace denies the oldest pending request, through its card's button (inert when
@@ -70,6 +75,9 @@ function useChatKeys(pending: readonly string[], composer: { current: HTMLElemen
   });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // A key held down, mid-composition, already taken (the `/` menu's Enter) or under a modal
+      // is not the chat's: it never answers a request.
+      if (event.repeat || event.isComposing || event.defaultPrevented || modalOpen()) return;
       if (event.key === "Escape" && event.shiftKey) {
         event.preventDefault();
         composer.current?.focus({ preventScroll: true });
