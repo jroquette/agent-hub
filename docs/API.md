@@ -230,6 +230,9 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   `opus`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything else is 422 and the driver is
   not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`; without a first prompt a new
   session is `idle` with no `init` yet.
+- **Observed twin.** `GET ""` and `GET /{id}` carry `observed_session_id`: the `claude_session_id` once the hooks or
+  transcripts observed that Claude session (it is then a row of `GET /api/v1/sessions`), else `null`, so a list shows a
+  driven session once, with or without its twin. The other routes answer it `null`.
 - **Permission answers.** `always` needs `suggestion`, the index of one of the request's suggestions; a request
   carries only `addRules` suggestions with behaviour `allow` and destination `localSettings` (a `setMode`,
   `addDirectories` or other suggestion is never shown, and naming one is 422); `answers`

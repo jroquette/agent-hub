@@ -40,6 +40,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - `GET /api/v1/sessions` and `GET /api/v1/sessions/{session_id}` carry the Live tile fields (`waiting_reason`,
   `last_action`, `last_tool`, `needs_you_problem`, `failing_notice`, and `sparkline_60s` until the session ends), derived
   by the same code as the Live tiles, so a sessions list can show what Live shows (AGH-236).
+- `GET /api/v1/agent-sessions` and `GET /api/v1/agent-sessions/{id}` carry `observed_session_id`, the observed
+  session's id once its twin has been observed, else `null`, so a list can show a driven session once (AGH-236).
 
 ### Changed
 

@@ -529,6 +529,16 @@ class FoldedEventReadModels:
         session = self._session(snapshot, session_id)
         return _with_tile_fields(snapshot, self._decorated([session]))[0]
 
+    def observed(self, pairs: Iterable[tuple[str, str]]) -> frozenset[tuple[str, str]]:
+        """The ``(project, session_id)`` pairs that are sessions of their project, from one
+        snapshot (``ObservedSessionLookup``)."""
+        sessions = self._snapshot().sessions
+        return frozenset(
+            (project, session_id)
+            for project, session_id in pairs
+            if (found := sessions.get(session_id)) is not None and found.project == project
+        )
+
     def session_summary(self, session_id: str) -> SessionSummary:
         """The session's summary lines (D17)."""
         snapshot = self._snapshot()

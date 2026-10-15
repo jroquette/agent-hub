@@ -855,6 +855,14 @@ def test_carries_agent_session_id_when_link_known_agent_session_link() -> None:
     assert one.agent_session_id == "a-1"
 
 
+def test_answers_observed_by_project_when_session_known(store: InMemoryEventStore) -> None:
+    service = _service(store, NOW)[0]
+
+    observed = service.observed([("demo", "s-a"), ("other", "s-a"), ("demo", "s-unknown")])
+
+    assert observed == frozenset({("demo", "s-a")})
+
+
 def test_drops_permission_reason_when_link_stops_waiting_at_same_mark() -> None:
     links = {("demo", "s-web"): AgentSessionLink(agent_session_id="a-1", waiting=True)}
     service = _linked_service(links)
