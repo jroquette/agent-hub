@@ -8,7 +8,8 @@ there; otherwise the run is at the stage of its latest step. Pure and order-inde
 A workflow engine run (ADR 0032) is told apart by what only the engine writes: the pinned
 ``content_hash``, or a step's ``failure_kind`` or ``skip_cause``. Its steps keep every node id,
 its ``run.end`` is the one with the highest ``n`` in ``<run>:run:<n>:end`` (one per resume),
-and a ``run.end`` without a delivery outcome is a failed delivery only when the run failed.
+none while a step comes after it (a resume not ended yet), and a ``run.end`` without a
+delivery outcome is a failed delivery only when the run failed.
 Its ``stage`` follows issue-to-pr's nodes; any other workflow's live run is ``PICKED``.
 """
 
@@ -284,9 +285,15 @@ def _run_end(run_id: str, winners: Sequence[StoredEvent], *, engine: bool) -> St
     run_ends = [stored for stored in winners if stored.event.type == EventType.RUN_END]
     if not run_ends:
         return None
-    if engine:
-        return max(run_ends, key=lambda stored: _end_index(run_id, stored.event.source_id))
-    return run_ends[0]
+    if not engine:
+        return run_ends[0]
+    latest = max(run_ends, key=lambda stored: _end_index(run_id, stored.event.source_id))
+    # A step after the latest end is a resume whose own end is not written yet.
+    resumed = any(
+        stored.event.type in _STEP_TYPES and stored.event.timestamp > latest.event.timestamp
+        for stored in winners
+    )
+    return None if resumed else latest
 
 
 def _status(run_end: StoredEvent | None, failure: RunFailure | None) -> WorkflowRunStatus:
@@ -310,9 +317,10 @@ def _engine_stage(winners: Sequence[StoredEvent], stages: Mapping[StepKey, Stage
 
 def _pinned(winners: Sequence[StoredEvent]) -> tuple[int | None, str | None]:
     """The revision and content hash an engine run pinned at start."""
-    revision = next((_int(item.event.payload.get("revision")) for item in winners), None)
-    content_hash = next((_text(item.event.payload.get("content_hash")) for item in winners), None)
-    return revision, content_hash
+    revisions = (_int(item.event.payload.get("revision")) for item in winners)
+    hashes = (_text(item.event.payload.get("content_hash")) for item in winners)
+    revision = next((value for value in revisions if value is not None), None)
+    return revision, next((value for value in hashes if value is not None), None)
 
 
 def _current_stage(winners: Sequence[StoredEvent], run_end: StoredEvent | None) -> Stage:
