@@ -29,7 +29,7 @@ const one = (n: number, status: "waiting" | "live" | "ended") =>
 interface Data {
   current: ReturnType<typeof one>[];
   /** A section whose next answer is a problem. */
-  fail?: string;
+  fail?: string | undefined;
   /** The cursor every first page answers with, and the page it opens. */
   next?: string;
   more?: ReturnType<typeof one>[];
@@ -238,17 +238,28 @@ describe("SessionsListScreen no-jump", () => {
     });
     await screen.findByText("/s3");
     const release = hold((url) => url.searchParams.get("cursor") === "e2");
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    const more = screen.getByRole("button", { name: "Load more" });
+    fireEvent.click(more);
+    await waitFor(() => {
+      expect(more).toBeDisabled(); // the screen knows Ended is loading more
+    });
     vi.useFakeTimers();
     stream(STREAM).emit("tile.upsert", { id: anId(3), group: "ended_recently" });
     await act(() => vi.advanceTimersByTimeAsync(2_000)); // Ended is loading more: skipped
     const skipped = requests.length;
+    // Refetches of Ended's first page (the held Load more is logged when it is let through).
+    const refetched = () =>
+      statusesAsked(
+        requests.slice(skipped).filter((r) => !new URL(r.url).searchParams.has("cursor")),
+        0,
+      );
     release();
     await act(() => vi.advanceTimersByTimeAsync(0)); // the Load more settles
     await act(() => vi.advanceTimersByTimeAsync(1_999));
-    expect(statusesAsked(requests, skipped)).toEqual([]);
+    expect(refetched()).toEqual([]);
     await act(() => vi.advanceTimersByTimeAsync(1));
-    expect(statusesAsked(requests, skipped)).toEqual(["ended", "ended"]); // both loaded pages
+    // One throttled tick, 2 s after the last: every open section, Ended among them.
+    expect(refetched()).toEqual(["ended", "idle", "live", "waiting"]);
   });
 
   it("does not cancel a Load more in flight when a refetch is due", async () => {
