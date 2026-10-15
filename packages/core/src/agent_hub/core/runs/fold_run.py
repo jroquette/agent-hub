@@ -4,6 +4,12 @@ Steps are keyed ``(step, attempt)``: a loop back into verify is verify attempt 2
 ``run.end`` in source order decides how the run ended; a later one is a conflicting copy and
 is ignored. Without a ``run.end``, a failed step with nothing after it means the run failed
 there; otherwise the run is at the stage of its latest step. Pure and order-independent.
+
+A workflow engine run (ADR 0032) is told apart by what only the engine writes: the pinned
+``content_hash``, or a step's ``failure_kind`` or ``skip_cause``. Its steps keep every node id,
+its ``run.end`` is the one with the highest ``n`` in ``<run>:run:<n>:end`` (one per resume),
+and a ``run.end`` without a delivery outcome is a failed delivery only when the run failed.
+Its ``stage`` follows issue-to-pr's nodes; any other workflow's live run is ``PICKED``.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -14,7 +20,11 @@ from urllib.parse import urlsplit
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.json_form import JsonValue
-from agent_hub.core.readmodels.fact_keys import canonical_events, resolve_facts
+from agent_hub.core.readmodels.fact_keys import (
+    canonical_events,
+    engine_end_index,
+    resolve_facts,
+)
 from agent_hub.core.runner.run_record import Stage
 from agent_hub.core.runs.workflow_run import (
     IssueRef,
@@ -24,10 +34,14 @@ from agent_hub.core.runs.workflow_run import (
     RunGateResult,
     RunStep,
     StepKey,
+    StepKind,
     WorkflowRun,
+    WorkflowRunStatus,
 )
 from agent_hub.core.sessions.session import Session
 from agent_hub.core.sessions.session_cost import run_cost
+from agent_hub.core.workflows.failures import FailureKind
+from agent_hub.core.workflows.ports import SkipCause
 
 RUN_SESSION_PREFIX = "run:"
 DEFAULT_WORKFLOW = "issue-to-pr"
@@ -38,7 +52,18 @@ STEP_STAGES: Mapping[StepKey, Stage] = {
     "verify": Stage.VERIFYING,
     "pr": Stage.PR_OPEN,
 }
+# The node type of each issue-to-pr step (``pick`` is the parent's, not a node).
+ISSUE_TO_PR_KINDS: Mapping[StepKey, StepKind] = {
+    "worktree": "shell",
+    "implement": "loop",
+    "verify": "shell",
+    "pr": "shell",
+    "report": "shell",
+}
 RUN_SOURCES_MISSING = (EventSource.LINEAR, EventSource.GITHUB)
+_ENGINE_KEYS: Final = ("content_hash", "failure_kind", "skip_cause")
+_FAILURE_KINDS: Final[tuple[FailureKind, ...]] = get_args(FailureKind.__value__)
+_SKIP_CAUSES: Final[tuple[SkipCause, ...]] = get_args(SkipCause.__value__)
 _STEP_TYPES = frozenset({EventType.STEP_START, EventType.STEP_END})
 _DELIVERIES: Final[tuple[RunDelivery, ...]] = get_args(RunDelivery.__value__)
 _NOT_DELIVERED: Final = frozenset({"no_changes", "blocked"})
@@ -89,8 +114,19 @@ def run_id_of(stored: StoredEvent) -> str | None:
     return run
 
 
-def _step_key(stored: StoredEvent) -> StepKey | None:
+def _known[T](value: object, known: tuple[T, ...]) -> T | None:
+    return next((item for item in known if item == value), None)
+
+
+def _is_engine_run(winners: Sequence[StoredEvent]) -> bool:
+    return any(key in stored.event.payload for stored in winners for key in _ENGINE_KEYS)
+
+
+def _step_key(stored: StoredEvent, *, engine: bool = False) -> StepKey | None:
+    """The step's node id: any for an engine run, else one of ``hub run``'s steps."""
     key = stored.event.step or _text(stored.event.payload.get("step"))
+    if engine:
+        return key
     for known in STEP_STAGES:
         if key == known:
             return known
@@ -110,11 +146,17 @@ def _step_session_ids(key: StepKey, attempt: int, sessions: Sequence[Session]) -
     )
 
 
-def _steps(winners: Sequence[StoredEvent], sessions: Sequence[Session]) -> tuple[RunStep, ...]:
+def _steps(
+    winners: Sequence[StoredEvent],
+    sessions: Sequence[Session],
+    *,
+    engine: bool,
+    kinds: Mapping[StepKey, StepKind],
+) -> tuple[RunStep, ...]:
     starts: dict[tuple[StepKey, int], StoredEvent] = {}
     ends: dict[tuple[StepKey, int], StoredEvent] = {}
     for stored in winners:
-        key = _step_key(stored)
+        key = _step_key(stored, engine=engine)
         if key is None or stored.event.type not in _STEP_TYPES:
             continue
         target = starts if stored.event.type == EventType.STEP_START else ends
@@ -125,20 +167,27 @@ def _steps(winners: Sequence[StoredEvent], sessions: Sequence[Session]) -> tuple
     steps = []
     for step_id in {*starts, *ends}:
         start, end = starts.get(step_id), ends.get(step_id)
-        failed = end is not None and end.event.payload.get("status") == "failed"
+        ended = {} if end is None else end.event.payload
         steps.append(
             RunStep(
                 key=step_id[0],
+                kind=kinds.get(step_id[0]),
                 attempt=step_id[1],
                 max_attempts=max_attempts[step_id[0]],
-                status="running" if end is None else "failed" if failed else "ok",
+                status="running" if end is None else _step_status(ended.get("status")),
                 started_at=(start or end or winners[0]).event.timestamp,
                 ended_at=None if end is None else end.event.timestamp,
                 session_ids=_step_session_ids(step_id[0], step_id[1], sessions),
-                reason=None if end is None else _text(end.event.payload.get("reason")),
+                reason=_text(ended.get("reason")),
+                failure_kind=_known(ended.get("failure_kind"), _FAILURE_KINDS),
+                skip_cause=_known(ended.get("skip_cause"), _SKIP_CAUSES),
             )
         )
     return tuple(sorted(steps, key=lambda step: (step.started_at, step.attempt, step.key)))
+
+
+def _step_status(value: object) -> Literal["ok", "failed", "skipped"]:
+    return "failed" if value == "failed" else "skipped" if value == "skipped" else "ok"
 
 
 def _caps(winners: Sequence[StoredEvent]) -> RunCaps | None:
@@ -169,7 +218,13 @@ def _latest_step_event(winners: Sequence[StoredEvent]) -> StoredEvent | None:
     return steps[-1] if steps else None
 
 
-def _failure(winners: Sequence[StoredEvent], run_end: StoredEvent | None) -> RunFailure | None:
+def _failure(
+    winners: Sequence[StoredEvent],
+    run_end: StoredEvent | None,
+    *,
+    engine: bool,
+    stages: Mapping[StepKey, Stage],
+) -> RunFailure | None:
     latest = _latest_step_event(winners)
     failed_steps = [
         stored
@@ -185,16 +240,21 @@ def _failure(winners: Sequence[StoredEvent], run_end: StoredEvent | None) -> Run
     failing = failed_steps[-1] if failed_steps else run_end
     if failing is None:
         return None
-    key = _step_key(failing)
+    key = _step_key(failing, engine=engine)
     stage = (
         _stage(None if run_end is None else run_end.event.payload.get("stage"))
         or _stage(failing.event.payload.get("stage"))
-        or (STEP_STAGES[key] if key is not None else Stage.FAILED)
+        or (stages.get(key, Stage.FAILED) if key is not None else Stage.FAILED)
     )
     reason = _text(failing.event.payload.get("reason"))
     if run_end is not None:
         reason = _text(run_end.event.payload.get("reason")) or reason
-    return RunFailure(stage=stage, reason=reason, failing_event_id=failing.event_id)
+    return RunFailure(
+        stage=stage,
+        reason=reason,
+        failing_event_id=failing.event_id,
+        failure_kind=_known(failing.event.payload.get("failure_kind"), _FAILURE_KINDS),
+    )
 
 
 def _delivery(payload: Mapping[str, JsonValue], *, failure: RunFailure | None) -> RunDelivery:
@@ -205,6 +265,54 @@ def _delivery(payload: Mapping[str, JsonValue], *, failure: RunFailure | None) -
         if outcome == known:
             return known
     return "delivered" if failure is None and _https_url(payload.get("pr_url")) else "failed"
+
+
+def _engine_delivery(
+    payload: Mapping[str, JsonValue], *, failure: RunFailure | None
+) -> RunDelivery | None:
+    """An engine run's delivery outcome (issue-to-pr's ``report``), else ``failed`` for a failed
+    run and none for another: its outcome is not a delivery."""
+    return _known(payload.get("outcome"), _DELIVERIES) or ("failed" if failure else None)
+
+
+def _end_index(run_id: str, source_id: str) -> int:
+    index = engine_end_index(run_id, source_id)
+    return -1 if index is None else index
+
+
+def _run_end(run_id: str, winners: Sequence[StoredEvent], *, engine: bool) -> StoredEvent | None:
+    run_ends = [stored for stored in winners if stored.event.type == EventType.RUN_END]
+    if not run_ends:
+        return None
+    if engine:
+        return max(run_ends, key=lambda stored: _end_index(run_id, stored.event.source_id))
+    return run_ends[0]
+
+
+def _status(run_end: StoredEvent | None, failure: RunFailure | None) -> WorkflowRunStatus:
+    if failure is not None:
+        return "failed"
+    if run_end is None:
+        return "running"
+    return "cancelled" if run_end.event.payload.get("status") == "cancelled" else "done"
+
+
+def _engine_stage(winners: Sequence[StoredEvent], stages: Mapping[StepKey, Stage]) -> Stage:
+    """The stage of the latest step started that has one (issue-to-pr's nodes), else PICKED."""
+    started = [
+        _step_key(stored, engine=True)
+        for stored in winners
+        if stored.event.type == EventType.STEP_START
+    ]
+    known = [stages[key] for key in started if key is not None and key in stages]
+    return known[-1] if known else Stage.PICKED
+
+
+def _pinned(winners: Sequence[StoredEvent]) -> tuple[int | None, str | None]:
+    """The revision and content hash an engine run pinned at start."""
+    revision = next((_int(item.event.payload.get("revision")) for item in winners), None)
+    content_hash = next((_text(item.event.payload.get("content_hash")) for item in winners), None)
+    return revision, content_hash
 
 
 def _current_stage(winners: Sequence[StoredEvent], run_end: StoredEvent | None) -> Stage:
@@ -243,11 +351,23 @@ def fold_run(
     """One run from its executor events (at least one) and the sessions it started."""
     ordered = canonical_events(events)
     winners = resolve_facts(ordered).winners
-    run_ends = [stored for stored in winners if stored.event.type == EventType.RUN_END]
-    run_end = run_ends[0] if run_ends else None
-    failure = _failure(winners, run_end)
+    workflow = next((item.event.workflow for item in ordered if item.event.workflow), None)
+    workflow = workflow or DEFAULT_WORKFLOW
+    engine = _is_engine_run(winners)
+    issue_to_pr = workflow == DEFAULT_WORKFLOW
+    stages = STEP_STAGES if issue_to_pr or not engine else {}
+    run_end = _run_end(run_id, winners, engine=engine)
+    failure = _failure(winners, run_end, engine=engine, stages=stages)
     payload_of_end = {} if run_end is None else run_end.event.payload
-    delivery = None if run_end is None else _delivery(payload_of_end, failure=failure)
+    delivery = None
+    if run_end is not None:
+        deliver = _engine_delivery if engine else _delivery
+        delivery = deliver(payload_of_end, failure=failure)
+    stage = _current_stage(winners, run_end)
+    if engine and run_end is None:
+        stage = _engine_stage(winners, stages)
+    outcome = payload_of_end.get("outcome")
+    revision, content_hash = _pinned(winners)
     issue = next((_text(item.event.payload.get("issue")) for item in ordered), None)
     linked = sorted((s for s in sessions if s.run_id == run_id), key=lambda s: s.started_at)
     cost, cost_source = run_cost(
@@ -260,14 +380,19 @@ def fold_run(
         project=first.project,
         repo=next((item.event.repo for item in ordered if item.event.repo), None),
         issue=None if issue is None else IssueRef(key=issue),
-        workflow=next((item.event.workflow for item in ordered if item.event.workflow), None)
-        or DEFAULT_WORKFLOW,
-        stage=Stage.FAILED if failure is not None else _current_stage(winners, run_end),
+        workflow=workflow,
+        stage=Stage.FAILED if failure is not None else stage,
+        status=_status(run_end, failure),
+        outcome=outcome if isinstance(outcome, bool | str) else None,
+        revision=revision,
+        content_hash=content_hash,
         mode=_mode(winners),
         started_at=first.timestamp,
         ended_at=None if run_end is None else run_end.event.timestamp,
         last_activity_at=ordered[-1].event.timestamp,
-        steps=_steps(winners, linked),
+        steps=_steps(
+            winners, linked, engine=engine, kinds=ISSUE_TO_PR_KINDS if issue_to_pr else {}
+        ),
         failure=failure,
         caps=_caps(winners),
         cost_usd=cost,

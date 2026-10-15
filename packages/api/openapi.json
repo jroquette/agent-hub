@@ -1631,6 +1631,23 @@
         "title": "ExternalPlugin",
         "type": "object"
       },
+      "FailureKind": {
+        "enum": [
+          "transient",
+          "timeout",
+          "rate_limited",
+          "overloaded",
+          "exec_failed",
+          "output_contract",
+          "max_iterations",
+          "unknown",
+          "config",
+          "auth",
+          "cancelled",
+          "fatal"
+        ],
+        "type": "string"
+      },
       "FeatureDetail": {
         "additionalProperties": false,
         "description": "A feature with its acceptance criteria rows, its records (D3) and every eval.",
@@ -5437,6 +5454,16 @@
               }
             ]
           },
+          "failure_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FailureKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reason": {
             "anyOf": [
               {
@@ -5516,6 +5543,14 @@
         "title": "RunGateResult",
         "type": "object"
       },
+      "RunStatus": {
+        "enum": [
+          "done",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
       "RunStep": {
         "additionalProperties": false,
         "description": "One step attempt, keyed ``(key, attempt)``; a loop back into verify is attempt 2.",
@@ -5535,8 +5570,28 @@
               }
             ]
           },
+          "failure_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FailureKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "key": {
             "$ref": "#/components/schemas/StepKey"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "max_attempts": {
             "minimum": 1.0,
@@ -5561,6 +5616,16 @@
             },
             "title": "Session Ids",
             "type": "array"
+          },
+          "skip_cause": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkipCause"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "started_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
@@ -6876,6 +6941,16 @@
         "title": "SkillStructure",
         "type": "object"
       },
+      "SkipCause": {
+        "enum": [
+          "upstream_failed",
+          "upstream_skipped",
+          "condition",
+          "condition_parse_error",
+          "prior_success"
+        ],
+        "type": "string"
+      },
       "SourceStatus": {
         "additionalProperties": false,
         "description": "When a source last sent an event, and whether that is recent enough.",
@@ -7017,12 +7092,19 @@
         "type": "object"
       },
       "StepKey": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "StepKind": {
         "enum": [
-          "pick",
-          "worktree",
-          "implement",
-          "verify",
-          "pr"
+          "agent",
+          "shell",
+          "script",
+          "loop",
+          "loop_group",
+          "approval",
+          "wait",
+          "halt"
         ],
         "type": "string"
       },
@@ -7064,7 +7146,8 @@
         "enum": [
           "running",
           "ok",
-          "failed"
+          "failed",
+          "skipped"
         ],
         "type": "string"
       },
@@ -7888,7 +7971,7 @@
       },
       "WorkflowRun": {
         "additionalProperties": false,
-        "description": "A run folded from executor events (D9, D16): the first ``run.end`` wins.",
+        "description": "A run folded from executor events (D9, D16): the first ``run.end`` wins, the highest\n``n`` for an engine run. ``stage`` is issue-to-pr's machine (another workflow's live run is\n``PICKED``); ``status`` and ``outcome`` hold for every workflow.",
         "properties": {
           "caps": {
             "anyOf": [
@@ -7899,6 +7982,17 @@
                 "type": "null"
               }
             ]
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
           },
           "cost_source": {
             "anyOf": [
@@ -8011,6 +8105,20 @@
             ],
             "title": "Mode"
           },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
           "pr_url": {
             "anyOf": [
               {
@@ -8037,6 +8145,17 @@
             ],
             "title": "Repo"
           },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
           "session_ids": {
             "default": [],
             "items": {
@@ -8058,6 +8177,10 @@
           },
           "started_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowRunStatus",
+            "default": "running"
           },
           "steps": {
             "items": {
@@ -8089,6 +8212,17 @@
         ],
         "title": "WorkflowRun",
         "type": "object"
+      },
+      "WorkflowRunStatus": {
+        "anyOf": [
+          {
+            "const": "running",
+            "type": "string"
+          },
+          {
+            "$ref": "#/components/schemas/RunStatus"
+          }
+        ]
       }
     }
   },
@@ -12159,6 +12293,40 @@
                 }
               ],
               "title": "Issue"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workflow",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workflow"
+            }
+          },
+          {
+            "in": "query",
+            "name": "failure_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/FailureKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Failure Kind"
             }
           },
           {

@@ -1,15 +1,26 @@
-"""The WorkflowRun read model: one ``hub run`` execution, its steps, failure and caps."""
+"""The WorkflowRun read model: one ``hub run`` or workflow engine run, its steps, failure and caps.
 
-from typing import Literal
+A step is keyed by its node id as recorded (``a__b`` inside an include). ``kind`` is the node's
+type, which events do not carry: it is known only for issue-to-pr's steps; the workflow's
+document (``GET /workflows``) gives the others.
+"""
+
+from typing import Annotated, Literal
 
 from pydantic import Field
 
 from agent_hub.core.events.stored_event import EventId
 from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView, Money, ViewModel
 from agent_hub.core.runner.run_record import Stage
+from agent_hub.core.workflows.failures import FailureKind
+from agent_hub.core.workflows.ports import RunStatus, SkipCause
 
-type StepKey = Literal["pick", "worktree", "implement", "verify", "pr"]
-type StepStatus = Literal["running", "ok", "failed"]
+type StepKey = Annotated[str, Field(min_length=1)]
+type StepStatus = Literal["running", "ok", "failed", "skipped"]
+type StepKind = Literal[
+    "agent", "shell", "script", "loop", "loop_group", "approval", "wait", "halt"
+]
+type WorkflowRunStatus = Literal["running"] | RunStatus
 # What an ended run delivered (AGH-140), apart from whether it failed (``failure``).
 type RunDelivery = Literal["delivered", "no_changes", "blocked", "failed"]
 
@@ -18,6 +29,7 @@ class RunStep(ViewModel):
     """One step attempt, keyed ``(key, attempt)``; a loop back into verify is attempt 2."""
 
     key: StepKey
+    kind: StepKind | None = None
     attempt: int = Field(ge=1)
     max_attempts: int = Field(ge=1)
     status: StepStatus
@@ -25,6 +37,8 @@ class RunStep(ViewModel):
     ended_at: ApiTimestamp | None
     session_ids: tuple[str, ...] = ()
     reason: str | None = None
+    failure_kind: FailureKind | None = None
+    skip_cause: SkipCause | None = None
 
 
 class RunFailure(ViewModel):
@@ -34,6 +48,7 @@ class RunFailure(ViewModel):
     reason: str | None
     failing_event_id: EventId | None
     diagnosis_comment_url: str | None = None
+    failure_kind: FailureKind | None = None
 
 
 class RunCaps(ViewModel):
@@ -64,7 +79,9 @@ class IssueRef(ViewModel):
 
 
 class WorkflowRun(DerivedView):
-    """A run folded from executor events (D9, D16): the first ``run.end`` wins."""
+    """A run folded from executor events (D9, D16): the first ``run.end`` wins, the highest
+    ``n`` for an engine run. ``stage`` is issue-to-pr's machine (another workflow's live run is
+    ``PICKED``); ``status`` and ``outcome`` hold for every workflow."""
 
     id: str
     project: str
@@ -72,6 +89,10 @@ class WorkflowRun(DerivedView):
     issue: IssueRef | None
     workflow: str
     stage: Stage
+    status: WorkflowRunStatus = "running"
+    outcome: bool | str | None = None
+    revision: int | None = None
+    content_hash: str | None = None
     mode: Literal["live", "dry_run"] | None
     started_at: ApiTimestamp
     ended_at: ApiTimestamp | None
