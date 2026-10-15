@@ -280,9 +280,12 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
   });
 
   it("renders 2,000 entries in under a second and a delta re-renders only the streaming entry", () => {
-    const runFrame = manualFrames();
+    manualFrames();
     const state = longState(delta(0, "Wor"));
     expect(state.entries).toHaveLength(2002);
+    // A first mount warms the module and JIT caches up, so the budget times the render alone.
+    render(<Transcript state={state} />).unmount();
+    const runFrame = manualFrames();
 
     const started = performance.now();
     const view = render(<Transcript state={state} />);
