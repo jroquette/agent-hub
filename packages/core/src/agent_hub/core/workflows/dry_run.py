@@ -100,7 +100,10 @@ def dry_run(
     Raises ``WorkflowEngineError`` when the engine refuses the run (inputs, an approval node).
     """
     runner, recorder = _StubRunner(stubs), _MemoryRecorder()
-    ports = EnginePorts(runner, recorder, _StillClock(), outputs, lambda: 0.0)
+    # One node at a time: nothing waits in memory, and the stubs' records keep one order.
+    ports = EnginePorts(
+        runner, recorder, _StillClock(), outputs, lambda: 0.0, _StillCheckout(), max_parallel=1
+    )
     report = run_workflow(plan, inputs, ports)
     order = [node.id for node in plan.all_nodes()]
     returns = plan.document.returns
@@ -239,6 +242,13 @@ def _reply(node: ExecutableNode, stub: Stub) -> NodeReply:
     if node.output_format is not None:
         return NodeReply(json.dumps(stub.output, allow_nan=False))
     return NodeReply(canonical_text(stub.output))
+
+
+class _StillCheckout:
+    """No checkout changes in memory: a read-only node always passes its check."""
+
+    def status(self) -> str:
+        return ""
 
 
 class _StillClock:

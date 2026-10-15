@@ -1,8 +1,15 @@
 """The workflow engine (ADR 0032): a pure interpreter of a plan over its ports.
 
-Layers run in order and, in v1, one node at a time; a failure never stops later layers. Each
-node goes through: the resume cache, its ``trigger_rule``, its ``when:``, then its attempts. A
-resumed run reuses a node that completed before (``prior_success``) unless it is ``always_run``
+Layers run in order, a failure never stopping later layers; a layer's nodes run concurrently in
+threads (at most ``EnginePorts.max_parallel``), except a layer holding a ``halt``, which runs one
+node at a time and stops at the halt. Each node records into a buffer replayed in declaration
+order, so a run's records keep one order whatever ends first; the shared state is locked.
+Planning keeps read-only nodes (``mutates_checkout: false``) and nodes resuming one session out
+of a shared layer. A read-only node's attempt reads the ``CheckoutProbe`` before and after: a
+change fails it ``config`` (never retried).
+
+Each node goes through: the resume cache, its ``trigger_rule``, its ``when:``, then its attempts.
+A resumed run reuses a node that completed before (``prior_success``) unless it is ``always_run``
 or an ancestor now ends differently. Every visit takes the node's next ``attempt``, counted over
 the whole run and its resumes, so no two steps share one. A failed attempt asks
 ``retry_decision`` and waits through the ``Clock``; each retry is recorded, and a loop's retry
@@ -20,8 +27,11 @@ the group's id) end it, with an output mapping each body id to its output; past
 """
 
 import json
-from collections.abc import Callable, Mapping
+import threading
+from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Final
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import JsonValue
@@ -50,6 +60,7 @@ from agent_hub.core.workflows.nodes import (
 )
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import (
+    CheckoutProbe,
     Clock,
     NodeCall,
     NodeRunner,
@@ -80,6 +91,9 @@ from agent_hub.core.workflows.substitution import (
     resolve,
 )
 
+# The most nodes of one layer that run at once.
+MAX_PARALLEL: Final = 4
+
 
 class WorkflowEngineError(AgentHubError):
     """A run the engine refuses to start: unsupported nodes, inputs that do not fit."""
@@ -92,6 +106,8 @@ class EnginePorts:
     clock: Clock
     outputs: OutputValidator
     jitter: Callable[[], float]
+    checkout: CheckoutProbe | None = None
+    max_parallel: int = MAX_PARALLEL
 
 
 def run_workflow(
@@ -150,23 +166,58 @@ class _Run:
             for body in node.nodes
         }
         self.loop_prevs: dict[str, dict[str, NodeResult]] = {}
+        self.lock = threading.Lock()
+        self.local = threading.local()
+
+    @property
+    def recorder(self) -> RunRecorder:
+        """The thread's buffer while a concurrent layer runs it, else the run's recorder."""
+        buffer: _Buffer | None = getattr(self.local, "buffer", None)
+        return self.ports.recorder if buffer is None else buffer
 
     def execute(self) -> RunReport:
         nodes = {node.id: node for node in self.plan.document.nodes}
         for layer in self.plan.layers:
             for node_id in layer:
-                node = nodes[node_id]
-                if any(dep in self.changed or dep in self.stale for dep in node.depends_on):
+                if any(d in self.changed or d in self.stale for d in nodes[node_id].depends_on):
                     self.stale.add(node_id)
-                self._visit(node)
-                if self.ends[node_id].result != self.prior.nodes.get(node_id):
+            self._run_layer([nodes[node_id] for node_id in layer])
+            for node_id in layer:
+                end = self.ends.get(node_id)
+                if end is not None and end.result != self.prior.nodes.get(node_id):
                     self.changed.add(node_id)
-                if self.halted_by is not None:
-                    return self._finish()
+            if self.halted_by is not None:
+                return self._finish()
         return self._finish()
 
+    def _run_layer(self, nodes: Sequence[Node]) -> None:
+        """Visit a layer's nodes: concurrently, their records replayed in declaration order."""
+        sequential = self.ports.max_parallel <= 1 or len(nodes) == 1
+        if sequential or any(isinstance(node, HaltNode) for node in nodes):
+            for node in nodes:
+                self._visit(node)
+                if self.halted_by is not None:
+                    return
+            return
+        target = self.recorder
+        with ThreadPoolExecutor(max_workers=min(len(nodes), self.ports.max_parallel)) as pool:
+            for future in [pool.submit(self._buffered, node) for node in nodes]:
+                future.result().replay(target)
+
+    def _buffered(self, node: Node) -> _Buffer:
+        self.local.buffer = buffer = _Buffer()
+        try:
+            self._visit(node)
+        finally:
+            self.local.buffer = None
+        return buffer
+
     def _finish(self) -> RunReport:
-        status, reason = run_status(self.ends, self.halted_by)
+        # In declaration order: the ends of a concurrent layer arrive in any order.
+        ends = {
+            node.id: self.ends[node.id] for node in self.plan.all_nodes() if node.id in self.ends
+        }
+        status, reason = run_status(ends, self.halted_by)
         document = self.plan.document
         outcome = authored_outcome(document.returns, document.outcome_field, self.ends)
         self.ports.recorder.run_ended(RunEnd(status, self.ports.clock.now(), outcome, reason))
@@ -174,8 +225,9 @@ class _Run:
         return RunReport(status, outcome, reason, state)
 
     def _end(self, node: Node, end: NodeEnd) -> None:
-        self.ends[node.id] = end
-        self.results[node.id] = end.result
+        with self.lock:
+            self.ends[node.id] = end
+            self.results[node.id] = end.result
 
     def _visit(self, node: Node) -> None:
         if self._reusable(node):
@@ -198,7 +250,7 @@ class _Run:
         when = evaluate_when(expr, self._context(node))
         if isinstance(when, WhenFail):
             attempt = self._attempt(node)
-            self.ports.recorder.step_started(StepStart(node.id, attempt, self.ports.clock.now()))
+            self.recorder.step_started(StepStart(node.id, attempt, self.ports.clock.now()))
             self._record_failure(node, attempt, NodeFailedError("config", str(when.error)))
             self._end(node, NodeEnd(NodeResult("failed"), failure_kind="config"))
         elif isinstance(when, WhenSkip):
@@ -222,8 +274,9 @@ class _Run:
         return node.id not in self.stale
 
     def _attempt(self, node: Node) -> int:
-        self.attempts[node.id] = self.attempts.get(node.id, 0) + 1
-        return self.attempts[node.id]
+        with self.lock:
+            self.attempts[node.id] = self.attempts.get(node.id, 0) + 1
+            return self.attempts[node.id]
 
     def _skip(
         self,
@@ -234,14 +287,14 @@ class _Run:
         result: NodeResult | None = None,
     ) -> None:
         at, attempt = self.ports.clock.now(), self._attempt(node)
-        self.ports.recorder.step_ended(
+        self.recorder.step_ended(
             StepEnd(node.id, attempt, "skipped", at, skip_cause=cause, origin=origin)
         )
         self._end(node, NodeEnd(result or NodeResult("skipped"), cause, origin))
 
     def _record_failure(self, node: Node, attempt: int, failure: NodeFailedError) -> None:
         output = failure.output if isinstance(failure, MaxIterationsError) else None
-        self.ports.recorder.step_ended(
+        self.recorder.step_ended(
             StepEnd(
                 node.id,
                 attempt,
@@ -254,7 +307,7 @@ class _Run:
         )
 
     def _halt(self, node: HaltNode) -> None:
-        recorder, now = self.ports.recorder, self.ports.clock.now()
+        recorder, now = self.recorder, self.ports.clock.now()
         attempt = self._attempt(node)
         recorder.step_started(StepStart(node.id, attempt, now))
         try:
@@ -311,9 +364,13 @@ class _Run:
         composition root's bug.
         """
         attempt = self._attempt(node)
-        self.ports.recorder.step_started(StepStart(node.id, attempt, self.ports.clock.now()))
+        self.recorder.step_started(StepStart(node.id, attempt, self.ports.clock.now()))
         try:
+            before = self._checkout_status(node)
             turn, done = run(attempt)
+            if before is not None and self._checkout_status(node) != before:
+                detail = "the checkout changed, though the node declares mutates_checkout: false"
+                raise NodeFailedError("config", detail)
         except NodeFailedError as failure:
             self._record_failure(node, attempt, failure)
             raise
@@ -325,10 +382,18 @@ class _Run:
             unknown = NodeFailedError("unknown", type(error).__name__)
             self._record_failure(node, attempt, unknown)
             raise unknown from None
-        self.ports.recorder.step_ended(
+        self.recorder.step_ended(
             StepEnd(node.id, attempt, "ok", self.ports.clock.now(), output=turn.output)
         )
         return turn, done
+
+    def _checkout_status(self, node: ExecutableNode) -> str | None:
+        """The checkout's status for a read-only node (``mutates_checkout: false``), else None."""
+        if node.mutates_checkout:
+            return None
+        if self.ports.checkout is None:
+            raise NodeFailedError("config", "no checkout probe to check mutates_checkout: false")
+        return self.ports.checkout.status()
 
     def _retrying(self, node: ExecutableNode, once: Callable[[], Turn]) -> Turn | NodeFailedError:
         """``once`` again while ``retry_decision`` allows; the last failure once none is left."""
@@ -357,7 +422,7 @@ class _Run:
         if not decision.retry:
             return False
         record = RetryRecord(self.attempts[node.id], failure.kind, decision.delay)
-        self.ports.recorder.retry_scheduled(node.id, record)
+        self.recorder.retry_scheduled(node.id, record)
         try:
             self.ports.clock.sleep(decision.delay)
         except Exception:  # noqa: BLE001 - a port's unexpected error: no retry
@@ -370,7 +435,8 @@ class _Run:
             return
         self._end(node, NodeEnd(NodeResult("completed", turn.output)))
         if turn.session is not None:
-            self.sessions[node.id] = turn.session
+            with self.lock:
+                self.sessions[node.id] = turn.session
 
     def _resumed_session(self, node: ExecutableNode) -> str | None:
         if not isinstance(node, AgentNode | LoopNode):
@@ -400,7 +466,8 @@ class _Run:
     def _context(self, node: Node) -> RefContext:
         """What ``node`` reads: ``$LOOP_PREV`` inside a group (its body or its channels)."""
         group = self.owner.get(node.id, node)
-        return RefContext(self.inputs, self.results, self.loop_prevs.get(group.id))
+        with self.lock:
+            return RefContext(self.inputs, dict(self.results), self.loop_prevs.get(group.id))
 
     def _node_context(self, node: ExecutableNode) -> RefContext:
         """The context of an attempt: an agent's ``with`` values resolved (``$WITH``)."""
@@ -419,10 +486,11 @@ class _Run:
         return RefContext(context.inputs, context.nodes, context.loop_prev, values)
 
     def _group(self, group: LoopGroupNode) -> None:
-        recorder, attempt = self.ports.recorder, self._attempt(group)
+        recorder, attempt = self.recorder, self._attempt(group)
         recorder.step_started(StepStart(group.id, attempt, self.ports.clock.now()))
         end = self._iterate(group)
-        self.loop_prevs.pop(group.id, None)
+        with self.lock:
+            self.loop_prevs.pop(group.id, None)
         if isinstance(end, NodeFailedError):
             self._record_failure(group, attempt, end)
             self._end(group, NodeEnd(NodeResult("failed"), failure_kind=end.kind))
@@ -433,9 +501,10 @@ class _Run:
     def _iterate(self, group: LoopGroupNode) -> JsonValue | NodeFailedError:
         """The group's iterations: the output map once done, or why the group failed."""
         body = {node.id: node for node in group.nodes}
-        for node_id in body:
-            self.sessions.pop(node_id, None)
-        self.loop_prevs[group.id] = {}
+        with self.lock:
+            for node_id in body:
+                self.sessions.pop(node_id, None)
+            self.loop_prevs[group.id] = {}
         iteration = 0
         while True:
             iteration += 1
@@ -450,20 +519,21 @@ class _Run:
             if iteration >= group.max_iterations:
                 detail = f"{group.max_iterations} iterations did not end the group"
                 return MaxIterationsError(detail, output)
-            self.loop_prevs[group.id] = {n: self.results[n] for n in body}
+            with self.lock:
+                self.loop_prevs[group.id] = {n: self.results[n] for n in body}
 
     def _run_body(
         self, group: LoopGroupNode, body: Mapping[str, Node], iteration: int
     ) -> NodeFailedError | None:
         """One iteration of the body's layers; why it fails the group, if it does."""
-        for node_id in body:
-            self.ends.pop(node_id, None)
-            self.results.pop(node_id, None)
+        with self.lock:
+            for node_id in body:
+                self.ends.pop(node_id, None)
+                self.results.pop(node_id, None)
         for layer in self.plan.bodies[group.id]:
-            for node_id in layer:
-                self._visit(body[node_id])
-                if self.halted_by is not None:
-                    return NodeFailedError("cancelled", "a halt in the body ended the run")
+            self._run_layer([body[node_id] for node_id in layer])
+            if self.halted_by is not None:
+                return NodeFailedError("cancelled", "a halt in the body ended the run")
         failed = next((n for n in body if self.ends[n].result.state == "failed"), None)
         if failed is None:
             return None
@@ -504,6 +574,29 @@ class _Run:
             raise NodeFailedError("output_contract", "the output is not one JSON value") from None
         self.ports.outputs.check(node.output_format, value)
         return value
+
+
+class _Buffer:
+    """A node's records while its layer runs concurrently, replayed in declaration order."""
+
+    def __init__(self) -> None:
+        self.calls: list[Callable[[RunRecorder], None]] = []
+
+    def step_started(self, start: StepStart) -> None:
+        self.calls.append(lambda recorder: recorder.step_started(start))
+
+    def step_ended(self, end: StepEnd) -> None:
+        self.calls.append(lambda recorder: recorder.step_ended(end))
+
+    def retry_scheduled(self, node: str, retry: RetryRecord) -> None:
+        self.calls.append(lambda recorder: recorder.retry_scheduled(node, retry))
+
+    def run_ended(self, end: RunEnd) -> None:
+        self.calls.append(lambda recorder: recorder.run_ended(end))
+
+    def replay(self, target: RunRecorder) -> None:
+        for call in self.calls:
+            call(target)
 
 
 def _refuse_constant(name: str) -> JsonValue:
