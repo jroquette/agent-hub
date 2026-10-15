@@ -8,7 +8,10 @@ const delta = (index: number): StreamItem => ({
   type: "delta",
   delta: aDeltaFrame({ after_seq: 0, block: 0, index, text: `d${String(index)}` }),
 });
-const record = (seq: number): StreamItem => ({ type: "record", record: aLogRecord("text", { seq }) });
+const record = (seq: number): StreamItem => ({
+  type: "record",
+  record: aLogRecord("text", { seq }),
+});
 
 /** Animation frames the test runs by hand; a cancelled frame never runs. */
 let frames: Map<number, FrameRequestCallback>;

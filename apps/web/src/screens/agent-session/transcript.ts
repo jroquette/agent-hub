@@ -576,14 +576,17 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
       const text = str(body, "text") ?? "";
       // Core refuses a send while an interrupt awaits its result, so a message after an
       // interrupt means that interrupt cut no turn short (it landed on an idle session).
-      return push({ ...s, interrupted: false }, {
-        kind: "user",
-        key: `u-${String(record.seq)}`,
-        seq: record.seq,
-        at: record.at,
-        text,
-        redacted: isRedacted(text),
-      });
+      return push(
+        { ...s, interrupted: false },
+        {
+          kind: "user",
+          key: `u-${String(record.seq)}`,
+          seq: record.seq,
+          at: record.at,
+          text,
+          redacted: isRedacted(text),
+        },
+      );
     }
     case "text":
       return applyText(s, record.seq, body);
