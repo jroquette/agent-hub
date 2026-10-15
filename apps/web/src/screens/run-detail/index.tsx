@@ -39,6 +39,7 @@ import type { WorkflowRun } from "../runs-list/queries";
 import { graphFailureTitle, isGraphRun } from "./graph";
 import { failingSession, failureReason, failureTitle, lanes, loopLabel, pipeline } from "./model";
 import { useRun, useRunStream } from "./queries";
+import { OpenGates } from "./OpenGates";
 import { RunGraph } from "./RunGraph";
 
 const TABS = ["sessions", "gates", "tracker", "caps", "pr"] as const;
@@ -656,6 +657,7 @@ function RunBody({ run }: { run: WorkflowRun }) {
           </Banner>
         )}
         <OutcomeLine run={run} />
+        {isGraphRun(run) && <OpenGates run={run} />}
         {isGraphRun(run) ? (
           <RunGraph run={run} now={now} />
         ) : (
