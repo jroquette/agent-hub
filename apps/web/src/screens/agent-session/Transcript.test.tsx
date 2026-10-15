@@ -322,6 +322,30 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
     expect(card?.closest(".as-entry")?.querySelector(".as-tool")).toHaveTextContent("ls");
   });
 
+  it("never starts the first render inside a run of calls, so the run keeps its node (tool-cards)", () => {
+    const runFrame = manualFrames();
+    const items: StreamItem[] = [{ type: "record", record: aLogRecord("text", { seq: 1 }) }];
+    for (let seq = 2; seq < 2 + FIRST_ENTRIES + 100; seq += 1) {
+      items.push({
+        type: "record",
+        record: aLogRecord("tool.call", {
+          seq,
+          body: { tool_use_id: `t${String(seq)}`, name: "Read", input: { file_path: "a" } },
+        }),
+      });
+    }
+
+    render(<Transcript state={items.reduce(reduceTranscript, initialTranscript())} />);
+    const log = screen.getByRole("log");
+    const head = within(log).getByRole("button", { name: /^Explored/ });
+    expect(head).toHaveTextContent(`Explored · ${String(FIRST_ENTRIES + 100)} Read`);
+    expect(log.children).toHaveLength(1);
+    runFrame();
+
+    expect(log.children).toHaveLength(2);
+    expect(within(log).getByRole("button", { name: /^Explored/ })).toBe(head);
+  });
+
   it("first renders from the oldest pending card and keeps it in view as earlier entries come", () => {
     const runFrame = manualFrames();
     const request = aLogRecord("permission.request", { seq: 2002 });
@@ -442,6 +466,37 @@ describe("Transcript (tool-cards) attached permission", () => {
     expect(head.closest(".as-tool")?.nextElementSibling).toHaveAttribute("data-request-id", "b");
     expect(top.value).toBe(384);
     vi.restoreAllMocks();
+  });
+
+  it("keeps an expanded first call, the same node with the focus, when a second call joins it", async () => {
+    const one = [call(1, "a")].reduce(reduceTranscript, initialTranscript());
+    const { rerender } = render(<Transcript state={one} />);
+    const head = screen.getByRole("button", { name: "Bash make check (Running)" });
+    await userEvent.click(head);
+    expect(head).toHaveAttribute("aria-expanded", "true");
+
+    rerender(<Transcript state={reduceTranscript(one, call(2, "b", "Read"))} />);
+
+    expect(screen.getByRole("button", { name: /^Explored · 1 Bash, 1 Read/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getAllByRole("button", { name: "Bash make check (Running)" })).toEqual([head]);
+    expect(head).toHaveAttribute("aria-expanded", "true");
+    expect(head).toHaveFocus();
+  });
+
+  it("keeps a pending card and the focus in its message when a second call joins its run", async () => {
+    const one = [call(1, "a"), ask(2, "a")].reduce(reduceTranscript, initialTranscript());
+    const { rerender } = render(<Transcript state={one} />);
+    const card = document.querySelector("[data-request-id='a']");
+    const message = screen.getByRole("textbox", { name: /Message to Claude if you deny/ });
+    await userEvent.click(message);
+
+    rerender(<Transcript state={reduceTranscript(one, call(3, "b", "Read"))} />);
+
+    expect(document.querySelector("[data-request-id='a']")).toBe(card);
+    expect(message).toHaveFocus();
   });
 
   it("re-renders no grouped call when text streams below the group", () => {
