@@ -358,8 +358,6 @@ CONVENTIONS_READERS = {
     # RunChildren.conventions, the repo's effective conventions (conventions_for): its branch
     # and the prompt's commit title
     "cli/src/agent_hub/cli/run_children.py": 2,
-    # the PR title step reads RunChildren.conventions
-    "cli/src/agent_hub/cli/run_steps.py": 1,
     # hub ship's PR title step reads ShipTarget.conventions (conventions_for, in ship_set)
     "cli/src/agent_hub/cli/ship_steps.py": 1,
     # hub step: worktree reads RunChildren.conventions (the prompt's commit title, the target it
