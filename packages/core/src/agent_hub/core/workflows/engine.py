@@ -68,6 +68,7 @@ from agent_hub.core.workflows.run_state import (
     run_status,
     trigger_skip,
 )
+from agent_hub.core.workflows.scope import RefScope
 from agent_hub.core.workflows.substitution import (
     NodeRef,
     NodeResult,
@@ -395,12 +396,15 @@ class _Run:
             env = {name: render(value, context) for name, value in node.env.items()}
             return NodeCall(node, attempt, context, iteration, tuple(argv), cwd, env)
         prompt = render(node.prompt, context) if node.prompt is not None else None
-        return NodeCall(node, attempt, context, iteration, prompt=prompt, resume_session=resume)
+        scope = self.plan.scopes.get(node.id, RefScope())
+        return NodeCall(
+            node, attempt, context, iteration, prompt=prompt, resume_session=resume, scope=scope
+        )
 
     def _context(self, node: Node) -> RefContext:
         """What ``node`` reads: ``$LOOP_PREV`` inside a group (its body or its channels)."""
         group = self.owner.get(node.id, node)
-        return RefContext(self.inputs, self.results, self.loop_prevs.get(group.id))
+        return RefContext(self.inputs, dict(self.results), self.loop_prevs.get(group.id))
 
     def _node_context(self, node: ExecutableNode) -> RefContext:
         """The context of an attempt: an agent's ``with`` values resolved (``$WITH``)."""

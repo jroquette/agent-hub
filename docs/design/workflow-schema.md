@@ -66,14 +66,10 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
   plus `text` with `capture_response: true`. Rework is a `loop_group` whose `until_when` reads the decision.
 - `wait`: `duration` (≤ 7d), `until` (ISO-8601 with offset, or a whole reference) or `attention` (a message answered
   with text, or an option id given `options`); output `{at}`, `{text}` or `{choice, text}`; an early resume re-pauses.
-- `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with`. `with` fills the
-  included `inputs` (checked as at run start) and replaces `$INPUTS.<name>` there. Nodes, and references to them,
-  become `<include id>__<id>`; roots inherit the include's graph keys; dependants wait for the primary sink (`returns`,
-  else the single sink), read as `$<include id>.output`. Depth ≤ 3, no cycles; planning checks run after expansion.
-  An include names a workflow of its own pack (`prompt_file` and `script` are pack paths). A block reads only its own
-  nodes and inputs. Several sinks and no `returns` make `$<include id>.output` a load error. A root's `when:` joins
-  the include's as `A && B`, refused if either holds `||`; in a block's `when:` an input takes a reference, since a
-  literal put in place of a reference breaks the grammar (a load error).
+- `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with`, naming a flow of
+  its pack; `with` fills its `inputs` (`$INPUTS.<name>`; in a `when:`, a reference). Nodes become `<include id>__<id>`;
+  roots take its graph keys (`when:` as `A && B`, never `||`); depending on it waits on every sink, `$<include>.output`
+  reads `returns` or the single sink. A block, prompt files too, reads only its own scope; ≤ 3 levels, ≤ 512 nodes.
 
 ### Running: joins, conditions, outputs, status, retry and events
 

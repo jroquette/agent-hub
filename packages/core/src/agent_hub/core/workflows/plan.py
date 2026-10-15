@@ -17,7 +17,7 @@ it, outer nodes upstream of the group, and ``$LOOP_PREV.<body id>``; ``until_whe
 """
 
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final
 
 from pydantic import JsonValue
@@ -29,7 +29,7 @@ from agent_hub.core.workflows.document import (
     WorkflowProblem,
 )
 from agent_hub.core.workflows.includes import IncludeResolver, expand_includes
-from agent_hub.core.workflows.loops import record_body
+from agent_hub.core.workflows.loops import local_id, record_body
 from agent_hub.core.workflows.nodes import (
     AgentNode,
     ApprovalNode,
@@ -42,6 +42,8 @@ from agent_hub.core.workflows.nodes import (
     ShellNode,
     required_property,
 )
+from agent_hub.core.workflows.rewrite import SEPARATOR
+from agent_hub.core.workflows.scope import RefScope, ScopeStep
 from agent_hub.core.workflows.substitution import (
     InputRef,
     LoopPrevRef,
@@ -68,6 +70,8 @@ class WorkflowPlan:
     layers: tuple[tuple[str, ...], ...]
     # Each loop_group's body layers, by group id, body ids as recorded.
     bodies: Mapping[str, tuple[tuple[str, ...], ...]] = field(default_factory=dict)
+    # Each node's reference scope when it has one, by recorded id, for its prompt file.
+    scopes: Mapping[str, RefScope] = field(default_factory=dict)
 
     def all_nodes(self) -> Iterator[Node]:
         """Every node the run may record, in declaration order: a group, then its body."""
@@ -84,9 +88,17 @@ def plan_workflow(
     raises ``WorkflowLoadError`` naming every problem found, on the document's own nodes."""
     expansion = expand_includes(document, includes)
     try:
-        return _plan(expansion.document)
+        plan = _plan(expansion.document)
     except WorkflowLoadError as error:
         raise WorkflowLoadError([expansion.locate(p) for p in error.problems]) from None
+    scopes = dict(expansion.scopes)
+    for group in plan.document.nodes:
+        if isinstance(group, LoopGroupNode):
+            # The body's ids as recorded: the step ``record_body`` took at load.
+            step = ScopeStep(names={local_id(group, body.id): body.id for body in group.nodes})
+            for body in group.nodes:
+                scopes[body.id] = scopes.get(body.id, RefScope()).then(step)
+    return replace(plan, scopes=scopes) if scopes else plan
 
 
 def _plan(document: WorkflowDocument) -> WorkflowPlan:
@@ -277,11 +289,14 @@ def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
             continue
         where: Loc = ("nodes", index)
         body = group.nodes
+        # An included group's body is checked against its own block's ids.
+        head, separator, _ = group.id.rpartition(SEPARATOR)
+        namespace = head + separator
         problems = [*_repeated_ids(body), *_unknown_dependencies(body, "body node")]
         problems += [
             WorkflowProblem(("nodes", position, "id"), message)
             for position, node in enumerate(body)
-            if node.id in graph.producers
+            if namespace + node.id in graph.producers
             for message in [f"the body id {echo(node.id)} is already a node id"]
         ]
         if not problems:
