@@ -10,7 +10,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Final, Literal
+from typing import Final, Literal, get_args
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.workflows.nodes import MAX_DURATION_DIGITS, Retry, duration_seconds
@@ -29,6 +29,7 @@ type FailureKind = Literal[
     "cancelled",
     "fatal",
 ]
+FAILURE_KINDS: Final[frozenset[str]] = frozenset(get_args(FailureKind.__value__))
 type ExecutableType = Literal["agent", "shell", "script", "loop"]
 
 # Retried with backoff by default; the provider pushback kinds wait longer, with jitter.

@@ -1,0 +1,170 @@
+{
+ "calls": [
+  [
+   "get_issue",
+   "DEM-1"
+  ],
+  [
+   "add_label",
+   "DEM-1",
+   "agent-failed"
+  ],
+  [
+   "comment",
+   "DEM-1",
+   "Run <run> stopped at IMPLEMENTING and needs a human. The session asked: BLOCKED: the issue has an open question"
+  ]
+ ],
+ "events": [
+  [
+   "step.start",
+   "pick",
+   {
+    "attempt": 1,
+    "caps": {
+     "budget": 3.0,
+     "max_turns": 40,
+     "model": "sonnet",
+     "transport": "api"
+    },
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PICKED"
+   }
+  ],
+  [
+   "step.end",
+   "pick",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "PICKED",
+    "status": "ok"
+   }
+  ],
+  [
+   "step.start",
+   "worktree",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "WORKTREE"
+   }
+  ],
+  [
+   "step.end",
+   "worktree",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "WORKTREE",
+    "status": "ok"
+   }
+  ],
+  [
+   "step.start",
+   "implement",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "IMPLEMENTING"
+   }
+  ],
+  [
+   "step.end",
+   "implement",
+   {
+    "attempt": 1,
+    "issue": "DEM-1",
+    "mode": "live",
+    "repo": "demo-api",
+    "run": "<run>",
+    "stage": "IMPLEMENTING",
+    "status": "ok"
+   }
+  ],
+  [
+   "run.end",
+   null,
+   {
+    "cost_usd": 0.42,
+    "issue": "DEM-1",
+    "mode": "live",
+    "outcome": "blocked",
+    "reason": "the implementing session stopped: BLOCKED: the issue has an open question",
+    "repo": "demo-api",
+    "run": "<run>",
+    "status": "done"
+   }
+  ]
+ ],
+ "exit_code": 3,
+ "records": [
+  {
+   "budget": 3.0,
+   "event": "picked",
+   "issue": "DEM-1",
+   "live": true,
+   "max_turns": 40,
+   "model": "sonnet",
+   "repo": "demo-api",
+   "state": "PICKED",
+   "transport": "api"
+  },
+  {
+   "event": "worktree_ready",
+   "issue": "DEM-1",
+   "live": true,
+   "path": "<ws>/demo-api/.claude/worktrees/dem-1",
+   "repo": "demo-api",
+   "state": "WORKTREE"
+  },
+  {
+   "cost_usd": 0.42,
+   "event": "agent_finished",
+   "issue": "DEM-1",
+   "live": true,
+   "repo": "demo-api",
+   "state": "IMPLEMENTING",
+   "subtype": "success",
+   "turns": 3,
+   "verdict": null
+  },
+  {
+   "event": "not_delivered",
+   "issue": "DEM-1",
+   "live": true,
+   "outcome": "blocked",
+   "reason": "the implementing session stopped: BLOCKED: the issue has an open question",
+   "repo": "demo-api",
+   "stage": "IMPLEMENTING",
+   "state": "IMPLEMENTING"
+  },
+  {
+   "event": "reported",
+   "failed_stage": null,
+   "issue": "DEM-1",
+   "live": true,
+   "ok": true,
+   "outcome": "blocked",
+   "pr": "",
+   "repo": "demo-api",
+   "state": "REPORTED",
+   "total_cost_usd": 0.42
+  }
+ ]
+}
