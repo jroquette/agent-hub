@@ -109,8 +109,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   button, and wide tables scroll sideways in their own region (AGH-241).
 - The chat is complete for the keyboard and screen readers: `/` at the start of a message lists the session's slash
   commands and skills (filter as you type, arrows, Enter or Tab inserts, Esc closes; Enter never sends while it is
-  open); Ctrl/Cmd+Alt+Enter allows and Ctrl/Cmd+Alt+Backspace denies the oldest waiting permission, `a` / `d` answer
-  a focused card, Shift+Esc focuses the composer, ArrowUp in an empty composer recalls your last prompt, and a new
+  open, and a live region announces how many commands match); Ctrl/Cmd+Alt+Enter allows and Ctrl/Cmd+Alt+Backspace
+  denies the oldest waiting tool permission (not on a key repeat, mid-composition or under a dialog), `a` / `d`
+  answer a focused tool card (`g a` still goes to Approvals and never allows), plain Alt+Enter still sends, Shift+Esc focuses the composer, ArrowUp in an empty composer recalls your last prompt, and a new
   permission card never takes focus from a composer holding text; the shortcut sheet has a Chat group, and the chat
   has no serious axe violation in any state (AGH-242).
 
