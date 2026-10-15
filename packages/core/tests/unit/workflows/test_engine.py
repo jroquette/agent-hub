@@ -14,6 +14,7 @@ from agent_hub.core.testing.workflow_fakes import (
     ScriptedRunner,
     a_plan,
 )
+from agent_hub.core.workflows import plan as plan_module
 from agent_hub.core.workflows.engine import (
     MAX_PARALLEL,
     EnginePorts,
@@ -613,14 +614,14 @@ class GatedRunner(ScriptedRunner):
                 self.second_ran.set()
 
 
-def test_records_in_declaration_order_when_parallel_nodes_end_out_of_order() -> None:
+def test_records_each_node_as_it_ends_when_parallel_nodes_end_out_of_order() -> None:
     runner = GatedRunner("a", "b")
 
     run = Run(plan_of(shell("a"), shell("b"), shell("c", "a", "b")), runner)
 
     assert runner.ran() == ["b", "a", "c"]
-    assert [start.node for start in run.recorder.starts] == ["a", "b", "c"]
-    assert [end.node for end in run.recorder.ends] == ["a", "b", "c"]
+    assert {start.node for start in run.recorder.starts[:2]} == {"a", "b"}
+    assert [end.node for end in run.recorder.ends] == ["b", "a", "c"]
     assert run.report.status == "done"
 
 
@@ -703,3 +704,99 @@ def test_names_the_first_failed_node_in_declaration_order_when_parallel_nodes_fa
     run = Run(plan_of(shell("a"), shell("b")), runner)
 
     assert (run.report.status, run.report.reason) == ("failed", "a")
+
+
+def a_group(*body: dict[str, object], **keys: object) -> dict[str, object]:
+    group = {"id": "g", "type": "loop_group", "max_iterations": 1, "nodes": list(body)}
+    return group | {"until_when": "$INPUTS.mode == 'off'"} | keys
+
+
+def test_runs_one_node_at_a_time_when_a_parallel_layer_holds_a_group_with_a_halt() -> None:
+    halt = {"id": "stop", "type": "halt", "reason": "Stop."}
+
+    run = Run(plan_of(a_group(halt), shell("b")))
+
+    assert run.runner.ran() == []
+    assert run.report.status == "cancelled"
+
+
+def test_splits_a_parallel_layer_when_a_group_reads_and_a_node_writes() -> None:
+    plan = plan_of(shell("w"), a_group(shell("r", mutates_checkout=False)))
+
+    assert plan.layers == (("w",), ("g",))
+
+
+class Counting(ScriptedRunner):
+    """Keeps the most calls that ran at once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lock = threading.Lock()
+        self.active = self.most = 0
+
+    def run(self, call: NodeCall) -> NodeReply:
+        with self.lock:
+            self.active += 1
+            self.most = max(self.most, self.active)
+        try:
+            threading.Event().wait(0.05)
+            return super().run(call)
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+def test_runs_at_most_the_bound_at_once_when_parallel_groups_nest() -> None:
+    runner = Counting()
+    body = [shell(f"b{index}") for index in range(4)]
+    plan = plan_of(*(shell(f"n{index}") for index in range(6)), a_group(*body))
+
+    Run(plan, runner)
+
+    assert len(runner.calls) == 10
+    assert runner.most == MAX_PARALLEL
+
+
+def test_interrupts_running_nodes_when_a_parallel_layer_is_interrupted() -> None:
+    stopped = threading.Event()
+
+    class Interrupted(ScriptedRunner):
+        def run(self, call: NodeCall) -> NodeReply:
+            if call.node.id == "a":
+                raise KeyboardInterrupt
+            if not stopped.wait(timeout=5):
+                raise TimeoutError
+            return super().run(call)
+
+    ports = EnginePorts(
+        Interrupted(),
+        ListRecorder(),
+        FakeClock(),
+        KeysOutputs(),
+        lambda: 0.5,
+        interrupt=stopped.set,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_workflow(plan_of(shell("a"), shell("b")), {}, ports)
+
+    assert stopped.is_set()
+
+
+def test_splits_a_wide_layer_in_linear_work_when_read_only_and_writing_nodes_alternate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    fits = plan_module._Batch.fits
+
+    def counted(batch: object, node: object) -> bool:
+        calls.append(1)
+        return fits(batch, node)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(plan_module._Batch, "fits", counted)
+    nodes = [shell(f"n{i}", mutates_checkout=bool(i % 2)) for i in range(4000)]
+
+    plan = plan_of(*nodes)
+
+    assert len(plan.layers) == 2
+    assert len(calls) <= 2 * len(nodes)

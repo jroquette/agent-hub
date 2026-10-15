@@ -40,6 +40,7 @@ from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, shown_command, without
 from agent_hub.cli.run_log import new_run_id, now
+from agent_hub.cli.workflow_checkout import GitCheckoutProbe
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_runs import (
     DOCUMENT,
@@ -58,6 +59,7 @@ from agent_hub.cli.workflow_runs import (
     run_folder,
     run_lock,
     snapshot_hash,
+    snapshot_includes,
     snapshot_run,
 )
 from agent_hub.core.hub_config.problems import ROOT_PATH
@@ -96,6 +98,7 @@ from agent_hub.generator.workflow_fixtures import (
     skeleton_yaml,
 )
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
+from agent_hub.generator.workflow_yaml import WorkflowMapping
 
 # How a built-in's file is shown: it lives in the installed package, not in the hub.
 BUILTIN_PREFIX: Final = "<builtin>"
@@ -183,7 +186,11 @@ def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | 
     _exit_on_problems(catalog)
     if not catalog.plans:
         fail(f"no workflow named {shown_path(name)} in {HUB_WORKFLOWS}/ or the built-ins")
-    plan, found = catalog.plans[0], source.found[name]
+    found = source.found[name]
+    # Planned again to keep each workflow it includes for the snapshot (resume reads those).
+    included: dict[str, WorkflowMapping] = {}
+    resolver = pack_resolver(source.discovery, found.pack_root, used=included)
+    plan = plan_workflow(parse_workflow(found.document), includes=resolver)
     inputs = _inputs(plan, given)
     if not live:
         _print_plan(plan)
@@ -194,7 +201,11 @@ def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | 
     with run_lock(folder):
         try:
             pack, content_hash = snapshot_run(
-                folder, document=dict(found.document), plan=plan, pack_root=found.pack_root
+                folder,
+                document=dict(found.document),
+                plan=plan,
+                pack_root=found.pack_root,
+                includes=included,
             )
         except WorkflowRunError:
             # Nothing ran: a half-made run is not left to resume.
@@ -237,7 +248,8 @@ def _continue(hub: Path, folder: Path) -> int:
         )
     try:
         document = (folder / SNAPSHOT / DOCUMENT).read_bytes()
-        plan = plan_workflow(parse_workflow(_json(document)))
+        includes = snapshot_includes(folder / SNAPSHOT)
+        plan = plan_workflow(parse_workflow(_json(document)), includes=includes)
     except (OSError, WorkflowLoadError) as error:
         raise WorkflowRunError(f"cannot load the run's snapshot: {error}") from None
     inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
@@ -315,7 +327,19 @@ def _execute(
         environ=os.environ,
         hub_program=own_hub_program(),
     )
-    ports = EnginePorts(runner, recorder, SystemClock(), JsonSchemaOutputs(), _JITTER.random)
+    # The checkouts git can read: the hub and each repo cloned next to it.
+    repos = (hub.parent / repo.dir for repo in config.repos)
+    roots = tuple(root for root in (hub, *repos) if (root / ".git").exists())
+    checkout = GitCheckoutProbe(roots=roots, environ=os.environ)
+    ports = EnginePorts(
+        runner,
+        recorder,
+        SystemClock(),
+        JsonSchemaOutputs(),
+        _JITTER.random,
+        checkout,
+        interrupt=runner.stop_children,
+    )
     report = run_workflow(plan, inputs, ports, prior=prior)
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
     outcome = "" if report.outcome is None else f", outcome {report.outcome}"
@@ -415,9 +439,10 @@ class _DiscoveredSource:
         self.only = only
         self.builtin_root = builtin_root
         self.found: dict[str, DiscoveredWorkflow] = {}
+        self.discovery = WorkflowDiscovery(workflows=(), overridden=(), problems=())
 
     def workflow_files(self) -> Iterator[WorkflowFile | LoadProblem]:
-        discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
+        self.discovery = discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
         for problem in discovery.problems:
             # A folder's problem (a linked workflows/, an unreadable pack, the file budget)
             # bears on every name; a file's only on its own.

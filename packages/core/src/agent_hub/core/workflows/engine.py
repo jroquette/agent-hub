@@ -1,9 +1,11 @@
 """The workflow engine (ADR 0032): a pure interpreter of a plan over its ports.
 
 Layers run in order, a failure never stopping later layers; a layer's nodes run concurrently in
-threads (at most ``EnginePorts.max_parallel``), except a layer holding a ``halt``, which runs one
-node at a time and stops at the halt. Each node records into a buffer replayed in declaration
-order, so a run's records keep one order whatever ends first; the shared state is locked.
+threads, except a layer holding a ``halt`` (or a group whose body does), which runs one node at a
+time and stops at the halt. At most ``EnginePorts.max_parallel`` attempts run at once across the
+run, nested group layers included. Nodes record as they go, through one lock, so records follow
+the order things happen; the run's ``reason`` stays the first failed node in declaration order.
+An interrupted concurrent layer calls ``EnginePorts.interrupt`` to stop its running children.
 Planning keeps read-only nodes (``mutates_checkout: false``) and nodes resuming one session out
 of a shared layer. A read-only node's attempt reads the ``CheckoutProbe`` before and after: a
 change fails it ``config`` (never retried).
@@ -109,6 +111,8 @@ class EnginePorts:
     jitter: Callable[[], float]
     checkout: CheckoutProbe | None = None
     max_parallel: int = MAX_PARALLEL
+    # Called when a concurrent layer is interrupted: stops the children its nodes run.
+    interrupt: Callable[[], None] | None = None
 
 
 def run_workflow(
@@ -168,13 +172,10 @@ class _Run:
         }
         self.loop_prevs: dict[str, dict[str, NodeResult]] = {}
         self.lock = threading.Lock()
-        self.local = threading.local()
-
-    @property
-    def recorder(self) -> RunRecorder:
-        """The thread's buffer while a concurrent layer runs it, else the run's recorder."""
-        buffer: _Buffer | None = getattr(self.local, "buffer", None)
-        return self.ports.recorder if buffer is None else buffer
+        # Concurrent nodes record through one lock, as they end; at most ``max_parallel``
+        # attempts run at once across the run, nested group layers included.
+        self.recorder: RunRecorder = _LockedRecorder(ports.recorder)
+        self.permits = threading.BoundedSemaphore(max(1, ports.max_parallel))
 
     def execute(self) -> RunReport:
         nodes = {node.id: node for node in self.plan.document.nodes}
@@ -192,26 +193,26 @@ class _Run:
         return self._finish()
 
     def _run_layer(self, nodes: Sequence[Node]) -> None:
-        """Visit a layer's nodes: concurrently, their records replayed in declaration order."""
+        """Visit a layer's nodes, concurrently unless one may halt the run (then in order)."""
         sequential = self.ports.max_parallel <= 1 or len(nodes) == 1
-        if sequential or any(isinstance(node, HaltNode) for node in nodes):
+        if sequential or any(_may_halt(node) for node in nodes):
             for node in nodes:
                 self._visit(node)
                 if self.halted_by is not None:
                     return
             return
-        target = self.recorder
         with ThreadPoolExecutor(max_workers=min(len(nodes), self.ports.max_parallel)) as pool:
-            for future in [pool.submit(self._buffered, node) for node in nodes]:
-                future.result().replay(target)
-
-    def _buffered(self, node: Node) -> _Buffer:
-        self.local.buffer = buffer = _Buffer()
-        try:
-            self._visit(node)
-        finally:
-            self.local.buffer = None
-        return buffer
+            futures = [pool.submit(self._visit, node) for node in nodes]
+            try:
+                for future in futures:
+                    future.result()
+            except BaseException:
+                # Ctrl-C (or an engine bug): the running children stop before the pool waits.
+                for future in futures:
+                    future.cancel()
+                if self.ports.interrupt is not None:
+                    self.ports.interrupt()
+                raise
 
     def _finish(self) -> RunReport:
         # In declaration order: the ends of a concurrent layer arrive in any order.
@@ -367,11 +368,14 @@ class _Run:
         attempt = self._attempt(node)
         self.recorder.step_started(StepStart(node.id, attempt, self.ports.clock.now()))
         try:
-            before = self._checkout_status(node)
-            turn, done = run(attempt)
-            if before is not None and self._checkout_status(node) != before:
-                detail = "the checkout changed, though the node declares mutates_checkout: false"
-                raise NodeFailedError("config", detail)
+            with self.permits:
+                before = self._checkout_status(node)
+                turn, done = run(attempt)
+                if before is not None and self._checkout_status(node) != before:
+                    detail = (
+                        "the checkout changed, though the node declares mutates_checkout: false"
+                    )
+                    raise NodeFailedError("config", detail)
         except NodeFailedError as failure:
             self._record_failure(node, attempt, failure)
             raise
@@ -580,27 +584,34 @@ class _Run:
         return value
 
 
-class _Buffer:
-    """A node's records while its layer runs concurrently, replayed in declaration order."""
+class _LockedRecorder:
+    """``recorder`` for concurrent nodes: one call at a time, in the order they come."""
 
-    def __init__(self) -> None:
-        self.calls: list[Callable[[RunRecorder], None]] = []
+    def __init__(self, recorder: RunRecorder) -> None:
+        self.recorder, self.lock = recorder, threading.Lock()
 
     def step_started(self, start: StepStart) -> None:
-        self.calls.append(lambda recorder: recorder.step_started(start))
+        with self.lock:
+            self.recorder.step_started(start)
 
     def step_ended(self, end: StepEnd) -> None:
-        self.calls.append(lambda recorder: recorder.step_ended(end))
+        with self.lock:
+            self.recorder.step_ended(end)
 
     def retry_scheduled(self, node: str, retry: RetryRecord) -> None:
-        self.calls.append(lambda recorder: recorder.retry_scheduled(node, retry))
+        with self.lock:
+            self.recorder.retry_scheduled(node, retry)
 
     def run_ended(self, end: RunEnd) -> None:
-        self.calls.append(lambda recorder: recorder.run_ended(end))
+        with self.lock:
+            self.recorder.run_ended(end)
 
-    def replay(self, target: RunRecorder) -> None:
-        for call in self.calls:
-            call(target)
+
+def _may_halt(node: Node) -> bool:
+    """A halt, or a group whose body holds one: its layer runs one node at a time."""
+    if isinstance(node, LoopGroupNode):
+        return any(isinstance(child, HaltNode) for child in node.nodes)
+    return isinstance(node, HaltNode)
 
 
 def _refuse_constant(name: str) -> JsonValue:

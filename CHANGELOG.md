@@ -34,8 +34,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A `loop_group` node repeats a body of nodes until its `until_when` holds or its `until_bash` exits 0, at most
   `max_iterations` times; body steps are recorded as `<group>__<id>`, `$LOOP_PREV.<id>.output` reads the previous
   iteration, and `$<group>.output.<id>` reads the last one (AGH-228).
-- The workflow engine runs a layer's nodes concurrently (at most 4 at once), keeping each run's records in declaration
-  order. A `mutates_checkout: false` node never shares a layer with one that may change the checkout, and fails
+- The workflow engine runs a layer's nodes concurrently (at most 4 attempts at once in a run), each recorded as it
+  ends; Ctrl-C stops the running children. A `mutates_checkout: false` node never shares a layer with one that may change the checkout, and fails
   `config` when its attempt changes `git status` (AGH-228).
 
 ### Fixed

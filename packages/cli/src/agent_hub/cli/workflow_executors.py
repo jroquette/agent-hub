@@ -6,7 +6,9 @@ settings, hooks and plugin load; the hub's repos are attached with ``--add-dir``
 with the node's tier from ``hub.json`` → ``models.tiers`` and its ``limits`` as ``--max-turns`` and
 ``--max-budget-usd``; ``--resume`` continues a session. Its output is the result's text, or, with
 an ``output_format``, the result's last JSON line (the engine checks it). A ``prompt_file`` is
-read from the pack's ``prompts/`` and rendered against the attempt's references.
+read from the pack's ``prompts/`` and rendered against the attempt's references through the call's
+scope, so a node from an include or a loop group reads its own workflow's inputs and nodes.
+``stop_children`` kills the groups of the children running now (an interrupted concurrent layer).
 
 A ``shell`` node runs its rendered argv, never through a shell; a ``script`` node runs
 ``sh <file>`` or ``uv run <file>`` from the pack's ``scripts/``, its ``args`` after the file. The
@@ -66,7 +68,6 @@ from agent_hub.core.workflows.nodes import (
     duration_seconds,
 )
 from agent_hub.core.workflows.ports import NodeCall, NodeReply
-from agent_hub.core.workflows.substitution import render
 from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, resolve_pack_file
 
 MAX_OUTPUT_BYTES: Final = 512 * 1024
@@ -95,6 +96,14 @@ class WorkflowExecutors:
     environ: Mapping[str, str]
     hub_program: tuple[str, ...]
     child: ChildRunner = field(default=run_child)
+    # The process groups of the children running now: ``stop_children`` kills them.
+    running: set[int] = field(default_factory=set)
+
+    def stop_children(self) -> None:
+        """Kill every running child's group (a run interrupted while nodes run concurrently)."""
+        for group in list(self.running):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(group, signal.SIGKILL)
 
     def run(self, call: NodeCall) -> NodeReply:
         node = call.node
@@ -168,7 +177,8 @@ class WorkflowExecutors:
         except (OSError, UnicodeDecodeError) as error:
             detail = f"cannot read prompts/{node.prompt_file}: {type(error).__name__}"
             raise NodeFailedError("config", detail) from None
-        return render(template, call.context)
+        # A node from an include or a loop group reads its file in its own workflow's scope.
+        return call.scope.render(template, call.context)
 
     def _command(self, call: NodeCall) -> tuple[list[str], dict[str, str]]:
         node = call.node
@@ -209,6 +219,11 @@ class WorkflowExecutors:
         output_limit: int = MAX_OUTPUT_BYTES + 1,
     ) -> ChildResult:
         groups: list[int] = []
+
+        def started(group: int) -> None:
+            groups.append(group)
+            self.running.add(group)
+
         try:
             return self.child(
                 argv,
@@ -217,7 +232,7 @@ class WorkflowExecutors:
                 timeout=timeout,
                 own_session=True,
                 output_limit=output_limit,
-                on_start=groups.append,
+                on_start=started,
             )
         except ChildTimedOutError as error:
             raise NodeFailedError("timeout", str(error)) from None
@@ -226,6 +241,7 @@ class WorkflowExecutors:
             raise NodeFailedError("config", detail) from None
         finally:
             for group in groups:
+                self.running.discard(group)
                 # The leader has ended; what it left running ends with it.
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     os.killpg(group, signal.SIGKILL)
