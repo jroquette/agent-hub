@@ -44,7 +44,7 @@ _INPUT_TYPES: dict[str, tuple[type, ...]] = {
     "number": (int, float),
     "boolean": (bool,),
 }
-_NODE_TYPES = "agent, shell, script, loop, approval, halt, include"
+_NODE_TYPES = "agent, shell, script, loop, loop_group, approval, halt, include"
 _MESSAGES = {
     "extra_forbidden": "unknown key",
     "model_type": "must be a mapping",

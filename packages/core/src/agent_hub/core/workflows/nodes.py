@@ -1,8 +1,9 @@
 """The workflow nodes: one frozen model per ``type`` (docs/design/workflow-schema.md § Nodes).
 
 Every model forbids unknown keys. An ``include`` is replaced at load by the nodes of the workflow
-it names (``includes.py``), so the engine never sees one. ``loop_group`` and ``wait`` come later;
-until then their ``type`` is refused like any other unknown one. Checks that need more than one node
+it names (``includes.py``), so the engine never sees one. A ``loop_group`` holds a body of nodes
+repeated per iteration (no include or group inside). ``wait`` comes later; until then its ``type``
+is refused like any other unknown one. Checks that need more than one node
 (``depends_on`` targets, references, ``context.resume``) are planning's (``plan.py``).
 """
 
@@ -327,8 +328,41 @@ class IncludeNode(_Node):
 
 
 type ExecutableNode = AgentNode | ShellNode | ScriptNode | LoopNode
+BodyNode = Annotated[
+    AgentNode | ShellNode | ScriptNode | LoopNode | ApprovalNode | HaltNode,
+    Field(discriminator="type"),
+]
+
+
+class LoopGroupNode(_Node):
+    """A body sub-graph run once per iteration until ``until_when`` holds or ``until_bash``
+    exits 0, at most ``max_iterations`` times. Body ids are recorded as ``<group>__<id>``."""
+
+    type: Literal["loop_group"]
+    nodes: Annotated[tuple[BodyNode, ...], Field(min_length=1)]
+    max_iterations: Annotated[StrictInt, Field(ge=1, le=50)]
+    until_bash: Argv | None = None
+    until_when: Text | None = None
+    # ``false`` (default): a body agent resumes its own session of the previous iteration.
+    fresh_context: StrictBool = False
+
+    @model_validator(mode="after")
+    def _until_channel(self) -> Self:
+        if self.until_bash is None and self.until_when is None:
+            msg = "give at least one of 'until_bash' or 'until_when'"
+            raise ValueError(msg)
+        return self
+
+
 Node = Annotated[
-    AgentNode | ShellNode | ScriptNode | LoopNode | ApprovalNode | HaltNode | IncludeNode,
+    AgentNode
+    | ShellNode
+    | ScriptNode
+    | LoopNode
+    | ApprovalNode
+    | HaltNode
+    | IncludeNode
+    | LoopGroupNode,
     Field(discriminator="type"),
 ]
 

@@ -7,10 +7,17 @@ that node's ``output_format``; argv lists follow ``check_argv`` (a whole element
 program nor a ``-c`` script); a hub step node's ``cwd`` holds none; ``context.resume`` names an
 upstream agent; and ``returns``/``outcome_field`` name a node and a required boolean or enum
 string of its output.
+
+A ``loop_group``'s body is planned the same way inside the group: its ids unique and new to the
+document, its ``depends_on`` inside the body, no cycle. A body node reads body nodes upstream of
+it, outer nodes upstream of the group, and ``$LOOP_PREV.<body id>``; ``until_when`` and
+``until_bash`` read any body node. ``$<group>.output.<body id>[.path]`` follows that body node's
+``output_format``. The planned document records body ids as ``<group>__<id>`` (``loops``), and
+``WorkflowPlan.bodies`` holds each body's layers.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final
 
 from pydantic import JsonValue
@@ -22,11 +29,13 @@ from agent_hub.core.workflows.document import (
     WorkflowProblem,
 )
 from agent_hub.core.workflows.includes import IncludeResolver, expand_includes
+from agent_hub.core.workflows.loops import record_body
 from agent_hub.core.workflows.nodes import (
     AgentNode,
     ApprovalNode,
     FromBinding,
     HaltNode,
+    LoopGroupNode,
     LoopNode,
     Node,
     ScriptNode,
@@ -57,6 +66,15 @@ class WorkflowPlan:
 
     document: WorkflowDocument
     layers: tuple[tuple[str, ...], ...]
+    # Each loop_group's body layers, by group id, body ids as recorded.
+    bodies: Mapping[str, tuple[tuple[str, ...], ...]] = field(default_factory=dict)
+
+    def all_nodes(self) -> Iterator[Node]:
+        """Every node the run may record, in declaration order: a group, then its body."""
+        for node in self.document.nodes:
+            yield node
+            if isinstance(node, LoopGroupNode):
+                yield from node.nodes
 
 
 def plan_workflow(
@@ -81,13 +99,14 @@ def _plan(document: WorkflowDocument) -> WorkflowPlan:
         raise WorkflowLoadError([_cycle_problem(nodes, leftover)])
     graph = _Graph(document, _Upstream(nodes, layers), {node.id: node for node in nodes})
     problems = [
-        *_reference_problems(graph),
-        *_resume_problems(graph),
+        *_reference_problems(graph, nodes),
+        *_resume_problems(graph, nodes),
         *_outcome_problems(document),
+        *_group_problems(graph),
     ]
     if problems:
         raise WorkflowLoadError(problems)
-    return WorkflowPlan(document, layers)
+    return _recorded(document, layers)
 
 
 def _repeated_ids(nodes: Sequence[Node]) -> Iterator[WorkflowProblem]:
@@ -98,13 +117,13 @@ def _repeated_ids(nodes: Sequence[Node]) -> Iterator[WorkflowProblem]:
         seen.add(node.id)
 
 
-def _unknown_dependencies(nodes: Sequence[Node]) -> Iterator[WorkflowProblem]:
+def _unknown_dependencies(nodes: Sequence[Node], kind: str = "node") -> Iterator[WorkflowProblem]:
     ids = {node.id for node in nodes}
     for index, node in enumerate(nodes):
         for position, target in enumerate(node.depends_on):
             if target not in ids:
                 loc = ("nodes", index, "depends_on", position)
-                yield WorkflowProblem(loc, f"no node has the id {echo(target)}")
+                yield WorkflowProblem(loc, f"no {kind} has the id {echo(target)}")
 
 
 def _kahn_layers(nodes: Sequence[Node]) -> tuple[tuple[tuple[str, ...], ...], set[str]]:
@@ -206,22 +225,107 @@ class _Graph:
             return f"no node has the id {echo(ref.node)}"
         if not self.upstream.contains(ref.node, node.id):
             return f"the node {echo(ref.node)} is not upstream"
-        if ref.path and not _has_path(producer, ref.path):
-            path = ".".join(ref.path)
-            return f"the path {echo(path)} is not in the output of {echo(ref.node)}"
-        return None
+        return _path_problem(producer, ref)
+
+    def resumable(self, target: str, node: Node) -> bool:
+        """Whether ``node`` may resume the session of the agent ``target``."""
+        producer = self.producers.get(target)
+        is_agent = isinstance(producer, AgentNode | LoopNode)
+        return is_agent and self.upstream.contains(target, node.id)
 
 
-def _reference_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
-    for index, node in enumerate(graph.document.nodes):
-        for loc, text in _texts(node):
-            where: Loc = ("nodes", index, *loc)
+@dataclass(frozen=True)
+class _BodyGraph(_Graph):
+    """A ``loop_group``'s body: body nodes first, then the outer graph upstream of the group.
+    Read in the group itself (its ``until`` channels), every body node is upstream."""
+
+    outer: _Graph
+    group: LoopGroupNode
+
+    def _ref_problem(self, node: Node, ref: Ref) -> str | None:
+        if isinstance(ref, LoopPrevRef):
+            producer = self.producers.get(ref.node)
+            if producer is None:
+                return f"no body node has the id {echo(ref.node)}"
+            return _path_problem(producer, NodeRef(ref.node, ref.path))
+        return super()._ref_problem(node, ref)
+
+    def _node_ref_problem(self, node: Node, ref: NodeRef) -> str | None:
+        producer = self.producers.get(ref.node)
+        if producer is None:
+            return self.outer._node_ref_problem(self.group, ref)
+        if node is not self.group and not self.upstream.contains(ref.node, node.id):
+            return f"the node {echo(ref.node)} is not upstream"
+        return _path_problem(producer, ref)
+
+    def resumable(self, target: str, node: Node) -> bool:
+        if target in self.producers:
+            return super().resumable(target, node)
+        return self.outer.resumable(target, self.group)
+
+
+def _path_problem(producer: Node, ref: NodeRef) -> str | None:
+    if ref.path and not _has_path(producer, ref.path):
+        path = ".".join(ref.path)
+        return f"the path {echo(path)} is not in the output of {echo(ref.node)}"
+    return None
+
+
+def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
+    for index, group in enumerate(graph.document.nodes):
+        if not isinstance(group, LoopGroupNode):
+            continue
+        where: Loc = ("nodes", index)
+        body = group.nodes
+        problems = [*_repeated_ids(body), *_unknown_dependencies(body, "body node")]
+        problems += [
+            WorkflowProblem(("nodes", position, "id"), message)
+            for position, node in enumerate(body)
+            if node.id in graph.producers
+            for message in [f"the body id {echo(node.id)} is already a node id"]
+        ]
+        if not problems:
+            layers, leftover = _kahn_layers(body)
+            if leftover:
+                problems.append(_cycle_problem(body, leftover))
+        if problems:
+            yield from (WorkflowProblem((*where, *p.loc), p.message) for p in problems)
+            continue
+        producers = {node.id: node for node in body}
+        upstream = _Upstream(body, layers)
+        inside = _BodyGraph(graph.document, upstream, producers, graph, group)
+        yield from _reference_problems(inside, body, (*where, "nodes"))
+        yield from _resume_problems(inside, body, (*where, "nodes"))
+        yield from _reference_problems(inside, [group], where, until=True)
+
+
+def _recorded(document: WorkflowDocument, layers: tuple[tuple[str, ...], ...]) -> WorkflowPlan:
+    """The plan, each ``loop_group``'s body recorded as ``<group>__<id>``."""
+    groups = [node for node in document.nodes if isinstance(node, LoopGroupNode)]
+    if not groups:
+        return WorkflowPlan(document, layers)
+    recorded = {group.id: record_body(group) for group in groups}
+    nodes = tuple(recorded.get(node.id, node) for node in document.nodes)
+    bodies = {group_id: _kahn_layers(group.nodes)[0] for group_id, group in recorded.items()}
+    return WorkflowPlan(document.model_copy(update={"nodes": nodes}), layers, bodies)
+
+
+def _reference_problems(
+    graph: _Graph, nodes: Sequence[Node], prefix: Loc = ("nodes",), *, until: bool = False
+) -> Iterator[WorkflowProblem]:
+    """The reference problems of ``nodes``; ``until``: those of a group's ``until`` channels."""
+    for index, node in enumerate(nodes):
+        where_node: Loc = prefix if until else (*prefix, index)
+        texts = _until_texts(node) if until else _texts(node)
+        lists = _until_argv(node) if until else _argv_lists(node)
+        for loc, text in texts:
+            where: Loc = (*where_node, *loc)
             yield from (WorkflowProblem(where, message) for message in graph.problems(node, text))
-        for key, argv, offset in _argv_lists(node):
+        for key, argv, offset in lists:
             problems = check_argv([*([""] * offset), *argv])
             refused = {problem.index - offset: problem.error for problem in problems}
             for position, element in enumerate(argv):
-                where = ("nodes", index, key, position)
+                where = (*where_node, key, position)
                 if position in refused:
                     yield WorkflowProblem(where, str(refused[position]))
                 else:
@@ -229,7 +333,17 @@ def _reference_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
                     yield from (WorkflowProblem(where, message) for message in messages)
         if isinstance(node, ShellNode) and node.is_hub_step and node.cwd and _has_ref(node.cwd):
             message = "a hub step node's cwd takes no reference"
-            yield WorkflowProblem(("nodes", index, "cwd"), message)
+            yield WorkflowProblem((*where_node, "cwd"), message)
+
+
+def _until_texts(node: Node) -> Iterator[tuple[Loc, str]]:
+    if isinstance(node, LoopGroupNode) and node.until_when is not None:
+        yield ("until_when",), node.until_when
+
+
+def _until_argv(node: Node) -> Iterator[tuple[str, Sequence[str], int]]:
+    if isinstance(node, LoopGroupNode) and node.until_bash is not None:
+        yield "until_bash", node.until_bash, 0
 
 
 def _has_ref(text: str) -> bool:
@@ -290,6 +404,10 @@ def _strings(value: JsonValue) -> Iterator[str]:
 def _has_path(producer: Node, segments: Sequence[str]) -> bool:
     if isinstance(producer, ApprovalNode):
         return len(segments) == 1 and segments[0] in _APPROVAL_FIELDS
+    if isinstance(producer, LoopGroupNode):
+        # The output maps body id → that body node's output.
+        body = {node.id: node for node in producer.nodes}
+        return segments[0] in body and _has_path(body[segments[0]], segments[1:])
     schema: object = getattr(producer, "output_format", None)
     for segment in segments:
         if not isinstance(schema, Mapping):
@@ -304,14 +422,14 @@ def _has_path(producer: Node, segments: Sequence[str]) -> bool:
     return True
 
 
-def _resume_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
-    nodes = graph.document.nodes
-    agents = {node.id for node in nodes if isinstance(node, AgentNode | LoopNode)}
+def _resume_problems(
+    graph: _Graph, nodes: Sequence[Node], prefix: Loc = ("nodes",)
+) -> Iterator[WorkflowProblem]:
     for index, node in enumerate(nodes):
         if isinstance(node, AgentNode | LoopNode) and not isinstance(node.context, str):
             target = node.context.resume
-            if target not in agents or not graph.upstream.contains(target, node.id):
-                loc = ("nodes", index, "context", "resume")
+            if not graph.resumable(target, node):
+                loc = (*prefix, index, "context", "resume")
                 yield WorkflowProblem(loc, f"{echo(target)} is not an upstream agent or loop node")
 
 
