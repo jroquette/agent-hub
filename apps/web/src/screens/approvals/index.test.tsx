@@ -232,6 +232,78 @@ describe("ApprovalsScreen", () => {
     });
   });
 
+  it("decides a workflow gate here with its declared decisions instead of P4 actions", async () => {
+    const gate = anApproval({
+      id: "run-9:ship:1",
+      kind: "human_gate",
+      title: "Human gate needs approval",
+      gate_id: "run-9:ship:1",
+      session_id: "run:run-9",
+      path: null,
+      rule: null,
+      requested_at: at(50),
+      how_to_decide: "cd /home/dev/agent-hub-hub && hub workflow approve|reject|respond run-9",
+    });
+    const encoded = encodeURIComponent(gate.id);
+    const { requests } = renderApprovals(`/approvals/${encoded}`, {
+      ...routesWith([gate, plan]),
+      [`/api/v1/approvals/${encoded}`]: gate,
+      [`/api/v1/approvals/${encoded}/gate`]: {
+        approval_id: gate.id,
+        run_id: "run-9",
+        project: "agent-hub",
+        workflow: "ship",
+        node: "ship",
+        attempt: 1,
+        form: "decision",
+        choices: [
+          { id: "approve", label: "Approve" },
+          { id: "reject", label: "Reject" },
+        ],
+        text: "off",
+      },
+      [`POST /api/v1/approvals/${encoded}/decision`]: {
+        approval_id: gate.id,
+        run_id: "run-9",
+        project: "agent-hub",
+        decision: "approve",
+      },
+    });
+
+    const panel = await screen.findByRole("region", { name: "Human gate needs approval" });
+    expect(
+      within(panel).getByText("Deciding here records your answer and resumes the run."),
+    ).toBeInTheDocument();
+    const decide = await within(panel).findByRole("group", { name: "Decide this gate" });
+    expect(within(panel).queryByText("P4")).toBeNull();
+    expect(within(panel).queryByRole("button", { name: /^Pass gate/ })).toBeNull();
+    await userEvent.click(within(decide).getByRole("button", { name: "Approve" }));
+
+    expect(await within(panel).findByText(/^Decision recorded/)).toHaveAttribute("role", "status");
+    const post = requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({ decision: "approve" });
+  });
+
+  it("keeps P4 actions on a human gate asked outside a workflow run", async () => {
+    const hook = anApproval({
+      id: anId(7, "0192bbbb"),
+      kind: "human_gate",
+      title: "Human gate needs approval",
+      session_id: "5f21c0aa-6d1e-7b20-9a4c-3e2f1d0c9b8a",
+      path: null,
+      rule: null,
+      requested_at: at(50),
+    });
+    renderApprovals(`/approvals/${hook.id}`, {
+      ...routesWith([hook]),
+      [`/api/v1/approvals/${hook.id}`]: hook,
+    });
+
+    const panel = await screen.findByRole("region", { name: "Human gate needs approval" });
+    expect(within(panel).getByRole("button", { name: /^Pass gate/ })).toBeDisabled();
+    expect(within(panel).queryByRole("group", { name: "Decide this gate" })).toBeNull();
+  });
+
   it("has no serious a11y violations (a11y)", async () => {
     const { container } = renderApprovals();
 
