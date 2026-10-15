@@ -341,16 +341,18 @@ class AgentSessionControl:
 
     async def snapshot(self, agent_session_id: str) -> AgentSession:
         """One session, with its open permission request while live (E10)."""
+        return (await self._with_twins([await self._session(agent_session_id)]))[0]
+
+    async def _session(self, agent_session_id: str) -> AgentSession:
+        """The live view of a session, else its stored record (no twin lookup)."""
         live = self._live.get(agent_session_id)
         if live is not None:
-            session = live.view()
-        else:
-            session = await asyncio.to_thread(self._store.get, agent_session_id)
-        return (await self._with_twins([session]))[0]
+            return live.view()
+        return await asyncio.to_thread(self._store.get, agent_session_id)
 
     async def events(self, agent_session_id: str, *, after: int, limit: int) -> LogRecordPage:
         """A page of the persisted (redacted) log after ``after``."""
-        session = await self.snapshot(agent_session_id)
+        session = await self._session(agent_session_id)
         records = await asyncio.to_thread(
             lambda: self._store.records(agent_session_id, after=after, limit=limit)
         )
@@ -655,16 +657,21 @@ class AgentSessionControl:
         """``sessions`` with ``observed_session_id`` set where the twin was observed; the
         lookup folds events, so it runs off the loop."""
         lookup = self._observed_sessions
-        if lookup is None or all(item.claude_session_id is None for item in sessions):
+        pairs = {
+            (item.project, item.claude_session_id)
+            for item in sessions
+            if item.claude_session_id is not None
+        }
+        if lookup is None or not pairs:
             return sessions
-
-        def twinned(session: AgentSession) -> AgentSession:
-            claude_id = session.claude_session_id
-            if claude_id is None or not lookup.is_observed(session.project, claude_id):
-                return session
-            return session.model_copy(update={"observed_session_id": claude_id})
-
-        return await asyncio.to_thread(lambda: [twinned(session) for session in sessions])
+        # One call, so one snapshot of the events answers the whole list.
+        observed = await asyncio.to_thread(lookup.observed, pairs)
+        return [
+            item.model_copy(update={"observed_session_id": item.claude_session_id})
+            if (item.project, item.claude_session_id) in observed
+            else item
+            for item in sessions
+        ]
 
     def _view(self, session: AgentSession) -> AgentSession:
         live = self._live.get(session.id)

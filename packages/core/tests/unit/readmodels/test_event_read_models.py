@@ -831,9 +831,9 @@ def test_carries_agent_session_id_when_link_known_agent_session_link() -> None:
 def test_answers_observed_by_project_when_session_known(store: InMemoryEventStore) -> None:
     service = _service(store, NOW)[0]
 
-    assert service.is_observed("demo", "s-a")
-    assert not service.is_observed("other", "s-a")
-    assert not service.is_observed("demo", "s-unknown")
+    observed = service.observed([("demo", "s-a"), ("other", "s-a"), ("demo", "s-unknown")])
+
+    assert observed == frozenset({("demo", "s-a")})
 
 
 def test_shows_waiting_tile_when_permission_pending_agent_session_link() -> None:

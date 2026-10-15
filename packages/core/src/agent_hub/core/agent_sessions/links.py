@@ -7,7 +7,7 @@ tile ``waiting`` while a permission request is open (AC-165.25). The other way r
 observed twin, to fill ``AgentSession.observed_session_id`` (D2).
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Protocol
 
 from agent_hub.core.readmodels.view_types import ViewModel
@@ -29,10 +29,11 @@ class AgentSessionLinkLookup(Protocol):
 
 
 class ObservedSessionLookup(Protocol):
-    """Whether the hooks or transcripts observed a Claude session (the session read models)."""
+    """Which Claude sessions the hooks or transcripts observed (the session read models)."""
 
-    def is_observed(self, project: str, session_id: str) -> bool:
-        """True when ``session_id`` is an observed session of ``project``."""
+    def observed(self, pairs: Iterable[tuple[str, str]]) -> frozenset[tuple[str, str]]:
+        """The ``(project, session_id)`` pairs of ``pairs`` that are observed sessions, all
+        answered from one snapshot of the events."""
         ...
 
 
