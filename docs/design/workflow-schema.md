@@ -106,7 +106,8 @@ recorded (`a__b`). `attempt` is per node and keeps counting across retries, iter
 `<run>:<step>:<attempt>:<type>` never repeats. Each attempt is one `step.start` (`attempt`, `revision`, `content_hash`)
 and one `step.end` (`attempt`, `status` `ok`, `failed` or `skipped`, `failure_kind`, `skip_cause`); a skipped node emits
 only `step.end`. `reason` holds only engine metadata (a kind, an origin node id): a halt's rendered `reason` stays in
-the record. `approval` and `wait` add `gate.request` (`gate_id` `<run>:<step>:<attempt>`, `kind` `approval` or `wait`);
+the record. `approval` and `wait` add `gate.request` (`gate_id` `<run>:<step>:<attempt>`, `name` the step; `kind`
+`human_gate`, the Approvals kind, when a person answers it, `wait` for a timed wait); a paused run has no `run.end`;
 one decision per `gate_id` comes back as a `control_plane` `gate.result` (`result`, `approver`, `where`), and a second
 is refused. `run.end` (`source_id` `<run>:run:<n>:end`, n counting the run's ends from 0; the fold takes the highest n)
 carries `status`, `outcome`, `reason`, `revision` and `content_hash` (`sha256:` over the run's snapshot).

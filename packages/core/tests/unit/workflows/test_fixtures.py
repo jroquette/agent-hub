@@ -139,7 +139,7 @@ def test_fails_the_fixture_when_the_engine_refuses_the_inputs() -> None:
     ("content", "key"),
     [
         ({"workflow": "demo", "reached": []}, "expect"),
-        (fixture(expect={"status": "paused"}), "expect.status"),
+        (fixture(expect={"status": "running"}), "expect.status"),
         (fixture(stubs={"build": {"text": "a", "fail": "config"}}), "stubs.build"),
         (fixture(stubs={"build": [{"nope": 1}]}), "stubs.build[0].nope"),
         (fixture(extra=1), "extra"),
@@ -176,3 +176,33 @@ def test_builds_a_passing_fixture_with_a_stub_per_node_when_a_skeleton_is_asked(
         "reached": ["build"],
     }
     assert check(skeleton, plan).problems == ()
+
+
+GATED = a_plan(
+    {"id": "build", "type": "shell", "command": ["make"]},
+    {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["build"]},
+    {"id": "nap", "type": "wait", "duration": "1h", "depends_on": ["ok"]},
+)
+
+
+def test_passes_when_a_gate_without_a_stub_pauses_the_run_as_expected() -> None:
+    content = {
+        "workflow": "demo",
+        "stubs": {"build": {"text": "ok"}},
+        "expect": {"status": "paused"},
+        "reached": ["build", "ok"],
+    }
+
+    assert check(content, GATED).problems == ()
+
+
+def test_answers_each_gate_when_a_skeleton_is_asked_for_a_gated_plan() -> None:
+    skeleton = skeleton_fixture(GATED, outputs=KeysOutputs())
+
+    assert skeleton["stubs"] == {
+        "build": {"text": "TODO"},
+        "ok": {"decision": "approve"},
+        "nap": {},
+    }
+    assert skeleton["expect"] == {"status": "done", "outcome": None}
+    assert check(skeleton, GATED).problems == ()

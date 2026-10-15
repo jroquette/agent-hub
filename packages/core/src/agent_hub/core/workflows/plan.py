@@ -29,6 +29,7 @@ from agent_hub.core.workflows.nodes import (
     Node,
     ScriptNode,
     ShellNode,
+    WaitNode,
     required_property,
 )
 from agent_hub.core.workflows.substitution import (
@@ -45,6 +46,8 @@ from agent_hub.core.workflows.substitution import (
 
 # An approval's output is ``{decision}`` (plus ``text``), whatever its schema.
 _APPROVAL_FIELDS: Final = frozenset({"decision", "text"})
+# A wait's output is ``{at}``, ``{text}`` or ``{choice, text}``.
+_WAIT_FIELDS: Final = frozenset({"at", "text", "choice"})
 # A cycle message names at most this many nodes, then how many more.
 _MAX_CYCLE_NAMES: Final = 10
 
@@ -238,6 +241,9 @@ def _texts(node: Node) -> Iterator[tuple[Loc, str]]:
         yield from ((("env", name), value) for name, value in node.env.items())
     elif isinstance(node, ApprovalNode):
         yield ("message",), node.message
+    elif isinstance(node, WaitNode):
+        texts = {"until": node.until, "attention": node.attention}
+        yield from (((key,), text) for key, text in texts.items() if text is not None)
     else:
         yield ("reason",), node.reason
 
@@ -277,6 +283,8 @@ def _strings(value: JsonValue) -> Iterator[str]:
 def _has_path(producer: Node, segments: Sequence[str]) -> bool:
     if isinstance(producer, ApprovalNode):
         return len(segments) == 1 and segments[0] in _APPROVAL_FIELDS
+    if isinstance(producer, WaitNode):
+        return len(segments) == 1 and segments[0] in _WAIT_FIELDS
     schema: object = getattr(producer, "output_format", None)
     for segment in segments:
         if not isinstance(schema, Mapping):

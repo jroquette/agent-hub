@@ -7,7 +7,9 @@ or an ancestor now ends differently. Every visit takes the node's next ``attempt
 the whole run and its resumes, so no two steps share one. A failed attempt asks
 ``retry_decision`` and waits through the ``Clock``; each retry is recorded, and a loop's retry
 starts the loop again from its first turn. A ``halt`` ends the
-run ``cancelled``. ``approval`` nodes come later: a plan holding one is refused before any step.
+run ``cancelled``. An ``approval`` or ``wait`` node opens a gate (``gates.py``) and, until it
+has its answer or its time, pauses the run there: the report is ``paused``, with no end, and the
+nodes after it wait for the resume, which takes up the same gate.
 """
 
 import json
@@ -18,6 +20,18 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.conditions import WhenFail, WhenSkip, evaluate_when
 from agent_hub.core.workflows.failures import NodeFailedError, RetryRecord, retry_decision
+from agent_hub.core.workflows.gates import (
+    GateAnswers,
+    GateError,
+    NoAnswers,
+    OpenGate,
+    gate_choices,
+    gate_form,
+    gate_kind,
+    gate_output,
+    gate_template,
+    wait_due,
+)
 from agent_hub.core.workflows.loops import (
     MaxIterationsError,
     Turn,
@@ -30,15 +44,18 @@ from agent_hub.core.workflows.nodes import (
     ApprovalNode,
     ExecutableNode,
     FromBinding,
+    GateNode,
     HaltNode,
     LoopNode,
     Node,
     ScriptNode,
     ShellNode,
+    WaitNode,
 )
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import (
     Clock,
+    GateRequest,
     NodeCall,
     NodeRunner,
     OutputValidator,
@@ -80,6 +97,7 @@ class EnginePorts:
     clock: Clock
     outputs: OutputValidator
     jitter: Callable[[], float]
+    gates: GateAnswers = NoAnswers()
 
 
 def run_workflow(
@@ -90,10 +108,6 @@ def run_workflow(
     prior: RunState | None = None,
 ) -> RunReport:
     """Run ``plan`` with ``inputs``, resuming ``prior`` when given; the run's report."""
-    for node in plan.document.nodes:
-        if isinstance(node, ApprovalNode):
-            msg = f"the node {echo(node.id)} is an approval, which this engine does not run yet"
-            raise WorkflowEngineError(msg)
     return _Run(plan, start_inputs(plan, inputs), ports, prior=prior or RunState()).execute()
 
 
@@ -130,6 +144,8 @@ class _Run:
         self.attempts = dict(prior.attempts)
         self.sessions = dict(prior.sessions)
         self.halted_by: str | None = None
+        # The gate node the run pauses on, and its open gate.
+        self.paused: tuple[str, OpenGate] | None = None
 
     def execute(self) -> RunReport:
         nodes = {node.id: node for node in self.plan.document.nodes}
@@ -139,6 +155,8 @@ class _Run:
                 if any(dep in self.changed or dep in self.stale for dep in node.depends_on):
                     self.stale.add(node_id)
                 self._visit(node)
+                if self.paused is not None:
+                    return self._pause(*self.paused)
                 if self.ends[node_id].result != self.prior.nodes.get(node_id):
                     self.changed.add(node_id)
                 if self.halted_by is not None:
@@ -152,6 +170,12 @@ class _Run:
         self.ports.recorder.run_ended(RunEnd(status, self.ports.clock.now(), outcome, reason))
         state = RunState({**self.prior.nodes, **self.results}, self.attempts, self.sessions)
         return RunReport(status, outcome, reason, state)
+
+    def _pause(self, node: str, gate: OpenGate) -> RunReport:
+        """The report of a run stopped on an open gate: no end is recorded."""
+        nodes = {**self.prior.nodes, **self.results}
+        state = RunState(nodes, self.attempts, self.sessions, {node: gate})
+        return RunReport("paused", None, node, state)
 
     def _end(self, node: Node, end: NodeEnd) -> None:
         self.ends[node.id] = end
@@ -168,7 +192,9 @@ class _Run:
             self._halt(node)
         elif isinstance(node, LoopNode):
             self._complete(node, self._retrying(node, lambda: self._loop_once(node)))
-        elif not isinstance(node, ApprovalNode):
+        elif isinstance(node, ApprovalNode | WaitNode):
+            self._gate(node)
+        else:
             self._complete(node, self._retrying(node, lambda: self._execute_once(node)))
 
     def _stopped_by_when(self, node: Node, expr: str) -> bool:
@@ -192,7 +218,7 @@ class _Run:
         before = self.prior.nodes.get(node.id)
         if before is None or before.state != "completed":
             return False
-        if isinstance(node, HaltNode | ApprovalNode) or node.always_run:
+        if isinstance(node, HaltNode) or getattr(node, "always_run", False):
             return False
         # References reach only ancestors (planning), so an unchanged ancestry reads the same.
         return node.id not in self.stale
@@ -240,6 +266,44 @@ class _Run:
         recorder.step_ended(StepEnd(node.id, attempt, "ok", now, detail=detail))
         self._end(node, NodeEnd(NodeResult("completed")))
         self.halted_by = node.id
+
+    def _gate(self, node: GateNode) -> None:
+        """Take up the gate a pause left open, else open one; end the node once answered."""
+        clock, recorder = self.ports.clock, self.ports.recorder
+        held = self.prior.gates.get(node.id)
+        if held is not None:
+            attempt, due = held.attempt, held.due
+        else:
+            attempt, now = self._attempt(node), clock.now()
+            recorder.step_started(StepStart(node.id, attempt, now))
+            try:
+                text = render(gate_template(node), self._context())
+                due = wait_due(node, text, now)
+            except (SubstitutionError, GateError) as error:
+                self._gate_failed(node, attempt, NodeFailedError("config", str(error)))
+                return
+            kind, form, choices = gate_kind(node), gate_form(node), gate_choices(node)
+            recorder.gate_requested(
+                GateRequest(node.id, attempt, kind, form, now, choices, text, due)
+            )
+        try:
+            answer = self.ports.gates.answer(node.id, attempt)
+            output = gate_output(node, answer, due=due, now=clock.now())
+        except GateError as error:
+            self._gate_failed(node, attempt, NodeFailedError("config", str(error)))
+            return
+        except Exception as error:  # noqa: BLE001 - a port's unexpected error ends the step
+            self._gate_failed(node, attempt, NodeFailedError("unknown", type(error).__name__))
+            return
+        if output is None:
+            self.paused = (node.id, OpenGate(attempt, due))
+            return
+        recorder.step_ended(StepEnd(node.id, attempt, "ok", clock.now(), output=output))
+        self._end(node, NodeEnd(NodeResult("completed", output)))
+
+    def _gate_failed(self, node: GateNode, attempt: int, failure: NodeFailedError) -> None:
+        self._record_failure(node, attempt, failure)
+        self._end(node, NodeEnd(NodeResult("failed")))
 
     def _execute_once(self, node: ExecutableNode) -> Turn:
         resume = self._resumed_session(node)

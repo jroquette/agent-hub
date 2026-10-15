@@ -466,6 +466,71 @@ def run_path(sample: SampleRun, *parts: str) -> Path:
     return sample.hub.joinpath(".agent-runs", "workflows", RUN_ID, *parts)
 
 
+GATED_YAML = """\
+version: 1
+name: gated
+revision: 1
+nodes:
+  - id: status
+    type: shell
+    command: [git, status, --short]
+    cwd: ../demo-api
+  - id: ship
+    type: approval
+    message: Ship it?
+    capture_response: true
+    depends_on: [status]
+  - id: build
+    type: shell
+    command: [make, check]
+    depends_on: [ship]
+    when: "$ship.output.decision == 'approve'"
+"""
+
+
+def gated(sample: SampleRun, *args: str) -> Result:
+    write(sample.hub, "workflows/gated/gated.yaml", GATED_YAML)
+    return sample.run(*(args or ("gated", "--live", "--run-id", RUN_ID)))
+
+
+def test_pauses_with_a_gate_request_when_a_run_reaches_an_approval(
+    sample: SampleRun, tmp_path: Path
+) -> None:
+    result = gated(sample)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[-1] == "run r1: paused at ship"
+    [gate] = [record for record in sample.records() if record["event"] == "gate"]
+    assert (gate["gate_id"], gate["form"], gate["message"]) == ("r1:ship:1", "decision", "Ship it?")
+    assert gate["choices"] == ["approve", "reject"]
+    assert not [record for record in sample.records() if record["event"] == "end"]
+    stored = open_event_store(tmp_path / "events.db").read_all()
+    [request] = [event for event in stored if event.type == "gate.request"]
+    assert (request.payload["gate_id"], request.payload["kind"]) == ("r1:ship:1", "human_gate")
+    assert "Ship it?" not in json.dumps([event.payload for event in stored])
+    assert sample.fakes.calls("make") == []
+
+
+def test_pauses_again_then_runs_on_when_resumed_before_and_after_a_decision(
+    sample: SampleRun,
+) -> None:
+    gated(sample)
+    again = sample.run("--resume", RUN_ID)
+    decision = {"event": "decision", "node": "ship", "attempt": 1, "choice": "approve"}
+    workflow_runs.append_record(run_path(sample), decision | {"text": "go"})
+
+    result = sample.run("--resume", RUN_ID)
+
+    assert (again.exit_code, again.stdout.splitlines()[-1]) == (0, "run r1: paused at ship")
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[-1] == "run r1: done"
+    ship = [r for r in sample.records() if r.get("node") == "ship" and r["event"] == "step_end"]
+    assert [(r["attempt"], r["output"]) for r in ship] == [
+        (1, {"decision": "approve", "text": "go"})
+    ]
+    assert [call["argv"] for call in sample.fakes.calls("make")] == [["check"]]
+
+
 def test_ignores_modules_planted_in_hub_when_hub_step_node_runs(sample: SampleRun) -> None:
     marker = sample.hub / "planted-ran"
     write(sample.hub, "typer/__init__.py", f"open({str(marker)!r}, 'w').close()\n")

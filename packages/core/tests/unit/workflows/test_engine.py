@@ -7,6 +7,7 @@ import pytest
 
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.testing.workflow_fakes import (
+    AnswerBook,
     FakeClock,
     KeysOutputs,
     ListRecorder,
@@ -15,6 +16,7 @@ from agent_hub.core.testing.workflow_fakes import (
 )
 from agent_hub.core.workflows.engine import EnginePorts, WorkflowEngineError, run_workflow
 from agent_hub.core.workflows.failures import NodeFailedError, RetryRecord
+from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import NodeReply
 from agent_hub.core.workflows.run_state import RunReport, RunState
@@ -60,11 +62,19 @@ class Run:
         *,
         inputs: Mapping[str, JsonValue] | None = None,
         prior: RunState | None = None,
+        gates: AnswerBook | None = None,
     ) -> None:
         self.runner = runner or ScriptedRunner()
         self.recorder = ListRecorder()
         self.clock = FakeClock()
-        ports = EnginePorts(self.runner, self.recorder, self.clock, KeysOutputs(), lambda: 0.5)
+        ports = EnginePorts(
+            self.runner,
+            self.recorder,
+            self.clock,
+            KeysOutputs(),
+            lambda: 0.5,
+            gates or AnswerBook(),
+        )
         self.report: RunReport = run_workflow(plan, inputs or {}, ports, prior=prior)
 
     def status_of(self, node: str) -> tuple[str, str | None, str | None, str | None]:
@@ -344,15 +354,22 @@ def test_ends_cancelled_without_running_later_nodes_when_halt_is_reached() -> No
     assert [end.node for end in run.recorder.ends] == ["a", "stop"]
 
 
-def test_refuses_to_start_when_document_holds_an_approval_node() -> None:
-    plan = plan_of(
-        shell("a"), {"id": "gate", "type": "approval", "message": "Ok?", "depends_on": ["a"]}
-    )
-    runner = ScriptedRunner()
+def test_pauses_then_resumes_past_the_gate_when_an_approval_gets_its_decision() -> None:
+    gate = {"id": "gate", "type": "approval", "message": "Ok?", "depends_on": ["a"]}
+    plan = plan_of(shell("a"), gate, shell("b", "gate"), shell("c", "a"))
 
-    with pytest.raises(WorkflowEngineError, match='"gate".*approval'):
-        Run(plan, runner)
-    assert runner.calls == []
+    paused = Run(plan, ScriptedRunner())
+    answers = AnswerBook({("gate", 1): GateAnswer("approve")})
+    resumed = Run(plan, ScriptedRunner(), prior=paused.report.state, gates=answers)
+
+    assert (paused.report.status, paused.report.outcome) == ("paused", None)
+    assert paused.runner.ran() == ["a"]
+    assert paused.recorder.run_ends == []
+    assert resumed.report.status == "done"
+    assert resumed.runner.ran() == ["c", "b"]
+    assert resumed.status_of("a")[:2] == ("skipped", "prior_success")
+    assert resumed.recorder.end_of("gate").attempt == 1
+    assert resumed.report.state.gates == {}
 
 
 def test_fills_defaults_when_inputs_are_left_out() -> None:
