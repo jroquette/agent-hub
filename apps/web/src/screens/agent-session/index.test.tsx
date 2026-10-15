@@ -856,6 +856,42 @@ describe("AgentSessionScreen (chat-shortcuts)", () => {
     expect(view.requests.filter((r) => r.method === "POST")).toHaveLength(0);
   });
 
+  it.each([
+    ["plan_approval", "ExitPlanMode", "Claude finished a plan", "Keep planning"],
+    ["ask_user_question", "AskUserQuestion", "Claude has a question", "Deny"],
+  ] as const)("answers a %s card neither by chord nor by d", async (kind, tool, name, deny) => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 3,
+          open_permission: aPermissionRequest({
+            request_id: "req-k",
+            request_kind: kind,
+            tool,
+            summary: "Asked",
+            suggestions: [],
+            input: { plan: "## Plan", questions: [{ question: "Which?", options: [] }] },
+          }),
+        }),
+        [`POST ${SESSION}/permissions/req-k`]: anAgentSession({ status: "running" }),
+      }),
+    );
+    const card = await screen.findByRole("region", { name });
+    expect(within(card).getByRole("button", { name: deny })).not.toHaveAttribute(
+      "aria-keyshortcuts",
+    );
+
+    fireEvent.keyDown(document.body, { key: "Backspace", ctrlKey: true, altKey: true });
+    fireEvent.keyDown(document.body, { key: "Enter", metaKey: true, altKey: true });
+    card.focus();
+    fireEvent.keyDown(card, { key: "d" });
+    fireEvent.keyDown(card, { key: "a" });
+    await act(() => Promise.resolve());
+
+    expect(posts(view.requests, "/permissions/req-k")).toHaveLength(0);
+  });
+
   it("focuses the composer on Shift+Esc without stopping the turn", async () => {
     const view = twoPending({ [`POST ${SESSION}/interrupt`]: anAgentSession({ status: "idle" }) });
     const [oldest] = await cards();
