@@ -1,10 +1,15 @@
-"""``/workflow-runs``: the Workflow runs list and Run detail."""
+"""``/workflow-runs``: the Workflow runs list and Run detail, and the run commands (AC-213.19).
+
+Start, cancel, resume and abandon are strict writes that need the launch's cookie (checked
+before routing); each is one call to core's ``StartWorkflowRun`` or ``ControlWorkflowRun``.
+"""
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Path, Query
+from fastapi import APIRouter, Path, Query, Response
 
-from agent_hub.api.dependencies import EventReadModelsDep, parse_filter
+from agent_hub.api.dependencies import EventReadModelsDep, RunControlDep, RunStartsDep, parse_filter
+from agent_hub.api.openapi_paths import API_PREFIX
 from agent_hub.api.schemas import (
     DEFAULT_LIMIT,
     MAX_QUERY_TEXT,
@@ -18,10 +23,12 @@ from agent_hub.core.readmodels.page import Page
 from agent_hub.core.runner.run_record import Stage
 from agent_hub.core.runs.workflow_run import WorkflowRun
 from agent_hub.core.workflows.failures import FailureKind
+from agent_hub.core.workflows.launch import RUN_ID_TEXT, RunAccepted, StartRunRequest
 
 router = APIRouter(tags=["runs"], responses=PROBLEM_RESPONSES)
 
 TextParam = Annotated[str | None, Query(min_length=1, max_length=MAX_QUERY_TEXT)]
+RunIdPath = Annotated[str, Path(pattern=RUN_ID_TEXT)]
 
 
 @router.get("/workflow-runs")
@@ -65,3 +72,29 @@ def get_run(
 ) -> WorkflowRun:
     """One workflow run with its steps."""
     return models.get_run(run_id)
+
+
+@router.post("/workflow-runs", status_code=202)
+def start_run(body: StartRunRequest, starts: RunStartsDep, response: Response) -> RunAccepted:
+    """Start a project's workflow as a ``hub workflow run`` child; its events tell its status."""
+    accepted = starts(body)
+    response.headers["Location"] = f"{API_PREFIX}/workflow-runs/{accepted.run_id}"
+    return accepted
+
+
+@router.post("/workflow-runs/{run_id}/cancel", status_code=202)
+def cancel_run(run_id: RunIdPath, control: RunControlDep) -> RunAccepted:
+    """Stop the run's child (SIGINT, then SIGKILL), then end the run cancelled."""
+    return control.cancel(run_id)
+
+
+@router.post("/workflow-runs/{run_id}/resume", status_code=202)
+def resume_run(run_id: RunIdPath, control: RunControlDep) -> RunAccepted:
+    """Continue a failed or unended run in a new child, reusing what completed."""
+    return control.resume(run_id)
+
+
+@router.post("/workflow-runs/{run_id}/abandon")
+def abandon_run(run_id: RunIdPath, control: RunControlDep) -> RunAccepted:
+    """End a failed or unended run cancelled."""
+    return control.abandon(run_id)
