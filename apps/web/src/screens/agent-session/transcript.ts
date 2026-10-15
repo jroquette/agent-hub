@@ -132,6 +132,8 @@ export type TranscriptEntry =
       kind: "assistant";
       key: string;
       seq: number | null;
+      /** When its text record was written; null while it streams. */
+      at: string | null;
       block: number;
       text: string;
       streaming: boolean;
@@ -440,6 +442,7 @@ function applyDelta(state: TranscriptState, frame: DeltaFrame): TranscriptState 
       kind: "assistant",
       key: `d-${String(frame.after_seq)}-${String(frame.block)}`,
       seq: null,
+      at: null,
       block: frame.block,
       text: frame.text,
       streaming: true,
@@ -450,12 +453,14 @@ function applyDelta(state: TranscriptState, frame: DeltaFrame): TranscriptState 
   };
 }
 
-function applyText(state: TranscriptState, seq: number, body: JsonObject): TranscriptState {
+function applyText(state: TranscriptState, record: LogRecord): TranscriptState {
+  const { seq, body } = record;
   const block = num(body, "block") ?? 0;
   const text = str(body, "text") ?? "";
   const done = {
     kind: "assistant" as const,
     seq,
+    at: record.at,
     block,
     text,
     streaming: false,
@@ -694,7 +699,7 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
       );
     }
     case "text":
-      return applyText(s, record.seq, body);
+      return applyText(s, record);
     case "thinking": {
       const text = str(body, "text") ?? "";
       return push(s, {
