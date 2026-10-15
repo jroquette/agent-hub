@@ -33,6 +33,45 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `hub run` runs read as before (AGH-225).
 - `GET /api/v1/workflows` lists each project's workflows (source `hub` or `builtin`) and the files that do not load;
   `GET /api/v1/workflows/{project}/{name}` gives a workflow's document and its layers (AGH-225).
+- `hub step worktree|verdict|commits|pr|report` run `hub run`'s stages one at a time and print one JSON object each (the
+  worktree and the repo's target, the session's verdict, the branch's commits, the PR's url, the delivery), for the issue-to-pr
+  workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
+  tracker (AGH-223).
+- `GET /api/v1/sessions` and `GET /api/v1/sessions/{session_id}` carry the Live tile fields (`waiting_reason`,
+  `last_action`, `last_tool`, `needs_you_problem`, `failing_notice`, and `sparkline_60s` until the session ends), derived
+  by the same code as the Live tiles, so a sessions list can show what Live shows (AGH-236).
+- `GET /api/v1/agent-sessions` and `GET /api/v1/agent-sessions/{id}` carry `observed_session_id`, the observed
+  session's id once its twin has been observed, else `null`, so a list can show a driven session once (AGH-236).
+- The built-in `issue-to-pr` workflow (inputs `issue`, `repo`, `issue_text`) takes one issue to a PR as `hub run` does:
+  `hub step worktree`, one implementing session in the worktree with `hub run`'s prompt, `hub step verdict`,
+  `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's outcome;
+  no node retries. Its fixtures (delivered, no commit, blocked, dirty tree, error, gate failure, PR failure) run in
+  `hub workflow test`. Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured
+  repo; shell and script nodes take an optional `stdin`, a literal or one whole reference written to the child (at
+  most 1 MiB, as an agent's reply, `hub run`'s session cap), which carries the reply to `hub step verdict`; the dry
+  run shows it (AGH-223).
+- `hub workflow run issue-to-pr --live --input issue=ISSUE --input repo=REPO` gives what `hub run ISSUE --repo REPO --live`
+  gives: it reads the issue (filling `issue_text`), writes the same `.agent-runs` records and events, makes ADR 0030's
+  tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed); its runs
+  cannot be resumed or abandoned (exit 2) (AGH-223).
+
+### Changed
+
+- The chat of a session `hub web` drives is one fixed-height column: the header (title, status, cost, actions) and the
+  composer stay on screen and only the transcript scrolls. It opens at the latest message, or at the oldest permission
+  still waiting, follows the reply while you are at the bottom, stops when you scroll up, and offers "Jump to latest ·
+  N new" (or End); Send brings you back to the bottom (AGH-237).
+- The chat streams smoothly: replies render once per frame with a caret, long transcripts open fast, a "Claude is
+  working · <tool>" row shows while a turn runs, Stop works while a permission waits, Esc in the empty composer stops
+  the turn, and "Turn interrupted" follows its result (AGH-238).
+- `hub run --live` now runs the `issue-to-pr` workflow through the workflow engine, with its options, records, events,
+  tracker writes and exit codes unchanged: a hub's own `workflows/<pack>/issue-to-pr.yaml` replaces the built-in (it
+  must load, else exit 1, and declare the inputs `issue`, `repo`, `issue_text`, plus `start` for `--from verify`, else
+  exit 2) and is read from a copy taken at the start. `--model`, `--effort`, `--max-turns` and `--budget`, when typed,
+  win over its `implement` node's own model and limits (the built-in's are `hub run`'s defaults). A failed stage's `failed`
+  record and its `step.end` event now carry the failure kind (`failure_kind`, e.g. `exec_failed`, `timeout`). The dry
+  run is unchanged. The built-in `issue-to-pr` gains the input `start` (`verify` skips the session), runs its `hub step`
+  nodes in process as `hub run` does, and keeps the gate output's last line break (AGH-224).
 
 ### Fixed
 
