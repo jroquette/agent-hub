@@ -14,8 +14,9 @@ A ``shell`` node runs its rendered argv, never through a shell; a ``script`` nod
 ``sh <file>`` or ``uv run <file>`` from the pack's ``scripts/``, its ``args`` after the file. The
 output is stdout, at most ``MAX_OUTPUT_BYTES``: the child writes to a temporary file and only
 its last bytes are read back, so the memory is bounded, not the disk; past the cap the node fails
-once the child ends (``run_child`` has no early stop). A ``stdin``, at most as large, is written
-to the child from a temporary file (NUL and any length are safe there). The cwd is the node's
+once the child ends (``run_child`` has no early stop). An agent's reply and a ``stdin`` are
+capped at ``hub run``'s session output (1 MiB); a ``stdin`` is written to the child from a
+temporary file (NUL and any length are safe there). The cwd is the node's
 ``cwd`` (relative to the hub), else the hub; its real path must stay in the hub or in one of its
 repos.
 
@@ -74,6 +75,8 @@ from agent_hub.core.workflows.substitution import render
 from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, resolve_pack_file
 
 MAX_OUTPUT_BYTES: Final = 512 * 1024
+# An agent's reply and a stdin (which carries one to hub step verdict): hub run's session cap.
+MAX_REPLY_BYTES: Final = SESSION_OUTPUT_LIMIT
 AGENT_EFFORT: Final = "medium"
 # Kept from a failed child's stderr for the run's record (never for events).
 MAX_DETAIL_CHARS: Final = 1_500
@@ -110,8 +113,8 @@ class WorkflowExecutors:
         stdin = None
         if call.stdin is not None:
             stdin = call.stdin.encode(errors="surrogatepass")
-            if len(stdin) > MAX_OUTPUT_BYTES:
-                raise NodeFailedError("config", f"stdin is larger than {MAX_OUTPUT_BYTES} bytes")
+            if len(stdin) > MAX_REPLY_BYTES:
+                raise NodeFailedError("config", f"stdin is larger than {MAX_REPLY_BYTES} bytes")
         result = self._spawn(
             argv, env=env, cwd=self._cwd(call.cwd), timeout=_timeout(node), stdin=stdin
         )
@@ -180,7 +183,8 @@ class WorkflowExecutors:
             text = json.dumps(value)
         session = reply.session_id
         safe = session if session is not None and SESSION_ID.fullmatch(session) else None
-        return NodeReply(_bounded(text.encode(errors="surrogatepass")), safe)
+        reply_bytes = text.encode(errors="surrogatepass")
+        return NodeReply(_bounded(reply_bytes, limit=MAX_REPLY_BYTES), safe)
 
     def _prompt_file(self, call: NodeCall, node: AgentNode | LoopNode) -> str:
         path = self._pack_file("prompts", node.prompt_file or "")
@@ -264,11 +268,9 @@ def _timeout(node: ExecutableNode, *, default: float = GATE_TIMEOUT) -> float:
     return float(duration_seconds(node.timeout)) if node.timeout is not None else default
 
 
-def _bounded(output: bytes) -> str:
-    if len(output) > MAX_OUTPUT_BYTES:
-        raise NodeFailedError(
-            "output_contract", f"the output is larger than {MAX_OUTPUT_BYTES} bytes"
-        )
+def _bounded(output: bytes, *, limit: int = MAX_OUTPUT_BYTES) -> str:
+    if len(output) > limit:
+        raise NodeFailedError("output_contract", f"the output is larger than {limit} bytes")
     return output.decode(errors="replace")
 
 

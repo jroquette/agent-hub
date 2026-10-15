@@ -376,6 +376,21 @@ class TestVerdict:
 
         assert output_of(result)["question"] == "needs a plan"
 
+    def test_fails_when_reply_over_one_mib(
+        self, run_workspace: Workspace, *, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = verdict_of(run_workspace.workspace, "x" * 1_048_577, monkeypatch=monkeypatch)
+
+        assert result.exit_code == 1
+        assert result.stderr == "hub step verdict: the reply is larger than 1 MiB\n"
+
+    def test_reads_reply_when_exactly_one_mib(
+        self, run_workspace: Workspace, *, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = verdict_of(run_workspace.workspace, "x" * 1_048_576, monkeypatch=monkeypatch)
+
+        assert output_of(result)["status"] == "done"
+
 
 def test_lists_five_steps_when_help_asked(
     run_workspace: Workspace, run_command: CommandRunner

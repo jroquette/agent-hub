@@ -1,4 +1,4 @@
-"""``hub workflow list|validate|run``: the hub's workflows, loaded, planned and run (AGH-218, 221).
+"""``hub workflow list|validate|run|test``: the hub's workflows, loaded, planned, run and tested.
 
 The generator's ``discover_workflows`` finds the hub's ``workflows/<pack>/`` files, then the
 built-ins (a hub workflow overrides a built-in of its name), through the strict YAML loader; core's
@@ -18,6 +18,7 @@ issue read before, ``hub run``'s records (and so its events) during, ADR 0030's 
 and ``hub run``'s exit codes; there ``issue_text`` comes from the tracker, never from ``--input``,
 the workflow must declare ``issue``, ``repo`` and ``issue_text``, and ``--resume`` or
 ``--abandon`` of such a run exits 2.
+
 ``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
 engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
 warnings indented, then a count; a failed fixture exits 1. ``--stubs-init`` writes NAME's
@@ -470,7 +471,9 @@ def _print_plan(plan: WorkflowPlan) -> None:
             if isinstance(node, ScriptNode):
                 argv = (node.runtime, f"scripts/{node.script}", *node.args)
             line = f"would run: {node_id} ({node.type})"
-            typer.echo(f"{line}: {shown_command(argv)}" if argv else line)
+            line = f"{line}: {shown_command(argv)}" if argv else line
+            stdin = node.stdin if isinstance(node, ShellNode | ScriptNode) else None
+            typer.echo(line if stdin is None else f"{line}   stdin: {shown_text(stdin)}")
 
 
 def _json(data: bytes) -> object:
