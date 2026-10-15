@@ -54,6 +54,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   gives: it reads the issue (filling `issue_text`), writes the same `.agent-runs` records and events, makes ADR 0030's
   tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed); its runs
   cannot be resumed or abandoned (exit 2) (AGH-223).
+- `hub init` and `hub sync` seed the built-in `issue-to-pr` pack into the hub once, byte for byte as shipped
+  (`workflows/issue-to-pr/`: the workflow, its prompt and its fixtures). The hub then owns its copy, which `hub run` and
+  `hub workflow` read instead of the built-in; a later release's built-in reaches the hub only if it removes or updates
+  that copy (AGH-227).
+- `hub doctor` rule `workflows.valid` (error): every workflow of the hub's `workflows/` and the built-ins loads and
+  plans, as `hub workflow validate` checks them, one finding per problem at its file and line (AGH-227).
 
 ### Changed
 
@@ -72,6 +78,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   record and its `step.end` event now carry the failure kind (`failure_kind`, e.g. `exec_failed`, `timeout`). The dry
   run is unchanged. The built-in `issue-to-pr` gains the input `start` (`verify` skips the session), runs its `hub step`
   nodes in process as `hub run` does, and keeps the gate output's last line break (AGH-224).
+- A hub's `make check` also runs `./hub workflow test`, the workflow packs' fixtures, after `hub doctor` and before the
+  hub's own tests (AGH-227).
 
 ### Fixed
 
