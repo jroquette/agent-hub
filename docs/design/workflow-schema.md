@@ -5,6 +5,7 @@
 The contract of agent-hub's workflow format and engine (Phase 4, [SPEC](../SPEC.md) direction 1): a graph of typed
 nodes run by `hub workflow run|test` and `hub run`. The reasons for this design are in
 [ADR 0032](../adr/0032-workflow-engine.md), superseding [ADR 0027](../adr/0027-workflow-format-and-minimum-engine.md).
+Finer engine rules: [workflow-engine-rules.md](workflow-engine-rules.md).
 
 ## Contract
 
@@ -62,10 +63,9 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
   plus `text` with `capture_response: true`. Rework is a `loop_group` whose `until_when` reads the decision.
 - `wait`: `duration` (≤ 7d), `until` (ISO-8601 with offset, or a whole reference) or `attention` (a message answered
   with text, or an option id given `options`); output `{at}`, `{text}` or `{choice, text}`; an early resume re-pauses.
-- `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with`. `with` fills the
-  included `inputs` (checked as at run start) and replaces `$INPUTS.<name>` there. Nodes, and references to them,
-  become `<include id>__<id>`; roots inherit the include's graph keys; dependants wait for the primary sink (`returns`,
-  else the single sink), read as `$<include id>.output`. Depth ≤ 3, no cycles; planning checks run after expansion.
+- `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with` and names a workflow
+  of its pack: `with` fills its `inputs`, its nodes become `<include id>__<id>`, its roots take the include's graph
+  keys, depending on it waits on every sink, and `$<include id>.output` reads `returns` or the single sink.
 
 ### Running: joins, conditions, outputs, status, retry and events
 

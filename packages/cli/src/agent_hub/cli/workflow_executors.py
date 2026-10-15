@@ -8,7 +8,8 @@ the other repos attached, that repo's gates allowed. Its argv is
 with the node's tier from ``hub.json`` → ``models.tiers`` and its ``limits`` as ``--max-turns`` and
 ``--max-budget-usd``; ``--resume`` continues a session. Its output is the result's text, or, with
 an ``output_format``, the result's last JSON line (the engine checks it). A ``prompt_file`` is
-read from the pack's ``prompts/`` and rendered against the attempt's references.
+read from the pack's ``prompts/`` and rendered against the attempt's references through the call's
+scope, so a node from an include or a loop group reads its own workflow's inputs and nodes.
 
 A ``shell`` node runs its rendered argv, never through a shell; a ``script`` node runs
 ``sh <file>`` or ``uv run <file>`` from the pack's ``scripts/``, its ``args`` after the file. The
@@ -80,7 +81,6 @@ from agent_hub.core.workflows.nodes import (
     duration_seconds,
 )
 from agent_hub.core.workflows.ports import NodeCall, NodeReply
-from agent_hub.core.workflows.substitution import render
 from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, resolve_pack_file
 
 MAX_OUTPUT_BYTES: Final = 512 * 1024
@@ -209,7 +209,8 @@ class WorkflowExecutors:
         except (OSError, UnicodeDecodeError) as error:
             detail = f"cannot read prompts/{node.prompt_file}: {type(error).__name__}"
             raise NodeFailedError("config", detail) from None
-        return render(template, call.context)
+        # A node from an include or a loop group reads its file in its own workflow's scope.
+        return call.scope.render(template, call.context)
 
     def _command(self, call: NodeCall) -> tuple[list[str], dict[str, str]]:
         node = call.node

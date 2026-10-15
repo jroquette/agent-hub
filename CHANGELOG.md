@@ -54,6 +54,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   gives: it reads the issue (filling `issue_text`), writes the same `.agent-runs` records and events, makes ADR 0030's
   tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed); its runs
   cannot be resumed or abandoned (exit 2) (AGH-223).
+- A workflow node of type `include` copies in another workflow of the same pack at load: its nodes become
+  `<include id>__<id>`, `with:` fills its `inputs`, the include's `depends_on`/`when`/`trigger_rule` go to the block's
+  roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels and 512 nodes, no
+  cycles. A block's prompt files read its own inputs and nodes. Fixtures stub the namespaced ids (AGH-228).
 
 ### Changed
 

@@ -21,6 +21,7 @@ from agent_hub.core.testing.workflow_fakes import a_plan
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.nodes import ExecutableNode
 from agent_hub.core.workflows.ports import NodeCall
+from agent_hub.core.workflows.scope import RefScope, ScopeStep
 from agent_hub.core.workflows.substitution import NodeResult, RefContext
 
 GITHUB_VALUE = "g" * 8
@@ -380,6 +381,21 @@ def test_kills_child_group_when_interrupted(
         runner.run(call(spec, argv=("make",)))
 
     assert killed == [4242]
+
+
+def test_renders_prompt_file_through_the_call_scope_when_the_node_was_included(
+    tmp_path: Path, pack: Path
+) -> None:
+    (pack / "prompts" / "fix.md").write_text("Fix $INPUTS.issue after $prep.output\n")
+    child = FakeChild([claude_result("ok")])
+    spec = {"id": "c__fix", "type": "agent", "prompt_file": "fix.md"}
+    scope = RefScope((ScopeStep({"prep": "c__prep"}, {"issue": "CHILD"}, hermetic=True),))
+    context = RefContext({"issue": "MAIN"}, {"c__prep": NodeResult("completed", "P")})
+    the_node = node({**spec, "id": "fix"}).model_copy(update={"id": "c__fix"})
+
+    executors(tmp_path, pack, child).run(NodeCall(the_node, 1, context, scope=scope))
+
+    assert child.calls[0]["argv"][2] == "Fix CHILD after P\n"
 
 
 def test_runs_claude_in_worktree_as_hub_run_does_when_agent_node_has_cwd(
