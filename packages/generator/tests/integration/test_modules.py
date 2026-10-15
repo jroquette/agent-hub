@@ -180,7 +180,11 @@ class TestMake:
         completed = run_make(root, fake_uv_bin, "check")
 
         assert completed.returncode == 0, completed.stderr
-        assert logged_calls(fake_uv_bin)[-1].endswith(" hub doctor")
+        # AGH-227: the doctor, then the workflow fixtures.
+        assert [call.rsplit(" hub ", 1)[1] for call in logged_calls(fake_uv_bin)][1::2] == [
+            "doctor",
+            "workflow test",
+        ]
 
     @pytest.mark.parametrize(
         ("arguments", "hub_call"),

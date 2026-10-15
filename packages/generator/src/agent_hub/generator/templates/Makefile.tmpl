@@ -51,8 +51,9 @@ retro:  ## Retro metrics as JSON: PRs, cycle time, agent runs, CI health, memory
 	python3 scripts/retro_metrics.py --days $(or $(DAYS),14)
 
 # The hub tests run only when tests/ exists. From Python 3.12 unittest fails on a tests/ with no test.
-check:  ## Hub gates (what CI runs): hub doctor, then the hub's own tests when tests/ exists
+check:  ## Hub gates (what CI runs): hub doctor, the workflow fixtures, then the hub's own tests when tests/ exists
 	@$(HUB) doctor
+	@$(HUB) workflow test
 	@if [ -d tests ]; then python3 -m unittest discover -s tests -q; fi
 
 help:  ## Show this help
