@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from agent_hub.api.local_security import (
     allowed_origins,
     is_hub_registry_write,
     is_json_media_type,
+    is_run_write,
     is_strict_write,
     parse_allowed_hosts,
 )
@@ -220,3 +222,76 @@ def test_marks_hub_registry_write_when_post_or_delete_on_hubs(method: str, path:
     expected = (method, path) in {("POST", "/api/v1/hubs"), ("DELETE", "/api/v1/hubs/hub-1")}
 
     assert is_hub_registry_write(method, path) is expected
+
+
+RUN_WRITES = (
+    "/api/v1/workflow-runs",
+    "/api/v1/workflow-runs/run-1/cancel",
+    "/api/v1/workflow-runs/run-1/resume",
+    "/api/v1/workflow-runs/run-1/abandon",
+)
+OWN_JSON = {"Origin": "http://127.0.0.1:7420", "Content-Type": "application/json"}
+
+
+@pytest.mark.parametrize("path", RUN_WRITES)
+def test_marks_strict_run_write_when_post_to_run_command(path: str) -> None:
+    assert is_strict_write("POST", path)
+    assert is_run_write("POST", path)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/workflow-runs"),
+        ("GET", "/api/v1/workflow-runs/run-1"),
+        ("POST", "/api/v1/workflow-runs/run-1/stream"),
+        ("POST", "/api/v1/workflow-runs/a/b/cancel"),
+        ("POST", "/api/v1/workflow-runs/run-1/cancel/extra"),
+    ],
+)
+def test_keeps_default_checks_when_not_run_command(method: str, path: str) -> None:
+    assert not is_run_write(method, path)
+    assert not is_strict_write(method, path)
+
+
+@pytest.mark.parametrize("path", RUN_WRITES)
+@pytest.mark.parametrize(
+    ("headers", "status"),
+    [
+        ({"Content-Type": "application/json"}, 403),
+        ({**OWN_JSON, "Origin": "http://127.0.0.1:7421"}, 403),
+        ({**OWN_JSON, "Sec-Fetch-Site": "same-site"}, 403),
+        ({**OWN_JSON, "Content-Type": "text/plain"}, 415),
+        (OWN_JSON, 501),
+    ],
+)
+def test_applies_strict_rule_when_run_command_sent(
+    client: TestClient, *, path: str, headers: dict[str, str], status: int
+) -> None:
+    response = client.post(path, content=b"{}", headers=headers)
+
+    assert response.status_code == status
+
+
+@pytest.mark.parametrize("path", RUN_WRITES)
+def test_requires_launch_cookie_when_run_command_sent(client: TestClient, path: str) -> None:
+    client.cookies.clear()
+
+    response = client.post(path, content=b"{}", headers=OWN_JSON)
+
+    assert response.status_code == 401
+    assert response.json()["type"] == "urn:agent-hub:problem:agent-session-unauthorized"
+
+
+@pytest.mark.parametrize("path", RUN_WRITES)
+def test_turns_run_commands_off_when_sessions_off(
+    api_settings: ApiSettings, web_dist: Path, path: str
+) -> None:
+    app = create_app(replace(api_settings, sessions_off=True), web_dist=web_dist)
+    with TestClient(app, base_url="http://127.0.0.1:7420") as off:
+        response = off.post(path, content=b"{}", headers=OWN_JSON)
+        listed = off.get("/api/v1/workflow-runs")
+
+    assert response.status_code == 404
+    assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"
+    assert listed.status_code != 404
