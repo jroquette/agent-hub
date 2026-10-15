@@ -1,15 +1,14 @@
-"""hub web's run launcher over pid files: states, links, signals, input text (AC-213.19)."""
+"""hub web's run launcher over pid files: states, links, signals, caps (AC-213.19)."""
 
 import json
 import os
 import signal
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from agent_hub.api.run_launcher import ProcessRunLauncher, input_text
+from agent_hub.api.run_launcher import MAX_CHILDREN, MAX_PID_FILES, ProcessRunLauncher
 from agent_hub.core.workflows.launch import LaunchSpec, RunLaunchError
 
 STARTED = "Thu Oct 15 09:00:00 2026"
@@ -119,8 +118,15 @@ def test_refuses_start_when_web_runs_folder_is_link(tmp_path: Path) -> None:
     assert list(outside.iterdir()) == []
 
 
-@pytest.mark.parametrize(
-    ("value", "text"), [(True, "true"), (False, "false"), (2, "2"), (0.5, "0.5"), ("a=b", "a=b")]
-)
-def test_writes_cli_text_when_input_typed(value: Any, text: str) -> None:
-    assert input_text(value) == text
+def test_pins_caps_when_launcher_built() -> None:
+    assert (MAX_CHILDREN, MAX_PID_FILES) == (8, 64)
+
+
+def test_scans_first_sixty_four_pid_files_when_folder_holds_more(tmp_path: Path) -> None:
+    for index in range(65):
+        pid_file(tmp_path, f"run-{index:03d}", STARTED)
+
+    live = launcher(tmp_path).live_runs(str(tmp_path))
+
+    assert len(live) == 64
+    assert "run-064" not in live
