@@ -278,10 +278,20 @@ test("Agent session started from Sessions survives a reload while waiting and af
   const conversation = page.getByRole("log", { name: "Conversation" });
   await expect(page.getByRole("button", { name: "Allow once" })).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "Allow once" }).click();
+  // AGH-242 (AC-234.29): the chord allows the oldest pending request; the button is still there.
+  await expect(page.getByRole("button", { name: "Allow once" })).toBeVisible();
+  await page.keyboard.press("Control+Alt+Enter");
   await expect(conversation.getByText("The build ran.")).toBeVisible();
   const composer = page.getByRole("form", { name: "Message composer" });
-  await composer.getByLabel("Message Claude").fill(AGENT_FOLLOW_UP);
+  const box = composer.getByLabel("Message Claude");
+  // AGH-242 (AC-234.28, .30): `/` lists the init record's commands; axe runs with the menu open.
+  await box.focus();
+  await page.keyboard.type("/");
+  await expect(page.getByRole("option", { name: "/compact" })).toBeVisible();
+  await expectAccessible(page);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("listbox", { name: "Commands" })).toBeHidden();
+  await box.fill(AGENT_FOLLOW_UP);
   await composer.getByRole("button", { name: "Send" }).click();
   await expect(conversation.getByText("The tests ran.")).toBeVisible();
   // AGH-237 (AC-234.16): after the reply the header and the composer are still on screen; the
