@@ -31,6 +31,7 @@ from agent_hub.core.workflows.nodes import (
     ExecutableNode,
     FromBinding,
     HaltNode,
+    IncludeNode,
     LoopNode,
     Node,
     ScriptNode,
@@ -56,6 +57,7 @@ from agent_hub.core.workflows.run_state import (
     run_status,
     trigger_skip,
 )
+from agent_hub.core.workflows.scope import RefScope
 from agent_hub.core.workflows.substitution import (
     NodeRef,
     NodeResult,
@@ -168,7 +170,7 @@ class _Run:
             self._halt(node)
         elif isinstance(node, LoopNode):
             self._complete(node, self._retrying(node, lambda: self._loop_once(node)))
-        elif not isinstance(node, ApprovalNode):
+        elif isinstance(node, AgentNode | ShellNode | ScriptNode):
             self._complete(node, self._retrying(node, lambda: self._execute_once(node)))
 
     def _stopped_by_when(self, node: Node, expr: str) -> bool:
@@ -192,7 +194,7 @@ class _Run:
         before = self.prior.nodes.get(node.id)
         if before is None or before.state != "completed":
             return False
-        if isinstance(node, HaltNode | ApprovalNode) or node.always_run:
+        if isinstance(node, HaltNode | ApprovalNode | IncludeNode) or node.always_run:
             return False
         # References reach only ancestors (planning), so an unchanged ancestry reads the same.
         return node.id not in self.stale
@@ -368,8 +370,16 @@ class _Run:
             stdin = render(node.stdin, context) if node.stdin is not None else None
             return NodeCall(node, attempt, context, iteration, tuple(argv), cwd, env, stdin=stdin)
         prompt = render(node.prompt, context) if node.prompt is not None else None
+        scope = self.plan.scopes.get(node.id, RefScope())
         return NodeCall(
-            node, attempt, context, iteration, cwd=cwd, prompt=prompt, resume_session=resume
+            node,
+            attempt,
+            context,
+            iteration,
+            cwd=cwd,
+            prompt=prompt,
+            resume_session=resume,
+            scope=scope,
         )
 
     def _context(self) -> RefContext:

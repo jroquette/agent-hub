@@ -1,7 +1,8 @@
 """The workflow nodes: one frozen model per ``type`` (docs/design/workflow-schema.md § Nodes).
 
-Every model forbids unknown keys. ``include``, ``loop_group`` and ``wait`` come later; until
-then their ``type`` is refused like any other unknown one. Checks that need more than one node
+Every model forbids unknown keys. An ``include`` is replaced at load by the nodes of the workflow
+it names (``includes.py``), so the engine never sees one. ``loop_group`` and ``wait`` come later;
+until then their ``type`` is refused like any other unknown one. Checks that need more than one node
 (``depends_on`` targets, references, ``context.resume``) are planning's (``plan.py``).
 """
 
@@ -316,9 +317,23 @@ class HaltNode(_Node):
     reason: Text
 
 
+class IncludeNode(_Node):
+    """Replaced at load by the workflow ``include`` names; ``with`` fills that one's ``inputs``.
+
+    Its ``depends_on``, ``when`` and ``trigger_rule`` go to the block's roots; a root keeps its
+    own ``trigger_rule`` when it sets one.
+    """
+
+    type: Literal["include"]
+    include: KebabId
+    with_: Annotated[Mapping[VariableName, JsonValue], *READ_ONLY] = Field(
+        default_factory=empty, alias="with"
+    )
+
+
 type ExecutableNode = AgentNode | ShellNode | ScriptNode | LoopNode
 Node = Annotated[
-    AgentNode | ShellNode | ScriptNode | LoopNode | ApprovalNode | HaltNode,
+    AgentNode | ShellNode | ScriptNode | LoopNode | ApprovalNode | HaltNode | IncludeNode,
     Field(discriminator="type"),
 ]
 
