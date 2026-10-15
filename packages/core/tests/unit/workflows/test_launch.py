@@ -351,10 +351,13 @@ def test_refuses_inputs_when_argv_text_passes_cap() -> None:
         "nodes": [{"id": "work", "type": "shell", "command": ["make"]}],
     }
     plan = plan_workflow(parse_workflow(wide))
-    # 15 full inputs, then one that brings the argv text to 262,145 bytes (the cap plus one).
+    # 15 full inputs, then a non-ASCII one ("é" is 2 bytes) that brings the argv text to the cap
+    # plus one byte: counted in characters it would be far below the cap.
     given = {f"i{n}": "x" * 16_384 for n in range(15)}
-    used = sum(len(f"{k}={v}") for k, v in given.items())
-    given["i15"] = "x" * (256 * 1024 + 1 - used - len("i15="))
+    used = sum(len(f"{k}={v}".encode()) for k, v in given.items()) + len(b"i15=")
+    room = 256 * 1024 - used  # bytes left for i15's value at the cap
+    given["i15"] = "é" * (room // 2) + "x" * (room % 2 + 1)
+    assert len(given["i15"].encode()) == room + 1
 
     with pytest.raises(RunInputError, match="more than 262144 bytes"):
         launch_inputs(plan, given)
