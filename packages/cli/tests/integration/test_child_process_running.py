@@ -230,3 +230,15 @@ def test_reports_pid_when_child_starts(tmp_path: Path, *, limit: int | None) -> 
     # Its own session: the pid names the group a caller can kill.
     assert started == [pid]
     assert group == pid
+
+
+@pytest.mark.parametrize("limit", [None, 1 << 20])
+def test_writes_input_to_stdin_when_given(tmp_path: Path, limit: int | None) -> None:
+    data = b"x" * 200_000 + b"\x00end"
+    echo = "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"
+
+    result = run_child(
+        [*PYTHON, "-c", echo], cwd=tmp_path, env={}, timeout=5, output_limit=limit, stdin=data
+    )
+
+    assert (result.returncode, result.stdout) == (0, data)

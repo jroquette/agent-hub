@@ -4,7 +4,8 @@ The graph checks run in order and stop at the first that fails: a repeated id, a
 naming no node, a cycle. Then every reference (``substitution``'s grammar) must be well formed
 and name a declared input, a ``with`` value of its node or an upstream node, its path following
 that node's ``output_format``; argv lists follow ``check_argv`` (a whole element, never the
-program nor a ``-c`` script); a hub step node's ``cwd`` holds none; ``context.resume`` names an
+program nor a ``-c`` script); a ``stdin`` is a literal or one whole reference; a hub step node's
+``cwd`` holds none; ``context.resume`` names an
 upstream agent; and ``returns``/``outcome_field`` name a node and a required boolean or enum
 string of its output.
 
@@ -54,6 +55,7 @@ from agent_hub.core.workflows.substitution import (
     check_argv,
     echo,
     find_refs,
+    parse_ref,
 )
 
 # An approval's output is ``{decision}`` (plus ``text``), whatever its schema.
@@ -346,6 +348,10 @@ def _reference_problems(
                 else:
                     messages = graph.problems(node, element)
                     yield from (WorkflowProblem(where, message) for message in messages)
+        stdin = node.stdin if isinstance(node, ShellNode | ScriptNode) else None
+        if stdin is not None and _has_ref(stdin) and not _is_whole_ref(stdin):
+            message = "a reference fills the whole stdin, or none is used"
+            yield WorkflowProblem((*where_node, "stdin"), message)
         if isinstance(node, ShellNode) and node.is_hub_step and node.cwd and _has_ref(node.cwd):
             message = "a hub step node's cwd takes no reference"
             yield WorkflowProblem((*where_node, "cwd"), message)
@@ -368,6 +374,14 @@ def _has_ref(text: str) -> bool:
         return True
 
 
+def _is_whole_ref(text: str) -> bool:
+    try:
+        parse_ref(text)
+    except SubstitutionError:
+        return False
+    return True
+
+
 def _texts(node: Node) -> Iterator[tuple[Loc, str]]:
     """Each text of ``node`` outside argv lists that may hold a reference, with its key path."""
     if node.when is not None:
@@ -377,6 +391,8 @@ def _texts(node: Node) -> Iterator[tuple[Loc, str]]:
     elif isinstance(node, ShellNode | ScriptNode):
         if node.cwd is not None:
             yield ("cwd",), node.cwd
+        if node.stdin is not None:
+            yield ("stdin",), node.stdin
         yield from ((("env", name), value) for name, value in node.env.items())
     elif isinstance(node, ApprovalNode):
         yield ("message",), node.message
@@ -387,6 +403,8 @@ def _texts(node: Node) -> Iterator[tuple[Loc, str]]:
 def _agent_texts(node: AgentNode | LoopNode) -> Iterator[tuple[Loc, str]]:
     if node.prompt is not None:
         yield ("prompt",), node.prompt
+    if node.cwd is not None:
+        yield ("cwd",), node.cwd
     for name, binding in node.with_.items():
         if isinstance(binding, FromBinding):
             yield ("with", name, "from"), binding.from_
