@@ -186,6 +186,8 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
     if (posting.current || !onAnswer) return;
     posting.current = true;
     setSent(true);
+    // The buttons are disabled, then gone once answered: the keyboard stays on the card.
+    card.current?.focus({ preventScroll: true });
     setError(null);
     void Promise.resolve()
       .then(() => onAnswer(answer))

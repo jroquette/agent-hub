@@ -26,17 +26,22 @@ export function groupSummary(tools: readonly ToolView[]): string {
   return `Explored · ${parts.join(", ")}`;
 }
 
-/** Consecutive tool calls with no text between them, as one disclosure (AC-234.24): open while
- * a call waits for you or failed, collapsed otherwise; the reader's toggle holds until that
- * changes. */
+/** Consecutive tool calls with no text between them, as one disclosure (AC-234.24): it opens when
+ * a call waits for you or fails, starts collapsed otherwise, and only the reader closes it. */
 function ToolGroupView({ items, tools, calls, onAnswerPermission }: ToolGroupProps) {
   const listId = useId();
   const needsYou = items.some((item) => {
     const state = toolState(item.tool, item.request);
     return state === "waiting" || state === "error";
   });
-  const [toggled, setToggled] = useState<{ when: boolean; open: boolean } | null>(null);
-  const open = toggled !== null && toggled.when === needsYou ? toggled.open : needsYou;
+  // Opens by itself when a call starts to need you, never closes by itself: after the answer the
+  // outcome and the focus stay until the reader closes the group.
+  const [open, setOpen] = useState(needsYou);
+  const [neededYou, setNeededYou] = useState(needsYou);
+  if (neededYou !== needsYou) {
+    setNeededYou(needsYou);
+    if (needsYou) setOpen(true);
+  }
   return (
     <div className="as-tool-group">
       <button
@@ -45,7 +50,7 @@ function ToolGroupView({ items, tools, calls, onAnswerPermission }: ToolGroupPro
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         onClick={() => {
-          setToggled({ when: needsYou, open: !open });
+          setOpen(!open);
         }}
       >
         <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
