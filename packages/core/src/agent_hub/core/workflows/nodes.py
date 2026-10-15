@@ -250,6 +250,8 @@ class ShellNode(_Executable):
     command: Argv
     cwd: Text | None = None
     env: EnvMap = Field(default_factory=empty)
+    # Written to the child's stdin: a literal, or one whole reference's canonical text.
+    stdin: Text | None = None
 
     @property
     def is_hub_step(self) -> bool:
@@ -270,6 +272,7 @@ class ScriptNode(_Executable):
     args: tuple[StrictStr, ...] = ()
     cwd: Text | None = None
     env: EnvMap = Field(default_factory=empty)
+    stdin: Text | None = None
 
 
 class LoopNode(_AgentKeys):

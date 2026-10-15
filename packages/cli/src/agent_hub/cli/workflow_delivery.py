@@ -63,6 +63,7 @@ DELIVERY_INPUTS: Final = frozenset({"issue", "repo", ISSUE_TEXT})
 NODE_STAGES: Final[Mapping[str, Stage]] = {
     "worktree": Stage.WORKTREE,
     "implement": Stage.IMPLEMENTING,
+    "verdict": Stage.IMPLEMENTING,
     "commits": Stage.IMPLEMENTING,
     "verify": Stage.VERIFYING,
     "pr": Stage.PR_OPEN,

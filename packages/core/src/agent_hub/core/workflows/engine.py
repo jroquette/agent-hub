@@ -365,7 +365,8 @@ class _Run:
                 else [render(arg, context) for arg in node.args]
             )
             env = {name: render(value, context) for name, value in node.env.items()}
-            return NodeCall(node, attempt, context, iteration, tuple(argv), cwd, env)
+            stdin = render(node.stdin, context) if node.stdin is not None else None
+            return NodeCall(node, attempt, context, iteration, tuple(argv), cwd, env, stdin=stdin)
         prompt = render(node.prompt, context) if node.prompt is not None else None
         return NodeCall(
             node, attempt, context, iteration, cwd=cwd, prompt=prompt, resume_session=resume

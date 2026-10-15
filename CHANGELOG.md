@@ -17,16 +17,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   the strict loader, or JSON), then the built-ins, against the graph workflow format (ADR 0032): unknown keys, unknown
   or non-upstream node references, argv references that are not a whole element, cycles and a bad
   `returns`/`outcome_field` are reported as `<file>:<line>: <key>: <message>`, exit 1 (AGH-218).
+- `hub workflow test [NAME]` dry-runs each pack's `fixtures/*.yaml` through the workflow engine with stubbed node
+  results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
+  `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
+  `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
 - `hub workflow run NAME --input name=value` prints the nodes a run would start; with `--live` it runs them: agent
   nodes as `claude -p` in the hub with its settings and plugin, shell and script nodes as programs without a shell,
   each child with a scoped environment (none gets `LINEAR_API_KEY`). The run is recorded under
   `.agent-runs/workflows/<run>/` with a snapshot of its document, prompts and scripts, and its events go to the
   event database. `--resume RUN` continues a failed run on its snapshot, reusing what completed; `--abandon RUN` ends
   it cancelled. It makes no tracker write (AGH-221).
-- `hub workflow test [NAME]` dry-runs each pack's `fixtures/*.yaml` through the workflow engine with stubbed node
-  results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
-  `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
-  `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
 - `hub step worktree|verdict|commits|pr|report` run `hub run`'s stages one at a time and print one JSON object each (the
   worktree and the repo's target, the session's verdict, the branch's commits, the PR's url, the delivery), for the issue-to-pr
   workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
@@ -36,7 +36,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's outcome;
   no node retries. Its fixtures (delivered, no commit, blocked, dirty tree, error, gate failure, PR failure) run in
   `hub workflow test`. Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured
-  repo (AGH-223).
+  repo; shell and script nodes take an optional `stdin`, a literal or one whole reference written to the child (at
+  most 1 MiB, as an agent's reply, `hub run`'s session cap), which carries the reply to `hub step verdict`; the dry
+  run shows it (AGH-223).
 - `hub workflow run issue-to-pr --live --input issue=ISSUE --input repo=REPO` gives what `hub run ISSUE --repo REPO --live`
   gives: it reads the issue (filling `issue_text`), writes the same `.agent-runs` records and events, makes ADR 0030's
   tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed); its runs

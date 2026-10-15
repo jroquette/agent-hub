@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from typer.testing import Result
+from typer.testing import CliRunner, Result
+
+from agent_hub.cli.main import app
 
 pytestmark = pytest.mark.disable_socket
 
@@ -56,6 +58,12 @@ def commit(workspace: Workspace, *subjects: str) -> None:
             file.write("change\n")
         workspace.git(worktree, "add", "synthetic_change.txt")
         workspace.git(worktree, *IDENTITY, "commit", "-q", "-m", subject)
+
+
+def verdict_of(workspace: Workspace, reply: str, *, monkeypatch: pytest.MonkeyPatch) -> Result:
+    """``hub step verdict`` with the reply on stdin, as the workflow gives it."""
+    monkeypatch.chdir(workspace.hub)
+    return CliRunner().invoke(app, ["step", "verdict"], input=reply.encode())
 
 
 def made_worktree(run_command: CommandRunner, workspace: Workspace) -> dict[str, Any]:
@@ -344,14 +352,44 @@ class TestVerdict:
     def test_reads_reply_as_hub_run_does_when_verdict_asked(
         self,
         run_workspace: Workspace,
-        run_command: CommandRunner,
         *,
+        monkeypatch: pytest.MonkeyPatch,
         reply: str,
         expected: dict[str, str],
     ) -> None:
-        result = step(run_command, run_workspace.workspace, "verdict", "--", reply)
+        result = verdict_of(run_workspace.workspace, reply, monkeypatch=monkeypatch)
 
         assert output_of(result) == expected
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "x" * 131_073 + '\n{"status": "blocked", "summary": "needs a plan"}',
+            'Done.\x00\n{"status": "blocked", "summary": "needs a plan"}',
+        ],
+        ids=["over-argument-limit", "nul"],
+    )
+    def test_reads_reply_from_stdin_when_too_long_or_nul_for_argv(
+        self, run_workspace: Workspace, *, monkeypatch: pytest.MonkeyPatch, reply: str
+    ) -> None:
+        result = verdict_of(run_workspace.workspace, reply, monkeypatch=monkeypatch)
+
+        assert output_of(result)["question"] == "needs a plan"
+
+    def test_fails_when_reply_over_one_mib(
+        self, run_workspace: Workspace, *, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = verdict_of(run_workspace.workspace, "x" * 1_048_577, monkeypatch=monkeypatch)
+
+        assert result.exit_code == 1
+        assert result.stderr == "hub step verdict: the reply is larger than 1 MiB\n"
+
+    def test_reads_reply_when_exactly_one_mib(
+        self, run_workspace: Workspace, *, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = verdict_of(run_workspace.workspace, "x" * 1_048_576, monkeypatch=monkeypatch)
+
+        assert output_of(result)["status"] == "done"
 
 
 def test_lists_five_steps_when_help_asked(
