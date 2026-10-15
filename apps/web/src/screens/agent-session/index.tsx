@@ -120,7 +120,10 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const follow = useStickToBottom(scroller);
   const composer = useRef<HTMLTextAreaElement | null>(null);
-  const pending = pendingPermissions(transcript.state);
+  // The chords answer tool permissions only (AC-234.29): a question or plan card ahead of them is skipped.
+  const pending = pendingPermissions(transcript.state).filter(
+    (id) => transcript.state.permissions[id]?.requestKind === "tool",
+  );
   useChatKeys(pending, composer);
   const setComposer = useCallback((element: HTMLTextAreaElement | null) => {
     composer.current = element;
@@ -266,7 +269,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           <TodoList items={state.todos} />
         </div>
       </header>
-      {/* The chords answer the oldest pending request: its card names them (AC-234.29). */}
+      {/* The chords answer the oldest pending tool permission: its card names them (AC-234.29). */}
       <OldestPendingContext.Provider value={pending[0]}>
         <Transcript
           state={state}

@@ -892,6 +892,43 @@ describe("AgentSessionScreen (chat-shortcuts)", () => {
     expect(posts(view.requests, "/permissions/req-k")).toHaveLength(0);
   });
 
+  it("allows the oldest pending tool permission past an older question card", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 4,
+          open_permission: aPermissionRequest({ request_id: "req-2", summary: "ls" }),
+        }),
+        [EVENTS]: {
+          items: [
+            ...log(),
+            aLogRecord("permission.request", {
+              seq: 4,
+              body: {
+                request_id: "req-q",
+                request_kind: "ask_user_question",
+                tool: "AskUserQuestion",
+                input: { questions: [{ question: "Which?", options: [] }] },
+              },
+            }),
+          ],
+          next_after: null,
+        },
+        [`POST ${SESSION}/permissions/req-q`]: anAgentSession({ status: "running" }),
+        [`POST ${SESSION}/permissions/req-2`]: anAgentSession({ status: "running" }),
+      }),
+    );
+    await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+
+    fireEvent.keyDown(document.body, { key: "Enter", ctrlKey: true, altKey: true });
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-2")).toHaveLength(1);
+    });
+    expect(posts(view.requests, "/permissions/req-q")).toHaveLength(0);
+  });
+
   it("focuses the composer on Shift+Esc without stopping the turn", async () => {
     const view = twoPending({ [`POST ${SESSION}/interrupt`]: anAgentSession({ status: "idle" }) });
     const [oldest] = await cards();
