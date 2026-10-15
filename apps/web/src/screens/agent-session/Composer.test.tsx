@@ -190,6 +190,31 @@ describe("Composer (composer)", () => {
     window.localStorage.clear();
   });
 
+  it.each([
+    [true, true],
+    [false, false],
+  ])("takes focus on open without scrolling when asked (%s)", (focusOnOpen, focused) => {
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, "focus");
+    const { box } = open({ focusOnOpen });
+
+    expect(box === document.activeElement).toBe(focused);
+    if (focused) expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
+
+  it("keeps focus in the box after Send, without scrolling", async () => {
+    const { box } = open();
+    await userEvent.type(box, "Go");
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, "focus");
+
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(box).toHaveValue("");
+    expect(box).toHaveFocus();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
+
   it("has no serious violation (composer a11y)", async () => {
     const { container } = open({ status: "running" });
 

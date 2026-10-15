@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "../../components";
 import { ApiProblem } from "../../lib/api";
@@ -31,6 +31,8 @@ export interface ComposerProps {
   maxBytes?: number | undefined;
   /** The session whose draft this browser keeps (`ah.chat.draft.<id>`); none keeps nothing. */
   draftId?: string | null | undefined;
+  /** Take focus on open (the chat asks unless a permission is pending, AC-234.26). */
+  focusOnOpen?: boolean | undefined;
   /** Why nothing can be sent (log full, control off…); the session's end is detected on its own. */
   disabledReason?: string | null | undefined;
 }
@@ -60,6 +62,7 @@ export function Composer({
   maxBytes = DEFAULT_MESSAGE_MAX_BYTES,
   disabledReason,
   draftId = null,
+  focusOnOpen = false,
 }: ComposerProps) {
   const { text, setText, accepted } = useDraft(draftId);
   const [sending, setSending] = useState(false);
@@ -82,6 +85,13 @@ export function Composer({
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
+
+  const focusBox = () => box.current?.focus({ preventScroll: true });
+  // On open only: a permission that arrives later never takes focus away from here.
+  const focusOnMount = useRef(focusOnOpen);
+  useEffect(() => {
+    if (focusOnMount.current) box.current?.focus({ preventScroll: true });
+  }, []);
 
   useLayoutEffect(() => {
     const element = box.current;
@@ -113,6 +123,7 @@ export function Composer({
   const send = () => {
     if (!canSend || busy.current) return;
     onSending?.();
+    focusBox(); // Send by click keeps typing where it was.
     busy.current = true;
     setSending(true);
     setError(null);
