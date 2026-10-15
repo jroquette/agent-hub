@@ -12,8 +12,12 @@ exits 2. Nothing is written and no network is used.
 ``--live`` the engine runs it through ``workflow_executors`` (``--run-id`` names the run, else a
 fresh id), recording it with ``workflow_runs``. ``--resume RUN`` continues a failed or unended run
 on its snapshot, reusing what completed; ``--abandon RUN`` ends it ``cancelled``. A run that ends
-``done`` exits 0, any other end 1; a bad input exits 2. It makes no tracker write: issue-to-pr's
-writes stay ``hub run``'s.
+``done`` exits 0, any other end 1; a bad input exits 2. It makes no tracker write, except for
+the workflow named ``issue-to-pr``, whose parent is ``hub run``'s (``workflow_delivery``): the
+issue read before, ``hub run``'s records (and so its events) during, ADR 0030's writes after,
+and ``hub run``'s exit codes; there ``issue_text`` comes from the tracker, never from ``--input``,
+the workflow must declare ``issue``, ``repo`` and ``issue_text``, and ``--resume`` or
+``--abandon`` of such a run exits 2.
 
 ``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
 engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
@@ -31,17 +35,27 @@ from pathlib import Path
 from typing import Annotated, Final
 
 import typer
+from typer._click.exceptions import ClickException
 
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.command_exits import FAILURE, fail
+from agent_hub.cli.errors import RunLogError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, shown_command, without
 from agent_hub.cli.run_log import new_run_id, now
+from agent_hub.cli.workflow_delivery import (
+    DELIVERY_INPUTS,
+    ISSUE_TEXT,
+    ISSUE_TO_PR,
+    IssueToPr,
+    begin_delivery,
+)
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_runs import (
     DOCUMENT,
+    RECORDS,
     RUN_ID_PATTERN,
     SNAPSHOT,
     EventSink,
@@ -131,6 +145,7 @@ def validate(
 
 @workflow_app.command("run")
 def run(
+    context: typer.Context,
     name: Annotated[str | None, typer.Argument(help="The workflow to run.")] = None,
     *,
     given: Annotated[
@@ -158,25 +173,63 @@ def run(
             raise typer.BadParameter(hint, param_hint=option)
     root = hub_root_or_exit(os.environ, command=COMMAND)
     hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
+    _refuse_delivery_resume(hub, resume or abandon)
     try:
         if abandon is not None:
             _abandon(hub, abandon)
         elif resume is not None:
             raise typer.Exit(_resume(hub, resume))
         else:
-            raise typer.Exit(_start(hub, name or "", given or [], live=live, run_id=run_id))
+            started = _start(context, hub, name or "", given=given or [], live=live, run_id=run_id)
+            raise typer.Exit(started)
     except (WorkflowRunError, WorkflowEngineError) as error:
         fail(f"{_PREFIX}: {error}")
 
 
-def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | None) -> int:
+def _refuse_delivery_resume(hub: Path, run_id: str | None) -> None:
+    """Exit 2 when ``run_id`` is an issue-to-pr run: its tracker side (the issue read, the
+    records, ADR 0030's writes) belongs to one process, so a resume or an abandon could not
+    report it. Only the start record is read; nothing is written or locked."""
+    if run_id is None:
+        return
+    folder = run_folder(hub, run_id)
+    try:
+        with (folder / RECORDS).open("rb") as file:
+            first = json.loads(file.readline() or b"{}")
+    except OSError, ValueError:
+        return
+    if isinstance(first, dict) and first.get("workflow") == ISSUE_TO_PR:
+        message = f"resume and abandon are not supported for {ISSUE_TO_PR}; start a new run"
+        raise typer.BadParameter(message, param_hint="--resume/--abandon")
+
+
+def _start(
+    context: typer.Context,
+    hub: Path,
+    name: str,
+    *,
+    given: list[str],
+    live: bool,
+    run_id: str | None,
+) -> int:
     source = DiscoveredWorkflowSource(hub, only=name, builtin_root=BUILTIN_WORKFLOWS)
     catalog = check_workflows(source)
     _exit_on_problems(catalog)
     if not catalog.plans:
         fail(f"no workflow named {shown_path(name)} in {HUB_WORKFLOWS}/ or the built-ins")
     plan, found = catalog.plans[0], source.found[name]
-    inputs = _inputs(plan, given)
+    values = _given_values(plan, given)
+    delivery = name == ISSUE_TO_PR
+    if delivery and not set(plan.document.inputs) >= DELIVERY_INPUTS:
+        # A hub's own issue-to-pr overrides the built-in: the parent needs these to run it.
+        raise typer.BadParameter(
+            f"{ISSUE_TO_PR} must declare the inputs issue, repo and {ISSUE_TEXT}",
+            param_hint="NAME",
+        )
+    if delivery and ISSUE_TEXT in values:
+        raise typer.BadParameter(f"{ISSUE_TEXT} is read from the tracker", param_hint="--input")
+    # Checked before the tracker is read; the parent fills issue_text from the issue.
+    inputs = _inputs(plan, {**values, ISSUE_TEXT: ""} if delivery else values)
     if not live:
         _print_plan(plan)
         return 0
@@ -184,15 +237,28 @@ def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | 
     folder = run_folder(hub, run_id)
     make_run(folder)
     with run_lock(folder):
+        parent = None
         try:
             pack, content_hash = snapshot_run(
                 folder, document=dict(found.document), plan=plan, pack_root=found.pack_root
             )
-        except WorkflowRunError:
+            if delivery:
+                # After the snapshot, so the picked record names a run that can start.
+                parent = begin_delivery(context, hub, plan=plan, inputs=inputs, run_id=run_id)
+                inputs[ISSUE_TEXT] = parent.issue_text
+        except WorkflowRunError, typer.Exit, ClickException:
             # Nothing ran: a half-made run is not left to resume.
             shutil.rmtree(folder, ignore_errors=True)
             raise
-        return _begin(hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash)
+        return _begin(
+            hub,
+            folder,
+            plan=plan,
+            inputs=inputs,
+            pack=pack,
+            content_hash=content_hash,
+            parent=parent,
+        )
 
 
 def _begin(
@@ -203,6 +269,7 @@ def _begin(
     inputs: dict[str, JsonValue],
     pack: Path,
     content_hash: str,
+    parent: IssueToPr | None,
 ) -> int:
     run_id, name = folder.name, plan.document.name
     header: dict[str, JsonValue] = {"event": "start", "run": run_id, "workflow": name}
@@ -210,7 +277,9 @@ def _begin(
         folder, {**header, "revision": plan.document.revision, "content_hash": content_hash}
     )
     append_record(folder, {"event": "inputs", "inputs": inputs})
-    return _execute(hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash)
+    return _execute(
+        hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash, parent=parent
+    )
 
 
 def _resume(hub: Path, run_id: str) -> int:
@@ -287,6 +356,7 @@ def _execute(
     content_hash: str,
     prior: RunState | None = None,
     end_index: int = 0,
+    parent: IssueToPr | None = None,
 ) -> int:
     config = load_hub_config_or_exit(hub / FILE_LABEL)
     header: dict[str, JsonValue] = {
@@ -294,10 +364,11 @@ def _execute(
         "revision": plan.document.revision,
         "content_hash": content_hash,
     }
-    recorder = RecordedRun(
+    recorded = RecordedRun(
         folder=folder,
         events=_events(hub, folder.name, header, end_index=end_index),
-        sink=EventSink(),
+        # issue-to-pr's events are hub run's, from the parent's records.
+        sink=EventSink() if parent is None else None,
     )
     runner = WorkflowExecutors(
         hub=hub,
@@ -306,12 +377,23 @@ def _execute(
         pack_root=pack,
         environ=os.environ,
         hub_program=own_hub_program(),
+        replies={} if parent is None else parent.replies,
     )
+    recorder = recorded if parent is None else parent.recorder(recorded)
     ports = EnginePorts(runner, recorder, SystemClock(), JsonSchemaOutputs(), _JITTER.random)
-    report = run_workflow(plan, inputs, ports, prior=prior)
+    try:
+        report = run_workflow(plan, inputs, ports, prior=prior)
+    except RunLogError as error:
+        if parent is None:
+            raise
+        # hub run's record could not be written: the run stops there, as hub run does.
+        append_record(folder, {"event": "end", "status": "failed", "outcome": None})
+        return parent.live.stop_on_log_error(error)
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
     outcome = "" if report.outcome is None else f", outcome {report.outcome}"
     typer.echo(f"run {folder.name}: {report.status}{outcome}")
+    if parent is not None:
+        return parent.finish(report)
     return 0 if report.status == "done" else 1
 
 
@@ -336,8 +418,16 @@ def own_hub_program() -> tuple[str, ...]:
     return (sys.executable, "-I", "-m", "agent_hub.cli")
 
 
-def _inputs(plan: WorkflowPlan, given: list[str]) -> dict[str, JsonValue]:
-    """``NAME=VALUE`` pairs typed by the declared inputs, with the defaults; else exit 2."""
+def _inputs(plan: WorkflowPlan, values: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """``values`` with the defaults; else exit 2."""
+    try:
+        return start_inputs(plan, values)
+    except WorkflowEngineError as error:
+        raise typer.BadParameter(str(error), param_hint="--input") from None
+
+
+def _given_values(plan: WorkflowPlan, given: list[str]) -> dict[str, JsonValue]:
+    """``NAME=VALUE`` pairs typed by the declared inputs; else exit 2."""
     values: dict[str, JsonValue] = {}
     declared = plan.document.inputs
     for pair in given:
@@ -346,10 +436,7 @@ def _inputs(plan: WorkflowPlan, given: list[str]) -> dict[str, JsonValue]:
             raise typer.BadParameter(f"{pair!r} is not NAME=VALUE", param_hint="--input")
         kind = declared[key].type if key in declared else "string"
         values[key] = _typed(text, kind, key)
-    try:
-        return start_inputs(plan, values)
-    except WorkflowEngineError as error:
-        raise typer.BadParameter(str(error), param_hint="--input") from None
+    return values
 
 
 def _typed(text: str, kind: str, key: str) -> JsonValue:

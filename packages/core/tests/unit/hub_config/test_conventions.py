@@ -366,6 +366,8 @@ CONVENTIONS_READERS = {
     # prints, whose "conventions" key it writes and --target reads back); pr's title step reads
     # the target's
     "cli/src/agent_hub/cli/step_command.py": 5,
+    # issue-to-pr's parent records title_unmatched with RunChildren.conventions' title pattern
+    "cli/src/agent_hub/cli/workflow_delivery.py": 1,
     # the mixed hub's document data: the project's and demo-api's conventions keys, written,
     # not read
     f"{CORE}/testing/builders.py": 2,
