@@ -223,3 +223,15 @@ def test_lists_an_open_approval_when_an_approval_request_is_folded() -> None:
 
     approval = approvals["r1:ok:1"]
     assert (approval.kind, approval.status, approval.session_id) == ("human_gate", "open", "run:r1")
+
+
+def test_tags_gate_request_with_issue_when_run_has_one() -> None:
+    recorder = WorkflowEvents(
+        project="demo", run_id="r1", workflow="fix", revision=1, content_hash=HASH, issue="DEM-7"
+    )
+
+    recorder.gate_requested(GateRequest("ok", 1, "approval", "decision", START, ("approve",), "?"))
+
+    [event] = recorder.events
+    assert event.payload["issue"] == "DEM-7"
+    assert kept_payload(event.type, event.payload) == event.payload
