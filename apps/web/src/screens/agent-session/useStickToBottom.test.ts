@@ -1,6 +1,9 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, render, renderHook, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { Composer } from "./Composer";
 import { useStickToBottom } from "./useStickToBottom";
 
 /** A scroll container jsdom cannot lay out: its sizes are set by the test, its writes recorded. */
@@ -143,5 +146,37 @@ describe("useStickToBottom (stick to bottom)", () => {
     flushFrames();
 
     expect(scroller.writes).toEqual([630]);
+  });
+
+  it("pins the transcript again when the reader presses Send (send)", async () => {
+    const scroller = aScroller();
+    function Chat() {
+      const follow = useStickToBottom(scroller.element);
+      return createElement(
+        "div",
+        null,
+        createElement("output", null, follow.atBottom ? "pinned" : "detached"),
+        createElement(Composer, {
+          status: "idle",
+          mode: "default",
+          model: null,
+          models: ["default"],
+          onSend: () => Promise.resolve(),
+          onInterrupt: () => Promise.resolve(),
+          onSettings: () => Promise.resolve(),
+          onSending: follow.pin,
+        }),
+      );
+    }
+    render(createElement(Chat));
+    flushFrames();
+    scroller.userScroll(100);
+    expect(screen.getByRole("status")).toHaveTextContent("detached");
+
+    await userEvent.type(screen.getByRole("textbox", { name: "Message Claude" }), "Next.{Enter}");
+    flushFrames();
+
+    expect(screen.getByRole("status")).toHaveTextContent("pinned");
+    expect(scroller.element.scrollTop).toBe(600);
   });
 });
