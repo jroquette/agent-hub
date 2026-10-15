@@ -56,7 +56,7 @@ class Gated:
             self.clock,
             KeysOutputs(),
             lambda: 0.5,
-            AnswerBook(dict(answers or {})),
+            gates=AnswerBook(dict(answers or {})),
         )
         self.report: RunReport = run_workflow(a_plan(*nodes), {}, ports, prior=prior)
 
@@ -238,7 +238,7 @@ def test_fails_unknown_when_the_answers_port_raises() -> None:
 
     recorder = ListRecorder()
     ports = EnginePorts(
-        ScriptedRunner(), recorder, FakeClock(), KeysOutputs(), lambda: 0.5, Broken()
+        ScriptedRunner(), recorder, FakeClock(), KeysOutputs(), lambda: 0.5, gates=Broken()
     )
 
     report = run_workflow(a_plan(shell("a"), approval()), {}, ports)

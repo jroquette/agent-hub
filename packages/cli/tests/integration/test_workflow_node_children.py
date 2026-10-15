@@ -2,6 +2,7 @@
 children; a timeout leaves nothing behind before a retry starts another copy)."""
 
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -69,4 +70,29 @@ def test_kills_background_process_when_node_exits_zero(tmp_path: Path) -> None:
     reply = runner_in(tmp_path).run(call)
 
     assert reply.text == ""
+    assert gone(pidfile)
+
+
+def test_kills_running_children_when_the_run_is_interrupted(tmp_path: Path) -> None:
+    call, pidfile = shell_call(tmp_path, "sleep 30 & echo $! > PIDFILE; wait")
+    runner = runner_in(tmp_path)
+    failure: list[BaseException] = []
+
+    def attempt() -> None:
+        try:
+            runner.run(call)
+        except NodeFailedError as error:
+            failure.append(error)
+
+    worker = threading.Thread(target=attempt)
+    worker.start()
+    deadline = time.monotonic() + 5
+    while not pidfile.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+    runner.stop_children()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert failure
     assert gone(pidfile)

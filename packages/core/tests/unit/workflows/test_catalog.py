@@ -7,6 +7,7 @@ from agent_hub.core.workflows.catalog import (
     WorkflowFile,
     check_workflows,
 )
+from agent_hub.core.workflows.document import parse_workflow
 
 
 class ListSource:
@@ -83,3 +84,15 @@ def test_keeps_the_first_when_two_files_share_a_name() -> None:
     assert len(catalog.plans) == 1
     assert catalog.problems[0].file == "workflows/other/lint.yaml"
     assert "already defined in workflows/demo/lint.yaml" in catalog.problems[0].message
+
+
+def test_expands_includes_through_the_file_resolver_when_the_source_gives_one() -> None:
+    raw = {"version": 1, "name": "main", "revision": 1}
+    raw["nodes"] = [{"id": "inc", "type": "include", "include": "lint"}]
+    lint = parse_workflow(content("lint"))
+    item = WorkflowFile("main.yaml", "main", raw, includes={"lint": lint}.get)
+
+    catalog = check_workflows(ListSource(item))
+
+    assert catalog.problems == ()
+    assert [node.id for node in catalog.plans[0].document.nodes] == ["inc__a"]

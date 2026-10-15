@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.workflows.failures import FailureKind
 from agent_hub.core.workflows.gates import OpenGate
 from agent_hub.core.workflows.nodes import Node
 from agent_hub.core.workflows.ports import ReportStatus, RunStatus, SkipCause
@@ -26,6 +27,7 @@ class NodeEnd:
     result: NodeResult
     cause: SkipCause | None = None
     origin: str | None = None
+    failure_kind: FailureKind | None = None
 
 
 @dataclass(frozen=True)
