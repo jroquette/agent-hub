@@ -396,6 +396,27 @@ describe("reduceTranscript (sending-feedback)", () => {
     expect(users(state)).toEqual([["Hi", false]]);
   });
 
+  it("drops a sent message as soon as its record arrives, before the answer to its POST", () => {
+    const state = run([sending("a", "Hi"), user(3, "Hi")]);
+
+    expect(state.sending).toEqual([]);
+    expect(users(state)).toEqual([["Hi", false]]);
+    expect(run([accepted("a", 3)], state).sending).toEqual([]);
+  });
+
+  it("matches an unanswered record by text, oldest send first", () => {
+    const state = run([sending("a", "Hi"), sending("b", "Other"), sending("c", "Hi")]);
+
+    expect(run([user(3, "Hi")], state).sending.map((send) => send.key)).toEqual(["b", "c"]);
+    expect(run([user(3, "Else")], state).sending.map((send) => send.key)).toEqual(["a", "b", "c"]);
+  });
+
+  it("matches a record by its seq before its text", () => {
+    const state = run([sending("a", "Hi"), sending("b", "Hi"), accepted("b", 3)]);
+
+    expect(run([user(3, "Hi")], state).sending.map((send) => send.key)).toEqual(["a"]);
+  });
+
   it("drops a sent message that failed", () => {
     const state = run([sending("a", "Hi"), { type: "failed", key: "a" }]);
 
