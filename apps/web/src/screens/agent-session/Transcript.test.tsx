@@ -394,6 +394,82 @@ describe("Transcript (tool-cards) attached permission", () => {
     expect(log.lastElementChild?.querySelector("[data-request-id='req-other']")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Bash make check (Running)" })).toBeInTheDocument();
   });
+
+  it("groups consecutive calls with no text between them; text starts a new run", () => {
+    show([call(1, "a", "Read"), call(2, "b", "Grep"), call(3, "c", "Read"), text(4), call(5, "d")]);
+
+    const log = screen.getByRole("log");
+    expect(log.children).toHaveLength(3);
+    expect(within(log).getByRole("button", { name: "Explored · 2 Read, 1 Grep" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(log.lastElementChild).toHaveTextContent("Bash");
+  });
+
+  it("opens a group whose call waits for you, its card under the call, where the chat opens", () => {
+    const state = [
+      call(1, "a", "Read"),
+      call(2, "b"),
+      ask(3, "b"),
+      call(4, "c", "Read"),
+      text(5),
+      ask(6, "req-later"),
+    ].reduce(reduceTranscript, initialTranscript());
+    // Each card its own offset: opening on the wrong one lands elsewhere.
+    const offsets: Record<string, number> = { b: 400, "req-later": 900 };
+    vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return offsets[this.dataset.requestId ?? ""] ?? 0;
+    });
+    const top = { value: 0 };
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation((value) => {
+      top.value = value;
+    });
+
+    render(
+      <Transcript state={state} follow={{ atBottom: false, pin: vi.fn(), release: vi.fn() }} />,
+    );
+
+    const log = screen.getByRole("log");
+    expect(log.children).toHaveLength(3);
+    expect(within(log).getByRole("button", { name: /^Explored · 2 Read, 1 Bash/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    const head = screen.getByRole("button", { name: /Bash make check \(Waiting for you\)/ });
+    expect(head.closest(".as-tool")?.nextElementSibling).toHaveAttribute("data-request-id", "b");
+    expect(top.value).toBe(384);
+    vi.restoreAllMocks();
+  });
+
+  it("re-renders no grouped call when text streams below the group", () => {
+    const grouped = [call(1, "a", "Read"), call(2, "b", "Read")].reduce(
+      reduceTranscript,
+      initialTranscript(),
+    );
+    const { rerender } = render(<Transcript state={grouped} />);
+    screen.getByRole("button", { name: /^Explored/ }).click();
+    const streaming = reduceTranscript(grouped, {
+      type: "delta",
+      delta: aDeltaFrame({ after_seq: 2, block: 0, index: 0, text: "Hi" }),
+    });
+    rerender(<Transcript state={streaming} />);
+
+    renders.tool = 0;
+    rerender(
+      <Transcript
+        state={reduceTranscript(streaming, {
+          type: "delta",
+          delta: aDeltaFrame({ after_seq: 2, block: 0, index: 1, text: " there" }),
+        })}
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: /^Read/ })).toHaveLength(2);
+    expect(renders.tool).toBe(0);
+  });
 });
 
 describe("Transcript (sending-feedback)", () => {

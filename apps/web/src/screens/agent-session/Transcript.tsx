@@ -14,9 +14,10 @@ import {
 import { Icon, Markdown, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
 import { JumpToLatest } from "./JumpToLatest";
-import { PermissionCard, type PermissionAnswer } from "./PermissionCard";
+import { RequestCard, type PermissionAnswer } from "./PermissionCard";
 import { StoredCopyLabel } from "./SessionStatus";
 import { ToolCallCard } from "./ToolCallCard";
+import { ToolGroup, type GroupItem } from "./ToolGroup";
 import {
   pendingPermissions,
   type NoticeTone,
@@ -50,6 +51,34 @@ function attachedRequests(entries: readonly TranscriptEntry[]): Set<string> {
       entry.kind === "permission" && calls.has(entry.requestId) ? [entry.requestId] : [],
     ),
   );
+}
+
+type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
+type Row =
+  { kind: "entry"; entry: TranscriptEntry } | { kind: "group"; key: string; entries: ToolEntry[] };
+
+/** What the log shows: attached cards leave their place, and consecutive tool calls with no
+ * text between them become one group (AC-234.24). */
+function rowsOf(entries: readonly TranscriptEntry[], attached: Set<string>): Row[] {
+  const rows: Row[] = [];
+  let run: ToolEntry[] = [];
+  const flush = () => {
+    const [first] = run;
+    if (first && run.length > 1) rows.push({ kind: "group", key: `g-${first.key}`, entries: run });
+    else if (first) rows.push({ kind: "entry", entry: first });
+    run = [];
+  };
+  for (const entry of entries) {
+    if (entry.kind === "permission" && attached.has(entry.requestId)) continue;
+    if (entry.kind === "tool") {
+      run.push(entry);
+      continue;
+    }
+    flush();
+    rows.push({ kind: "entry", entry });
+  }
+  flush();
+  return rows;
 }
 
 function firstShown(state: TranscriptState): number {
@@ -128,23 +157,6 @@ function UserMessage({
   );
 }
 
-function Permission({
-  request,
-  onAnswerPermission,
-}: {
-  request: PermissionView;
-  onAnswerPermission: TranscriptProps["onAnswerPermission"];
-}) {
-  return (
-    <PermissionCard
-      request={request}
-      onAnswer={
-        onAnswerPermission ? (answer) => onAnswerPermission(request.requestId, answer) : undefined
-      }
-    />
-  );
-}
-
 function EntryBody({ entry, tool, tools, calls, request, onAnswerPermission }: EntryProps) {
   switch (entry.kind) {
     case "user":
@@ -171,12 +183,12 @@ function EntryBody({ entry, tool, tools, calls, request, onAnswerPermission }: E
       return tool && tools && calls ? (
         <>
           <ToolCallCard tool={tool} tools={tools} calls={calls} request={request} />
-          {request && <Permission request={request} onAnswerPermission={onAnswerPermission} />}
+          {request && <RequestCard request={request} onAnswerPermission={onAnswerPermission} />}
         </>
       ) : null;
     case "permission":
       return request ? (
-        <Permission request={request} onAnswerPermission={onAnswerPermission} />
+        <RequestCard request={request} onAnswerPermission={onAnswerPermission} />
       ) : null;
     case "notice":
       return (
@@ -216,6 +228,8 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
   );
   const oldestPending = pendingPermissions(state)[0];
   const attached = useMemo(() => attachedRequests(state.entries), [state.entries]);
+  const attachedTo = (toolId: string) =>
+    attached.has(toolId) ? state.permissions[toolId] : undefined;
   const release = follow?.release;
 
   // Opens once, on the loaded transcript (AC-234.17): at the oldest pending permission card,
@@ -288,28 +302,41 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
           {state.entries.length === 0 && (
             <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
           )}
-          {state.entries.slice(start).flatMap((entry) =>
-            entry.kind === "permission" && attached.has(entry.requestId)
-              ? []
-              : [
-                  <Entry
-                    key={entry.key}
-                    entry={entry}
-                    {...(entry.kind === "tool" && {
-                      tool: state.tools[entry.toolId],
-                      tools: state.tools,
-                      calls: state.children,
-                      request: attached.has(entry.toolId)
-                        ? state.permissions[entry.toolId]
-                        : undefined,
-                    })}
-                    {...(entry.kind === "permission" && {
-                      request: state.permissions[entry.requestId],
-                    })}
+          {rowsOf(state.entries.slice(start), attached).map((row) => {
+            if (row.kind === "group") {
+              const items = row.entries.flatMap(({ toolId }): GroupItem[] => {
+                const tool = state.tools[toolId];
+                return tool ? [{ tool, request: attachedTo(toolId) }] : [];
+              });
+              return (
+                <div key={row.key} className="as-entry">
+                  <ToolGroup
+                    items={items}
+                    tools={state.tools}
+                    calls={state.children}
                     onAnswerPermission={onAnswerPermission}
-                  />,
-                ],
-          )}
+                  />
+                </div>
+              );
+            }
+            const { entry } = row;
+            return (
+              <Entry
+                key={entry.key}
+                entry={entry}
+                {...(entry.kind === "tool" && {
+                  tool: state.tools[entry.toolId],
+                  tools: state.tools,
+                  calls: state.children,
+                  request: attachedTo(entry.toolId),
+                })}
+                {...(entry.kind === "permission" && {
+                  request: state.permissions[entry.requestId],
+                })}
+                onAnswerPermission={onAnswerPermission}
+              />
+            );
+          })}
           {state.sending.map((send) => (
             <div key={send.key} className="as-entry">
               <UserMessage text={send.text} note="Sending…" />
