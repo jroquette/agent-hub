@@ -116,6 +116,9 @@ case's temporary root and prints its path. The `hub init` golden,
 `packages/cli/tests/integration/golden/init/demo.hub.lock`, is the synthetic `demo` init's `hub.lock` with
 `platform_version` as `<VERSION>` and every hash kept, so a template change shows as a reviewed hash diff; it is `-text`
 too, and `GOLDEN_UPDATE=1` rewrites it the same way (the cli conftest's own harness, refused under `CI`).
+`packages/cli/tests/integration/golden/parity/<scenario>.json` is what v0.14 `hub run` (its own stage machine, before
+AGH-224) left in each `test_workflow_parity.py` scenario: exit code, tracker calls, records and events, the run id,
+timestamps and workspace path taken out. It was recorded once and is never regenerated: no code left produces it.
 The text a two-team hub renders where it names the tracker teams, the text a hub with conventions renders where
 it shows them, and the seeded starter `AGENTS.md` for app repos are checked in byte-exact under
 `packages/generator/tests/integration/rendered/two_teams/<path>.golden`, `rendered/conventions/<path>.golden` and
