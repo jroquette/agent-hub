@@ -25,7 +25,7 @@ issue at read time from the hub's ``LabelRules`` (``label_rules_of``), outside e
 import bisect
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -478,11 +478,6 @@ class FoldedEventReadModels:
             raise EntityNotFoundError(entity="session", entity_id=session_id)
         return session
 
-    def _with_issues(self, sessions: Iterable[Session]) -> list[Session]:
-        """``sessions`` with the issue each label names under its hub's current rules, and
-        the agent session each one is driven from."""
-        return [session for session, _ in self._decorated(sessions)]
-
     def _decorated(self, sessions: Iterable[Session]) -> list[tuple[Session, bool]]:
         """Each session with its issue and agent-session link, and whether that agent session
         waits on a permission request."""
@@ -520,14 +515,14 @@ class FoldedEventReadModels:
             request=session_filter,
             hwm=snapshot.hwm,
         )
-        items = self._with_issues(_with_tile_fields(snapshot, page.items))
+        items = _with_tile_fields(snapshot, self._decorated(page.items))
         return page.model_copy(update={"items": tuple(items)})
 
     def get_session(self, session_id: str) -> Session:
         """One session, with its tile fields."""
         snapshot = self._snapshot()
         session = self._session(snapshot, session_id)
-        return self._with_issues(_with_tile_fields(snapshot, [session]))[0]
+        return _with_tile_fields(snapshot, self._decorated([session]))[0]
 
     def is_observed(self, project: str, session_id: str) -> bool:
         """Whether ``session_id`` is a session of ``project`` (``ObservedSessionLookup``)."""
@@ -800,16 +795,23 @@ class FoldedEventReadModels:
 # Labels and tile fields at read time
 
 
-def _with_tile_fields(snapshot: _Snapshot, sessions: Iterable[Session]) -> list[Session]:
-    """``sessions`` with the fields their Live tile shows (D5), derived for these rows only."""
+def _with_tile_fields(
+    snapshot: _Snapshot, decorated: Iterable[tuple[Session, bool]]
+) -> list[Session]:
+    """Each decorated session with the fields its Live tile shows (D5), derived for these rows
+    only: one whose agent session waits on a permission request gets the fields of its
+    ``waiting`` tile, while it keeps its own status."""
     filled: list[Session] = []
-    for session in sessions:
+    for session, waits in decorated:
+        shown = _waiting(session) if waits else session
         fields = tile_fields(
-            session,
+            shown,
             snapshot.by_session[session.id],
             now=snapshot.now,
             problems=snapshot.problems[session.id],
         )
+        if waits and shown.status == SessionStatus.WAITING:
+            fields = replace(fields, waiting_reason=_permission_reason(fields.waiting_reason))
         filled.append(session.model_copy(update=asdict(fields)))
     return filled
 
@@ -822,10 +824,16 @@ def _waiting(session: Session) -> Session:
     return session.model_copy(update={"status": SessionStatus.WAITING})
 
 
+def _permission_reason(reason: str | None) -> str:
+    """The waiting reason of a session whose agent session waits on a permission request:
+    an open approval's own reason first."""
+    return WAITING_REASONS[ApprovalKind.PERMISSION] if reason is None else reason
+
+
 def _permission_tile(tile: LiveTile) -> LiveTile:
     if tile.group != "waiting" or tile.waiting_reason is not None:
         return tile
-    return tile.model_copy(update={"waiting_reason": WAITING_REASONS[ApprovalKind.PERMISSION]})
+    return tile.model_copy(update={"waiting_reason": _permission_reason(None)})
 
 
 def _with_issue(session: Session, rules: LabelRules | None) -> Session:

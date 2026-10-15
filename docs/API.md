@@ -139,11 +139,11 @@ filled for the rows of the page only; every one is optional and `null` when ther
 
 | Field | Value |
 | --- | --- |
-| `waiting_reason` | why a `waiting` session waits (`Guard ask`, `Plan approval`, `Spec approval`, `Human gate`, `Permission prompt`) |
+| `waiting_reason` | why a `waiting` session waits (`Guard ask`, `Plan approval`, `Spec approval`, `Human gate`, `Permission prompt`); a `live` or `idle` session whose driven agent session waits on a permission request reads `Permission prompt`, as its Live tile does, and keeps its `status` |
 | `last_action` · `last_tool` | the last tool call in plain words (`Ran make check`, `Edited src/app.py`) and its tool |
 | `needs_you_problem` | the "what went wrong" line of the first problem that needs the owner |
 | `failing_notice` | the same gate or command failed 2 times in a row, or 3 tool errors in the last 5 minutes |
-| `sparkline_60s` | activity in the last 60 s; `null` once the session has ended |
+| `sparkline_60s` | an empty list while the session has not ended (the web fills it from the event stream); `null` once it has ended |
 
 ## Learning decisions
 
