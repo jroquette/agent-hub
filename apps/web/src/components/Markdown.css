@@ -16,6 +16,33 @@
   border-top: 1px solid var(--border);
   margin: var(--space-4) 0;
 }
+.ah-md-code {
+  margin: 0 0 var(--space-3);
+  background: var(--code-bg);
+  border-radius: var(--radius-md);
+}
+.ah-md-code-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) 0 var(--space-3);
+}
+.ah-md-lang {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.ah-md-copy {
+  margin-left: auto;
+}
+.ah-md-code .ah-md-pre {
+  margin: 0;
+  padding-top: var(--space-1);
+}
 .ah-md-pre {
   margin: 0 0 var(--space-3);
   padding: var(--space-2) var(--space-3);

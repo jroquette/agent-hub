@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import type { components } from "../../api/schema";
 import {
@@ -16,6 +16,7 @@ import { useEventStream, type StreamHandlers, type StreamHealth } from "../../li
 import {
   applySnapshot,
   initialTranscript,
+  keepSending,
   reduceTranscript,
   type AgentSession,
   type AgentSessionStatus,
@@ -33,6 +34,7 @@ export type RecordKind = Schemas["RecordKind"];
 export type DriverCapabilities = Schemas["DriverCapabilities"];
 export type PermissionAnswer = Schemas["PermissionDecision"];
 export type SettingsBody = Schemas["SessionSettings"];
+export type MessageAccepted = Schemas["MessageAccepted"];
 type LogRecordPage = Schemas["LogRecordPage"];
 
 const SESSION = "/api/v1/agent-sessions/{agent_session_id}" as const;
@@ -165,7 +167,9 @@ export function streamHandlers(
 type Action = { type: "items"; items: StreamItem[] } | { type: "replace"; state: TranscriptState };
 
 function reducer(state: TranscriptState, action: Action): TranscriptState {
-  return action.type === "replace" ? action.state : action.items.reduce(reduceTranscript, state);
+  return action.type === "replace"
+    ? keepSending(state, action.state)
+    : action.items.reduce(reduceTranscript, state);
 }
 
 export interface FrameBatcher {
@@ -230,6 +234,8 @@ export interface AgentTranscript {
   health: StreamHealth;
   /** Whether the stream is (meant to be) open: a live session whose log has loaded. */
   streaming: boolean;
+  /** Posts `text` with `post`, showing it as "Sending…" until its record arrives (AC-234.27). */
+  send: (text: string, post: (text: string) => Promise<MessageAccepted>) => Promise<unknown>;
 }
 
 /**
@@ -301,6 +307,22 @@ export function useAgentTranscript(id: string): AgentTranscript {
     [batcher, id, queryClient, reload],
   );
 
+  const sends = useRef(0);
+  const send = useCallback(
+    async (text: string, post: (text: string) => Promise<MessageAccepted>) => {
+      const sendKey = `send-${String((sends.current += 1))}`;
+      batcher.push({ type: "sending", key: sendKey, text });
+      try {
+        const { seq } = await post(text);
+        batcher.push({ type: "accepted", key: sendKey, seq });
+      } catch (cause) {
+        batcher.push({ type: "failed", key: sendKey });
+        throw cause;
+      }
+    },
+    [batcher],
+  );
+
   const current = loaded?.key === key ? loaded : null;
   const after = current?.after ?? null;
   const streaming = after !== null && !isTerminal(state.status);
@@ -312,6 +334,7 @@ export function useAgentTranscript(id: string): AgentTranscript {
     retry: reload,
     health,
     streaming,
+    send,
   };
 }
 
@@ -325,7 +348,7 @@ function isSession(data: unknown): data is AgentSession {
 }
 
 export interface AgentSessionCommands {
-  send: (text: string) => Promise<unknown>;
+  send: (text: string) => Promise<MessageAccepted>;
   interrupt: () => Promise<unknown>;
   settings: (change: SettingsBody) => Promise<unknown>;
   answer: (requestId: string, answer: PermissionAnswer) => Promise<unknown>;

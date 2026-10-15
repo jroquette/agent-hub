@@ -42,12 +42,26 @@ export interface ResetFrame {
   reason: string;
 }
 
-/** What the reducer takes: one SSE frame, or one record of a `GET /{id}/events` page. */
+/** A message this page posts: shown at once, accepted with its record's seq, or failed. */
+export type SendItem =
+  | { type: "sending"; key: string; text: string }
+  | { type: "accepted"; key: string; seq: number }
+  | { type: "failed"; key: string };
+
+/** What the reducer takes: one SSE frame, one record of a `GET /{id}/events` page, or a send. */
 export type StreamItem =
   | { type: "record"; record: LogRecord }
   | { type: "delta"; delta: DeltaFrame }
   | { type: "status"; status: StatusFrame }
-  | { type: "reset"; reset: ResetFrame };
+  | { type: "reset"; reset: ResetFrame }
+  | SendItem;
+
+/** A sent message until its `user.message` record (the POST's `seq`) arrives (AC-234.27). */
+export interface SendingView {
+  key: string;
+  text: string;
+  seq: number | null;
+}
 
 export interface ToolResultView {
   content: JsonValue;
@@ -104,11 +118,22 @@ export interface MeterView {
 export type NoticeTone = "info" | "warning" | "error";
 
 export type TranscriptEntry =
-  | { kind: "user"; key: string; seq: number; at: string; text: string; redacted: boolean }
+  | {
+      kind: "user";
+      key: string;
+      seq: number;
+      at: string;
+      text: string;
+      redacted: boolean;
+      /** Sent while a turn ran: Claude reads it after that turn. */
+      queued: boolean;
+    }
   | {
       kind: "assistant";
       key: string;
       seq: number | null;
+      /** When its text record was written; null while it streams. */
+      at: string | null;
       block: number;
       text: string;
       streaming: boolean;
@@ -116,7 +141,15 @@ export type TranscriptEntry =
       lastDelta: number;
       redacted: boolean;
     }
-  | { kind: "thinking"; key: string; seq: number; text: string; redacted: boolean }
+  | {
+      kind: "thinking";
+      key: string;
+      seq: number;
+      text: string;
+      redacted: boolean;
+      /** Whole seconds from the previous record to this one, null when unknown (AC-234.25). */
+      seconds: number | null;
+    }
   | { kind: "tool"; key: string; toolId: string }
   | { kind: "permission"; key: string; requestId: string }
   | { kind: "notice"; key: string; seq: number; tone: NoticeTone; text: string };
@@ -135,12 +168,18 @@ export interface TranscriptState {
   mode: PermissionMode | null;
   slashCommands: string[];
   lastSeq: number;
+  /** When the last record was written: a thinking block's start. */
+  lastAt: string | null;
   /** A text block is streaming (its bubble is open). */
   streaming: boolean;
   /** An interrupt was recorded: the turn's result reads "Turn interrupted" (AC-234.21). */
   interrupted: boolean;
   /** Why the stream reset; the caller reloads, then clears it with a fresh state. */
   reset: string | null;
+  /** Messages posted from this page whose record has not arrived yet. */
+  sending: SendingView[];
+  /** A user message started a turn whose result has not arrived. */
+  turnOpen: boolean;
 }
 
 export function initialTranscript(): TranscriptState {
@@ -157,9 +196,12 @@ export function initialTranscript(): TranscriptState {
     mode: null,
     slashCommands: [],
     lastSeq: 0,
+    lastAt: null,
     streaming: false,
     interrupted: false,
     reset: null,
+    sending: [],
+    turnOpen: false,
   };
 }
 
@@ -258,6 +300,17 @@ export function ruleLabel(rule: unknown): string {
   const type = str(r, "type") ?? "rule";
   const value = str(r, "mode") ?? str(r, "behavior") ?? "";
   return value ? `${type} ${value}` : type;
+}
+
+/** Where a tool call stands (AC-234.24). */
+export type ToolState = "running" | "waiting" | "done" | "error" | "denied";
+
+/** A call's state from its result and the permission asked for it (by `tool_use_id`): an open
+ * request waits for you, a denied one reads denied whatever result the CLI then sent. */
+export function toolState(tool: ToolView, request?: PermissionView): ToolState {
+  if (request?.decision?.decision === "deny") return "denied";
+  if (tool.result === null) return request?.decision === null ? "waiting" : "running";
+  return tool.result.isError ? "error" : "done";
 }
 
 /* ---------- Diffs ---------- */
@@ -389,6 +442,7 @@ function applyDelta(state: TranscriptState, frame: DeltaFrame): TranscriptState 
       kind: "assistant",
       key: `d-${String(frame.after_seq)}-${String(frame.block)}`,
       seq: null,
+      at: null,
       block: frame.block,
       text: frame.text,
       streaming: true,
@@ -399,12 +453,14 @@ function applyDelta(state: TranscriptState, frame: DeltaFrame): TranscriptState 
   };
 }
 
-function applyText(state: TranscriptState, seq: number, body: JsonObject): TranscriptState {
+function applyText(state: TranscriptState, record: LogRecord): TranscriptState {
+  const { seq, body } = record;
   const block = num(body, "block") ?? 0;
   const text = str(body, "text") ?? "";
   const done = {
     kind: "assistant" as const,
     seq,
+    at: record.at,
     block,
     text,
     streaming: false,
@@ -538,10 +594,11 @@ function applyResult(state: TranscriptState, record: LogRecord): TranscriptState
     turns: state.meter.turns + 1,
   };
   // A turn's end closes a bubble no text record replaced (an interrupt cut it short).
-  const entries = state.entries.map((entry) =>
+  const ended = endTurn(state);
+  const entries = ended.entries.map((entry) =>
     entry.kind === "assistant" && entry.streaming ? { ...entry, streaming: false } : entry,
   );
-  const next = { ...state, entries, meter, streaming: false, interrupted: false };
+  const next = { ...ended, entries, meter, streaming: false, interrupted: false };
   const reason = str(body, "terminal_reason");
   if (state.interrupted || reason?.startsWith("aborted"))
     return notice(next, record.seq, "Turn interrupted", "warning");
@@ -567,17 +624,69 @@ function applySettings(state: TranscriptState, record: LogRecord): TranscriptSta
   return notice(next, record.seq, parts.join(", ") || "Settings changed");
 }
 
+/** The turn ended: queued messages start the next one. */
+function endTurn(state: TranscriptState): TranscriptState {
+  const queued = state.entries.some((entry) => entry.kind === "user" && entry.queued);
+  const entries = queued
+    ? state.entries.map((entry) =>
+        entry.kind === "user" && entry.queued ? { ...entry, queued: false } : entry,
+      )
+    : state.entries;
+  return { ...state, entries, turnOpen: queued };
+}
+const idle = (state: TranscriptState, status: AgentSessionStatus) =>
+  status === "running" || status === "waiting_permission"
+    ? state
+    : { ...endTurn(state), turnOpen: false };
+
+function applySend(state: TranscriptState, item: SendItem): TranscriptState {
+  const others = state.sending.filter((send) => send.key !== item.key);
+  switch (item.type) {
+    case "sending":
+      return { ...state, sending: [...others, { key: item.key, text: item.text, seq: null }] };
+    case "accepted":
+      // Its record may have come first: then it is already in the transcript.
+      return item.seq <= state.lastSeq
+        ? { ...state, sending: others }
+        : {
+            ...state,
+            sending: state.sending.map((send) =>
+              send.key === item.key ? { ...send, seq: item.seq } : send,
+            ),
+          };
+    case "failed":
+      return { ...state, sending: others };
+  }
+}
+
+/** Whole seconds (at least 1) between two record times; null when unknown or backwards. */
+function thoughtSeconds(start: string | null, end: string): number | null {
+  const ms = start === null ? NaN : Date.parse(end) - Date.parse(start);
+  return Number.isFinite(ms) && ms >= 0 ? Math.max(1, Math.round(ms / 1000)) : null;
+}
+
+/**
+ * Drops the send a user.message record echoes: the one with its seq or, since core publishes the
+ * record before the POST answers with that seq, the oldest unanswered send of the same text.
+ */
+function withoutEcho(sending: SendingView[], seq: number, text: string): SendingView[] {
+  let index = sending.findIndex((send) => send.seq === seq);
+  if (index < 0) index = sending.findIndex((send) => send.seq === null && send.text === text);
+  return index < 0 ? sending : sending.filter((_, i) => i !== index);
+}
+
 function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState {
   if (record.seq <= state.lastSeq) return state;
-  const s = { ...state, lastSeq: record.seq };
+  const s = { ...state, lastSeq: record.seq, lastAt: record.at };
   const body = record.body;
   switch (record.kind) {
     case "user.message": {
       const text = str(body, "text") ?? "";
+      const sending = withoutEcho(s.sending, record.seq, text);
       // Core refuses a send while an interrupt awaits its result, so a message after an
       // interrupt means that interrupt cut no turn short (it landed on an idle session).
       return push(
-        { ...s, interrupted: false },
+        { ...s, sending, turnOpen: true, interrupted: false },
         {
           kind: "user",
           key: `u-${String(record.seq)}`,
@@ -585,11 +694,12 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
           at: record.at,
           text,
           redacted: isRedacted(text),
+          queued: s.turnOpen,
         },
       );
     }
     case "text":
-      return applyText(s, record.seq, body);
+      return applyText(s, record);
     case "thinking": {
       const text = str(body, "text") ?? "";
       return push(s, {
@@ -598,6 +708,7 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
         seq: record.seq,
         text,
         redacted: isRedacted(text),
+        seconds: thoughtSeconds(state.lastAt, record.at),
       });
     }
     case "tool.call":
@@ -687,7 +798,7 @@ export function reduceTranscript(state: TranscriptState, item: StreamItem): Tran
       return applyDelta(state, item.delta);
     case "status":
       return {
-        ...state,
+        ...idle(state, item.status.status),
         status: item.status.status,
         endReason: item.status.end_reason ?? null,
         streaming:
@@ -696,14 +807,16 @@ export function reduceTranscript(state: TranscriptState, item: StreamItem): Tran
             : false,
       };
     case "reset":
-      return { ...initialTranscript(), reset: item.reset.reason };
+      return { ...initialTranscript(), reset: item.reset.reason, sending: state.sending };
+    default:
+      return applySend(state, item);
   }
 }
 
 /** Merges what `GET /{id}` holds: status, mode, model and the open request with its raw summary. */
 export function applySnapshot(state: TranscriptState, session: AgentSession): TranscriptState {
   const next: TranscriptState = {
-    ...state,
+    ...idle(state, session.status),
     status: session.status,
     endReason: session.end_reason ?? null,
     mode: session.mode,
@@ -724,6 +837,12 @@ export function applySnapshot(state: TranscriptState, session: AgentSession): Tr
     decision: known?.decision ?? null,
     redacted: false,
   });
+}
+
+/** `loaded` (a reload of the log) with the messages of `previous` whose record it lacks. */
+export function keepSending(previous: TranscriptState, loaded: TranscriptState): TranscriptState {
+  const sending = previous.sending.filter((send) => send.seq === null || send.seq > loaded.lastSeq);
+  return { ...loaded, sending };
 }
 
 /** The ids of the requests still waiting for an answer, oldest first. */

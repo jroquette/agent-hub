@@ -21,6 +21,21 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
   `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
   `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
+- Workflow `approval` and `wait` nodes. An approval (`message`, `decisions`, `capture_response`) or a wait (`duration`
+  up to 7 days, an `until` instant, or `attention` answered with text or one of `options`) pauses the run: `hub
+  workflow run` prints `run <id>: paused at <node>` and records a `gate.request` (an approval or attention wait shows
+  in Approvals). `--resume RUN` takes the same gate up again and goes on once it has its decision or its time. The
+  output (`{decision}`, `{at}`, `{text}`, `{choice, text}`) is readable from `when:`; rejecting the default decisions
+  cancels the run unless a `when:` reads the decision. An `until` is at most 7 days ahead; a timed wait ends on a
+  resume past its time. `hub workflow test` stubs gates with `{decision, text}`, `{text}`, `{choice}` or `{}`; without
+  a stub the run pauses (`expect.status: paused`). A gate in a `loop_group` body pauses its iteration, and the resume
+  goes on in it (rework: reject, fix, approve); two gates with no order between them are a load error (AGH-230).
+- `hub workflow approve|reject|respond RUN [NODE] [TEXT]` decide a paused run's open gate (`respond` takes
+  `--choice` for a declared decision or option) and resume the run. One decision per gate: a second, a gate that is
+  not open or an answer the gate does not take is refused. The text stays in the run's record; the event database
+  gets a `control_plane` `gate.result`, so Approvals shows the gate decided. A workflow gate closed without a decision
+  (run abandoned, gate skipped or failed on resume) shows declined, and its "How to decide" names these commands
+  (AGH-230).
 - `hub workflow run NAME --input name=value` prints the nodes a run would start; with `--live` it runs them: agent
   nodes as `claude -p` in the hub with its settings and plugin, shell and script nodes as programs without a shell,
   each child with a scoped environment (none gets `LINEAR_API_KEY`). The run is recorded under
@@ -54,6 +69,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   gives: it reads the issue (filling `issue_text`), writes the same `.agent-runs` records and events, makes ADR 0030's
   tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed); its runs
   cannot be resumed or abandoned (exit 2) (AGH-223).
+- A workflow node of type `include` copies in another workflow of the same pack at load: its nodes become
+  `<include id>__<id>`, `with:` fills its `inputs`, the include's `depends_on`/`when`/`trigger_rule` go to the block's
+  roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels and 512 nodes, no
+  cycles. A block's prompt files read its own inputs and nodes. Fixtures stub the namespaced ids (AGH-228).
+- A `loop_group` node repeats a body of nodes until its `until_when` holds or its `until_bash` exits 0, at most
+  `max_iterations` times; body steps are recorded as `<group>__<id>`, `$LOOP_PREV.<id>.output` reads the previous
+  iteration, and `$<group>.output.<id>` reads the last one (AGH-228).
+- The workflow engine runs a layer's nodes concurrently (at most 4 attempts at once in a run), each recorded as it
+  ends; Ctrl-C stops the running children. A `mutates_checkout: false` node never shares a layer with one that may change the checkout, and fails
+  `config` when its attempt changes `git status` (AGH-228).
 - `hub init` and `hub sync` seed the built-in `issue-to-pr` pack into the hub once, byte for byte as shipped
   (`workflows/issue-to-pr/`: the workflow, its prompt and its fixtures), as a whole: never into a hub whose `hub.lock`
   already lists the pack or whose folder holds files of its own, so a later release never adds a file to the hub's
@@ -79,6 +104,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   record and its `step.end` event now carry the failure kind (`failure_kind`, e.g. `exec_failed`, `timeout`). The dry
   run is unchanged. The built-in `issue-to-pr` gains the input `start` (`verify` skips the session), runs its `hub step`
   nodes in process as `hub run` does, and keeps the gate output's last line break (AGH-224).
+- The chat composer grows with its text up to 40% of the window, keeps an unsent draft per session in the browser
+  (restored after a reload), has focus on open unless a permission waits, ignores Enter while an IME composes (and on
+  touch screens Enter is a new line); a message shows "Sending…" at once, and "Queued: Claude reads it after this
+  turn" when sent during a running turn (AGH-239).
+- Chat tool cards read running, waiting for you, done, error or denied (icon and text), with a call's permission card
+  right under it; output over 10,000 characters is cut with "Show all (N characters)", consecutive calls group as
+  "Explored · 3 Read, 2 Grep" (open while one waits for you or failed), and thinking reads "Thought for N s" (AGH-240).
+- Chat messages show when they were written ("3 min ago", the full date and time on hover) and a Copy button for
+  their raw Markdown, on hover or focus (always on touch screens); Markdown code blocks show their language and a Copy
+  button, and wide tables scroll sideways in their own region (AGH-241).
 - A hub's `make check` also runs `./hub workflow test`, the workflow packs' fixtures, after `hub doctor` and before the
   hub's own tests (AGH-227).
 
