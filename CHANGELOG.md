@@ -34,6 +34,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   composer stay on screen and only the transcript scrolls. It opens at the latest message, or at the oldest permission
   still waiting, follows the reply while you are at the bottom, stops when you scroll up, and offers "Jump to latest ·
   N new" (or End); Send brings you back to the bottom (AGH-237).
+- The chat streams smoothly: replies render once per frame with a caret, long transcripts open fast, a "Claude is
+  working · <tool>" row shows while a turn runs, Stop works while a permission waits, Esc in the empty composer stops
+  the turn, and "Turn interrupted" follows its result (AGH-238).
 
 ### Fixed
 
