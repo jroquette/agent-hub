@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -214,6 +214,35 @@ describe("WorkflowDetailScreen", () => {
     const panel = await screen.findByRole("complementary", { name: "Node docs" });
     await user.click(within(panel).getByRole("button", { name: "Close" }));
     expect(row).toHaveFocus();
+  });
+
+  it("observes each node so a node that reflows redraws the edges", async () => {
+    const observed: Element[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe = (el: Element) => observed.push(el);
+        disconnect = vi.fn();
+      },
+    );
+    renderDetail();
+
+    await screen.findByRole("group", { name: "Workflow graph" });
+    const ids = observed.map((el) => el.getAttribute("data-node-id")).filter(Boolean);
+    expect(ids.sort()).toEqual(["build", "docs", "plan", "review"]);
+  });
+
+  it("gives focus to the node when nothing held focus as the panel opened", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    // A mouse click in Safari leaves focus on the body.
+    const docs = await screen.findByRole("button", { name: /docs.*script/ });
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.click(docs);
+    const panel = await screen.findByRole("complementary", { name: "Node docs" });
+    await user.click(within(panel).getByRole("button", { name: "Close" }));
+    expect(screen.getByRole("button", { name: /docs.*script/ })).toHaveFocus();
   });
 
   it("leaves focus alone when a node is opened by the URL", async () => {
