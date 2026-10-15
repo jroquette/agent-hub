@@ -38,7 +38,7 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 | `shell` | `command` (argv list), `cwd`, `env` | runs the program, never through a shell; exit 0 passes |
 | `script` | `runtime` (`sh` or `python`), `script`, `args`, `cwd`, `env` | `sh <file>` or `uv run <file>`; exit 0 passes |
 | `loop` | the `agent` keys, `max_iterations`, `until`, `until_field`, `until_bash`, `fresh_context` | repeats one agent turn until done |
-| `loop_group` | `nodes`, `max_iterations`, `until_bash`, `until_when` | repeats a body sub-graph until done |
+| `loop_group` | `nodes`, `max_iterations`, `until_bash`, `until_when`, `fresh_context` | repeats a body sub-graph until done |
 | `approval` | `message`, `decisions`, `capture_response` | pauses the run for a human decision |
 | `wait` | one of `duration`, `until`, `attention` (with `options`) | pauses the run until its condition holds |
 | `halt` | `reason` | ends the run `cancelled`; nodes not yet run never run |
@@ -56,29 +56,29 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 - `loop`: `max_iterations` (1–50) and at least one channel: `until` (text the final line equals), `until_field` (a
   `required` boolean of its `output_format`), `until_bash` (argv; exit 0 is done). `fresh_context: false` (default)
   resumes the previous iteration's session. The output is the last iteration's; past the cap it fails `max_iterations`.
-- `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's
-  body outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first). The output maps body id → output.
+- `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's body
+  outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first); the output maps body id → output.
 - `approval`: `decisions` `{id, label}` (kebab-case; default `approve`, `reject`); output `{decision}` (+ `text` with
   `capture_response`). Rework: a `loop_group` reading the decision; an unread default `reject` ends the run `cancelled`.
 - `wait`: `duration`, `until` (ISO-8601 with offset, or a whole reference) or `attention` (text, or an `options` id),
   ≤ 7d; output `{at}`, `{text}` or `{choice, text}`. A timed wait ends on a resume past its time; earlier, it re-pauses.
-- `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with`. `with` fills the
-  included `inputs` (checked as at run start) and replaces `$INPUTS.<name>` there. Nodes, and references to them,
-  become `<include id>__<id>`; roots inherit the include's graph keys; dependants wait for the primary sink (`returns`,
-  else the single sink), read as `$<include id>.output`. Depth ≤ 3, no cycles; planning checks run after expansion.
+- `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with`, naming a flow of
+  its pack; `with` fills its `inputs` (`$INPUTS.<name>`; in a `when:`, a reference). Nodes become `<include id>__<id>`;
+  roots take its graph keys (`when:` as `A && B`, never `||`); depending on it waits on every sink, `$<include>.output`
+  reads `returns` or the single sink. A block, prompt files too, reads only its own scope; ≤ 3 levels, ≤ 512 nodes.
 
 ### Running: joins, conditions, outputs, status, retry and events
 
 Kahn layers over `depends_on`, in declaration order inside a layer. A cycle, an unknown id, a reference to a node not
-upstream, or a bad `returns` or `outcome_field` is a load error. Layers run in order, in v1 one node at a time; a
-failure does not stop later layers. A node first checks its `trigger_rule` against its dependencies: `all_success`
-(default: every one completed), `one_success` (at least one), `none_failed_min_one_success` (none failed, at least one
-completed) or `all_done` (every one ended). Then `when:`: `atom (('&&' | '||') atom)*`, `&&` binding tighter, no
-parentheses or negation; an atom is `<ref> <op> <literal>` (op `==`, `!=`, `<`, `>`, `<=`, `>=`; literal `'text'`, a
-number, `true`, `false`). A numeric literal compares numerically (a non-numeric value is a parse failure); other
-literals compare canonical text with `==`, `!=`. A skipped producer reads as empty text; a failed one fails the node.
-A node that does not run is skipped with a `skip_cause`: `upstream_failed` or `upstream_skipped` (`reason` names the
-origin node, carried down the chain), `condition`, `condition_parse_error`, or `prior_success` (reused on resume).
+upstream, or a bad `returns` or `outcome_field` is a load error. Layers run in order, a layer's nodes concurrently (≤ 4
+at once); a failure does not stop later layers. A node first checks its `trigger_rule` against its dependencies:
+`all_success` (default: every one completed), `one_success` (at least one), `none_failed_min_one_success` (none failed,
+at least one completed) or `all_done` (every one ended). Then `when:`: `atom (('&&' | '||') atom)*`, `&&` binding
+tighter, no parentheses or negation; an atom is `<ref> <op> <literal>` (op `==`, `!=`, `<`, `>`, `<=`, `>=`; literal
+`'text'`, a number, `true`, `false`). A numeric literal compares numerically (a non-numeric value is a parse failure);
+other literals compare canonical text with `==`, `!=`. A skipped producer reads as empty text; a failed one fails the
+node. A node that does not run is skipped with a `skip_cause`: `upstream_failed` or `upstream_skipped` (`reason` names
+the origin node, carried down the chain), `condition`, `condition_parse_error`, or `prior_success` (reused on resume).
 
 References are `$INPUTS.<name>`, `$<node>.output`, `$<node>.output.<path>` (dot segments, `.0` for an array item; a
 path needs the producer's `output_format`), `$LOOP_PREV…` and `$WITH.<name>`, in prompts, `command`, `args`, `cwd`,
@@ -147,4 +147,4 @@ out, fails the test, except an approval or wait with no stub: it pauses the run 
 
 ## Open questions
 
-- UI edits beside git; concurrent layers (`mutates_checkout`); the `content_hash` framing; the reference regex.
+- UI edits beside git; the `content_hash` framing; the reference regex.

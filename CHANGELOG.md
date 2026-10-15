@@ -17,12 +17,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   the strict loader, or JSON), then the built-ins, against the graph workflow format (ADR 0032): unknown keys, unknown
   or non-upstream node references, argv references that are not a whole element, cycles and a bad
   `returns`/`outcome_field` are reported as `<file>:<line>: <key>: <message>`, exit 1 (AGH-218).
-- `hub workflow run NAME --input name=value` prints the nodes a run would start; with `--live` it runs them: agent
-  nodes as `claude -p` in the hub with its settings and plugin, shell and script nodes as programs without a shell,
-  each child with a scoped environment (none gets `LINEAR_API_KEY`). The run is recorded under
-  `.agent-runs/workflows/<run>/` with a snapshot of its document, prompts and scripts, and its events go to the
-  event database. `--resume RUN` continues a failed run on its snapshot, reusing what completed; `--abandon RUN` ends
-  it cancelled. It makes no tracker write (AGH-221).
 - `hub workflow test [NAME]` dry-runs each pack's `fixtures/*.yaml` through the workflow engine with stubbed node
   results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
   `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
@@ -35,6 +29,22 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   cancels the run unless a `when:` reads the decision. An `until` is at most 7 days ahead; a timed wait ends on a
   resume past its time. `hub workflow test` stubs gates with `{decision, text}`, `{text}`, `{choice}` or `{}`; without
   a stub the run pauses (`expect.status: paused`) (AGH-230).
+- `hub workflow run NAME --input name=value` prints the nodes a run would start; with `--live` it runs them: agent
+  nodes as `claude -p` in the hub with its settings and plugin, shell and script nodes as programs without a shell,
+  each child with a scoped environment (none gets `LINEAR_API_KEY`). The run is recorded under
+  `.agent-runs/workflows/<run>/` with a snapshot of its document, prompts and scripts, and its events go to the
+  event database. `--resume RUN` continues a failed run on its snapshot, reusing what completed; `--abandon RUN` ends
+  it cancelled. It makes no tracker write (AGH-221).
+- A workflow node of type `include` copies in another workflow of the same pack at load: its nodes become
+  `<include id>__<id>`, `with:` fills its `inputs`, the include's `depends_on`/`when`/`trigger_rule` go to the block's
+  roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels and 512 nodes, no
+  cycles. A block's prompt files read its own inputs and nodes. Fixtures stub the namespaced ids (AGH-228).
+- A `loop_group` node repeats a body of nodes until its `until_when` holds or its `until_bash` exits 0, at most
+  `max_iterations` times; body steps are recorded as `<group>__<id>`, `$LOOP_PREV.<id>.output` reads the previous
+  iteration, and `$<group>.output.<id>` reads the last one (AGH-228).
+- The workflow engine runs a layer's nodes concurrently (at most 4 attempts at once in a run), each recorded as it
+  ends; Ctrl-C stops the running children. A `mutates_checkout: false` node never shares a layer with one that may change the checkout, and fails
+  `config` when its attempt changes `git status` (AGH-228).
 
 ### Fixed
 

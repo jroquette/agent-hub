@@ -26,6 +26,8 @@ from agent_hub.core.workflows.dry_run import PLACEHOLDER_TEXT, Stub, dry_run, sk
 from agent_hub.core.workflows.engine import WorkflowEngineError
 from agent_hub.core.workflows.nodes import (
     READ_ONLY,
+    HaltNode,
+    LoopGroupNode,
     Text,
     WorkflowObject,
     empty,
@@ -104,7 +106,7 @@ def run_fixture(plan: WorkflowPlan, fixture: Fixture, *, outputs: OutputValidato
         return FixtureResult(
             (f"workflow: the fixture is for {echo(fixture.workflow)}, not {echo(name)}",)
         )
-    ids = {node.id for node in plan.document.nodes}
+    ids = {node.id for node in plan.all_nodes()}
     if unknown := [node for node in fixture.stubs if node not in ids]:
         return FixtureResult(tuple(f"stubs: no node has the id {echo(node)}" for node in unknown))
     try:
@@ -134,7 +136,9 @@ def skeleton_fixture(plan: WorkflowPlan, *, outputs: OutputValidator) -> dict[st
         if spec.required
     }
     stubs: dict[str, JsonValue] = {
-        node.id: skeleton_stub(node) for node in document.nodes if node.type != "halt"
+        node.id: skeleton_stub(node)
+        for node in plan.all_nodes()
+        if not isinstance(node, HaltNode | LoopGroupNode)
     }
     parsed = {node: Stub.model_validate(stub) for node, stub in stubs.items()}
     report = dry_run(plan, inputs, parsed, outputs=outputs)
