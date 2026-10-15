@@ -16,13 +16,11 @@ import { cx } from "../../lib/cx";
 import { JumpToLatest } from "./JumpToLatest";
 import { RequestCard, type PermissionAnswer } from "./PermissionCard";
 import { StoredCopyLabel } from "./SessionStatus";
-import { ToolCallCard } from "./ToolCallCard";
 import { ToolGroup, type GroupItem } from "./ToolGroup";
 import {
   pendingPermissions,
   type NoticeTone,
   type PermissionView,
-  type ToolView,
   type TranscriptEntry,
   type TranscriptState,
 } from "./transcript";
@@ -55,17 +53,17 @@ function attachedRequests(entries: readonly TranscriptEntry[]): Set<string> {
 
 type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
 type Row =
-  { kind: "entry"; entry: TranscriptEntry } | { kind: "group"; key: string; entries: ToolEntry[] };
+  { kind: "entry"; entry: TranscriptEntry } | { kind: "run"; key: string; entries: ToolEntry[] };
 
 /** What the log shows: attached cards leave their place, and consecutive tool calls with no
- * text between them become one group (AC-234.24). */
+ * text between them become one run, keyed by its first call so it keeps its node as it grows
+ * (AC-234.24). */
 function rowsOf(entries: readonly TranscriptEntry[], attached: Set<string>): Row[] {
   const rows: Row[] = [];
   let run: ToolEntry[] = [];
   const flush = () => {
     const [first] = run;
-    if (first && run.length > 1) rows.push({ kind: "group", key: `g-${first.key}`, entries: run });
-    else if (first) rows.push({ kind: "entry", entry: first });
+    if (first) rows.push({ kind: "run", key: first.key, entries: run });
     run = [];
   };
   for (const entry of entries) {
@@ -81,17 +79,27 @@ function rowsOf(entries: readonly TranscriptEntry[], attached: Set<string>): Row
   return rows;
 }
 
+/** A tool call, or a permission card shown under one: part of a run. */
+function inRun(entry: TranscriptEntry | undefined, attached: Set<string>): boolean {
+  return entry?.kind === "tool" || (entry?.kind === "permission" && attached.has(entry.requestId));
+}
+
 function firstShown(state: TranscriptState): number {
+  const { entries } = state;
   const oldest = pendingPermissions(state)[0];
-  const attached = oldest !== undefined && attachedRequests(state.entries).has(oldest);
+  const calls = attachedRequests(entries);
+  const attached = oldest !== undefined && calls.has(oldest);
   // An attached card shows with its tool call, so the first render starts there.
-  const card = state.entries.findIndex((entry) =>
+  const card = entries.findIndex((entry) =>
     attached
       ? entry.kind === "tool" && entry.toolId === oldest
       : entry.kind === "permission" && entry.requestId === oldest,
   );
-  const tail = state.entries.length - FIRST_ENTRIES;
-  return Math.max(0, card >= 0 ? Math.min(card, tail) : tail);
+  const tail = entries.length - FIRST_ENTRIES;
+  let first = Math.max(0, card >= 0 ? Math.min(card, tail) : tail);
+  // Never inside a run: the earlier entries would give it another first call, so another key.
+  while (first > 0 && inRun(entries[first], calls) && inRun(entries[first - 1], calls)) first -= 1;
+  return first;
 }
 
 /** The tool a running turn waits on: the latest call without a result. */
@@ -128,11 +136,7 @@ function AssistantText({ entry }: { entry: AssistantEntry }) {
 
 interface EntryProps {
   entry: TranscriptEntry;
-  /** Only what this entry shows, so a delta elsewhere leaves its props equal (memo). A tool
-   * call's `request` is the permission asked for it, shown under its card. */
-  tool?: ToolView | undefined;
-  tools?: TranscriptState["tools"] | undefined;
-  calls?: TranscriptState["children"] | undefined;
+  /** Only what this entry shows, so a delta elsewhere leaves its props equal (memo). */
   request?: PermissionView | undefined;
   onAnswerPermission: TranscriptProps["onAnswerPermission"];
 }
@@ -157,7 +161,7 @@ function UserMessage({
   );
 }
 
-function EntryBody({ entry, tool, tools, calls, request, onAnswerPermission }: EntryProps) {
+function EntryBody({ entry, request, onAnswerPermission }: EntryProps) {
   switch (entry.kind) {
     case "user":
       return (
@@ -181,12 +185,8 @@ function EntryBody({ entry, tool, tools, calls, request, onAnswerPermission }: E
         </details>
       );
     case "tool":
-      return tool && tools && calls ? (
-        <>
-          <ToolCallCard tool={tool} tools={tools} calls={calls} request={request} />
-          {request && <RequestCard request={request} onAnswerPermission={onAnswerPermission} />}
-        </>
-      ) : null;
+      // A call shows in its run (ToolGroup).
+      return null;
     case "permission":
       return request ? (
         <RequestCard request={request} onAnswerPermission={onAnswerPermission} />
@@ -304,13 +304,13 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
             <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
           )}
           {rowsOf(state.entries.slice(start), attached).map((row) => {
-            if (row.kind === "group") {
+            if (row.kind === "run") {
               const items = row.entries.flatMap(({ toolId }): GroupItem[] => {
                 const tool = state.tools[toolId];
                 return tool ? [{ tool, request: attachedTo(toolId) }] : [];
               });
               return (
-                <div key={row.key} className="as-entry">
+                <div key={row.key} className="as-entry as-settled">
                   <ToolGroup
                     items={items}
                     tools={state.tools}
@@ -325,12 +325,6 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
               <Entry
                 key={entry.key}
                 entry={entry}
-                {...(entry.kind === "tool" && {
-                  tool: state.tools[entry.toolId],
-                  tools: state.tools,
-                  calls: state.children,
-                  request: attachedTo(entry.toolId),
-                })}
                 {...(entry.kind === "permission" && {
                   request: state.permissions[entry.requestId],
                 })}

@@ -1,6 +1,7 @@
 import { memo, useId, useState } from "react";
 
 import { Icon } from "../../components";
+import { cx } from "../../lib/cx";
 import { RequestCard, type AnswerPermission } from "./PermissionCard";
 import { ToolCallCard } from "./ToolCallCard";
 import { toolState, type PermissionView, type ToolView, type TranscriptState } from "./transcript";
@@ -26,41 +27,58 @@ export function groupSummary(tools: readonly ToolView[]): string {
   return `Explored · ${parts.join(", ")}`;
 }
 
-/** Consecutive tool calls with no text between them, as one disclosure (AC-234.24): it opens when
- * a call waits for you or fails, starts collapsed otherwise, and only the reader closes it. */
+/** Consecutive tool calls with no text between them (AC-234.24). One call shows as its card; two
+ * or more as one disclosure that opens when a call waits for you or fails, starts collapsed
+ * otherwise, and only the reader closes. A run keeps this one component as it grows, so its
+ * cards keep their state and focus; a call the reader worked with keeps its run open. */
 function ToolGroupView({ items, tools, calls, onAnswerPermission }: ToolGroupProps) {
   const listId = useId();
+  const many = items.length > 1;
   const needsYou = items.some((item) => {
     const state = toolState(item.tool, item.request);
     return state === "waiting" || state === "error";
   });
-  // Opens by itself when a call starts to need you, never closes by itself: after the answer the
-  // outcome and the focus stay until the reader closes the group.
   const [open, setOpen] = useState(needsYou);
   const [neededYou, setNeededYou] = useState(needsYou);
   if (neededYou !== needsYou) {
     setNeededYou(needsYou);
     if (needsYou) setOpen(true);
   }
+  const shown = open || !many;
   return (
-    <div className="as-tool-group">
-      <button
-        type="button"
-        className="as-tool-group-head"
-        aria-expanded={open}
-        aria-controls={open ? listId : undefined}
-        onClick={() => {
-          setOpen(!open);
-        }}
-      >
-        <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
-        <Icon name="layers" size="sm" />
-        {groupSummary(items.map((item) => item.tool))}
-      </button>
-      {open && (
-        <ul id={listId} className="as-tool-group-list">
+    <div
+      className={cx("as-tool-run", many && "as-tool-group")}
+      onFocus={
+        many
+          ? undefined
+          : () => {
+              setOpen(true);
+            }
+      }
+    >
+      {many && (
+        <button
+          type="button"
+          className="as-tool-group-head"
+          aria-expanded={open}
+          aria-controls={open ? listId : undefined}
+          onClick={() => {
+            setOpen(!open);
+          }}
+        >
+          <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
+          <Icon name="layers" size="sm" />
+          {groupSummary(items.map((item) => item.tool))}
+        </button>
+      )}
+      {shown && (
+        <ul
+          id={listId}
+          className={cx("as-tool-run-list", many && "as-tool-group-list")}
+          role={many ? undefined : "presentation"}
+        >
           {items.map(({ tool, request }) => (
-            <li key={tool.id}>
+            <li key={tool.id} role={many ? undefined : "presentation"}>
               <ToolCallCard tool={tool} tools={tools} calls={calls} request={request} />
               {request && <RequestCard request={request} onAnswerPermission={onAnswerPermission} />}
             </li>
