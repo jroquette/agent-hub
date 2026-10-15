@@ -52,6 +52,8 @@ interface Box {
 
 export interface WorkflowGraphProps<N extends GraphNode> {
   layers: N[][];
+  /** The graph's accessible name (default "Workflow graph"). */
+  label?: string | undefined;
   selected: string | null;
   onSelect: (id: string) => void;
   /** A line under the node's type (a run's state); also a column of the list view. */
@@ -64,6 +66,7 @@ export interface WorkflowGraphProps<N extends GraphNode> {
 
 function GraphCanvas<N extends GraphNode>({
   layers,
+  label = "Workflow graph",
   selected,
   onSelect,
   detail,
@@ -104,7 +107,7 @@ function GraphCanvas<N extends GraphNode>({
     <div
       ref={ref}
       role="group"
-      aria-label="Workflow graph"
+      aria-label={label}
       style={{ position: "relative", display: "flex", gap: 48, overflowX: "auto", padding: 4 }}
     >
       <svg
