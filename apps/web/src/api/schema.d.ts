@@ -1118,6 +1118,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/workflows": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Workflows
+     * @description The workflows of every (or one) project, and the files that do not load.
+     */
+    get: operations["list_workflows_api_v1_workflows_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/workflows/{project}/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Workflow
+     * @description One workflow: its document and its layers.
+     */
+    get: operations["get_workflow_api_v1_workflows__project___name__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2037,7 +2077,7 @@ export interface components {
       decision?: components["schemas"]["HookDecision"] | null;
       /** Hook */
       hook: {
-        [key: string]: components["schemas"]["JsonValue"];
+        [key: string]: components["schemas"]["JsonValue-Input"];
       };
       /** Project */
       project: string;
@@ -2157,7 +2197,7 @@ export interface components {
      * @enum {string}
      */
     ItemKind: "skill" | "agent" | "hook";
-    JsonValue: unknown;
+    "JsonValue-Input": unknown;
     /**
      * Learning
      * @description A learning; ``text`` is its title (120 characters at most, redacted).
@@ -2432,7 +2472,7 @@ export interface components {
       at: components["schemas"]["ApiTimestamp"];
       /** Body */
       body: {
-        [key: string]: components["schemas"]["JsonValue"];
+        [key: string]: components["schemas"]["pydantic__types__JsonValue"];
       };
       by?: components["schemas"]["RecordBy"] | null;
       kind: components["schemas"]["RecordKind"];
@@ -2513,7 +2553,7 @@ export interface components {
       deadline_at: components["schemas"]["ApiTimestamp"];
       /** Input */
       input?: {
-        [key: string]: components["schemas"]["JsonValue"];
+        [key: string]: components["schemas"]["pydantic__types__JsonValue"];
       } | null;
       /** Request Id */
       request_id: string;
@@ -2728,7 +2768,7 @@ export interface components {
       destination: string;
       /** Index */
       index: number;
-      rule: components["schemas"]["JsonValue"];
+      rule: components["schemas"]["pydantic__types__JsonValue"];
     };
     /**
      * Problem
@@ -3805,7 +3845,7 @@ export interface components {
       merged_sources: components["schemas"]["EventSource"][];
       /** Payload */
       payload: {
-        [key: string]: components["schemas"]["JsonValue"];
+        [key: string]: components["schemas"]["pydantic__types__JsonValue"];
       };
       /** Project */
       project: string;
@@ -3967,6 +4007,75 @@ export interface components {
       warnings: string[];
     };
     /**
+     * WorkflowCatalogView
+     * @description The workflows that load, by project then name, and every problem found.
+     */
+    WorkflowCatalogView: {
+      /** Items */
+      items: components["schemas"]["WorkflowSummary"][];
+      /** Problems */
+      problems: components["schemas"]["WorkflowProblemView"][];
+    };
+    /**
+     * WorkflowDetail
+     * @description A workflow's layers (in run order, nodes in declaration order) and its document as
+     *     written (keys left out are not filled in).
+     */
+    WorkflowDetail: {
+      /** Description */
+      description: string | null;
+      /** Document */
+      document: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+      };
+      /** Layer Count */
+      layer_count: number;
+      /** Layers */
+      layers: components["schemas"]["WorkflowNodeView"][][];
+      /** Name */
+      name: string;
+      /** Node Count */
+      node_count: number;
+      /** Project */
+      project: string;
+      /** Revision */
+      revision: number;
+      source: components["schemas"]["WorkflowOrigin"];
+    };
+    /**
+     * WorkflowNodeView
+     * @description A node as the graph shows it: its id, type and the nodes it waits for.
+     */
+    WorkflowNodeView: {
+      /** Depends On */
+      depends_on: string[];
+      /** Description */
+      description?: string | null;
+      /** Id */
+      id: string;
+      /** Type */
+      type: string;
+    };
+    /** @enum {string} */
+    WorkflowOrigin: "hub" | "builtin";
+    /**
+     * WorkflowProblemView
+     * @description Why a file of a project's hub is not a workflow: ``file`` is hub-relative (a built-in's
+     *     starts ``<builtin>/``), ``line`` is 1-based when known, ``key`` is ``$`` for the file.
+     */
+    WorkflowProblemView: {
+      /** File */
+      file: string;
+      /** Key */
+      key: string;
+      /** Line */
+      line: number | null;
+      /** Message */
+      message: string;
+      /** Project */
+      project: string;
+    };
+    /**
      * WorkflowRun
      * @description A run folded from executor events (D9, D16): the first ``run.end`` wins, the highest
      *     ``n`` for an engine run. ``stage`` is issue-to-pr's machine (another workflow's live run is
@@ -4030,6 +4139,35 @@ export interface components {
       workflow: string;
     };
     WorkflowRunStatus: "running" | components["schemas"]["RunStatus"];
+    /**
+     * WorkflowSummary
+     * @description A workflow of a project's hub, and where it comes from (``source``).
+     */
+    WorkflowSummary: {
+      /** Description */
+      description: string | null;
+      /** Layer Count */
+      layer_count: number;
+      /** Name */
+      name: string;
+      /** Node Count */
+      node_count: number;
+      /** Project */
+      project: string;
+      /** Revision */
+      revision: number;
+      source: components["schemas"]["WorkflowOrigin"];
+    };
+    agent_hub__core__json_form__JsonValue:
+      | {
+          [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+        }
+      | components["schemas"]["agent_hub__core__json_form__JsonValue"][]
+      | string
+      | number
+      | boolean
+      | null;
+    pydantic__types__JsonValue: unknown;
   };
   responses: never;
   parameters: never;
@@ -6543,6 +6681,87 @@ export interface operations {
         };
         content: {
           "text/event-stream": string;
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  list_workflows_api_v1_workflows_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkflowCatalogView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_workflow_api_v1_workflows__project___name__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkflowDetail"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
