@@ -12,6 +12,7 @@ import fcntl
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -552,3 +553,175 @@ def test_leaves_no_run_folder_when_a_pack_file_is_over_the_cap(sample: SampleRun
     assert "scripts/report.sh is larger than" in result.stderr
     assert not run_path(sample).exists()
     assert sample.fakes.calls("claude") == []
+
+
+PASSING_FIXTURE = """\
+workflow: check
+stubs: {lint: {text: ok}, test: {text: ok}}
+expect: {status: done}
+reached: [lint, test]
+"""
+FAILING_FIXTURE = """\
+workflow: check
+stubs: {lint: {fail: exec_failed}}
+expect: {status: done}
+reached: [lint]
+"""
+
+
+def test_passes_and_exits_zero_when_every_fixture_matches_its_run(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/fixtures/green.yaml", PASSING_FIXTURE)
+
+    result = run(hub, "test")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "workflows/demo/fixtures/green.yaml: ok",
+        "1 fixture: 1 passed, 0 failed",
+    ]
+
+
+def test_reports_each_problem_and_exits_one_when_a_fixture_fails(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/fixtures/green.yaml", PASSING_FIXTURE)
+    write(hub, "workflows/demo/fixtures/red.yaml", FAILING_FIXTURE)
+
+    result = run(hub, "test")
+
+    assert result.exit_code == 1
+    assert result.stdout.splitlines() == [
+        "workflows/demo/fixtures/green.yaml: ok",
+        "workflows/demo/fixtures/red.yaml: FAILED",
+        "  status: expected done, got failed",
+        '  failed: expected [], got ["lint"]',
+        "2 fixtures: 1 passed, 1 failed",
+    ]
+
+
+def test_runs_only_the_named_workflow_fixtures_when_test_gets_a_name(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/fixtures/green.yaml", PASSING_FIXTURE)
+    write(hub, "workflows/demo/other.yaml", CHECK_YAML.replace("name: check", "name: other"))
+    write(hub, "workflows/demo/fixtures/x.yaml", FAILING_FIXTURE.replace("check", "other"))
+
+    result = run(hub, "test", "check")
+
+    assert result.exit_code == 0, result.output
+    assert "x.yaml" not in result.stdout
+
+
+def test_exits_one_when_the_named_workflow_has_no_fixture(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+
+    result = run(hub, "test", "check")
+
+    assert result.exit_code == 1
+    assert "no fixture for the workflow 'check'" in result.stderr
+
+
+def test_runs_nothing_and_exits_zero_when_no_pack_has_fixtures(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+
+    result = run(hub, "test")
+
+    assert (result.exit_code, result.stdout) == (0, "0 fixtures: 0 passed, 0 failed\n")
+
+
+def test_writes_a_passing_skeleton_when_stubs_init_names_a_workflow(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+
+    written = run(hub, "test", "check", "--stubs-init")
+    tested = run(hub, "test", "check")
+
+    assert written.exit_code == 0, written.output
+    assert written.stdout == "wrote workflows/demo/fixtures/check.yaml\n"
+    assert (
+        "stubs:\n  lint:\n    text: TODO\n"
+        in (hub / "workflows/demo/fixtures/check.yaml").read_text()
+    )
+    assert tested.exit_code == 0, tested.output
+
+
+def test_never_overwrites_the_file_when_stubs_init_finds_one(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    kept = write(hub, "workflows/demo/fixtures/check.yaml", PASSING_FIXTURE)
+
+    result = run(hub, "test", "check", "--stubs-init")
+
+    assert result.exit_code == 1
+    assert "already exists; it is not overwritten" in result.stderr
+    assert kept.read_text() == PASSING_FIXTURE
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (("--stubs-init",), "--stubs-init needs a workflow name"),
+        (("ghost", "--stubs-init"), "no workflow named"),
+    ],
+)
+def test_exits_one_when_stubs_init_has_no_workflow_to_write_for(
+    hub: Path, args: tuple[str, ...], message: str
+) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+
+    result = run(hub, "test", *args)
+
+    assert result.exit_code == 1
+    assert message in result.stderr
+
+
+def test_refuses_a_builtin_workflow_when_stubs_init_names_one(hub: Path, builtins: Path) -> None:
+    write(builtins, "shipped/check.yaml", CHECK_YAML)
+
+    result = run(hub, "test", "check", "--stubs-init")
+
+    assert result.exit_code == 1
+    assert "is a built-in workflow" in result.stderr
+    assert not (builtins / "shipped" / "fixtures").exists()
+
+
+def test_writes_nothing_outside_the_pack_when_its_fixtures_folder_is_a_link(
+    hub: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    outside = tmp_path_factory.mktemp("outside")
+    (hub / "workflows/demo/fixtures").symlink_to(outside, target_is_directory=True)
+
+    result = run(hub, "test", "check", "--stubs-init")
+
+    assert result.exit_code == 1
+    assert "workflows/demo/fixtures is a link; nothing is written" in result.stderr
+    assert list(outside.iterdir()) == []
+
+
+def test_says_how_the_skeleton_run_ended_when_it_does_not_end_done(hub: Path) -> None:
+    pattern = '    output_format: {type: string, pattern: "^ok$"}\n'
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML + pattern)
+
+    result = run(hub, "test", "check", "--stubs-init")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "wrote workflows/demo/fixtures/check.yaml",
+        "note: its own dry run ended failed; fill in the stubs the placeholders could not satisfy",
+    ]
+
+
+def test_spawns_no_child_and_records_nothing_when_fixtures_run(
+    hub: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("hub workflow test started a child process")
+
+    for module, name in [(subprocess, "Popen"), (os, "posix_spawn"), (os, "fork"), (os, "execv")]:
+        monkeypatch.setattr(module, name, refuse)
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/fixtures/green.yaml", PASSING_FIXTURE)
+
+    result = run(hub, "test")
+
+    assert result.exit_code == 0, result.output
+    assert not (hub / ".agent-runs").exists()
+    assert not (tmp_path / "xdg").exists()
