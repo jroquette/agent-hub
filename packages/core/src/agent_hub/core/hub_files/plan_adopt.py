@@ -60,6 +60,7 @@ from agent_hub.core.hub_files.plan_sync import (
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
+from agent_hub.core.hub_files.seed_units import held_units, is_held
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEntry, TreeSnapshot
 
 # The verbs a path is written with; ``RECORDED`` and ``MIGRATED`` paths are joined as they are.
@@ -185,11 +186,18 @@ def _difference(rendered: _Rendered, disk: TreeEntry) -> Listed | None:
 
 
 def _adopt_verdict(
-    rendered: _Rendered, entry: LockEntry | None, entries: Mapping[str, TreeEntry]
+    rendered: _Rendered,
+    entry: LockEntry | None,
+    entries: Mapping[str, TreeEntry],
+    *,
+    held: frozenset[str] = frozenset(),
 ) -> _AdoptVerdict:
-    verdict = _rendered_verdict(rendered, entry, entries)
+    verdict = _rendered_verdict(rendered, entry, entries, held=held)
     if entry is not None or isinstance(verdict, Verb):
         return verdict
+    if is_held(rendered.path, held) and rendered.path not in entries:
+        # A missing file of a seed unit the hub already has: neither created nor recorded.
+        return None
     # With no entry, sync's "nothing to do" is a managed path equal to its render or a seeded file
     # present: adopt joins it to the lock as it is.
     if verdict is None:
@@ -329,8 +337,9 @@ def plan_adopt(
         for each in items
         if any(ancestor in migrations for ancestor in _ancestors(each.path))
     }
+    held = held_units(rendered, entries, old)
     every: dict[str, _AdoptVerdict] = {
-        each.path: _adopt_verdict(each, old.get(each.path), entries)
+        each.path: _adopt_verdict(each, old.get(each.path), entries, held=held)
         for each in items
         if each.path not in under
     }

@@ -9,6 +9,7 @@ import {
 import {
   applySnapshot,
   initialTranscript,
+  keepSending,
   pendingPermissions,
   reduceTranscript,
   ruleLabel,
@@ -367,5 +368,109 @@ describe("reduceTranscript (stop)", () => {
     ]);
 
     expect(state.entries[0]).toMatchObject({ kind: "assistant", text: "Half a", streaming: false });
+  });
+});
+
+describe("reduceTranscript (sending-feedback)", () => {
+  const sending = (key: string, text: string): StreamItem => ({ type: "sending", key, text });
+  const accepted = (key: string, seq: number): StreamItem => ({ type: "accepted", key, seq });
+  const user = (seq: number, text = "Next") => record("user.message", { seq, body: { text } });
+  const users = (state: TranscriptState) =>
+    state.entries.flatMap((entry) => (entry.kind === "user" ? [[entry.text, entry.queued]] : []));
+
+  it("shows a sent message at once and swaps it for the echoed record of its seq", () => {
+    const shown = run([sending("a", "Hi"), sending("b", "Again"), accepted("a", 3)]);
+    expect(shown.sending).toEqual([
+      { key: "a", text: "Hi", seq: 3 },
+      { key: "b", text: "Again", seq: null },
+    ]);
+
+    const echoed = run([user(2, "Other"), user(3, "Hi")], shown);
+    expect(echoed.sending.map((send) => send.key)).toEqual(["b"]);
+  });
+
+  it("drops a sent message whose record arrived before the answer to its POST", () => {
+    const state = run([sending("a", "Hi"), user(3, "Hi"), accepted("a", 3)]);
+
+    expect(state.sending).toEqual([]);
+    expect(users(state)).toEqual([["Hi", false]]);
+  });
+
+  it("drops a sent message as soon as its record arrives, before the answer to its POST", () => {
+    const state = run([sending("a", "Hi"), user(3, "Hi")]);
+
+    expect(state.sending).toEqual([]);
+    expect(users(state)).toEqual([["Hi", false]]);
+    expect(run([accepted("a", 3)], state).sending).toEqual([]);
+  });
+
+  it("matches an unanswered record by text, oldest send first", () => {
+    const state = run([sending("a", "Hi"), sending("b", "Other"), sending("c", "Hi")]);
+
+    expect(run([user(3, "Hi")], state).sending.map((send) => send.key)).toEqual(["b", "c"]);
+    expect(run([user(3, "Else")], state).sending.map((send) => send.key)).toEqual(["a", "b", "c"]);
+  });
+
+  it("matches a record by its seq before its text", () => {
+    const state = run([sending("a", "Hi"), sending("b", "Hi"), accepted("b", 3)]);
+
+    expect(run([user(3, "Hi")], state).sending.map((send) => send.key)).toEqual(["a"]);
+  });
+
+  it("drops a sent message that failed", () => {
+    const state = run([sending("a", "Hi"), { type: "failed", key: "a" }]);
+
+    expect(state.sending).toEqual([]);
+  });
+
+  it("keeps the sent messages a reloaded log lacks", () => {
+    const previous = run([sending("a", "A"), sending("b", "B"), sending("c", "C")]);
+    const before = run([accepted("b", 5), accepted("c", 6)], previous);
+
+    const kept = keepSending(before, run([user(5, "B")]));
+    expect(kept.sending.map((send) => send.key)).toEqual(["a", "c"]);
+  });
+
+  it("keeps sent messages through a reset", () => {
+    const state = run([sending("a", "Hi"), { type: "reset", reset: { reason: "gone" } }]);
+
+    expect(state.sending).toHaveLength(1);
+  });
+
+  it("queues a message sent while a turn runs until that turn's result", () => {
+    const queued = run([user(1, "First"), user(2, "Second")]);
+    expect(users(queued)).toEqual([
+      ["First", false],
+      ["Second", true],
+    ]);
+
+    // Claude reads it in the next turn, which runs until its own result.
+    const next = run([record("result", { seq: 3 }), user(4, "Third")], queued);
+    expect(users(next)).toEqual([
+      ["First", false],
+      ["Second", false],
+      ["Third", true],
+    ]);
+    const done = run([record("result", { seq: 5 }), record("result", { seq: 6 }), user(7)], next);
+    expect(users(done).at(-1)).toEqual(["Next", false]);
+  });
+
+  it.each([
+    [
+      "an idle status",
+      (s: TranscriptState) => run([{ type: "status", status: { status: "idle" } }], s),
+    ],
+    [
+      "an idle snapshot",
+      (s: TranscriptState) => applySnapshot(s, anAgentSession({ status: "idle" })),
+    ],
+  ])("ends the turn on %s", (_, end) => {
+    const state = end(run([user(1), user(2)]));
+
+    expect(users(state)).toEqual([
+      ["Next", false],
+      ["Next", false],
+    ]);
+    expect(users(run([user(3)], state)).at(-1)).toEqual(["Next", false]);
   });
 });

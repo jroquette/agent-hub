@@ -21,6 +21,7 @@ import { SessionsListScreen } from "./screens/sessions-list";
 import { SettingsScreen } from "./screens/settings";
 import { SkillDetailScreen, SkillsPickerScreen, SkillsScreen } from "./screens/skills";
 import { WelcomeScreen } from "./screens/welcome";
+import { WorkflowDetailScreen, WorkflowsScreen } from "./screens/workflows";
 import { AppShell } from "./shell/AppShell";
 
 /**
@@ -35,7 +36,7 @@ export function HubGate() {
 
 /**
  * The Phase 2 routes (D20, spec 01 sitemap). Screens live in `src/screens/<name>/index.tsx`
- * and export `<Name>Screen`; hidden destinations (Metrics, Bench, Tracker, Workflows) fall to 404.
+ * and export `<Name>Screen`; hidden destinations (Metrics, Bench, Tracker) fall to 404.
  * A project's Brain is `projects/:project/brain/<note path>` (AGH-201 D3); its Skills are
  * `projects/:project/skills[/<kind>/<source>/<name>]` (AGH-164).
  */
@@ -68,6 +69,8 @@ export const appRoutes: RouteObject[] = [
           { path: "knowledge/:section", element: <KnowledgePhase3Screen /> },
           { path: "features", element: <FeaturesScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
+          { path: "workflows", element: <WorkflowsScreen /> },
+          { path: "workflows/:project/:name", element: <WorkflowDetailScreen /> },
           { path: "health", element: <HealthScreen /> },
           { path: "*", element: <NotFoundScreen /> },
         ],

@@ -1,7 +1,7 @@
 import type { Stage as ChipStage, Status } from "../../components";
 import { STAGES } from "../../components";
 import { toNumber } from "../../lib/format";
-import type { RunStep, Stage, WorkflowRun } from "./queries";
+import type { FailureKind, RunStep, SkipCause, Stage, WorkflowRun } from "./queries";
 
 /* View models of workflow runs, shared by the Runs list, Run detail and Project overview. */
 
@@ -111,4 +111,33 @@ export function finishedCosts(runs: readonly WorkflowRun[]): number[] {
 
 export function shortRunId(id: string): string {
   return id.replace(/-/g, "").slice(0, 8);
+}
+
+/** Why a node failed (ADR 0032 failure kinds), as the UI says it. */
+export const FAILURE_KIND_LABEL: Record<FailureKind, string> = {
+  transient: "Transient",
+  timeout: "Timeout",
+  rate_limited: "Rate limited",
+  overloaded: "Overloaded",
+  exec_failed: "Exit code",
+  output_contract: "Output contract",
+  max_iterations: "Max iterations",
+  unknown: "Unknown",
+  config: "Config",
+  auth: "Auth",
+  cancelled: "Cancelled",
+  fatal: "Fatal",
+};
+
+/** Why a node did not run. */
+export const SKIP_CAUSE_LABEL: Record<SkipCause, string> = {
+  upstream_failed: "upstream failed",
+  upstream_skipped: "upstream skipped",
+  condition: "condition false",
+  condition_parse_error: "condition unreadable",
+  prior_success: "done in an earlier attempt",
+};
+
+export function asFailureKind(value: string | null): FailureKind | null {
+  return value !== null && value in FAILURE_KIND_LABEL ? (value as FailureKind) : null;
 }

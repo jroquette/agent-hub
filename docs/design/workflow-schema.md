@@ -5,6 +5,7 @@
 The contract of agent-hub's workflow format and engine (Phase 4, [SPEC](../SPEC.md) direction 1): a graph of typed
 nodes run by `hub workflow run|test` and `hub run`. The reasons for this design are in
 [ADR 0032](../adr/0032-workflow-engine.md), superseding [ADR 0027](../adr/0027-workflow-format-and-minimum-engine.md).
+Finer engine rules: [workflow-engine-rules.md](workflow-engine-rules.md).
 
 ## Contract
 
@@ -38,7 +39,7 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 | `shell` | `command` (argv list), `cwd`, `env`, `stdin` | runs the program, never through a shell; exit 0 passes |
 | `script` | `runtime` (`sh` or `python`), `script`, `args`, `cwd`, `env`, `stdin` | `sh <file>` or `uv run <file>`; exit 0 passes |
 | `loop` | the `agent` keys, `max_iterations`, `until`, `until_field`, `until_bash`, `fresh_context` | repeats one agent turn until done |
-| `loop_group` | `nodes`, `max_iterations`, `until_bash`, `until_when` | repeats a body sub-graph until done |
+| `loop_group` | `nodes`, `max_iterations`, `until_bash`, `until_when`, `fresh_context` | repeats a body sub-graph until done |
 | `approval` | `message`, `decisions`, `capture_response` | pauses the run for a human decision |
 | `wait` | one of `duration`, `until`, `attention` (with `options`) | pauses the run until its condition holds |
 | `halt` | `reason` | ends the run `cancelled`; nodes not yet run never run |
@@ -56,29 +57,28 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 - `loop`: `max_iterations` (1–50) and at least one channel: `until` (text the final line equals), `until_field` (a
   `required` boolean of its `output_format`), `until_bash` (argv; exit 0 is done). `fresh_context: false` (default)
   resumes the previous iteration's session. The output is the last iteration's; past the cap it fails `max_iterations`.
-- `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's
-  body outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first). The output maps body id → output.
-- `approval`: `decisions` lists `{id, label}` (kebab-case; default `approve`, `reject`); the output is `{decision}`,
-  plus `text` with `capture_response: true`. Rework is a `loop_group` whose `until_when` reads the decision.
-- `wait`: `duration` (≤ 7d), `until` (ISO-8601 with offset, or a whole reference) or `attention` (a message answered
-  with text, or an option id given `options`); output `{at}`, `{text}` or `{choice, text}`; an early resume re-pauses.
-- `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with`. `with` fills the
-  included `inputs` (checked as at run start) and replaces `$INPUTS.<name>` there. Nodes, and references to them,
-  become `<include id>__<id>`; roots inherit the include's graph keys; dependants wait for the primary sink (`returns`,
-  else the single sink), read as `$<include id>.output`. Depth ≤ 3, no cycles; planning checks run after expansion.
+- `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's body
+  outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first); the output maps body id → output.
+- `approval`: `decisions` `{id, label}` (default `approve`, `reject`); output `{decision}` (+ `text` with
+  `capture_response`); rework is a `loop_group` reading it; an unread default `reject` cancels the run. Gates (and
+  groups holding one) are ordered; a body gate pauses its iteration. `wait`: `duration`, `until` (ISO-8601 + offset, or a
+  reference), `attention` (text, or an `options` id), ≤ 7d; output `{at}`, `{text}`, `{choice, text}`; ends on a resume.
+- `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with` and names a workflow
+  of its pack: `with` fills its `inputs`, its nodes become `<include id>__<id>`, its roots take the include's graph
+  keys, depending on it waits on every sink, and `$<include id>.output` reads `returns` or the single sink.
 
 ### Running: joins, conditions, outputs, status, retry and events
 
 Kahn layers over `depends_on`, in declaration order inside a layer. A cycle, an unknown id, a reference to a node not
-upstream, or a bad `returns` or `outcome_field` is a load error. Layers run in order, in v1 one node at a time; a
-failure does not stop later layers. A node first checks its `trigger_rule` against its dependencies: `all_success`
-(default: every one completed), `one_success` (at least one), `none_failed_min_one_success` (none failed, at least one
-completed) or `all_done` (every one ended). Then `when:`: `atom (('&&' | '||') atom)*`, `&&` binding tighter, no
-parentheses or negation; an atom is `<ref> <op> <literal>` (op `==`, `!=`, `<`, `>`, `<=`, `>=`; literal `'text'`, a
-number, `true`, `false`). A numeric literal compares numerically (a non-numeric value is a parse failure); other
-literals compare canonical text with `==`, `!=`. A skipped producer reads as empty text; a failed one fails the node.
-A node that does not run is skipped with a `skip_cause`: `upstream_failed` or `upstream_skipped` (`reason` names the
-origin node, carried down the chain), `condition`, `condition_parse_error`, or `prior_success` (reused on resume).
+upstream, or a bad `returns` or `outcome_field` is a load error. Layers run in order, a layer's nodes concurrently (≤ 4
+at once); a failure does not stop later layers. A node first checks its `trigger_rule` against its dependencies:
+`all_success` (default: every one completed), `one_success` (at least one), `none_failed_min_one_success` (none failed,
+at least one completed) or `all_done` (every one ended). Then `when:`: `atom (('&&' | '||') atom)*`, `&&` binding
+tighter, no parentheses or negation; an atom is `<ref> <op> <literal>` (op `==`, `!=`, `<`, `>`, `<=`, `>=`; literal
+`'text'`, a number, `true`, `false`). A numeric literal compares numerically (a non-numeric value is a parse failure);
+other literals compare canonical text with `==`, `!=`. A skipped producer reads as empty text; a failed one fails the
+node. A node that does not run is skipped with a `skip_cause`: `upstream_failed` or `upstream_skipped` (`reason` names
+the origin node, carried down the chain), `condition`, `condition_parse_error`, or `prior_success` (reused on resume).
 
 References are `$INPUTS.<name>`, `$<node>.output`, `$<node>.output.<path>` (dot segments, `.0` for an array item; a
 path needs the producer's `output_format`), `$LOOP_PREV…` and `$WITH.<name>`, in prompts, `command`, `args`, `cwd`,
@@ -106,10 +106,10 @@ recorded (`a__b`). `attempt` is per node and keeps counting across retries, iter
 `<run>:<step>:<attempt>:<type>` never repeats. Each attempt is one `step.start` (`attempt`, `revision`, `content_hash`)
 and one `step.end` (`attempt`, `status` `ok`, `failed` or `skipped`, `failure_kind`, `skip_cause`); a skipped node emits
 only `step.end`. `reason` holds only engine metadata (a kind, an origin node id): a halt's rendered `reason` stays in
-the record. `approval` and `wait` add `gate.request` (`gate_id` `<run>:<step>:<attempt>`, `kind` `approval` or `wait`);
-one decision per `gate_id` comes back as a `control_plane` `gate.result` (`result`, `approver`, `where`), and a second
-is refused. `run.end` (`source_id` `<run>:run:<n>:end`, n counting the run's ends from 0; the fold takes the highest n)
-carries `status`, `outcome`, `reason`, `revision` and `content_hash` (`sha256:` over the run's snapshot).
+the record. `approval` and `wait` add `gate.request` (`gate_id` `<run>:<step>:<attempt>`, `kind` `human_gate` if a
+person answers, else `wait`); one decision per `gate_id` comes back as a `control_plane` `gate.result` (`result`,
+`approver`, `where`), a second is refused. `run.end` (`source_id` `<run>:run:<n>:end`, n from 0; the fold takes the
+highest n) carries `status`, `outcome`, `reason`, `revision` and `content_hash` (`sha256:` of the snapshot).
 
 ### Dry run and fixtures
 
@@ -147,4 +147,4 @@ out, fails the test, except an approval or wait with no stub: it pauses the run 
 
 ## Open questions
 
-- UI edits beside git; concurrent layers (`mutates_checkout`); the `content_hash` framing; the reference regex.
+- UI edits beside git; the `content_hash` framing; the reference regex.

@@ -137,7 +137,7 @@
     "Makefile": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "45ef2fae5d02ab4224585b7792ed92440c3e5a44378efc57bc4fab1f991963a4"
+      "sha256": "8ad542f2ba897d61beaa23fa814f47f2a9c8a8bf7291ba41d1c5312a5e1f5577"
     },
     "Makefile.project": {
       "ownership": "seeded"
@@ -197,7 +197,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "76e60c796d156fd5f0cf32a1b3e0ac92fb652cea4334fdc94cf7241637e436d8"
+      "sha256": "902ca42e191428681c9b5f63489a8643752a64e5fcc6c8aaad6bacb242f7468b"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -445,6 +445,36 @@
       "executable": true,
       "ownership": "managed",
       "sha256": "fdac169d0ebd59302540f442f0592e39239ede6ca87fc367184c16806f9eff21"
+    },
+    "workflows/issue-to-pr/fixtures/blocked.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/issue-to-pr/fixtures/dirty.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/issue-to-pr/fixtures/done.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/issue-to-pr/fixtures/error.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/issue-to-pr/fixtures/from-verify.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/issue-to-pr/fixtures/gate-failure.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/issue-to-pr/fixtures/no-commit.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/issue-to-pr/fixtures/pr-failure.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/issue-to-pr/issue-to-pr.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/issue-to-pr/prompts/implement.md": {
+      "ownership": "seeded"
     }
   },
   "lock_version": 1,

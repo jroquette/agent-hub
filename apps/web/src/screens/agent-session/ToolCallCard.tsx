@@ -1,6 +1,6 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 
-import { Icon, JsonViewer, TOOL_ICON, type IconName } from "../../components";
+import { Button, Icon, JsonViewer, TOOL_ICON, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
 import { StoredCopyLabel } from "./SessionStatus";
 import {
@@ -9,9 +9,21 @@ import {
   toolSummary,
   asArray,
   asObject,
+  toolState,
+  type PermissionView,
   type ToolResultView,
+  type ToolState,
   type ToolView,
 } from "./transcript";
+
+/** Each state reads as an icon and a word, never colour alone (AC-234.24). */
+export const TOOL_STATE: Record<ToolState, { icon: IconName; text: string }> = {
+  running: { icon: "loader", text: "Running" },
+  waiting: { icon: "hand", text: "Waiting for you" },
+  done: { icon: "circle-check", text: "Done" },
+  error: { icon: "circle-x", text: "Error" },
+  denied: { icon: "shield-x", text: "Denied" },
+};
 
 /** A unified diff as text (`<pre>`), each line tinted by its sign. */
 export function DiffText({ diff, label }: { diff: string; label: string }) {
@@ -51,8 +63,35 @@ export function resultText(content: unknown): string | null {
   return texts.length > 0 ? texts.join("\n") : null;
 }
 
+/** Output shown before "Show all", in characters (plan: inputs, bounds and budget). */
+export const OUTPUT_SHOWN = 10_000;
+
+/** The first `max` characters of `text` and how many it has, or null when it has no more.
+ * Characters are code points, so an emoji counts once and is never cut in half. */
+export function cutText(text: string, max: number): { shown: string; total: number } | null {
+  if (text.length <= max) return null;
+  let total = 0;
+  let end = 0;
+  for (const char of text) {
+    if (total < max) end += char.length;
+    total += 1;
+  }
+  return total > max ? { shown: text.slice(0, end), total } : null;
+}
+
+/** A result as text: its text, or its JSON when that is too long for the JSON viewer. */
+function shownText(content: unknown): string | null {
+  const text = resultText(content);
+  if (text !== null) return text;
+  const json = JSON.stringify(content, null, 2) as string | undefined;
+  return json !== undefined && cutText(json, OUTPUT_SHOWN) ? json : null;
+}
+
 function ResultBody({ result }: { result: ToolResultView }) {
-  const text = resultText(result.content);
+  const text = useMemo(() => shownText(result.content), [result.content]);
+  const [all, setAll] = useState(false);
+  const pre = useRef<HTMLPreElement>(null);
+  const cut = useMemo(() => (text === null ? null : cutText(text, OUTPUT_SHOWN)), [text]);
   return (
     <div className="as-tool-section">
       <div className="as-tool-label">
@@ -61,11 +100,25 @@ function ResultBody({ result }: { result: ToolResultView }) {
       </div>
       {text !== null ? (
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        <pre className={cx("as-pre", result.isError && "as-pre-error")} tabIndex={0}>
-          {text}
+        <pre ref={pre} className={cx("as-pre", result.isError && "as-pre-error")} tabIndex={0}>
+          {cut && !all ? cut.shown : text}
         </pre>
       ) : (
         <JsonViewer value={result.content} maxHeight={240} />
+      )}
+      {cut && !all && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="as-show-all"
+          onClick={() => {
+            setAll(true);
+            // The button goes away: the keyboard stays on the output it opened.
+            pre.current?.focus({ preventScroll: true });
+          }}
+        >
+          Show all ({cut.total.toLocaleString("en-US")} characters)
+        </Button>
       )}
       {result.truncated && (
         <p className="ah-small ah-muted">
@@ -106,16 +159,28 @@ export interface ToolCallCardProps {
   /** Tool ids by the calling tool's id. */
   calls: Readonly<Record<string, readonly string[]>>;
   defaultOpen?: boolean | undefined;
+  /** The permission asked for this call, when one was. */
+  request?: PermissionView | undefined;
+  /** Every permission by request id (= the call's id): a subagent's call reads Waiting for you
+   * while its permission is open; its card stays where it arrived. */
+  requests?: Readonly<Record<string, PermissionView>> | undefined;
 }
 
 /** A collapsible tool call (D10): name, short input, status; input or diff and result on expand. */
-export function ToolCallCard({ tool, tools, calls, defaultOpen = false }: ToolCallCardProps) {
+export function ToolCallCard({
+  tool,
+  tools,
+  calls,
+  defaultOpen = false,
+  request,
+  requests,
+}: ToolCallCardProps) {
   const [open, setOpen] = useState(defaultOpen);
   const bodyId = useId();
   const summary = toolSummary(tool.input);
   const icon: IconName = TOOL_ICON[tool.name] ?? (tool.name.startsWith("mcp__") ? "plug" : "box");
-  const state = tool.result === null ? "running" : tool.result.isError ? "error" : "done";
-  const stateText = state === "running" ? "Running" : state === "error" ? "Error" : "Done";
+  const state = toolState(tool, request);
+  const { icon: stateIcon, text: stateText } = TOOL_STATE[state];
   const nested = (calls[tool.id] ?? []).flatMap((id) => {
     const child = tools[id];
     return child ? [child] : [];
@@ -137,7 +202,10 @@ export function ToolCallCard({ tool, tools, calls, defaultOpen = false }: ToolCa
         <span className="as-tool-name">{tool.name}</span>
         {summary && <span className="as-tool-summary ah-mono">{summary}</span>}
         <span className="ah-grow" />
-        <span className="as-tool-state ah-small">{stateText}</span>
+        <span className="as-tool-state ah-small">
+          <Icon name={stateIcon} size="sm" data-icon={stateIcon} />
+          {stateText}
+        </span>
       </button>
       {open && (
         <div id={bodyId} className="as-tool-body">
@@ -149,7 +217,13 @@ export function ToolCallCard({ tool, tools, calls, defaultOpen = false }: ToolCa
         <ul className="as-tool-nested" aria-label={`Calls made by ${tool.name}`}>
           {nested.map((child) => (
             <li key={child.id}>
-              <ToolCallCard tool={child} tools={tools} calls={calls} />
+              <ToolCallCard
+                tool={child}
+                tools={tools}
+                calls={calls}
+                request={requests?.[child.id]}
+                requests={requests}
+              />
             </li>
           ))}
         </ul>

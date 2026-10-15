@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -147,6 +147,152 @@ describe("Composer (composer)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not change the mode. Try again.",
     );
+  });
+
+  it.each([
+    [120, "120px", "hidden"],
+    [400, "400px", "hidden"],
+    [401, "400px", "auto"],
+  ])("grows to fit %i px of text, up to 40vh, then scrolls", async (content, height, overflow) => {
+    vi.stubGlobal("innerHeight", 1000);
+    const { box } = open();
+    // Only the composer's own box reports the content height.
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: () => content });
+
+    await userEvent.type(box, "a");
+
+    expect(box.style.height).toBe(height);
+    expect(box.style.overflowY).toBe(overflow);
+    vi.unstubAllGlobals();
+  });
+
+  it("measures the content height once per change", async () => {
+    vi.stubGlobal("innerHeight", 1000);
+    const { box } = open();
+    const measure = vi.fn(() => 120);
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: measure });
+
+    await userEvent.type(box, "a");
+
+    expect(measure).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("fits the box again when the window shrinks, and scrolls past the new cap", async () => {
+    vi.stubGlobal("innerHeight", 2000);
+    const { box } = open();
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: () => 500 });
+    await userEvent.type(box, "a");
+    expect([box.style.height, box.style.overflowY]).toEqual(["500px", "hidden"]);
+
+    vi.stubGlobal("innerHeight", 1000);
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    expect([box.style.height, box.style.overflowY]).toEqual(["400px", "auto"]);
+    vi.unstubAllGlobals();
+  });
+
+  it("restores the session's draft and clears it once the send is accepted", async () => {
+    window.localStorage.setItem("ah.chat.draft.s-1", JSON.stringify("Saved earlier"));
+    const { box, props } = open({ draftId: "s-1" });
+
+    expect(box).toHaveValue("Saved earlier");
+    await userEvent.type(box, "{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith("Saved earlier");
+    expect(box).toHaveValue("");
+    expect(window.localStorage.getItem("ah.chat.draft.s-1")).toBeNull();
+  });
+
+  it("keeps the saved draft when the send fails", async () => {
+    window.localStorage.setItem("ah.chat.draft.s-1", JSON.stringify("Try me"));
+    const { box } = open({ draftId: "s-1", onSend: vi.fn(() => Promise.reject(new Error("x"))) });
+
+    await userEvent.type(box, "{Enter}");
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(box).toHaveValue("Try me");
+    expect(window.localStorage.getItem("ah.chat.draft.s-1")).toBe(JSON.stringify("Try me"));
+    window.localStorage.clear();
+  });
+
+  it.each([
+    [true, true],
+    [false, false],
+  ])("takes focus on open without scrolling when asked (%s)", (focusOnOpen, focused) => {
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, "focus");
+    const { box } = open({ focusOnOpen });
+
+    expect(box === document.activeElement).toBe(focused);
+    if (focused) expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
+
+  it("keeps focus in the box after Send, without scrolling", async () => {
+    const { box } = open();
+    await userEvent.type(box, "Go");
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, "focus");
+
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(box).toHaveValue("");
+    expect(box).toHaveFocus();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
+
+  /** Presses Enter and lets a send that started reach `onSend`. */
+  const pressEnter = async (box: HTMLElement, init: object = {}) => {
+    await act(async () => {
+      fireEvent.keyDown(box, { key: "Enter", ...init });
+      await Promise.resolve();
+    });
+  };
+
+  it.each([
+    ["the key event says so", true],
+    ["only the composition events say so", false],
+  ])("never sends on Enter while an IME composes (%s)", async (_, isComposing) => {
+    const { box, props } = open();
+    fireEvent.change(box, { target: { value: "にほん" } });
+
+    if (!isComposing) fireEvent.compositionStart(box);
+
+    await pressEnter(box, { isComposing });
+
+    expect(props.onSend).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(box);
+  });
+
+  it.each([
+    [499, false],
+    [500, true],
+  ])("sends on Enter %i ms after the composition ends: %s", async (after, sends) => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(1000);
+    const { box, props } = open();
+    fireEvent.change(box, { target: { value: "日本" } });
+    fireEvent.compositionStart(box);
+    fireEvent.compositionEnd(box);
+
+    now.mockReturnValue(1000 + after);
+    await pressEnter(box);
+
+    expect(props.onSend).toHaveBeenCalledTimes(sends ? 1 : 0);
+    now.mockRestore();
+  });
+
+  it("keeps Enter as a new line under a coarse pointer; Send sends", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(pointer: coarse)" }));
+    const { box, props } = open();
+    await userEvent.type(box, "one{Enter}two");
+
+    expect(box).toHaveValue("one\ntwo");
+    expect(props.onSend).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(props.onSend).toHaveBeenCalledWith("one\ntwo");
+    vi.unstubAllGlobals();
   });
 
   it("has no serious violation (composer a11y)", async () => {

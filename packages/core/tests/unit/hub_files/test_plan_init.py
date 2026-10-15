@@ -53,6 +53,7 @@ CORE_MODULES = (
     "hub_files/plan_sync.py",
     "hub_files/plan_adopt.py",
     "hub_files/extension_inputs.py",
+    "hub_files/seed_units.py",
     "doctor/__init__.py",
     "doctor/finding.py",
     "doctor/snapshot.py",
@@ -656,3 +657,70 @@ def test_returns_every_problem_sorted_when_several_refused(
             PathProblem("scripts/run.sh", "symlinked ancestor scripts"),
         )
     )
+
+
+# AGH-227: init writes nothing into a workflow pack folder the target already holds.
+PACK = "workflows/demo"
+PACK_FILES = (f"{PACK}/demo.yaml", f"{PACK}/fixtures/done.yaml")
+
+
+def pack_file(path: str) -> RenderedFile:
+    return RenderedFile(
+        path=path,
+        content=b"pack\n",
+        executable=False,
+        kind=Kind.GENERIC,
+        ownership=Ownership.SEEDED,
+        module=None,
+    )
+
+
+def with_pack(a_rendered_hub: HubFactory) -> RenderedHub:
+    return a_rendered_hub(files=(*a_rendered_hub().files, *(pack_file(p) for p in PACK_FILES)))
+
+
+def test_writes_nothing_into_pack_when_target_holds_its_folder(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    custom = FileEntry(executable=False, content=None)
+    tree = folders("workflows", PACK) | {f"{PACK}/mine.yaml": custom}
+
+    plan = planned(with_pack(a_rendered_hub), config, a_tree(tree))
+
+    assert not [path for path in written_paths(plan) if path.startswith("workflows/")]
+    assert not [folder for folder in plan.folders if folder.startswith("workflows")]
+    assert not [path for path in plan.created_seeded if path.startswith("workflows/")]
+    assert plan.kept_seeded == ()
+
+
+def test_keeps_present_pack_file_when_target_holds_its_folder(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    own = FileEntry(executable=False, content=b"mine\n")
+    tree = folders("workflows", PACK) | {PACK_FILES[0]: own}
+
+    plan = planned(with_pack(a_rendered_hub), config, a_tree(tree))
+
+    assert plan.kept_seeded == (PACK_FILES[0],)
+    assert PACK_FILES[1] not in written_paths(plan)
+
+
+def test_completes_pack_when_an_interrupted_init_left_only_render_bytes(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    first = FileEntry(executable=False, content=b"pack\n")
+    tree = folders("workflows", PACK, f"{PACK}/fixtures") | {PACK_FILES[0]: first}
+
+    plan = planned(with_pack(a_rendered_hub), config, a_tree(tree))
+
+    assert PACK_FILES[1] in written_paths(plan)
+    assert plan.kept_seeded == (PACK_FILES[0],)
+
+
+def test_seeds_whole_pack_when_target_lacks_its_folder(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    plan = planned(with_pack(a_rendered_hub), config, a_tree())
+
+    assert set(PACK_FILES) <= set(plan.created_seeded)
+    assert set(PACK_FILES) <= set(written_paths(plan))

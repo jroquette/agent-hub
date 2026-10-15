@@ -1,6 +1,7 @@
 """Core's ``WorkflowSource`` over ``discover_workflows``: what ``hub workflow`` and hub web read.
 
-Each file the discovery read is a ``WorkflowFile`` with its origin (hub or built-in), each
+Each file the discovery read is a ``WorkflowFile`` with its origin (hub or built-in) and the
+resolver of the workflows it may include (its own pack's), each
 problem a ``LoadProblem`` keyed ``$``. A file is shown relative to the hub, a built-in's as
 ``<builtin>/<pack>/<file>``, so no absolute path of the installed package is shown.
 ``fingerprint`` lists the two roots stat-only (each entry's path, size and mtime, two levels
@@ -19,7 +20,9 @@ from agent_hub.generator.workflow_discovery import (
     HUB_WORKFLOWS,
     WORKFLOW_SUFFIXES,
     DiscoveredWorkflow,
+    WorkflowDiscovery,
     discover_workflows,
+    pack_resolver,
 )
 
 type Stat = tuple[str, int, int]
@@ -39,9 +42,11 @@ class DiscoveredWorkflowSource:
         self.builtin_root = builtin_root
         # Each workflow the last ``workflow_files`` yielded, by name: its path and pack root.
         self.found: dict[str, DiscoveredWorkflow] = {}
+        # The discovery the last ``workflow_files`` read: what its includes resolve against.
+        self.discovery = WorkflowDiscovery(workflows=(), overridden=(), problems=())
 
     def workflow_files(self) -> Iterator[WorkflowFile | LoadProblem]:
-        discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
+        self.discovery = discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
         for problem in discovery.problems:
             # A folder's problem (a linked workflows/, an unreadable pack, the file budget)
             # bears on every name; a file's only on its own.
@@ -54,7 +59,11 @@ class DiscoveredWorkflowSource:
             if self.only is None or found.name == self.only:
                 self.found[found.name] = found
                 shown = self._shown(found.path)
-                yield WorkflowFile(shown, found.name, found.document, found.lines, found.origin)
+                # An include resolves among the workflows of its own pack.
+                includes = pack_resolver(discovery, found.pack_root)
+                yield WorkflowFile(
+                    shown, found.name, found.document, found.lines, found.origin, includes
+                )
 
     def fingerprint(self) -> tuple[Stat, ...]:
         """Each entry of the hub's ``workflows/`` and the built-ins, packs included."""
