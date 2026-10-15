@@ -16,6 +16,7 @@ from agent_hub.core.runner.session_prompt import (
     gate_tools,
     implementing_argv,
     implementing_prompt,
+    prompt_parts,
 )
 from agent_hub.core.testing.builders import an_issue
 from agent_hub.core.tracker.tracker_client import Issue
@@ -399,3 +400,19 @@ def test_fits_argument_limit_when_commit_title_at_cap() -> None:
 
     assert f"`{pattern}`" in prompt
     assert len(prompt.encode()) < MAX_ARGUMENT_BYTES
+
+
+def test_gives_texts_prompt_holds_when_parts_built() -> None:
+    parts = prompt_parts(
+        sensitive=("hub.json",),
+        fast_gate=None,
+        full_gate="make check",
+        issue_id="DEM-1",
+        prefix="DEM-",
+    )
+    prompt = " ".join(prompt_for(an_issue(), sensitive=("hub.json",)).split())
+
+    assert parts["guard"] == "touches a file matching hub.json (needs an approved plan) or "
+    assert parts["gate_step"].startswith("This repo has no fast gate: run its full gate")
+    assert parts["commit_shape"] in prompt
+    assert " ".join(parts["guard"].split()) in prompt

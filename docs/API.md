@@ -29,8 +29,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=…`, and the one AGH-136 added
   (`TICKET_PATHS`): `GET /features/{project}/{slug}/tickets` ([Feature tickets](#feature-tickets)), and the three
   AGH-164 added (`SKILL_PATHS`, all GET): `/projects/{project}/skills`, `/projects/{project}/skills/{kind}/{source}/{name}`
-  and `/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` ([Skills](#skills)). A test fails on
-  any other path.
+  and `/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` ([Skills](#skills)), and the two AGH-225
+  added (`WORKFLOW_PATHS`, both GET): `/workflows` and `/workflows/{project}/{name}` ([Workflows](#workflows)). A test
+  fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -131,6 +132,20 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
   of a resource, `DELETE` removes it. The only writes are registering and removing a hub, posting hook envelopes,
   since AGH-201 the two learning decisions, and since AGH-165 the agent-session commands.
 
+## Sessions
+
+`GET /api/v1/sessions` and `GET /api/v1/sessions/{session_id}` carry, besides the folded counts, the fields a Live tile
+shows, derived on read by the same code as `GET /api/v1/live-sessions` (never stored, no new payload key). They are
+filled for the rows of the page only; every one is optional and `null` when there is nothing to say.
+
+| Field | Value |
+| --- | --- |
+| `waiting_reason` | why a `waiting` session waits (`Guard ask`, `Plan approval`, `Spec approval`, `Human gate`, `Permission prompt`); a `live` or `idle` session whose driven agent session waits on a permission request reads `Permission prompt`, as its Live tile does, and keeps its `status` |
+| `last_action` · `last_tool` | the last tool call in plain words (`Ran make check`, `Edited src/app.py`) and its tool |
+| `needs_you_problem` | the "what went wrong" line of the first problem that needs the owner |
+| `failing_notice` | the same gate or command failed 2 times in a row, or 3 tool errors in the last 5 minutes |
+| `sparkline_60s` | an empty list while the session has not ended (the web fills it from the event stream); `null` once it has ended |
+
 ## Learning decisions
 
 `POST /api/v1/learnings/{learning_id}/accept` with `{"target": "<folder or .md path under brain/>"}` (1 to 200
@@ -215,6 +230,9 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   `opus`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything else is 422 and the driver is
   not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`; without a first prompt a new
   session is `idle` with no `init` yet.
+- **Observed twin.** `GET ""` and `GET /{id}` carry `observed_session_id`: the `claude_session_id` once the hooks or
+  transcripts observed that Claude session (it is then a row of `GET /api/v1/sessions`), else `null`, so a list shows a
+  driven session once, with or without its twin. The other routes answer it `null`.
 - **Permission answers.** `always` needs `suggestion`, the index of one of the request's suggestions; a request
   carries only `addRules` suggestions with behaviour `allow` and destination `localSettings` (a `setMode`,
   `addDirectories` or other suggestion is never shown, and naming one is 422); `answers`
@@ -295,6 +313,23 @@ Items and files are addressed by ids the server issues (`file_id` is 16 hex char
 hub-relative path), never by a client path. Bounds: 500 items per kind, 200 bundled files per skill, 2,000 hooks,
 256 KiB per file, 16 MiB read per catalog; past one, `truncated` is `true` with a notice and an over-cap file carries
 the diagnostic `too_large`.
+
+## Workflows
+
+Two read-only GET routes serve the registered hubs' workflows, read from their files on request through the
+generator's discovery (the hub's `workflows/<pack>/` files, then the built-ins; a hub workflow overrides a built-in of
+its name) and never stored. A hub's read is reused while its listing fingerprint (path, size and mtime of each entry
+of its `workflows/` and the built-ins, stat only) is unchanged. A problem never names an absolute path.
+
+- `GET /api/v1/workflows[?project=…]` → `WorkflowCatalogView`: `items` (each with `project`, `name`, `description`,
+  `revision`, `source` `hub` or `builtin`, `node_count`, `layer_count`), by project then name, and `problems` (each
+  with `project`, hub-relative `file` (a built-in's starts `<builtin>/`), `line` or `null`, `key` (`$` for the whole
+  file) and `message`), one per file that does not load or plan. A project scope that names no project is empty.
+- `GET /api/v1/workflows/{project}/{name}` → `WorkflowDetail`: the summary fields, `layers` (in run order, each a list
+  of nodes `{id, type, depends_on, description}` in declaration order) and `document` (the file's content as written,
+  keys left out not filled in). An unknown project is a 404 (entity `project`); an unknown workflow, or one listed as a
+  problem, is a 404 (entity `workflow`, id `<project>/<name>`). A parameter over 200 characters is a 400. The routes
+  answer 501 only in a build where the workflow reads are not wired.
 
 ## Local security
 

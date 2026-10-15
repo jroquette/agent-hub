@@ -13,6 +13,7 @@ from agent_hub.core.sessions.session import (
     SessionCost,
     SessionFileChange,
     SessionLabel,
+    SessionStatus,
     SessionSummary,
     SummaryLine,
     TimelineEvent,
@@ -184,3 +185,44 @@ def test_marks_agent_deprecated_when_schema_built() -> None:
     schema = Session.model_json_schema()
 
     assert schema["properties"]["agent"]["deprecated"] is True
+
+
+def test_serializes_tile_fields_when_session_carries_them() -> None:
+    session = a_session(
+        waiting_reason="Plan approval",
+        last_action="Ran make check",
+        last_tool="Bash",
+        needs_you_problem="Needs you: command_exit in make check",
+        failing_notice="make check failed 2 times in a row",
+        sparkline_60s=(0, 2, 1),
+    )
+
+    document = json.loads(session.model_dump_json())
+
+    assert document["waiting_reason"] == "Plan approval"
+    assert document["last_action"] == "Ran make check"
+    assert document["last_tool"] == "Bash"
+    assert document["needs_you_problem"] == "Needs you: command_exit in make check"
+    assert document["failing_notice"] == "make check failed 2 times in a row"
+    assert document["sparkline_60s"] == [0, 2, 1]
+
+
+def test_leaves_tile_fields_empty_when_session_not_decorated() -> None:
+    document = a_session().model_dump(mode="json")
+
+    assert [
+        document[key]
+        for key in (
+            "waiting_reason",
+            "last_action",
+            "last_tool",
+            "needs_you_problem",
+            "failing_notice",
+            "sparkline_60s",
+        )
+    ] == [None] * 6
+
+
+def test_rejects_sparkline_when_session_ended() -> None:
+    with pytest.raises(ValidationError, match="sparkline_60s"):
+        a_session(status=SessionStatus.ENDED, sparkline_60s=(1,))
