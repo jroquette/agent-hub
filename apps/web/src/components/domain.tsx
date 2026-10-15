@@ -39,14 +39,20 @@ export interface LiveSession {
   issueTitle?: string | null | undefined;
   step?: string | null | undefined;
   lastAction: string;
-  lastActionNode?: ReactNode;
   lastIcon?: IconName | undefined;
   lastAgo?: string | undefined;
+  /** A gate keeps failing: shown under the last action, never a red edge alone. */
+  notice?: string | null | undefined;
+  /** Where a waiting session is answered: its chat or the approvals. */
+  link?: { href: string; label: string } | null | undefined;
+  /** Driven from hub web: a "Chat" badge. */
+  chat?: boolean | undefined;
   /** Seconds. */
   elapsed: number;
-  turns: number;
+  /** Null when the source does not know it (a driven session without an observed twin): "—". */
+  turns: number | null;
   tokens: number;
-  files: number;
+  files: number | null;
   /** USD, null when unknown. */
   cost: number | null;
   budget?: number | null | undefined;
@@ -110,6 +116,11 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
         <span className="ah-tile-agent" title={s.title}>
           {s.title}
         </span>
+        {s.chat && (
+          <span className="ah-badge" title="Started from hub web: opens the chat">
+            Chat
+          </span>
+        )}
       </div>
       {s.detail && (
         <div className="ah-mono ah-small ah-subtle ah-tile-detail" title={s.detail}>
@@ -132,11 +143,29 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
           size="sm"
           style={{ color: "var(--ev-tool)", flex: "none", alignSelf: "center" }}
         />
-        <span>{s.lastActionNode ?? s.lastAction}</span>
+        <span>{s.lastAction}</span>
         <span className="ah-subtle ah-small" style={{ flex: "none", marginLeft: "auto" }}>
           {s.lastAgo}
         </span>
       </div>
+      {s.notice && (
+        <div className="ah-row ah-small" style={{ gap: 4, color: "var(--text-muted)" }}>
+          <Icon name="circle-x" size="sm" />
+          {s.notice}
+        </div>
+      )}
+      {s.link && (
+        <AppLink
+          href={s.link.href}
+          className="ah-small"
+          style={{ fontWeight: 500, alignSelf: "flex-start" }}
+          onClick={(event) => {
+            event.stopPropagation();
+          }}
+        >
+          {s.link.label}
+        </AppLink>
+      )}
       {s.problems && (
         <div
           className="ah-row ah-small"
@@ -158,13 +187,13 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
           Elapsed<b>{fmtDuration(s.elapsed)}</b>
         </span>
         <span>
-          Turns<b>{s.turns}</b>
+          Turns<b>{s.turns ?? "—"}</b>
         </span>
         <span>
           Tokens<b>{fmtTokens(s.tokens)}</b>
         </span>
         <span>
-          Files<b>{s.files}</b>
+          Files<b>{s.files ?? "—"}</b>
         </span>
       </div>
       {s.budget ? (
@@ -181,14 +210,18 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
         </div>
       )}
       <div className="ah-tile-foot">
-        <Sparkline
-          data={s.activity ?? [0]}
-          bars
-          width={120}
-          height={18}
-          label="Events per 5 s, last 60 s"
-        />
-        <span className="ah-subtle ah-small">events · 60 s</span>
+        {s.status !== "ended" && (
+          <>
+            <Sparkline
+              data={s.activity ?? [0]}
+              bars
+              width={120}
+              height={18}
+              label="Events per 5 s, last 60 s"
+            />
+            <span className="ah-subtle ah-small">events · 60 s</span>
+          </>
+        )}
         <span className="ah-grow" />
         {s.denials !== undefined && s.denials > 0 && (
           <span
