@@ -355,8 +355,9 @@
 .as-composer-input {
   height: auto;
   min-height: 64px;
+  max-height: 40vh;
   padding: var(--space-2) var(--space-3);
-  resize: vertical;
+  resize: none;
 }
 .as-composer-bar {
   display: flex;

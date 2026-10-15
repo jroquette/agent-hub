@@ -149,6 +149,23 @@ describe("Composer (composer)", () => {
     );
   });
 
+  it.each([
+    [120, "120px", "hidden"],
+    [400, "400px", "hidden"],
+    [401, "400px", "auto"],
+  ])("grows to fit %i px of text, up to 40vh, then scrolls", async (content, height, overflow) => {
+    vi.stubGlobal("innerHeight", 1000);
+    const { box } = open();
+    // Only the composer's own box reports the content height.
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: () => content });
+
+    await userEvent.type(box, "a");
+
+    expect(box.style.height).toBe(height);
+    expect(box.style.overflowY).toBe(overflow);
+    vi.unstubAllGlobals();
+  });
+
   it("has no serious violation (composer a11y)", async () => {
     const { container } = open({ status: "running" });
 
