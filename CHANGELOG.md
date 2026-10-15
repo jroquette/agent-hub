@@ -21,6 +21,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
   `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
   `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
+- Workflow `approval` and `wait` nodes. An approval (`message`, `decisions`, `capture_response`) or a wait (`duration`
+  up to 7 days, an `until` instant, or `attention` answered with text or one of `options`) pauses the run: `hub
+  workflow run` prints `run <id>: paused at <node>` and records a `gate.request` (an approval or attention wait shows
+  in Approvals). `--resume RUN` takes the same gate up again and goes on once it has its decision or its time. The
+  output (`{decision}`, `{at}`, `{text}`, `{choice, text}`) is readable from `when:`; rejecting the default decisions
+  cancels the run unless a `when:` reads the decision. An `until` is at most 7 days ahead; a timed wait ends on a
+  resume past its time. `hub workflow test` stubs gates with `{decision, text}`, `{text}`, `{choice}` or `{}`; without
+  a stub the run pauses (`expect.status: paused`). A gate in a `loop_group` body pauses its iteration, and the resume
+  goes on in it (rework: reject, fix, approve); two gates with no order between them are a load error (AGH-230).
 - `hub workflow run NAME --input name=value` prints the nodes a run would start; with `--live` it runs them: agent
   nodes as `claude -p` in the hub with its settings and plugin, shell and script nodes as programs without a shell,
   each child with a scoped environment (none gets `LINEAR_API_KEY`). The run is recorded under

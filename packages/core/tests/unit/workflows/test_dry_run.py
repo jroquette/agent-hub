@@ -18,7 +18,6 @@ from agent_hub.core.workflows.dry_run import (
     placeholder,
     skeleton_stub,
 )
-from agent_hub.core.workflows.engine import WorkflowEngineError
 from agent_hub.core.workflows.plan import WorkflowPlan
 
 OBJECT = {
@@ -196,15 +195,69 @@ def test_takes_the_outcome_from_the_returns_stub_when_it_completes() -> None:
     assert report.outcome == "b"
 
 
-def test_refuses_the_run_when_the_plan_holds_an_approval() -> None:
-    plan = a_plan({"id": "gate", "type": "approval", "message": "Ship?"})
+GATES = (
+    {"id": "ok", "type": "approval", "message": "Ship?", "capture_response": True},
+    {"id": "nap", "type": "wait", "duration": "1h", "depends_on": ["ok"]},
+    {"id": "ask", "type": "wait", "attention": "Why?", "depends_on": ["nap"]},
+    {
+        "id": "pick",
+        "type": "wait",
+        "attention": "Which?",
+        "options": [{"id": "red", "label": "Red"}],
+        "depends_on": ["ask"],
+    },
+)
 
-    with pytest.raises(WorkflowEngineError):
-        run(plan)
+
+def test_pauses_on_the_first_gate_when_it_has_no_stub() -> None:
+    report = run(a_plan(shell("a"), {**GATES[0], "depends_on": ["a"]}), a={"text": "x"})
+
+    assert (report.run.status, report.run.reason) == ("paused", "ok")
+    assert (report.reached, report.missing, report.failed) == (("a", "ok"), (), ())
+
+
+def test_answers_each_gate_from_its_stub_when_every_gate_has_one() -> None:
+    report = run(
+        a_plan(*GATES),
+        ok={"decision": "approve", "text": "tests"},
+        nap={},
+        ask={"text": "because"},
+        pick={"choice": "red"},
+    )
+
+    assert report.run.status == "done"
+    assert output_of(report, "ok") == {"decision": "approve", "text": "tests"}
+    assert output_of(report, "nap") == {"at": "2000-01-01T00:00:00+00:00"}
+    assert output_of(report, "ask") == {"text": "because"}
+    assert output_of(report, "pick") == {"choice": "red", "text": ""}
 
 
 @pytest.mark.parametrize(
-    "stub", [{}, {"text": "a", "output": "b"}, {"fail": "nope"}, {"until_exit": 1}, {"why": 1}]
+    ("node", "stub"),
+    [("ok", {"decision": "maybe"}), ("ok", {"output": "x"}), ("a", {"decision": "approve"})],
+)
+def test_fails_config_when_a_stub_does_not_fit_its_node(node: str, stub: object) -> None:
+    plan = a_plan(shell("a"), {**GATES[0], "depends_on": ["a"]})
+    given: dict[str, object] = {"a": {"text": "x"}, "ok": {"decision": "approve"}} | {node: stub}
+
+    report = run(plan, **given)
+
+    assert report.failed == (node,)
+    assert [step.failure_kind for step in report.steps if step.node == node] == ["config"]
+
+
+@pytest.mark.parametrize(
+    "stub",
+    [
+        {"text": "a", "output": "b"},
+        {"fail": "nope"},
+        {"until_exit": 1},
+        {"why": 1},
+        {"decision": "a", "choice": "b"},
+        {"decision": "a", "output": 1},
+        {"choice": "a", "fail": "exec_failed"},
+        {"decision": "Not Kebab"},
+    ],
 )
 def test_refuses_the_stub_when_it_gives_no_answer_or_more_than_one(stub: object) -> None:
     with pytest.raises(ValidationError):
@@ -292,3 +345,25 @@ def test_lists_the_failed_body_node_and_its_group_when_a_body_node_fails() -> No
 
     assert report.failed == ("g", "g__b")
     assert report.reached == ("g", "g__b")
+
+
+def test_reworks_through_the_stub_list_when_a_body_approval_rejects_then_approves() -> None:
+    group = {
+        "id": "g",
+        "type": "loop_group",
+        "max_iterations": 3,
+        "until_when": "$ok.output.decision == 'approve'",
+        "nodes": [
+            shell("work"),
+            {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["work"]},
+        ],
+    }
+
+    report = run(
+        a_plan(group),
+        g__work={"text": "x"},
+        g__ok=[{"decision": "reject"}, {"decision": "approve"}],
+    )
+
+    assert report.run.status == "done"
+    assert [step.node for step in report.steps].count("g__work") == 2

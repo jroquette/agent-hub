@@ -15,6 +15,7 @@ from typing import Literal, Protocol
 
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.failures import FailureKind, RetryRecord
+from agent_hub.core.workflows.gates import GateForm, GateKind
 from agent_hub.core.workflows.nodes import ExecutableNode
 from agent_hub.core.workflows.scope import RefScope
 from agent_hub.core.workflows.substitution import RefContext
@@ -24,6 +25,8 @@ type SkipCause = Literal[
     "upstream_failed", "upstream_skipped", "condition", "condition_parse_error", "prior_success"
 ]
 type RunStatus = Literal["done", "failed", "cancelled"]
+# A report's status: a run's end, or ``paused`` on an open gate (no end yet).
+type ReportStatus = Literal["done", "failed", "cancelled", "paused"]
 
 
 @dataclass(frozen=True)
@@ -144,8 +147,26 @@ class RunEnd:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class GateRequest:
+    """A gate opened by an ``approval`` or ``wait`` node's attempt.
+
+    ``text`` (the rendered message, or a wait's ``until``) belongs to the run's record only,
+    never to events (ADR 0019); ``choices`` are the ids an answer may choose.
+    """
+
+    node: str
+    attempt: int
+    kind: GateKind
+    form: GateForm
+    at: datetime
+    choices: tuple[str, ...] = ()
+    text: str = ""
+    due: datetime | None = None
+
+
 class RunRecorder(Protocol):
-    """Receives a run's steps, retries and end, in order (events, the run's record)."""
+    """Receives a run's steps, retries, gates and end, in order (events, the run's record)."""
 
     def step_started(self, start: StepStart) -> None: ...
 
@@ -154,3 +175,5 @@ class RunRecorder(Protocol):
     def retry_scheduled(self, node: str, retry: RetryRecord) -> None: ...
 
     def run_ended(self, end: RunEnd) -> None: ...
+
+    def gate_requested(self, request: GateRequest) -> None: ...

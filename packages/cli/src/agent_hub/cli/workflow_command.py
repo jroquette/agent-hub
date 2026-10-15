@@ -11,8 +11,11 @@ exits 2. Nothing is written and no network is used.
 ``run NAME [--input name=value]...`` prints each node a run would start, layer by layer; with
 ``--live`` the engine runs it through ``workflow_executors`` (``--run-id`` names the run, else a
 fresh id), recording it with ``workflow_runs``. ``--resume RUN`` continues a failed or unended run
-on its snapshot, reusing what completed; ``--abandon RUN`` ends it ``cancelled``. A run that ends
-``done`` exits 0, any other end 1; a bad input exits 2. It makes no tracker write, except for
+on its snapshot, reusing what completed; ``--abandon RUN`` ends it ``cancelled``. A run that
+reaches an ``approval`` or ``wait`` without its answer or time pauses there (``run <id>: paused at
+<node>``, exit 0); its resume takes the gate up again, and pauses again until the gate's decision
+is recorded or its time has come. A run that ends ``done`` exits 0, any other end 1; a bad input
+exits 2. It makes no tracker write, except for
 the workflow named ``issue-to-pr``, whose parent is ``hub run``'s (``workflow_delivery``): the
 issue read before, ``hub run``'s records (and so its events) during, ADR 0030's writes after,
 and ``hub run``'s exit codes; there ``issue_text`` comes from the tracker, never from ``--input``,
@@ -61,12 +64,14 @@ from agent_hub.cli.workflow_runs import (
     RUN_ID_PATTERN,
     SNAPSHOT,
     EventSink,
+    RecordedAnswers,
     RecordedRun,
     SystemClock,
     WorkflowRunError,
     append_record,
     drop_torn_tail,
     ends_of,
+    held_record,
     make_run,
     prior_state,
     read_records,
@@ -91,6 +96,7 @@ from agent_hub.core.workflows.engine import (
     start_inputs,
 )
 from agent_hub.core.workflows.events import WorkflowEvents
+from agent_hub.core.workflows.gates import GateAnswers
 from agent_hub.core.workflows.nodes import ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import RunEnd, RunRecorder
@@ -292,8 +298,13 @@ def run_delivery(
 
 
 def _ports(
-    runner: WorkflowExecutors, recorder: RunRecorder, checkout: GitCheckoutProbe | None
+    runner: WorkflowExecutors,
+    recorder: RunRecorder,
+    checkout: GitCheckoutProbe | None,
+    *,
+    gates: GateAnswers | None = None,
 ) -> EnginePorts:
+    """The engine's ports for a live run; ``gates`` answers its gates (a resume's decisions)."""
     return EnginePorts(
         runner,
         recorder,
@@ -304,6 +315,7 @@ def _ports(
         # In-process hub steps share this process's streams: they never run side by side.
         max_parallel=runner.max_parallel,
         interrupt=runner.stop_children,
+        gates=gates or RecordedAnswers([]),
     )
 
 
@@ -385,6 +397,7 @@ def _continue(hub: Path, folder: Path) -> int:
         content_hash=str(header.get("content_hash")),
         prior=prior_state(records),
         end_index=len(ends_of(records)),
+        answers=RecordedAnswers(records),
     )
 
 
@@ -430,6 +443,7 @@ def _execute(
     prior: RunState | None = None,
     end_index: int = 0,
     parent: IssueToPr | None = None,
+    answers: RecordedAnswers | None = None,
 ) -> int:
     config = load_hub_config_or_exit(hub / FILE_LABEL)
     header: dict[str, JsonValue] = {
@@ -447,7 +461,7 @@ def _execute(
     recorder = recorded if parent is None else parent.recorder(recorded)
     roots, _ = _checkouts(hub, config)
     checkout = GitCheckoutProbe(roots=roots, environ=os.environ)
-    ports = _ports(runner, recorder, checkout)
+    ports = _ports(runner, recorder, checkout, gates=answers)
     try:
         report = run_workflow(plan, inputs, ports, prior=prior)
     except RunLogError as error:
@@ -457,6 +471,12 @@ def _execute(
         append_record(folder, {"event": "end", "status": "failed", "outcome": None})
         return parent.live.stop_on_log_error(error)
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
+    if report.status == "paused":
+        append_record(folder, held_record(report.state))
+        gate = report.state.gates.get(report.reason or "")
+        due = "" if gate is None or gate.due is None else f" until {gate.due.isoformat()}"
+        typer.echo(f"run {folder.name}: paused at {report.reason}{due}")
+        return 0
     outcome = "" if report.outcome is None else f", outcome {report.outcome}"
     typer.echo(f"run {folder.name}: {report.status}{outcome}")
     if parent is not None:

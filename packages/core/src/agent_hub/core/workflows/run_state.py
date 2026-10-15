@@ -12,8 +12,9 @@ from dataclasses import dataclass, field
 
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.failures import FailureKind
+from agent_hub.core.workflows.gates import OpenGate
 from agent_hub.core.workflows.nodes import Node
-from agent_hub.core.workflows.ports import RunStatus, SkipCause
+from agent_hub.core.workflows.ports import ReportStatus, RunStatus, SkipCause
 from agent_hub.core.workflows.substitution import NodeResult, NodeState
 
 _FAILED = NodeResult("failed")
@@ -30,19 +31,35 @@ class NodeEnd:
 
 
 @dataclass(frozen=True)
+class HeldGroup:
+    """A ``loop_group`` paused inside an iteration: its attempt, that iteration, the results of
+    the iteration before (``$LOOP_PREV``) and how this one's body nodes already ended (kind and
+    cause included, so the group ends as it would have without the pause)."""
+
+    attempt: int
+    iteration: int
+    previous: Mapping[str, NodeResult] = field(default_factory=dict)
+    current: Mapping[str, NodeEnd] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class RunState:
-    """What a run leaves for its resume: each node's result, its attempts, agent sessions."""
+    """What a run leaves for its resume: each node's result, its attempts, agent sessions and
+    the gates it paused on, with the groups paused around one."""
 
     nodes: Mapping[str, NodeResult] = field(default_factory=dict)
     attempts: Mapping[str, int] = field(default_factory=dict)
     sessions: Mapping[str, str] = field(default_factory=dict)
+    gates: Mapping[str, OpenGate] = field(default_factory=dict)
+    groups: Mapping[str, HeldGroup] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class RunReport:
-    """The run's end: ``status`` apart from the authored ``outcome``; ``reason`` is a node id."""
+    """The run's end, or its pause: ``status`` apart from the authored ``outcome``; ``reason``
+    is a node id (the failed, halting or gate node)."""
 
-    status: RunStatus
+    status: ReportStatus
     outcome: JsonValue
     reason: str | None
     state: RunState
