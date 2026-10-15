@@ -194,6 +194,77 @@ describe("SessionsListScreen filters-both-views", () => {
   });
 });
 
+describe("SessionsListScreen select-all-section", () => {
+  it("selects and clears only its own section's rows", async () => {
+    const rows = [...SAMPLE, one(4, "live", "runner-2")];
+    renderWithApi(<SessionsListScreen />, {
+      routes: routes(aSessionsByStatus(rows)),
+      path: "/sessions",
+    });
+    await screen.findByText("/runner-2");
+
+    const waiting = screen.getByRole("table", { name: "Waiting sessions" });
+    const live = screen.getByRole("table", { name: "Live sessions" });
+    fireEvent.click(within(waiting).getByRole("checkbox", { name: "Select row" }));
+    fireEvent.click(within(live).getByRole("checkbox", { name: "Select all" }));
+    expect(screen.getByText("Selected", { exact: false })).toHaveTextContent("Selected 3");
+    expect(within(live).getByRole("checkbox", { name: "Select all" })).toBeChecked();
+    expect(
+      within(screen.getByRole("table", { name: "Ended or failed sessions" })).getByRole(
+        "checkbox",
+        { name: "Select all" },
+      ),
+    ).not.toBeChecked();
+
+    fireEvent.click(within(live).getByRole("checkbox", { name: "Select all" }));
+    expect(screen.getByText("Selected", { exact: false })).toHaveTextContent("Selected 1");
+    expect(within(waiting).getByRole("checkbox", { name: "Select row" })).toBeChecked();
+    expect(
+      within(live)
+        .getAllByRole("checkbox", { name: "Select row" })
+        .map((box) => (box as HTMLInputElement).checked),
+    ).toEqual([false, false]);
+  });
+});
+
+/** Waits until `count` session requests were sent, then a beat more, so a duplicate would show. */
+async function settled(requests: Request[], count: number) {
+  await waitFor(() => {
+    expect(sessionRequests(requests).length).toBeGreaterThanOrEqual(count);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  return sessionRequests(requests);
+}
+
+describe("SessionsListScreen filter-requests", () => {
+  it("asks only Ended again on a period change, and every section once on a repo filter", async () => {
+    const { requests } = renderWithApi(<SessionsListScreen />, {
+      routes: routes(),
+      path: "/sessions",
+    });
+    await screen.findByText("/asker");
+    const first = await settled(requests, 4);
+    expect(first).toHaveLength(4);
+
+    fireEvent.click(screen.getByRole("button", { name: "24 h" }));
+    const afterPeriod = (await settled(requests, 5)).slice(4);
+    expect(afterPeriod.map((url) => url.searchParams.get("status"))).toEqual(["ended"]);
+    expect(afterPeriod[0]?.searchParams.has("from")).toBe(true);
+
+    const repo = screen.getByRole("textbox", { name: "Repo" });
+    fireEvent.change(repo, { target: { value: "tipple" } });
+    fireEvent.blur(repo);
+    const afterRepo = (await settled(requests, 9)).slice(5);
+    expect(afterRepo.map((url) => url.searchParams.get("status")).sort()).toEqual([
+      "ended",
+      "idle",
+      "live",
+      "waiting",
+    ]);
+    expect(afterRepo.every((url) => url.searchParams.get("repo") === "tipple")).toBe(true);
+  });
+});
+
 describe("SessionsListScreen table-sections", () => {
   it("gives each section its own table with the chosen columns, density and sort", async () => {
     const { router, requests } = renderWithApi(<SessionsListScreen />, {
