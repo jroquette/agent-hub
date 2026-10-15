@@ -11,7 +11,8 @@ from agent_hub.core.agent_sessions.agent_session import Screenshot
 from agent_hub.core.agent_sessions.driver import DriverImage
 from agent_hub.core.agent_sessions.errors import InvalidScreenshotError, ScreenshotTooLargeError
 
-MAX_SCREENSHOT_BYTES: Final = 5 * 1024 * 1024
+# 3.75 MiB decoded: its base64 fits the Anthropic API's 5 MiB image limit.
+MAX_SCREENSHOT_BYTES: Final = 3_932_160
 PNG_SIGNATURE: Final = b"\x89PNG\r\n\x1a\n"
 
 
