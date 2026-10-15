@@ -26,16 +26,14 @@ from agent_hub.core.workflows.dry_run import PLACEHOLDER_TEXT, Stub, dry_run, sk
 from agent_hub.core.workflows.engine import WorkflowEngineError
 from agent_hub.core.workflows.nodes import (
     READ_ONLY,
-    AgentNode,
-    LoopNode,
-    ScriptNode,
-    ShellNode,
+    HaltNode,
+    LoopGroupNode,
     Text,
     WorkflowObject,
     empty,
 )
 from agent_hub.core.workflows.plan import WorkflowPlan
-from agent_hub.core.workflows.ports import OutputValidator, RunStatus
+from agent_hub.core.workflows.ports import OutputValidator, ReportStatus
 from agent_hub.core.workflows.substitution import echo
 
 _INPUT_PLACEHOLDERS: Final[Mapping[str, JsonValue]] = {
@@ -58,7 +56,7 @@ FixtureStubs = Annotated[
 
 
 class Expect(WorkflowObject):
-    status: RunStatus
+    status: ReportStatus
     outcome: JsonValue = None
 
 
@@ -130,10 +128,7 @@ def run_fixture(plan: WorkflowPlan, fixture: Fixture, *, outputs: OutputValidato
 
 def skeleton_fixture(plan: WorkflowPlan, *, outputs: OutputValidator) -> dict[str, JsonValue]:
     """A fixture that passes: a placeholder per required input, a ``skeleton_stub`` per
-    executable node, and the expectations its own dry run gives.
-
-    Raises ``WorkflowEngineError`` when the engine refuses the run (an approval node).
-    """
+    node but halts, and the expectations its own dry run gives."""
     document = plan.document
     inputs: dict[str, JsonValue] = {
         name: _INPUT_PLACEHOLDERS[spec.type]
@@ -143,7 +138,7 @@ def skeleton_fixture(plan: WorkflowPlan, *, outputs: OutputValidator) -> dict[st
     stubs: dict[str, JsonValue] = {
         node.id: skeleton_stub(node)
         for node in plan.all_nodes()
-        if isinstance(node, AgentNode | ShellNode | ScriptNode | LoopNode)
+        if not isinstance(node, HaltNode | LoopGroupNode)
     }
     parsed = {node: Stub.model_validate(stub) for node, stub in stubs.items()}
     report = dry_run(plan, inputs, parsed, outputs=outputs)

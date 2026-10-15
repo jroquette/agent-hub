@@ -2,13 +2,13 @@
 
 Every model forbids unknown keys. An ``include`` is replaced at load by the nodes of the workflow
 it names (``includes.py``), so the engine never sees one. A ``loop_group`` holds a body of nodes
-repeated per iteration (no include or group inside). ``wait`` comes later; until then its ``type``
-is refused like any other unknown one. Checks that need more than one node
+repeated per iteration (no include or group inside). Checks that need more than one node
 (``depends_on`` targets, references, ``context.resume``) are planning's (``plan.py``).
 """
 
 import math
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Annotated, Final, Literal, Self
@@ -318,6 +318,47 @@ class HaltNode(_Node):
     reason: Text
 
 
+def _until(value: str) -> str:
+    # A whole reference is read at run time; anything else is an instant with its offset.
+    if value.startswith("$"):
+        try:
+            parse_ref(value)
+        except SubstitutionError as error:
+            raise ValueError(str(error)) from None
+        return value
+    try:
+        instant = datetime.fromisoformat(value)
+    except ValueError:
+        instant = None
+    if instant is None or instant.tzinfo is None:
+        msg = "must be an ISO-8601 instant with an offset, or a whole reference"
+        raise ValueError(msg)
+    return value
+
+
+class WaitNode(_Node):
+    """Waits ``duration``, until an instant, or for a person's ``attention`` (text, or one of
+    ``options``)."""
+
+    type: Literal["wait"]
+    duration: Duration | None = None
+    until: Annotated[Text, AfterValidator(_until)] | None = None
+    attention: Text | None = None
+    options: Annotated[tuple[Decision, ...], Field(min_length=1)] | None = None
+
+    @model_validator(mode="after")
+    def _one_condition(self) -> Self:
+        if [self.duration, self.until, self.attention].count(None) != 2:
+            msg = "give exactly one of 'duration', 'until' or 'attention'"
+            raise ValueError(msg)
+        if self.options is not None:
+            if self.attention is None:
+                msg = "'options' needs 'attention'"
+                raise ValueError(msg)
+            _unique(tuple(option.id for option in self.options))
+        return self
+
+
 class IncludeNode(_Node):
     """Replaced at load by the workflow ``include`` names; ``with`` fills that one's ``inputs``.
 
@@ -333,8 +374,9 @@ class IncludeNode(_Node):
 
 
 type ExecutableNode = AgentNode | ShellNode | ScriptNode | LoopNode
+type GateNode = ApprovalNode | WaitNode
 BodyNode = Annotated[
-    AgentNode | ShellNode | ScriptNode | LoopNode | ApprovalNode | HaltNode,
+    AgentNode | ShellNode | ScriptNode | LoopNode | ApprovalNode | HaltNode | WaitNode,
     Field(discriminator="type"),
 ]
 
@@ -366,6 +408,7 @@ Node = Annotated[
     | LoopNode
     | ApprovalNode
     | HaltNode
+    | WaitNode
     | IncludeNode
     | LoopGroupNode,
     Field(discriminator="type"),

@@ -16,6 +16,7 @@ from agent_hub.core.workflows.nodes import (
     Retry,
     ScriptNode,
     ShellNode,
+    WaitNode,
 )
 
 NODE: TypeAdapter[Any] = TypeAdapter(Node)
@@ -41,6 +42,19 @@ def errors_of(raw: dict[str, object]) -> list[tuple[tuple[str | int, ...], str]]
         ),
         ({"id": "ok", "type": "approval", "message": "Ship it?"}, ApprovalNode),
         ({"id": "stop", "type": "halt", "reason": "Nothing to do"}, HaltNode),
+        ({"id": "nap", "type": "wait", "duration": "7d"}, WaitNode),
+        ({"id": "nap", "type": "wait", "until": "2026-10-16T09:00:00+02:00"}, WaitNode),
+        ({"id": "nap", "type": "wait", "until": "$INPUTS.at"}, WaitNode),
+        ({"id": "ask", "type": "wait", "attention": "Colour?"}, WaitNode),
+        (
+            {
+                "id": "ask",
+                "type": "wait",
+                "attention": "Pick",
+                "options": [{"id": "a", "label": "A"}],
+            },
+            WaitNode,
+        ),
         ({"id": "rev", "type": "include", "include": "review", "with": {"pr": 1}}, IncludeNode),
     ],
 )
@@ -85,7 +99,7 @@ def test_refuses_key_when_it_is_not_in_the_type_row(raw: dict[str, object]) -> N
     assert any(message == "Extra inputs are not permitted" for _, message in errors_of(raw))
 
 
-@pytest.mark.parametrize("node_type", ["wait", "bash"])
+@pytest.mark.parametrize("node_type", ["bash", "fan_out"])
 def test_refuses_type_when_it_is_not_a_node_type_yet(node_type: str) -> None:
     [(loc, message)] = errors_of({"id": "a", "type": node_type})
 
@@ -249,3 +263,22 @@ def test_refuses_duration_when_it_is_over_seven_days(duration: str, key: str) ->
     [(loc, message)] = errors_of(raw)
     assert loc == (("shell", "timeout") if key == "timeout" else ("shell", "retry", "delay"))
     assert "at most 7 days" in message
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        {},
+        {"duration": "1h", "attention": "Now?"},
+        {"until": "2026-10-16T09:00:00"},
+        {"until": "tomorrow"},
+        {"until": "$a.output and more"},
+        {"duration": "1h", "options": [{"id": "a", "label": "A"}]},
+        {"attention": "Pick", "options": [{"id": "a", "label": "A"}, {"id": "a", "label": "B"}]},
+        {"duration": "8d"},
+    ],
+)
+def test_refuses_the_wait_when_its_condition_is_missing_or_malformed(
+    keys: dict[str, object],
+) -> None:
+    assert errors_of({"id": "nap", "type": "wait"} | keys)
