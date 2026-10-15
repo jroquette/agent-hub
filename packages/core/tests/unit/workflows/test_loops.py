@@ -314,6 +314,28 @@ def test_threads_body_sessions_by_fresh_context_when_a_group_iterates(
     assert [call.resume_session for call in runner.calls] == resumed
 
 
+def test_starts_a_body_agent_afresh_each_iteration_when_it_sets_context_fresh() -> None:
+    worker = {"id": "w", "type": "agent", "prompt": "Work."}
+    lens = {
+        "id": "r",
+        "type": "agent",
+        "prompt": "Review.",
+        "depends_on": ["w"],
+        "context": "fresh",
+    }
+    runner = ScriptedRunner(
+        {
+            "g__w": [NodeReply("w1", session="w1"), NodeReply("w2", session="w2")],
+            "g__r": [NodeReply("no", session="r1"), NodeReply("done", session="r2")],
+        }
+    )
+
+    run_group(a_group(worker, lens, until_when="$r.output == 'done'"), runner)
+
+    resumed = [(call.node.id, call.resume_session) for call in runner.calls]
+    assert resumed == [("g__w", None), ("g__r", None), ("g__w", "w1"), ("g__r", None)]
+
+
 def test_keeps_body_attempts_monotonic_when_a_body_node_retries_across_iterations() -> None:
     runner = ScriptedRunner({"g__b": [NodeFailedError("transient"), "no", "done"]})
 

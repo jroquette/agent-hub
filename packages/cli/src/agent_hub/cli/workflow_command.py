@@ -30,11 +30,12 @@ option) and/or TEXT. The decision and its text go to the run's record, a ``contr
 ``gate.result`` to the events; a gate that is not open, already decided or cannot take the
 answer is refused (exit 1).
 
-``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
-engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
-warnings indented, then a count; a failed fixture exits 1. ``--stubs-init`` writes NAME's
-skeleton fixture to ``<pack>/fixtures/<NAME>.yaml``, never over an existing file nor through a
-linked folder, and notes when the skeleton's own dry run did not end ``done``.
+``test [NAME]...`` dry-runs each fixture of the discovered packs (or the NAMEs', each file once)
+in memory through the engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line
+each, its problems and warnings indented, then a count; a failed fixture, or a NAME with none,
+exits 1. ``--stubs-init`` writes one NAME's skeleton fixture to ``<pack>/fixtures/<NAME>.yaml``,
+never over an existing file nor through a linked folder, and notes when the skeleton's own dry
+run did not end ``done``.
 """
 
 import getpass
@@ -113,7 +114,7 @@ from agent_hub.core.workflows.engine import (
 )
 from agent_hub.core.workflows.events import WorkflowEvents, issue_key
 from agent_hub.core.workflows.gates import GateAnswer, GateAnswers
-from agent_hub.core.workflows.nodes import ScriptNode, ShellNode
+from agent_hub.core.workflows.nodes import Node, ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import RunEnd, RunRecorder
 from agent_hub.core.workflows.run_state import RunState
@@ -128,6 +129,7 @@ from agent_hub.generator.workflow_discovery import (
 from agent_hub.generator.workflow_fixtures import (
     FIXTURE_SUFFIX,
     FIXTURES,
+    FixtureRun,
     run_fixtures,
     skeleton_yaml,
 )
@@ -680,17 +682,24 @@ def _typed(text: str, kind: str, key: str) -> JsonValue:
 
 
 def _print_plan(plan: WorkflowPlan) -> None:
-    nodes = {node.id: node for node in plan.document.nodes}
+    """Each node a run would start, layer by layer; a group's body, indented, under it."""
+    nodes = {node.id: node for node in plan.all_nodes()}
     for layer in plan.layers:
         for node_id in layer:
-            node = nodes[node_id]
-            argv = node.command if isinstance(node, ShellNode) else ()
-            if isinstance(node, ScriptNode):
-                argv = (node.runtime, f"scripts/{node.script}", *node.args)
-            line = f"would run: {node_id} ({node.type})"
-            line = f"{line}: {shown_command(argv)}" if argv else line
-            stdin = node.stdin if isinstance(node, ShellNode | ScriptNode) else None
-            typer.echo(line if stdin is None else f"{line}   stdin: {shown_text(stdin)}")
+            typer.echo(_plan_line(nodes[node_id]))
+            for body_layer in plan.bodies.get(node_id, ()):
+                for body_id in body_layer:
+                    typer.echo(f"  {_plan_line(nodes[body_id])}")
+
+
+def _plan_line(node: Node) -> str:
+    argv = node.command if isinstance(node, ShellNode) else ()
+    if isinstance(node, ScriptNode):
+        argv = (node.runtime, f"scripts/{node.script}", *node.args)
+    line = f"would run: {node.id} ({node.type})"
+    line = f"{line}: {shown_command(argv)}" if argv else line
+    stdin = node.stdin if isinstance(node, ShellNode | ScriptNode) else None
+    return line if stdin is None else f"{line}   stdin: {shown_text(stdin)}"
 
 
 def _json(data: bytes) -> object:
@@ -719,7 +728,9 @@ def _problem_line(problem: LoadProblem) -> str:
 
 @workflow_app.command("test")
 def test_workflows(
-    name: Annotated[str | None, typer.Argument(help="Run only this workflow's fixtures.")] = None,
+    names: Annotated[
+        list[str] | None, typer.Argument(help="Run only these workflows' fixtures.")
+    ] = None,
     *,
     stubs_init: Annotated[
         bool, typer.Option("--stubs-init", help="Write a skeleton fixture for NAME.")
@@ -728,12 +739,13 @@ def test_workflows(
     """Run each pack's fixtures/*.yaml in memory, no child or event; exit 1 on a failure."""
     root = hub_root_or_exit(os.environ, command="workflow")
     discovery = discover_workflows(root, builtin_root=BUILTIN_WORKFLOWS)
+    wanted = list(dict.fromkeys(names or ()))
     if stubs_init:
-        _write_skeleton(root, discovery, name)
+        if len(names or ()) > 1:
+            fail("--stubs-init needs one workflow name")
+        _write_skeleton(root, discovery, wanted[0] if wanted else None)
         return
-    runs = run_fixtures(discovery, only=name)
-    if name is not None and not runs:
-        fail(f"no fixture for the workflow {name!r} in its pack's {FIXTURES}/")
+    runs = _fixture_runs(discovery, wanted)
     for fixture_run in runs:
         where = shown_text(_shown_fixture(root, fixture_run.path))
         typer.echo(f"{where}: {'FAILED' if fixture_run.problems else 'ok'}")
@@ -746,6 +758,21 @@ def test_workflows(
     typer.echo(f"{len(runs)} {noun}: {len(runs) - failed} passed, {failed} failed")
     if failed:
         raise typer.Exit(FAILURE)
+
+
+def _fixture_runs(discovery: WorkflowDiscovery, names: list[str]) -> list[FixtureRun]:
+    """Every fixture's run, or those of ``names``, each file once; exit 1 on a name with none."""
+    if not names:
+        return list(run_fixtures(discovery))
+    runs: list[FixtureRun] = []
+    for name in names:
+        named = run_fixtures(discovery, only=name)
+        if not named:
+            fail(f"no fixture for the workflow {name!r} in its pack's {FIXTURES}/")
+        # Two names of one pack share its unreadable fixtures: each file runs once.
+        seen = {run.path for run in runs}
+        runs.extend(item for item in named if item.path not in seen)
+    return runs
 
 
 def _write_skeleton(root: Path, discovery: WorkflowDiscovery, name: str | None) -> None:
