@@ -1,0 +1,20 @@
+# The spec lens finds a blocking gap: the run ends done, its verdict FAIL.
+workflow: review
+inputs: {issue: DEM-1, path: ../demo-api/.claude/worktrees/dem-1, task: "1.2", round: 2}
+stubs:
+  spec:
+    output:
+      schema: agent-hub/review/1
+      reviewer: spec
+      ticket: DEM-1
+      task: "1.2"
+      round: 2
+      commit: 0a1b2c3d
+      verdict: FAIL
+      findings:
+        - {id: F1, kind: missing, severity: blocking, path: src/api.py, line: 12, acs: [AC-1], what: The endpoint is not added., expected: The plan's endpoint exists.}
+  quality:
+    output: {schema: agent-hub/review/1, reviewer: quality, ticket: DEM-1, task: "1.2", round: 2, commit: 0a1b2c3d, verdict: PASS, findings: []}
+  verdict: {output: {verdict: FAIL, lenses: {spec: FAIL, quality: PASS}}}
+expect: {status: done, outcome: FAIL}
+reached: [spec, quality, verdict]

@@ -1,0 +1,23 @@
+# The check is red every round: no lens runs (no lens or review stub: one that ran would have
+# none, which fails this fixture), and past three rounds the group fails (max_iterations).
+workflow: deliver
+inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  rounds__implement: {text: Changes the code.}
+  rounds__verdict: {output: {status: done, summary: Changes the code., question: ""}}
+  rounds__check: [{output: {passed: false, exit_code: 2, round: 1, tail: "FAILED test_api\n"}}, {output: {passed: false, exit_code: 2, round: 2, tail: "FAILED test_api\n"}}, {output: {passed: false, exit_code: 2, round: 3, tail: "FAILED test_api\n"}}]
+  rounds__notes: {output: {check: {passed: true, exit_code: 0, tail: "ok\n"}, findings: [], omitted: 0}}
+  rounds__feedback: {output: {check: {passed: true, exit_code: 0, tail: "ok\n"}, findings: [], omitted: 0}}
+expect: {status: failed}
+failed: [rounds]
+reached: [worktree, rounds, rounds__implement, rounds__verdict, rounds__check, rounds__notes, rounds__feedback]

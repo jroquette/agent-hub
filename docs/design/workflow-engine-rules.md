@@ -46,7 +46,8 @@ together. The format is the schema's contract; the reasons are in [ADR 0032](../
   node's failure kind. A halt in a body ends the group `cancelled`.
 - Otherwise `until_when` (over the iteration's outputs), then `until_bash` (exit 0) end the group; past
   `max_iterations` it fails `max_iterations`. A group is never retried. A completed group is reused whole on resume.
-- Without `fresh_context` (the default) a body agent resumes its own session of the previous iteration.
+- Without `fresh_context` (the default) a body agent resumes its own session of the previous iteration, unless it
+  sets `context: fresh` itself (a reviewer that starts afresh each round).
 - A group's body counts toward the 512-node cap of an expansion.
 
 ### Concurrent layers
