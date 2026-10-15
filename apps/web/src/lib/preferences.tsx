@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from "react";
 
 import type { TimeZoneMode } from "./format";
-import { readStored, writeStored } from "./storage";
+import { readStored, removeStored, writeStored } from "./storage";
 
 export type ThemeChoice = "light" | "dark" | "system";
 
@@ -12,25 +12,35 @@ export interface Preferences {
   resolvedTheme: "light" | "dark";
   tz: TimeZoneMode;
   sidebarCollapsed: boolean;
+  /** A mouse shake opens New session with a screenshot; off by default. */
+  shakeToSession: boolean;
   setTheme: (theme: ThemeChoice) => void;
   /** Light → Dark → System → Light. */
   cycleTheme: () => void;
   setTz: (tz: TimeZoneMode) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
+  setShakeToSession: (on: boolean) => void;
 }
 
 const THEMES: readonly ThemeChoice[] = ["light", "dark", "system"];
-const KEYS = { theme: "ah.theme", tz: "ah.tz", sidebar: "ah.sidebar.collapsed" } as const;
+const KEYS = {
+  theme: "ah.theme",
+  tz: "ah.tz",
+  sidebar: "ah.sidebar.collapsed",
+  shake: "ah.shakeToSession",
+} as const;
 
 const PreferencesContext = createContext<Preferences>({
   theme: "system",
   resolvedTheme: "light",
   tz: "local",
   sidebarCollapsed: false,
+  shakeToSession: false,
   setTheme: () => undefined,
   cycleTheme: () => undefined,
   setTz: () => undefined,
   setSidebarCollapsed: () => undefined,
+  setShakeToSession: () => undefined,
 });
 
 function systemTheme(): "light" | "dark" {
@@ -52,6 +62,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     readStored(KEYS.tz) === "utc" ? "utc" : "local",
   );
   const [sidebarCollapsed, setSidebarState] = useState(() => readStored(KEYS.sidebar) === "1");
+  const [shakeToSession, setShakeState] = useState(() => readStored(KEYS.shake) === "on");
   const [system, setSystem] = useState(systemTheme);
 
   useEffect(() => {
@@ -91,18 +102,37 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     writeStored(KEYS.sidebar, collapsed ? "1" : "0");
   }, []);
 
+  const setShakeToSession = useCallback((on: boolean) => {
+    setShakeState(on);
+    if (on) writeStored(KEYS.shake, "on");
+    else removeStored(KEYS.shake);
+  }, []);
+
   const value = useMemo(
     () => ({
       theme,
       resolvedTheme,
       tz,
       sidebarCollapsed,
+      shakeToSession,
       setTheme,
       cycleTheme,
       setTz,
       setSidebarCollapsed,
+      setShakeToSession,
     }),
-    [theme, resolvedTheme, tz, sidebarCollapsed, setTheme, cycleTheme, setTz, setSidebarCollapsed],
+    [
+      theme,
+      resolvedTheme,
+      tz,
+      sidebarCollapsed,
+      shakeToSession,
+      setTheme,
+      cycleTheme,
+      setTz,
+      setSidebarCollapsed,
+      setShakeToSession,
+    ],
   );
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 }
