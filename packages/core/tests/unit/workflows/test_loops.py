@@ -461,3 +461,53 @@ def test_refuses_the_run_when_a_group_body_holds_an_approval() -> None:
 
     with pytest.raises(WorkflowEngineError, match="approval"):
         run_workflow(plan, {}, ports)
+
+
+def test_renders_a_body_prompt_file_in_the_body_scope_when_a_group_iterates() -> None:
+    writer = {"id": "w", "type": "agent", "prompt_file": "w.md", "depends_on": ["x"]}
+    group = a_group(body_shell("x"), writer, until_when="$w.output == 'done'")
+    runner = ScriptedRunner({"g__x": ["X1", "X2"], "g__w": ["no", "done"]})
+
+    run_group(group, runner)
+
+    template = "$x.output after $LOOP_PREV.x.output"
+    calls = [call for call in runner.calls if call.node.id == "g__w"]
+    assert [call.scope.render(template, call.context) for call in calls] == [
+        "X1 after ",
+        "X2 after X1",
+    ]
+
+
+def included_group() -> dict[str, object]:
+    writer = {"id": "w", "type": "agent", "prompt_file": "w.md", "depends_on": ["b"]}
+    return {
+        "version": 1,
+        "name": "inner",
+        "revision": 1,
+        "inputs": {"issue": {"required": True}},
+        "nodes": [
+            body_shell("prep"),
+            a_group(body_shell("b"), writer, depends_on=["prep"], until_when="$w.output == 'x'"),
+        ],
+    }
+
+
+def test_renders_an_included_body_prompt_file_in_its_scope_when_the_group_runs() -> None:
+    raw = {
+        "version": 1,
+        "name": "main",
+        "revision": 1,
+        "nodes": [
+            body_shell("b"),
+            {"id": "i", "type": "include", "include": "inner", "with": {"issue": "CHILD"}},
+        ],
+    }
+    plan = plan_workflow(parse_workflow(raw), includes=lambda _: parse_workflow(included_group()))
+    runner = ScriptedRunner({"i__prep": ["P"], "i__g__b": ["B"], "i__g__w": ["x"]})
+    ports = EnginePorts(runner, ListRecorder(), FakeClock(), KeysOutputs(), lambda: 0.5)
+
+    run_workflow(plan, {}, ports)
+
+    [call] = [call for call in runner.calls if call.node.id == "i__g__w"]
+    template = "$INPUTS.issue: $prep.output, $b.output"
+    assert call.scope.render(template, call.context) == "CHILD: P, B"

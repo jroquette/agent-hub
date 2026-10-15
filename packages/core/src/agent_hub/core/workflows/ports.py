@@ -15,6 +15,7 @@ from typing import Literal, Protocol
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.failures import FailureKind, RetryRecord
 from agent_hub.core.workflows.nodes import ExecutableNode
+from agent_hub.core.workflows.scope import RefScope
 from agent_hub.core.workflows.substitution import RefContext
 
 type StepStatus = Literal["ok", "failed", "skipped"]
@@ -32,6 +33,8 @@ class NodeCall:
     prompt (a ``prompt_file`` is read and rendered by the runner, against ``context``).
     ``resume_session`` is the session to continue: ``context.resume``'s, or a loop's previous
     iteration's without ``fresh_context``. ``iteration`` counts a loop's turns from 1, else 0.
+    ``scope`` is how a text written in the node's own workflow reads here: the runner renders a
+    ``prompt_file`` with ``scope.render(template, context)``.
     """
 
     node: ExecutableNode
@@ -43,6 +46,7 @@ class NodeCall:
     env: Mapping[str, str] = field(default_factory=dict)
     prompt: str | None = None
     resume_session: str | None = None
+    scope: RefScope = field(default_factory=RefScope)
 
 
 @dataclass(frozen=True)
