@@ -9,7 +9,9 @@ the whole run and its resumes, so no two steps share one. A failed attempt asks
 starts the loop again from its first turn. A ``halt`` ends the
 run ``cancelled``. An ``approval`` or ``wait`` node opens a gate (``gates.py``) and, until it
 has its answer or its time, pauses the run there: the report is ``paused``, with no end, and the
-nodes after it wait for the resume, which takes up the same gate.
+nodes after it wait for the resume, which takes up the same gate. Rejecting an approval with the
+default decisions ends the run ``cancelled`` like a ``halt``, unless the workflow reads the
+decision.
 """
 
 import json
@@ -30,6 +32,7 @@ from agent_hub.core.workflows.gates import (
     gate_kind,
     gate_output,
     gate_template,
+    reject_cancels,
     wait_due,
 )
 from agent_hub.core.workflows.loops import (
@@ -300,6 +303,9 @@ class _Run:
             return
         recorder.step_ended(StepEnd(node.id, attempt, "ok", clock.now(), output=output))
         self._end(node, NodeEnd(NodeResult("completed", output)))
+        rejected = isinstance(output, dict) and output.get("decision") == "reject"
+        if rejected and reject_cancels(node, self.plan.document.nodes):
+            self.halted_by = node.id
 
     def _gate_failed(self, node: GateNode, attempt: int, failure: NodeFailedError) -> None:
         self._record_failure(node, attempt, failure)

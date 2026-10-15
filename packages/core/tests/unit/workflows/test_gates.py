@@ -244,3 +244,58 @@ def test_fails_unknown_when_the_answers_port_raises() -> None:
     report = run_workflow(a_plan(shell("a"), approval()), {}, ports)
 
     assert (report.status, recorder.end_of("gate").failure_kind) == ("failed", "unknown")
+
+
+def test_ends_the_run_cancelled_when_default_decisions_are_rejected_and_nothing_reads_it() -> None:
+    answers = {("gate", 1): GateAnswer("reject")}
+
+    run = Gated(shell("a"), approval(), shell("b", "gate"), answers=answers, prior=paused_at_gate())
+
+    assert (run.report.status, run.report.reason) == ("cancelled", "gate")
+    assert run.recorder.end_of("gate").output == {"decision": "reject"}
+    assert run.runner.ran() == []
+    assert run.recorder.run_ends[-1].status == "cancelled"
+
+
+def test_completes_the_gate_and_runs_on_when_a_condition_reads_the_rejected_decision() -> None:
+    answers = {("gate", 1): GateAnswer("reject")}
+    when = "$gate.output.decision == 'reject'"
+
+    run = Gated(
+        shell("a"),
+        approval(),
+        shell("b", "gate", when=when),
+        answers=answers,
+        prior=paused_at_gate(),
+    )
+
+    assert run.report.status == "done"
+    assert run.runner.ran() == ["b"]
+
+
+def test_completes_the_gate_when_authored_decisions_include_reject() -> None:
+    decisions = [{"id": "approve", "label": "Go"}, {"id": "reject", "label": "Stop"}]
+    answers = {("gate", 1): GateAnswer("reject")}
+
+    run = Gated(
+        shell("a"),
+        approval(decisions=decisions),
+        shell("b", "gate"),
+        answers=answers,
+        prior=paused_at_gate(),
+    )
+
+    assert run.report.status == "done"
+    assert run.runner.ran() == ["b"]
+
+
+@pytest.mark.parametrize(
+    ("until", "status"),
+    [("2026-10-22T09:00:00+00:00", "paused"), ("2026-10-22T09:00:01+00:00", "failed")],
+)
+def test_bounds_until_at_seven_days_when_the_gate_opens(until: str, status: str) -> None:
+    run = Gated(shell("a"), wait(until=until))
+
+    assert run.report.status == status
+    if status == "failed":
+        assert run.recorder.end_of("gate").failure_kind == "config"

@@ -58,10 +58,10 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
   resumes the previous iteration's session. The output is the last iteration's; past the cap it fails `max_iterations`.
 - `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's
   body outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first). The output maps body id → output.
-- `approval`: `decisions` lists `{id, label}` (kebab-case; default `approve`, `reject`); the output is `{decision}`,
-  plus `text` with `capture_response: true`. Rework is a `loop_group` whose `until_when` reads the decision.
-- `wait`: `duration` (≤ 7d), `until` (ISO-8601 with offset, or a whole reference) or `attention` (a message answered
-  with text, or an option id given `options`); output `{at}`, `{text}` or `{choice, text}`; an early resume re-pauses.
+- `approval`: `decisions` `{id, label}` (kebab-case; default `approve`, `reject`); output `{decision}` (+ `text` with
+  `capture_response`). Rework: a `loop_group` reading the decision; an unread default `reject` ends the run `cancelled`.
+- `wait`: `duration`, `until` (ISO-8601 with offset, or a whole reference) or `attention` (text, or an `options` id),
+  ≤ 7d; output `{at}`, `{text}` or `{choice, text}`. A timed wait ends on a resume past its time; earlier, it re-pauses.
 - `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with`. `with` fills the
   included `inputs` (checked as at run start) and replaces `$INPUTS.<name>` there. Nodes, and references to them,
   become `<include id>__<id>`; roots inherit the include's graph keys; dependants wait for the primary sink (`returns`,
@@ -106,11 +106,10 @@ recorded (`a__b`). `attempt` is per node and keeps counting across retries, iter
 `<run>:<step>:<attempt>:<type>` never repeats. Each attempt is one `step.start` (`attempt`, `revision`, `content_hash`)
 and one `step.end` (`attempt`, `status` `ok`, `failed` or `skipped`, `failure_kind`, `skip_cause`); a skipped node emits
 only `step.end`. `reason` holds only engine metadata (a kind, an origin node id): a halt's rendered `reason` stays in
-the record. `approval` and `wait` add `gate.request` (`gate_id` `<run>:<step>:<attempt>`, `name` the step; `kind`
-`human_gate`, the Approvals kind, when a person answers it, `wait` for a timed wait); a paused run has no `run.end`;
-one decision per `gate_id` comes back as a `control_plane` `gate.result` (`result`, `approver`, `where`), and a second
-is refused. `run.end` (`source_id` `<run>:run:<n>:end`, n counting the run's ends from 0; the fold takes the highest n)
-carries `status`, `outcome`, `reason`, `revision` and `content_hash` (`sha256:` over the run's snapshot).
+the record. `approval` and `wait` add `gate.request` (`gate_id` `<run>:<step>:<attempt>`, `kind` `human_gate` if a
+person answers, else `wait`); one decision per `gate_id` comes back as a `control_plane` `gate.result` (`result`,
+`approver`, `where`), a second is refused. `run.end` (`source_id` `<run>:run:<n>:end`, n from 0; the fold takes the
+highest n) carries `status`, `outcome`, `reason`, `revision` and `content_hash` (`sha256:` of the snapshot).
 
 ### Dry run and fixtures
 
