@@ -3,7 +3,8 @@
 The server binds 127.0.0.1 only, but a page on any site can still make the browser send it a
 request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a ``POST`` or
 ``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the learning
-actions also need that ``Origin``, a same-origin fetch and a JSON body (S7), so do the hub
+actions and the workflow-run writes also need that ``Origin``, a same-origin fetch and a JSON
+body (S7), so do the hub
 registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is refused too,
 A11: a registered hub is a folder sessions may start in), bodies stop at
 1 MiB, API answers are never cached, a CSP keeps the app to its own origin, and no CORS header
@@ -31,7 +32,14 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # server's own ``Origin``, a same-origin fetch (when the browser says) and a JSON body, which a
 # cross-site form cannot send without a preflight that is never granted. Other writes keep the
 # checks above only (E9).
-STRICT_WRITES = re.compile(rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$")
+# The workflow-run writes (AC-213.19) start or stop a child process: strict too, and they need
+# the launch's cookie when sessions are on (``session_access``).
+RUN_WRITES = re.compile(
+    rf"^{re.escape(API_PREFIX)}/workflow-runs(/[^/]+/(cancel|resume|abandon))?$"
+)
+STRICT_WRITES = re.compile(
+    rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"
+)
 # The hub registry writes (A11): this server's exact ``Origin`` is required, a missing one too.
 # A script (``make connect``, the demo seed) sends its base URL as ``Origin``.
 HUB_REGISTRY_WRITES = (
@@ -118,6 +126,11 @@ def _host_and_port(entry: str, *, default_port: int) -> str:
 def is_strict_write(method: str, path: str) -> bool:
     """Whether a request is one of the writes that take the strict checks (``STRICT_WRITES``)."""
     return method in STATE_CHANGING_METHODS and STRICT_WRITES.fullmatch(path) is not None
+
+
+def is_run_write(method: str, path: str) -> bool:
+    """Whether a request starts, cancels, resumes or abandons a workflow run (``RUN_WRITES``)."""
+    return method in STATE_CHANGING_METHODS and RUN_WRITES.fullmatch(path) is not None
 
 
 def is_hub_registry_write(method: str, path: str) -> bool:

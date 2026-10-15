@@ -23,6 +23,7 @@ from agent_hub.core.hub_files.hub_lock import (
 from agent_hub.core.hub_files.rendered_file import Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
+from agent_hub.core.hub_files.seed_units import held_units, is_held
 from agent_hub.core.hub_files.tree_snapshot import (
     FileEntry,
     FolderEntry,
@@ -90,6 +91,8 @@ class _Outcome(Enum):
     WRITE = "write"
     KEPT_SEEDED = "kept seeded"
     KEPT_EQUAL = "kept equal"
+    # An absent file of a seed unit the target already holds (seed_units.py): not written.
+    SKIPPED = "skipped"
 
 
 class _Group(Enum):
@@ -194,12 +197,15 @@ def _decision(
 def _decisions(
     rendered: RenderedHub, hub_json: bytes, entries: Mapping[str, TreeEntry]
 ) -> list[_Decision]:
+    held = held_units(rendered, entries, ())
     # Built in write order (Q-16): files, links, then ``hub.json``.
     decisions = [
         _decision(
             file.path,
             _Group.SEEDED if file.ownership is Ownership.SEEDED else _Group.MANAGED,
-            _file_verdict(file, entries.get(file.path)),
+            _Outcome.SKIPPED
+            if is_held(file.path, held) and file.path not in entries
+            else _file_verdict(file, entries.get(file.path)),
             write=FileWrite(path=file.path, content=file.content, executable=file.executable),
             entries=entries,
         )
@@ -234,16 +240,19 @@ def _is_leftover(path: str, entry: TreeEntry) -> bool:
 
 
 def _rest_of_tree(
-    entries: Mapping[str, TreeEntry], decisions: Iterable[_Decision]
+    entries: Mapping[str, TreeEntry], decisions: Iterable[_Decision], held: frozenset[str]
 ) -> tuple[list[str], list[PathProblem]]:
-    """The leftovers and the unknown entries: every entry no rendered path decides."""
+    """The leftovers and the unknown entries: every entry no rendered path decides.
+
+    What a held seed unit's folder holds is the project's own pack: neither.
+    """
     decided = {each.path for each in decisions} | {HUB_LOCK_PATH}
     # Ancestors of decided paths: a folder there is allowed, anything else refuses the paths below.
     ancestors = {ancestor for path in decided for ancestor in _ancestors(path)}
     leftovers: list[str] = []
     unknown: list[PathProblem] = []
     for path, entry in entries.items():
-        if path in decided or path in ancestors:
+        if path in decided or path in ancestors or is_held(path, held):
             continue
         if _is_leftover(path, entry):
             leftovers.append(path)
@@ -296,7 +305,8 @@ def plan_init(
     """
     _check_render(rendered)
     decisions = _decisions(rendered, hub_json, tree.entries)
-    leftovers, unknown = _rest_of_tree(tree.entries, decisions)
+    held = held_units(rendered, tree.entries, ())
+    leftovers, unknown = _rest_of_tree(tree.entries, decisions, held)
     problems = _problems(decisions, unknown, tree.entries)
     if problems:
         return InitRefusal(problems=problems)
@@ -306,7 +316,9 @@ def plan_init(
     write, kept_seeded, kept_equal = _Outcome.WRITE, _Outcome.KEPT_SEEDED, _Outcome.KEPT_EQUAL
     return InitPlan(
         leftovers=tuple(leftovers),
-        folders=_missing_folders((each.path for each in decisions), tree.entries),
+        folders=_missing_folders(
+            (each.path for each in decisions if each.verdict is not _Outcome.SKIPPED), tree.entries
+        ),
         writes=tuple(writes),
         created_managed=_paths(decisions, write, _Group.MANAGED),
         created_seeded=_paths(decisions, write, _Group.SEEDED),

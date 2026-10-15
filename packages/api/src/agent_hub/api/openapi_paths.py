@@ -1,5 +1,5 @@
 """The Phase 2 contract's paths, the paths control-plane clarity, ticket planning, the Skills
-tab and the workflows add, and the paths an app's OpenAPI document lists."""
+tab, the workflows and the run commands add, and the paths an app's OpenAPI document lists."""
 
 from fastapi import FastAPI
 
@@ -107,9 +107,26 @@ WORKFLOW_PATHS: frozenset[tuple[str, str]] = frozenset(
     ("get", f"{API_PREFIX}{path}") for path in ("/workflows", "/workflows/{project}/{name}")
 )
 
+# The run commands (AGH-232, AC-213.19): start, cancel, resume and abandon, strict writes.
+RUN_COMMAND_PATHS: frozenset[tuple[str, str]] = frozenset(
+    ("post", f"{API_PREFIX}{path}")
+    for path in (
+        "/workflow-runs",
+        "/workflow-runs/{run_id}/cancel",
+        "/workflow-runs/{run_id}/resume",
+        "/workflow-runs/{run_id}/abandon",
+    )
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
-    P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS | AGENT_SESSION_PATHS | WORKFLOW_PATHS
+    P2_PATHS
+    | CLARITY_PATHS
+    | TICKET_PATHS
+    | SKILL_PATHS
+    | AGENT_SESSION_PATHS
+    | WORKFLOW_PATHS
+    | RUN_COMMAND_PATHS
 )
 
 

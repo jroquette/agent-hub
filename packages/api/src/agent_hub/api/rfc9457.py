@@ -50,6 +50,7 @@ from agent_hub.core.learnings.brain_change_requests import (
 from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_view import SkillFileTooLargeError
+from agent_hub.core.workflows.launch import RunConflictError, RunInputError, RunLaunchError
 from agent_hub.storage.errors import DatabaseAccessError
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
@@ -287,6 +288,32 @@ def _change_request_timeout_problem(_: ChangeRequestTimeoutError) -> Problem:
     )
 
 
+# Workflow-run commands (AC-213.19): an input name, a state reason and a run id, never a value
+# the browser sent or the CLI's output (it can name local paths).
+WORKFLOW_RUN_PROBLEM_PREFIX = "urn:agent-hub:problem:workflow-run-"
+
+
+def _run_input_problem(error: RunInputError) -> Problem:
+    members: dict[str, JsonValue] = {"type": f"{WORKFLOW_RUN_PROBLEM_PREFIX}invalid-inputs"}
+    return Problem(422, "Invalid workflow inputs", str(error), members)
+
+
+def _run_conflict_problem(error: RunConflictError) -> Problem:
+    members: dict[str, JsonValue] = {
+        "type": f"{WORKFLOW_RUN_PROBLEM_PREFIX}{error.code.replace('_', '-')}",
+        "code": error.code,
+    }
+    if error.run_id is not None:
+        members["run_id"] = error.run_id
+    return Problem(409, "Workflow run command refused", error.reason, members)
+
+
+def _run_launch_problem(_: RunLaunchError) -> Problem:
+    members: dict[str, JsonValue] = {"type": f"{WORKFLOW_RUN_PROBLEM_PREFIX}launch-failed"}
+    detail = "hub workflow run could not be started or did not finish; nothing was changed."
+    return Problem(502, "Could not run hub workflow run", detail, members)
+
+
 def _not_implemented_problem(error: NotImplementedInBuildError) -> Problem:
     return Problem(501, "Not implemented in this build", str(error))
 
@@ -508,6 +535,9 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     BrainNoteNotFoundError: _brain_note_not_found_problem,
     BrainNoteTooLargeError: _brain_note_too_large_problem,
     SkillFileTooLargeError: _skill_file_too_large_problem,
+    RunInputError: _run_input_problem,
+    RunConflictError: _run_conflict_problem,
+    RunLaunchError: _run_launch_problem,
     LearningConflictError: _learning_conflict_problem,
     HubReadOnlyError: _hub_read_only_problem,
     ChangeRequestError: _change_request_error_problem,

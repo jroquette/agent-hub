@@ -346,7 +346,7 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 **Phase 2 (built).** `hub web` serves the views above that Phase 2 covers: Portfolio, Project overview,
 Approvals (read-only), Live sessions, Sessions and Session detail (Timeline, Files, Cost, Raw events), Workflow runs and
 Run detail, Features and Feature detail, Health (the doctor rules run in process per hub, cached 15 min), Knowledge ›
-Learnings, Knowledge › Brain and Knowledge › Skills, Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
+Learnings, Knowledge › Brain and Knowledge › Skills, Workflows (AGH-226, below), Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
 recomputed on read and memoized in process by the store's high-water mark ([event-derivations.md](design/event-derivations.md)).
 Cost is estimated from transcript usage times a dated price table and always labelled so; OpenTelemetry and GitHub
 are not connected in this version and their cells say so, and Linear is read only for a feature's tickets (AGH-136
@@ -500,13 +500,18 @@ and never stored:
   says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
   hub by its listing's fingerprint.
 
-**Workflows (AGH-225, API built, screens to come).** `GET /api/v1/workflows` lists each project's workflows (the
+**Workflows (AGH-225 API, AGH-226 screen).** `GET /api/v1/workflows` lists each project's workflows (the
 hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema.md)) with their source (`hub` or
 `builtin`), revision and counts, and every file that does not load as a problem (file, line, key, message);
 `GET /api/v1/workflows/{project}/{name}` gives one workflow's document as written and its layers (each node's id, type
 and `depends_on`). Both read the files on request through the generator's discovery and store nothing. Workflow runs
 read any engine run: node ids as recorded, `skipped` steps with their cause, failure kinds, the run's `status`,
-`outcome`, `revision` and `content_hash` ([event derivations](design/event-derivations.md)).
+`outcome`, `revision` and `content_hash` ([event derivations](design/event-derivations.md)). The Workflows page
+(`/workflows`, sidebar group Improve) lists them with their source and the files that do not load; a workflow's page
+draws its graph by layers (a column per layer, arrows for `depends_on`, a list view as its text alternative, a
+keyboard-reachable node panel) and shows its document read-only. Run detail draws an engine run as that graph, each
+node with its state, attempt, skip cause and failure kind (issue-to-pr runs keep their stage pipeline), and the
+Workflow runs list filters by workflow and failure kind.
 
 ## Data sources and event model
 
@@ -590,6 +595,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `step.end` from the workflow engine ([ADR 0032](adr/0032-workflow-engine.md)) | `failure_kind` (`transient`, `timeout`, `rate_limited`, `overloaded`, `exec_failed`, `output_contract`, `max_iterations`, `unknown`, `config`, `auth`, `cancelled`, `fatal`), `skip_cause` (`upstream_failed`, `upstream_skipped`, `condition`, `condition_parse_error`, `prior_success`) |
 | `run.end` from the workflow engine | `outcome` (the `returns` node's `outcome_field` value, stored as JSON: a boolean or an enum string; issue-to-pr keeps the four above); `reason` holds only engine-made metadata (a kind, an origin node id), never rendered or human text |
 | `step.start`, `run.end` from the workflow engine | `revision` (the document's integer), `content_hash` (`sha256:` + 64 hex) |
+| `step.start`, `step.end`, `run.end` from the workflow engine | `issue` (the run's `issue` input, when it is a tracker key such as `DEM-7`), so hub web keeps one live run per issue (AGH-232) |
 | `session.summary` | `text`, `lines` |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
