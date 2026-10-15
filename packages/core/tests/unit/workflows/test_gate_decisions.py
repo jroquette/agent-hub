@@ -319,6 +319,15 @@ def test_refuses_text_without_launching_when_it_is_longer_than_the_cap() -> None
     assert launcher.calls == []
 
 
+def test_records_text_when_it_is_exactly_the_cap() -> None:
+    launcher = Launcher()
+    text = "é" * 32768  # 65536 bytes in UTF-8
+
+    decide(Reads(engine_run(), approvals=[a_gate()]), launcher, decision="approve", text=text)
+
+    assert launcher.calls[0][1][3] == GateAnswer("approve", text)
+
+
 def test_refuses_decision_when_run_child_still_runs() -> None:
     launcher = Launcher(live={"run-9": None})
 
