@@ -62,7 +62,9 @@ the machine can satisfy `3.14`. Fix with `uv self update` and `uv python install
 ## Dependency rule
 
 1. Every package may depend on `core`.
-2. `core` depends on nothing internal, and not on the adapter libraries `sqlalchemy`, `alembic` or `typer`.
+2. `core` depends on nothing internal, and not on the adapter libraries `sqlalchemy`, `alembic`, `typer` or
+   `jsonschema` (workflow output contracts are checked in `generator`, behind core's `OutputValidator` port,
+   [ADR 0032](adr/0032-workflow-engine.md)).
 3. `agent_hub.cli` is the composition root ([ADR 0008](adr/0008-cli-as-composition-root.md)): it may import the adapter
    packages `storage`, `collector`, `generator` and `tracker_linear` to build adapters and pass them to core use cases.
    Nothing imports `cli`. `agent_hub.api`, the second composition root, may import `storage`, `collector`, `generator`,
