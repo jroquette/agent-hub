@@ -229,6 +229,111 @@ def test_lists_session_views_when_session_known(store: InMemoryEventStore) -> No
     assert len(calls.items) == 4
 
 
+def test_fills_tile_fields_when_sessions_listed(store: InMemoryEventStore) -> None:
+    service = _service(store, NOW)[0]
+
+    listed = {s.id: s for s in service.list_sessions(SessionFilter()).items}
+    [tile] = service.list_live_sessions(Scope(project="demo")).items
+    one = service.get_session("s-b")
+
+    waiting = listed["s-b"]
+    assert (
+        waiting.waiting_reason,
+        waiting.last_action,
+        waiting.last_tool,
+        waiting.needs_you_problem,
+        waiting.failing_notice,
+    ) == (
+        tile.waiting_reason,
+        tile.last_action,
+        tile.last_tool,
+        tile.needs_you_problem,
+        tile.failing_notice,
+    )
+    assert waiting.waiting_reason == "Guard ask"
+    assert waiting.sparkline_60s == ()
+    assert one == waiting
+    ended = listed["s-a"]
+    assert ended.last_tool is not None
+    assert ended.sparkline_60s is None
+    linked = _linked_service(
+        {("demo", "s-web"): AgentSessionLink(agent_session_id="a-1", waiting=True)}
+    )
+    tiles = {tile.id: tile for tile in linked.list_live_sessions(Scope()).items}
+    rows = {s.id: s for s in linked.list_sessions(SessionFilter()).items}
+    assert rows["s-web"].waiting_reason == tiles["s-web"].waiting_reason == "Permission prompt"
+    assert linked.get_session("s-web").waiting_reason == "Permission prompt"
+    assert rows["s-cli"].waiting_reason is None
+    own = _linked_service({}).get_session("s-web").status
+    assert own in {SessionStatus.LIVE, SessionStatus.IDLE}
+    assert rows["s-web"].status == linked.get_session("s-web").status == own
+    assert rows["s-web"].sparkline_60s == linked.get_session("s-web").sparkline_60s == ()
+
+
+def test_folds_tile_fields_for_page_rows_only_when_page_smaller_than_matches(
+    store: InMemoryEventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _service(store, NOW)[0]
+    calls: list[str] = []
+    real = event_read_models.tile_fields
+
+    def counting(session: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(session.id)
+        return real(session, *args, **kwargs)
+
+    monkeypatch.setattr(event_read_models, "tile_fields", counting)
+
+    page = service.list_sessions(SessionFilter(limit=1))
+
+    assert calls == [item.id for item in page.items]
+    assert len(calls) == 1
+
+
+def test_reuses_tile_fields_when_read_again_at_same_mark(
+    store: InMemoryEventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _service(store, NOW)[0]
+    calls: list[str] = []
+    real = event_read_models.tile_fields
+
+    def counting(session: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(session.id)
+        return real(session, *args, **kwargs)
+
+    monkeypatch.setattr(event_read_models, "tile_fields", counting)
+    first = service.list_sessions(SessionFilter())
+    one = service.get_session("s-b")
+    calls.clear()
+
+    again = service.list_sessions(SessionFilter())
+    same = service.get_session("s-b")
+
+    assert calls == []
+    assert again == first
+    assert same == one
+
+
+def test_refolds_tile_fields_of_changed_session_only_when_store_grows(
+    store: InMemoryEventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _service(store, NOW)[0]
+    calls: list[str] = []
+    real = event_read_models.tile_fields
+
+    def counting(session: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(session.id)
+        return real(session, *args, **kwargs)
+
+    monkeypatch.setattr(event_read_models, "tile_fields", counting)
+    service.list_sessions(SessionFilter())
+    calls.clear()
+
+    store.append([an_event(session="s-b", timestamp=NOW - timedelta(minutes=1))])
+    service.list_sessions(SessionFilter())
+
+    assert calls == ["s-b"]
+
+
 def test_pages_session_events_when_limit_smaller_than_events(store: InMemoryEventStore) -> None:
     service = _service(store, NOW)[0]
     first = service.session_events("s-a", types=frozenset(), page=PageRequest(limit=5))
@@ -748,6 +853,20 @@ def test_carries_agent_session_id_when_link_known_agent_session_link() -> None:
     assert listed["s-web"].agent_session_id == "a-1"
     assert listed["s-cli"].agent_session_id is None
     assert one.agent_session_id == "a-1"
+
+
+def test_drops_permission_reason_when_link_stops_waiting_at_same_mark() -> None:
+    links = {("demo", "s-web"): AgentSessionLink(agent_session_id="a-1", waiting=True)}
+    service = _linked_service(links)
+
+    before = service.get_session("s-web").waiting_reason
+    links[("demo", "s-web")] = AgentSessionLink(agent_session_id="a-1")
+    after = service.get_session("s-web").waiting_reason
+    listed = {s.id: s for s in service.list_sessions(SessionFilter()).items}
+
+    assert before == "Permission prompt"
+    assert after is None
+    assert listed["s-web"].waiting_reason is None
 
 
 def test_shows_waiting_tile_when_permission_pending_agent_session_link() -> None:

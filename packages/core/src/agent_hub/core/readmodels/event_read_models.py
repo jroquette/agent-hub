@@ -25,7 +25,7 @@ issue at read time from the hub's ``LabelRules`` (``label_rules_of``), outside e
 import bisect
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -66,7 +66,13 @@ from agent_hub.core.readmodels.filters import (
     SessionFilter,
 )
 from agent_hub.core.readmodels.fold_memo import FoldMemo
-from agent_hub.core.readmodels.live_tiles import WAITING_REASONS, has_tile, live_tiles
+from agent_hub.core.readmodels.live_tiles import (
+    WAITING_REASONS,
+    TileFields,
+    has_tile,
+    live_tiles,
+    tile_fields,
+)
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.runner.run_record import Stage
@@ -205,10 +211,13 @@ class _FoldMemos:
         str, tuple[_Group, frozenset[tuple[str, str]], dict[str, tuple[_CanonicalKey, Approval]]]
     ]
     learnings: tuple[_Group, dict[str, Learning]]
+    # Tile fields per (session, waits on a permission request), derived at read time for the
+    # rows asked; valid while the group, ``now`` and the folded problems are the same.
+    tiles: dict[tuple[str, bool], tuple[_Group, datetime, SessionProblems, TileFields]]
 
     @classmethod
     def empty(cls) -> _FoldMemos:
-        return cls(sessions={}, runs={}, approvals={}, learnings=((), {}))
+        return cls(sessions={}, runs={}, approvals={}, learnings=((), {}), tiles={})
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -224,6 +233,7 @@ class _Snapshot:
     runs: Mapping[str, WorkflowRun]
     approvals: Mapping[str, Approval]
     learnings: Mapping[str, Learning]
+    tiles: dict[tuple[str, bool], tuple[_Group, datetime, SessionProblems, TileFields]]
 
 
 def _microseconds(moment: datetime | None) -> int:
@@ -425,6 +435,7 @@ class FoldedEventReadModels:
                 runs=_fold_runs(index, sessions, memos),
                 approvals=_fold_approvals(index, hub_paths, memos),
                 learnings=_fold_learnings(index, memos),
+                tiles=memos.tiles,
             )
 
     def _fold_sessions(
@@ -472,11 +483,6 @@ class FoldedEventReadModels:
             raise EntityNotFoundError(entity="session", entity_id=session_id)
         return session
 
-    def _with_issues(self, sessions: Iterable[Session]) -> list[Session]:
-        """``sessions`` with the issue each label names under its hub's current rules, and
-        the agent session each one is driven from."""
-        return [session for session, _ in self._decorated(sessions)]
-
     def _decorated(self, sessions: Iterable[Session]) -> list[tuple[Session, bool]]:
         """Each session with its issue and agent-session link, and whether that agent session
         waits on a permission request."""
@@ -514,11 +520,14 @@ class FoldedEventReadModels:
             request=session_filter,
             hwm=snapshot.hwm,
         )
-        return page.model_copy(update={"items": tuple(self._with_issues(page.items))})
+        items = _with_tile_fields(snapshot, self._decorated(page.items))
+        return page.model_copy(update={"items": tuple(items)})
 
     def get_session(self, session_id: str) -> Session:
-        """One session."""
-        return self._with_issues([self._session(self._snapshot(), session_id)])[0]
+        """One session, with its tile fields."""
+        snapshot = self._snapshot()
+        session = self._session(snapshot, session_id)
+        return _with_tile_fields(snapshot, self._decorated([session]))[0]
 
     def session_summary(self, session_id: str) -> SessionSummary:
         """The session's summary lines (D17)."""
@@ -783,7 +792,42 @@ class FoldedEventReadModels:
         )
 
 
-# Labels at read time
+# Labels and tile fields at read time
+
+
+def _with_tile_fields(
+    snapshot: _Snapshot, decorated: Iterable[tuple[Session, bool]]
+) -> list[Session]:
+    """Each decorated session with the fields its Live tile shows (D5), derived for these rows
+    only: one whose agent session waits on a permission request gets the fields of its
+    ``waiting`` tile, while it keeps its own status."""
+    filled: list[Session] = []
+    for session, waits in decorated:
+        fields = _tile_fields_of(snapshot, session, waits=waits)
+        filled.append(session.model_copy(update=asdict(fields)))
+    return filled
+
+
+def _tile_fields_of(snapshot: _Snapshot, session: Session, *, waits: bool) -> TileFields:
+    """The tile fields of one row, folded again only when its events, ``now`` or problems
+    changed (AC-234.5: a read at the same mark, or after an append to another session, does
+    not fold every row's events)."""
+    group = snapshot.by_session[session.id]
+    problems = snapshot.problems[session.id]
+    found = snapshot.tiles.get((session.id, waits))
+    if (
+        found is not None
+        and found[0] is group
+        and found[1] == snapshot.now
+        and found[2] is problems
+    ):
+        return found[3]
+    shown = _waiting(session) if waits else session
+    fields = tile_fields(shown, group, now=snapshot.now, problems=problems)
+    if waits and shown.status == SessionStatus.WAITING:
+        fields = replace(fields, waiting_reason=_permission_reason(fields.waiting_reason))
+    snapshot.tiles[(session.id, waits)] = (group, snapshot.now, problems, fields)
+    return fields
 
 
 def _waiting(session: Session) -> Session:
@@ -794,10 +838,16 @@ def _waiting(session: Session) -> Session:
     return session.model_copy(update={"status": SessionStatus.WAITING})
 
 
+def _permission_reason(reason: str | None) -> str:
+    """The waiting reason of a session whose agent session waits on a permission request:
+    an open approval's own reason first."""
+    return WAITING_REASONS[ApprovalKind.PERMISSION] if reason is None else reason
+
+
 def _permission_tile(tile: LiveTile) -> LiveTile:
     if tile.group != "waiting" or tile.waiting_reason is not None:
         return tile
-    return tile.model_copy(update={"waiting_reason": WAITING_REASONS[ApprovalKind.PERMISSION]})
+    return tile.model_copy(update={"waiting_reason": _permission_reason(None)})
 
 
 def _with_issue(session: Session, rules: LabelRules | None) -> Session:

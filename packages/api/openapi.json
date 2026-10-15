@@ -5734,7 +5734,7 @@
       },
       "Session": {
         "additionalProperties": false,
-        "description": "A session folded from its events (status, counts, tokens, estimated cost).\n\n``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.\n``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.",
+        "description": "A session folded from its events (status, counts, tokens, estimated cost).\n\n``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.\n``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.\nThe tile fields (``waiting_reason`` to ``sparkline_60s``) are what a Live tile shows,\nderived by the same code (D5); lists and the session read fill them, other reads leave them\n``null``. ``sparkline_60s`` is ``null`` once the session has ended.",
         "properties": {
           "actors": {
             "default": [],
@@ -5828,6 +5828,17 @@
             "title": "Errors",
             "type": "integer"
           },
+          "failing_notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failing Notice"
+          },
           "files_touched": {
             "minimum": 0.0,
             "title": "Files Touched",
@@ -5872,8 +5883,30 @@
               }
             ]
           },
+          "last_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Action"
+          },
           "last_activity_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "last_tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Tool"
           },
           "learnings_proposed": {
             "minimum": 0.0,
@@ -5890,6 +5923,17 @@
               }
             ],
             "title": "Model"
+          },
+          "needs_you_problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs You Problem"
           },
           "outcome": {
             "anyOf": [
@@ -5972,6 +6016,20 @@
             "title": "Sources Missing",
             "type": "array"
           },
+          "sparkline_60s": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sparkline 60S"
+          },
           "started_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
           },
@@ -6010,6 +6068,17 @@
             "minimum": 0.0,
             "title": "Turns",
             "type": "integer"
+          },
+          "waiting_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Reason"
           }
         },
         "required": [
