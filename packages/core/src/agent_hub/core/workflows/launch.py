@@ -41,6 +41,8 @@ TRACKER_WORKFLOWS: Final = frozenset({"issue-to-pr"})
 MAX_INPUTS: Final = 64
 # One argv element each (Linux caps one at 128 KiB); no NUL, which argv cannot carry.
 MAX_INPUT_CHARS: Final = 16_384
+# All inputs together, as ``--input name=value`` argv text (UTF-8): far below any ARG_MAX.
+MAX_INPUT_ARGV_BYTES: Final = 256 * 1024
 MAX_WORKFLOW_CHARS: Final = 128
 # The read model's pages read for an issue's live runs, newest first.
 MAX_LIVE_PAGES: Final = 10
@@ -139,10 +141,22 @@ def new_run_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
+def argv_text(value: JsonValue) -> str:
+    """An input as ``--input`` takes it: ``true``/``false``, a number, or the text itself."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return repr(value)
+    return str(value)
+
+
 def launch_inputs(plan: WorkflowPlan, given: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
     """``given`` with the declared defaults filled in; ``RunInputError`` when an input is
     unknown, missing or of another type."""
     declared = plan.document.inputs
+    size = sum(len(f"{name}={argv_text(value)}".encode()) for name, value in given.items())
+    if size > MAX_INPUT_ARGV_BYTES:
+        raise RunInputError(f"the inputs take more than {MAX_INPUT_ARGV_BYTES} bytes as arguments")
     for name, value in given.items():
         if name in declared and not declared[name].fits(value):
             raise RunInputError(f"the input {echo(name)} must be of type {declared[name].type}")
