@@ -8,7 +8,9 @@ web's store, absolute), so the child's events, appended through its ``IngestEven
 ones the web reads. A start (always ``--live``) or resume is detached: its own session (its
 group id is its pid), stdin empty, both streams appended to ``.agent-runs/web/<run>.log``. Its
 pid file ``.agent-runs/web/<run>.pid`` is made before the child (``O_EXCL``, 0600, never
-through a link) and holds the pid, its start time and the issue. One lock covers the in-use
+through a link), locked by its writer (``flock``) until its record (the pid, its start time and
+the issue) is written; another launcher removes a file it judged replaceable only once that lock
+is free and the file still reads the same, else 409. One lock covers the in-use
 check, the spawn and the registration, so of two concurrent launches of a run one answers 409;
 at most ``max_children`` children run at once.
 
@@ -27,6 +29,7 @@ import fcntl
 import json
 import logging
 import os
+import secrets
 import shutil
 import signal
 import subprocess
@@ -288,7 +291,7 @@ class ProcessRunLauncher:
                 reason = f"{self._max_children} runs started from hub web are still running"
                 raise RunConflictError(code="too_many_runs", reason=reason)
             # It reads as judged and names nothing live: a stale file, a link or junk.
-            pid_path.unlink(missing_ok=True)
+            _remove_unheld(pid_path, before, run_id)
             child = self._spawn_registered(hub_path, pid_path, argv, issue=issue)
         threading.Thread(target=self._reap, args=(pid_path, child), daemon=True).start()
 
@@ -308,7 +311,7 @@ class ProcessRunLauncher:
         self, hub_path: str, pid_path: Path, argv: list[str], *, issue: str | None
     ) -> _Child:
         try:
-            pid_file = os.open(pid_path, _NEW_FILE, PRIVATE_MODE)
+            pid_file = _create_locked(pid_path)
         except FileExistsError:
             reason = "the run's child is still running"
             raise RunConflictError(code="in_use", reason=reason) from None
@@ -420,8 +423,71 @@ def _pid_bytes(path: Path) -> bytes | None:
         return None
     except OSError:
         return _UNREADABLE
-    with os.fdopen(descriptor, "rb") as file:
-        return file.read(MAX_PID_FILE_BYTES + 1)
+    try:
+        return _read_or_marker(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _read_or_marker(descriptor: int) -> bytes:
+    try:
+        return os.read(descriptor, MAX_PID_FILE_BYTES + 1)
+    except OSError:  # a folder named <run>.pid, an I/O error
+        return _UNREADABLE
+
+
+def _create_locked(pid_path: Path) -> int:
+    """The new pid file's descriptor, holding ``LOCK_EX`` until its record is written.
+
+    A temporary name is made (``O_EXCL``) and locked, then hard-linked to the pid path, which
+    fails with ``FileExistsError`` when a file is there: the pid path never shows an empty file
+    that is not locked by its writer.
+    """
+    temporary = pid_path.with_name(f".{pid_path.name}.{secrets.token_hex(4)}")
+    descriptor = os.open(temporary, _NEW_FILE, PRIVATE_MODE)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        os.link(temporary, pid_path, follow_symlinks=False)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    finally:
+        temporary.unlink(missing_ok=True)
+    return descriptor
+
+
+def _remove_unheld(pid_path: Path, before: bytes | None, run_id: str) -> None:
+    """Remove a pid file judged replaceable, once its writer's lock is free and it still reads
+    as judged (409 ``in_use`` else); a link is removed, never followed."""
+    if before is None:
+        return
+    busy = RunConflictError(code="in_use", reason="the run's pid file is in use", run_id=run_id)
+    try:
+        descriptor = os.open(pid_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        raise busy from None
+    except OSError:
+        descriptor = None  # a link: nothing writes through it
+    try:
+        if descriptor is not None and not _locked_as(descriptor, before):
+            raise busy
+        pid_path.unlink()
+    except FileNotFoundError:
+        raise busy from None
+    except OSError as error:
+        raise RunLaunchError(f"cannot replace the run's pid file: {error.strerror}") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _locked_as(descriptor: int, before: bytes) -> bool:
+    """Whether the file's lock was free (now taken) and it still reads ``before``."""
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return _read_or_marker(descriptor) == before
 
 
 def _read_pid_file(path: Path) -> _PidFile | None:
