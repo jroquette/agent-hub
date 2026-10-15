@@ -1,5 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Profiler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -843,6 +845,106 @@ describe("AgentSessionScreen (chat-shortcuts)", () => {
     });
 
     expect(await screen.findByRole("region", { name: /Claude wants to use Bash/ })).toHaveFocus();
+  });
+});
+
+describe("AgentSessionScreen (axe)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    scrolled.top = 0;
+  });
+
+  /** The log, named by its visually hidden h2, and no serious axe violation in the page. */
+  async function accessible(container: Element, busy: boolean) {
+    const conversation = screen.getByRole("log", { name: "Conversation" });
+    const heading = screen.getByRole("heading", { level: 2, name: "Conversation" });
+    expect(heading).toHaveClass("ah-sr");
+    expect(conversation).toHaveAttribute("aria-labelledby", heading.id);
+    expect(conversation).toHaveAttribute("aria-busy", String(busy));
+    expect(await seriousViolations(container)).toEqual([]);
+  }
+
+  it("is accessible when empty", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 0 }),
+        [EVENTS]: { items: [], next_after: null },
+      }),
+    );
+    await screen.findByText(/No messages yet/);
+    await accessible(view.container, false);
+  });
+
+  it("is accessible while a block streams", async () => {
+    const runFrame = manualFrames();
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    act(() => {
+      view.stream(STREAM).open();
+      view
+        .stream(STREAM)
+        .emit("delta", aDeltaFrame({ after_seq: 3, block: 1, text: "Hel" }), "3.0");
+    });
+    runFrame();
+    expect(screen.getAllByRole("article", { name: "Claude" })[1]).toHaveTextContent("Hel");
+    await accessible(view.container, true);
+  });
+
+  it("is accessible while a permission waits", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          open_permission: aPermissionRequest(),
+        }),
+      }),
+    );
+    await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+    await accessible(view.container, false);
+  });
+
+  it("is accessible when detached, with the jump button", async () => {
+    stubScrolling();
+    const view = renderChat();
+    const conversation = await screen.findByRole("log", { name: "Conversation" });
+    const scroller = conversation.closest(".as-scroll");
+    if (!scroller) throw new Error("no scroller");
+    await waitFor(() => {
+      expect(scrolled.top).toBe(600);
+    });
+    scrollUp(scroller);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+    await accessible(view.container, false);
+  });
+
+  it("is accessible with the slash menu open", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    await userEvent.type(screen.getByRole("textbox", { name: "Message Claude" }), "/");
+    expect(screen.getByRole("option", { name: "/feature" })).toBeVisible();
+    await accessible(view.container, false);
+  });
+
+  it("is accessible once ended", async () => {
+    const view = renderChat(
+      routes({ [SESSION]: anAgentSession({ status: "ended", end_reason: "closed" }) }),
+    );
+    await screen.findByText(/Ended · closed/);
+    await accessible(view.container, false);
+  });
+
+  it("animates no caret or working dot under reduced motion", () => {
+    const css = readFileSync(
+      join(process.cwd(), "src/screens/agent-session/agent-session.css"),
+      "utf8",
+    );
+    const animated = [...css.matchAll(/([^{}]+)\{[^{}]*\banimation:(?!\s*none)[^;]+;/g)].map(
+      (match) => match[1]?.trim(),
+    );
+    expect(animated).toEqual([".as-caret", ".as-working::before"]);
+    const reduced =
+      /@media \(prefers-reduced-motion: reduce\) \{\s*([^{]+)\{\s*animation: none;/.exec(css);
+    expect(reduced?.[1]?.split(",").map((selector) => selector.trim())).toEqual(animated);
   });
 });
 
