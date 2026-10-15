@@ -212,6 +212,7 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
     <section
       ref={card}
       className={cx("as-perm", pending ? "as-perm-pending" : "as-perm-done")}
+      data-request-id={request.requestId}
       aria-labelledby={titleId}
       tabIndex={-1}
     >
