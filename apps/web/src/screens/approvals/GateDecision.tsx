@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { Button, Skeleton, type IconName } from "../../components";
 import type { ApiProblem } from "../../lib/api";
+import { useModalFocus } from "../../lib/modalFocus";
 import { useDecideGate, useWorkflowGate, type WorkflowGate } from "./queries";
 
 /* A workflow gate decided from hub web (AC-213.18): one button per declared decision or option
@@ -54,8 +55,6 @@ function DecisionError({ error }: { error: ApiProblem }) {
   );
 }
 
-const FOCUSABLE = "button:not([disabled]), textarea:not([disabled])";
-
 interface TextDialogProps {
   choice: Choice;
   required: boolean;
@@ -77,47 +76,7 @@ function TextDialog({ choice, required, pending, error, onConfirm, onCancel }: T
   const heading = choice.id === null ? "Respond to this gate?" : `${choice.label}?`;
   const label = required ? "Response (required)" : "Reason (optional)";
 
-  useEffect(() => {
-    const before = document.activeElement;
-    dialog.current?.querySelector("textarea")?.focus();
-    return () => {
-      if (before instanceof HTMLElement) before.focus();
-    };
-  }, []);
-
-  // Escape cancels (not while the request runs) and Tab cycles inside the dialog.
-  useEffect(() => {
-    const node = dialog.current;
-    if (!node) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        if (!pending) onCancel();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)];
-      const head = items[0];
-      const tail = items[items.length - 1];
-      if (!head || !tail) {
-        // Every control is off while the request runs: focus stays on the dialog itself.
-        event.preventDefault();
-        node.focus();
-        return;
-      }
-      if (event.shiftKey && document.activeElement === head) {
-        event.preventDefault();
-        tail.focus();
-      } else if (!event.shiftKey && document.activeElement === tail) {
-        event.preventDefault();
-        head.focus();
-      }
-    };
-    node.addEventListener("keydown", onKeyDown);
-    return () => {
-      node.removeEventListener("keydown", onKeyDown);
-    };
-  }, [pending, onCancel]);
+  useModalFocus(dialog, { locked: pending, onEscape: onCancel, initial: "textarea" });
 
   return (
     <div className="ah-scrim">
