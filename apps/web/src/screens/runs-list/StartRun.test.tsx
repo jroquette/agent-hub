@@ -1,6 +1,6 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -13,7 +13,7 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
-import { StartRun } from "./StartRun";
+import { REPORT_WAIT_MS, StartRun } from "./StartRun";
 
 const LIST = "/api/v1/workflows";
 const FIX = "/api/v1/workflows/agent-hub/fix";
@@ -122,6 +122,48 @@ describe("StartRun", () => {
       },
       { timeout: 4000 },
     );
+  });
+
+  it("offers the run's log and a link when it has not reported in 30 s", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { router } = renderStart({ [START]: ACCEPTED, "/api/v1/workflow-runs": aPage([]) });
+      const dialog = await openDialog();
+      await chooseFix(dialog);
+      await userEvent.type(within(dialog).getByRole("textbox", { name: /^issue/ }), "DEM-7");
+      await userEvent.click(within(dialog).getByRole("button", { name: "Start run" }));
+      await within(dialog).findByText(/Waiting for the run's first event/);
+      expect(within(dialog).getByRole("button", { name: "Close" })).toBeEnabled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(REPORT_WAIT_MS);
+      });
+
+      const alert = await within(dialog).findByRole("alert");
+      expect(alert).toHaveTextContent(".agent-runs/web/a1b2c3d4.log");
+      expect(within(alert).getByRole("link", { name: "Open the run anyway" })).toHaveAttribute(
+        "href",
+        "/runs/a1b2c3d4",
+      );
+      expect(router.state.location.pathname).toBe("/runs");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says a number field the browser could not read is not a number", async () => {
+    renderStart();
+    const dialog = await openDialog();
+    await chooseFix(dialog);
+    await userEvent.type(within(dialog).getByRole("textbox", { name: /^issue/ }), "DEM-7");
+    const ratio = within(dialog).getByRole("spinbutton", { name: /^ratio/ });
+    await userEvent.type(ratio, "1");
+
+    Object.defineProperty(ratio, "validity", { value: { badInput: true }, configurable: true });
+    fireEvent.change(ratio, { target: { value: "" } });
+
+    expect(within(dialog).getByText("ratio must be a number.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Start run" })).toBeDisabled();
   });
 
   it("starts the run with typed inputs and opens it", async () => {
