@@ -48,8 +48,8 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 - `prompt_file` and `script` are paths inside the pack's `prompts/` and `scripts/` (no `..`, not absolute). `with` maps
   names to values or `{from: <output ref>, if_skipped: <value>}`, read in a prompt as `$WITH.<name>`. `model` is a
   `hub.json` → `models.tiers` tier (default `medium`); `limits` is `{max_turns, max_cost_usd}` (default 40 and 3.0);
-  `context` is `fresh` (default) or `{resume: <upstream agent node id>}`. A `cwd` (an agent's may be a reference) stays
-  in the hub or a repo (else `config`); there an agent runs as `hub run`'s. `stdin`: a literal or one whole reference.
+  `context` is `fresh` (default; an explicit one in a `loop_group` body never resumes) or `{resume: <upstream agent node id>}`.
+  A `cwd` (an agent's may be a reference) stays in the hub or a repo (else `config`); there an agent runs as `hub run`'s. `stdin`: a literal or one whole reference.
 - No child gets `LINEAR_API_KEY`. Agents run with `session_env`, other commands with `untrusted_env`; `env` adds no
   token. A `hub step` node (`command[0:2]` is `[hub, step]`) runs the engine's own hub with `child_env`, refuses `env`
   and a referenced `cwd`, and narrows per call (`push_env` only for fetch, push, gh). Tracker writes (ADR 0030) are the
