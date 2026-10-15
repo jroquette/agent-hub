@@ -574,7 +574,9 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
   switch (record.kind) {
     case "user.message": {
       const text = str(body, "text") ?? "";
-      return push(s, {
+      // Core refuses a send while an interrupt awaits its result, so a message after an
+      // interrupt means that interrupt cut no turn short (it landed on an idle session).
+      return push({ ...s, interrupted: false }, {
         kind: "user",
         key: `u-${String(record.seq)}`,
         seq: record.seq,

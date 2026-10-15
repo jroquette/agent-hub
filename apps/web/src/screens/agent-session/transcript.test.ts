@@ -347,6 +347,18 @@ describe("reduceTranscript (stop)", () => {
     ]);
   });
 
+  it("forgets an interrupt that landed on an idle session once the next message is sent", () => {
+    const state = run([
+      record("user.message", { seq: 1 }),
+      record("result", { seq: 2 }),
+      record("interrupt", { seq: 3 }),
+      record("user.message", { seq: 4 }),
+      record("result", { seq: 5 }),
+    ]);
+
+    expect(notices(state)).toEqual(["You interrupted the turn"]);
+  });
+
   it("closes a bubble an interrupt cut short, so no caret stays", () => {
     const state = run([
       delta({ after_seq: 0, block: 0, index: 0, text: "Half a" }),
