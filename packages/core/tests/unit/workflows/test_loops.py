@@ -14,6 +14,7 @@ from agent_hub.core.testing.workflow_fakes import (
 from agent_hub.core.workflows.document import WorkflowLoadError, parse_workflow
 from agent_hub.core.workflows.engine import EnginePorts, WorkflowEngineError, run_workflow
 from agent_hub.core.workflows.failures import NodeFailedError
+from agent_hub.core.workflows.includes import MAX_EXPANDED_NODES
 from agent_hub.core.workflows.loops import last_line
 from agent_hub.core.workflows.plan import plan_workflow
 from agent_hub.core.workflows.ports import NodeReply
@@ -511,3 +512,34 @@ def test_renders_an_included_body_prompt_file_in_its_scope_when_the_group_runs()
     [call] = [call for call in runner.calls if call.node.id == "i__g__w"]
     template = "$INPUTS.issue: $prep.output, $b.output"
     assert call.scope.render(template, call.context) == "CHILD: P, B"
+
+
+def group_cap_plan(own: int) -> object:
+    body = [body_shell(f"b{index}") for index in range(99)]
+    block = {
+        "version": 1,
+        "name": "rounds",
+        "revision": 1,
+        "nodes": [a_group(*body, until_when="$b0.output == 'x'")],
+    }
+    nodes = [body_shell(f"n{index}") for index in range(own)]
+    nodes += [{"id": f"i{index}", "type": "include", "include": "rounds"} for index in range(5)]
+    raw = {"version": 1, "name": "main", "revision": 1, "nodes": nodes}
+    return plan_workflow(parse_workflow(raw), includes=lambda _: parse_workflow(block))
+
+
+def test_counts_group_bodies_when_an_expansion_holds_exactly_the_node_cap() -> None:
+    plan = group_cap_plan(MAX_EXPANDED_NODES - 500)
+
+    assert sum(1 for _ in plan.all_nodes()) == MAX_EXPANDED_NODES  # type: ignore[attr-defined]
+
+
+def test_refuses_the_include_when_a_group_body_takes_the_expansion_past_the_cap() -> None:
+    with pytest.raises(WorkflowLoadError) as caught:
+        group_cap_plan(MAX_EXPANDED_NODES - 499)
+
+    crossing = MAX_EXPANDED_NODES - 499 + 4
+    cap = MAX_EXPANDED_NODES
+    assert (
+        str(caught.value) == f"nodes[{crossing}].include: the expanded workflow passes {cap} nodes"
+    )
