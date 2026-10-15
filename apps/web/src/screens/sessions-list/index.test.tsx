@@ -85,7 +85,7 @@ describe("SessionsListScreen", () => {
     expect(inTables("$1.2500")).toHaveLength(2);
     expect(inTables("3")).toHaveLength(3);
     expect(inTables("—")).toHaveLength(1);
-    expect(screen.getByText(/Showing 2 of ~2 · 7 d · 1 project/)).toBeInTheDocument();
+    expect(screen.getByText(/Showing 2 of ~2 · Ended: last 7 d · 1 project/)).toBeInTheDocument();
   });
 
   it("names each session by its label over repo · branch and has no Agent column (label, AC-201.4)", async () => {
