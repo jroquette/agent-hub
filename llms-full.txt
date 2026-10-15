@@ -2010,7 +2010,9 @@ the render and `hub.json` only, never `hub.local.json` (`build_hub_lock`), writt
      else conflict. No entry or a seeded one: absent → write, `created` (never `restored`); present → conflict.
    - **Rendered seeded.** No entry: absent → write, `created`; a regular file → recorded; a link, folder or other →
      conflict. Seeded entry: nothing, whatever is on disk (deleted stays deleted). Managed entry (managed → seeded):
-     the file, or its absence, stays; recorded seeded.
+     the file, or its absence, stays; recorded seeded. A workflow pack (`workflows/<pack>/`) is one unit, at init
+     and adopt too: held when the lock lists one of its paths or its folder holds anything but the render's folders
+     and bytes, and then none of its absent files is written (still recorded seeded) (AGH-227).
    - **In the lock, not rendered.** Seeded → entry dropped. Managed: gone → dropped; equal to the entry → deleted,
      `deleted`; else conflict. A rename is a delete plus a create.
    - **Type.** A file or folder where a link is rendered, or the reverse, is a conflict even when equal to its entry
@@ -2344,6 +2346,7 @@ functions registered when the module ships.
 | `config.stop_gate` | warning | each repo whose `check_fast` is absent, empty or blank: `no Stop gate for <dir>` at `repos[<i>].check_fast`; can be disabled, cannot be retuned (a `severity` is a `config.schema` error) | AGH-52 |
 | `brain.memory` | warning | personal memory in `brain/auto/workspace/` stays out of git: (a) on a git listing only (`listed_by_git`), each tracked or not-ignored path under the folder but its `.gitkeep` (at most 10, then one `N more` at the folder); (b) the root `.gitignore` has no line ignoring the folder (a line match, not git's matcher: a nested `.gitignore` and a later `!` line are not evaluated). Paths and counts only. Details, messages, fix and limits: [memory-layers.md](memory-layers.md#doctor-rule-brainmemory) | AGH-48 |
 | `sandbox.workflow` | error | the hub's own commands work inside the Claude Code sandbox the managed settings turn on: with `.claude/settings.json` → `sandbox.enabled` not `true`, one info (nothing to check); with it on, one error naming each command of `WORKFLOW_EXCLUDED_COMMANDS` (`gh *`, `git push/fetch/pull/clone/ls-remote *`, `./hub worktree *`, `hub worktree *`, `make worktree *`, `make worktree-remove *`) missing from `sandbox.excludedCommands`; run from a Claude Code session (`CLAUDECODE=1`, so `hub doctor` itself runs sandboxed), each git checkout of `repos` gets `git ls-remote -q origin HEAD` (20 s, no prompt) and a failure is a warning at `../<dir>` whose fix names the bare `./hub worktree` call and the `git fetch` + `--no-fetch` path. A missing or invalid `settings.json` is `settings.weakening`'s. `uv`'s folders are the `hub` shim's (it moves them to `.hub-uv/` when they cannot be written), not a settings key | AGH-134 |
+| `workflows.valid` | error | every workflow of the hub's `workflows/` and the built-ins loads and plans, as `hub workflow validate` reads them (core's `WorkflowSource`, filled by the generator): one finding per problem at its file and line (a built-in's file shown as `<builtin>/…`), message `<key>: <problem>`, fix "fix the workflow file; hub workflow validate lists each problem"; fixtures are not run (the hub's `make check` runs `hub workflow test`) | AGH-227 |
 
 "config lint" and "feature check" are the hub scripts these rules replace ([hub-generator.md](hub-generator.md),
 Commands). Each ported rule keeps the old check's behavior, pinned first by characterization tests, but for what its

@@ -36,8 +36,10 @@ import {
   STEP_OF,
 } from "../runs-list/model";
 import type { WorkflowRun } from "../runs-list/queries";
+import { graphFailureTitle, isGraphRun } from "./graph";
 import { failingSession, failureReason, failureTitle, lanes, loopLabel, pipeline } from "./model";
 import { useRun, useRunStream } from "./queries";
+import { RunGraph } from "./RunGraph";
 
 const TABS = ["sessions", "gates", "tracker", "caps", "pr"] as const;
 type Tab = (typeof TABS)[number];
@@ -165,7 +167,7 @@ function FailureBanner({ run, onTab }: { run: WorkflowRun; onTab: (tab: Tab) => 
     >
       <Icon name="octagon-x" style={{ color: "var(--failed)", marginTop: 2 }} />
       <div className="ah-stack" style={{ gap: 6 }}>
-        <b>{failureTitle(run, stageLabel(stage))}</b>
+        <b>{isGraphRun(run) ? graphFailureTitle(run) : failureTitle(run, stageLabel(stage))}</b>
         <div>{failureReason(run)}</div>
         {failure?.diagnosis_comment_url && (
           <div className="ah-small ah-muted">
@@ -526,7 +528,7 @@ function Header({ run, now }: { run: WorkflowRun; now: number }) {
         {run.mode === "dry_run" && <StatusBadge status="idle" label="Dry run" />}
         <StaleStamp />
         <span className="ah-grow" />
-        {outcome === "failed" && (
+        {outcome === "failed" && !isGraphRun(run) && (
           <Button variant="primary" icon="rotate-ccw" phase="P4">
             Retry from {retryFrom}
           </Button>
@@ -654,21 +656,25 @@ function RunBody({ run }: { run: WorkflowRun }) {
           </Banner>
         )}
         <OutcomeLine run={run} />
-        <div>
-          <div className="ah-row" style={{ marginBottom: 8 }}>
-            <span className="ah-overline">Stages</span>
-          </div>
-          <StagePipeline steps={steps} />
-          {loop && (
-            <div
-              className="ah-row ah-small"
-              style={{ gap: 4, marginTop: 8, color: "var(--failed)", fontWeight: 500 }}
-            >
-              <Icon name="rotate-ccw" size="sm" />
-              {loop}
+        {isGraphRun(run) ? (
+          <RunGraph run={run} now={now} />
+        ) : (
+          <div>
+            <div className="ah-row" style={{ marginBottom: 8 }}>
+              <span className="ah-overline">Stages</span>
             </div>
-          )}
-        </div>
+            <StagePipeline steps={steps} />
+            {loop && (
+              <div
+                className="ah-row ah-small"
+                style={{ gap: 4, marginTop: 8, color: "var(--failed)", fontWeight: 500 }}
+              >
+                <Icon name="rotate-ccw" size="sm" />
+                {loop}
+              </div>
+            )}
+          </div>
+        )}
         <div
           style={{
             display: "grid",

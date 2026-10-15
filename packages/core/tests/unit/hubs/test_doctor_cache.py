@@ -108,3 +108,53 @@ def test_runs_again_when_watched_file_modified() -> None:
     cache.findings(HUB)
 
     assert reader.snapshots == {HUB: 2}
+
+
+def test_watches_workflow_folders_when_hub_has_workflows() -> None:
+    # AGH-227: workflows.valid reads every file under workflows/, so a file added or removed
+    # there (its folder's time) makes the run stale, as an edit (the file's own time) does.
+    reader = a_reader(files={"AGENTS.md": b"# Demo\n", "workflows/demo/fixtures/a.yaml": b"x\n"})
+
+    run = run_doctor(reader, HUB, running_version=RUNNING)
+
+    assert {"workflows", "workflows/demo", "workflows/demo/fixtures"} <= set(run.watched)
+    assert "workflows/demo/fixtures/a.yaml" in run.watched
+
+
+def test_watches_workflows_folder_when_hub_has_no_workflow() -> None:
+    assert "workflows" in run_doctor(a_reader(), HUB, running_version=RUNNING).watched
+
+
+def test_runs_again_when_workflow_added() -> None:
+    reader = a_reader(
+        files={"AGENTS.md": b"# Demo\n", "workflows/demo/lint.yaml": b"x\n"},
+        mtimes={"hub.json": 1, "workflows": 4, "workflows/demo": 5},
+    )
+    cache = DoctorCache(reader, running_version=RUNNING, clock=Clock())
+
+    cache.findings(HUB)
+    reader.hubs[HUB].mtimes["workflows/demo"] = 6
+    cache.findings(HUB)
+
+    assert reader.snapshots == {HUB: 2}
+
+
+def test_watches_empty_pack_folder_when_workflows_listed() -> None:
+    # F2: a pack folder git does not list (empty, or untracked) is watched from the listing of
+    # workflows/ itself, so a workflow added to it makes the run stale.
+    reader = a_reader(folders=("workflows/empty",))
+
+    run = run_doctor(reader, HUB, running_version=RUNNING)
+
+    assert "workflows/empty" in run.watched
+
+
+def test_watches_at_most_three_levels_when_workflow_paths_nest_deeply() -> None:
+    deep = "workflows/demo/fixtures/a/b/c.yaml"
+    reader = a_reader(files={"AGENTS.md": b"# Demo\n", deep: b"x\n"})
+
+    watched = set(run_doctor(reader, HUB, running_version=RUNNING).watched)
+
+    assert {"workflows", "workflows/demo", "workflows/demo/fixtures", deep} <= watched
+    assert "workflows/demo/fixtures/a" not in watched
+    assert "workflows/demo/fixtures/a/b" not in watched

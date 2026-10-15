@@ -24,11 +24,13 @@ import { useScope } from "../../lib/scope";
 import { useRefreshOnCounts } from "../portfolio/queries";
 import { StaleStamp } from "../portfolio/StaleStamp";
 import {
+  asFailureKind,
   attemptText,
   budgetOf,
   byAttention,
   chipStage,
   durationSeconds,
+  FAILURE_KIND_LABEL,
   finishedCosts,
   median,
   runBadge,
@@ -47,7 +49,15 @@ const STAGE_IDS: readonly Stage[] = [
   "REPORTED",
   "FAILED",
 ];
-const FILTER_KEYS = ["stage", "outcome", "failure_stage", "repo", "mode"] as const;
+const FILTER_KEYS = [
+  "stage",
+  "outcome",
+  "failure_stage",
+  "repo",
+  "mode",
+  "workflow",
+  "failure_kind",
+] as const;
 type FilterKey = (typeof FILTER_KEYS)[number];
 
 /** Cost against budget in one table row: amber at 80 %, failed at 100 % (spec 13). */
@@ -111,7 +121,16 @@ function readFilters(params: URLSearchParams, project: string | null): RunFilter
     failure_stage: asStage(params.get("failure_stage")),
     repo: params.get("repo"),
     mode: mode === "live" || mode === "dry_run" ? mode : null,
+    workflow: params.get("workflow"),
+    failure_kind: asFailureKind(params.get("failure_kind")),
   };
+}
+
+/** The values the loaded runs hold, plus the one filtered on (so it can be unchecked). */
+function present(values: (string | null | undefined)[], current: string | null): string[] {
+  const found = [...new Set(values.filter((v): v is string => typeof v === "string"))];
+  if (current !== null && !found.includes(current)) found.push(current);
+  return found.sort();
 }
 
 function facets(runs: readonly WorkflowRun[], filters: RunFilters): Facet[] {
@@ -189,6 +208,33 @@ function facets(runs: readonly WorkflowRun[], filters: RunFilters): Facet[] {
           checked: filters.mode === "dry_run",
         },
       ],
+    },
+    {
+      id: "workflow",
+      title: "Workflow",
+      options: present(
+        runs.map((run) => run.workflow),
+        filters.workflow,
+      ).map((name) => ({
+        id: name,
+        label: name,
+        mono: true,
+        count: count((run) => run.workflow === name),
+        checked: filters.workflow === name,
+      })),
+    },
+    {
+      id: "failure_kind",
+      title: "Failure kind",
+      options: present(
+        runs.map((run) => run.failure?.failure_kind),
+        filters.failure_kind,
+      ).map((kind) => ({
+        id: kind,
+        label: FAILURE_KIND_LABEL[kind as keyof typeof FAILURE_KIND_LABEL],
+        count: count((run) => run.failure?.failure_kind === kind),
+        checked: filters.failure_kind === kind,
+      })),
     },
   ];
 }

@@ -49,6 +49,8 @@ class Read(StrEnum):
     DEVELOPER_IDENTITY = "developer_identity"
     # Each repo's remote, probed with ``git ls-remote`` inside a Claude Code session (AGH-134).
     REMOTES = "remotes"
+    # The hub's workflows and the built-ins, through core's ``WorkflowSource`` (AGH-227).
+    WORKFLOWS = "workflows"
 
 
 # The reads the hub listing serves: the listing itself, and the file sets that come from it.
