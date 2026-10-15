@@ -505,7 +505,9 @@ read any engine run: node ids as recorded, `skipped` steps with their cause, fai
 `outcome`, `revision` and `content_hash` ([event derivations](design/event-derivations.md)). The Workflows page
 (`/workflows`, sidebar group Improve) lists them with their source and the files that do not load; a workflow's page
 draws its graph by layers (a column per layer, arrows for `depends_on`, a list view as its text alternative, a
-keyboard-reachable node panel) and shows its document read-only.
+keyboard-reachable node panel) and shows its document read-only. Run detail draws an engine run as that graph, each
+node with its state, attempt, skip cause and failure kind (issue-to-pr runs keep their stage pipeline), and the
+Workflow runs list filters by workflow and failure kind.
 
 ## Data sources and event model
 
