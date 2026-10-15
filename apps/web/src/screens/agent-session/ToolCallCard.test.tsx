@@ -141,6 +141,29 @@ describe("ToolCallCard (tool-cards) states", () => {
   });
 });
 
+describe("ToolCallCard (tool-cards) long output", () => {
+  const output = (length: number) => aTool({ result: { ...ok, content: "x".repeat(length) } });
+
+  it("shows 10,000 characters whole", async () => {
+    await expand(output(10_000));
+
+    expect(screen.getAllByText("x".repeat(10_000))).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+  });
+
+  it("cuts 10,001 characters to 10,000 and Show all brings the rest, focus on the output", async () => {
+    await expand(output(10_001));
+
+    const pre = screen.getByText("x".repeat(10_000));
+    expect(pre.tagName).toBe("PRE");
+    await userEvent.click(screen.getByRole("button", { name: "Show all (10,001 characters)" }));
+
+    expect(pre).toHaveTextContent(/^x{10001}$/);
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+    expect(pre).toHaveFocus();
+  });
+});
+
 describe("resultText", () => {
   it("joins the text blocks of a content list and gives up on other shapes", () => {
     expect(

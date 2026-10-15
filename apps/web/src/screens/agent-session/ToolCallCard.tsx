@@ -1,6 +1,6 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 
-import { Icon, JsonViewer, TOOL_ICON, type IconName } from "../../components";
+import { Button, Icon, JsonViewer, TOOL_ICON, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
 import { StoredCopyLabel } from "./SessionStatus";
 import {
@@ -63,8 +63,14 @@ export function resultText(content: unknown): string | null {
   return texts.length > 0 ? texts.join("\n") : null;
 }
 
+/** Output shown before "Show all" (plan: inputs, bounds and budget). */
+export const OUTPUT_SHOWN = 10_000;
+
 function ResultBody({ result }: { result: ToolResultView }) {
   const text = resultText(result.content);
+  const [all, setAll] = useState(false);
+  const pre = useRef<HTMLPreElement>(null);
+  const cut = text !== null && !all && text.length > OUTPUT_SHOWN;
   return (
     <div className="as-tool-section">
       <div className="as-tool-label">
@@ -73,11 +79,25 @@ function ResultBody({ result }: { result: ToolResultView }) {
       </div>
       {text !== null ? (
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        <pre className={cx("as-pre", result.isError && "as-pre-error")} tabIndex={0}>
-          {text}
+        <pre ref={pre} className={cx("as-pre", result.isError && "as-pre-error")} tabIndex={0}>
+          {cut ? text.slice(0, OUTPUT_SHOWN) : text}
         </pre>
       ) : (
         <JsonViewer value={result.content} maxHeight={240} />
+      )}
+      {cut && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="as-show-all"
+          onClick={() => {
+            setAll(true);
+            // The button goes away: the keyboard stays on the output it opened.
+            pre.current?.focus({ preventScroll: true });
+          }}
+        >
+          Show all ({text.length.toLocaleString("en-US")} characters)
+        </Button>
       )}
       {result.truncated && (
         <p className="ah-small ah-muted">
