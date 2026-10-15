@@ -538,10 +538,14 @@ describe("RunDetailScreen", () => {
 
       const panel = await screen.findByRole("complementary", { name: "Node plan" });
       expect(await within(panel).findByText(/Waiting for a decision at/)).toBeInTheDocument();
+      const graph = screen.getByRole("group", { name: "Run graph" });
+      expect(nodeButton(graph, "plan")).toHaveTextContent("Waiting for a decision");
+      expect(nodeButton(graph, "build")).not.toHaveTextContent("Waiting for a decision");
       expect(
         await within(panel).findByRole("group", { name: "Decide this gate" }),
       ).toBeInTheDocument();
-      expect(await screen.findByRole("region", { name: "Waiting for you" })).toBeInTheDocument();
+      expect(screen.getAllByRole("group", { name: "Decide this gate" })).toHaveLength(1);
+      expect(screen.queryByRole("region", { name: "Waiting for you" })).toBeNull();
     });
 
     it("shows no open gates and asks for none when the run has ended", async () => {

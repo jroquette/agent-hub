@@ -145,7 +145,9 @@ export function RunGraph({ run, now }: { run: WorkflowRun; now: number }) {
           selected={selected?.id ?? null}
           onSelect={node.open}
           state={nodeState}
-          detail={nodeSummary}
+          detail={(graphNode) =>
+            gateOf(gates, graphNode.id) ? "Waiting for a decision" : nodeSummary(graphNode)
+          }
         />
         {selected && (
           <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
