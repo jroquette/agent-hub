@@ -26,6 +26,7 @@ from agent_hub.core.learnings.learning_ports import LearningDecisions, LearningR
 from agent_hub.core.readmodels.filters import LearningFilter
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
+from agent_hub.core.workflows.gate_decisions import DecideWorkflowGate, WorkflowGates
 from agent_hub.core.workflows.launch import ControlWorkflowRun, StartWorkflowRun
 from agent_hub.core.workflows.workflow_reads import WorkflowReads
 
@@ -48,6 +49,8 @@ class ApiPorts:
     workflow_reads: WorkflowReads | None = None
     run_starts: StartWorkflowRun | None = None
     run_control: ControlWorkflowRun | None = None
+    workflow_gates: WorkflowGates | None = None
+    gate_decisions: DecideWorkflowGate | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -95,6 +98,22 @@ def run_starts(request: Request) -> StartWorkflowRun:
 def run_control(request: Request) -> ControlWorkflowRun:
     """The workflow-run cancel, resume and abandon, or 501 when not wired."""
     port = _ports(request).run_control
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def workflow_gates(request: Request) -> WorkflowGates:
+    """The open gates of workflow runs, or 501 when not wired."""
+    port = _ports(request).workflow_gates
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def gate_decisions(request: Request) -> DecideWorkflowGate:
+    """A workflow gate's decision from hub web, or 501 when not wired."""
+    port = _ports(request).gate_decisions
     if port is None:
         raise _unwired(request)
     return port
@@ -226,6 +245,8 @@ HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
 WorkflowReadsDep = Annotated[WorkflowReads, Depends(workflow_reads)]
 RunStartsDep = Annotated[StartWorkflowRun, Depends(run_starts)]
 RunControlDep = Annotated[ControlWorkflowRun, Depends(run_control)]
+WorkflowGatesDep = Annotated[WorkflowGates, Depends(workflow_gates)]
+GateDecisionsDep = Annotated[DecideWorkflowGate, Depends(gate_decisions)]
 IngestHookDep = Annotated[IngestHook, Depends(ingest_hook)]
 LearningReadsDep = Annotated[LearningReads, Depends(learning_reads)]
 LearningDecisionsDep = Annotated[LearningDecisions, Depends(learning_decisions)]

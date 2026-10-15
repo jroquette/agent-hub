@@ -21,7 +21,8 @@ process has the recorded start time (``/proc`` on Linux, else ``ps``), ``stale``
 process is gone or started at another time (the file is then removed), else ``unknown``: never
 signalled, never removed, and counted live. Cancel sends SIGINT to the group (the CLI then kills
 its node children), SIGKILL after ``grace`` seconds, then abandons the run so its end is
-recorded. Abandon waits for the CLI. Nothing here polls a run's status: it comes from events.
+recorded. Abandon and a gate's decision (``hub workflow decide``, its text on stdin, never in
+argv) wait for the CLI. Nothing here polls a run's status: it comes from events.
 """
 
 import contextlib
@@ -42,8 +43,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
 
+from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.launch import (
     RUN_ID_PATTERN,
+    DecisionUnknownError,
     LaunchSpec,
     RunConflictError,
     RunLaunchError,
@@ -60,6 +63,7 @@ MAX_PID_FILE_BYTES: Final = 4096
 MAX_PID_FILES: Final = 64
 MAX_CHILDREN: Final = 8
 ABANDON_TIMEOUT_SECONDS: Final = 60.0
+DECIDE_TIMEOUT_SECONDS: Final = 60.0
 GRACE_SECONDS: Final = 10.0
 _POLL_SECONDS: Final = 0.2
 SCAN_BUDGET_SECONDS: Final = 2.0
@@ -148,23 +152,55 @@ class ProcessRunLauncher:
     def abandon(self, hub_path: str, run_id: str) -> None:
         argv = [*self._program, "workflow", "run", "--abandon", run_id]
         try:
-            done = subprocess.run(  # noqa: S603 -- an argv list; the program is this hub
-                argv,
-                cwd=hub_path,
-                env=self._env(hub_path),
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=ABANDON_TIMEOUT_SECONDS,
-                check=False,
-            )
+            code = self._wait_for(hub_path, argv, timeout=ABANDON_TIMEOUT_SECONDS)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise RunLaunchError(
                 f"hub workflow run --abandon did not finish: {type(error).__name__}"
             ) from None
-        if done.returncode != 0:
+        if code != 0:
             # Not the CLI's words: its stderr can name local paths.
             reason = "hub workflow run refused to abandon the run (it may be in use or ended)"
             raise RunConflictError(code="refused", reason=reason, run_id=run_id)
+
+    def decide(self, hub_path: str, run_id: str, *, gate_id: str, answer: GateAnswer) -> None:
+        argv = [*self._program, "workflow", "decide", run_id, "--gate", gate_id]
+        if answer.choice is not None:
+            argv += ["--choice", answer.choice]
+        if answer.text is not None:
+            argv.append("--text-stdin")
+        stdin = (answer.text or "").encode()
+        try:
+            code = self._wait_for(hub_path, argv, timeout=DECIDE_TIMEOUT_SECONDS, stdin=stdin)
+        except OSError as error:
+            message = f"hub workflow decide did not finish: {type(error).__name__}"
+            raise RunLaunchError(message) from None
+        except subprocess.TimeoutExpired:
+            # The CLI records the decision before it sends the event: it may be recorded.
+            message = "hub workflow decide did not finish in time; the decision may be recorded"
+            raise DecisionUnknownError(message) from None
+        if code != 0:
+            reason = (
+                "hub workflow decide refused the decision "
+                "(the gate may be closed, already decided or the run in use)"
+            )
+            raise RunConflictError(code="refused", reason=reason, run_id=run_id)
+
+    def _wait_for(
+        self, hub_path: str, argv: Sequence[str], *, timeout: float, stdin: bytes | None = None
+    ) -> int:
+        """Run a CLI command to its end, ``stdin`` given (else none), its output dropped; its
+        exit code."""
+        done = subprocess.run(  # noqa: S603 -- an argv list; the program is this hub
+            argv,
+            cwd=hub_path,
+            env=self._env(hub_path),
+            input=stdin,
+            stdin=subprocess.DEVNULL if stdin is None else None,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+        return done.returncode
 
     def cancel(self, hub_path: str, run_id: str) -> bool:
         if not RUN_ID_PATTERN.fullmatch(run_id):
