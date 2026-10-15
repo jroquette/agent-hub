@@ -265,6 +265,33 @@ describe("SessionsListScreen filter-requests", () => {
   });
 });
 
+describe("SessionsListScreen keep-previous", () => {
+  it("keeps the shown sections while a sort refetches; a hidden empty one stays hidden", async () => {
+    // The sorted pages never arrive, so the screen stays mid-refetch.
+    const { requests } = renderWithApi(<SessionsListScreen />, {
+      routes: routes((request: Request) =>
+        new URL(request.url).searchParams.get("sort") === "-cost"
+          ? "pending"
+          : aSessionsByStatus(SAMPLE)(request),
+      ),
+      path: "/sessions",
+    });
+    await screen.findByText("/asker");
+    expect(headers()).toEqual(["Waiting · 1", "Live · 1", "Ended or failed · 1"]);
+
+    const live = screen.getByRole("table", { name: "Live sessions" });
+    fireEvent.click(within(live).getByRole("button", { name: /^Cost/ }));
+    await waitFor(() => {
+      expect(
+        sessionRequests(requests).filter((url) => url.searchParams.get("sort") === "-cost"),
+      ).toHaveLength(4);
+    });
+    // Mid-refetch: the same sections and rows, no Idle placeholder, no skeleton.
+    expect(headers()).toEqual(["Waiting · 1", "Live · 1", "Ended or failed · 1"]);
+    expect(screen.getByText("/runner")).toBeInTheDocument();
+  });
+});
+
 describe("SessionsListScreen table-sections", () => {
   it("gives each section its own table with the chosen columns, density and sort", async () => {
     const { router, requests } = renderWithApi(<SessionsListScreen />, {
