@@ -595,6 +595,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `step.end` from the workflow engine ([ADR 0032](adr/0032-workflow-engine.md)) | `failure_kind` (`transient`, `timeout`, `rate_limited`, `overloaded`, `exec_failed`, `output_contract`, `max_iterations`, `unknown`, `config`, `auth`, `cancelled`, `fatal`), `skip_cause` (`upstream_failed`, `upstream_skipped`, `condition`, `condition_parse_error`, `prior_success`) |
 | `run.end` from the workflow engine | `outcome` (the `returns` node's `outcome_field` value, stored as JSON: a boolean or an enum string; issue-to-pr keeps the four above); `reason` holds only engine-made metadata (a kind, an origin node id), never rendered or human text |
 | `step.start`, `run.end` from the workflow engine | `revision` (the document's integer), `content_hash` (`sha256:` + 64 hex) |
+| `step.start`, `step.end`, `run.end` from the workflow engine | `issue` (the run's `issue` input, when it is a tracker key such as `DEM-7`), so hub web keeps one live run per issue (AGH-232) |
 | `session.summary` | `text`, `lines` |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
