@@ -29,6 +29,7 @@ from agent_hub.core.hub_files.plan_adopt import AdoptPlan
 from agent_hub.core.hub_files.plan_sync import SyncPlan
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
+from agent_hub.core.hub_files.seed_units import unit_files, unit_folders
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeSnapshot
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.file_adapter import apply_sync
@@ -86,6 +87,8 @@ def planned_paths(
     paths = sorted((in_render | set(lock_files)) - {HUB_JSON_PATH})
     wanted = {file.path for file in rendered.files if file.ownership is Ownership.MANAGED}
     wanted |= {path for path, entry in lock_files.items() if isinstance(entry, ManagedFileEntry)}
+    # A seed unit is written whole or not at all, so its files are compared too (seed_units.py).
+    wanted |= set(unit_files(rendered))
     return paths, wanted - {HUB_JSON_PATH}
 
 
@@ -109,10 +112,13 @@ def rendering_or_exit(
     project = config.project.name
     try:
         siblings = project_json_siblings(config)
-        paths, wanted = planned_paths(render_hub(config), lock_files)
+        plain = render_hub(config)
+        paths, wanted = planned_paths(plain, lock_files)
         folders = links_in(project)
+        # Each seed unit folder is listed, so a file of the hub's own there keeps the unit out.
+        listed = [*folders, *unit_folders(plain)]
         tree = read_planned_tree(
-            root, paths=paths, wanted={*wanted, *siblings}, listed=folders, links_in=folders
+            root, paths=paths, wanted={*wanted, *siblings}, listed=listed, links_in=folders
         )
     except GeneratorError as error:
         fail_generator(error)

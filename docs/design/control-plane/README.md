@@ -35,8 +35,9 @@ end; where a spec file says otherwise, this list wins.
   [ADR 0033](../../adr/0033-sessions-and-chat-interaction-model.md)), Session
   detail (Timeline, Files, Cost and Raw events tabs; no Decisions or Context tab), Workflow runs, Run detail,
   Features, Feature detail, Health, Knowledge › Learnings and Knowledge › Brain (both since AGH-201, no `P3` tag),
-  Settings (Hubs, Collector, Privacy, Appearance, About), Welcome and 404. Metrics, Bench, Tracker queue, Workflows,
-  Decisions and Context are hidden; the other Knowledge items show only their title and "Arrives in Phase 3.".
+  Settings (Hubs, Collector, Privacy, Appearance, About), Welcome and 404. Workflows ships read-only in Phase 4
+  (AGH-226: catalog, layered graph, document). Metrics, Bench, Tracker queue, Decisions and Context are hidden;
+  the other Knowledge items show only their title and "Arrives in Phase 3.".
 - **Phase 3 and 4 actions.** Where the design puts an action in a screen body (the Approvals action bar, Run detail
   "Retry from verify", Runs list "Start run on an issue", Learnings snooze), it renders disabled with a `PhaseTag` and
   the tooltip "Available in Phase 3/4. This version is read-only.". Overflow menus keep only Phase 2 items. No Phase

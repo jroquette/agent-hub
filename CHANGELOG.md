@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` can start, cancel, resume and abandon workflow runs: `POST /api/v1/workflow-runs` and
+  `/workflow-runs/{run_id}/cancel|resume|abandon` run `hub workflow run --live` as a detached child (no
+  `LINEAR_API_KEY`, a pid file under `.agent-runs/web/`), keep one live run per issue across starts and resumes,
+  refuse `issue-to-pr`, and are strict writes that need the launch cookie. A run's events now carry its `issue` input
+  when it is a tracker key (AGH-232).
 - `hub workflow list` and `hub workflow validate [NAME]` load and plan the hub's `workflows/<pack>/` files (YAML through
   the strict loader, or JSON), then the built-ins, against the graph workflow format (ADR 0032): unknown keys, unknown
   or non-upstream node references, argv references that are not a whole element, cycles and a bad
@@ -48,6 +53,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `hub run` runs read as before (AGH-225).
 - `GET /api/v1/workflows` lists each project's workflows (source `hub` or `builtin`) and the files that do not load;
   `GET /api/v1/workflows/{project}/{name}` gives a workflow's document and its layers (AGH-225).
+- `hub web` has a Workflows page (sidebar group Improve): each workflow with its source (hub or built-in), the files
+  that do not load, and a workflow's graph by layers (a column per layer, arrows for `depends_on`, a list view, a
+  keyboard-reachable node panel) with its document, read-only (AGH-226).
+- `hub web` Run detail shows an engine run as its workflow's graph: each node with its state, attempt, skip cause and
+  failure kind, and a side panel (reason, sessions, loop body steps); issue-to-pr runs keep their stage pipeline. The
+  Runs list gains Workflow and Failure kind facets (AGH-226).
 - `hub step worktree|verdict|commits|pr|report` run `hub run`'s stages one at a time and print one JSON object each (the
   worktree and the repo's target, the session's verdict, the branch's commits, the PR's url, the delivery), for the issue-to-pr
   workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
@@ -79,6 +90,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The workflow engine runs a layer's nodes concurrently (at most 4 attempts at once in a run), each recorded as it
   ends; Ctrl-C stops the running children. A `mutates_checkout: false` node never shares a layer with one that may change the checkout, and fails
   `config` when its attempt changes `git status` (AGH-228).
+- `hub init` and `hub sync` seed the built-in `issue-to-pr` pack into the hub once, byte for byte as shipped
+  (`workflows/issue-to-pr/`: the workflow, its prompt and its fixtures), as a whole: never into a hub whose `hub.lock`
+  already lists the pack or whose folder holds files of its own, so a later release never adds a file to the hub's
+  pack. The hub then owns its copy, which `hub run` and `hub workflow` read instead of the built-in; delete
+  `workflows/issue-to-pr/` to follow the built-in again (AGH-227).
+- `hub doctor` rule `workflows.valid` (error): every workflow of the hub's `workflows/` and the built-ins loads and
+  plans, as `hub workflow validate` checks them, one finding per problem at its file and line (AGH-227).
 
 ### Changed
 
@@ -107,6 +125,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Chat messages show when they were written ("3 min ago", the full date and time on hover) and a Copy button for
   their raw Markdown, on hover or focus (always on touch screens); Markdown code blocks show their language and a Copy
   button, and wide tables scroll sideways in their own region (AGH-241).
+- A hub's `make check` also runs `./hub workflow test`, the workflow packs' fixtures, after `hub doctor` and before the
+  hub's own tests (AGH-227).
 - The chat is complete for the keyboard and screen readers: `/` at the start of a message lists the session's slash
   commands and skills (filter as you type, arrows, Enter or Tab inserts, Esc closes; Enter never sends while it is
   open, and a live region announces how many commands match); Ctrl/Cmd+Alt+Enter allows and Ctrl/Cmd+Alt+Backspace
