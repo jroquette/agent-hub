@@ -246,7 +246,12 @@ export function Composer({
               ? "Send to send, Enter for a new line"
               : "Enter to send, Shift+Enter for a new line"}
         </span>
-        <Button icon="circle-stop" disabled={!canStop || stoppingShown} onClick={stop}>
+        <Button
+          icon="circle-stop"
+          disabled={!canStop}
+          aria-disabled={stoppingShown || undefined}
+          onClick={stop}
+        >
           {stoppingShown ? "Stopping…" : "Stop"}
         </Button>
         <Button type="submit" variant="primary" icon="arrow-up" disabled={!canSend}>
