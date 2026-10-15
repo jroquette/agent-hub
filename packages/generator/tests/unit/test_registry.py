@@ -162,7 +162,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "scripts/mine_transcripts.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "scripts/recall_transcripts.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "scripts/retro_metrics.py": (Kind.GENERIC, Ownership.MANAGED, None),
-    # Row "`workflows/<pack>/**` (the built-in packs, `issue-to-pr`, `sdlc`)": generic, seeded (AGH-227).
+    # Row "`workflows/<pack>/**` (the built-in packs, `issue-to-pr`, `sdlc`)": generic, seeded.
     **{f"workflows/{name}": (Kind.GENERIC, Ownership.SEEDED, None) for name in SEEDED_PACK_FILES},
 }
 
