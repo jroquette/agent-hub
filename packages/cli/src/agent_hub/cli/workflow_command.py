@@ -44,6 +44,7 @@ from agent_hub.cli.workflow_runs import (
     SystemClock,
     WorkflowRunError,
     append_record,
+    drop_torn_tail,
     ends_of,
     make_run,
     prior_state,
@@ -209,6 +210,7 @@ def _begin(
 def _resume(hub: Path, run_id: str) -> int:
     folder = _existing_run(hub, run_id)
     with run_lock(folder):
+        drop_torn_tail(folder)
         return _continue(hub, folder)
 
 
@@ -241,6 +243,7 @@ def _continue(hub: Path, folder: Path) -> int:
 def _abandon(hub: Path, run_id: str) -> None:
     folder = _existing_run(hub, run_id)
     with run_lock(folder):
+        drop_torn_tail(folder)
         records = _ended_check(folder)
         events = _events(hub, folder.name, records[0], end_index=len(ends_of(records)))
         RecordedRun(folder=folder, events=events, sink=EventSink()).run_ended(
