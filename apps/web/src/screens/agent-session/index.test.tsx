@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Profiler } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
@@ -39,8 +40,47 @@ function routes(overrides: ApiRoutes = {}): ApiRoutes {
   };
 }
 
-function renderChat(apiRoutes: ApiRoutes = routes()) {
-  return renderWithApi(<AgentSessionScreen />, {
+/** Markdown renders (each one parses its source). */
+const parses = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../../components/Markdown", async (original) => {
+  const real = await original<typeof import("../../components/Markdown")>();
+  return {
+    ...real,
+    Markdown: (props: Parameters<typeof real.Markdown>[0]) => {
+      parses.count += 1;
+      return real.Markdown(props);
+    },
+  };
+});
+
+/** Animation frames run only when the test says so. */
+function manualFrames() {
+  const queue = new Map<number, FrameRequestCallback>();
+  let next = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    queue.set(++next, callback);
+    return next;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => queue.delete(id));
+  return () => {
+    const due = [...queue.values()];
+    queue.clear();
+    act(() => {
+      for (const callback of due) callback(0);
+    });
+  };
+}
+
+function renderChat(apiRoutes: ApiRoutes = routes(), onCommit?: () => void) {
+  const screenUi = <AgentSessionScreen />;
+  const ui = onCommit ? (
+    <Profiler id="chat" onRender={onCommit}>
+      {screenUi}
+    </Profiler>
+  ) : (
+    screenUi
+  );
+  return renderWithApi(ui, {
     routes: apiRoutes,
     path: `/agent-sessions/${ID}`,
     route: "/agent-sessions/:agentSessionId",
@@ -57,6 +97,7 @@ const posts = (requests: Request[], suffix: string) =>
 
 describe("AgentSessionScreen (transcript)", () => {
   it("loads the log then streams after its last record, appending deltas to one bubble", async () => {
+    const runFrame = manualFrames();
     const view = renderChat();
 
     expect(await screen.findByText("Run the tests.")).toBeInTheDocument();
@@ -74,6 +115,7 @@ describe("AgentSessionScreen (transcript)", () => {
       source.emit("delta", aDeltaFrame({ after_seq: 4, block: 1, index: 0, text: "Hel" }), "4.0");
       source.emit("delta", aDeltaFrame({ after_seq: 4, block: 1, index: 1, text: "lo" }), "4.1");
     });
+    runFrame();
 
     const bubbles = screen.getAllByRole("article", { name: "Claude" });
     expect(bubbles).toHaveLength(2);
@@ -166,6 +208,67 @@ describe("AgentSessionScreen (transcript)", () => {
 
     const link = await screen.findByRole("link", { name: /Observed session/ });
     expect(link).toHaveAttribute("href", `/sessions/${anId(1, "5091b986")}`);
+  });
+});
+
+describe("AgentSessionScreen (streaming-batch)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function streamingChat() {
+    const runFrame = manualFrames();
+    let commits = 0;
+    const view = renderChat(routes(), () => {
+      commits += 1;
+    });
+    await screen.findByText("Starting.");
+    const source = view.stream(STREAM);
+    // The stream's health renders at most once a second: let it show "open" first.
+    act(() => {
+      source.open();
+      source.emit("heartbeat", {});
+    });
+    runFrame();
+    const delta = (index: number, text: string) => {
+      source.emit(
+        "delta",
+        aDeltaFrame({ after_seq: 3, block: 1, index, text }),
+        `3.${String(index)}`,
+      );
+    };
+    commits = 0;
+    parses.count = 0;
+    return { source, delta, runFrame, commits: () => commits };
+  }
+
+  it("commits 100 deltas of one frame as one render with at most one parse", async () => {
+    const chat = await streamingChat();
+
+    act(() => {
+      for (let i = 0; i < 100; i++) chat.delta(i, "a");
+    });
+    expect(chat.commits()).toBe(0);
+    chat.runFrame();
+
+    expect(chat.commits()).toBe(1);
+    const bubbles = screen.getAllByRole("article", { name: "Claude" });
+    expect(bubbles[1]).toHaveTextContent("a".repeat(100));
+  });
+
+  it("flushes the queued deltas before a record, in order, without waiting for the frame", async () => {
+    const chat = await streamingChat();
+
+    act(() => {
+      chat.delta(0, "Hel");
+      chat.delta(1, "lo");
+      chat.source.emit("record.tool.call", aLogRecord("tool.call", { seq: 4 }), "4");
+    });
+
+    const bubble = screen.getAllByRole("article", { name: "Claude" })[1];
+    expect(bubble).toHaveTextContent("Hello");
+    const card = screen.getByRole("button", { name: /Edit src\/app\.py/ });
+    expect(bubble?.compareDocumentPosition(card)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 });
 
