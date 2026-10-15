@@ -40,7 +40,7 @@
 /* The grid view (AC-234.5): fluid columns, more of them on a wide screen. */
 .sl-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
   gap: var(--space-3);
   align-items: start;
 }
