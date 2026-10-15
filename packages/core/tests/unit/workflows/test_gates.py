@@ -17,7 +17,7 @@ from agent_hub.core.testing.workflow_fakes import (
     a_plan,
 )
 from agent_hub.core.workflows.document import parse_workflow
-from agent_hub.core.workflows.engine import EnginePorts, run_workflow
+from agent_hub.core.workflows.engine import MAX_LAYER_THREADS, EnginePorts, run_workflow
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.gates import GateAnswer, OpenGate, answer_problem, gate_id
 from agent_hub.core.workflows.plan import plan_workflow
@@ -378,21 +378,22 @@ def test_pauses_again_without_rerunning_the_iteration_when_resumed_before_an_ans
 
 
 def test_opens_no_gate_after_an_interrupt_when_a_parallel_layer_is_stopped() -> None:
-    # The body layer's pool runs two shells; the gate waits for a free worker, which only comes
-    # once the interrupt has stopped the run, so the gate is visited after the stop.
-    started, interrupted = threading.Event(), threading.Event()
+    # Every thread of the body layer holds a running shell when ``a`` interrupts the run; the
+    # gate, queued behind them, is visited only once one returns, after the stop. No shell
+    # raises, so nothing cancels the queued gate first.
+    all_running, interrupted = threading.Barrier(MAX_LAYER_THREADS + 1), threading.Event()
 
     class Stopping(ScriptedRunner):
         def run(self, call: NodeCall) -> NodeReply:
+            all_running.wait(timeout=5)
             if call.node.id == "a":
-                assert started.wait(timeout=5)
                 raise KeyboardInterrupt
-            started.set()
             assert interrupted.wait(timeout=5)
             return super().run(call)
 
     gate = {"id": "ok", "type": "approval", "message": "Ship?"}
-    group = REWORK | {"nodes": [shell("w1"), shell("w2"), gate]}
+    shells = [shell(f"w{index}") for index in range(MAX_LAYER_THREADS)]
+    group = REWORK | {"nodes": [*shells, gate]}
     recorder = ListRecorder()
     ports = EnginePorts(
         Stopping(),
@@ -400,7 +401,7 @@ def test_opens_no_gate_after_an_interrupt_when_a_parallel_layer_is_stopped() -> 
         FakeClock(),
         KeysOutputs(),
         lambda: 0.5,
-        max_parallel=2,
+        max_parallel=MAX_LAYER_THREADS + 1,
         interrupt=interrupted.set,
     )
 
