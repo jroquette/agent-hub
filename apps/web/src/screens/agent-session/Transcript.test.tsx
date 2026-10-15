@@ -307,6 +307,21 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
     );
   });
 
+  it("first renders from the tool call an attached pending card shows under (tool-cards)", () => {
+    manualFrames();
+    const request = aLogRecord("permission.request", {
+      seq: 2002,
+      body: { request_id: "t301", tool: "Bash", request_kind: "tool", summary: "ls" },
+    });
+
+    render(<Transcript state={longState({ type: "record", record: request })} />);
+
+    // t301 is entry 302 of 2,002; its card leaves its own place for the call's.
+    expect(screen.getByRole("log").children).toHaveLength(2002 - 302 - 1);
+    const card = document.querySelector("[data-request-id='t301']");
+    expect(card?.closest(".as-entry")?.querySelector(".as-tool")).toHaveTextContent("ls");
+  });
+
   it("first renders from the oldest pending card and keeps it in view as earlier entries come", () => {
     const runFrame = manualFrames();
     const request = aLogRecord("permission.request", { seq: 2002 });
@@ -337,6 +352,47 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
 
     expect(screen.getByRole("log").children).toHaveLength(2002);
     expect(top.value).toBe(1984);
+  });
+});
+
+describe("Transcript (tool-cards) attached permission", () => {
+  const call = (seq: number, id: string, name = "Bash"): StreamItem => ({
+    type: "record",
+    record: aLogRecord("tool.call", {
+      seq,
+      body: { tool_use_id: id, name, input: { command: "make check" } },
+    }),
+  });
+  const ask = (seq: number, id: string): StreamItem => ({
+    type: "record",
+    record: aLogRecord("permission.request", {
+      seq,
+      body: { request_id: id, tool: "Bash", request_kind: "tool", summary: "make check" },
+    }),
+  });
+  const text = (seq: number): StreamItem => ({
+    type: "record",
+    record: aLogRecord("text", { seq, body: { block: 0, text: "Between" } }),
+  });
+
+  it("renders the permission card directly under its tool call, which reads Waiting for you", () => {
+    show([call(1, "toolu_9"), text(2), ask(3, "toolu_9")]);
+
+    const head = screen.getByRole("button", { name: "Bash make check (Waiting for you)" });
+    const entry = head.closest(".as-entry");
+    const card = document.querySelector("[data-request-id='toolu_9']");
+    expect(card?.closest(".as-entry")).toBe(entry);
+    expect(head.closest(".as-tool")?.nextElementSibling).toBe(card);
+    expect(screen.getByRole("log").children).toHaveLength(2);
+  });
+
+  it("keeps a permission with no matching call where it arrived", () => {
+    show([call(1, "toolu_9"), text(2), ask(3, "req-other")]);
+
+    const log = screen.getByRole("log");
+    expect(log.children).toHaveLength(3);
+    expect(log.lastElementChild?.querySelector("[data-request-id='req-other']")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Bash make check (Running)" })).toBeInTheDocument();
   });
 });
 

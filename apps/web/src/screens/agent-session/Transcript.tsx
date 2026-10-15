@@ -42,10 +42,24 @@ export interface TranscriptProps {
  * the earlier ones follow a frame later (run budget: 2,000 entries render in under a second). */
 export const FIRST_ENTRIES = 300;
 
+/** The requests whose card shows under their tool call (matched by `tool_use_id`, AC-234.24). */
+function attachedRequests(entries: readonly TranscriptEntry[]): Set<string> {
+  const calls = new Set(entries.flatMap((entry) => (entry.kind === "tool" ? [entry.toolId] : [])));
+  return new Set(
+    entries.flatMap((entry) =>
+      entry.kind === "permission" && calls.has(entry.requestId) ? [entry.requestId] : [],
+    ),
+  );
+}
+
 function firstShown(state: TranscriptState): number {
   const oldest = pendingPermissions(state)[0];
-  const card = state.entries.findIndex(
-    (entry) => entry.kind === "permission" && entry.requestId === oldest,
+  const attached = oldest !== undefined && attachedRequests(state.entries).has(oldest);
+  // An attached card shows with its tool call, so the first render starts there.
+  const card = state.entries.findIndex((entry) =>
+    attached
+      ? entry.kind === "tool" && entry.toolId === oldest
+      : entry.kind === "permission" && entry.requestId === oldest,
   );
   const tail = state.entries.length - FIRST_ENTRIES;
   return Math.max(0, card >= 0 ? Math.min(card, tail) : tail);
@@ -85,7 +99,8 @@ function AssistantText({ entry }: { entry: AssistantEntry }) {
 
 interface EntryProps {
   entry: TranscriptEntry;
-  /** Only what this entry shows, so a delta elsewhere leaves its props equal (memo). */
+  /** Only what this entry shows, so a delta elsewhere leaves its props equal (memo). A tool
+   * call's `request` is the permission asked for it, shown under its card. */
   tool?: ToolView | undefined;
   tools?: TranscriptState["tools"] | undefined;
   calls?: TranscriptState["children"] | undefined;
@@ -113,6 +128,23 @@ function UserMessage({
   );
 }
 
+function Permission({
+  request,
+  onAnswerPermission,
+}: {
+  request: PermissionView;
+  onAnswerPermission: TranscriptProps["onAnswerPermission"];
+}) {
+  return (
+    <PermissionCard
+      request={request}
+      onAnswer={
+        onAnswerPermission ? (answer) => onAnswerPermission(request.requestId, answer) : undefined
+      }
+    />
+  );
+}
+
 function EntryBody({ entry, tool, tools, calls, request, onAnswerPermission }: EntryProps) {
   switch (entry.kind) {
     case "user":
@@ -137,16 +169,14 @@ function EntryBody({ entry, tool, tools, calls, request, onAnswerPermission }: E
       );
     case "tool":
       return tool && tools && calls ? (
-        <ToolCallCard tool={tool} tools={tools} calls={calls} />
+        <>
+          <ToolCallCard tool={tool} tools={tools} calls={calls} request={request} />
+          {request && <Permission request={request} onAnswerPermission={onAnswerPermission} />}
+        </>
       ) : null;
     case "permission":
       return request ? (
-        <PermissionCard
-          request={request}
-          onAnswer={
-            onAnswerPermission ? (answer) => onAnswerPermission(entry.requestId, answer) : undefined
-          }
-        />
+        <Permission request={request} onAnswerPermission={onAnswerPermission} />
       ) : null;
     case "notice":
       return (
@@ -185,6 +215,7 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
     [scrollerRef],
   );
   const oldestPending = pendingPermissions(state)[0];
+  const attached = useMemo(() => attachedRequests(state.entries), [state.entries]);
   const release = follow?.release;
 
   // Opens once, on the loaded transcript (AC-234.17): at the oldest pending permission card,
@@ -257,19 +288,28 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
           {state.entries.length === 0 && (
             <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
           )}
-          {state.entries.slice(start).map((entry) => (
-            <Entry
-              key={entry.key}
-              entry={entry}
-              {...(entry.kind === "tool" && {
-                tool: state.tools[entry.toolId],
-                tools: state.tools,
-                calls: state.children,
-              })}
-              {...(entry.kind === "permission" && { request: state.permissions[entry.requestId] })}
-              onAnswerPermission={onAnswerPermission}
-            />
-          ))}
+          {state.entries.slice(start).flatMap((entry) =>
+            entry.kind === "permission" && attached.has(entry.requestId)
+              ? []
+              : [
+                  <Entry
+                    key={entry.key}
+                    entry={entry}
+                    {...(entry.kind === "tool" && {
+                      tool: state.tools[entry.toolId],
+                      tools: state.tools,
+                      calls: state.children,
+                      request: attached.has(entry.toolId)
+                        ? state.permissions[entry.toolId]
+                        : undefined,
+                    })}
+                    {...(entry.kind === "permission" && {
+                      request: state.permissions[entry.requestId],
+                    })}
+                    onAnswerPermission={onAnswerPermission}
+                  />,
+                ],
+          )}
           {state.sending.map((send) => (
             <div key={send.key} className="as-entry">
               <UserMessage text={send.text} note="Sending…" />

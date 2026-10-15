@@ -296,7 +296,7 @@ export type ToolState = "running" | "waiting" | "done" | "error" | "denied";
  * request waits for you, a denied one reads denied whatever result the CLI then sent. */
 export function toolState(tool: ToolView, request?: PermissionView): ToolState {
   if (request?.decision?.decision === "deny") return "denied";
-  if (tool.result === null) return request && request.decision === null ? "waiting" : "running";
+  if (tool.result === null) return request?.decision === null ? "waiting" : "running";
   return tool.result.isError ? "error" : "done";
 }
 
