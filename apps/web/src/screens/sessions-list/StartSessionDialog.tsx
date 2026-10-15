@@ -41,7 +41,8 @@ export function StartSessionDialog({
   const navigate = useNavigate();
   const [resumeFor, setResumeFor] = useState<string | null>(null);
   const resumable = useResumable(project, resumeFor);
-  const create = useCreateAgentSession();
+  // A shake's screenshot leaves the mutation cache with the dialog, not gcTime later.
+  const create = useCreateAgentSession({ release: screenshot !== undefined });
   const { reset } = create;
 
   useEffect(() => {

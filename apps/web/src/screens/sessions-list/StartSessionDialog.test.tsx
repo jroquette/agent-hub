@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { rememberScreenshot, screenshotFor } from "../../lib/screenshotCopy";
@@ -61,6 +62,42 @@ describe("StartSessionDialog (shake to start a session)", () => {
     expect(await bodyOf(post)).toMatchObject({
       prompt: "What is on this screen?",
       screenshot: { media_type: "image/png", data: "iVBORw0KGgoAAAANSUhEUg==" },
+    });
+  });
+
+  it("releases the sent screenshot from the mutation cache once the dialog closes", async () => {
+    const created = anAgentSession({ id: anId(8, "0192a5e5"), status: "running" });
+    function Host() {
+      const [open, setOpen] = useState(true);
+      return open ? (
+        <StartSessionDialog
+          project="agent-hub"
+          workdirs={[aWorkdir()]}
+          capabilities={aCapabilities()}
+          screenshot={{ dataUrl: SHOT }}
+          onClose={() => {
+            setOpen(false);
+          }}
+        />
+      ) : null;
+    }
+    const view = renderWithApi(<Host />, {
+      routes: { [`POST ${AGENT}`]: created },
+      path: "/sessions",
+    });
+
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "First prompt (optional)" }),
+      "What is on this screen?",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start session" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${created.id}`);
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => {
+      expect(view.queryClient.getMutationCache().getAll()).toEqual([]);
     });
   });
 

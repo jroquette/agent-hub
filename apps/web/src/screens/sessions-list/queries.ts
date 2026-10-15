@@ -114,11 +114,15 @@ export function useCloudSessions(project: string | null, enabled: boolean) {
   );
 }
 
-/** `POST /agent-sessions`; the caller navigates to the new session's chat. */
-export function useCreateAgentSession() {
+/**
+ * `POST /agent-sessions`; the caller navigates to the new session's chat. `release` drops the mutation
+ * (its body, a base64 screenshot included) from the cache as soon as its dialog unmounts (AGH-260).
+ */
+export function useCreateAgentSession({ release = false }: { release?: boolean } = {}) {
   const queryClient = useQueryClient();
   return useMutation<AgentSession, ApiProblem, CreateAgentSession>({
     mutationFn: (body) => apiPost("/api/v1/agent-sessions", body),
+    ...(release ? { gcTime: 0 } : {}),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: apiKey("/api/v1/agent-sessions") });
     },
