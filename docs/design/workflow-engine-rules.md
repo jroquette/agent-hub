@@ -3,8 +3,8 @@
 ## Purpose
 
 The rules of the workflow engine that [workflow-schema.md](workflow-schema.md) states in short: how an `include` is
-expanded, how the run reads the files of an included node, and how a loop group's body runs. The format itself is the schema's contract; the reasons
-are in [ADR 0032](../adr/0032-workflow-engine.md).
+expanded, how the run reads the files of an included node, and how a loop group's body runs. The format is the
+schema's contract; the reasons are in [ADR 0032](../adr/0032-workflow-engine.md).
 
 ## Contract
 
