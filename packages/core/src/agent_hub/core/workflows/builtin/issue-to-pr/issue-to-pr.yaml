@@ -112,7 +112,7 @@ nodes:
     command:
       - bash
       - -c
-      - 'e=$(mktemp) || exit 1; eval "$1" 1>&2 2>"$e"; c=$?; cat "$e" >&2; rm -f "$e"; exit $c'
+      - '{ e=$(eval "$1" 2>&1 1>&3 3>&-); c=$?; } 3>&2; printf %s "$e" >&2; exit $c'
       - bash
       - $worktree.output.check
     retry: {max_attempts: 0}
