@@ -14,21 +14,33 @@ export function useNow(intervalMs = 1000): number {
   return now;
 }
 
-/** One minute clock shared by every subscriber: a single timer, however many read it. */
+/**
+ * One minute clock shared by every subscriber: a single timer, however many read it. It fires on each
+ * wall-clock minute boundary (re-armed every tick, so it does not drift), which is exactly when the
+ * floored snapshot below changes: every row reads the same minute, never up to two minutes behind.
+ */
 const minute = {
   listeners: new Set<() => void>(),
-  timer: undefined as ReturnType<typeof setInterval> | undefined,
+  timer: undefined as ReturnType<typeof setTimeout> | undefined,
 };
+
+function armMinute(): void {
+  minute.timer = setTimeout(
+    () => {
+      armMinute();
+      for (const notify of minute.listeners) notify();
+    },
+    60_000 - (Date.now() % 60_000),
+  );
+}
 
 function subscribeMinute(listener: () => void): () => void {
   minute.listeners.add(listener);
-  minute.timer ??= setInterval(() => {
-    for (const notify of minute.listeners) notify();
-  }, 60_000);
+  if (minute.timer === undefined) armMinute();
   return () => {
     minute.listeners.delete(listener);
     if (minute.listeners.size > 0) return;
-    clearInterval(minute.timer);
+    clearTimeout(minute.timer);
     minute.timer = undefined;
   };
 }
