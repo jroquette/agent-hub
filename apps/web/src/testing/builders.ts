@@ -209,6 +209,7 @@ export function aRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
     sources_missing: ["github", "linear"],
     stage: "IMPLEMENTING",
     started_at: T0,
+    status: "running",
     steps: [
       {
         attempt: 1,

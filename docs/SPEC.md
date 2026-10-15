@@ -77,6 +77,7 @@ hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each
 hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue with a complete brief to a PR through the tracker port
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
+hub step worktree|verdict|commits|pr|report …   # one hub run stage as JSON, for the issue-to-pr workflow's nodes
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as metadata-only events
@@ -171,6 +172,15 @@ each tracker write it would make, with placeholder PR urls (no link edit: the li
 only git reads, writes no file and does not write to the tracker. Usage errors exit 2 before any tracker call, with no
 child run but `git` reads (the hub's main checkout, the git identity a branch prefix may come from); every other
 failure exits 1. No child gets `LINEAR_API_KEY`, and only the push and `gh` get a GitHub token.
+
+`hub step` runs one stage of `hub run` for the issue-to-pr workflow (ADR 0032) and prints one JSON object: `worktree
+--issue --repo` makes or keeps the worktree as `hub run` does and prints its path, the prompt's texts and the repo's
+`target` (branch, base, GitHub repo, gate, conventions) read from `hub.json` before the session; `verdict` reads
+the session's reply on stdin as `hub run` does (done, or blocked, with its question); `commits --target` and `pr --issue
+--target [--summary]` take that target back (a path outside the workspace exits 2) and never read `hub.json` again;
+`report` computes the delivery (`delivered`, `no_changes`, `blocked`, `failed`) from the other steps' outputs. A
+failure is one `hub step <name>: <reason>` stderr line and exit 1. No step reads or writes the tracker; only the
+fetch, the push and `gh` get a GitHub token.
 
 `hub start ISSUE` reads the issue once, then looks for its task worktrees in every repo: a name found there resumes the
 task, else the task is named `<issue lower>-<title slug>`. It checks the branches, creates the missing worktrees of the
@@ -319,7 +329,7 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 | --- | --- | --- |
 | Portfolio | How are my projects doing? | Hubs, repos, tasks in progress, open PRs, CI, cost of the week |
 | Workflows | How should work flow? | Editor and visualization of steps and gates; which step each task is at; where it gets stuck |
-| Live sessions | What are the agents doing right now? | Active sessions by repo and task, last action, accumulated turns and cost, pending approvals |
+| Sessions | What are the agents doing right now, and which one needs me? | Every session, observed or driven, in status sections (waiting first) as tiles or a table: last action, accumulated turns and cost, pending approvals |
 | Session timeline | Why did the agent do that? | Messages, reasoning summaries, tool calls, files and diffs, marked decisions and the final outcome |
 | Knowledge | What does it know and what did it learn? | Context loaded in the session (rules, brain, memory), proposed learnings, inbox triage, evolution over time |
 
@@ -345,7 +355,7 @@ GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hu
 ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)). The browser never contacts Linear. Agent sessions (AGH-165,
 below) add no outbound call of the server: the `claude` processes it starts reach Anthropic as when the user runs
 them. The approved UI design and the departures from it are in
-[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025 and 0031.
+[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025, 0031 and 0033.
 
 **Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
 
@@ -438,6 +448,28 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
   stored copy. No server log line holds conversation text. Cloud sessions are link-out guidance through the CLI
   (`claude --cloud`, `--teleport`); the platform never calls claude.ai itself.
 
+**Sessions and chat (AGH-234, [ADR 0033](adr/0033-sessions-and-chat-interaction-model.md)).** One Sessions screen
+replaces Live sessions and the separate list of driven sessions (design in
+[14-sessions-list.md](design/control-plane/specs/14-sessions-list.md)):
+
+- **One tab.** The sidebar has one Sessions entry with the live badge; `/live` and its deep links redirect to
+  `/sessions?view=grid` (`group=` becomes `within=`), and `g l` opens the grid. A grid (tiles) and a table view share
+  the same filters, saved views and period.
+- **Status sections.** Both views group sessions as Waiting, Live, Idle, Ended or failed (failed in red text), each
+  section its own paginated `GET /sessions?status=` query with its own count; the period filters the Ended section
+  only. `Session` carries the tile fields `LiveTile` has, derived on read; no new route or migration, and the event payload allow-list does not change.
+- **Driven sessions in the same list.** A session `hub web` drives shows once: as its observed twin with a "Chat"
+  badge, or, with no twin (`AgentSession.observed_session_id` null), in its own status section. Every tile and row
+  has a visible Open (or Open chat, Answer) and a real link. New session is a short dialog (where and the prompt).
+- **Chat.** The chat stays a full page and behaves as a chat client: it opens at the latest entry, follows the stream
+  only at the bottom, keeps header, composer and Stop on screen, and has message time and Copy, code labels, clear
+  tool states, a saved draft, a `/` menu and keyboard paths for permissions
+  ([agent-sessions.md](design/agent-sessions.md#chat-behaviour)). Transport, access and storage stay as ADR 0031 set.
+- **Credit.** Open WebUI (github.com/open-webui/open-webui, Open WebUI License, a BSD-3 variant with a branding
+  clause) was read as design study material at commit `6a18585` (v0.12.2) for chat and list interaction patterns.
+  We write our own React code. Nothing was copied, no asset or branding is used, and `NOTICE` and `LICENSES/` do not
+  change. Open WebUI is not affiliated with, and has not endorsed, this project.
+
 **Skills tab (AGH-164, built).** Knowledge › Skills shows what a hub's agents can do, read from its files on request
 and never stored:
 
@@ -463,6 +495,14 @@ and never stored:
   kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog
   says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
   hub by its listing's fingerprint.
+
+**Workflows (AGH-225, API built, screens to come).** `GET /api/v1/workflows` lists each project's workflows (the
+hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema.md)) with their source (`hub` or
+`builtin`), revision and counts, and every file that does not load as a problem (file, line, key, message);
+`GET /api/v1/workflows/{project}/{name}` gives one workflow's document as written and its layers (each node's id, type
+and `depends_on`). Both read the files on request through the generator's discovery and store nothing. Workflow runs
+read any engine run: node ids as recorded, `skipped` steps with their cause, failure kinds, the run's `status`,
+`outcome`, `revision` and `content_hash` ([event derivations](design/event-derivations.md)).
 
 ## Data sources and event model
 

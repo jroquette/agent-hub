@@ -31,7 +31,8 @@ end; where a spec file says otherwise, this list wins.
   an unknown model gives "Cost unknown: model <id> has no price".
   Exception (AGH-136, ADR 0025): the feature Tickets tab reads Linear server-side, read-only, when
   `LINEAR_API_KEY` is set; without it the tab shows the plan from `features.json` with a notice.
-- **Screens in Phase 2.** Portfolio, Project overview, Approvals (read-only), Live sessions, Sessions list, Session
+- **Screens in Phase 2.** Portfolio, Project overview, Approvals (read-only), Live sessions, Sessions list (merged into one Sessions screen by
+  [ADR 0033](../../adr/0033-sessions-and-chat-interaction-model.md)), Session
   detail (Timeline, Files, Cost and Raw events tabs; no Decisions or Context tab), Workflow runs, Run detail,
   Features, Feature detail, Health, Knowledge › Learnings and Knowledge › Brain (both since AGH-201, no `P3` tag),
   Settings (Hubs, Collector, Privacy, Appearance, About), Welcome and 404. Metrics, Bench, Tracker queue, Workflows,

@@ -2,7 +2,8 @@
 sessions built in ``tmp_path``: a hook POST p95 under 50 ms, a read endpoint p95 under 300 ms;
 and AGH-201's: a session's problems p95 under 150 ms at 5,000 events, a brain note under 100 ms
 and the brain tree under 150 ms in a hub of 2,000 notes; AGH-136's: a feature's tickets under
-100 ms on a warm snapshot cache with 50 tickets; AGH-164's: the skills catalog under 150 ms and
+100 ms on a warm snapshot cache with 50 tickets; AGH-236's: a page of 50 sessions of 2,000
+events each, with their tile fields, under 300 ms; AGH-164's: the skills catalog under 150 ms and
 a skill's detail under 100 ms, warm, with 200 skills beside the 10,000 events.
 
 Each read follows an append, so it folds again (the memo is keyed by the high-water mark): the
@@ -162,6 +163,44 @@ def test_answers_problems_within_budget_when_session_holds_five_thousand_events(
         samples.append(elapsed)
 
     assert _p95(samples) < PROBLEMS_P95_MS, samples
+
+
+# AGH-236 budget (AC-234.5): a page of large sessions with their tile fields (D5).
+PAGE_SESSIONS = 50
+PAGE_SESSION_EVENTS = 2_000
+
+
+def test_answers_session_page_within_budget_when_each_row_holds_two_thousand_events(
+    composed: Any,
+) -> None:
+    # Each read follows an append to another session, as above: the snapshot is folded again,
+    # while each large row's fold and tile fields are reused (keyed by its events). The composed
+    # clock is frozen, as in the budgets above; a moving clock refolds every session today.
+    tools = tuple(("Bash", {"command": f"make t{i % 50}"}) for i in range(999))
+    failed = frozenset(range(0, len(tools), 7))
+    for number in range(PAGE_SESSIONS):
+        events = a_session_events(
+            f"session-page-{number:02d}",
+            start=SCENARIO_START + timedelta(minutes=number),
+            tools=tools,
+            failed_tools=failed,
+            ended=False,
+        )
+        assert len(events) == PAGE_SESSION_EVENTS
+        composed.store.append(events)
+    path = f"/api/v1/sessions?limit={PAGE_SESSIONS}"
+    first = composed.client.get(path)
+    assert first.status_code == 200, first.text
+    assert len(first.json()["items"]) == PAGE_SESSIONS
+    samples: list[float] = []
+    for number in range(SAMPLES):
+        moment = SCENARIO_START + timedelta(days=3, seconds=number)
+        composed.store.append([an_event(session="session-other", timestamp=moment)])
+        elapsed, response = _timed(lambda: composed.client.get(path))
+        assert response.status_code == 200, response.text
+        samples.append(elapsed)
+
+    assert _p95(samples) < READ_P95_MS, samples
 
 
 @pytest.fixture

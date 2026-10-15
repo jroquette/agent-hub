@@ -9,9 +9,12 @@ more times in a row, or when 3 or more tool calls failed in the last 5 minutes.
 
 A tile carries its session's label, actors and problem counts (AGH-201), and
 ``needs_you_problem``: the "what went wrong" line of the first problem that needs the owner.
+``tile_fields`` derives the fields a tile shows from the session's events; ``live_tile`` and
+the sessions list (``Session``) both read them from it, so a row and its tile agree (D5).
 """
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -82,7 +85,10 @@ def _longest_streak(outcomes: Iterable[tuple[str, bool]]) -> tuple[str, int] | N
 
 def failing_notice(events: Iterable[StoredEvent], *, now: datetime) -> str | None:
     """The tile's failing notice, or None when the session is not failing repeatedly."""
-    winners = resolve_facts(events).winners
+    return _failing_notice(resolve_facts(events).winners, now=now)
+
+
+def _failing_notice(winners: Sequence[StoredEvent], *, now: datetime) -> str | None:
     streak = _longest_streak(_check_outcomes(winners))
     if streak is not None and streak[1] >= STREAK_NOTICE:
         return f"{streak[0]} failed {streak[1]} times in a row"
@@ -151,6 +157,45 @@ def needs_you_line(problems: SessionProblems) -> str | None:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class TileFields:
+    """What a tile shows beyond the session's own fields; ``sparkline_60s`` is None once the
+    session has ended."""
+
+    waiting_reason: str | None
+    last_action: str | None
+    last_tool: str | None
+    needs_you_problem: str | None
+    failing_notice: str | None
+    sparkline_60s: tuple[int, ...] | None
+
+
+def tile_fields(
+    session: Session,
+    events: Sequence[StoredEvent],
+    *,
+    now: datetime,
+    problems: SessionProblems | None = None,
+) -> TileFields:
+    """The tile fields of ``session`` (whose events are ``events``), at its status.
+
+    ``problems`` are the session's problems at its status; they are folded when not given.
+    """
+    if problems is None:
+        problems = fold_problems(events, status=session.status)
+    winners = resolve_facts(events).winners
+    last_action, last_tool = _last_action(winners)
+    waiting = _open_approvals(events) if session.status == SessionStatus.WAITING else []
+    return TileFields(
+        waiting_reason=WAITING_REASONS[waiting[0].kind] if waiting else None,
+        last_action=last_action,
+        last_tool=last_tool,
+        needs_you_problem=needs_you_line(problems),
+        failing_notice=_failing_notice(winners, now=now),
+        sparkline_60s=None if session.status == SessionStatus.ENDED else (),
+    )
+
+
 def live_tile(
     session: Session,
     events: Sequence[StoredEvent],
@@ -166,11 +211,7 @@ def live_tile(
     group = _group(session, now)
     if group is None:
         return None
-    if problems is None:
-        problems = fold_problems(events, status=session.status)
-    winners = resolve_facts(events).winners
-    last_action, last_tool = _last_action(winners)
-    waiting = _open_approvals(events) if group == "waiting" else []
+    fields = tile_fields(session, events, now=now, problems=problems)
     tokens = session.tokens
     return LiveTile(
         id=session.id,
@@ -181,9 +222,9 @@ def live_tile(
         status=session.status,
         group=group,
         outcome=session.outcome,
-        waiting_reason=WAITING_REASONS[waiting[0].kind] if waiting else None,
-        last_action=last_action,
-        last_tool=last_tool,
+        waiting_reason=fields.waiting_reason,
+        last_action=fields.last_action,
+        last_tool=fields.last_tool,
         last_activity_at=session.last_activity_at,
         started_at=session.started_at,
         ended_at=session.ended_at,
@@ -200,12 +241,13 @@ def live_tile(
         guard_denials=session.guard_denials,
         cost_usd=session.cost_usd,
         budget_usd=budget_usd,
-        failing_notice=failing_notice(events, now=now),
+        failing_notice=fields.failing_notice,
+        sparkline_60s=fields.sparkline_60s or (),
         sources_missing=session.sources_missing,
         label=session.label,
         actors=session.actors,
         problems=session.problems,
-        needs_you_problem=needs_you_line(problems),
+        needs_you_problem=fields.needs_you_problem,
         agent_session_id=session.agent_session_id,
     )
 

@@ -2,10 +2,12 @@
 
 ``AgentSessionLinks`` (LK) implements ``AgentSessionLinkLookup`` from the live index and the
 store; the session read models take it to fill ``Session.agent_session_id`` and to show a live
-tile ``waiting`` while a permission request is open (AC-165.25).
+tile ``waiting`` while a permission request is open (AC-165.25). The other way round,
+``ObservedSessionLookup`` tells the agent-session use case whether a Claude session has an
+observed twin, to fill ``AgentSession.observed_session_id`` (D2).
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Protocol
 
 from agent_hub.core.readmodels.view_types import ViewModel
@@ -23,6 +25,15 @@ class AgentSessionLinkLookup(Protocol):
 
     def link_of(self, project: str, claude_session_id: str) -> AgentSessionLink | None:
         """The link of ``claude_session_id`` in ``project``, or None."""
+        ...
+
+
+class ObservedSessionLookup(Protocol):
+    """Which Claude sessions the hooks or transcripts observed (the session read models)."""
+
+    def observed(self, pairs: Iterable[tuple[str, str]]) -> frozenset[tuple[str, str]]:
+        """The ``(project, session_id)`` pairs of ``pairs`` that are observed sessions, all
+        answered from one snapshot of the events."""
         ...
 
 
