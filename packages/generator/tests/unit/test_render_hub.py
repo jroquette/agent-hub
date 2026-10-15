@@ -134,6 +134,17 @@ DESIGN_PATHS = (
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
+    # AGH-227: the built-in issue-to-pr pack, seeded.
+    "workflows/issue-to-pr/fixtures/blocked.yaml",
+    "workflows/issue-to-pr/fixtures/dirty.yaml",
+    "workflows/issue-to-pr/fixtures/done.yaml",
+    "workflows/issue-to-pr/fixtures/error.yaml",
+    "workflows/issue-to-pr/fixtures/from-verify.yaml",
+    "workflows/issue-to-pr/fixtures/gate-failure.yaml",
+    "workflows/issue-to-pr/fixtures/no-commit.yaml",
+    "workflows/issue-to-pr/fixtures/pr-failure.yaml",
+    "workflows/issue-to-pr/issue-to-pr.yaml",
+    "workflows/issue-to-pr/prompts/implement.md",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
 # folder name.
@@ -1333,10 +1344,12 @@ def test_calls_hub_through_shim_when_recipes_read(demo_config: HubConfig) -> Non
         " $(if $(value BUDGET),--budget $(call hub_quote,BUDGET))"
         " $(if $(value FROM),--from $(call hub_quote,FROM))",
     ]
-    assert recipe_lines(makefile, "check")[0] == "@$(HUB) doctor"
-    assert "@if [ -d tests ]; then python3 -m unittest discover -s tests -q; fi" in (
-        recipe_lines(makefile, "check")
-    )
+    # AGH-227: the doctor, then the workflow packs' fixtures, then the hub's own tests.
+    assert recipe_lines(makefile, "check") == [
+        "@$(HUB) doctor",
+        "@$(HUB) workflow test",
+        "@if [ -d tests ]; then python3 -m unittest discover -s tests -q; fi",
+    ]
     assert recipe_lines(makefile, "agent") == ["./agent"]
     # The protocol is the ./hub shim's (test_hub_shim.py); the Makefile holds no copy of it.
     # The shim by the hub's absolute path, so a recipe that changes folder still finds it.
@@ -2416,7 +2429,13 @@ def test_passes_check_when_hub_has_no_tests(
     completed = run_make(root, fake_uv_bin, "check")
 
     assert completed.returncode == 0, completed.stderr
-    assert logged_calls(fake_uv_bin)[-1].endswith(" hub doctor")
+    source = pinned_source(RUN_VERSION)
+    assert logged_calls(fake_uv_bin) == [
+        f"uvx --from {source} hub --version",
+        f"uvx --from {source} hub doctor",
+        f"uvx --from {source} hub --version",
+        f"uvx --from {source} hub workflow test",
+    ]
 
 
 def test_fails_check_when_hub_test_fails(
@@ -2482,7 +2501,6 @@ def test_runs_shim_when_hub_folder_name_needs_quoting(
             ("run-issue", "ISSUE=DEM-1", "REPO=demo-api", "LIVE=1", "BUDGET=2.5", "FROM=verify"),
             "hub run DEM-1 --repo demo-api --live --budget 2.5 --from verify",
         ),
-        (("check",), "hub doctor"),
     ],
 )
 def test_runs_pinned_release_when_target_run(

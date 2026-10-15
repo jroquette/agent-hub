@@ -176,7 +176,8 @@ def test_reads_content_of_compared_files_when_tree_read(
     git_on_path: Any, monkeypatch: pytest.MonkeyPatch, target: Path, *, demo_flags: list[str]
 ) -> None:
     # The planner compares every managed file and hub.json by content, and the kept sibling is
-    # merged (spec D2): the reader must read them.
+    # merged (spec D2): the reader must read them. So are the workflow pack's files, kept whole
+    # unless they hold the render's bytes (AGH-227).
     asked: list[frozenset[str]] = []
 
     def recording_read(root: Path, *, wanted: Collection[str]) -> TreeSnapshot:
@@ -190,7 +191,9 @@ def test_reads_content_of_compared_files_when_tree_read(
     assert result.exit_code == 0, result.stderr
     rendered = render_hub(written_config(target))
     managed = {file.path for file in rendered.files if file.ownership is Ownership.MANAGED}
-    assert asked == [frozenset({*managed, "hub.json", ".claude/settings.project.json"})]
+    pack = {file.path for file in rendered.files if file.path.startswith("workflows/")}
+    assert pack
+    assert asked == [frozenset({*managed, *pack, "hub.json", ".claude/settings.project.json"})]
 
 
 @pytest.mark.parametrize(
@@ -1441,3 +1444,23 @@ def test_renames_lock_last_when_demo_written(
         ("file", "hub.json", True),
         ("file", "hub.lock", True),
     ]
+
+
+# AGH-227: a workflow pack is seeded whole or not at all.
+PACK = "workflows/issue-to-pr"
+
+
+def test_writes_nothing_into_pack_when_target_holds_custom_pack(
+    git_on_path: Any, target: Path, *, demo_flags: list[str]
+) -> None:
+    (target / PACK).mkdir(parents=True)
+    (target / PACK / "mine.yaml").write_bytes(b"# our own\n")
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 0, result.stderr
+    assert sorted(p.relative_to(target).as_posix() for p in (target / PACK).rglob("*")) == [
+        f"{PACK}/mine.yaml"
+    ]
+    assert (target / PACK / "mine.yaml").read_bytes() == b"# our own\n"
+    assert lock_files(target)[f"{PACK}/issue-to-pr.yaml"] == {"ownership": "seeded"}

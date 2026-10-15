@@ -34,6 +34,7 @@ from agent_hub.core.hub_files.hub_lock import HUB_JSON_PATH
 from agent_hub.core.hub_files.plan_init import InitPlan, InitRefusal, plan_init
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
+from agent_hub.core.hub_files.seed_units import unit_files
 from agent_hub.core.json_form import dump_json
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.file_adapter import apply_writes, ensure_root, remove_leftovers
@@ -194,9 +195,10 @@ def _check_root_or_exit(root: str) -> None:
 
 
 def _wanted(rendered: RenderedHub, *, siblings: Iterable[str]) -> frozenset[str]:
-    """The files read by content: every managed file, ``hub.json`` and the ``*.project.json``."""
+    """The files read by content: every managed file, ``hub.json``, the ``*.project.json`` and
+    the seed units' files (a unit already there is kept whole: seed_units.py)."""
     managed = (file.path for file in rendered.files if file.ownership is Ownership.MANAGED)
-    return frozenset({*managed, HUB_JSON_PATH, *siblings})
+    return frozenset({*managed, HUB_JSON_PATH, *siblings, *unit_files(rendered)})
 
 
 def _plan_or_exit(root: str, *, config: HubConfig, hub_json: bytes) -> tuple[InitPlan, bool]:
