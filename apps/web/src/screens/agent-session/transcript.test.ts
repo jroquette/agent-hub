@@ -346,4 +346,14 @@ describe("reduceTranscript (stop)", () => {
       "Turn interrupted",
     ]);
   });
+
+  it("closes a bubble an interrupt cut short, so no caret stays", () => {
+    const state = run([
+      delta({ after_seq: 0, block: 0, index: 0, text: "Half a" }),
+      record("interrupt", { seq: 1 }),
+      record("result", { seq: 2, ...aborted }),
+    ]);
+
+    expect(state.entries[0]).toMatchObject({ kind: "assistant", text: "Half a", streaming: false });
+  });
 });
