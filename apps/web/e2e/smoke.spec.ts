@@ -65,7 +65,7 @@ const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
 const PAGES: SmokePage[] = [
   { name: "Portfolio", path: "/", heading: "Portfolio", shows: /Failed runs · 7 d/ },
   { name: "Live sessions", path: "/live", heading: "Live sessions", shows: /Waiting · Guard ask/ },
-  { name: "Sessions", path: "/sessions", heading: "Sessions", shows: "Showing all 4" },
+  { name: "Sessions", path: "/sessions", heading: "Sessions", shows: "Waiting · 1" },
   {
     name: "Session detail",
     path: `/sessions/${LIVE_SESSION}`,
