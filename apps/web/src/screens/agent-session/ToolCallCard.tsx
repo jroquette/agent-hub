@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 
 import { Button, Icon, JsonViewer, TOOL_ICON, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
@@ -63,14 +63,35 @@ export function resultText(content: unknown): string | null {
   return texts.length > 0 ? texts.join("\n") : null;
 }
 
-/** Output shown before "Show all" (plan: inputs, bounds and budget). */
+/** Output shown before "Show all", in characters (plan: inputs, bounds and budget). */
 export const OUTPUT_SHOWN = 10_000;
 
+/** The first `max` characters of `text` and how many it has, or null when it has no more.
+ * Characters are code points, so an emoji counts once and is never cut in half. */
+export function cutText(text: string, max: number): { shown: string; total: number } | null {
+  if (text.length <= max) return null;
+  let total = 0;
+  let end = 0;
+  for (const char of text) {
+    if (total < max) end += char.length;
+    total += 1;
+  }
+  return total > max ? { shown: text.slice(0, end), total } : null;
+}
+
+/** A result as text: its text, or its JSON when that is too long for the JSON viewer. */
+function shownText(content: unknown): string | null {
+  const text = resultText(content);
+  if (text !== null) return text;
+  const json = JSON.stringify(content, null, 2) as string | undefined;
+  return json !== undefined && cutText(json, OUTPUT_SHOWN) ? json : null;
+}
+
 function ResultBody({ result }: { result: ToolResultView }) {
-  const text = resultText(result.content);
+  const text = useMemo(() => shownText(result.content), [result.content]);
   const [all, setAll] = useState(false);
   const pre = useRef<HTMLPreElement>(null);
-  const cut = text !== null && !all && text.length > OUTPUT_SHOWN;
+  const cut = useMemo(() => (text === null ? null : cutText(text, OUTPUT_SHOWN)), [text]);
   return (
     <div className="as-tool-section">
       <div className="as-tool-label">
@@ -80,12 +101,12 @@ function ResultBody({ result }: { result: ToolResultView }) {
       {text !== null ? (
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
         <pre ref={pre} className={cx("as-pre", result.isError && "as-pre-error")} tabIndex={0}>
-          {cut ? text.slice(0, OUTPUT_SHOWN) : text}
+          {cut && !all ? cut.shown : text}
         </pre>
       ) : (
         <JsonViewer value={result.content} maxHeight={240} />
       )}
-      {cut && (
+      {cut && !all && (
         <Button
           size="sm"
           variant="ghost"
@@ -96,7 +117,7 @@ function ResultBody({ result }: { result: ToolResultView }) {
             pre.current?.focus({ preventScroll: true });
           }}
         >
-          Show all ({text.length.toLocaleString("en-US")} characters)
+          Show all ({cut.total.toLocaleString("en-US")} characters)
         </Button>
       )}
       {result.truncated && (
