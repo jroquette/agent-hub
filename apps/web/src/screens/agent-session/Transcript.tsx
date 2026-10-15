@@ -15,7 +15,7 @@ import { Icon, Markdown, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
 import { JumpToLatest } from "./JumpToLatest";
 import { MessageMeta } from "./MessageMeta";
-import { RequestCard, type PermissionAnswer } from "./PermissionCard";
+import { OldestPendingContext, RequestCard, type PermissionAnswer } from "./PermissionCard";
 import { StoredCopyLabel } from "./SessionStatus";
 import { ToolGroup, type GroupItem } from "./ToolGroup";
 import {
@@ -288,80 +288,85 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
   };
 
   return (
-    <div className="as-body">
-      {/* A scroll container takes focus so the keyboard can scroll it and press End. */}
-      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-static-element-interactions */}
-      <div className="as-scroll" ref={attach} tabIndex={0} onKeyDown={onKeyDown}>
-        <div
-          className="as-transcript as-column"
-          role="log"
-          aria-live="polite"
-          aria-relevant="additions text"
-          aria-busy={state.streaming || start > 0}
-          aria-label="Conversation"
-        >
-          {state.entries.length === 0 && (
-            <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
-          )}
-          {rowsOf(state.entries, attached, start).map((row) => {
-            if (row.kind === "run") {
-              const items = row.entries.flatMap(({ toolId }): GroupItem[] => {
-                const tool = state.tools[toolId];
-                return tool ? [{ tool, request: attachedTo(toolId) }] : [];
-              });
-              return (
-                <div key={row.key} className="as-entry as-settled">
-                  <ToolGroup
-                    items={items}
-                    tools={state.tools}
-                    calls={state.children}
-                    requests={state.permissions}
-                    onAnswerPermission={onAnswerPermission}
-                  />
-                </div>
-              );
-            }
-            const { entry } = row;
-            return (
-              <Entry
-                key={entry.key}
-                entry={entry}
-                {...(entry.kind === "permission" && {
-                  request: state.permissions[entry.requestId],
-                })}
-                onAnswerPermission={onAnswerPermission}
-              />
-            );
-          })}
-        </div>
-        {/* Outside the live log: only the echoed record is announced, not its Sending… copy too. */}
-        <div className="as-pending as-column">
-          {state.sending.map((send) => (
-            <div key={send.key} className="as-entry">
-              <UserMessage text={send.text} note="Sending…" />
-            </div>
-          ))}
-        </div>
-        {/* One live region stays mounted while the session lives, so its text changes are announced. */}
-        {state.status !== "ended" && state.status !== "failed" && (
-          <p
-            className={cx("as-working as-column ah-small ah-muted", !working && "as-working-idle")}
-            role="status"
+    <OldestPendingContext.Provider value={oldestPending}>
+      <div className="as-body">
+        {/* A scroll container takes focus so the keyboard can scroll it and press End. */}
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-static-element-interactions */}
+        <div className="as-scroll" ref={attach} tabIndex={0} onKeyDown={onKeyDown}>
+          <div
+            className="as-transcript as-column"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions text"
+            aria-busy={state.streaming || start > 0}
+            aria-label="Conversation"
           >
-            {working ? ["Claude is working", activeTool(state)].filter(Boolean).join(" · ") : ""}
-          </p>
+            {state.entries.length === 0 && (
+              <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
+            )}
+            {rowsOf(state.entries, attached, start).map((row) => {
+              if (row.kind === "run") {
+                const items = row.entries.flatMap(({ toolId }): GroupItem[] => {
+                  const tool = state.tools[toolId];
+                  return tool ? [{ tool, request: attachedTo(toolId) }] : [];
+                });
+                return (
+                  <div key={row.key} className="as-entry as-settled">
+                    <ToolGroup
+                      items={items}
+                      tools={state.tools}
+                      calls={state.children}
+                      requests={state.permissions}
+                      onAnswerPermission={onAnswerPermission}
+                    />
+                  </div>
+                );
+              }
+              const { entry } = row;
+              return (
+                <Entry
+                  key={entry.key}
+                  entry={entry}
+                  {...(entry.kind === "permission" && {
+                    request: state.permissions[entry.requestId],
+                  })}
+                  onAnswerPermission={onAnswerPermission}
+                />
+              );
+            })}
+          </div>
+          {/* Outside the live log: only the echoed record is announced, not its Sending… copy too. */}
+          <div className="as-pending as-column">
+            {state.sending.map((send) => (
+              <div key={send.key} className="as-entry">
+                <UserMessage text={send.text} note="Sending…" />
+              </div>
+            ))}
+          </div>
+          {/* One live region stays mounted while the session lives, so its text changes are announced. */}
+          {state.status !== "ended" && state.status !== "failed" && (
+            <p
+              className={cx(
+                "as-working as-column ah-small ah-muted",
+                !working && "as-working-idle",
+              )}
+              role="status"
+            >
+              {working ? ["Claude is working", activeTool(state)].filter(Boolean).join(" · ") : ""}
+            </p>
+          )}
+        </div>
+        {follow && !atBottom && (
+          <JumpToLatest
+            unseen={unseen}
+            onJump={() => {
+              // The button goes away once pinned: keep keyboard focus in the chat, not on <body>.
+              scroller.current?.focus({ preventScroll: true });
+              follow.pin("smooth");
+            }}
+          />
         )}
       </div>
-      {follow && !atBottom && (
-        <JumpToLatest
-          unseen={unseen}
-          onJump={() => {
-            // The button goes away once pinned: keep keyboard focus in the chat, not on <body>.
-            scroller.current?.focus({ preventScroll: true });
-            follow.pin("smooth");
-          }}
-        />
-      )}
-    </div>
+    </OldestPendingContext.Provider>
   );
 }
