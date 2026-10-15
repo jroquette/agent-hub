@@ -166,6 +166,34 @@ describe("Composer (composer)", () => {
     vi.unstubAllGlobals();
   });
 
+  it("measures the content height once per change", async () => {
+    vi.stubGlobal("innerHeight", 1000);
+    const { box } = open();
+    const measure = vi.fn(() => 120);
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: measure });
+
+    await userEvent.type(box, "a");
+
+    expect(measure).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("fits the box again when the window shrinks, and scrolls past the new cap", async () => {
+    vi.stubGlobal("innerHeight", 2000);
+    const { box } = open();
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: () => 500 });
+    await userEvent.type(box, "a");
+    expect([box.style.height, box.style.overflowY]).toEqual(["500px", "hidden"]);
+
+    vi.stubGlobal("innerHeight", 1000);
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    expect([box.style.height, box.style.overflowY]).toEqual(["400px", "auto"]);
+    vi.unstubAllGlobals();
+  });
+
   it("restores the session's draft and clears it once the send is accepted", async () => {
     window.localStorage.setItem("ah.chat.draft.s-1", JSON.stringify("Saved earlier"));
     const { box, props } = open({ draftId: "s-1" });
