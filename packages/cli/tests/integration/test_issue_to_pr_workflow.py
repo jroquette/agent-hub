@@ -113,7 +113,8 @@ def test_prints_declared_output_when_steps_run(
 def test_shows_stdin_when_dry_run_prints_verdict_node(
     demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
-    given = ("--input", "issue=DEM-1", "--input", "repo=demo-api", "--input", "issue_text=x")
+    # issue_text is the parent's to fill (from the tracker); a dry run reads no tracker.
+    given = ("--input", "issue=DEM-1", "--input", "repo=demo-api")
 
     result = run_command(demo_workspace.hub, "workflow", "run", "issue-to-pr", *given)
 

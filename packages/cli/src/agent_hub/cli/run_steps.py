@@ -91,7 +91,9 @@ from agent_hub.core.runner.run_texts import (
     success_comment,
 )
 from agent_hub.core.runner.verdict import (
+    Outcome,
     OutcomeKind,
+    SessionReply,
     last_json_line,
     parse_session_output,
     session_outcome,
@@ -165,7 +167,7 @@ class LiveRun:
         try:
             return self._run_stages()
         except RunLogError as error:
-            return self._stop_on_log_error(error)
+            return self.stop_on_log_error(error)
 
     def _run_stages(self) -> int:
         try:
@@ -176,6 +178,30 @@ class LiveRun:
         except StageFailure as failure:
             return self._report_failure(failure)
         return self._report_success()
+
+    def finish(self, failure: StageFailure | None) -> int:
+        """Report a run whose stages ran elsewhere (the issue-to-pr workflow): delivered with
+        ``pr_url`` and ``summary`` set, else ``failure``; its exit, as ``run`` gives it."""
+        try:
+            return self._report_success() if failure is None else self._report_failure(failure)
+        except RunLogError as error:
+            return self.stop_on_log_error(error)
+
+    def record_session(self, reply: SessionReply) -> Outcome:
+        """Count the session's cost and record ``agent_finished``; its outcome."""
+        self.cost_usd += reply.cost_usd
+        # The old runner's event and fields (the retro contract, AC-27.21 "as today").
+        verdict: JsonValue = json.loads(json.dumps(last_json_line(reply.result)))
+        self.log.record(
+            "agent_finished",
+            {
+                "cost_usd": round(self.cost_usd, 4),
+                "turns": reply.turns,
+                "subtype": reply.subtype,
+                "verdict": verdict,
+            },
+        )
+        return session_outcome(reply)
 
     # stages
 
@@ -249,19 +275,7 @@ class LiveRun:
             argv, env=env, timeout=SESSION_TIMEOUT, output_limit=SESSION_OUTPUT_LIMIT
         )
         reply = parse_session_output(result.stdout.decode(errors="replace"))
-        self.cost_usd += reply.cost_usd
-        outcome = session_outcome(reply)
-        # The old runner's event and fields (the retro contract, AC-27.21 "as today").
-        verdict: JsonValue = json.loads(json.dumps(last_json_line(reply.result)))
-        self.log.record(
-            "agent_finished",
-            {
-                "cost_usd": round(self.cost_usd, 4),
-                "turns": reply.turns,
-                "subtype": reply.subtype,
-                "verdict": verdict,
-            },
-        )
+        outcome = self.record_session(reply)
         if outcome.kind is OutcomeKind.STOPPED:
             raise StageFailure(
                 Stage.IMPLEMENTING, outcome.text, RunOutcome.BLOCKED, question=outcome.question
@@ -499,7 +513,7 @@ class LiveRun:
         tests patch them here)."""
         return StepTimeouts(gate=GATE_TIMEOUT, push=PUSH_TIMEOUT, gh=GH_TIMEOUT, git=GIT_TIMEOUT)
 
-    def _stop_on_log_error(self, error: RunLogError) -> int:
+    def stop_on_log_error(self, error: RunLogError) -> int:
         """Name the open PR and the report's writes not made; the tracker is left as it is."""
         typer.echo(f"{_PREFIX}: {error}", err=True)
         pending = self.pending
