@@ -292,13 +292,16 @@
 .as-tool-group-head:focus-visible {
   outline: 2px solid var(--focus-ring);
 }
-.as-tool-group-list {
+.as-tool-run-list {
   list-style: none;
-  margin: var(--space-1) 0 0;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+.as-tool-group-list {
+  margin-top: var(--space-1);
 }
 .as-tool + .as-perm {
   margin-top: var(--space-2);

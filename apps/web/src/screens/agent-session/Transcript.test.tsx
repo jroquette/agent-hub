@@ -488,12 +488,18 @@ describe("Transcript (tool-cards) attached permission", () => {
 
   it("keeps a pending card and the focus in its message when a second call joins its run", async () => {
     const one = [call(1, "a"), ask(2, "a")].reduce(reduceTranscript, initialTranscript());
-    const { rerender } = render(<Transcript state={one} />);
+    const answer = vi.fn();
+    const { rerender } = render(<Transcript state={one} onAnswerPermission={answer} />);
     const card = document.querySelector("[data-request-id='a']");
     const message = screen.getByRole("textbox", { name: /Message to Claude if you deny/ });
     await userEvent.click(message);
 
-    rerender(<Transcript state={reduceTranscript(one, call(3, "b", "Read"))} />);
+    rerender(
+      <Transcript
+        state={reduceTranscript(one, call(3, "b", "Read"))}
+        onAnswerPermission={answer}
+      />,
+    );
 
     expect(document.querySelector("[data-request-id='a']")).toBe(card);
     expect(message).toHaveFocus();
