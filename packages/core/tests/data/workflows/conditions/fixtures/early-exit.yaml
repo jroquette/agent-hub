@@ -1,0 +1,7 @@
+# A question routes nowhere: every branch skips on its condition and the summary on its
+# upstream skips. Only the classifier needs a stub.
+workflow: conditions
+stubs:
+  classify: {output: {kind: question, score: 1}}
+expect: {status: done}
+reached: [classify]

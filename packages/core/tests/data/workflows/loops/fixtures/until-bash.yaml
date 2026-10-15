@@ -1,0 +1,7 @@
+# polish never says POLISHED: its check command decides, failing once, then passing.
+workflow: loops
+stubs:
+  implement: {output: {done: true}}
+  polish: [{text: first, until_exit: 2}, {text: second, until_exit: 0}]
+expect: {status: done}
+reached: [implement, polish]
