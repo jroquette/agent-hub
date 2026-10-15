@@ -1,4 +1,4 @@
-"""``hub workflow list|validate|run``: the hub's workflows, loaded, planned and run (AGH-218, 221).
+"""``hub workflow list|validate|run|test``: the hub's workflows, loaded, planned, run and tested.
 
 The generator's ``discover_workflows`` finds the hub's ``workflows/<pack>/`` files, then the
 built-ins (a hub workflow overrides a built-in of its name), through the strict YAML loader; core's
@@ -14,6 +14,7 @@ fresh id), recording it with ``workflow_runs``. ``--resume RUN`` continues a fai
 on its snapshot, reusing what completed; ``--abandon RUN`` ends it ``cancelled``. A run that ends
 ``done`` exits 0, any other end 1; a bad input exits 2. It makes no tracker write: issue-to-pr's
 writes stay ``hub run``'s.
+
 ``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
 engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
 warnings indented, then a count; a failed fixture exits 1. ``--stubs-init`` writes NAME's
