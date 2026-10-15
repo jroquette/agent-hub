@@ -42,6 +42,8 @@ class NodeCall:
     env: Mapping[str, str] = field(default_factory=dict)
     prompt: str | None = None
     resume_session: str | None = None
+    # A shell or script node's rendered ``stdin``.
+    stdin: str | None = None
 
 
 @dataclass(frozen=True)

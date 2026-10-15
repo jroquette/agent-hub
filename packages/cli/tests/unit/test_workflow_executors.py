@@ -419,3 +419,34 @@ def test_fails_config_when_agent_cwd_leaves_hub_and_repos(
 
     assert raised.value.kind == "config"
     assert child.calls == []
+
+
+def test_writes_stdin_when_shell_node_has_one(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild()
+    spec = {"id": "read", "type": "shell", "command": ["hub", "step", "verdict"], "stdin": "x"}
+
+    executors(tmp_path, pack, child).run(call(spec, argv=tuple(spec["command"]), stdin="é\x00"))
+
+    assert child.calls[0]["stdin"] == "é\x00".encode()
+
+
+def test_fails_config_when_stdin_past_cap(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild()
+    spec = {"id": "read", "type": "shell", "command": ["cat"], "stdin": "x"}
+    big = "x" * (MAX_OUTPUT_BYTES + 1)
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(spec, argv=("cat",), stdin=big))
+
+    assert raised.value.kind == "config"
+    assert child.calls == []
+
+
+def test_fails_config_when_child_refuses_its_arguments(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild([ValueError("embedded null byte")])
+    spec = {"id": "st", "type": "shell", "command": ["ls"]}
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(spec, argv=("ls",)))
+
+    assert raised.value.kind == "config"
