@@ -111,7 +111,7 @@ from agent_hub.core.workflows.engine import (
     run_workflow,
     start_inputs,
 )
-from agent_hub.core.workflows.events import WorkflowEvents
+from agent_hub.core.workflows.events import WorkflowEvents, issue_key
 from agent_hub.core.workflows.gates import GateAnswer, GateAnswers
 from agent_hub.core.workflows.nodes import ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
@@ -517,7 +517,14 @@ def _abandon(hub: Path, run_id: str) -> None:
     with run_lock(folder):
         drop_torn_tail(folder)
         records = _ended_check(folder)
-        events = _events(hub, folder.name, records[0], end_index=len(ends_of(records)))
+        inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
+        events = _events(
+            hub,
+            folder.name,
+            records[0],
+            end_index=len(ends_of(records)),
+            issue=_issue(inputs if isinstance(inputs, dict) else {}),
+        )
         RecordedRun(folder=folder, events=events, sink=EventSink()).run_ended(
             RunEnd("cancelled", now())
         )
@@ -564,7 +571,7 @@ def _execute(
     }
     recorded = RecordedRun(
         folder=folder,
-        events=_events(hub, folder.name, header, end_index=end_index),
+        events=_events(hub, folder.name, header, end_index=end_index, issue=_issue(inputs)),
         # issue-to-pr's events are hub run's, from the parent's records.
         sink=EventSink() if parent is None else None,
     )
@@ -595,6 +602,12 @@ def _execute(
     return 0 if report.status == "done" else 1
 
 
+def _issue(inputs: dict[str, JsonValue]) -> str | None:
+    """The run's ``issue`` input when it is a tracker key: its events carry it, so hub web
+    finds an issue's live run."""
+    return issue_key(inputs.get("issue"))
+
+
 def _checkouts(hub: Path, config: HubConfig) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     """The hub and the repos next to it, as git checkouts (watched) and other folders (not)."""
     folders = (hub, *(hub.parent / repo.dir for repo in config.repos))
@@ -603,7 +616,12 @@ def _checkouts(hub: Path, config: HubConfig) -> tuple[tuple[Path, ...], tuple[Pa
 
 
 def _events(
-    hub: Path, run_id: str, header: dict[str, JsonValue], *, end_index: int
+    hub: Path,
+    run_id: str,
+    header: dict[str, JsonValue],
+    *,
+    end_index: int,
+    issue: str | None = None,
 ) -> WorkflowEvents:
     revision = header.get("revision")
     return WorkflowEvents(
@@ -613,6 +631,7 @@ def _events(
         revision=revision if isinstance(revision, int) else 0,
         content_hash=str(header.get("content_hash")),
         end_index=end_index,
+        issue=issue,
     )
 
 

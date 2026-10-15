@@ -1071,7 +1071,11 @@ export interface paths {
      */
     get: operations["list_runs_api_v1_workflow_runs_get"];
     put?: never;
-    post?: never;
+    /**
+     * Start Run
+     * @description Start a project's workflow as a ``hub workflow run`` child; its events tell its status.
+     */
+    post: operations["start_run_api_v1_workflow_runs_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1092,6 +1096,66 @@ export interface paths {
     get: operations["get_run_api_v1_workflow_runs__run_id__get"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/workflow-runs/{run_id}/abandon": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Abandon Run
+     * @description End a failed or unended run cancelled.
+     */
+    post: operations["abandon_run_api_v1_workflow_runs__run_id__abandon_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/workflow-runs/{run_id}/cancel": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Cancel Run
+     * @description Stop the run's child (SIGINT, then SIGKILL), then end the run cancelled.
+     */
+    post: operations["cancel_run_api_v1_workflow_runs__run_id__cancel_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/workflow-runs/{run_id}/resume": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Resume Run
+     * @description Continue a failed or unended run in a new child, reusing what completed.
+     */
+    post: operations["resume_run_api_v1_workflow_runs__run_id__resume_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2170,6 +2234,11 @@ export interface components {
        */
       warnings: string[];
     };
+    InputName: string;
+    InputNumber: number;
+    InputText: string;
+    InputValue:
+      boolean | number | components["schemas"]["InputNumber"] | components["schemas"]["InputText"];
     /**
      * IssueRef
      * @description The tracker issue a run works on; title and url need Linear (``null`` in Phase 2).
@@ -3076,6 +3145,19 @@ export interface components {
       items: components["schemas"]["PastSession"][];
     };
     /**
+     * RunAccepted
+     * @description What a run command did: the run, its project and the action taken.
+     */
+    RunAccepted: {
+      action: components["schemas"]["RunAction"];
+      /** Project */
+      project: string;
+      /** Run Id */
+      run_id: string;
+    };
+    /** @enum {string} */
+    RunAction: "start" | "cancel" | "resume" | "abandon";
+    /**
      * RunCaps
      * @description The limits a run started with.
      */
@@ -3687,6 +3769,20 @@ export interface components {
       task: string;
       /** Workdir Id */
       workdir_id: string;
+    };
+    /**
+     * StartRunRequest
+     * @description The body of ``POST /workflow-runs``: a project's workflow and its inputs (always live).
+     */
+    StartRunRequest: {
+      /** Inputs */
+      inputs?: {
+        [key: string]: components["schemas"]["InputValue"];
+      };
+      /** Project */
+      project: string;
+      /** Workflow */
+      workflow: string;
     };
     /**
      * Step
@@ -6639,6 +6735,48 @@ export interface operations {
       };
     };
   };
+  start_run_api_v1_workflow_runs_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StartRunRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RunAccepted"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   get_run_api_v1_workflow_runs__run_id__get: {
     parameters: {
       query?: never;
@@ -6657,6 +6795,126 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["WorkflowRun"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  abandon_run_api_v1_workflow_runs__run_id__abandon_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RunAccepted"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  cancel_run_api_v1_workflow_runs__run_id__cancel_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RunAccepted"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  resume_run_api_v1_workflow_runs__run_id__resume_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RunAccepted"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
