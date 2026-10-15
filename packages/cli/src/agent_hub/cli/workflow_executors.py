@@ -1,7 +1,9 @@
 """The workflow engine's ``NodeRunner``: agent, shell and script nodes as children (ADR 0032).
 
 An ``agent`` or ``loop`` turn is one ``claude -p`` in the hub's main checkout, so the hub's
-settings, hooks and plugin load; the hub's repos are attached with ``--add-dir``. Its argv is
+settings, hooks and plugin load; the hub's repos are attached with ``--add-dir``. With a ``cwd``
+inside a repo (issue-to-pr's worktree) it runs there as ``hub run``'s session does: the hub and
+the other repos attached, that repo's gates allowed. Its argv is
 ``hub run``'s (``implementing_argv``: permission mode ``dontAsk``, the tracker's tools denied),
 with the node's tier from ``hub.json`` → ``models.tiers`` and its ``limits`` as ``--max-turns`` and
 ``--max-budget-usd``; ``--resume`` continues a session. Its output is the result's text, or, with
@@ -116,17 +118,24 @@ class WorkflowExecutors:
         prompt = call.prompt if call.prompt is not None else self._prompt_file(call, node)
         if len(prompt.encode(errors="surrogatepass")) > MAX_ARGUMENT_BYTES:
             raise NodeFailedError("config", f"the prompt is larger than {MAX_ARGUMENT_BYTES} bytes")
+        cwd = self._cwd(call.cwd)
         repos = self.config.repos
+        # In a repo (its worktree), as hub run's session: the hub and the other repos attached,
+        # that repo's gates allowed. In the hub: every repo attached, every gate allowed.
+        home = next((r for r in repos if cwd.is_relative_to(self._root(r.dir))), None)
+        folders = (str(self.hub),) if home is not None else ()
+        others = (r for r in repos if r is not home)
+        gated = (home,) if home is not None else repos
         argv = implementing_argv(
             prompt=prompt,
             max_turns=node.limits.max_turns,
             budget=node.limits.max_cost_usd,
             model=self.config.models.model_for(node.model),
             effort=AGENT_EFFORT,
-            add_dirs=tuple(str(self.hub.parent / repo.dir) for repo in repos),
+            add_dirs=(*folders, *(str(self.hub.parent / repo.dir) for repo in others)),
             tools=(
                 *IMPLEMENTING_TOOLS,
-                *gate_tools(command for repo in repos for command in (repo.check_fast, repo.check)),
+                *gate_tools(command for repo in gated for command in (repo.check_fast, repo.check)),
             ),
             denied_tools=SESSION_DENIED_TOOLS,
         )
@@ -146,7 +155,7 @@ class WorkflowExecutors:
         result = self._spawn(
             argv,
             env=env,
-            cwd=self._cwd(None),
+            cwd=cwd,
             timeout=_timeout(node, default=SESSION_TIMEOUT),
             output_limit=SESSION_OUTPUT_LIMIT,
         )
@@ -194,10 +203,13 @@ class WorkflowExecutors:
         hub or one of its repos."""
         hub = self.hub.resolve()
         path = hub if given is None else (hub / given).resolve()
-        roots = (hub, *((hub.parent / repo.dir).resolve() for repo in self.config.repos))
+        roots = (hub, *(self._root(repo.dir) for repo in self.config.repos))
         if not any(path.is_relative_to(root) for root in roots):
             raise NodeFailedError("config", "the cwd leaves the hub and its repos")
         return path
+
+    def _root(self, repo: str) -> Path:
+        return (self.hub.resolve().parent / repo).resolve()
 
     def _spawn(
         self,

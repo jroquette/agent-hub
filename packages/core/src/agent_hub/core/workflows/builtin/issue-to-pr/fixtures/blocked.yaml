@@ -1,0 +1,9 @@
+# Blocked: the session stops with a question; the commits, gate and PR are skipped.
+workflow: issue-to-pr
+inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
+stubs:
+  worktree: {output: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk, hub: /ws/hub, hub_name: hub, check: make check, prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}}}
+  implement: {output: {done: true, status: blocked, summary: "Which API should change?"}}
+  report: {output: {delivery: blocked, stage: IMPLEMENTING, reason: "the implementing session stopped: Which API should change?", question: "Which API should change?", pr: "", summary: ""}}
+expect: {status: done, outcome: blocked}
+reached: [worktree, implement, report]

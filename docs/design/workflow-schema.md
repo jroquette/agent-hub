@@ -34,7 +34,7 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 
 | `type` | Keys | What happens |
 |---|---|---|
-| `agent` | `prompt` or `prompt_file` (one), `with`, `model`, `limits`, `context` | one `claude -p` session, with the hub's settings and plugin |
+| `agent` | `prompt` or `prompt_file` (one), `with`, `model`, `limits`, `context`, `cwd` | one `claude -p` session, with the hub's settings and plugin |
 | `shell` | `command` (argv list), `cwd`, `env` | runs the program, never through a shell; exit 0 passes |
 | `script` | `runtime` (`sh` or `python`), `script`, `args`, `cwd`, `env` | `sh <file>` or `uv run <file>`; exit 0 passes |
 | `loop` | the `agent` keys, `max_iterations`, `until`, `until_field`, `until_bash`, `fresh_context` | repeats one agent turn until done |
@@ -48,6 +48,9 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
   names to values or `{from: <output ref>, if_skipped: <value>}`, read in a prompt as `$WITH.<name>`. `model` is a
   `hub.json` → `models.tiers` tier (default `medium`); `limits` is `{max_turns, max_cost_usd}` (default 40 and 3.0);
   `context` is `fresh` (default) or `{resume: <upstream agent node id>}`.
+- A `cwd` (shell, script, agent, loop) resolves inside the hub or a configured repo, else `config`. An agent's `cwd` may
+  be a reference, such as the worktree path `hub step worktree` prints; inside a repo the session runs as `hub run`'s
+  (the hub and the other repos attached with `--add-dir`, that repo's gates allowed), else in the hub with every repo.
 - No child gets `LINEAR_API_KEY`. Agents run with `session_env`, other commands with `untrusted_env`; `env` adds no
   token. A `hub step` node (`command[0:2]` is `[hub, step]`) runs the engine's own hub (absolute path) with `child_env`
   (GitHub tokens), refuses `env` and a referenced `cwd`, and narrows per call as today: `untrusted_env` for git reads
