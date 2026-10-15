@@ -4636,6 +4636,7 @@ ADAPTER_MODULES = frozenset(
         "registered_hub_files.py",
         "workflow_discovery.py",
         "workflow_fixtures.py",
+        "workflow_source.py",
     }
 )
 RENDERING_MODULES = frozenset(
