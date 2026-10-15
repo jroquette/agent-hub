@@ -102,7 +102,7 @@ class Scenario(_Frozen):
 
 class StubRecord(_Frozen):
     """One line the stub appends to its record file: a start, a spawn, a control request or a
-    user message."""
+    user message (with ``images``, each one's media type and decoded size, when it had any)."""
 
     event: Literal["start", "spawn", "control", "user"]
     pid: int
@@ -112,6 +112,7 @@ class StubRecord(_Frozen):
     grandchild_pid: int | None = None
     subtype: str | None = None
     data: dict[str, JsonValue] = Field(default_factory=dict)
+    images: list[dict[str, JsonValue]] | None = None
 
 
 def simple_turn(text: str = "Hello from the stub.") -> list[Step]:

@@ -12,6 +12,7 @@ It never reaches the network and holds no real output: the shapes are synthetic 
 the Wave 0 spike observed from the local CLI.
 """
 
+import base64
 import json
 import os
 import signal
@@ -151,7 +152,7 @@ class StubSession:
         """React to one stdin message."""
         match message.get("type"):
             case "user":
-                self._write_record("user", data={"text": _user_text(message)})
+                self._write_user_record(message)
                 self.queued.append(_user_text(message))
                 self._start_next()
             case "control_request":
@@ -378,6 +379,14 @@ class StubSession:
         line = {"event": event, "pid": os.getpid(), "subtype": subtype, "data": data or {}}
         _append(self.record, StubRecord.model_validate(line))
 
+    def _write_user_record(self, message: Message) -> None:
+        """The message's text, and each image's media type and decoded size (never its data)."""
+        line: Message = {"event": "user", "pid": os.getpid(), "data": {"text": _user_text(message)}}
+        images = _user_images(message)
+        if images:
+            line["images"] = images
+        _append(self.record, StubRecord.model_validate(line))
+
 
 def _session_id(scenario: Scenario, options: _Options) -> str:
     if options.resume is not None:
@@ -394,6 +403,24 @@ def _user_text(message: Message) -> str:
         for block in content
         if isinstance(block, dict) and block.get("type") == "text"
     )
+
+
+def _user_images(message: Message) -> list[Message]:
+    content = message.get("message", {}).get("content", "")
+    if isinstance(content, str):
+        return []
+    sources = [
+        _json_object(block.get("source"))
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "image"
+    ]
+    return [
+        {
+            "media_type": source.get("media_type"),
+            "bytes": len(base64.b64decode(str(source.get("data", "")))),
+        }
+        for source in sources
+    ]
 
 
 def _json_object(value: object) -> Message:

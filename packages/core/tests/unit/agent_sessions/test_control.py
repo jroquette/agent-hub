@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
@@ -25,6 +26,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverCapabilities,
     DriverEvent,
     DriverHandle,
+    DriverImage,
     PastSession,
     PermissionRequest,
     PermissionSuggestion,
@@ -37,11 +39,13 @@ from agent_hub.core.agent_sessions.driver import (
 from agent_hub.core.agent_sessions.errors import (
     AgentSessionNotFoundError,
     InvalidDecisionError,
+    InvalidScreenshotError,
     InvalidWorkdirError,
     LiveLimitError,
     LogFullError,
     MessageTooLargeError,
     PermissionAnsweredError,
+    ScreenshotTooLargeError,
     SessionLiveError,
     SessionsUnavailableError,
     SessionTerminalError,
@@ -50,11 +54,13 @@ from agent_hub.core.agent_sessions.errors import (
 )
 from agent_hub.core.agent_sessions.limits import KIB, SessionLimits
 from agent_hub.core.agent_sessions.permission_policy import CLOSED_MESSAGE, TIMEOUT_MESSAGE
-from agent_hub.core.agent_sessions.records import LogRecord, StatusFrame
+from agent_hub.core.agent_sessions.records import LogRecord, StatusFrame, StreamPosition
+from agent_hub.core.agent_sessions.screenshot import MAX_SCREENSHOT_BYTES
 from agent_hub.core.agent_sessions.store import AgentSessionFields
 from agent_hub.core.readmodels.event_read_models import FoldedEventReadModels
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL, Rig
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
+from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.fakes import InMemoryEventStore
 from agent_hub.core.testing.session_driver_fakes import Hold, InMemorySessionDriver
 from agent_hub.core.testing.session_scenarios import a_session_events
@@ -775,7 +781,9 @@ class FailingStore(InMemoryAgentSessionStore):
 
 
 class SendFailingDriver(InMemorySessionDriver):
-    async def send(self, handle: DriverHandle, text: str) -> None:
+    async def send(
+        self, handle: DriverHandle, text: str, *, images: tuple[DriverImage, ...] = ()
+    ) -> None:
         raise RuntimeError("pipe closed")
 
 
@@ -1035,3 +1043,65 @@ async def test_skips_twin_lookup_when_reading_log_page(make_rig: MakeRig) -> Non
 
     assert observed.calls == 0
     assert page.next_after is None
+
+
+PNG = a_png_bytes()
+PNG_BASE64 = base64.b64encode(PNG).decode("ascii")
+SCREENSHOT_MARKER = {"kind": "screenshot", "media_type": "image/png", "bytes": len(PNG)}
+
+
+def _screenshot(data: bytes = PNG) -> dict[str, str]:
+    return {"media_type": "image/png", "data": base64.b64encode(data).decode("ascii")}
+
+
+async def test_sends_prompt_with_image_when_screenshot_sent(make_rig: MakeRig) -> None:
+    rig = make_rig()
+
+    created = await rig.create("Say hello.", screenshot=_screenshot())
+    await rig.until_status(created.id, "idle")
+
+    sends = [call.args for call in rig.driver.calls if call.method == "send"]
+    assert sends == [("Say hello.", (DriverImage(media_type="image/png", data=PNG),))]
+    first = rig.records(created.id)[0]
+    assert first.kind == "user.message"
+    assert first.body == {"text": "Say hello.", "attachments": [SCREENSHOT_MARKER]}
+
+
+@pytest.mark.parametrize(
+    ("data", "refusal"),
+    [
+        (b"\x89PNG\r\n\x1a\n" + b"\x00" * MAX_SCREENSHOT_BYTES, ScreenshotTooLargeError),
+        (b"\xff\xd8\xff\xe0JFIF", InvalidScreenshotError),
+    ],
+    ids=["too-large", "jpeg"],
+)
+async def test_refuses_before_driver_when_screenshot_refused(
+    make_rig: MakeRig, data: bytes, refusal: type[Exception]
+) -> None:
+    rig = make_rig()
+
+    with pytest.raises(refusal):
+        await rig.create("Say hello.", screenshot=_screenshot(data))
+
+    assert rig.driver.calls == []
+    assert rig.store.list() == ()
+
+
+async def test_logs_marker_without_bytes_when_screenshot_sent(make_rig: MakeRig) -> None:
+    rig = make_rig()
+
+    created = await rig.create("Say hello.", screenshot=_screenshot())
+    await rig.until_status(created.id, "idle")
+    frames = await rig.control.subscribe(created.id, StreamPosition(seq=0))
+    streamed: list[str] = []
+    async with asyncio.timeout(5):
+        async for item in frames:
+            streamed.append(item.model_dump_json())
+            if isinstance(item, LogRecord) and item.kind == "result":
+                break
+
+    stored = [record.model_dump_json() for record in rig.records(created.id)]
+    assert rig.records(created.id)[0].body["attachments"] == [SCREENSHOT_MARKER]
+    for text in stored + streamed:
+        assert PNG_BASE64 not in text
+        assert "iVBORw0KGgo" not in text
