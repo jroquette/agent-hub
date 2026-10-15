@@ -134,7 +134,7 @@ def run(
     root = hub_root_or_exit(os.environ, command=COMMAND)
     hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
     hub_config = load_hub_config_or_exit(hub / FILE_LABEL)
-    _refuse_usage(context, hub_config, issue=issue, repo=repo)
+    refuse_usage(context, hub_config, issue=issue, repo=repo)
     effective, prefix = effective_with_prefix_or_fail(context, hub_config, home=hub)
     # hub.json with the developer's local values over it: the transport may be theirs.
     config = effective.config
@@ -240,7 +240,9 @@ def _print_dry_run(
         typer.echo(f"would call: {shown_text(call_line(write))}")
 
 
-def _refuse_usage(context: typer.Context, config: HubConfig, *, issue: str, repo: str) -> None:
+def refuse_usage(context: typer.Context, config: HubConfig, *, issue: str, repo: str) -> None:
+    """Exit 2 unless ``issue`` is shaped ``<team>-<n>`` for a team of ``config`` and ``repo`` is
+    one of its repo dirs (``hub run`` and ``hub step``)."""
     teams = config.tracker.team_keys
     if not (ISSUE_ID_PATTERN.fullmatch(issue) and team_of(issue, teams)):
         team = config.tracker.default_team

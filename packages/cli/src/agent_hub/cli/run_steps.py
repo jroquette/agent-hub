@@ -115,7 +115,7 @@ CHILD_OUTPUT_LIMIT: Final = 64 * 1024
 SESSION_OUTPUT_LIMIT: Final = 1 << 20
 _PREFIX = "hub run"
 # Given to the token-bearing fetch as its own -c, like the push's.
-_HOOKS_OFF = ("-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false")
+HOOKS_OFF: Final = ("-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false")
 
 
 class StageFailure(Exception):  # noqa: N818 - a stage's outcome, read as "the stage failed"
@@ -207,10 +207,10 @@ class LiveRun:
                 # and the repo's setup script run without them, every hook off for the add.
                 env=untrusted_env(self.environ),
                 fetch_env=push_env(self.environ),
-                fetch_options=_HOOKS_OFF,
+                fetch_options=HOOKS_OFF,
                 add_options=("-c", f"core.hooksPath={os.devnull}"),
                 git_timeout=WORKTREE_GIT_TIMEOUT,
-                runner=_bounded_child,
+                runner=bounded_child,
             )
             check_branches(task)
             self.worktree = create_worktree(task, self.children.repo, echo=typer.echo)
@@ -546,7 +546,7 @@ class LiveRun:
             raise StageFailure(stage, f"{name} could not run: {error.strerror or error}") from None
 
 
-def _bounded_child(
+def bounded_child(
     argv: Sequence[str],
     *,
     cwd: Path | str,
