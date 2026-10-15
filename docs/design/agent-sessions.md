@@ -87,6 +87,47 @@ is refused (`terminal`, or `log-full` naming Resume); a command while an interru
 Session its `agent_session_id` and makes its live tile `waiting` while a request is open; the tile carries
 `agent_session_id` too, so the web app links it to the chat (a hook-observed prompt links to Approvals).
 
+## Chat behaviour
+
+The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a full page
+([ADR 0033](../adr/0033-sessions-and-chat-interaction-model.md)). Transport, access and storage stay as above.
+
+- **Layout.** A fixed-height column: the header (title, status, cost, actions) and the composer stay on screen, the
+  transcript is the only scroll container; messages and tool cards share one centred column (text about 80ch wide);
+  the todo list collapses.
+- **Scroll.** It opens at the latest entry, or at the oldest pending permission card when one exists. While the
+  reader is within 24 px of the bottom, new entries and deltas keep it pinned; once they scroll up, nothing moves it.
+  Send pins it again. A detached reader sees "Jump to latest" with the count of new entries ("3 new"); the button or
+  End in the transcript scrolls to the bottom and hides it.
+- **Streaming.** Deltas are batched per animation frame: one render and at most one Markdown parse of the streaming
+  bubble per frame. The bubble shows a caret while it streams; while a turn runs with no text streaming, a "Claude is
+  working · <tool>" row shows.
+- **Stop.** Visible and enabled while `running` or `waiting_permission`. Esc in an empty composer with no menu open
+  posts one interrupt; a "Turn interrupted" notice follows the turn's result.
+- **Messages.** On hover or focus (always under `hover: none`) a row shows `<time datetime>` (relative text, absolute
+  time in its title) and Copy, which copies the raw Markdown. Code blocks carry a language label and Copy; wide tables
+  scroll in a wrapper; raw HTML stays inert text.
+- **Tool calls.** Each card shows an icon and text: running, waiting for you, done, error or denied; a call with an
+  open permission reads "Waiting for you" with its permission card under it. Output over 10,000 characters is cut
+  with "Show all (N characters)". Consecutive calls with no text between them group as one "Explored · 3 Read,
+  2 Grep" row, open when one is pending or failed. Thinking reads "Thought for N s" (from the previous record's `at`),
+  else "Thinking".
+- **Composer.** Grows up to 40% of the viewport. The draft is saved to `ah.chat.draft.<id>` in the browser after
+  500 ms (not above 64 KiB), restored on reload, cleared once a send is accepted. It has focus on open unless a
+  permission is pending and keeps it after Send. Enter does not send during IME composition or within 500 ms after
+  `compositionend`; under `pointer: coarse` Enter is a newline. A send shows a "Sending…" bubble until the echoed
+  record replaces it; during a running turn it reads "Queued: Claude reads it after this turn".
+- **`/` menu.** `/` at the start of the composer lists the `init` record's slash commands and skills (at most 200,
+  strings, de-duplicated); typing filters, arrows move, Enter or Tab inserts, Esc closes, and Enter never sends while
+  it is open.
+- **Keys.** Ctrl/Cmd+Alt+Enter allows once and Ctrl/Cmd+Alt+Backspace denies the oldest pending permission (inert
+  when none; the buttons carry `aria-keyshortcuts`); `a` / `d` do the same while a permission card has focus;
+  Shift+Esc focuses the composer; ArrowUp in an empty composer recalls the last prompt sent. The shortcut sheet has a
+  "Chat" group. A new pending card never takes focus from a composer holding text.
+- **Accessibility.** No serious or critical axe violation in any state (empty, streaming, waiting, detached, menu
+  open, ended). The log keeps `role="log"` and `aria-busy` and has a visually hidden h2; under
+  `prefers-reduced-motion` no caret, shimmer or smooth scroll animates.
+
 ## Invariants
 
 - The platform implements no agent loop and calls no model; the children are the user's own `claude` with its own
@@ -109,6 +150,8 @@ Session its `agent_session_id` and makes its live tile `waiting` while a request
 
 - [ADR 0031](../adr/0031-driving-claude-code-sessions-from-the-app.md): the engine, the token, the data exception,
   the cloud link-out; partially supersedes ADR 0017, 0019 and 0022.
+- [ADR 0033](../adr/0033-sessions-and-chat-interaction-model.md): the chat's interaction model and the one Sessions
+  screen that lists driven sessions with the observed ones.
 - [ADR 0019](../adr/0019-metadata-only-events-and-redaction.md): the redaction rule set the stored copy uses.
 - [ADR 0024](../adr/0024-learning-actions-from-the-app.md): off in the container, as hubs are read-only there.
 
