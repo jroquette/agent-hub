@@ -36,6 +36,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - `hub web` has a Workflows page (sidebar group Improve): each workflow with its source (hub or built-in), the files
   that do not load, and a workflow's graph by layers (a column per layer, arrows for `depends_on`, a list view, a
   keyboard-reachable node panel) with its document, read-only (AGH-226).
+- `hub web` Run detail shows an engine run as its workflow's graph: each node with its state, attempt, skip cause and
+  failure kind, and a side panel (reason, sessions, loop body steps); issue-to-pr runs keep their stage pipeline. The
+  Runs list gains Workflow and Failure kind facets (AGH-226).
 - `hub step worktree|verdict|commits|pr|report` run `hub run`'s stages one at a time and print one JSON object each (the
   worktree and the repo's target, the session's verdict, the branch's commits, the PR's url, the delivery), for the issue-to-pr
   workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
