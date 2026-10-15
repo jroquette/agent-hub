@@ -56,7 +56,7 @@ together. The format is the schema's contract; the reasons are in [ADR 0032](../
   order.
 - Planning splits a layer, first fit in declaration order: a node that reads the checkout (`mutates_checkout: false`,
   or a group whose body holds one) never shares a run with one that may change it, and two agents resuming one session
-  never run together. Splitting is linear in the layer's size.
+  never run together. Each kind skips, for good, the batches that can no longer take it, so splitting is near-linear.
 - A layer holding a `halt`, or a group whose body holds one, runs one node at a time and stops at the halt.
 - A read-only node's attempt reads `git status` of the hub and its repos before and after; a change fails it `config`
   (never retried). A folder that is not a git checkout is not watched; the run's start record lists it
