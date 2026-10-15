@@ -37,7 +37,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   no node retries. Its fixtures (delivered, no commit, blocked, dirty tree, error, gate failure, PR failure) run in
   `hub workflow test`. Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured
   repo; shell and script nodes take an optional `stdin`, a literal or one whole reference written to the child (at
-  most 512 KiB), which carries the session's reply to `hub step verdict` (AGH-223).
+  most 1 MiB, as an agent's reply, `hub run`'s session cap), which carries the reply to `hub step verdict`; the dry
+  run shows it (AGH-223).
 
 ### Fixed
 

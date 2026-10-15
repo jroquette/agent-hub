@@ -376,7 +376,6 @@ class TestVerdict:
 
         assert output_of(result)["question"] == "needs a plan"
 
-
     def test_fails_when_reply_over_one_mib(
         self, run_workspace: Workspace, *, monkeypatch: pytest.MonkeyPatch
     ) -> None:

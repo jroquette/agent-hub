@@ -108,3 +108,16 @@ def test_prints_declared_output_when_steps_run(
             (worktree / "change.txt").write_text("change\n")
             workspace.git(worktree, "add", "change.txt")
             workspace.git(worktree, *identity, "commit", "-q", "-m", "feat(api): it (DEM-1)")
+
+
+def test_shows_stdin_when_dry_run_prints_verdict_node(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    given = ("--input", "issue=DEM-1", "--input", "repo=demo-api", "--input", "issue_text=x")
+
+    result = run_command(demo_workspace.hub, "workflow", "run", "issue-to-pr", *given)
+
+    assert result.exit_code == 0, result.output
+    assert "would run: verdict (shell): hub step verdict   stdin: $implement.output" in (
+        result.stdout.splitlines()
+    )

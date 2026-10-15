@@ -87,9 +87,9 @@ undeclared input or a path outside the producer's schema is a load error; a fail
 Values render as canonical text: strings as is, numbers and booleans as JSON, null as empty, objects and arrays as
 compact JSON with sorted keys. In argv a reference fills a whole element, never `command[0]` nor a `-c` script, else a
 load error; a script gets values only as positional parameters: `[sh, -c, 'gh pr view "$1"', sh, $pr.output.url]`. The
-output is the agent's final message or the command's stdout (≤ 512 KiB). With `output_format` (JSON Schema 2020-12,
-checked by the core port `OutputValidator`) it must be one matching JSON value, else `output_contract`. Outputs,
-rendered text and human answers live in the run's record under `.agent-runs/`, never in events.
+output is the command's stdout (≤ 512 KiB) or the agent's final message (≤ 1 MiB, as is a `stdin`). With
+`output_format` (JSON Schema 2020-12, via core's `OutputValidator`) it must be one matching JSON value, else
+`output_contract`. Outputs, rendered text and answers stay in the run's record (`.agent-runs/`), never in events.
 
 A run is `running` or `paused`, then ends `done`, `failed` (a node failed after its retries) or `cancelled` (`halt`,
 cancel, abandon). The outcome is apart: `outcome_field`'s JSON value (boolean or string) on the completed `returns`

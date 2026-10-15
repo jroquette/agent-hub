@@ -433,7 +433,7 @@ def test_writes_stdin_when_shell_node_has_one(tmp_path: Path, pack: Path) -> Non
 def test_fails_config_when_stdin_past_cap(tmp_path: Path, pack: Path) -> None:
     child = FakeChild()
     spec = {"id": "read", "type": "shell", "command": ["cat"], "stdin": "x"}
-    big = "x" * (MAX_OUTPUT_BYTES + 1)
+    big = "x" * 1_048_577
 
     with pytest.raises(NodeFailedError) as raised:
         executors(tmp_path, pack, child).run(call(spec, argv=("cat",), stdin=big))
@@ -450,3 +450,27 @@ def test_fails_config_when_child_refuses_its_arguments(tmp_path: Path, pack: Pat
         executors(tmp_path, pack, child).run(call(spec, argv=("ls",)))
 
     assert raised.value.kind == "config"
+
+
+def test_passes_stdin_when_exactly_at_session_cap(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild()
+    spec = {"id": "read", "type": "shell", "command": ["cat"], "stdin": "x"}
+
+    executors(tmp_path, pack, child).run(call(spec, argv=("cat",), stdin="x" * 1_048_576))
+
+    assert len(child.calls[0]["stdin"]) == 1_048_576
+
+
+@pytest.mark.parametrize(("size", "passes"), [(1_048_576, True), (1_048_577, False)])
+def test_bounds_agent_reply_at_session_cap_when_claude_answers(
+    tmp_path: Path, pack: Path, *, size: int, passes: bool
+) -> None:
+    child = FakeChild([claude_result("x" * size)])
+
+    if passes:
+        reply = executors(tmp_path, pack, child).run(call(AGENT, prompt="Go."))
+        assert len(reply.text) == size
+    else:
+        with pytest.raises(NodeFailedError) as raised:
+            executors(tmp_path, pack, child).run(call(AGENT, prompt="Go."))
+        assert raised.value.kind == "output_contract"
