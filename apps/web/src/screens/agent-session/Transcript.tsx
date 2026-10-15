@@ -338,6 +338,9 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
               />
             );
           })}
+        </div>
+        {/* Outside the live log: only the echoed record is announced, not its Sending… copy too. */}
+        <div className="as-pending as-column">
           {state.sending.map((send) => (
             <div key={send.key} className="as-entry">
               <UserMessage text={send.text} note="Sending…" />
