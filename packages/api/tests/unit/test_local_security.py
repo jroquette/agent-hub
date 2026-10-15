@@ -229,6 +229,7 @@ RUN_WRITES = (
     "/api/v1/workflow-runs/run-1/cancel",
     "/api/v1/workflow-runs/run-1/resume",
     "/api/v1/workflow-runs/run-1/abandon",
+    "/api/v1/approvals/run-1:ok:1/decision",
 )
 OWN_JSON = {"Origin": "http://127.0.0.1:7420", "Content-Type": "application/json"}
 
@@ -247,6 +248,9 @@ def test_marks_strict_run_write_when_post_to_run_command(path: str) -> None:
         ("POST", "/api/v1/workflow-runs/run-1/stream"),
         ("POST", "/api/v1/workflow-runs/a/b/cancel"),
         ("POST", "/api/v1/workflow-runs/run-1/cancel/extra"),
+        ("GET", "/api/v1/approvals/run-1:ok:1/gate"),
+        ("POST", "/api/v1/approvals/a/b/decision"),
+        ("POST", "/api/v1/approvals/run-1:ok:1/decision/extra"),
     ],
 )
 def test_keeps_default_checks_when_not_run_command(method: str, path: str) -> None:

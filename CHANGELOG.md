@@ -13,6 +13,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Approvals and Run detail decide a workflow run's open gate: one button per declared decision or option (labels
+  from the workflow), a dialog for the reason or response where the gate takes one, and the run resumes on the
+  server; Run detail lists the running run's open gates and shows the card in the waiting node's panel. Human gates
+  outside a workflow run keep their Phase 4 placeholders (AGH-231).
+- `hub web` can decide a paused workflow run's gate: `GET /api/v1/approvals/{id}/gate` shows its decisions or options
+  (with labels) and whether it takes a text, and `POST /api/v1/approvals/{id}/decision` (a strict write that needs
+  the launch cookie) records the answer through the new hidden `hub workflow decide RUN --gate ID` (text on stdin,
+  no resume, `gate.result` where `web`), then resumes the run detached (AGH-231).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key

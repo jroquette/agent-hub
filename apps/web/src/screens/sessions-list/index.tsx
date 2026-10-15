@@ -675,7 +675,12 @@ export function SessionsListScreen() {
   const screenRef = useRef<HTMLDivElement>(null);
   const arm = useScrollAnchor(
     screenRef,
-    Object.fromEntries(askedIds.map((id) => [id, sections[id].dataUpdatedAt])),
+    Object.fromEntries(
+      askedIds.map((id) => [
+        id,
+        { at: sections[id].dataUpdatedAt, fetching: sections[id].isFetching },
+      ]),
+    ),
   );
   useSectionRefresh(
     scope,
@@ -736,6 +741,7 @@ export function SessionsListScreen() {
     observed,
     driven,
     new Set(SECTIONS.filter(({ id }) => queries[id] !== null).map(({ id }) => id)),
+    queries.ended?.from ?? null,
   );
   const asked = SECTIONS.flatMap((section) => {
     if (queries[section.id] === null) return [];
