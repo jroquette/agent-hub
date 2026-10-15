@@ -24,19 +24,7 @@ type CommandRunner = Callable[..., Result]
 type Workspace = Any
 
 PACK = BUILTIN_WORKFLOWS / "issue-to-pr"
-OUTCOMES = ("done", "no-commit", "blocked", "error", "gate-failure", "pr-failure")
-# Where the pack's prompt departs from hub run's on purpose: a blocked session answers with the
-# JSON verdict (its output_format), and the verdict holds the loop's ``done``.
-BLOCKED_BEFORE = "STOP and reply\n   `BLOCKED: <reason>` without editing anything."
-BLOCKED_AFTER = (
-    'STOP and reply\n   with the step 5 line, "status" "blocked" and your question as its'
-    ' "summary", without editing anything.'
-)
-VERDICT_BEFORE = '   {"status": "done" | "blocked",'
-VERDICT_AFTER = '   {"done": true, "status": "done" | "blocked",'
-MORE_TURNS = (
-    '\n   Set "done" to false only when the work is unfinished and you need another turn to go on.'
-)
+OUTCOMES = ("done", "no-commit", "blocked", "dirty", "error", "gate-failure", "pr-failure")
 
 
 def node_formats() -> dict[str, Any]:
@@ -53,11 +41,11 @@ def test_validates_and_passes_every_fixture_when_pack_tested(
     tested = run_command(demo_workspace.hub, "workflow", "test", "issue-to-pr")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "issue-to-pr: valid (6 nodes in 6 layers)\n"
+    assert validated.stdout == "issue-to-pr: valid (7 nodes in 7 layers)\n"
     assert tested.exit_code == 0, tested.output
     for outcome in OUTCOMES:
         assert f"<builtin>/issue-to-pr/fixtures/{outcome}.yaml: ok" in tested.stdout
-    assert tested.stdout.endswith("6 fixtures: 6 passed, 0 failed\n")
+    assert tested.stdout.endswith("7 fixtures: 7 passed, 0 failed\n")
 
 
 @pytest.mark.parametrize("sensitive", [(), ("hub.json", "docs/adr")])
@@ -89,12 +77,7 @@ def test_renders_hub_run_prompt_when_prompt_file_filled(sensitive: tuple[str, ..
         full_gate="make check",
         prefix="DEM-",
     )
-    verdict_end = today.index("\n", today.index(VERDICT_BEFORE))
-    expected = today[:verdict_end] + MORE_TURNS + today[verdict_end:]
-    expected = expected.replace(BLOCKED_BEFORE, BLOCKED_AFTER).replace(
-        VERDICT_BEFORE, VERDICT_AFTER
-    )
-    assert rendered == expected
+    assert rendered == today
 
 
 def test_prints_declared_output_when_steps_run(
@@ -105,18 +88,23 @@ def test_prints_declared_output_when_steps_run(
     issue = ("--issue", "DEM-1", "--repo", "demo-api")
     worktree = workspace.ws / "demo-api" / ".claude" / "worktrees" / "dem-1"
     identity = ("-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com")
+    target: list[str] = []
     steps = {
         "worktree": ("worktree", *issue),
-        "commits": ("commits", *issue),
-        "pr": ("pr", *issue, "--summary", "Adds it."),
+        "verdict": ("verdict", "--", "Done."),
+        "commits": ("commits", "--target"),
+        "pr": ("pr", "--issue", "DEM-1", "--summary", "Adds it.", "--target"),
         "report": ("report", "--status", "done", "--commits", "1", "--pr", "https://x/1"),
     }
 
     for node_id, args in steps.items():
-        result = run_command(workspace.hub, "step", *args)
+        given = (*args, *target) if args[-1] == "--target" else args
+        result = run_command(workspace.hub, "step", *given)
         assert result.exit_code == 0, result.output
-        outputs.check(formats[node_id], json.loads(result.stdout))
+        output = json.loads(result.stdout)
+        outputs.check(formats[node_id], output)
         if node_id == "worktree":
+            target.append(json.dumps(output["target"]))
             (worktree / "change.txt").write_text("change\n")
             workspace.git(worktree, "add", "change.txt")
             workspace.git(worktree, *identity, "commit", "-q", "-m", "feat(api): it (DEM-1)")

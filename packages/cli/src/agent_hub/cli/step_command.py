@@ -1,12 +1,15 @@
-"""``hub step worktree|commits|pr|report``: ``hub run``'s stages as commands a workflow runs.
+"""``hub step worktree|verdict|commits|pr|report``: ``hub run``'s stages as commands.
 
 The issue-to-pr workflow (ADR 0032) runs them as ``hub step`` nodes. Each prints one JSON object
 on stdout, the ``output_format`` its node declares, and exits 0; a failure is one
 ``hub step <name>: <reason>`` line on stderr and exit 1 (other lines, such as the worktree's
 ``created`` line and its setup script's, also go to stderr). A usage problem exits 2, as in
-``hub run``. ``worktree``, ``commits`` and ``pr`` read ``hub.json`` and the developer's branch
-prefix as ``hub run`` does and derive the repo's worktree, branch and base from ``--issue`` and
-``--repo`` (``RunChildren``): no path comes from another node's output.
+``hub run``. ``worktree`` reads ``hub.json`` and the developer's branch prefix as ``hub run``
+does, before the session, and prints the repo's facts as ``target`` (the worktree, branch, base,
+GitHub repo, gate and conventions); ``commits`` and ``pr`` take that object back as
+``--target`` and never read ``hub.json`` again, which the session could have edited. A target
+whose path leaves the workspace is refused. ``verdict`` reads the session's reply as ``hub run``
+does (``session_outcome``).
 
 Tokens are narrowed per call from the caller's environment, as in ``hub run``: git's reads, the
 worktree add and the repo's setup script get ``untrusted_env``; only the fetch, the push and
@@ -19,6 +22,8 @@ parent's (``hub workflow run``, ``hub run``).
 import json
 import os
 import shutil
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated, Final, NoReturn
 
 import typer
@@ -34,7 +39,6 @@ from agent_hub.cli.pr_steps import (
     open_or_find_pr,
     push_branch,
     refuse_risky_config,
-    refuse_uncommitted,
     titled_pr,
     unmatched_warning,
 )
@@ -43,20 +47,32 @@ from agent_hub.cli.run_command import refuse_usage
 from agent_hub.cli.run_steps import HOOKS_OFF, WORKTREE_GIT_TIMEOUT, bounded_child
 from agent_hub.cli.ship_steps import ship_child, step_timeouts
 from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
+from agent_hub.core.hub_config.conventions import EffectiveConventions
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.run_record import RunOutcome, Stage
 from agent_hub.core.runner.run_texts import commit_summary, pr_body
 from agent_hub.core.runner.session_prompt import prompt_parts
+from agent_hub.core.runner.verdict import (
+    OutcomeKind,
+    SessionReply,
+    last_json_line,
+    session_outcome,
+)
 
 COMMAND: Final = "step"
 NO_COMMIT: Final = "no commit on the branch (the session reported done or gave no verdict)"
 NO_PR: Final = "no PR was opened for the commits"
+UNCOMMITTED: Final = "uncommitted changes in the worktree"
+TARGET_TEXTS: Final = ("branch", "base", "default_branch", "github", "gate")
 STOPPED: Final = "the implementing session stopped: "
 
 step_app = typer.Typer(name=COMMAND, no_args_is_help=True, help="Run one stage of hub run.")
 
 Issue = Annotated[str, typer.Option("--issue", metavar="ISSUE", help="The issue, <team>-<n>.")]
 Repo = Annotated[str, typer.Option("--repo", metavar="REPO", help="The repo's dir in hub.json.")]
+Target = Annotated[
+    str, typer.Option("--target", metavar="JSON", help="The target hub step worktree printed.")
+]
 
 
 @step_app.command("worktree")
@@ -110,68 +126,86 @@ def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
             "hub_name": children.hub.name,
             "check": children.gate,
             "prompt": dict(parts),
+            "target": _target_value(children, path),
+        }
+    )
+
+
+@step_app.command("verdict")
+def verdict(reply: Annotated[str, typer.Argument(help="The session's final message.")]) -> None:
+    """Read the session's reply as hub run does: done, or blocked with its question."""
+    outcome = session_outcome(
+        SessionReply(is_error=False, subtype=None, result=reply, cost_usd=0.0, turns=None)
+    )
+    blocked = outcome.kind is OutcomeKind.STOPPED
+    found = last_json_line(reply) or {}
+    summary = found.get("summary") if blocked else outcome.text
+    _print(
+        {
+            "status": RunOutcome.BLOCKED.value if blocked else OutcomeKind.DONE.value,
+            "summary": summary if isinstance(summary, str) else "",
+            "question": outcome.question,
         }
     )
 
 
 @step_app.command("commits")
-def commits(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
-    """Print the commits on the issue's branch; with any, no tracked change may sit beside them."""
-    children = _children(context, issue=issue, repo=repo)
-    child, timeout = ship_child(children.worktree), step_timeouts().git
+def commits(*, target: Target) -> None:
+    """Print the commits on the branch, and whether a tracked change sits beside them."""
+    facts = _target(target)
+    child, timeout = ship_child(facts.path), step_timeouts().git
     try:
         log = git_output(
-            child,
-            "log",
-            "--format=%s",
-            f"{children.base}..HEAD",
-            environ=os.environ,
-            timeout=timeout,
+            child, "log", "--format=%s", f"{facts.base}..HEAD", environ=os.environ, timeout=timeout
         )
         subjects = [line for line in log.splitlines() if line]
-        summary = ""
+        summary, dirty = "", False
         if subjects:
-            refuse_uncommitted(child, environ=os.environ, timeout=timeout)
-            summary = _commit_summary(children)
+            summary = _commit_summary(facts)
+            # refuse_uncommitted's check: untracked files never reach the PR.
+            status = git_output(
+                child,
+                *("status", "--porcelain", "--untracked-files=no"),
+                environ=os.environ,
+                timeout=timeout,
+            )
+            dirty = bool(status.strip())
     except PrStepError as error:
         _fail("commits", error.reason)
-    _print({"count": len(subjects), "subjects": list(subjects), "summary": summary})
+    _print({"count": len(subjects), "subjects": list(subjects), "summary": summary, "dirty": dirty})
 
 
 @step_app.command("pr")
 def pr(
-    context: typer.Context,
     *,
     issue: Issue,
-    repo: Repo,
+    target: Target,
     summary: Annotated[
         str, typer.Option("--summary", help="The PR's summary; blank, the commit messages.")
     ] = "",
 ) -> None:
-    """Push the issue's branch and open its PR (or find the one open); print its url."""
-    children = _children(context, issue=issue, repo=repo)
-    child, timeouts = ship_child(children.worktree), step_timeouts()
-    workspace = str(children.workspace)
-    target = PrTarget(
-        github=children.github, base_branch=children.default_branch, branch=children.branch
-    )
+    """Push the branch and open its PR (or find the one open); print its url."""
+    facts = _target(target)
+    child, timeouts = ship_child(facts.path), step_timeouts()
+    workspace = str(facts.workspace)
+    pr_target = PrTarget(github=facts.github, base_branch=facts.default_branch, branch=facts.branch)
     try:
-        summary = summary if summary.strip() else _commit_summary(children)
-        push_branch(child, target=target, environ=os.environ, timeouts=timeouts)
+        summary = summary if summary.strip() else _commit_summary(facts)
+        push_branch(child, target=pr_target, environ=os.environ, timeouts=timeouts)
         subject = git_output(
             child, "log", "-1", "--format=%s", environ=os.environ, timeout=timeouts.git
         )
-        conventions = children.conventions
+        conventions = facts.conventions
         titled = titled_pr(subject, conventions=conventions, issue_id=issue, workspace=workspace)
         if titled.unmatched is not None:
             line = unmatched_warning(
                 "hub step pr", line=titled.unmatched, commit_title=conventions.commit_title
             )
             typer.echo(line, err=True)
-        body = pr_body(issue_id=issue, summary=summary, gate=children.gate, workspace=workspace)
+        body = pr_body(issue_id=issue, summary=summary, gate=facts.gate, workspace=workspace)
         opened = open_or_find_pr(
             child,
-            target=target,
+            target=pr_target,
             title=titled.title,
             body=body,
             draft=False,
@@ -193,10 +227,13 @@ def pr(
 @step_app.command("report")
 def report(
     *,
-    status: Annotated[str, typer.Option("--status", help="The session's verdict status.")] = "",
+    status: Annotated[str, typer.Option("--status", help="The verdict's status.")] = "",
     question: Annotated[str, typer.Option("--question", help="What a blocked session asked.")] = "",
     count: Annotated[
         str, typer.Option("--commits", help="The commit count (blank: none were read).")
+    ] = "",
+    dirty: Annotated[
+        str, typer.Option("--dirty", help="true: a tracked change sits beside the commits.")
     ] = "",
     url: Annotated[str, typer.Option("--pr", help="The PR's url (blank: none opened).")] = "",
     summary: Annotated[str, typer.Option("--summary", help="The PR's summary.")] = "",
@@ -209,6 +246,9 @@ def report(
         delivery, stage, reason = RunOutcome.BLOCKED, Stage.IMPLEMENTING, STOPPED + question
     elif not int(count or "0"):
         delivery, stage, reason = RunOutcome.NO_CHANGES, Stage.IMPLEMENTING, NO_COMMIT
+    elif dirty == "true":
+        # As hub run's gate: the PR holds the commits only (refuse_uncommitted).
+        delivery, stage, reason = RunOutcome.FAILED, Stage.VERIFYING, UNCOMMITTED
     elif url:
         delivery = RunOutcome.DELIVERED
     else:
@@ -224,6 +264,77 @@ def report(
             "summary": summary if delivered else "",
         }
     )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StepTarget:
+    """The repo's facts ``worktree`` read from ``hub.json`` before the session."""
+
+    path: Path
+    workspace: Path
+    branch: str
+    base: str
+    default_branch: str
+    github: str
+    gate: str
+    conventions: EffectiveConventions
+
+
+def _target_value(children: RunChildren, path: Path) -> dict[str, JsonValue]:
+    conventions = children.conventions
+    return {
+        "path": str(path),
+        "branch": children.branch,
+        "base": children.base,
+        "default_branch": children.default_branch,
+        "github": children.github,
+        "gate": children.gate,
+        "conventions": {
+            "branch": conventions.branch,
+            "commit_title": conventions.commit_title,
+            "pr_title": conventions.pr_title,
+            "titles_configured": conventions.titles_configured,
+            "pr_title_explicit": conventions.pr_title_explicit,
+        },
+    }
+
+
+def _target(text: str) -> StepTarget:
+    """``--target`` checked: the keys ``worktree`` prints, its path an existing folder inside the
+    hub's workspace; else exit 2."""
+    root = hub_root_or_exit(os.environ, command=COMMAND)
+    workspace = hub_checkout(
+        root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN)
+    ).parent
+    try:
+        value = json.loads(text)
+        names = value["conventions"]
+        conventions = EffectiveConventions(
+            branch=_string(names, "branch"),
+            commit_title=_string(names, "commit_title"),
+            pr_title=_string(names, "pr_title"),
+            titles_configured=names["titles_configured"] is True,
+            pr_title_explicit=names["pr_title_explicit"] is True,
+        )
+        path = Path(_string(value, "path")).resolve()
+        facts = StepTarget(
+            path=path,
+            workspace=workspace,
+            conventions=conventions,
+            **{key: _string(value, key) for key in TARGET_TEXTS},
+        )
+    except (ValueError, KeyError, TypeError) as error:
+        raise typer.BadParameter(f"not a worktree target: {error}", param_hint="--target") from None
+    if not (path.is_relative_to(workspace.resolve()) and path.is_dir()):
+        raise typer.BadParameter("the path leaves the workspace", param_hint="--target")
+    return facts
+
+
+def _string(value: object, key: str) -> str:
+    found = value[key] if isinstance(value, dict) else None
+    if not isinstance(found, str):
+        raise TypeError(f"{key} is not a string")
+    return found
 
 
 def _children(context: typer.Context, *, issue: str, repo: str) -> RunChildren:
@@ -251,14 +362,14 @@ def _guarded(name: str, children: RunChildren, *, use: str, outcome: str) -> Non
         _fail(name, error.reason)
 
 
-def _commit_summary(children: RunChildren) -> str:
+def _commit_summary(facts: StepTarget) -> str:
     messages = git_output(
-        ship_child(children.worktree),
-        *("log", "--format=%B", f"{children.base}..HEAD"),
+        ship_child(facts.path),
+        *("log", "--format=%B", f"{facts.base}..HEAD"),
         environ=os.environ,
         timeout=step_timeouts().git,
     )
-    return commit_summary(messages, workspace=str(children.workspace))
+    return commit_summary(messages, workspace=str(facts.workspace))
 
 
 def _print(value: dict[str, JsonValue]) -> None:

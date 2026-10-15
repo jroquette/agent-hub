@@ -1,7 +1,8 @@
-# hub run's stages as a workflow (ADR 0032): the worktree, the implementing session in it, the
-# commits, the repo's gate, the PR, then the delivery (ADR 0030). A failed node fails the run and
-# skips the report (no outcome: the delivery is failed); no_changes and blocked end it done.
-# No node writes the tracker: the parent does, from run.end's outcome.
+# hub run's stages as a workflow (ADR 0032): the worktree, one implementing session in it, its
+# verdict read as hub run reads it, the commits, the repo's gate, the PR, then the delivery
+# (ADR 0030). No node retries, as hub run never does. A failed node fails the run and skips the
+# report (no outcome: the delivery is failed); no_changes and blocked end it done. No node writes
+# the tracker: hub workflow run does, from run.end's outcome.
 version: 1
 name: issue-to-pr
 description: One tracker issue to a PR, as hub run takes it.
@@ -21,8 +22,9 @@ outcome_field: delivery
 nodes:
   - id: worktree
     type: shell
-    description: Make (or keep) the issue's worktree from a fresh fetch.
+    description: Make (or keep) the issue's worktree from a fresh fetch; print the repo's target.
     command: [hub, step, worktree, --issue, $INPUTS.issue, --repo, $INPUTS.repo]
+    retry: {max_attempts: 0}
     timeout: 2h
     output_format:
       type: object
@@ -40,46 +42,80 @@ nodes:
             gate_step: {type: string}
             commit_shape: {type: string}
           required: [guard, gate_step, commit_shape]
-      required: [path, branch, base, hub, hub_name, check, prompt]
+        target:
+          type: object
+          properties:
+            path: {type: string}
+            branch: {type: string}
+            base: {type: string}
+            default_branch: {type: string}
+            github: {type: string}
+            gate: {type: string}
+            conventions:
+              type: object
+              properties:
+                branch: {type: string}
+                commit_title: {type: string}
+                pr_title: {type: string}
+                titles_configured: {type: boolean}
+                pr_title_explicit: {type: boolean}
+              required: [branch, commit_title, pr_title, titles_configured, pr_title_explicit]
+          required: [path, branch, base, default_branch, github, gate, conventions]
+      required: [path, branch, base, hub, hub_name, check, prompt, target]
 
   - id: implement
-    type: loop
-    description: The implementing session, in the worktree, until its verdict says done.
+    type: agent
+    description: The implementing session, one claude -p in the worktree, as hub run runs it.
     depends_on: [worktree]
     prompt_file: implement.md
     cwd: $worktree.output.path
-    max_iterations: 3
-    until_field: done
+    retry: {max_attempts: 0}
+
+  - id: verdict
+    type: shell
+    description: The session's reply read as hub run reads it - done, or blocked with a question.
+    depends_on: [implement]
+    command: [hub, step, verdict, --, $implement.output]
+    retry: {max_attempts: 0}
     output_format:
       type: object
       properties:
-        done: {type: boolean}
         status: {type: string, enum: [done, blocked]}
         summary: {type: string}
-        tests: {type: string}
-      required: [done]
+        question: {type: string}
+      required: [status, summary, question]
 
   - id: commits
     type: shell
-    description: The commits on the branch; with any, no tracked change beside them.
-    depends_on: [implement]
-    when: "$implement.output.status != 'blocked'"
-    command: [hub, step, commits, --issue, $INPUTS.issue, --repo, $INPUTS.repo]
+    description: The commits on the branch, and whether a tracked change sits beside them.
+    depends_on: [verdict]
+    when: "$verdict.output.status != 'blocked'"
+    command: [hub, step, commits, --target, $worktree.output.target]
+    retry: {max_attempts: 0}
     output_format:
       type: object
       properties:
         count: {type: integer, minimum: 0}
         subjects: {type: array, items: {type: string}}
         summary: {type: string}
-      required: [count, subjects, summary]
+        dirty: {type: boolean}
+      required: [count, subjects, summary, dirty]
 
   - id: verify
     type: shell
-    description: The repo's gate (its check) on the commits, without the GitHub tokens.
+    description: >-
+      The repo's gate (its check) on the commits, without the GitHub tokens; its stdout then its
+      stderr go to stderr, so a failure's detail reads as hub run's.
     depends_on: [commits]
-    when: "$commits.output.count > 0"
+    when: "$commits.output.count > 0 && $commits.output.dirty == false"
     cwd: $worktree.output.path
-    command: [bash, -c, 'eval "$1"', bash, $worktree.output.check]
+    command:
+      - bash
+      - -c
+      - 'e=$(mktemp) || exit 1; eval "$1" 1>&2 2>"$e"; c=$?; cat "$e" >&2; rm -f "$e"; exit $c'
+      - bash
+      - $worktree.output.check
+    retry: {max_attempts: 0}
     timeout: 30m
 
   - id: pr
@@ -92,10 +128,11 @@ nodes:
       - pr
       - --issue
       - $INPUTS.issue
-      - --repo
-      - $INPUTS.repo
+      - --target
+      - $worktree.output.target
       - --summary
-      - $implement.output.summary
+      - $verdict.output.summary
+    retry: {max_attempts: 0}
     timeout: 30m
     output_format:
       type: object
@@ -109,22 +146,25 @@ nodes:
   - id: report
     type: shell
     description: The run's delivery, from what the steps printed (no tracker write).
-    depends_on: [implement, commits, verify, pr]
+    depends_on: [implement, verdict, commits, verify, pr]
     trigger_rule: none_failed_min_one_success
     command:
       - hub
       - step
       - report
       - --status
-      - $implement.output.status
+      - $verdict.output.status
       - --question
-      - $implement.output.summary
+      - $verdict.output.question
       - --commits
       - $commits.output.count
+      - --dirty
+      - $commits.output.dirty
       - --pr
       - $pr.output.url
       - --summary
       - $pr.output.summary
+    retry: {max_attempts: 0}
     output_format:
       type: object
       properties:
