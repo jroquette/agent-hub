@@ -32,20 +32,21 @@ describe("Sidebar", () => {
       "Brain",
       "Skills",
       "Features",
+      "Workflows",
       "Health",
       "Settings",
     ]);
-    for (const group of ["Overview", "Observe", "Understand", "Hub"]) {
+    for (const group of ["Overview", "Observe", "Understand", "Improve", "Hub"]) {
       expect(within(nav).getByText(group)).toBeInTheDocument();
     }
   });
 
-  it("has no P3 tag and hides Metrics, Bench, Tracker queue and Workflows", () => {
+  it("has no P3 tag and hides Metrics, Bench and Tracker queue", () => {
     const { container } = renderSidebar();
 
     expect(container.querySelector(".ah-phase")).toBeNull();
     expect(screen.getByRole("link", { name: "Learnings" })).toHaveTextContent(/^Learnings$/);
-    for (const hidden of ["Metrics", "Bench", "Tracker queue", "Workflows", "Improve"]) {
+    for (const hidden of ["Metrics", "Bench", "Tracker queue"]) {
       expect(screen.queryByText(hidden)).not.toBeInTheDocument();
     }
   });

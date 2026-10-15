@@ -8,7 +8,9 @@ the other repos attached, that repo's gates allowed. Its argv is
 with the node's tier from ``hub.json`` → ``models.tiers`` and its ``limits`` as ``--max-turns`` and
 ``--max-budget-usd``; ``--resume`` continues a session. Its output is the result's text, or, with
 an ``output_format``, the result's last JSON line (the engine checks it). A ``prompt_file`` is
-read from the pack's ``prompts/`` and rendered against the attempt's references.
+read from the pack's ``prompts/`` and rendered against the attempt's references through the call's
+scope, so a node from an include or a loop group reads its own workflow's inputs and nodes.
+``stop_children`` kills the groups of the children running now (an interrupted concurrent layer).
 
 A ``shell`` node runs its rendered argv, never through a shell; a ``script`` node runs
 ``sh <file>`` or ``uv run <file>`` from the pack's ``scripts/``, its ``args`` after the file. The
@@ -44,6 +46,7 @@ import json
 import os
 import re
 import signal
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -70,6 +73,7 @@ from agent_hub.core.runner.session_prompt import (
     implementing_argv,
 )
 from agent_hub.core.runner.verdict import SessionReply, last_json_line, parse_session_output
+from agent_hub.core.workflows.engine import MAX_PARALLEL
 from agent_hub.core.workflows.failures import NodeFailedError, kind_for_exit
 from agent_hub.core.workflows.nodes import (
     AgentNode,
@@ -80,7 +84,6 @@ from agent_hub.core.workflows.nodes import (
     duration_seconds,
 )
 from agent_hub.core.workflows.ports import NodeCall, NodeReply
-from agent_hub.core.workflows.substitution import render
 from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, resolve_pack_file
 
 MAX_OUTPUT_BYTES: Final = 512 * 1024
@@ -117,6 +120,23 @@ class WorkflowExecutors:
     hub_steps: Callable[[Sequence[str], bytes], str] | None = None
     in_session: bool = True
     session: RunOptions | None = None
+    # The process groups of the children running now: ``stop_children`` kills them.
+    running: set[int] = field(default_factory=set)
+    # Set by ``stop_children``: no child starts after it, and one starting as it lands is killed.
+    stop: threading.Event = field(default_factory=threading.Event)
+
+    @property
+    def max_parallel(self) -> int:
+        """How many attempts may run at once: one while hub steps run in this process (they
+        capture its global streams), else the engine's bound."""
+        return 1 if self.hub_steps is not None else MAX_PARALLEL
+
+    def stop_children(self) -> None:
+        """Kill every running child's group (a run interrupted while nodes run concurrently)."""
+        self.stop.set()
+        for group in list(self.running):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(group, signal.SIGKILL)
 
     def run(self, call: NodeCall) -> NodeReply:
         node = call.node
@@ -209,7 +229,8 @@ class WorkflowExecutors:
         except (OSError, UnicodeDecodeError) as error:
             detail = f"cannot read prompts/{node.prompt_file}: {type(error).__name__}"
             raise NodeFailedError("config", detail) from None
-        return render(template, call.context)
+        # A node from an include or a loop group reads its file in its own workflow's scope.
+        return call.scope.render(template, call.context)
 
     def _command(self, call: NodeCall) -> tuple[list[str], dict[str, str]]:
         node = call.node
@@ -254,6 +275,17 @@ class WorkflowExecutors:
         stdin: bytes | None = None,
     ) -> ChildResult:
         groups: list[int] = []
+
+        def started(group: int) -> None:
+            groups.append(group)
+            self.running.add(group)
+            if self.stop.is_set():
+                # The stop came between the check below and this start.
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(group, signal.SIGKILL)
+
+        if self.stop.is_set():
+            raise NodeFailedError("cancelled", "the run was interrupted")
         try:
             return self.child(
                 argv,
@@ -263,7 +295,7 @@ class WorkflowExecutors:
                 own_session=self.in_session,
                 output_limit=output_limit,
                 # A child in the caller's group leads no group of its own to kill.
-                on_start=groups.append if self.in_session else None,
+                on_start=started if self.in_session else None,
                 **({} if stdin is None else {"stdin": stdin}),
             )
         except ChildTimedOutError as error:
@@ -276,6 +308,7 @@ class WorkflowExecutors:
             raise NodeFailedError("config", f"cannot start {argv[0]}: {error}") from None
         finally:
             for group in groups:
+                self.running.discard(group)
                 # The leader has ended; what it left running ends with it.
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     os.killpg(group, signal.SIGKILL)

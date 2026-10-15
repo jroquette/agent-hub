@@ -119,7 +119,7 @@ def test_names_every_problem_when_the_error_is_printed() -> None:
     assert str(error) == "nodes[0].id: bad; $: x"
 
 
-@pytest.mark.parametrize("node", [{"id": "a"}, {"id": "a", "type": "wait"}])
+@pytest.mark.parametrize("node", [{"id": "a"}, {"id": "a", "type": "bash"}])
 def test_points_at_the_type_key_when_node_type_is_missing_or_unknown(
     node: dict[str, object],
 ) -> None:
