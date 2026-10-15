@@ -36,7 +36,7 @@ Sessions                    [Grid | Table]  [Views ▾] [Columns] [24 h|7 d|30 d
   Ended or failed (`ended`, `outcome=error` in red text; driven `ended`, `failed`). Troubled sessions
   (`needs_you > 0`) keep their section and get the red edge (`data-trouble`). Each section is its own
   `GET /sessions?status=` query (50 per page, "Load more" by cursor) and its header count is that query's
-  `total_estimate`. A header button with `aria-expanded` collapses it; the collapsed set persists in
+  `total_estimate` plus the section's driven sessions without an observed twin. A header button with `aria-expanded` collapses it; the collapsed set persists in
   `ah.sessions.collapsed`. Empty sections are hidden; when all are empty, one empty state shows.
 - **Grid view.** Each session is a `SessionTile` (waiting reason, last action, problems, stats, sparkline while not
   ended; fields from `GET /sessions`). `within=repo|run|workflow` sub-groups the tiles inside each section.

@@ -17,12 +17,12 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 └ /approvals/:approvalId            Approval detail (side panel over the inbox)      P2 · P4 actions
 
 /live                               redirect (replace) to /sessions?view=grid        ADR 0033
-    ?group=repo|run|workflow → within=; group=flat and unknown params dropped; project kept
+    ?group=repo|run|workflow → within=; group=flat and unknown params dropped; scope (project) kept
 
 /sessions                           Sessions (grid or table, status sections)        P2 · P3 compare
     ?view=grid|table&within=repo|run|workflow
-    &project=&repo=&agent=&status=&outcome=&workflow=&from=&to=&cost_min=&cost_max=
-    &file=&tool=&guard_denial=1&has_decisions=1&sort=-started_at   (saved views are filter sets, not a param)
+    &scope=&period=&repo=&agent=&status=&outcome=&workflow=&cost_min=&cost_max=
+    &file=&tool=&guard_denial=1&sort=-started_at   (saved views are filter sets, not a param)
 ├ /sessions/:id                     Session detail (default tab = timeline)          P2
 │   ?tab=timeline&event=:eventId&types=tool.call,decision&q=&errors=1&follow=1&axis=time|turn&lane=:subSessionId
 │   ?tab=files&path=:repoRelativePath&repo=:repo                                       P2

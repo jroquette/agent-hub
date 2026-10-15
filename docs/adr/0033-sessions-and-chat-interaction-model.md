@@ -19,7 +19,6 @@ observed sessions, with the sessions `hub web` drives in a separate list above i
 Nothing on a tile or a row says it opens. The New session dialog shows seven fields. The chat (ADR 0031) has no
 scroll management: it opens at the top, never follows the stream, and its composer and Stop button fall below the
 fold; code has no copy, the draft is lost on reload, and a tool call waiting for permission reads "Running".
-(Evidence: the AGH-234 research and its audit, frictions F1 to F17.)
 
 How should one screen show both kinds of session, ordered by what needs the owner, and how should the chat behave,
 without new transport, a new store or a new runtime dependency?
@@ -33,7 +32,8 @@ List:
 3. Keep two screens and only cross-link them.
 
 Grouping:
-1. **Sections, one query per status** with the existing `status` filter; counts from each query's `total_estimate`.
+1. **Sections, one query per status** with the existing `status` filter; counts from each query's `total_estimate`
+   plus the driven sessions without an observed twin in that section.
 2. Group rows inside one table sorted by status; counts from a new endpoint.
 
 Chat placement:
@@ -52,7 +52,8 @@ Markdown:
 Chosen: list option 1, grouping option 1, chat option 1, markdown option 1.
 
 - **Sessions is the only sessions screen.** `/live` redirects (replace) to `/sessions?view=grid`, mapping
-  `group=repo|run|workflow` to `within=` and dropping `group=flat` and unknown parameters (`project` is kept). The
+  `group=repo|run|workflow` to `within=` and dropping `group=flat` and unknown parameters (the project parameter
+  `scope` is kept). The
   sidebar's live badge moves to Sessions; `g l` stays as an alias to the grid. `apps/web/src/screens/live-sessions`
   is deleted once its pieces move to `screens/sessions-list`.
 - **Views:** `view=grid|table` in the URL, remembered in `ah.sessions.view`; the URL wins, the default is the grid.
@@ -60,13 +61,15 @@ Chosen: list option 1, grouping option 1, chat option 1, markdown option 1.
 - **Status sections, needs-me first:** Waiting → Live → Idle → Ended or failed. Observed `waiting|live|idle|ended`
   map one to one (failed = `ended` with `outcome=error`, marked red); agent `waiting_permission|running|idle|
   ended|failed` map to the same four. A troubled session keeps its section and gets the red edge. Each section is
-  its own paginated query, so counts come from the API and sorting, pagination and filters keep their meaning per
+  its own paginated query, so counts come from the API (plus that section's driven
+  sessions without an observed twin) and sorting, pagination and filters keep their meaning per
   section. The period filter applies to the Ended section only. Sections refetch on the existing live-tile stream
   (debounced), never moving a reader's scroll position.
-- **API, additive only:** `Session` gains the tile fields that `LiveTile` already computes (`waiting_reason`,
-  `last_action`, `last_tool`, `needs_you_problem`, `failing_notice`, `sparkline_60s` while running), derived in core
+- **API, additive only:** `Session` gains the tile fields that `LiveTile` carries (`waiting_reason`,
+  `last_action`, `last_tool`, `needs_you_problem`, `failing_notice`, and `sparkline_60s` while not ended), derived in core
   read models from the same code; `AgentSession` gains `observed_session_id` (null when no twin), so the list shows a
-  driven session once. No new payload key, no migration, no new route.
+  driven session once. The event payload allow-list (ADR 0019) does not change and events still go through
+  `IngestEvents`; no migration, no new route.
 - **Open is explicit:** every tile and row has a visible primary button (Open, Open chat, Answer) and a real link;
   `j`/`k` and `Enter`/`o` work across sections. The Cloud guidance becomes a collapsed "Cloud sessions" details below
   the sections.
