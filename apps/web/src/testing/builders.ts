@@ -54,6 +54,10 @@ export type CatalogItem = Schemas["CatalogItem"];
 export type SkillCatalog = Schemas["SkillCatalog"];
 export type SkillDetail = Schemas["SkillDetail"];
 export type BundledFileText = Schemas["BundledFileText"];
+export type WorkflowSummary = Schemas["WorkflowSummary"];
+export type WorkflowCatalogView = Schemas["WorkflowCatalogView"];
+export type WorkflowDetail = Schemas["WorkflowDetail"];
+export type WorkflowProblem = Schemas["WorkflowProblemView"];
 
 /** The synthetic clock every builder uses. */
 export const T0 = "2026-10-11T14:00:00.000Z";
@@ -1429,6 +1433,80 @@ export function aBundledFileText(overrides: Partial<BundledFileText> = {}): Bund
     role: "references",
     size: 64,
     text: "# Checklist\n\n- The spec is approved.\n- `make check` passes.\n",
+    ...overrides,
+  };
+}
+
+/** `feature-flow`, a hub workflow of project `agent-hub`: 4 nodes in 3 layers. */
+export function aWorkflowSummary(overrides: Partial<WorkflowSummary> = {}): WorkflowSummary {
+  return {
+    description: "Plans, builds and documents a feature, then asks for a review.",
+    layer_count: 3,
+    name: "feature-flow",
+    node_count: 4,
+    project: "agent-hub",
+    revision: 3,
+    source: "hub",
+    ...overrides,
+  };
+}
+
+/** A file of the hub that does not load. */
+export function aWorkflowProblem(overrides: Partial<WorkflowProblem> = {}): WorkflowProblem {
+  return {
+    file: "workflows/team/broken.yaml",
+    key: "nodes[1].depends_on",
+    line: 12,
+    message: "depends on unknown node 'plan'",
+    project: "agent-hub",
+    ...overrides,
+  };
+}
+
+/** The hub's `feature-flow`, the built-in `issue-to-pr` and one file that does not load. */
+export function aWorkflowCatalog(
+  overrides: Partial<WorkflowCatalogView> = {},
+): WorkflowCatalogView {
+  return {
+    items: [
+      aWorkflowSummary(),
+      aWorkflowSummary({
+        description: "Takes a tracker issue to a pull request.",
+        layer_count: 6,
+        name: "issue-to-pr",
+        node_count: 6,
+        revision: 1,
+        source: "builtin",
+      }),
+    ],
+    problems: [aWorkflowProblem()],
+    ...overrides,
+  };
+}
+
+/** `feature-flow`: `plan` (agent), then `build` (shell) and `docs` (script), then `review`
+ * (approval) after both. */
+export function aWorkflowDetail(overrides: Partial<WorkflowDetail> = {}): WorkflowDetail {
+  return {
+    ...aWorkflowSummary(),
+    layers: [
+      [{ id: "plan", type: "agent", depends_on: [], description: "Writes the plan." }],
+      [
+        { id: "build", type: "shell", depends_on: ["plan"], description: null },
+        { id: "docs", type: "script", depends_on: ["plan"], description: null },
+      ],
+      [{ id: "review", type: "approval", depends_on: ["build", "docs"], description: null }],
+    ],
+    document: {
+      name: "feature-flow",
+      description: "Plans, builds and documents a feature, then asks for a review.",
+      nodes: [
+        { id: "plan", type: "agent", description: "Writes the plan.", prompt: "Plan $issue." },
+        { id: "build", type: "shell", depends_on: ["plan"], command: ["make", "check"] },
+        { id: "docs", type: "script", depends_on: ["plan"], runtime: "sh", script: "docs.sh" },
+        { id: "review", type: "approval", depends_on: ["build", "docs"], message: "Ship it?" },
+      ],
+    },
     ...overrides,
   };
 }
