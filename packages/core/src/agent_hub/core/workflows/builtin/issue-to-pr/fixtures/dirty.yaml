@@ -1,0 +1,32 @@
+# A tracked change beside the commits: no gate, no PR; the delivery is failed at VERIFYING.
+workflow: issue-to-pr
+inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target:
+        path: /ws/demo-api/.claude/worktrees/dem-1
+        branch: jdoe/dem-1
+        base: origin/trunk
+        default_branch: trunk
+        github: acme/demo-api
+        gate: make check
+        conventions:
+          branch: "{prefix}{issue_lower}"
+          commit_title: "{type}({scope}): {summary} ({ISSUE})"
+          pr_title: "{type}({scope}): {summary} ({ISSUE})"
+          titles_configured: false
+          pr_title_explicit: false
+  implement: {text: "Done.\n{\"status\": \"done\", \"summary\": \"Adds the change.\"}"}
+  verdict: {output: {status: done, summary: Adds the change., question: ""}}
+  commits: {output: {count: 1, subjects: ["feat(api): change (DEM-1)"], summary: Adds the change., dirty: true}}
+  report: {output: {delivery: failed, stage: VERIFYING, reason: uncommitted changes in the worktree, question: "", pr: "", summary: ""}}
+expect: {status: done, outcome: failed}
+reached: [worktree, implement, verdict, commits, report]
