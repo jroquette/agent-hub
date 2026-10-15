@@ -1,13 +1,17 @@
 """Workflow node children are killed as a group (AGH-221 AC: shell and script nodes run as
 children; a timeout leaves nothing behind before a retry starts another copy)."""
 
+import dataclasses
 import os
 import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
@@ -96,3 +100,31 @@ def test_kills_running_children_when_the_run_is_interrupted(tmp_path: Path) -> N
     assert not worker.is_alive()
     assert failure
     assert gone(pidfile)
+
+
+def test_spawns_nothing_when_the_children_were_stopped(tmp_path: Path) -> None:
+    call, pidfile = shell_call(tmp_path, "echo $$ > PIDFILE")
+    runner = runner_in(tmp_path)
+    runner.stop_children()
+
+    with pytest.raises(NodeFailedError) as raised:
+        runner.run(call)
+
+    assert raised.value.kind == "cancelled"
+    assert not pidfile.exists()
+
+
+def test_kills_a_child_when_it_starts_after_the_stop(tmp_path: Path) -> None:
+    call, pidfile = shell_call(tmp_path, "sleep 30 & echo $! > PIDFILE; wait")
+    runner = runner_in(tmp_path)
+
+    def late(argv: Sequence[str], **options: Any) -> ChildResult:
+        # The stop lands between the check before the spawn and the child's start.
+        runner.stop_children()
+        return run_child(argv, **options)
+
+    started = time.monotonic()
+    with pytest.raises(NodeFailedError):
+        dataclasses.replace(runner, child=late, stop=runner.stop).run(call)
+
+    assert time.monotonic() - started < 10

@@ -55,7 +55,8 @@ from agent_hub.core.workflows.substitution import (
 type IncludeResolver = Callable[[str], WorkflowDocument | None]
 
 MAX_INCLUDE_DEPTH: Final = 3
-# The most nodes an expanded document may hold: a few small includes cannot grow past it.
+# The most nodes an expanded document may hold, group bodies included: a few small includes
+# cannot grow past it.
 MAX_EXPANDED_NODES: Final = 512
 
 
@@ -116,10 +117,13 @@ def _expand(document: WorkflowDocument, resolver: _Resolver, stack: tuple[str, .
     parent = _Parent(_blocks(nodes, resolver, stack))
     expanded: list[Node] = []
     origins: list[tuple[int, bool]] = []
+    # Every node the expanded document holds, a loop group's body included.
+    count = 0
     for index, node in enumerate(nodes):
         try:
             copies = parent.place(node)
-            if len(expanded) + len(copies) > MAX_EXPANDED_NODES:
+            count += sum(_size(copy) for copy in copies)
+            if count > MAX_EXPANDED_NODES:
                 message = f"the expanded workflow passes {MAX_EXPANDED_NODES} nodes"
                 raise RewriteError(("include",) if isinstance(node, IncludeNode) else (), message)
         except RewriteError as error:
@@ -152,6 +156,11 @@ def scope_keys(node: Node) -> Iterator[tuple[str, frozenset[str]]]:
         body = frozenset(child.id for child in node.nodes)
         for child in node.nodes:
             yield f"{node.id}{SEPARATOR}{child.id}", body
+
+
+def _size(node: Node) -> int:
+    """The nodes ``node`` stands for: itself, and a loop group's body."""
+    return 1 + len(node.nodes) if isinstance(node, LoopGroupNode) else 1
 
 
 def _repeated_ids(nodes: Sequence[Node]) -> Iterator[WorkflowProblem]:

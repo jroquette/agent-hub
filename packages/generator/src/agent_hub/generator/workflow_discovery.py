@@ -13,7 +13,8 @@ Each file is read through ``workflow_yaml`` into a raw mapping and its key lines
 core's document model. A problem belongs to one file (or one folder) and never stops the scan: a
 hub ``workflows/`` that is a link (not scanned), a linked pack folder, a workflow file directly
 under a root, a file whose real path leaves its pack, one that is not a regular file, one that
-does not load, a ``name`` that is not the stem, a name already taken.
+does not load, a ``name`` that is not the stem, a name already taken (naming the claiming file
+relative to its root, so no absolute path reaches a message).
 
 ``pack_resolver`` resolves the workflows a workflow includes, by name, among those of its own pack
 (the hub's choice, or a pack-mate the hub overrides): a node's ``prompt_file`` and ``script`` are
@@ -213,7 +214,8 @@ class _Root:
     def _take(self, pack_root: Path, path: Path) -> None:
         name = path.stem
         if name in self.claimed:
-            reason = f"the workflow name {name!r} is already taken by {self.claimed[name]}"
+            claimer = self.claimed[name].relative_to(pack_root.parent).as_posix()
+            reason = f"the workflow name {name!r} is already taken by {claimer}"
             self._problem(path, reason)
             return
         self.claimed[name] = path
