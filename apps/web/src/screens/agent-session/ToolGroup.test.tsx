@@ -118,4 +118,44 @@ describe("ToolGroup (tool-cards)", () => {
 
     expect(head).toHaveAttribute("aria-expanded", "true");
   });
+
+  it("stays open with the outcome and the focus after you answer a call inside it", async () => {
+    const onAnswerPermission = vi.fn(() => Promise.resolve());
+    const first = { tool: aTool("r1", "Read") };
+    const waiting = { tool: aTool("b1", "Bash", null), request: aRequest("b1") };
+    const { rerender } = show([first, waiting], onAnswerPermission);
+    const head = screen.getByRole("button", { name: /^Explored/ });
+    const group = head.parentElement;
+    if (!group) throw new Error("no group");
+    const allow = screen.getByRole("button", { name: "Allow once" });
+    allow.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onAnswerPermission).toHaveBeenCalledWith("b1", { decision: "allow" });
+
+    rerender(
+      <ToolGroup
+        items={[
+          first,
+          {
+            tool: waiting.tool,
+            request: {
+              ...waiting.request,
+              decision: { decision: "allow", by: null, message: null, at: "2026-01-01T00:00:01Z" },
+            },
+          },
+        ]}
+        tools={{}}
+        calls={{}}
+        onAnswerPermission={onAnswerPermission}
+      />,
+    );
+
+    expect(head).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Allowed once");
+    expect(group.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toHaveAttribute("data-request-id", "b1");
+
+    await userEvent.click(head);
+    expect(head).toHaveAttribute("aria-expanded", "false");
+  });
 });

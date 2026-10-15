@@ -51,6 +51,7 @@ describe("PermissionCard (permission)", () => {
     expect(onAnswer).toHaveBeenCalledWith({ decision: "allow" });
     expect(allow).toBeDisabled();
     expect(within(card).getByRole("button", { name: "Deny" })).toBeDisabled();
+    expect(card).toHaveFocus();
     expect(within(card).getByRole("status")).toHaveTextContent("Sending your answer…");
   });
 
