@@ -6,11 +6,12 @@ written under the run's lock), which also keeps the answer's text for the engine
 gate cannot take, records the decision, then sends a ``control_plane`` ``gate.result`` in the
 run's session (``run:<id>``) through ``IngestEvents``: ``fold_approvals`` pairs it with the
 request by ``gate_id``. The event carries the result, the approver and where it was decided,
-never the text (ADR 0019). A store that fails after the decision is recorded leaves the
-decision standing; the error is returned for the caller to report.
+never the text (ADR 0019), which is at most ``MAX_TEXT_BYTES`` in UTF-8. The event store is opened
+only once the decision is recorded; a store that fails then leaves the decision standing, and
+the error is returned for the caller to report.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final, Protocol
@@ -25,6 +26,7 @@ from agent_hub.core.workflows.gates import GateAnswer, GateForm, answer_problem
 
 # An approval's decision as the Approvals read model shows it; any other answer is "approved".
 _RESULTS: Final[Mapping[str, ApprovalStatus]] = {"approve": "approved", "reject": "rejected"}
+MAX_TEXT_BYTES: Final = 65536
 
 
 class GateDecisionError(AgentHubError):
@@ -83,8 +85,10 @@ class GateBook(Protocol):
 class DecideGate:
     """Record one decision for an open gate and send its ``gate.result``."""
 
-    def __init__(self, book: GateBook, ingest: IngestEvents | None, *, project: str) -> None:
-        self._book, self._ingest, self._project = book, ingest, project
+    def __init__(
+        self, book: GateBook, events: Callable[[], IngestEvents] | None, *, project: str
+    ) -> None:
+        self._book, self._events, self._project = book, events, project
 
     def execute(self, decision: GateDecision) -> GateDecided:
         gate = self._book.open_gate(decision.gate_id)
@@ -94,12 +98,14 @@ class DecideGate:
             raise GateDecisionError(f"the gate {gate.gate_id} is already decided")
         if (problem := answer_problem(gate.form, gate.choices, decision.answer)) is not None:
             raise GateDecisionError(problem)
+        if len((decision.answer.text or "").encode(errors="surrogatepass")) > MAX_TEXT_BYTES:
+            raise GateDecisionError(f"the text is longer than {MAX_TEXT_BYTES} bytes")
         self._book.record(gate, decision)
         event = self._event(gate, decision)
-        if self._ingest is None:
+        if self._events is None:
             return GateDecided(event)
         try:
-            self._ingest.execute([event])
+            self._events().execute([event])
         except (AgentHubError, OSError) as error:
             return GateDecided(event, " ".join(str(error).split()) or type(error).__name__)
         return GateDecided(event)

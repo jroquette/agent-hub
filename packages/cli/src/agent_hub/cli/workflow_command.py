@@ -55,7 +55,6 @@ from agent_hub.cli.workflow_runs import (
     DOCUMENT,
     RUN_ID_PATTERN,
     SNAPSHOT,
-    UNAVAILABLE,
     EventSink,
     RecordedAnswers,
     RecordedGates,
@@ -79,7 +78,6 @@ from agent_hub.core.approvals.decide_gate import (
     GateDecisionError,
     RequestedGate,
 )
-from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_config.problems import ROOT_PATH
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
@@ -255,9 +253,10 @@ def _decide(
                 gate.gate_id, GateAnswer(choice, text), _approver(), "cli", now()
             )
             project = hub_project_name(hub) or hub.name
-            decided = DecideGate(book, _ingest(), project=project).execute(decision)
+            decided = DecideGate(book, _ingest, project=project).execute(decision)
             if decided.event_error is not None:
-                typer.echo(f"{UNAVAILABLE}: {decided.event_error}", err=True)
+                unavailable = f"hub workflow {command}: event store unavailable"
+                typer.echo(f"{unavailable}: {decided.event_error}", err=True)
             typer.echo(f"run {run_id}: {gate.node} {choice or 'answered'}")
             return _continue(hub, folder)
     except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
@@ -288,14 +287,8 @@ def _approver() -> str:
         return "unknown"
 
 
-def _ingest() -> IngestEvents | None:
-    try:
-        return IngestEvents(open_default_event_store())
-    except (AgentHubError, OSError) as error:
-        typer.echo(
-            f"{UNAVAILABLE}: {' '.join(str(error).split()) or type(error).__name__}", err=True
-        )
-        return None
+def _ingest() -> IngestEvents:
+    return IngestEvents(open_default_event_store())
 
 
 def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | None) -> int:

@@ -37,7 +37,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - `hub workflow approve|reject|respond RUN [NODE] [TEXT]` decide a paused run's open gate (`respond` takes
   `--choice` for a declared decision or option) and resume the run. One decision per gate: a second, a gate that is
   not open or an answer the gate does not take is refused. The text stays in the run's record; the event database
-  gets a `control_plane` `gate.result`, so Approvals shows the gate decided (AGH-230).
+  gets a `control_plane` `gate.result`, so Approvals shows the gate decided. A workflow gate closed without a decision
+  (run abandoned, gate skipped or failed on resume) shows declined, and its "How to decide" names these commands
+  (AGH-230).
 
 ### Fixed
 

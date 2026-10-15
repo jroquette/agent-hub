@@ -54,7 +54,7 @@ def test_records_the_decision_and_sends_a_paired_gate_result_when_a_gate_is_open
     request.gate_requested(GateRequest("ship", 2, "approval", "decision", START, ("approve",)))
     IngestEvents(store).execute(request.events)
 
-    decided = DecideGate(book, IngestEvents(store), project="demo").execute(
+    decided = DecideGate(book, lambda: IngestEvents(store), project="demo").execute(
         decision(text="ship it")
     )
 
@@ -150,7 +150,39 @@ def test_keeps_the_decision_and_names_the_error_when_the_event_store_fails() -> 
 
     book = Book()
 
-    decided = DecideGate(book, IngestEvents(Failing()), project="demo").execute(decision())
+    decided = DecideGate(book, lambda: IngestEvents(Failing()), project="demo").execute(decision())
 
     assert book.recorded == [decision()]
     assert decided.event_error == "database is locked"
+
+
+def test_opens_the_event_store_only_after_recording_when_a_decision_is_taken() -> None:
+    book, opened = Book(), []
+
+    def events() -> IngestEvents:
+        opened.append(len(book.recorded))
+        raise OSError("no database")
+
+    use_case = DecideGate(book, events, project="demo")
+    with pytest.raises(GateDecisionError):
+        use_case.execute(decision("maybe"))
+    decided = use_case.execute(decision())
+
+    assert opened == [1]
+    assert decided.event_error == "no database"
+
+
+def test_takes_the_text_when_it_is_exactly_64_kib() -> None:
+    book = Book()
+
+    DecideGate(book, None, project="demo").execute(decision(text="x" * 65536))
+
+    assert len(book.recorded) == 1
+
+
+def test_refuses_the_text_without_recording_when_it_is_one_byte_over_64_kib() -> None:
+    book = Book()
+
+    with pytest.raises(GateDecisionError, match="65536 bytes"):
+        DecideGate(book, None, project="demo").execute(decision(text="é" * 32768 + "x"))
+    assert book.recorded == []
