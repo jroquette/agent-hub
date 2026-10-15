@@ -95,6 +95,20 @@ comment carrying the session's question, and exits 3; only `failed` gets the fai
 1. Every outcome but `failed` removes the failed and blocked labels the issue carries. Approvals anywhere in a run are a `gate.request` (waiting) and a `gate.result`
 (approver, decision), paired by `payload.gate_id`, never by adjacency.
 
+**Workflow engine runs (ADR 0032, AGH-225).** A run is the engine's when one of its events carries what only the engine
+writes: `content_hash`, or a step's `failure_kind` or `skip_cause` ([workflow schema](workflow-schema.md)). Its steps
+keep every node id as recorded (`a__b` inside an include), with `status` `ok`, `failed` or `skipped`, `failure_kind`
+and `skip_cause`; a run with neither keeps `hub run`'s five steps and drops any other. Each engine `run.end`
+(`<run>:run:<n>:end`) is its own fact, and the one with the highest `n` decides the end, so a resumed run ends
+on its latest end; a `hub run` run keeps the first. The run has `status` (`running`, then the `run.end`'s `done`,
+`failed` or `cancelled`), `outcome` (the `run.end`'s JSON boolean or string), and the pinned `revision` and
+`content_hash`. Its `delivery` is the outcome when it names one, `failed` for a failed run with none, and none
+otherwise. `stage` stays issue-to-pr's machine: an issue-to-pr engine run takes the stage of its latest node that has
+one (`report` keeps the PR's), any other workflow's live run is `PICKED`, and an ended run is `REPORTED` or `FAILED`.
+Events do not carry a node's type, so a step's `kind` is set only for issue-to-pr (`worktree`, `verify`, `pr` and
+`report` are `shell`, `implement` is `loop`, `pick` none); the workflow's document gives the others. The runs list
+filters by `workflow` and by the failing step's `failure_kind`; `runs_in_flight_by_stage` counts `running` runs.
+
 ### Learning
 
 | Step | Events | Fields used |
