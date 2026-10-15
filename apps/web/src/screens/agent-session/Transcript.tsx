@@ -213,6 +213,8 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
   if (atBottom && seen !== count) setSeen(count);
   const unseen = atBottom ? 0 : Math.max(0, count - seen);
 
+  const working = state.status === "running" && !state.streaming;
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "End" || !follow || isEditable(event.target)) return;
     event.preventDefault();
@@ -249,9 +251,13 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
             />
           ))}
         </div>
-        {state.status === "running" && !state.streaming && (
-          <p className="as-working as-column ah-small ah-muted" role="status">
-            {["Claude is working", activeTool(state)].filter(Boolean).join(" · ")}
+        {/* One live region stays mounted while the session lives, so its text changes are announced. */}
+        {state.status !== "ended" && state.status !== "failed" && (
+          <p
+            className={cx("as-working as-column ah-small ah-muted", !working && "as-working-idle")}
+            role="status"
+          >
+            {working ? ["Claude is working", activeTool(state)].filter(Boolean).join(" · ") : ""}
           </p>
         )}
       </div>
