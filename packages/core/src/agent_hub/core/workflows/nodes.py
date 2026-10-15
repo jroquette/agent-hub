@@ -1,12 +1,14 @@
 """The workflow nodes: one frozen model per ``type`` (docs/design/workflow-schema.md § Nodes).
 
-Every model forbids unknown keys. ``include``, ``loop_group`` and ``wait`` come later; until
-then their ``type`` is refused like any other unknown one. Checks that need more than one node
+Every model forbids unknown keys. An ``include`` is replaced at load by the nodes of the workflow
+it names (``includes.py``), so the engine never sees one. A ``loop_group`` holds a body of nodes
+repeated per iteration (no include or group inside). Checks that need more than one node
 (``depends_on`` targets, references, ``context.resume``) are planning's (``plan.py``).
 """
 
 import math
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Annotated, Final, Literal, Self
@@ -230,6 +232,8 @@ class _AgentKeys(_Executable):
     model: Tier = "medium"
     limits: Limits = Field(default_factory=Limits)
     context: Context = "fresh"
+    # The session's folder (the hub when absent), contained as a shell node's ``cwd``.
+    cwd: Text | None = None
 
     @model_validator(mode="after")
     def _one_prompt(self) -> Self:
@@ -248,6 +252,8 @@ class ShellNode(_Executable):
     command: Argv
     cwd: Text | None = None
     env: EnvMap = Field(default_factory=empty)
+    # Written to the child's stdin: a literal, or one whole reference's canonical text.
+    stdin: Text | None = None
 
     @property
     def is_hub_step(self) -> bool:
@@ -268,6 +274,7 @@ class ScriptNode(_Executable):
     args: tuple[StrictStr, ...] = ()
     cwd: Text | None = None
     env: EnvMap = Field(default_factory=empty)
+    stdin: Text | None = None
 
 
 class LoopNode(_AgentKeys):
@@ -311,9 +318,99 @@ class HaltNode(_Node):
     reason: Text
 
 
+def _until(value: str) -> str:
+    # A whole reference is read at run time; anything else is an instant with its offset.
+    if value.startswith("$"):
+        try:
+            parse_ref(value)
+        except SubstitutionError as error:
+            raise ValueError(str(error)) from None
+        return value
+    try:
+        instant = datetime.fromisoformat(value)
+    except ValueError:
+        instant = None
+    if instant is None or instant.tzinfo is None:
+        msg = "must be an ISO-8601 instant with an offset, or a whole reference"
+        raise ValueError(msg)
+    return value
+
+
+class WaitNode(_Node):
+    """Waits ``duration``, until an instant, or for a person's ``attention`` (text, or one of
+    ``options``)."""
+
+    type: Literal["wait"]
+    duration: Duration | None = None
+    until: Annotated[Text, AfterValidator(_until)] | None = None
+    attention: Text | None = None
+    options: Annotated[tuple[Decision, ...], Field(min_length=1)] | None = None
+
+    @model_validator(mode="after")
+    def _one_condition(self) -> Self:
+        if [self.duration, self.until, self.attention].count(None) != 2:
+            msg = "give exactly one of 'duration', 'until' or 'attention'"
+            raise ValueError(msg)
+        if self.options is not None:
+            if self.attention is None:
+                msg = "'options' needs 'attention'"
+                raise ValueError(msg)
+            _unique(tuple(option.id for option in self.options))
+        return self
+
+
+class IncludeNode(_Node):
+    """Replaced at load by the workflow ``include`` names; ``with`` fills that one's ``inputs``.
+
+    Its ``depends_on``, ``when`` and ``trigger_rule`` go to the block's roots; a root keeps its
+    own ``trigger_rule`` when it sets one.
+    """
+
+    type: Literal["include"]
+    include: KebabId
+    with_: Annotated[Mapping[VariableName, JsonValue], *READ_ONLY] = Field(
+        default_factory=empty, alias="with"
+    )
+
+
 type ExecutableNode = AgentNode | ShellNode | ScriptNode | LoopNode
+type GateNode = ApprovalNode | WaitNode
+BodyNode = Annotated[
+    AgentNode | ShellNode | ScriptNode | LoopNode | ApprovalNode | HaltNode | WaitNode,
+    Field(discriminator="type"),
+]
+
+
+class LoopGroupNode(_Node):
+    """A body sub-graph run once per iteration until ``until_when`` holds or ``until_bash``
+    exits 0, at most ``max_iterations`` times. Body ids are recorded as ``<group>__<id>``."""
+
+    type: Literal["loop_group"]
+    nodes: Annotated[tuple[BodyNode, ...], Field(min_length=1)]
+    max_iterations: Annotated[StrictInt, Field(ge=1, le=50)]
+    until_bash: Argv | None = None
+    until_when: Text | None = None
+    # ``false`` (default): a body agent resumes its own session of the previous iteration.
+    fresh_context: StrictBool = False
+
+    @model_validator(mode="after")
+    def _until_channel(self) -> Self:
+        if self.until_bash is None and self.until_when is None:
+            msg = "give at least one of 'until_bash' or 'until_when'"
+            raise ValueError(msg)
+        return self
+
+
 Node = Annotated[
-    AgentNode | ShellNode | ScriptNode | LoopNode | ApprovalNode | HaltNode,
+    AgentNode
+    | ShellNode
+    | ScriptNode
+    | LoopNode
+    | ApprovalNode
+    | HaltNode
+    | WaitNode
+    | IncludeNode
+    | LoopGroupNode,
     Field(discriminator="type"),
 ]
 

@@ -1,13 +1,22 @@
-import { useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "../../components";
 import { ApiProblem } from "../../lib/api";
+import { useDraft } from "./useDraft";
 import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./transcript";
 
 /** The modes the web offers (D5): never bypassPermissions, dontAsk or auto. */
 export const MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan"];
 /** The user message limit's default (L3: 64 KiB of UTF-8). */
 export const DEFAULT_MESSAGE_MAX_BYTES = 64 * 1024;
+/** The composer grows with its text up to this share of the viewport, then scrolls (AC-234.26). */
+const MAX_HEIGHT_SHARE = 0.4;
+/** Safari sends the Enter that ends an IME composition after `compositionend`. */
+const AFTER_COMPOSITION_MS = 500;
+
+/** On a touch screen Enter is a new line and the Send button sends (AC-234.26). */
+const coarsePointer = () =>
+  typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
 
 export interface SettingsChange {
   mode?: PermissionMode;
@@ -26,6 +35,10 @@ export interface ComposerProps {
   /** Called as a message goes out: the chat pins the transcript to its bottom (AC-234.18). */
   onSending?: (() => void) | undefined;
   maxBytes?: number | undefined;
+  /** The session whose draft this browser keeps (`ah.chat.draft.<id>`); none keeps nothing. */
+  draftId?: string | null | undefined;
+  /** Take focus on open (the chat asks unless a permission is pending, AC-234.26). */
+  focusOnOpen?: boolean | undefined;
   /** Why nothing can be sent (log full, control off…); the session's end is detected on its own. */
   disabledReason?: string | null | undefined;
 }
@@ -54,13 +67,18 @@ export function Composer({
   onSending,
   maxBytes = DEFAULT_MESSAGE_MAX_BYTES,
   disabledReason,
+  draftId = null,
+  focusOnOpen = false,
 }: ComposerProps) {
-  const [text, setText] = useState("");
+  const { text, setText, accepted } = useDraft(draftId);
   const [sending, setSending] = useState(false);
   // Shown, not only guarded: a POST that never settles leaves a visibly pending Stop.
   const [stoppingShown, setStoppingShown] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+  const box = useRef<HTMLTextAreaElement | null>(null);
+  const composing = useRef(false);
+  const composedAt = useRef(-Infinity);
   const stopping = useRef(false);
   const inputId = useId();
   const hintId = useId();
@@ -77,6 +95,31 @@ export function Composer({
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
+
+  const focusBox = () => box.current?.focus({ preventScroll: true });
+  // On open only: a permission that arrives later never takes focus away from here.
+  const focusOnMount = useRef(focusOnOpen);
+  useEffect(() => {
+    if (focusOnMount.current) box.current?.focus({ preventScroll: true });
+  }, []);
+
+  // One layout read per fit; a window resize moves the 40vh cap, so it fits again.
+  const fit = useCallback(() => {
+    const element = box.current;
+    if (!element) return;
+    const max = Math.floor(window.innerHeight * MAX_HEIGHT_SHARE);
+    element.style.height = "auto";
+    const content = element.scrollHeight;
+    element.style.height = `${String(Math.min(content, max))}px`;
+    element.style.overflowY = content > max ? "auto" : "hidden";
+  }, []);
+  useLayoutEffect(fit, [fit, text]);
+  useEffect(() => {
+    window.addEventListener("resize", fit);
+    return () => {
+      window.removeEventListener("resize", fit);
+    };
+  }, [fit]);
 
   const run = (action: () => Promise<unknown> | undefined, what: string, done?: () => void) => {
     setError(null);
@@ -101,6 +144,7 @@ export function Composer({
   const send = () => {
     if (!canSend || busy.current) return;
     onSending?.();
+    focusBox(); // Send by click keeps typing where it was.
     busy.current = true;
     setSending(true);
     setError(null);
@@ -109,7 +153,7 @@ export function Composer({
       .then(() => onSend(message))
       .then(
         () => {
-          setText((current) => (current === message ? "" : current));
+          accepted(message);
         },
         (cause: unknown) => {
           setError(problemText(cause, "send the message"));
@@ -135,6 +179,7 @@ export function Composer({
       </label>
       <textarea
         id={inputId}
+        ref={box}
         className="ah-input as-composer-input"
         rows={3}
         value={text}
@@ -145,16 +190,23 @@ export function Composer({
         onChange={(event) => {
           setText(event.target.value);
         }}
+        onCompositionStart={() => {
+          composing.current = true;
+        }}
+        onCompositionEnd={() => {
+          composing.current = false;
+          composedAt.current = performance.now();
+        }}
         onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing) return;
+          if (event.nativeEvent.isComposing || composing.current) return;
           // Esc stops only from an empty box (no menu exists yet): typed text keeps its Esc.
           if (event.key === "Escape" && text === "" && canStop) {
             event.preventDefault();
             stop();
           }
-          if (event.key !== "Enter" || event.shiftKey) return;
+          if (event.key !== "Enter" || event.shiftKey || coarsePointer()) return;
           event.preventDefault();
-          send();
+          if (performance.now() - composedAt.current >= AFTER_COMPOSITION_MS) send();
         }}
       />
       <div className="as-composer-bar">
@@ -199,7 +251,9 @@ export function Composer({
         <span id={hintId} className="ah-small ah-subtle ah-grow">
           {tooLong
             ? `Too long: ${String(Math.ceil(size / 1024))} KiB of ${String(Math.floor(maxBytes / 1024))} KiB`
-            : "Enter to send, Shift+Enter for a new line"}
+            : coarsePointer()
+              ? "Send to send, Enter for a new line"
+              : "Enter to send, Shift+Enter for a new line"}
         </span>
         <Button
           icon="circle-stop"

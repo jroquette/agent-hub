@@ -120,6 +120,20 @@ def test_ends_run_failed_with_stage_and_reason_when_reported_after_failure() -> 
     assert "pr_url" not in end.payload
 
 
+@pytest.mark.parametrize(("kind", "kept"), [("timeout", "timeout"), ("made-up", None)])
+def test_carries_failure_kind_when_failed_record_names_one(kind: str, kept: str | None) -> None:
+    records = run_lines_failed_in_verify(loops=1)
+    for record in records:
+        if record["event"] == "failed":
+            record["failure_kind"] = kind
+
+    events = map_run_records(records, project="d")
+
+    [end] = [e for e in events if e.type == "step.end" and e.payload["status"] == "failed"]
+    assert (end.step, end.payload.get("failure_kind")) == ("verify", kept)
+    assert kept_payload(end.type, end.payload) == end.payload
+
+
 def test_ends_run_failed_when_tracker_report_failed_reported() -> None:
     records = run_lines_picked_to_reported()
     records[-1]["ok"] = False

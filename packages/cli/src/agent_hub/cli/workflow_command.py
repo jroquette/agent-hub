@@ -11,9 +11,24 @@ exits 2. Nothing is written and no network is used.
 ``run NAME [--input name=value]...`` prints each node a run would start, layer by layer; with
 ``--live`` the engine runs it through ``workflow_executors`` (``--run-id`` names the run, else a
 fresh id), recording it with ``workflow_runs``. ``--resume RUN`` continues a failed or unended run
-on its snapshot, reusing what completed; ``--abandon RUN`` ends it ``cancelled``. A run that ends
-``done`` exits 0, any other end 1; a bad input exits 2. It makes no tracker write: issue-to-pr's
-writes stay ``hub run``'s.
+on its snapshot, reusing what completed; ``--abandon RUN`` ends it ``cancelled``. A run that
+reaches an ``approval`` or ``wait`` without its answer or time pauses there (``run <id>: paused at
+<node>``, exit 0); its resume takes the gate up again, and pauses again until the gate's decision
+is recorded or its time has come. A run that ends ``done`` exits 0, any other end 1; a bad input
+exits 2. It makes no tracker write, except for
+the workflow named ``issue-to-pr``, whose parent is ``hub run``'s (``workflow_delivery``): the
+issue read before, ``hub run``'s records (and so its events) during, ADR 0030's writes after,
+and ``hub run``'s exit codes; there ``issue_text`` comes from the tracker, never from ``--input``,
+the workflow must declare ``issue``, ``repo`` and ``issue_text``, and ``--resume`` or
+``--abandon`` of such a run exits 2. ``hub run --live`` is that run (``run_delivery``), without
+a workflow folder: ``hub run``'s records are its only record.
+``approve|reject|respond RUN [NODE] [TEXT]`` decide a paused run's open gate (``DecideGate``)
+under the run's lock, then resume it as ``--resume`` does. NODE may be left out while the run has
+one open gate; a single word after RUN that names no open gate is the TEXT. ``approve`` and
+``reject`` give those decisions; ``respond`` answers with ``--choice`` (a declared decision or
+option) and/or TEXT. The decision and its text go to the run's record, a ``control_plane``
+``gate.result`` to the events; a gate that is not open, already decided or cannot take the
+answer is refused (exit 1).
 
 ``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
 engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
@@ -22,6 +37,7 @@ skeleton fixture to ``<pack>/fixtures/<NAME>.yaml``, never over an existing file
 linked folder, and notes when the skeleton's own dry run did not end ``done``.
 """
 
+import getpass
 import json
 import os
 import random
@@ -31,34 +47,57 @@ from pathlib import Path
 from typing import Annotated, Final
 
 import typer
+from typer._click.exceptions import ClickException
 
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.command_exits import FAILURE, fail
+from agent_hub.cli.errors import RunLogError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, shown_command, without
-from agent_hub.cli.run_log import new_run_id, now
+from agent_hub.cli.run_log import new_run_id, now, open_default_event_store
+from agent_hub.cli.workflow_checkout import GitCheckoutProbe
+from agent_hub.cli.workflow_delivery import (
+    ISSUE_TEXT,
+    ISSUE_TO_PR,
+    IssueToPr,
+    begin_delivery,
+    delivery_problem,
+)
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_runs import (
     DOCUMENT,
+    RECORDS,
     RUN_ID_PATTERN,
     SNAPSHOT,
     EventSink,
+    RecordedAnswers,
+    RecordedGates,
     RecordedRun,
     SystemClock,
     WorkflowRunError,
     append_record,
     drop_torn_tail,
     ends_of,
+    held_record,
     make_run,
     prior_state,
     read_records,
     run_folder,
     run_lock,
     snapshot_hash,
+    snapshot_includes,
     snapshot_run,
 )
+from agent_hub.core.approvals.decide_gate import (
+    DecideGate,
+    GateDecision,
+    GateDecisionError,
+    RequestedGate,
+)
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.catalog import (
     LoadProblem,
@@ -73,15 +112,18 @@ from agent_hub.core.workflows.engine import (
     start_inputs,
 )
 from agent_hub.core.workflows.events import WorkflowEvents
+from agent_hub.core.workflows.gates import GateAnswer, GateAnswers
 from agent_hub.core.workflows.nodes import ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
-from agent_hub.core.workflows.ports import RunEnd
+from agent_hub.core.workflows.ports import RunEnd, RunRecorder
 from agent_hub.core.workflows.run_state import RunState
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
     HUB_WORKFLOWS,
+    DiscoveredWorkflow,
     WorkflowDiscovery,
     discover_workflows,
+    pack_resolver,
 )
 from agent_hub.generator.workflow_fixtures import (
     FIXTURE_SUFFIX,
@@ -91,6 +133,7 @@ from agent_hub.generator.workflow_fixtures import (
 )
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
+from agent_hub.generator.workflow_yaml import WorkflowMapping
 
 COMMAND: Final = "workflow"
 _PREFIX: Final = "hub workflow run"
@@ -131,6 +174,7 @@ def validate(
 
 @workflow_app.command("run")
 def run(
+    context: typer.Context,
     name: Annotated[str | None, typer.Argument(help="The workflow to run.")] = None,
     *,
     given: Annotated[
@@ -158,25 +202,151 @@ def run(
             raise typer.BadParameter(hint, param_hint=option)
     root = hub_root_or_exit(os.environ, command=COMMAND)
     hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
+    _refuse_delivery_resume(hub, resume or abandon)
     try:
         if abandon is not None:
             _abandon(hub, abandon)
         elif resume is not None:
             raise typer.Exit(_resume(hub, resume))
         else:
-            raise typer.Exit(_start(hub, name or "", given or [], live=live, run_id=run_id))
+            started = _start(context, hub, name or "", given=given or [], live=live, run_id=run_id)
+            raise typer.Exit(started)
     except (WorkflowRunError, WorkflowEngineError) as error:
         fail(f"{_PREFIX}: {error}")
 
 
-def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | None) -> int:
-    source = DiscoveredWorkflowSource(hub, only=name, builtin_root=BUILTIN_WORKFLOWS)
-    catalog = check_workflows(source)
-    _exit_on_problems(catalog)
-    if not catalog.plans:
-        fail(f"no workflow named {shown_path(name)} in {HUB_WORKFLOWS}/ or the built-ins")
-    plan, found = catalog.plans[0], source.found[name]
-    inputs = _inputs(plan, given)
+_RUN_ARG = typer.Argument(help="The paused run.")
+_NODE_ARG = typer.Argument(help="The gate's node (optional with one open gate).")
+_TEXT_ARG = typer.Argument(help="The answer's text.")
+
+
+@workflow_app.command("approve")
+def approve(
+    run_id: Annotated[str, _RUN_ARG],
+    node: Annotated[str | None, _NODE_ARG] = None,
+    text: Annotated[str | None, _TEXT_ARG] = None,
+) -> None:
+    """Approve a paused run's gate, then resume the run."""
+    raise typer.Exit(_decide("approve", run_id, node=node, text=text, choice="approve"))
+
+
+@workflow_app.command("reject")
+def reject(
+    run_id: Annotated[str, _RUN_ARG],
+    node: Annotated[str | None, _NODE_ARG] = None,
+    text: Annotated[str | None, _TEXT_ARG] = None,
+) -> None:
+    """Reject a paused run's gate, then resume the run."""
+    raise typer.Exit(_decide("reject", run_id, node=node, text=text, choice="reject"))
+
+
+@workflow_app.command("respond")
+def respond(
+    run_id: Annotated[str, _RUN_ARG],
+    node: Annotated[str | None, _NODE_ARG] = None,
+    text: Annotated[str | None, _TEXT_ARG] = None,
+    *,
+    choice: Annotated[
+        str | None, typer.Option("--choice", help="A declared decision or option id.")
+    ] = None,
+) -> None:
+    """Answer a paused run's gate with a choice and/or a text, then resume the run."""
+    raise typer.Exit(_decide("respond", run_id, node=node, text=text, choice=choice))
+
+
+def _decide(
+    command: str, run_id: str, *, node: str | None, text: str | None, choice: str | None
+) -> int:
+    if not RUN_ID_PATTERN.fullmatch(run_id):
+        hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
+        raise typer.BadParameter(hint, param_hint="RUN")
+    root = hub_root_or_exit(os.environ, command=COMMAND)
+    hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
+    try:
+        folder = _existing_run(hub, run_id)
+        with run_lock(folder):
+            drop_torn_tail(folder)
+            book = RecordedGates(folder, _ended_check(folder))
+            gate, text = _gate_of(book, node, text)
+            decision = GateDecision(
+                gate.gate_id, GateAnswer(choice, text), _approver(), "cli", now()
+            )
+            project = hub_project_name(hub) or hub.name
+            decided = DecideGate(book, _ingest, project=project).execute(decision)
+            if decided.event_error is not None:
+                unavailable = f"hub workflow {command}: event store unavailable"
+                typer.echo(f"{unavailable}: {decided.event_error}", err=True)
+            typer.echo(f"run {run_id}: {gate.node} {choice or 'answered'}")
+            return _continue(hub, folder)
+    except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
+        fail(f"hub workflow {command}: {error}")
+
+
+def _gate_of(
+    book: RecordedGates, node: str | None, text: str | None
+) -> tuple[RequestedGate, str | None]:
+    """The open gate NODE names, else the one open gate; a lone word naming none is the text."""
+    gates = {gate.node: gate for gate in book.open.values()}
+    if node is not None and text is None and node not in gates:
+        node, text = None, node
+    if node is not None:
+        if node not in gates:
+            raise GateDecisionError(f"the run has no open gate at {node}")
+        return gates[node], text
+    if len(gates) != 1:
+        open_nodes = ", ".join(sorted(gates)) or "none"
+        raise GateDecisionError(f"name the gate's node; open gates: {open_nodes}")
+    return next(iter(gates.values())), text
+
+
+def _approver() -> str:
+    try:
+        return getpass.getuser()
+    except KeyError, OSError:
+        return "unknown"
+
+
+def _ingest() -> IngestEvents:
+    return IngestEvents(open_default_event_store())
+
+
+def _refuse_delivery_resume(hub: Path, run_id: str | None) -> None:
+    """Exit 2 when ``run_id`` is an issue-to-pr run: its tracker side (the issue read, the
+    records, ADR 0030's writes) belongs to one process, so a resume or an abandon could not
+    report it. Only the start record is read; nothing is written or locked."""
+    if run_id is None:
+        return
+    folder = run_folder(hub, run_id)
+    try:
+        with (folder / RECORDS).open("rb") as file:
+            first = json.loads(file.readline() or b"{}")
+    except OSError, ValueError:
+        return
+    if isinstance(first, dict) and first.get("workflow") == ISSUE_TO_PR:
+        message = f"resume and abandon are not supported for {ISSUE_TO_PR}; start a new run"
+        raise typer.BadParameter(message, param_hint="--resume/--abandon")
+
+
+def _start(
+    context: typer.Context,
+    hub: Path,
+    name: str,
+    *,
+    given: list[str],
+    live: bool,
+    run_id: str | None,
+) -> int:
+    plan, found = discovered(hub, name)
+    included = _included(hub, found)
+    values = _given_values(plan, given)
+    delivery = name == ISSUE_TO_PR
+    # A hub's own issue-to-pr overrides the built-in: the parent needs its inputs to run it.
+    if delivery and (problem := delivery_problem(plan)):
+        raise typer.BadParameter(problem, param_hint="NAME")
+    if delivery and ISSUE_TEXT in values:
+        raise typer.BadParameter(f"{ISSUE_TEXT} is read from the tracker", param_hint="--input")
+    # Checked before the tracker is read; the parent fills issue_text from the issue.
+    inputs = _inputs(plan, {**values, ISSUE_TEXT: ""} if delivery else values)
     if not live:
         _print_plan(plan)
         return 0
@@ -184,15 +354,103 @@ def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | 
     folder = run_folder(hub, run_id)
     make_run(folder)
     with run_lock(folder):
+        parent = None
         try:
             pack, content_hash = snapshot_run(
-                folder, document=dict(found.document), plan=plan, pack_root=found.pack_root
+                folder,
+                document=dict(found.document),
+                plan=plan,
+                pack_root=found.pack_root,
+                includes=included,
             )
-        except WorkflowRunError:
+            if delivery:
+                # After the snapshot, so the picked record names a run that can start.
+                parent = begin_delivery(context, hub, plan=plan, inputs=inputs, run_id=run_id)
+                inputs[ISSUE_TEXT] = parent.issue_text
+        except WorkflowRunError, typer.Exit, ClickException:
             # Nothing ran: a half-made run is not left to resume.
             shutil.rmtree(folder, ignore_errors=True)
             raise
-        return _begin(hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash)
+        return _begin(
+            hub,
+            folder,
+            plan=plan,
+            inputs=inputs,
+            pack=pack,
+            content_hash=content_hash,
+            parent=parent,
+        )
+
+
+def discovered(hub: Path, name: str) -> tuple[WorkflowPlan, DiscoveredWorkflow]:
+    """The workflow ``name``, the hub's own over the built-in, loaded and planned; else exit 1."""
+    source = DiscoveredWorkflowSource(hub, only=name, builtin_root=BUILTIN_WORKFLOWS)
+    catalog = check_workflows(source)
+    _exit_on_problems(catalog)
+    if not catalog.plans:
+        fail(f"no workflow named {shown_path(name)} in {HUB_WORKFLOWS}/ or the built-ins")
+    return catalog.plans[0], source.found[name]
+
+
+def run_delivery(
+    hub: Path, parent: IssueToPr, *, plan: WorkflowPlan, inputs: dict[str, JsonValue], pack: Path
+) -> int:
+    """``hub run``'s run of issue-to-pr: the engine around ``parent``, no workflow folder (no
+    resume); ``hub run``'s exit."""
+    config = load_hub_config_or_exit(hub / FILE_LABEL)
+    runner = _executors(hub, config, run_id=parent.live.log.run_id, pack=pack, parent=parent)
+    recorder = parent.recorder(None)
+    ports = _ports(runner, recorder, None)
+    try:
+        report = run_workflow(plan, inputs, ports)
+    except RunLogError as error:
+        return parent.live.stop_on_log_error(error)
+    return parent.finish(report)
+
+
+def _ports(
+    runner: WorkflowExecutors,
+    recorder: RunRecorder,
+    checkout: GitCheckoutProbe | None,
+    *,
+    gates: GateAnswers | None = None,
+) -> EnginePorts:
+    """The engine's ports for a live run; ``gates`` answers its gates (a resume's decisions)."""
+    return EnginePorts(
+        runner,
+        recorder,
+        SystemClock(),
+        JsonSchemaOutputs(),
+        _JITTER.random,
+        checkout,
+        # In-process hub steps share this process's streams: they never run side by side.
+        max_parallel=runner.max_parallel,
+        interrupt=runner.stop_children,
+        gates=gates or RecordedAnswers([]),
+    )
+
+
+def _included(hub: Path, found: DiscoveredWorkflow) -> dict[str, WorkflowMapping]:
+    """Each workflow ``found`` includes, as read: the run's snapshot keeps them for a resume."""
+    included: dict[str, WorkflowMapping] = {}
+    discovery = discover_workflows(hub, builtin_root=BUILTIN_WORKFLOWS)
+    resolver = pack_resolver(discovery, found.pack_root, used=included)
+    plan_workflow(parse_workflow(found.document), includes=resolver)
+    return included
+
+
+def _executors(
+    hub: Path, config: HubConfig, *, run_id: str, pack: Path, parent: IssueToPr | None
+) -> WorkflowExecutors:
+    return WorkflowExecutors(
+        hub=hub,
+        config=config,
+        run_id=run_id,
+        pack_root=pack,
+        environ=os.environ,
+        hub_program=own_hub_program(),
+        **({} if parent is None else parent.executor_options()),
+    )
 
 
 def _begin(
@@ -203,14 +461,20 @@ def _begin(
     inputs: dict[str, JsonValue],
     pack: Path,
     content_hash: str,
+    parent: IssueToPr | None,
 ) -> int:
     run_id, name = folder.name, plan.document.name
     header: dict[str, JsonValue] = {"event": "start", "run": run_id, "workflow": name}
-    append_record(
-        folder, {**header, "revision": plan.document.revision, "content_hash": content_hash}
-    )
+    header |= {"revision": plan.document.revision, "content_hash": content_hash}
+    _, unwatched = _checkouts(hub, load_hub_config_or_exit(hub / FILE_LABEL))
+    if unwatched:
+        # Noted once: a read-only node's git status check does not see these folders.
+        header["checkout_unwatched"] = [str(path) for path in unwatched]
+    append_record(folder, header)
     append_record(folder, {"event": "inputs", "inputs": inputs})
-    return _execute(hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash)
+    return _execute(
+        hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash, parent=parent
+    )
 
 
 def _resume(hub: Path, run_id: str) -> int:
@@ -229,7 +493,8 @@ def _continue(hub: Path, folder: Path) -> int:
         )
     try:
         document = (folder / SNAPSHOT / DOCUMENT).read_bytes()
-        plan = plan_workflow(parse_workflow(_json(document)))
+        includes = snapshot_includes(folder / SNAPSHOT)
+        plan = plan_workflow(parse_workflow(_json(document)), includes=includes)
     except (OSError, WorkflowLoadError) as error:
         raise WorkflowRunError(f"cannot load the run's snapshot: {error}") from None
     inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
@@ -243,6 +508,7 @@ def _continue(hub: Path, folder: Path) -> int:
         content_hash=str(header.get("content_hash")),
         prior=prior_state(records),
         end_index=len(ends_of(records)),
+        answers=RecordedAnswers(records),
     )
 
 
@@ -287,6 +553,8 @@ def _execute(
     content_hash: str,
     prior: RunState | None = None,
     end_index: int = 0,
+    parent: IssueToPr | None = None,
+    answers: RecordedAnswers | None = None,
 ) -> int:
     config = load_hub_config_or_exit(hub / FILE_LABEL)
     header: dict[str, JsonValue] = {
@@ -294,25 +562,44 @@ def _execute(
         "revision": plan.document.revision,
         "content_hash": content_hash,
     }
-    recorder = RecordedRun(
+    recorded = RecordedRun(
         folder=folder,
         events=_events(hub, folder.name, header, end_index=end_index),
-        sink=EventSink(),
+        # issue-to-pr's events are hub run's, from the parent's records.
+        sink=EventSink() if parent is None else None,
     )
-    runner = WorkflowExecutors(
-        hub=hub,
-        config=config,
-        run_id=folder.name,
-        pack_root=pack,
-        environ=os.environ,
-        hub_program=own_hub_program(),
-    )
-    ports = EnginePorts(runner, recorder, SystemClock(), JsonSchemaOutputs(), _JITTER.random)
-    report = run_workflow(plan, inputs, ports, prior=prior)
+    runner = _executors(hub, config, run_id=folder.name, pack=pack, parent=parent)
+    recorder = recorded if parent is None else parent.recorder(recorded)
+    roots, _ = _checkouts(hub, config)
+    checkout = GitCheckoutProbe(roots=roots, environ=os.environ)
+    ports = _ports(runner, recorder, checkout, gates=answers)
+    try:
+        report = run_workflow(plan, inputs, ports, prior=prior)
+    except RunLogError as error:
+        if parent is None:
+            raise
+        # hub run's record could not be written: the run stops there, as hub run does.
+        append_record(folder, {"event": "end", "status": "failed", "outcome": None})
+        return parent.live.stop_on_log_error(error)
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
+    if report.status == "paused":
+        append_record(folder, held_record(report.state))
+        gate = report.state.gates.get(report.reason or "")
+        due = "" if gate is None or gate.due is None else f" until {gate.due.isoformat()}"
+        typer.echo(f"run {folder.name}: paused at {report.reason}{due}")
+        return 0
     outcome = "" if report.outcome is None else f", outcome {report.outcome}"
     typer.echo(f"run {folder.name}: {report.status}{outcome}")
+    if parent is not None:
+        return parent.finish(report)
     return 0 if report.status == "done" else 1
+
+
+def _checkouts(hub: Path, config: HubConfig) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """The hub and the repos next to it, as git checkouts (watched) and other folders (not)."""
+    folders = (hub, *(hub.parent / repo.dir for repo in config.repos))
+    watched = tuple(folder for folder in folders if (folder / ".git").exists())
+    return watched, tuple(folder for folder in folders if folder not in watched)
 
 
 def _events(
@@ -336,8 +623,16 @@ def own_hub_program() -> tuple[str, ...]:
     return (sys.executable, "-I", "-m", "agent_hub.cli")
 
 
-def _inputs(plan: WorkflowPlan, given: list[str]) -> dict[str, JsonValue]:
-    """``NAME=VALUE`` pairs typed by the declared inputs, with the defaults; else exit 2."""
+def _inputs(plan: WorkflowPlan, values: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """``values`` with the defaults; else exit 2."""
+    try:
+        return start_inputs(plan, values)
+    except WorkflowEngineError as error:
+        raise typer.BadParameter(str(error), param_hint="--input") from None
+
+
+def _given_values(plan: WorkflowPlan, given: list[str]) -> dict[str, JsonValue]:
+    """``NAME=VALUE`` pairs typed by the declared inputs; else exit 2."""
     values: dict[str, JsonValue] = {}
     declared = plan.document.inputs
     for pair in given:
@@ -346,10 +641,7 @@ def _inputs(plan: WorkflowPlan, given: list[str]) -> dict[str, JsonValue]:
             raise typer.BadParameter(f"{pair!r} is not NAME=VALUE", param_hint="--input")
         kind = declared[key].type if key in declared else "string"
         values[key] = _typed(text, kind, key)
-    try:
-        return start_inputs(plan, values)
-    except WorkflowEngineError as error:
-        raise typer.BadParameter(str(error), param_hint="--input") from None
+    return values
 
 
 def _typed(text: str, kind: str, key: str) -> JsonValue:
@@ -377,7 +669,9 @@ def _print_plan(plan: WorkflowPlan) -> None:
             if isinstance(node, ScriptNode):
                 argv = (node.runtime, f"scripts/{node.script}", *node.args)
             line = f"would run: {node_id} ({node.type})"
-            typer.echo(f"{line}: {shown_command(argv)}" if argv else line)
+            line = f"{line}: {shown_command(argv)}" if argv else line
+            stdin = node.stdin if isinstance(node, ShellNode | ScriptNode) else None
+            typer.echo(line if stdin is None else f"{line}   stdin: {shown_text(stdin)}")
 
 
 def _json(data: bytes) -> object:
@@ -444,7 +738,8 @@ def _write_skeleton(root: Path, discovery: WorkflowDiscovery, name: str | None) 
     if found.origin != "hub":
         fail(f"{name!r} is a built-in workflow; its fixtures ship with it")
     try:
-        skeleton = skeleton_yaml(plan_workflow(parse_workflow(found.document)))
+        includes = pack_resolver(discovery, found.pack_root)
+        skeleton = skeleton_yaml(plan_workflow(parse_workflow(found.document), includes=includes))
     except (WorkflowLoadError, WorkflowEngineError) as error:
         fail(f"{_shown_fixture(root, found.path)}: {error}")
     target = _skeleton_target(root, found.pack_root, name)

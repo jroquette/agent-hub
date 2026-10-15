@@ -1,15 +1,16 @@
 """The workflows a hub has, checked: what ``hub workflow list`` and ``validate`` print.
 
 A ``WorkflowSource`` (the port) yields each file it read as a ``WorkflowFile``, its content
-already parsed, or as a ``LoadProblem`` when the file could not be read. ``check_workflows``
-loads and plans every file and gives each problem its file, line and key: the source's loader
+already parsed, or as a ``LoadProblem`` when the file could not be read; a file's ``includes``
+resolves the workflows it may include (``includes.py``). ``check_workflows`` loads and plans every
+file and gives each problem its file, line and key: the source's loader
 records the line of each key path, so a problem is placed on the line of its nearest key.
 """
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, NamedTuple, Protocol
+from typing import Final, Literal, NamedTuple, Protocol
 
 from agent_hub.core.workflows.document import (
     Loc,
@@ -17,10 +18,13 @@ from agent_hub.core.workflows.document import (
     WorkflowProblem,
     parse_workflow,
 )
+from agent_hub.core.workflows.includes import IncludeResolver
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 
 # Where a workflow comes from: the hub's ``workflows/``, or the built-ins (ADR 0032).
 type WorkflowOrigin = Literal["hub", "builtin"]
+# The hub's folder of workflow packs, ``workflows/<pack>/``.
+HUB_WORKFLOWS_FOLDER: Final = "workflows"
 
 
 class LoadProblem(NamedTuple):
@@ -42,6 +46,7 @@ class WorkflowFile:
     content: object
     lines: Mapping[Loc, int] = field(default_factory=lambda: MappingProxyType({}))
     origin: WorkflowOrigin = "hub"
+    includes: IncludeResolver | None = None
 
     def line_of(self, loc: Loc) -> int | None:
         """The line of ``loc``, or of its nearest enclosing key the loader recorded."""
@@ -79,7 +84,7 @@ def check_workflows(source: WorkflowSource) -> WorkflowCatalog:
             problems.append(item)
             continue
         try:
-            plan = plan_workflow(parse_workflow(item.content))
+            plan = plan_workflow(parse_workflow(item.content), includes=item.includes)
         except WorkflowLoadError as error:
             problems.extend(item.problem(problem) for problem in error.problems)
             continue

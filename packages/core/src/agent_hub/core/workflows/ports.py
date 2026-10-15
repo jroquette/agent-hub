@@ -1,7 +1,8 @@
 """The engine's ports (ADR 0032): what runs a node, records a run, tells the time, checks outputs.
 
-The engine (``engine.py``) is a pure interpreter over these four. The cli implements
-``NodeRunner`` (``claude -p``, programs, scripts) and ``Clock``; ``generator`` implements
+The engine (``engine.py``) is a pure interpreter over these four, plus a ``CheckoutProbe`` for
+``mutates_checkout: false`` nodes. The cli implements ``NodeRunner`` (``claude -p``, programs,
+scripts), ``Clock`` and ``CheckoutProbe`` (``git status``); ``generator`` implements
 ``OutputValidator`` with JSON Schema; ``events.py`` builds the run's events from a
 ``RunRecorder``'s calls, and the cli also writes them to the run's record under ``.agent-runs/``.
 """
@@ -9,11 +10,14 @@ The engine (``engine.py``) is a pure interpreter over these four. The cli implem
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from threading import Event
 from typing import Literal, Protocol
 
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.failures import FailureKind, RetryRecord
+from agent_hub.core.workflows.gates import GateForm, GateKind
 from agent_hub.core.workflows.nodes import ExecutableNode
+from agent_hub.core.workflows.scope import RefScope
 from agent_hub.core.workflows.substitution import RefContext
 
 type StepStatus = Literal["ok", "failed", "skipped"]
@@ -21,6 +25,8 @@ type SkipCause = Literal[
     "upstream_failed", "upstream_skipped", "condition", "condition_parse_error", "prior_success"
 ]
 type RunStatus = Literal["done", "failed", "cancelled"]
+# A report's status: a run's end, or ``paused`` on an open gate (no end yet).
+type ReportStatus = Literal["done", "failed", "cancelled", "paused"]
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,8 @@ class NodeCall:
     prompt (a ``prompt_file`` is read and rendered by the runner, against ``context``).
     ``resume_session`` is the session to continue: ``context.resume``'s, or a loop's previous
     iteration's without ``fresh_context``. ``iteration`` counts a loop's turns from 1, else 0.
+    ``scope`` is how a text written in the node's own workflow reads here: the runner renders a
+    ``prompt_file`` with ``scope.render(template, context)``.
     """
 
     node: ExecutableNode
@@ -42,6 +50,9 @@ class NodeCall:
     env: Mapping[str, str] = field(default_factory=dict)
     prompt: str | None = None
     resume_session: str | None = None
+    scope: RefScope = field(default_factory=RefScope)
+    # A shell or script node's rendered ``stdin``.
+    stdin: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,8 +82,16 @@ class Clock(Protocol):
         """The current instant, with an offset."""
         ...
 
-    def sleep(self, delay: timedelta) -> None:
-        """Wait ``delay`` (a retry's backoff)."""
+    def sleep(self, delay: timedelta, stop: Event | None = None) -> None:
+        """Wait ``delay`` (a retry's backoff), or less once ``stop`` is set (the run stops)."""
+        ...
+
+
+class CheckoutProbe(Protocol):
+    """The checkout's state as text (the cli's ``git status``), read around a read-only node."""
+
+    def status(self) -> str:
+        """The current status; the same text before and after means nothing changed."""
         ...
 
 
@@ -128,8 +147,26 @@ class RunEnd:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class GateRequest:
+    """A gate opened by an ``approval`` or ``wait`` node's attempt.
+
+    ``text`` (the rendered message, or a wait's ``until``) belongs to the run's record only,
+    never to events (ADR 0019); ``choices`` are the ids an answer may choose.
+    """
+
+    node: str
+    attempt: int
+    kind: GateKind
+    form: GateForm
+    at: datetime
+    choices: tuple[str, ...] = ()
+    text: str = ""
+    due: datetime | None = None
+
+
 class RunRecorder(Protocol):
-    """Receives a run's steps, retries and end, in order (events, the run's record)."""
+    """Receives a run's steps, retries, gates and end, in order (events, the run's record)."""
 
     def step_started(self, start: StepStart) -> None: ...
 
@@ -138,3 +175,5 @@ class RunRecorder(Protocol):
     def retry_scheduled(self, node: str, retry: RetryRecord) -> None: ...
 
     def run_ended(self, end: RunEnd) -> None: ...
+
+    def gate_requested(self, request: GateRequest) -> None: ...

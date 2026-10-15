@@ -68,7 +68,7 @@ def test_declares_design_fields_when_rule_read() -> None:
     assert SANDBOX_WORKFLOW.severity is Severity.ERROR
     assert SANDBOX_WORKFLOW.reads == frozenset({Read.REMOTES})
     assert SANDBOX_WORKFLOW.module is None
-    assert RULE_IDS[-1] == "sandbox.workflow"
+    assert RULE_IDS[-2] == "sandbox.workflow"
     assert WORKFLOW_EXCLUDED_COMMANDS == WORKFLOW
 
 

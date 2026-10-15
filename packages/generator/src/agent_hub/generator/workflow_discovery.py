@@ -16,6 +16,10 @@ under a root, a file whose real path leaves its pack, one that is not a regular 
 does not load, a ``name`` that is not the stem, a name already taken (naming the claiming file
 relative to its root, so no absolute path reaches a message).
 
+``pack_resolver`` resolves the workflows a workflow includes, by name, among those of its own pack
+(the hub's choice, or a pack-mate the hub overrides): a node's ``prompt_file`` and ``script`` are
+paths inside its pack, so an included node must come from the same one.
+
 ``resolve_pack_file`` turns a node's ``prompt_file`` or ``script`` into a file inside its pack:
 relative to the pack's ``prompts/`` or ``scripts/``, no ``..``, not absolute, and its real path
 (links followed) still inside the pack.
@@ -32,6 +36,8 @@ from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from typing import Final, Literal
 
+from agent_hub.core.workflows.document import WorkflowDocument, parse_workflow
+from agent_hub.core.workflows.includes import IncludeResolver
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.regular_files import read_regular
 from agent_hub.generator.workflow_yaml import (
@@ -115,6 +121,37 @@ def discover_workflows(
         overridden=tuple(builtin.found[name] for name in sorted(shadowed)),
         problems=tuple(problems),
     )
+
+
+def pack_documents(discovery: WorkflowDiscovery, pack_root: Path) -> dict[str, WorkflowMapping]:
+    """The raw documents of the pack at ``pack_root``, by name: what an include may name."""
+    return {
+        workflow.name: workflow.document
+        for workflow in (*discovery.overridden, *discovery.workflows)
+        if workflow.pack_root == pack_root
+    }
+
+
+def pack_resolver(
+    discovery: WorkflowDiscovery,
+    pack_root: Path,
+    *,
+    used: dict[str, WorkflowMapping] | None = None,
+) -> IncludeResolver:
+    """Resolve an include by name among the workflows of the pack at ``pack_root``; a document
+    that does not parse raises ``WorkflowLoadError``. ``used`` collects each document resolved
+    (a run's snapshot keeps them)."""
+    found = pack_documents(discovery, pack_root)
+
+    def resolve(name: str) -> WorkflowDocument | None:
+        document = found.get(name)
+        if document is None:
+            return None
+        if used is not None:
+            used[name] = document
+        return parse_workflow(document)
+
+    return resolve
 
 
 def resolve_pack_file(pack_root: Path, folder: PackFolder, relative: str) -> Path:
