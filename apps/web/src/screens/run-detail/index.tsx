@@ -230,7 +230,12 @@ function Gantt({ run, now }: { run: WorkflowRun; now: number }) {
   }
   const pct = (t: number) => ((t - from) / (to - from)) * 100;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => from + f * (to - from));
-  const color = { ok: "var(--chart-1)", failed: "var(--failed)", running: "var(--live)" } as const;
+  const color = {
+    ok: "var(--chart-1)",
+    failed: "var(--failed)",
+    running: "var(--live)",
+    skipped: "var(--border-strong)",
+  } as const;
   return (
     <div className="ah-stack" style={{ gap: 4 }} role="list" aria-label="Steps over time">
       <div style={{ display: "grid", gridTemplateColumns: "170px 1fr", gap: 8 }} aria-hidden="true">
