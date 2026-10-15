@@ -163,6 +163,40 @@ describe("useStickToBottom (stick to bottom)", () => {
     expect(scroller.element.scrollTop).toBe(590);
   });
 
+  it("stays pinned on an upward wheel when there is nothing above to scroll to", () => {
+    const scroller = aScroller(300, 400); // A short chat: no overflow yet, scrollTop stays 0.
+    const { result } = renderHook(() => useStickToBottom(scroller.element));
+    flushFrames();
+
+    act(() => {
+      scroller.element.dispatchEvent(new WheelEvent("wheel", { deltaY: -4 }));
+    });
+    grow(scroller, 500);
+    flushFrames();
+
+    expect(result.current.atBottom).toBe(true);
+    expect(scroller.element.scrollTop).toBe(400);
+  });
+
+  it("leaves ArrowUp and Home typed in a text field inside the transcript alone", () => {
+    const scroller = aScroller();
+    const input = document.createElement("input");
+    scroller.element.append(input);
+    const { result } = renderHook(() => useStickToBottom(scroller.element));
+    flushFrames();
+
+    for (const key of ["ArrowUp", "Home"]) {
+      act(() => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      });
+    }
+    grow(scroller, 50);
+    flushFrames();
+
+    expect(result.current.atBottom).toBe(true);
+    expect(scroller.element.scrollTop).toBe(650);
+  });
+
   it("detaches after the reader scrolls up, and new content no longer moves it", () => {
     const scroller = aScroller();
     const { result } = renderHook(() => useStickToBottom(scroller.element));
