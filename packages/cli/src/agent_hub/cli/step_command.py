@@ -68,7 +68,8 @@ from agent_hub.core.runner.verdict import (
 COMMAND: Final = "step"
 NO_COMMIT: Final = "no commit on the branch (the session reported done or gave no verdict)"
 NO_PR: Final = "no PR was opened for the commits"
-# The most of a reply read: the session's output cap (``run_steps.SESSION_OUTPUT_LIMIT``).
+# The largest reply read, the session's output cap (``run_steps.SESSION_OUTPUT_LIMIT``); a
+# longer one fails the step.
 MAX_REPLY_BYTES: Final = SESSION_OUTPUT_LIMIT
 UNCOMMITTED: Final = "uncommitted changes in the worktree"
 TARGET_TEXTS: Final = ("branch", "base", "default_branch", "github", "gate")
@@ -143,7 +144,10 @@ def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
 def verdict() -> None:
     """Read the session's reply on stdin as hub run does: done, or blocked with its question."""
     # On stdin, not as an argument: a reply may be longer than one argument holds, or hold NUL.
-    reply = sys.stdin.buffer.read(MAX_REPLY_BYTES).decode(errors="replace")
+    data = sys.stdin.buffer.read(MAX_REPLY_BYTES + 1)
+    if len(data) > MAX_REPLY_BYTES:
+        _fail("verdict", "the reply is larger than 1 MiB")
+    reply = data.decode(errors="replace")
     outcome = session_outcome(
         SessionReply(is_error=False, subtype=None, result=reply, cost_usd=0.0, turns=None)
     )
