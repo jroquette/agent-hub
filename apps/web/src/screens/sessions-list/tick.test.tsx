@@ -1,5 +1,5 @@
 import { act, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   aPage,
@@ -12,6 +12,11 @@ import {
   renderWithApi,
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
+
+// These tests read the tables; the grid is the default view (AC-234.3).
+beforeEach(() => {
+  window.localStorage.setItem("ah.sessions.view", "table");
+});
 
 const durations = vi.hoisted(() => ({ calls: 0 }));
 vi.mock("../../lib/format", async (original) => {

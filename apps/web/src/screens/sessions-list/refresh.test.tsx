@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   aPage,
@@ -12,6 +12,11 @@ import {
   type FakeEventSource,
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
+
+// These tests read the tables; the grid is the default view (AC-234.3).
+beforeEach(() => {
+  window.localStorage.setItem("ah.sessions.view", "table");
+});
 
 const SESSIONS = "/api/v1/sessions";
 const STREAM = "/api/v1/live-sessions/stream";
