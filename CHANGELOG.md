@@ -49,7 +49,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - `hub run --live` now runs the `issue-to-pr` workflow through the workflow engine, with its options, records, events,
   tracker writes and exit codes unchanged: a hub's own `workflows/<pack>/issue-to-pr.yaml` replaces the built-in (it
   must load, else exit 1, and declare the inputs `issue`, `repo`, `issue_text`, plus `start` for `--from verify`, else
-  exit 2). `--model`, `--effort`, `--max-turns` and `--budget` apply to its `implement` node. A failed stage's `failed`
+  exit 2) and is read from a copy taken at the start. `--model`, `--effort`, `--max-turns` and `--budget`, when typed,
+  win over its `implement` node's own model and limits (the built-in's are `hub run`'s defaults). A failed stage's `failed`
   record and its `step.end` event now carry the failure kind (`failure_kind`, e.g. `exec_failed`, `timeout`). The dry
   run is unchanged. The built-in `issue-to-pr` gains the input `start` (`verify` skips the session), runs its `hub step`
   nodes in process as `hub run` does, and keeps the gate output's last line break (AGH-224).

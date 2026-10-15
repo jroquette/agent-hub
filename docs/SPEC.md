@@ -139,8 +139,8 @@ write) it makes the worktree, runs the implementing `claude -p` session (no trac
 `tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. A live
 run is the `issue-to-pr` workflow run through the engine ([ADR 0032](adr/0032-workflow-engine.md), AGH-224): the hub's
 own `workflows/<pack>/issue-to-pr.yaml` when present (it must load, else exit 1, and declare the inputs the run fills,
-else exit 2), else the built-in; `--from verify` is its `start` input, and `--model`, `--effort`, `--max-turns` and
-`--budget` are its `implement` node's. A failed stage's `failed` record and `step.end` event carry its `failure_kind`
+else exit 2), else the built-in, read from a copy taken at the start; `--from verify` is its `start` input, and
+`--model`, `--effort`, `--max-turns` and `--budget`, when typed, win over its `implement` node's model and limits. A failed stage's `failed` record and `step.end` event carry its `failure_kind`
 (AGH-179); the dry run loads no workflow. The report follows the run's outcome ([ADR 0030](adr/0030-run-outcomes-in-the-tracker.md)): a run that ended with no commit
 gets a comment and no label and exits 0; a run whose session stopped for a human gets the blocked label
 (`tracker.blocked_label`, else `tracker.failed_label`) and a comment with its question and exits 3; a failed run gets

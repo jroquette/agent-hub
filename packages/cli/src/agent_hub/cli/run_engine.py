@@ -7,17 +7,22 @@ and unchanged: the dry run prints v0.14's lines and loads no workflow. Live, the
 and planned after the usage checks (a problem exits 1 before the tracker is read) and must take
 the inputs the parent fills (else exit 2): ``issue``, ``repo`` and ``issue_text``, and ``start``
 for ``--from verify``, which skips the implementing session through the node's ``when:``.
-``--model``, ``--effort``, ``--max-turns`` and ``--budget`` are the ``implement`` node's, over
-its own (``WorkflowExecutors.session``). The run writes ``hub run``'s records only (no workflow
-folder, so no resume) and exits as v0.14 did: 0 delivered or no changes, 3 blocked, 1 failed.
+``--model``, ``--effort``, ``--max-turns`` and ``--budget``, when typed, win over the
+``implement`` node's own model and limits (the built-in's are ``hub run``'s defaults). The pack is
+copied to a temporary folder at the start and read from there. The run writes ``hub run``'s
+records only (no workflow folder, so no resume) and exits as v0.14 did: 0 delivered or no
+changes, 3 blocked, 1 failed; Ctrl-C ends it with no tracker write.
 """
 
 import os
-from typing import Annotated
+import tempfile
+from pathlib import Path
+from typing import Annotated, Final
 
 import typer
 from typer._click.core import ParameterSource
 
+from agent_hub.cli.command_exits import fail
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.run_children import CHILD_HIDDEN, RunOptions, without
@@ -43,10 +48,15 @@ from agent_hub.cli.workflow_delivery import (
     START,
     IssueToPr,
     delivery_problem,
+    session_options,
 )
+from agent_hub.cli.workflow_runs import WorkflowRunError, snapshot_run
 from agent_hub.core.hub_config.model_tiers import RUN_TIER
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.engine import WorkflowEngineError, start_inputs
+
+# A flag typed on the command line (not its default): it wins over the implement node's own.
+_TYPED: Final = ParameterSource.COMMANDLINE
 
 
 def run(
@@ -113,6 +123,17 @@ def run(
     if not options.live:
         dry_run(children, client, options=options)
         return
-    parent = IssueToPr(begin_live_run(children, client, options=options, run_id=new_run_id()))
-    inputs[ISSUE_TEXT] = parent.issue_text
-    raise typer.Exit(run_delivery(hub, parent, plan=plan, inputs=inputs, pack=found.pack_root))
+    flags = {"max_turns": max_turns, "budget": budget, "model": model, "effort": effort}
+    given = {k: v for k, v in flags.items() if context.get_parameter_source(k) is _TYPED}
+    options = session_options(plan, children.config, start=start, given=given)
+    with tempfile.TemporaryDirectory(prefix="hub-run-") as scratch:
+        # The pack as it was at the start: a session cannot change the prompts the run reads.
+        try:
+            pack, _ = snapshot_run(
+                Path(scratch), document=dict(found.document), plan=plan, pack_root=found.pack_root
+            )
+        except WorkflowRunError as error:
+            fail(f"hub {COMMAND}: {error}")
+        parent = IssueToPr(begin_live_run(children, client, options=options, run_id=new_run_id()))
+        inputs[ISSUE_TEXT] = parent.issue_text
+        raise typer.Exit(run_delivery(hub, parent, plan=plan, inputs=inputs, pack=pack))

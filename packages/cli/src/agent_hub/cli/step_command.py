@@ -20,10 +20,13 @@ parent's (``hub workflow run``, ``hub run``).
 
 That parent runs its ``hub step`` nodes in process (``run_in_process``): the same code with
 ``hub run``'s children (in the caller's group), timeouts and lines (the worktree's on stdout, a
-warning naming ``hub run``), its output kept instead of printed and a failure raised with its
-reason as written.
+warning naming the parent's command), the node's stdin given, its output kept instead of printed
+and a failure raised with its reason as written (an exit's, from its last stderr line). An
+interrupt (Ctrl-C) is not a failure: it ends the parent as it would end ``hub run``.
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -32,7 +35,7 @@ from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Final, NoReturn
+from typing import Annotated, Final, NoReturn, TextIO
 
 import typer
 from typer._click.exceptions import ClickException
@@ -72,7 +75,7 @@ from agent_hub.core.runner.verdict import (
     last_json_line,
     session_outcome,
 )
-from agent_hub.core.workflows.failures import NodeFailedError
+from agent_hub.core.workflows.failures import NodeFailedError, kind_for_exit
 
 COMMAND: Final = "step"
 NO_COMMIT: Final = "no commit on the branch (the session reported done or gave no verdict)"
@@ -99,33 +102,46 @@ class StepFailedError(Exception):
 
 @dataclass
 class InProcess:
-    """A step run by the issue-to-pr parent: where its lines go, whom a warning names, and
-    the output it made."""
+    """A step run by the issue-to-pr parent: where its lines and warnings go, whom a warning
+    names, its stdin, and the output it made."""
 
     echo: Callable[[str], None]
     prefix: str
+    stdin: bytes
+    stderr: TextIO
     output: dict[str, JsonValue] | None = None
 
 
 _IN_PROCESS: ContextVar[InProcess | None] = ContextVar("in_process", default=None)
 
 
-def run_in_process(arguments: Sequence[str], *, echo: Callable[[str], None], prefix: str) -> str:
+def run_in_process(
+    arguments: Sequence[str], *, stdin: bytes, echo: Callable[[str], None], prefix: str
+) -> str:
     """``hub step <arguments>`` run here; its JSON output. A step's failure is ``exec_failed``
-    with its reason, a usage problem (or any other exit) ``config``."""
-    mode = InProcess(echo, prefix)
+    with its reason, an exit the kind of its code with its last stderr line, a usage problem
+    ``config``; ``KeyboardInterrupt`` propagates."""
+    errors = io.StringIO()
+    mode = InProcess(echo, prefix, stdin, sys.stderr)
     token = _IN_PROCESS.set(mode)
     try:
         command = typer.main.get_command(step_app)
-        code = command.main(list(arguments), prog_name="hub step", standalone_mode=False)
+        with (
+            contextlib.redirect_stderr(errors),
+            command.make_context("hub step", [*arguments]) as context,
+        ):
+            command.invoke(context)
     except StepFailedError as error:
         raise NodeFailedError("exec_failed", str(error)) from None
     except ClickException as error:
         raise NodeFailedError("config", error.format_message()) from None
+    except typer.Exit as exited:
+        lines = errors.getvalue().splitlines() or [f"hub step exited {exited.exit_code}"]
+        raise NodeFailedError(kind_for_exit(exited.exit_code) or "config", lines[-1]) from None
     finally:
         _IN_PROCESS.reset(token)
     if mode.output is None:
-        raise NodeFailedError("config", f"hub step exited {code} without an output")
+        raise NodeFailedError("config", "hub step ended without an output")
     return json.dumps(mode.output, sort_keys=True)
 
 
@@ -189,7 +205,8 @@ def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
 def verdict() -> None:
     """Read the session's reply on stdin as hub run does: done, or blocked with its question."""
     # On stdin, not as an argument: a reply may be longer than one argument holds, or hold NUL.
-    data = sys.stdin.buffer.read(MAX_REPLY_BYTES + 1)
+    mode = _IN_PROCESS.get()
+    data = sys.stdin.buffer.read(MAX_REPLY_BYTES + 1) if mode is None else mode.stdin
     if len(data) > MAX_REPLY_BYTES:
         _fail("verdict", "the reply is larger than 1 MiB")
     reply = data.decode(errors="replace")
@@ -263,7 +280,8 @@ def pr(
                 line=titled.unmatched,
                 commit_title=conventions.commit_title,
             )
-            typer.echo(line, err=True)
+            # In process, past the stderr the step's exit reads: the user sees it, as in hub run.
+            typer.echo(line, file=sys.stderr if mode is None else mode.stderr)
         body = pr_body(issue_id=issue, summary=summary, gate=facts.gate, workspace=workspace)
         opened = open_or_find_pr(
             child,

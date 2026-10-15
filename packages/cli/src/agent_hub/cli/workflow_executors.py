@@ -113,7 +113,8 @@ class WorkflowExecutors:
     child: ChildRunner = field(default=run_child)
     # Each agent node's last ``claude`` result (cost, turns, verdict), for issue-to-pr's records.
     replies: dict[str, SessionReply] = field(default_factory=dict)
-    hub_steps: Callable[[Sequence[str]], str] | None = None
+    # In process: (the step's arguments, its stdin) to its JSON output.
+    hub_steps: Callable[[Sequence[str], bytes], str] | None = None
     in_session: bool = True
     session: RunOptions | None = None
 
@@ -121,14 +122,14 @@ class WorkflowExecutors:
         node = call.node
         if isinstance(node, AgentNode | LoopNode):
             return self._agent(call, node)
-        if isinstance(node, ShellNode) and node.is_hub_step and self.hub_steps is not None:
-            return NodeReply(_bounded(self.hub_steps(call.argv[2:]).encode()))
-        argv, env = self._command(call)
         stdin = None
         if call.stdin is not None:
             stdin = call.stdin.encode(errors="surrogatepass")
             if len(stdin) > MAX_REPLY_BYTES:
                 raise NodeFailedError("config", f"stdin is larger than {MAX_REPLY_BYTES} bytes")
+        if isinstance(node, ShellNode) and node.is_hub_step and self.hub_steps is not None:
+            return NodeReply(_bounded(self.hub_steps(call.argv[2:], stdin or b"").encode()))
+        argv, env = self._command(call)
         result = self._spawn(
             argv, env=env, cwd=self._cwd(call.cwd), timeout=_timeout(node), stdin=stdin
         )
