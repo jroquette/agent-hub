@@ -15,6 +15,7 @@ from agent_hub.generator.workflow_discovery import (
     PackPathError,
     WorkflowDiscovery,
     discover_workflows,
+    pack_resolver,
     resolve_pack_file,
 )
 
@@ -333,3 +334,36 @@ def test_keeps_failed_first_claim_when_later_pack_reuses_name(hub: Path, builtin
 
     assert found.workflows == ()
     assert [p.path for p in found.problems][-1] == later
+
+
+def _valid(root: Path, pack: str, name: str) -> Path:
+    text = f"version: 1\nname: {name}\nrevision: 1\nnodes:\n  - {{id: a, type: halt, reason: x}}\n"
+    return _write(root / pack / f"{name}.yaml", text.encode())
+
+
+def test_resolves_an_include_among_its_pack_workflows_when_given_a_name(
+    hub: Path, builtin: Path
+) -> None:
+    _valid(hub / "workflows", "sdlc", "deliver")
+    _valid(hub / "workflows", "sdlc", "review")
+    _valid(hub / "workflows", "other", "lint")
+    found = _discover(hub, builtin)
+    pack = found.workflows[0].pack_root.parent / "sdlc"
+
+    resolve = pack_resolver(found, pack)
+
+    review = resolve("review")
+    assert review is not None
+    assert review.name == "review"
+    assert resolve("lint") is None
+    assert resolve("ghost") is None
+
+
+def test_resolves_a_pack_mate_when_the_hub_overrides_its_name(hub: Path, builtin: Path) -> None:
+    _valid(builtin, "sdlc", "review")
+    _valid(hub / "workflows", "mine", "review")
+    found = _discover(hub, builtin)
+
+    review = pack_resolver(found, builtin / "sdlc")("review")
+
+    assert review is not None

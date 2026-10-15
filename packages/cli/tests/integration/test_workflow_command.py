@@ -135,6 +135,57 @@ def test_checks_only_the_named_workflow_when_validate_gets_a_name(hub: Path) -> 
     assert (result.exit_code, result.stdout) == (0, "check: valid (2 nodes in 2 layers)\n")
 
 
+MAIN_YAML = """\
+version: 1
+name: main
+revision: 1
+nodes:
+  - id: ci
+    type: include
+    include: check
+  - id: ship
+    type: shell
+    command: [make, ship]
+    depends_on: [ci]
+"""
+
+
+def test_expands_the_include_from_the_pack_when_validate_names_the_includer(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/main.yaml", MAIN_YAML)
+
+    result = run(hub, "validate", "main")
+
+    assert (result.exit_code, result.stdout) == (0, "main: valid (3 nodes in 3 layers)\n")
+
+
+def test_refuses_the_include_when_its_workflow_is_in_another_pack(hub: Path) -> None:
+    write(hub, "workflows/other/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/main.yaml", MAIN_YAML)
+
+    result = run(hub, "validate", "main")
+
+    assert result.exit_code == 1
+    assert (
+        result.stderr
+        == 'workflows/demo/main.yaml:7: nodes[0].include: no workflow is named "check"\n'
+    )
+
+
+def test_writes_a_skeleton_with_namespaced_stubs_when_the_workflow_includes_one(
+    hub: Path,
+) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/main.yaml", MAIN_YAML)
+
+    result = run(hub, "test", "main", "--stubs-init")
+
+    assert result.exit_code == 0, result.output
+    skeleton = (hub / "workflows/demo/fixtures/main.yaml").read_text()
+    assert "ci__lint:" in skeleton
+    assert run(hub, "test", "main").exit_code == 0
+
+
 def test_exits_one_when_validate_names_no_workflow(hub: Path) -> None:
     result = run(hub, "validate", "ghost")
 

@@ -31,6 +31,7 @@ from agent_hub.core.workflows.nodes import (
     ExecutableNode,
     FromBinding,
     HaltNode,
+    IncludeNode,
     LoopNode,
     Node,
     ScriptNode,
@@ -168,7 +169,7 @@ class _Run:
             self._halt(node)
         elif isinstance(node, LoopNode):
             self._complete(node, self._retrying(node, lambda: self._loop_once(node)))
-        elif not isinstance(node, ApprovalNode):
+        elif isinstance(node, AgentNode | ShellNode | ScriptNode):
             self._complete(node, self._retrying(node, lambda: self._execute_once(node)))
 
     def _stopped_by_when(self, node: Node, expr: str) -> bool:
@@ -192,7 +193,7 @@ class _Run:
         before = self.prior.nodes.get(node.id)
         if before is None or before.state != "completed":
             return False
-        if isinstance(node, HaltNode | ApprovalNode) or node.always_run:
+        if isinstance(node, HaltNode | ApprovalNode | IncludeNode) or node.always_run:
             return False
         # References reach only ancestors (planning), so an unchanged ancestry reads the same.
         return node.id not in self.stale

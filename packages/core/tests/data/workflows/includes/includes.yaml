@@ -1,0 +1,30 @@
+version: 1
+name: includes
+description: Build, then one checks block per target, then a report that reads the lint verdict.
+revision: 1
+nodes:
+  - id: build
+    type: shell
+    command: [make, build]
+  - id: lint
+    type: include
+    include: checks
+    depends_on: [build]
+    with: {target: lint}
+  - id: test
+    type: include
+    include: checks
+    depends_on: [build]
+    with: {target: test}
+  - id: report
+    type: shell
+    command: [echo, $lint.output.verdict]
+    depends_on: [lint, test]
+    trigger_rule: all_done
+    output_format:
+      type: object
+      properties:
+        delivery: {type: string, enum: [delivered, failed]}
+      required: [delivery]
+returns: report
+outcome_field: delivery
