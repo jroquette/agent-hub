@@ -322,3 +322,50 @@ describe("tool helpers (transcript)", () => {
     expect(ruleLabel("odd")).toBe("odd");
   });
 });
+
+describe("reduceTranscript (stop)", () => {
+  const notices = (state: TranscriptState) =>
+    state.entries.flatMap((entry) => (entry.kind === "notice" ? [entry.text] : []));
+  const aborted = { body: { subtype: "error_during_execution", terminal_reason: "aborted_tools" } };
+
+  it("follows an interrupted turn's result with one Turn interrupted notice", () => {
+    const state = run([
+      record("interrupt", { seq: 1 }),
+      record("result", { seq: 2 }),
+      record("result", { seq: 3 }),
+      record("interrupt", { seq: 4 }),
+      record("result", { seq: 5, ...aborted }),
+      record("result", { seq: 6, ...aborted }),
+    ]);
+
+    expect(notices(state)).toEqual([
+      "You interrupted the turn",
+      "Turn interrupted",
+      "You interrupted the turn",
+      "Turn interrupted",
+      "Turn interrupted",
+    ]);
+  });
+
+  it("forgets an interrupt that landed on an idle session once the next message is sent", () => {
+    const state = run([
+      record("user.message", { seq: 1 }),
+      record("result", { seq: 2 }),
+      record("interrupt", { seq: 3 }),
+      record("user.message", { seq: 4 }),
+      record("result", { seq: 5 }),
+    ]);
+
+    expect(notices(state)).toEqual(["You interrupted the turn"]);
+  });
+
+  it("closes a bubble an interrupt cut short, so no caret stays", () => {
+    const state = run([
+      delta({ after_seq: 0, block: 0, index: 0, text: "Half a" }),
+      record("interrupt", { seq: 1 }),
+      record("result", { seq: 2, ...aborted }),
+    ]);
+
+    expect(state.entries[0]).toMatchObject({ kind: "assistant", text: "Half a", streaming: false });
+  });
+});
