@@ -73,8 +73,47 @@ def test_declares_added_keys_when_allow_list_widened() -> None:
         (EventType.TOOL_CALL, "skill"),
         (EventType.TOOL_CALL, "to"),
         (EventType.TOOL_RESULT, "error_message"),
+        (EventType.STEP_START, "revision"),
+        (EventType.STEP_START, "content_hash"),
+        (EventType.STEP_END, "failure_kind"),
+        (EventType.STEP_END, "skip_cause"),
+        (EventType.RUN_END, "revision"),
+        (EventType.RUN_END, "content_hash"),
     }
     assert {event_type for event_type, key in added if key == "git_branch"} == (
         set(PAYLOAD_KEYS) - {EventType.SESSION_START}
     )
     assert all(key in PAYLOAD_KEYS[event_type] for event_type, key in added)
+
+
+@pytest.mark.parametrize(
+    ("event_type", "keys"),
+    [
+        (EventType.STEP_START, {"run", "attempt", "revision", "content_hash"}),
+        (EventType.STEP_END, {"run", "attempt", "status", "failure_kind", "skip_cause", "reason"}),
+        (EventType.RUN_END, {"run", "status", "outcome", "reason", "revision", "content_hash"}),
+    ],
+    ids=["step.start", "step.end", "run.end"],
+)
+def test_keeps_workflow_engine_keys_when_engine_event_given(
+    event_type: EventType, keys: set[str]
+) -> None:
+    payload = dict.fromkeys(keys, "x") | {"output": "body", "detail": "text"}
+
+    assert kept_payload(event_type, payload) == dict.fromkeys(keys, "x")
+
+
+@pytest.mark.parametrize(
+    ("event_type", "key"),
+    [
+        (EventType.STEP_START, "failure_kind"),
+        (EventType.STEP_START, "skip_cause"),
+        (EventType.RUN_END, "skip_cause"),
+        (EventType.STEP_END, "content_hash"),
+    ],
+    ids=lambda value: str(value),
+)
+def test_drops_an_engine_key_when_its_type_does_not_carry_it(
+    event_type: EventType, key: str
+) -> None:
+    assert kept_payload(event_type, {key: "x"}) == {}
