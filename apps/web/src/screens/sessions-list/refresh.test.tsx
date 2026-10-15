@@ -56,7 +56,7 @@ function render(data: { current: ReturnType<typeof one>[] }) {
 function layOutRows() {
   vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
     const scroller = screen.getByTestId("scroller");
-    const rows = [...document.querySelectorAll("tr[data-key]")];
+    const rows = [...document.querySelectorAll("tr[data-key], .ah-table-wrap > div[tabindex]")];
     const index = rows.indexOf(this);
     const top = this === scroller ? 0 : index < 0 ? 0 : index * ROW - scroller.scrollTop;
     return {
@@ -173,6 +173,23 @@ describe("SessionsListScreen no-jump", () => {
     await screen.findByText("/s5");
 
     expect(scroller.scrollTop).toBe(2 * ROW + 10); // /s3 kept its offset; /s2 moved
+  });
+
+  it("anchors on a section's bounded region, not on the rows scrolling inside it", async () => {
+    const ended = Array.from({ length: 101 }, (_, i) => one(100 + i, "ended"));
+    const data = { current: [one(1, "live"), ...ended] };
+    const { stream } = render(data);
+    await screen.findByText("/s100");
+    layOutRows();
+    const scroller = screen.getByTestId("scroller");
+    scroller.scrollTop = ROW + 10; // the Ended region is the first visible thing
+    fireEvent.scroll(scroller);
+
+    data.current = [one(2, "live"), one(1, "live"), one(9, "ended"), one(8, "ended"), ...ended];
+    await change(stream(STREAM), "tile.upsert", { id: anId(9), group: "ended_recently" });
+    await screen.findByText("/s9");
+
+    expect(scroller.scrollTop).toBe(2 * ROW + 10); // one row above the region, none for those inside
   });
 
   it("does not move a reader at the very top", async () => {
