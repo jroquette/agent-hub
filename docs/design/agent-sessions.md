@@ -118,8 +118,8 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   `compositionend`; under `pointer: coarse` Enter is a newline. A send shows a "Sending…" bubble until the echoed
   record replaces it; during a running turn it reads "Queued: Claude reads it after this turn".
 - **`/` menu.** `/` at the start of the composer lists the `init` record's slash commands and skills (at most 200,
-  strings, de-duplicated); typing filters, arrows move, Enter or Tab inserts, Esc closes, and Enter never sends while
-  it is open.
+  strings of at most 100 characters, de-duplicated; else "No commands"); typing filters, arrows move, Enter or Tab
+  inserts, Esc closes, and Enter never sends while it is open.
 - **Keys.** Ctrl/Cmd+Alt+Enter allows once and Ctrl/Cmd+Alt+Backspace denies the oldest pending permission (inert
   when none; the buttons carry `aria-keyshortcuts`); `a` / `d` do the same while a permission card has focus;
   Shift+Esc focuses the composer; ArrowUp in an empty composer recalls the last prompt sent. The shortcut sheet has a
