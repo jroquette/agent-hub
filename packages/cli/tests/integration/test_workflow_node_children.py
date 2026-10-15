@@ -3,6 +3,7 @@ children; a timeout leaves nothing behind before a retry starts another copy).""
 
 import dataclasses
 import os
+import signal
 import threading
 import time
 from collections.abc import Sequence
@@ -118,13 +119,18 @@ def test_kills_a_child_when_it_starts_after_the_stop(tmp_path: Path) -> None:
     call, pidfile = shell_call(tmp_path, "sleep 30 & echo $! > PIDFILE; wait")
     runner = runner_in(tmp_path)
 
+    results: list[ChildResult] = []
+
     def late(argv: Sequence[str], **options: Any) -> ChildResult:
         # The stop lands between the check before the spawn and the child's start.
         runner.stop_children()
-        return run_child(argv, **options)
+        results.append(run_child(argv, **options))
+        return results[-1]
 
-    started = time.monotonic()
-    with pytest.raises(NodeFailedError):
+    with pytest.raises(NodeFailedError) as raised:
         dataclasses.replace(runner, child=late, stop=runner.stop).run(call)
 
-    assert time.monotonic() - started < 10
+    assert raised.value.kind == "exec_failed"
+    assert results[0].returncode == -signal.SIGKILL
+    # Killed as it started: the shell may not have written its child's pid at all.
+    assert not pidfile.exists() or gone(pidfile)

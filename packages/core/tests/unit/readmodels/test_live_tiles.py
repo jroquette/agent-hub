@@ -2,7 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from agent_hub.core.events.stored_event import StoredEvent
-from agent_hub.core.readmodels.live_tiles import failing_notice, live_tiles
+from agent_hub.core.readmodels.live_tiles import failing_notice, live_tiles, tile_fields
 from agent_hub.core.sessions.fold_session import fold_sessions, group_by_session
 from agent_hub.core.sessions.session import ProblemCounts, SessionStatus
 from agent_hub.core.sessions.session_problems import fold_problems
@@ -80,6 +80,43 @@ def test_groups_waiting_live_idle_then_recently_ended_when_tiles_built() -> None
     assert tiles[2].last_tool == "Bash"
     assert tiles[2].last_action == "Ran make check-fast"
     assert tiles[4].outcome is not None
+
+
+def test_matches_live_tile_with_session_tile_fields_when_session_has_tile() -> None:
+    events, now = _scene()
+    sessions = fold_sessions(events, now=now)
+    by_session = group_by_session(events)
+
+    tiles = live_tiles(sessions, by_session, now=now)
+
+    for tile in tiles:
+        fields = tile_fields(sessions[tile.id], by_session[tile.id], now=now)
+        assert (
+            fields.waiting_reason,
+            fields.last_action,
+            fields.last_tool,
+            fields.needs_you_problem,
+            fields.failing_notice,
+        ) == (
+            tile.waiting_reason,
+            tile.last_action,
+            tile.last_tool,
+            tile.needs_you_problem,
+            tile.failing_notice,
+        )
+        assert fields.sparkline_60s == (None if tile.group == "ended_recently" else ())
+    assert tiles[0].waiting_reason == "Plan approval"
+
+
+def test_fills_session_tile_fields_when_session_ended_long_ago() -> None:
+    events, now = _scene()
+    sessions = fold_sessions(events, now=now)
+
+    fields = tile_fields(sessions["s-old"], group_by_session(events)["s-old"], now=now)
+
+    assert fields.waiting_reason is None
+    assert fields.last_tool is not None
+    assert fields.sparkline_60s is None
 
 
 def test_carries_run_budget_when_session_belongs_to_run() -> None:
