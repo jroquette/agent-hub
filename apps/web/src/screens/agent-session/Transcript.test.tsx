@@ -2,7 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { aDeltaFrame, aLogRecord } from "../../testing/builders";
+import { aDeltaFrame, aLogRecord, at } from "../../testing/builders";
 import { seriousViolations } from "../../testing/axe";
 import { CostMeter } from "./CostMeter";
 import { TodoList } from "./TodoList";
@@ -688,14 +688,21 @@ describe("Transcript (message-meta)", () => {
   });
 
   it("re-renders no Markdown when the minute ticks", () => {
-    vi.useFakeTimers({ now: Date.now() });
+    // At 14:01:30 the minute clock reads 14:01:00: the first reply (14:00:01) is 59 s old, "just now";
+    // the 14:02:00 tick makes it 119 s old, which reads "2 min ago".
+    vi.useFakeTimers({ now: Date.parse(at(90)) });
     show([reply(1, "One"), reply(2, "Two")]);
+    const [first] = screen.getAllByRole("article", { name: "Claude" });
+    if (!first) throw new Error("no reply");
+    const label = () => first.querySelector("time")?.textContent;
+    expect(label()).toBe("just now");
     renders.markdown = 0;
 
     act(() => {
       vi.advanceTimersByTime(60_000);
     });
 
+    expect(label()).toBe("2 min ago");
     expect(renders.markdown).toBe(0);
   });
 });
