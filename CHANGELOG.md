@@ -27,6 +27,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
   `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
   `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
+- `hub step worktree|commits|pr --issue ISSUE --repo REPO` and `hub step report` run `hub run`'s stages one at a time and
+  print one JSON object each (the worktree's path and branch, the branch's commits, the PR's url, the delivery), for the issue-to-pr
+  workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
+  tracker (AGH-223).
 
 ### Fixed
 
