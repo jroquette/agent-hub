@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { aWorkdir } from "../testing/builders";
-import { derivedWorkdirId, matchingWorkdir, servedCheckout } from "./devCheckout";
+import { derivedWorkdirId, matchingWorkdir } from "./devCheckout";
 
 // The same vector as core's test_matches_known_vector_when_id_derived (E6).
 const ROOT = "/srv/demo/agent-hub";
@@ -29,10 +29,5 @@ describe("devCheckout (O8)", () => {
     expect(await matchingWorkdir(null, [repo])).toBeNull();
     expect(await matchingWorkdir("/srv/other", [repo, aWorkdir()])).toBeNull();
     expect(await matchingWorkdir(ROOT, [])).toBeNull();
-  });
-
-  it("live-edit-fallback: the served checkout is a string or null, never in a build", () => {
-    const served = servedCheckout();
-    expect(served === null || typeof served === "string").toBe(true);
   });
 });

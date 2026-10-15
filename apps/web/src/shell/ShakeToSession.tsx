@@ -17,6 +17,11 @@ import { StartSessionDialog } from "../screens/sessions-list/StartSessionDialog"
 /** Shown when the served checkout is not a listed folder, or outside `make dev` (O8). */
 export const LIVE_RELOAD_NOTE = "Live reload needs make dev in a listed folder";
 
+/** Any open dialog, a confirmation (`alertdialog`) included: a shake never stacks on one. */
+function dialogOpen(): boolean {
+  return document.querySelector('[role="dialog"], [role="alertdialog"]') !== null;
+}
+
 interface Opened {
   project: string;
   workdirs: readonly Workdir[];
@@ -64,19 +69,31 @@ export function ShakeToSession() {
       now.caps === undefined ||
       !now.folders ||
       now.folders.length === 0 ||
-      document.querySelector('[role="dialog"]') !== null
+      dialogOpen()
     )
       return;
+    const { project, caps, folders } = now;
     busy.current = true;
-    const shot = await captureScreen();
-    const workdirId = await matchingWorkdir(servedCheckout(), now.folders);
-    setOpened({
-      project: now.project,
-      workdirs: now.folders,
-      capabilities: now.caps,
-      screenshot: shot.ok ? { dataUrl: shot.dataUrl } : { failed: true },
-      workdirId,
-    });
+    let opening = false;
+    try {
+      const shot = await captureScreen();
+      // No match is the honest fallback when the id cannot be derived (no crypto.subtle).
+      const workdirId = await matchingWorkdir(servedCheckout(), folders).catch(() => null);
+      // A dialog that opened during the capture wins: the shot is dropped.
+      if (dialogOpen()) return;
+      setOpened({
+        project,
+        workdirs: folders,
+        capabilities: caps,
+        screenshot: shot.ok ? { dataUrl: shot.dataUrl } : { failed: true },
+        workdirId,
+      });
+      opening = true;
+    } catch {
+      // A shake that fails before opening opens nothing; the next shake tries again.
+    } finally {
+      if (!opening) busy.current = false;
+    }
   }, []);
 
   useEffect(() => {

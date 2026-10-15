@@ -1,8 +1,9 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { ConfirmDialog } from "../components/feedback";
 import { captureScreen } from "../lib/screenCapture";
-import { servedCheckout } from "../lib/devCheckout";
+import { matchingWorkdir, servedCheckout } from "../lib/devCheckout";
 import {
   aCapabilities,
   aPage,
@@ -16,10 +17,14 @@ import { AppShell } from "./AppShell";
 import { LIVE_RELOAD_NOTE, ShakeToSession } from "./ShakeToSession";
 
 vi.mock("../lib/screenCapture", () => ({ captureScreen: vi.fn() }));
-vi.mock("../lib/devCheckout", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../lib/devCheckout")>()),
-  servedCheckout: vi.fn(() => null),
-}));
+vi.mock("../lib/devCheckout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/devCheckout")>();
+  return {
+    ...actual,
+    servedCheckout: vi.fn(() => null),
+    matchingWorkdir: vi.fn(actual.matchingWorkdir),
+  };
+});
 
 const AGENT = "/api/v1/agent-sessions";
 const SHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
@@ -64,6 +69,13 @@ async function ready(view: ReturnType<typeof mount>) {
   });
   await act(async () => {
     await Promise.resolve();
+  });
+}
+
+/** Lets a shake's awaits (capture, workdir match) run to the end. */
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
 
@@ -183,6 +195,83 @@ describe("ShakeToSession (shake to start a session)", () => {
 
     expect(captureScreen).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "New session" })).toBeNull();
+  });
+
+  it("shake-inert: a confirmation (alertdialog) already open", async () => {
+    const view = renderWithApi(
+      <>
+        <ConfirmDialog title="Stop the session?" confirmLabel="Stop" />
+        <ShakeToSession />
+      </>,
+      { routes: routes(), path: "/sessions?scope=agent-hub" },
+    );
+    await ready(view);
+    expect(screen.getByRole("alertdialog", { name: "Stop the session?" })).toBeInTheDocument();
+
+    shake();
+    await settle();
+
+    expect(captureScreen).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "New session" })).toBeNull();
+  });
+
+  it("shake-inert: a dialog that opens during the capture keeps New session closed", async () => {
+    const palette = document.createElement("div");
+    palette.setAttribute("role", "dialog");
+    palette.setAttribute("aria-label", "Command palette");
+    onTestFinished(() => {
+      palette.remove();
+    });
+    vi.mocked(captureScreen).mockImplementationOnce(() => {
+      document.body.append(palette);
+      return Promise.resolve({ ok: true, dataUrl: SHOT, bytes: 16 });
+    });
+    const view = mount();
+    await ready(view);
+
+    shake();
+    await settle();
+
+    expect(captureScreen).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: "New session" })).toBeNull();
+
+    palette.remove();
+    shake();
+    await screen.findByRole("dialog", { name: "New session" });
+    expect(captureScreen).toHaveBeenCalledTimes(2);
+  });
+
+  it("live-edit-fallback: a throwing workdir match still opens, and the next shake works", async () => {
+    vi.mocked(servedCheckout).mockReturnValue(ROOT);
+    vi.mocked(matchingWorkdir).mockRejectedValueOnce(new TypeError("crypto.subtle is undefined"));
+    const view = mount();
+    await ready(view);
+
+    shake();
+
+    const dialog = await screen.findByRole("dialog", { name: "New session" });
+    expect(within(dialog).getByRole("note")).toHaveTextContent(LIVE_RELOAD_NOTE);
+    act(() => {
+      within(dialog).getByRole("button", { name: "Cancel" }).click();
+    });
+
+    shake();
+    const again = await screen.findByRole("dialog", { name: "New session" });
+    expect(within(again).getByRole("combobox", { name: "Working folder" })).toHaveValue(REPO_ID);
+  });
+
+  it("a shake that fails before opening leaves the gesture alive", async () => {
+    vi.mocked(captureScreen).mockRejectedValueOnce(new Error("boom"));
+    const view = mount();
+    await ready(view);
+
+    shake();
+    await settle();
+    expect(screen.queryByRole("dialog", { name: "New session" })).toBeNull();
+
+    shake();
+    await screen.findByRole("dialog", { name: "New session" });
+    expect(captureScreen).toHaveBeenCalledTimes(2);
   });
 
   it("shake-inert: no project", async () => {
