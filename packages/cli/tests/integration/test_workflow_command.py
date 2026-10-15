@@ -1175,3 +1175,15 @@ def test_snapshots_a_body_prompt_file_when_a_group_runs_live(sample: SampleRun) 
     assert (snapshot / "prompts" / "body.md").is_file()
     [round_one] = sample.fakes.calls("claude")
     assert round_one["argv"][1] == "Round after \n"
+
+
+def test_notes_the_unwatched_checkouts_on_the_start_record_when_one_is_not_a_repository(
+    sample: SampleRun,
+) -> None:
+    write(sample.hub, "workflows/sample/look.yaml", READ_ONLY_YAML)
+    write(sample.hub, "workflows/sample/scripts/look.sh", "printf ok\n")
+
+    sample.run("look", "--live", "--run-id", "l2")
+
+    start = sample.records("l2")[0]
+    assert start["checkout_unwatched"] == [str(sample.hub)]

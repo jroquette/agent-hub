@@ -369,17 +369,30 @@ def _split(
 ) -> tuple[tuple[str, ...], ...]:
     """Each layer as runs of nodes that may run concurrently, first fit in declaration order: a
     node that reads the checkout (``mutates_checkout: false``, or a group whose body holds one)
-    never beside one that may change it, and two agents never resuming one session at once."""
+    never beside one that may change it, and two agents never resuming one session at once. A node
+    goes to the first batch that fits after the last one resuming its session."""
     traits = {node.id: _Traits.of(node) for node in nodes}
     split: list[tuple[str, ...]] = []
     for layer in layers:
         batches: list[_Batch] = []
+        # The last batch resuming each session, and per checkout kind the first batch that may
+        # still take a node of that kind: a search starts past both, so a layer is linear work.
+        last: dict[str, int] = {}
+        first: dict[tuple[bool, bool], int] = {}
         for node_id in layer:
-            batch = next((b for b in batches if b.fits(traits[node_id])), None)
-            if batch is None:
-                batch = _Batch()
-                batches.append(batch)
-            batch.add(node_id, traits[node_id])
+            node = traits[node_id]
+            kind = (node.reads, node.writes)
+            start = max([first.get(kind, 0), *(last[s] + 1 for s in node.resumed if s in last)])
+            index = next((i for i in range(start, len(batches)) if batches[i].fits(node)), None)
+            if index is None:
+                index = len(batches)
+                batches.append(_Batch())
+            batches[index].add(node_id, node)
+            last.update(dict.fromkeys(node.resumed, index))
+            while first.get(kind, 0) < len(batches) and not batches[first.get(kind, 0)].fits(
+                _Traits(node.reads, node.writes, frozenset())
+            ):
+                first[kind] = first.get(kind, 0) + 1
         split.extend(tuple(batch.ids) for batch in batches)
     return tuple(split)
 

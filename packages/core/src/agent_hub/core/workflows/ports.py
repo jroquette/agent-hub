@@ -10,6 +10,7 @@ scripts), ``Clock`` and ``CheckoutProbe`` (``git status``); ``generator`` implem
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from threading import Event
 from typing import Literal, Protocol
 
 from agent_hub.core.json_form import JsonValue
@@ -79,8 +80,8 @@ class Clock(Protocol):
         """The current instant, with an offset."""
         ...
 
-    def sleep(self, delay: timedelta) -> None:
-        """Wait ``delay`` (a retry's backoff)."""
+    def sleep(self, delay: timedelta, stop: Event | None = None) -> None:
+        """Wait ``delay`` (a retry's backoff), or less once ``stop`` is set (the run stops)."""
         ...
 
 

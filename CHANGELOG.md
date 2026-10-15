@@ -52,6 +52,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The workflow engine runs a layer's nodes concurrently (at most 4 attempts at once in a run), each recorded as it
   ends; Ctrl-C stops the running children. A `mutates_checkout: false` node never shares a layer with one that may change the checkout, and fails
   `config` when its attempt changes `git status` (AGH-228).
+- Workflow runs read any workflow engine run: steps keep their node ids (`a__b` inside an include) with `skipped`,
+  `failure_kind` and `skip_cause`; a run has `status`, `outcome`, `revision` and `content_hash`, and its latest
+  `run.end` decides how a resumed run ended. `GET /api/v1/workflow-runs` filters by `workflow` and `failure_kind`;
+  `hub run` runs read as before (AGH-225).
+- `GET /api/v1/workflows` lists each project's workflows (source `hub` or `builtin`) and the files that do not load;
+  `GET /api/v1/workflows/{project}/{name}` gives a workflow's document and its layers (AGH-225).
 
 ### Fixed
 

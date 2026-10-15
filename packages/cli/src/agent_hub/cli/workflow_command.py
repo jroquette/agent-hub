@@ -38,7 +38,6 @@ import os
 import random
 import shutil
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated, Final
 
@@ -82,13 +81,12 @@ from agent_hub.core.approvals.decide_gate import (
     GateDecisionError,
     RequestedGate,
 )
-from agent_hub.core.hub_config.problems import ROOT_PATH
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.catalog import (
     LoadProblem,
     WorkflowCatalog,
-    WorkflowFile,
     check_workflows,
 )
 from agent_hub.core.workflows.document import WorkflowLoadError, parse_workflow
@@ -107,8 +105,6 @@ from agent_hub.core.workflows.run_state import RunState
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
     HUB_WORKFLOWS,
-    WORKFLOW_SUFFIXES,
-    DiscoveredWorkflow,
     WorkflowDiscovery,
     discover_workflows,
     pack_resolver,
@@ -120,10 +116,8 @@ from agent_hub.generator.workflow_fixtures import (
     skeleton_yaml,
 )
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
+from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 from agent_hub.generator.workflow_yaml import WorkflowMapping
-
-# How a built-in's file is shown: it lives in the installed package, not in the hub.
-BUILTIN_PREFIX: Final = "<builtin>"
 
 COMMAND: Final = "workflow"
 _PREFIX: Final = "hub workflow run"
@@ -298,7 +292,7 @@ def _ingest() -> IngestEvents:
 
 
 def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | None) -> int:
-    source = _DiscoveredSource(hub, only=name, builtin_root=BUILTIN_WORKFLOWS)
+    source = DiscoveredWorkflowSource(hub, only=name, builtin_root=BUILTIN_WORKFLOWS)
     catalog = check_workflows(source)
     _exit_on_problems(catalog)
     if not catalog.plans:
@@ -342,9 +336,12 @@ def _begin(
 ) -> int:
     run_id, name = folder.name, plan.document.name
     header: dict[str, JsonValue] = {"event": "start", "run": run_id, "workflow": name}
-    append_record(
-        folder, {**header, "revision": plan.document.revision, "content_hash": content_hash}
-    )
+    header |= {"revision": plan.document.revision, "content_hash": content_hash}
+    _, unwatched = _checkouts(hub, load_hub_config_or_exit(hub / FILE_LABEL))
+    if unwatched:
+        # Noted once: a read-only node's git status check does not see these folders.
+        header["checkout_unwatched"] = [str(path) for path in unwatched]
+    append_record(folder, header)
     append_record(folder, {"event": "inputs", "inputs": inputs})
     return _execute(hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash)
 
@@ -446,9 +443,7 @@ def _execute(
         environ=os.environ,
         hub_program=own_hub_program(),
     )
-    # The checkouts git can read: the hub and each repo cloned next to it.
-    repos = (hub.parent / repo.dir for repo in config.repos)
-    roots = tuple(root for root in (hub, *repos) if (root / ".git").exists())
+    roots, _ = _checkouts(hub, config)
     checkout = GitCheckoutProbe(roots=roots, environ=os.environ)
     ports = EnginePorts(
         runner,
@@ -471,6 +466,13 @@ def _execute(
     outcome = "" if report.outcome is None else f", outcome {report.outcome}"
     typer.echo(f"run {folder.name}: {report.status}{outcome}")
     return 0 if report.status == "done" else 1
+
+
+def _checkouts(hub: Path, config: HubConfig) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """The hub and the repos next to it, as git checkouts (watched) and other folders (not)."""
+    folders = (hub, *(hub.parent / repo.dir for repo in config.repos))
+    watched = tuple(folder for folder in folders if (folder / ".git").exists())
+    return watched, tuple(folder for folder in folders if folder not in watched)
 
 
 def _events(
@@ -544,7 +546,9 @@ def _json(data: bytes) -> object:
 
 def _catalog(*, name: str | None) -> WorkflowCatalog:
     root = hub_root_or_exit(os.environ, command=COMMAND)
-    return check_workflows(_DiscoveredSource(root, only=name, builtin_root=BUILTIN_WORKFLOWS))
+    return check_workflows(
+        DiscoveredWorkflowSource(root, only=name, builtin_root=BUILTIN_WORKFLOWS)
+    )
 
 
 def _exit_on_problems(catalog: WorkflowCatalog) -> None:
@@ -555,41 +559,6 @@ def _exit_on_problems(catalog: WorkflowCatalog) -> None:
 def _problem_line(problem: LoadProblem) -> str:
     where = shown_path(problem.file) + ("" if problem.line is None else f":{problem.line}")
     return f"{where}: {problem.key}: {problem.message}"
-
-
-class _DiscoveredSource:
-    """The ``WorkflowSource`` over the generator's discovery; ``only`` keeps one name's files."""
-
-    def __init__(self, root: Path, *, only: str | None, builtin_root: Path) -> None:
-        self.root = root
-        self.only = only
-        self.builtin_root = builtin_root
-        self.found: dict[str, DiscoveredWorkflow] = {}
-        self.discovery = WorkflowDiscovery(workflows=(), overridden=(), problems=())
-
-    def workflow_files(self) -> Iterator[WorkflowFile | LoadProblem]:
-        self.discovery = discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
-        for problem in discovery.problems:
-            # A folder's problem (a linked workflows/, an unreadable pack, the file budget)
-            # bears on every name; a file's only on its own.
-            on_folder = problem.path.suffix not in WORKFLOW_SUFFIXES
-            if self.only is None or on_folder or problem.path.stem == self.only:
-                yield LoadProblem(
-                    self._shown(problem.path), problem.line, ROOT_PATH, problem.reason
-                )
-        for found in discovery.workflows:
-            if self.only is None or found.name == self.only:
-                self.found[found.name] = found
-                includes = pack_resolver(discovery, found.pack_root)
-                shown = self._shown(found.path)
-                yield WorkflowFile(shown, found.name, found.document, found.lines, includes)
-
-    def _shown(self, path: Path) -> str:
-        if path.is_relative_to(self.root):
-            return path.relative_to(self.root).as_posix()
-        if path.is_relative_to(self.builtin_root):
-            return f"{BUILTIN_PREFIX}/{path.relative_to(self.builtin_root).as_posix()}"
-        return str(path)
 
 
 # ``hub workflow test`` (AGH-222): the packs' fixtures, dry-run in memory through the engine.
@@ -671,4 +640,4 @@ def _skeleton_target(root: Path, pack_root: Path, name: str) -> Path:
 
 
 def _shown_fixture(root: Path, path: Path) -> str:
-    return _DiscoveredSource(root, only=None, builtin_root=BUILTIN_WORKFLOWS)._shown(path)
+    return DiscoveredWorkflowSource(root, builtin_root=BUILTIN_WORKFLOWS)._shown(path)
