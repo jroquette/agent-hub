@@ -1624,6 +1624,9 @@ if os.environ.get("FAKE_MAKE_GRANDCHILD"):
 time.sleep(float(os.environ.get("FAKE_MAKE_SLEEP", "0")))
 code = int(os.environ.get("FAKE_MAKE_EXIT", "0"))
 sys.stdout.write("x" * int(os.environ.get("FAKE_MAKE_BYTES", "0")))
+if os.environ.get("FAKE_MAKE_STDOUT"):
+    # A gate that also explains itself on stdout, before its stderr line.
+    print("gate stdout line", flush=True)
 print("synthetic gate output", file=sys.stderr if code else sys.stdout)
 sys.exit(code)
 """

@@ -1,0 +1,32 @@
+# No changes: the session reports done without a commit; no gate, no PR, the run ends done.
+workflow: issue-to-pr
+inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target:
+        path: /ws/demo-api/.claude/worktrees/dem-1
+        branch: jdoe/dem-1
+        base: origin/trunk
+        default_branch: trunk
+        github: acme/demo-api
+        gate: make check
+        conventions:
+          branch: "{prefix}{issue_lower}"
+          commit_title: "{type}({scope}): {summary} ({ISSUE})"
+          pr_title: "{type}({scope}): {summary} ({ISSUE})"
+          titles_configured: false
+          pr_title_explicit: false
+  implement: {text: "Done.\n{\"status\": \"done\", \"summary\": \"Adds the change.\"}"}
+  verdict: {output: {status: done, summary: Adds the change., question: ""}}
+  commits: {output: {count: 0, subjects: [], summary: "", dirty: false}}
+  report: {output: {delivery: no_changes, stage: IMPLEMENTING, reason: no commit on the branch, question: "", pr: "", summary: ""}}
+expect: {status: done, outcome: no_changes}
+reached: [worktree, implement, verdict, commits, report]

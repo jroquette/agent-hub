@@ -245,6 +245,8 @@ def _texts(node: Node) -> Iterator[tuple[Loc, str]]:
 def _agent_texts(node: AgentNode | LoopNode) -> Iterator[tuple[Loc, str]]:
     if node.prompt is not None:
         yield ("prompt",), node.prompt
+    if node.cwd is not None:
+        yield ("cwd",), node.cwd
     for name, binding in node.with_.items():
         if isinstance(binding, FromBinding):
             yield ("with", name, "from"), binding.from_

@@ -34,7 +34,7 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 
 | `type` | Keys | What happens |
 |---|---|---|
-| `agent` | `prompt` or `prompt_file` (one), `with`, `model`, `limits`, `context` | one `claude -p` session, with the hub's settings and plugin |
+| `agent` | `prompt` or `prompt_file` (one), `with`, `model`, `limits`, `context`, `cwd` | one `claude -p` session, with the hub's settings and plugin |
 | `shell` | `command` (argv list), `cwd`, `env` | runs the program, never through a shell; exit 0 passes |
 | `script` | `runtime` (`sh` or `python`), `script`, `args`, `cwd`, `env` | `sh <file>` or `uv run <file>`; exit 0 passes |
 | `loop` | the `agent` keys, `max_iterations`, `until`, `until_field`, `until_bash`, `fresh_context` | repeats one agent turn until done |
@@ -47,12 +47,12 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 - `prompt_file` and `script` are paths inside the pack's `prompts/` and `scripts/` (no `..`, not absolute). `with` maps
   names to values or `{from: <output ref>, if_skipped: <value>}`, read in a prompt as `$WITH.<name>`. `model` is a
   `hub.json` → `models.tiers` tier (default `medium`); `limits` is `{max_turns, max_cost_usd}` (default 40 and 3.0);
-  `context` is `fresh` (default) or `{resume: <upstream agent node id>}`.
+  `context` is `fresh` (default) or `{resume: <upstream agent node id>}`. A `cwd` (an agent's may be a reference) stays
+  in the hub or a repo, else `config`; in a repo an agent runs as `hub run`'s session (hub and other repos attached).
 - No child gets `LINEAR_API_KEY`. Agents run with `session_env`, other commands with `untrusted_env`; `env` adds no
-  token. A `hub step` node (`command[0:2]` is `[hub, step]`) runs the engine's own hub (absolute path) with `child_env`
-  (GitHub tokens), refuses `env` and a referenced `cwd`, and narrows per call as today: `untrusted_env` for git reads
-  and the gate, `push_env` for fetch, push and gh. Tracker writes (ADR 0030) happen only in the parent (`hub workflow
-  run`, `hub run`) after the run ends, from `run.end`'s outcome; `hub step report` only computes the delivery.
+  token. A `hub step` node (`command[0:2]` is `[hub, step]`) runs the engine's own hub with `child_env`, refuses `env`
+  and a referenced `cwd`, and narrows per call (`push_env` only for fetch, push, gh). Tracker writes (ADR 0030) are the
+  parent's, from `run.end`'s outcome; for `issue-to-pr` it acts as `hub run` (issue read, records, events, exit codes).
 - `loop`: `max_iterations` (1–50) and at least one channel: `until` (text the final line equals), `until_field` (a
   `required` boolean of its `output_format`), `until_bash` (argv; exit 0 is done). `fresh_context: false` (default)
   resumes the previous iteration's session. The output is the last iteration's; past the cap it fails `max_iterations`.

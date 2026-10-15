@@ -571,3 +571,15 @@ def test_fails_the_node_and_ends_the_run_when_the_clock_cannot_sleep() -> None:
     assert runner.ran() == ["a"]
     assert report.status == "failed"
     assert [end.status for end in recorder.run_ends] == ["failed"]
+
+
+def test_renders_cwd_when_agent_node_reads_upstream_path() -> None:
+    plan = plan_of(
+        shell("tree", output_format={"type": "object", "properties": {"path": {"type": "string"}}}),
+        agent("work", "tree", cwd="$tree.output.path"),
+    )
+    runner = ScriptedRunner({"tree": ['{"path": "/ws/api/.claude/worktrees/agh-1"}']})
+
+    Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    assert runner.calls[1].cwd == "/ws/api/.claude/worktrees/agh-1"

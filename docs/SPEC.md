@@ -77,6 +77,7 @@ hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each
 hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue with a complete brief to a PR through the tracker port
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
+hub step worktree|verdict|commits|pr|report …   # one hub run stage as JSON, for the issue-to-pr workflow's nodes
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as metadata-only events
@@ -171,6 +172,15 @@ each tracker write it would make, with placeholder PR urls (no link edit: the li
 only git reads, writes no file and does not write to the tracker. Usage errors exit 2 before any tracker call, with no
 child run but `git` reads (the hub's main checkout, the git identity a branch prefix may come from); every other
 failure exits 1. No child gets `LINEAR_API_KEY`, and only the push and `gh` get a GitHub token.
+
+`hub step` runs one stage of `hub run` for the issue-to-pr workflow (ADR 0032) and prints one JSON object: `worktree
+--issue --repo` makes or keeps the worktree as `hub run` does and prints its path, the prompt's texts and the repo's
+`target` (branch, base, GitHub repo, gate, conventions) read from `hub.json` before the session; `verdict REPLY` reads
+the session's reply as `hub run` does (done, or blocked with its question); `commits --target` and `pr --issue
+--target [--summary]` take that target back (a path outside the workspace exits 2) and never read `hub.json` again;
+`report` computes the delivery (`delivered`, `no_changes`, `blocked`, `failed`) from the other steps' outputs. A
+failure is one `hub step <name>: <reason>` stderr line and exit 1. No step reads or writes the tracker; only the
+fetch, the push and `gh` get a GitHub token.
 
 `hub start ISSUE` reads the issue once, then looks for its task worktrees in every repo: a name found there resumes the
 task, else the task is named `<issue lower>-<title slug>`. It checks the branches, creates the missing worktrees of the

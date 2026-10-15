@@ -13,9 +13,10 @@ import pytest
 from agent_hub.cli import workflow_executors
 from agent_hub.cli.child_process import ChildResult
 from agent_hub.cli.errors import ChildTimedOutError
+from agent_hub.cli.run_children import RunChildren, RunOptions
 from agent_hub.cli.workflow_executors import MAX_OUTPUT_BYTES, WorkflowExecutors
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.testing.builders import a_models_document
+from agent_hub.core.testing.builders import a_models_document, an_issue
 from agent_hub.core.testing.workflow_fakes import a_plan
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.nodes import ExecutableNode
@@ -379,3 +380,42 @@ def test_kills_child_group_when_interrupted(
         runner.run(call(spec, argv=("make",)))
 
     assert killed == [4242]
+
+
+def test_runs_claude_in_worktree_as_hub_run_does_when_agent_node_has_cwd(
+    tmp_path: Path, pack: Path
+) -> None:
+    worktree = tmp_path / "demo-api" / ".claude" / "worktrees" / "dem-1"
+    worktree.mkdir(parents=True)
+    child = FakeChild([claude_result("ok")])
+    config = HubConfig.model_validate(a_models_document())
+    spec = {**AGENT, "model": "medium", "cwd": "../demo-api"}
+
+    executors(tmp_path, pack, child).run(call(spec, prompt="Go.", cwd=str(worktree)))
+
+    children = RunChildren(
+        config=config, hub=tmp_path / "hub", repo="demo-api", issue_id="DEM-1", branch_prefix="j/"
+    )
+    model = config.models.model_for("medium")
+    options = RunOptions(
+        live=True, max_turns=40, budget=3.0, model=model, start="implement", effort="medium"
+    )
+    expected = children.session_argv(an_issue(), options)
+    assert child.calls[0]["argv"][3:] == expected[3:]
+    assert child.calls[0]["cwd"] == worktree.resolve()
+
+
+@pytest.mark.parametrize("cwd", ["/etc", "..", "../demo-api/../..", "../demo-api/out"])
+def test_fails_config_when_agent_cwd_leaves_hub_and_repos(
+    tmp_path: Path, pack: Path, cwd: str
+) -> None:
+    (tmp_path / "demo-api").mkdir()
+    (tmp_path / "demo-api" / "out").symlink_to(tmp_path / "elsewhere")
+    child = FakeChild()
+    spec = {**AGENT, "cwd": "../demo-api"}
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(spec, prompt="Go.", cwd=cwd))
+
+    assert raised.value.kind == "config"
+    assert child.calls == []
