@@ -4,7 +4,9 @@ Each attempt is a ``step.start`` and a ``step.end``; a skipped node emits only `
 Source ``executor``, session ``run:<run>``, ``workflow`` the name and ``step`` the node id as
 recorded; ``source_id`` is ``<run>:<step>:<attempt>:<type>``, and ``<run>:run:<n>:end`` for
 the run's ``n``-th end (0 first, one more per resume). Outputs, details and rendered text stay
-in the run's record, never here (ADR 0019): ``reason`` holds only a node id. A retry adds no
+in the run's record, never here (ADR 0019): ``reason`` holds only a node id; ``issue`` (the run's
+``issue`` input, when given) rides on every event, so the read model can tell an issue's live
+runs apart. A retry adds no
 event: its failed attempt already ended with its kind. The composition root passes
 ``events`` to ``IngestEvents``, which redacts and trims them like any other.
 """
@@ -30,14 +32,18 @@ class WorkflowEvents:
         content_hash: str,
         end_index: int = 0,
         repo: str | None = None,
+        issue: str | None = None,
     ) -> None:
         self.project, self.run_id, self.workflow, self.repo = project, run_id, workflow, repo
+        self.tagged: dict[str, JsonValue] = {"run": run_id}
+        if issue is not None:
+            self.tagged["issue"] = issue
         self.pinned: dict[str, JsonValue] = {"revision": revision, "content_hash": content_hash}
         self.end_index = end_index
         self.events: list[Event] = []
 
     def step_started(self, start: StepStart) -> None:
-        payload = {"run": self.run_id, "attempt": start.attempt, **self.pinned}
+        payload = {**self.tagged, "attempt": start.attempt, **self.pinned}
         source_id = f"{self.run_id}:{start.node}:{start.attempt}:{EventType.STEP_START}"
         self.events.append(
             self._event(
@@ -47,7 +53,7 @@ class WorkflowEvents:
 
     def step_ended(self, end: StepEnd) -> None:
         payload: dict[str, JsonValue] = {
-            "run": self.run_id,
+            **self.tagged,
             "attempt": end.attempt,
             "status": end.status,
         }
@@ -66,7 +72,7 @@ class WorkflowEvents:
         """No event: the run's record keeps the retry."""
 
     def run_ended(self, end: RunEnd) -> None:
-        payload: dict[str, JsonValue] = {"run": self.run_id, "status": end.status}
+        payload: dict[str, JsonValue] = {**self.tagged, "status": end.status}
         payload["outcome"] = end.outcome
         if end.reason is not None:
             payload["reason"] = end.reason

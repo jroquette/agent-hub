@@ -135,15 +135,8 @@ class ReadWorkflows:
         return WorkflowCatalogView(items=tuple(items), problems=tuple(problems))
 
     def get_workflow(self, project: str, name: str) -> WorkflowDetail:
-        hub_path = next(
-            (path for known, path in self._hubs.project_hubs() if known == project), None
-        )
-        if hub_path is None:
-            raise EntityNotFoundError(entity="project", entity_id=project)
-        catalog, origins = self._read(hub_path)
-        plan = next((plan for plan in catalog.plans if plan.document.name == name), None)
-        if plan is None:
-            raise EntityNotFoundError(entity="workflow", entity_id=f"{project}/{name}")
+        hub_path, plan = self.workflow_plan(project, name)
+        _, origins = self._read(hub_path)
         nodes = {node.id: node for node in plan.document.nodes}
         layers = tuple(
             tuple(
@@ -161,6 +154,20 @@ class ReadWorkflows:
         return WorkflowDetail(
             **_summary(project, plan, origins).model_dump(), layers=layers, document=document
         )
+
+    def workflow_plan(self, project: str, name: str) -> tuple[str, WorkflowPlan]:
+        """The project's hub folder and the plan of its workflow ``name`` (``WorkflowPlans``);
+        ``EntityNotFoundError`` (``project``, ``workflow``) else."""
+        hub_path = next(
+            (path for known, path in self._hubs.project_hubs() if known == project), None
+        )
+        if hub_path is None:
+            raise EntityNotFoundError(entity="project", entity_id=project)
+        catalog, _ = self._read(hub_path)
+        plan = next((plan for plan in catalog.plans if plan.document.name == name), None)
+        if plan is None:
+            raise EntityNotFoundError(entity="workflow", entity_id=f"{project}/{name}")
+        return hub_path, plan
 
     def _read(self, hub_path: str) -> _Read:
         source = self._source_of(hub_path)

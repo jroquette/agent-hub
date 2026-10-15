@@ -1,0 +1,189 @@
+"""hub web's run launcher starting a fake ``hub`` executable as its children (AC-213.19)."""
+
+import json
+import os
+import stat
+import sys
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from agent_hub.api.run_launcher import ProcessRunLauncher
+from agent_hub.core.workflows.launch import LaunchSpec, RunConflictError, RunLaunchError
+
+# Records each call, then: exits 3 on --abandon when told to, sleeps on --live until a signal.
+FAKE_HUB = """#!{python}
+import json, os, sys, time
+with open(os.environ["FAKE_HUB_CALLS"], "a") as calls:
+    calls.write(json.dumps({{
+        "argv": sys.argv[1:],
+        "cwd": os.getcwd(),
+        "linear": "LINEAR_API_KEY" in os.environ,
+        "root": os.environ.get("AGENT_HUB_ROOT"),
+        "db": os.environ.get("AGENT_HUB_DB"),
+    }}) + "\\n")
+if "--abandon" in sys.argv and os.environ.get("FAKE_HUB_REFUSE"):
+    sys.exit(3)
+if "--live" in sys.argv:
+    time.sleep(30)
+"""
+
+
+@pytest.fixture
+def hub(tmp_path: Path) -> Path:
+    folder = tmp_path / "hub"
+    folder.mkdir()
+    return folder
+
+
+@pytest.fixture
+def make_launcher(tmp_path: Path) -> Callable[..., ProcessRunLauncher]:
+    program = tmp_path / "hub-fake"
+    program.write_text(FAKE_HUB.format(python=sys.executable))
+    program.chmod(0o700)
+
+    def make(**env: str) -> ProcessRunLauncher:
+        environ = {
+            "PATH": os.environ.get("PATH", ""),
+            "FAKE_HUB_CALLS": str(tmp_path / "calls.jsonl"),
+            "LINEAR_API_KEY": "lin_api_synthetic",
+            **env,
+        }
+        return ProcessRunLauncher(
+            db_path=tmp_path / "agent-hub.db", environ=environ, program=[str(program)], grace=5
+        )
+
+    return make
+
+
+def calls(tmp_path: Path, count: int) -> list[dict[str, Any]]:
+    path = tmp_path / "calls.jsonl"
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        lines = path.read_text().splitlines() if path.exists() else []
+        if len(lines) >= count:
+            return [json.loads(line) for line in lines]
+        time.sleep(0.05)
+    raise AssertionError(f"fewer than {count} calls")
+
+
+def gone(path: Path) -> bool:
+    deadline = time.monotonic() + 10
+    while path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not path.exists()
+
+
+def spec(hub: Path, *, live: bool = False, **inputs: Any) -> LaunchSpec:
+    return LaunchSpec(
+        run_id="run-1",
+        project="demo",
+        hub_path=str(hub),
+        workflow="fix",
+        inputs=inputs,
+        live=live,
+        issue="DEM-7",
+    )
+
+
+def test_starts_cli_with_argv_and_scoped_env_when_run_launched(
+    hub: Path, tmp_path: Path, make_launcher: Callable[..., ProcessRunLauncher]
+) -> None:
+    make_launcher().start(spec(hub, issue="DEM-7", tries=2, strict=True))
+
+    [call] = calls(tmp_path, 1)
+    assert call["argv"] == [
+        "workflow", "run", "fix", "--run-id", "run-1",
+        "--input", "issue=DEM-7", "--input", "tries=2", "--input", "strict=true",
+    ]  # fmt: skip
+    assert (call["cwd"], call["root"]) == (os.path.realpath(hub), str(hub))
+    assert call["db"] == str(tmp_path / "agent-hub.db")
+    assert call["linear"] is False
+    assert gone(hub / ".agent-runs" / "web" / "run-1.pid")
+    log = hub / ".agent-runs" / "web" / "run-1.log"
+    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+
+
+def test_keeps_owner_only_pid_file_while_child_runs_when_live(
+    hub: Path, tmp_path: Path, make_launcher: Callable[..., ProcessRunLauncher]
+) -> None:
+    launcher = make_launcher()
+    launcher.start(spec(hub, live=True))
+    calls(tmp_path, 1)
+    pid_file = hub / ".agent-runs" / "web" / "run-1.pid"
+
+    try:
+        assert stat.S_IMODE(pid_file.stat().st_mode) == 0o600
+        assert launcher.live_runs(str(hub)) == {"run-1": "DEM-7"}
+        with pytest.raises(RunConflictError):
+            launcher.resume(str(hub), "run-1")
+    finally:
+        assert launcher.cancel(str(hub), "run-1")
+    assert gone(pid_file)
+
+
+def test_signals_group_then_abandons_when_cancelled(
+    hub: Path, tmp_path: Path, make_launcher: Callable[..., ProcessRunLauncher]
+) -> None:
+    launcher = make_launcher()
+    launcher.start(spec(hub, live=True))
+    calls(tmp_path, 1)
+
+    assert launcher.cancel(str(hub), "run-1") is True
+
+    abandon = calls(tmp_path, 2)[1]
+    assert abandon["argv"] == ["workflow", "run", "--abandon", "run-1"]
+    assert launcher.live_runs(str(hub)) == {}
+
+
+def test_replaces_link_without_following_it_when_pid_path_is_link(
+    hub: Path, tmp_path: Path, make_launcher: Callable[..., ProcessRunLauncher]
+) -> None:
+    folder = hub / ".agent-runs" / "web"
+    folder.mkdir(parents=True)
+    target = tmp_path / "elsewhere"
+    target.write_text("kept")
+    (folder / "run-1.pid").symlink_to(target)
+
+    make_launcher().start(spec(hub))
+
+    calls(tmp_path, 1)
+    assert target.read_text() == "kept"
+
+
+def test_calls_cli_resume_detached_when_run_resumed(
+    hub: Path, tmp_path: Path, make_launcher: Callable[..., ProcessRunLauncher]
+) -> None:
+    make_launcher().resume(str(hub), "run-1")
+
+    assert calls(tmp_path, 1)[0]["argv"] == ["workflow", "run", "--resume", "run-1"]
+
+
+def test_waits_for_cli_when_run_abandoned(
+    hub: Path, tmp_path: Path, make_launcher: Callable[..., ProcessRunLauncher]
+) -> None:
+    make_launcher().abandon(str(hub), "run-1")
+
+    assert calls(tmp_path, 1)[0]["argv"] == ["workflow", "run", "--abandon", "run-1"]
+
+
+def test_refuses_abandon_when_cli_exits_non_zero(
+    hub: Path, make_launcher: Callable[..., ProcessRunLauncher]
+) -> None:
+    with pytest.raises(RunConflictError) as caught:
+        make_launcher(FAKE_HUB_REFUSE="1").abandon(str(hub), "run-1")
+
+    assert caught.value.code == "refused"
+
+
+def test_reports_launch_error_when_program_cannot_start(hub: Path, tmp_path: Path) -> None:
+    launcher = ProcessRunLauncher(
+        db_path=tmp_path / "db", environ={}, program=[str(tmp_path / "missing")]
+    )
+
+    with pytest.raises(RunLaunchError):
+        launcher.start(spec(hub))
+    assert not (hub / ".agent-runs" / "web" / "run-1.pid").exists()
