@@ -55,40 +55,36 @@ type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
 type Row =
   { kind: "entry"; entry: TranscriptEntry } | { kind: "run"; key: string; entries: ToolEntry[] };
 
-/** What the log shows: attached cards leave their place, and consecutive tool calls with no
- * text between them become one run, keyed by its first call so it keeps its node as it grows
- * (AC-234.24). */
-function rowsOf(entries: readonly TranscriptEntry[], attached: Set<string>): Row[] {
+/** What the log shows from `start` on: attached cards leave their place, and consecutive tool
+ * calls with no text between them become one run. A run is keyed by its first call in the whole
+ * list, so it keeps its node as it grows or as earlier calls join it a frame later (AC-234.24). */
+function rowsOf(entries: readonly TranscriptEntry[], attached: Set<string>, start: number): Row[] {
   const rows: Row[] = [];
+  let key: string | null = null;
   let run: ToolEntry[] = [];
   const flush = () => {
-    const [first] = run;
-    if (first) rows.push({ kind: "run", key: first.key, entries: run });
+    if (key !== null && run.length > 0) rows.push({ kind: "run", key, entries: run });
+    key = null;
     run = [];
   };
-  for (const entry of entries) {
-    if (entry.kind === "permission" && attached.has(entry.requestId)) continue;
+  entries.forEach((entry, index) => {
+    if (entry.kind === "permission" && attached.has(entry.requestId)) return;
     if (entry.kind === "tool") {
-      run.push(entry);
-      continue;
+      key ??= entry.key;
+      if (index >= start) run.push(entry);
+      return;
     }
     flush();
-    rows.push({ kind: "entry", entry });
-  }
+    if (index >= start) rows.push({ kind: "entry", entry });
+  });
   flush();
   return rows;
-}
-
-/** A tool call, or a permission card shown under one: part of a run. */
-function inRun(entry: TranscriptEntry | undefined, attached: Set<string>): boolean {
-  return entry?.kind === "tool" || (entry?.kind === "permission" && attached.has(entry.requestId));
 }
 
 function firstShown(state: TranscriptState): number {
   const { entries } = state;
   const oldest = pendingPermissions(state)[0];
-  const calls = attachedRequests(entries);
-  const attached = oldest !== undefined && calls.has(oldest);
+  const attached = oldest !== undefined && attachedRequests(entries).has(oldest);
   // An attached card shows with its tool call, so the first render starts there.
   const card = entries.findIndex((entry) =>
     attached
@@ -96,10 +92,7 @@ function firstShown(state: TranscriptState): number {
       : entry.kind === "permission" && entry.requestId === oldest,
   );
   const tail = entries.length - FIRST_ENTRIES;
-  let first = Math.max(0, card >= 0 ? Math.min(card, tail) : tail);
-  // Never inside a run: the earlier entries would give it another first call, so another key.
-  while (first > 0 && inRun(entries[first], calls) && inRun(entries[first - 1], calls)) first -= 1;
-  return first;
+  return Math.max(0, card >= 0 ? Math.min(card, tail) : tail);
 }
 
 /** The tool a running turn waits on: the latest call without a result. */
@@ -303,7 +296,7 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
           {state.entries.length === 0 && (
             <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
           )}
-          {rowsOf(state.entries.slice(start), attached).map((row) => {
+          {rowsOf(state.entries, attached, start).map((row) => {
             if (row.kind === "run") {
               const items = row.entries.flatMap(({ toolId }): GroupItem[] => {
                 const tool = state.tools[toolId];
