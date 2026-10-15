@@ -119,7 +119,8 @@ def test_keeps_first_pack_when_hub_packs_share_name(hub: Path, builtin: Path) ->
     found = _discover(hub, builtin)
 
     assert [w.path for w in found.workflows] == [first]
-    assert str(first) in _reasons(found)["review.yaml"]
+    assert "by a-pack/review.yaml" in _reasons(found)["review.yaml"]
+    assert str(hub) not in _reasons(found)["review.yaml"]
 
 
 def test_reports_problem_when_name_differs_from_file_name(hub: Path, builtin: Path) -> None:

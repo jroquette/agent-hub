@@ -30,8 +30,10 @@ from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.fakes import InMemoryEventStore
 from agent_hub.core.testing.session_scenarios import (
     SCENARIO_START,
+    NodeVisit,
     a_run_events,
     a_session_events,
+    a_workflow_run_events,
     learning_events,
     shuffled,
     usage_events,
@@ -388,6 +390,31 @@ def test_lists_runs_approvals_and_learnings_when_filtered(store: InMemoryEventSt
     assert decided.items == ()
     assert [item.id for item in learnings.items] == ["learning-1"]
     assert service.get_learning("learning-1").source_session_id == "s-a"
+
+
+def test_filters_runs_by_workflow_and_failure_kind_when_engine_runs_exist(
+    store: InMemoryEventStore,
+) -> None:
+    store.append(
+        [
+            *a_workflow_run_events(
+                [NodeVisit("build", "failed", failure_kind="timeout")], status="failed"
+            ),
+            *a_workflow_run_events([NodeVisit("build")], run="9c0d1e2f", status="cancelled"),
+            *a_workflow_run_events([NodeVisit("build", "running")], run="3a4b5c6d"),
+        ]
+    )
+    service = _service(store, NOW)[0]
+
+    def ids(**wanted: Any) -> list[str]:
+        return sorted(run.id for run in service.list_runs(RunFilter(**wanted)).items)
+
+    assert ids(workflow="ship") == ["3a4b5c6d", "5e6f7a8b", "9c0d1e2f"]
+    assert ids(workflow="issue-to-pr") == ["1a2b3c4d"]
+    assert ids(failure_kind="timeout") == ["5e6f7a8b"]
+    assert ids(outcome="done") == []
+    assert ids(outcome="failed") == ["1a2b3c4d", "5e6f7a8b"]
+    assert service.project_activity("demo").runs_in_flight_by_stage == {Stage.PICKED: 1}
 
 
 def test_groups_live_tiles_when_scope_given(store: InMemoryEventStore) -> None:

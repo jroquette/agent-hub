@@ -1,5 +1,5 @@
-"""The Phase 2 contract's paths, the paths control-plane clarity, ticket planning and the Skills
-tab add, and the paths an app's OpenAPI document lists."""
+"""The Phase 2 contract's paths, the paths control-plane clarity, ticket planning, the Skills
+tab and the workflows add, and the paths an app's OpenAPI document lists."""
 
 from fastapi import FastAPI
 
@@ -102,9 +102,14 @@ SKILL_PATHS: frozenset[tuple[str, str]] = frozenset(
     )
 )
 
+# The paths the workflows add (AGH-225, AC-213.15): the list and one workflow, read-only.
+WORKFLOW_PATHS: frozenset[tuple[str, str]] = frozenset(
+    ("get", f"{API_PREFIX}{path}") for path in ("/workflows", "/workflows/{project}/{name}")
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
-    P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS | AGENT_SESSION_PATHS
+    P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS | AGENT_SESSION_PATHS | WORKFLOW_PATHS
 )
 
 

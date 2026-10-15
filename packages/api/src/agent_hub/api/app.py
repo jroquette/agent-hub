@@ -32,6 +32,7 @@ from agent_hub.api.routes import (
     settings,
     skills,
     streams,
+    workflows,
 )
 from agent_hub.api.session_access import SessionAccessMiddleware
 from agent_hub.api.settings import ApiSettings
@@ -49,6 +50,7 @@ ROUTERS = (
     sessions,
     live,
     runs,
+    workflows,
     approvals,
     learnings,
     features,
