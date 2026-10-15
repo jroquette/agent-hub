@@ -14,6 +14,7 @@ import { usePreferences } from "../lib/preferences";
 import { useScope } from "../lib/scope";
 import { CommandPalette } from "./CommandPalette";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
+import { armGoSequence, clearGoSequence, goSequencePending } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./Sidebar";
@@ -46,7 +47,6 @@ const GO: Record<string, string> = {
   h: "/health",
   ",": "/settings",
 };
-const SEQUENCE_MS = 1000;
 
 function typingIn(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -65,7 +65,6 @@ function useGlobalKeys(actions: {
   cycleTheme: () => void;
 }) {
   const navigate = useNavigate();
-  const pendingG = useRef(0);
   const latest = useRef(actions);
   useEffect(() => {
     latest.current = actions;
@@ -82,9 +81,11 @@ function useGlobalKeys(actions: {
         act.closeAll();
         return;
       }
+      // A key a screen already handled (a card's `a`) is not the shell's.
+      if (event.defaultPrevented) return;
       if (event.ctrlKey || event.metaKey || event.altKey || typingIn(event.target)) return;
-      if (pendingG.current && Date.now() - pendingG.current < SEQUENCE_MS) {
-        pendingG.current = 0;
+      if (goSequencePending()) {
+        clearGoSequence();
         const to = GO[event.key];
         if (to !== undefined) {
           event.preventDefault();
@@ -92,7 +93,7 @@ function useGlobalKeys(actions: {
         }
         return;
       }
-      if (event.key === "g") pendingG.current = Date.now();
+      if (event.key === "g") armGoSequence();
       else if (event.key === "?") act.openShortcuts();
       else if (event.key === "t") act.toggleTz();
       else if (event.key === "D" && event.shiftKey) act.cycleTheme();
@@ -100,6 +101,7 @@ function useGlobalKeys(actions: {
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
+      clearGoSequence();
     };
   }, [navigate]);
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 
 import { Button } from "../../components";
 import { ApiProblem } from "../../lib/api";
+import { useSlashMenu } from "./SlashMenu";
 import { useDraft } from "./useDraft";
 import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./transcript";
 
@@ -35,6 +36,12 @@ export interface ComposerProps {
   /** Called as a message goes out: the chat pins the transcript to its bottom (AC-234.18). */
   onSending?: (() => void) | undefined;
   maxBytes?: number | undefined;
+  /** What the `/` menu lists: the session's slash commands and skills (AC-234.28). */
+  commands?: readonly string[] | undefined;
+  /** What ArrowUp in the empty box recalls: the last prompt sent (AC-234.29). */
+  lastPrompt?: string | null | undefined;
+  /** Receives the message box, so the chat can focus it (Shift+Esc). */
+  inputRef?: ((element: HTMLTextAreaElement | null) => void) | undefined;
   /** The session whose draft this browser keeps (`ah.chat.draft.<id>`); none keeps nothing. */
   draftId?: string | null | undefined;
   /** Take focus on open (the chat asks unless a permission is pending, AC-234.26). */
@@ -67,6 +74,9 @@ export function Composer({
   onSending,
   maxBytes = DEFAULT_MESSAGE_MAX_BYTES,
   disabledReason,
+  commands = [],
+  lastPrompt = null,
+  inputRef,
   draftId = null,
   focusOnOpen = false,
 }: ComposerProps) {
@@ -96,7 +106,15 @@ export function Composer({
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
 
+  const attachBox = useCallback(
+    (element: HTMLTextAreaElement | null) => {
+      box.current = element;
+      inputRef?.(element);
+    },
+    [inputRef],
+  );
   const focusBox = () => box.current?.focus({ preventScroll: true });
+  const slash = useSlashMenu(reason === null ? text : "", commands, setText);
   // On open only: a permission that arrives later never takes focus away from here.
   const focusOnMount = useRef(focusOnOpen);
   useEffect(() => {
@@ -174,12 +192,17 @@ export function Composer({
         send();
       }}
     >
+      {slash.menu}
+      {/* A textbox's activedescendant is not announced everywhere: the menu says what it holds. */}
+      <span className="ah-sr" aria-live="polite" aria-atomic="true">
+        {slash.announcement}
+      </span>
       <label htmlFor={inputId} className="ah-sr">
         Message Claude
       </label>
       <textarea
         id={inputId}
-        ref={box}
+        ref={attachBox}
         className="ah-input as-composer-input"
         rows={3}
         value={text}
@@ -187,6 +210,7 @@ export function Composer({
         disabled={reason !== null}
         aria-describedby={hintId}
         aria-invalid={tooLong}
+        {...slash.inputProps}
         onChange={(event) => {
           setText(event.target.value);
         }}
@@ -199,12 +223,21 @@ export function Composer({
         }}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || composing.current) return;
-          // Esc stops only from an empty box (no menu exists yet): typed text keeps its Esc.
-          if (event.key === "Escape" && text === "" && canStop) {
+          // The open `/` menu takes its keys first: Esc closes it, Enter inserts, never sends.
+          if (slash.onKeyDown(event)) return;
+          const plain = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
+          // Esc stops only from an empty box: typed text keeps its Esc (Shift+Esc is the chat's).
+          if (event.key === "Escape" && plain && text === "" && canStop) {
             event.preventDefault();
             stop();
           }
-          if (event.key !== "Enter" || event.shiftKey || coarsePointer()) return;
+          if (event.key === "ArrowUp" && plain && text === "" && lastPrompt) {
+            event.preventDefault();
+            setText(lastPrompt);
+          }
+          // Ctrl/Cmd+Alt+Enter answers a permission (the chat's chord), never sends; Alt+Enter sends.
+          const chord = event.altKey && (event.ctrlKey || event.metaKey);
+          if (event.key !== "Enter" || event.shiftKey || chord || coarsePointer()) return;
           event.preventDefault();
           if (performance.now() - composedAt.current >= AFTER_COMPOSITION_MS) send();
         }}

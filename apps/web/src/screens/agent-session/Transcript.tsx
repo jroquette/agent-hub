@@ -4,6 +4,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -232,6 +233,7 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
   const attachedTo = (toolId: string) =>
     attached.has(toolId) ? state.permissions[toolId] : undefined;
   const release = follow?.release;
+  const headingId = useId();
 
   // Opens once, on the loaded transcript (AC-234.17): at the oldest pending permission card,
   // else at the latest entry (the stick-to-bottom hook starts pinned).
@@ -292,13 +294,17 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
       {/* A scroll container takes focus so the keyboard can scroll it and press End. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-static-element-interactions */}
       <div className="as-scroll" ref={attach} tabIndex={0} onKeyDown={onKeyDown}>
+        {/* Screen-reader users reach the log by heading (AC-234.30). */}
+        <h2 id={headingId} className="ah-sr">
+          Conversation
+        </h2>
         <div
           className="as-transcript as-column"
           role="log"
           aria-live="polite"
           aria-relevant="additions text"
           aria-busy={state.streaming || start > 0}
-          aria-label="Conversation"
+          aria-labelledby={headingId}
         >
           {state.entries.length === 0 && (
             <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>

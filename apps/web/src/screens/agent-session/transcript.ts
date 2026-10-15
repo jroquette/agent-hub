@@ -166,6 +166,7 @@ export interface TranscriptState {
   endReason: EndReason | null;
   model: string | null;
   mode: PermissionMode | null;
+  /** The `/` menu: the init record's slash commands and skills, bounded (`commandsOf`). */
   slashCommands: string[];
   lastSeq: number;
   /** When the last record was written: a thinking block's start. */
@@ -675,6 +676,23 @@ function withoutEcho(sending: SendingView[], seq: number, text: string): Sending
   return index < 0 ? sending : sending.filter((_, i) => i !== index);
 }
 
+/** The `/` menu's bounds (plan "Inputs, bounds and budget"): what is over them is dropped. */
+export const MAX_COMMANDS = 200;
+export const MAX_COMMAND_CHARS = 100;
+
+/** The init record's slash commands then skills: strings of at most 100 characters, each once
+ * as `/name`, the first 200. Anything else is dropped silently (the menu reads "No commands"). */
+function commandsOf(body: JsonObject): string[] {
+  const names = new Set<string>();
+  for (const item of [...arr(body.slash_commands), ...arr(body.skills)]) {
+    if (names.size >= MAX_COMMANDS) break;
+    if (typeof item !== "string" || item.length > MAX_COMMAND_CHARS) continue;
+    const name = item.replace(/^\//, "");
+    if (name !== "") names.add(`/${name}`);
+  }
+  return [...names];
+}
+
 function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState {
   if (record.seq <= state.lastSeq) return state;
   const s = { ...state, lastSeq: record.seq, lastAt: record.at };
@@ -739,9 +757,8 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
       return applyResult(s, record);
     case "init": {
       const model = str(body, "model");
-      const commands = arr(body.slash_commands).filter((c): c is string => typeof c === "string");
       return notice(
-        { ...s, model: model ?? s.model, slashCommands: commands },
+        { ...s, model: model ?? s.model, slashCommands: commandsOf(body) },
         record.seq,
         model ? `Session started (model ${model})` : "Session started",
       );

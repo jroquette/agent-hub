@@ -1,11 +1,16 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Profiler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AppShell } from "../../shell/AppShell";
 import { seriousViolations } from "../../testing/axe";
 import {
   aCapabilities,
+  aPage,
+  aProjectSummary,
   aDeltaFrame,
   aLogRecord,
   aPermissionRequest,
@@ -662,6 +667,420 @@ describe("AgentSessionScreen (composer)", () => {
       "polite",
     );
     expect(await seriousViolations(view.container)).toEqual([]);
+  });
+});
+
+describe("AgentSessionScreen (chat-shortcuts)", () => {
+  /** Two requests wait: req-1 (the log's, older) and req-2 (the snapshot's). */
+  function twoPending(overrides: ApiRoutes = {}) {
+    return renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 4,
+          open_permission: aPermissionRequest({ request_id: "req-2", summary: "ls" }),
+        }),
+        [EVENTS]: {
+          items: [...log(), aLogRecord("permission.request", { seq: 4 })],
+          next_after: null,
+        },
+        [`POST ${SESSION}/permissions/req-1`]: anAgentSession({ status: "running" }),
+        [`POST ${SESSION}/permissions/req-2`]: anAgentSession({ status: "running" }),
+        ...overrides,
+      }),
+    );
+  }
+  const cards = () => screen.findAllByRole("region", { name: /Claude wants to use Bash/ });
+  const box = () => screen.getByRole("textbox", { name: "Message Claude" });
+
+  it("allows the oldest pending request once with Ctrl+Alt+Enter, even from the composer", async () => {
+    const view = twoPending();
+    await cards();
+    await userEvent.type(box(), "for later");
+
+    const notPrevented = fireEvent.keyDown(box(), { key: "Enter", ctrlKey: true, altKey: true });
+
+    expect(notPrevented).toBe(false);
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-1")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/permissions/req-1")[0])).toEqual({
+      decision: "allow",
+    });
+    expect(posts(view.requests, "/permissions/req-2")).toHaveLength(0);
+    expect(posts(view.requests, "/messages")).toHaveLength(0);
+    expect(box()).toHaveValue("for later");
+  });
+
+  it("denies the oldest pending request with Cmd+Alt+Backspace", async () => {
+    const view = twoPending();
+    await cards();
+
+    fireEvent.keyDown(document.body, { key: "Backspace", metaKey: true, altKey: true });
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-1")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/permissions/req-1")[0])).toEqual({
+      decision: "deny",
+    });
+  });
+
+  it("leaves the chords alone when nothing is pending, or without both modifiers", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+
+    expect(fireEvent.keyDown(box(), { key: "Enter", ctrlKey: true, altKey: true })).toBe(true);
+    expect(fireEvent.keyDown(box(), { key: "Backspace", metaKey: true, altKey: true })).toBe(true);
+    expect(view.requests.filter((r) => r.method === "POST")).toHaveLength(0);
+
+    const pending = twoPending();
+    await cards();
+    fireEvent.keyDown(document.body, { key: "Enter", altKey: true });
+    fireEvent.keyDown(document.body, { key: "Backspace", ctrlKey: true });
+    expect(pending.requests.filter((r) => r.method === "POST")).toHaveLength(0);
+  });
+
+  it("names the chords on the oldest card's buttons only", async () => {
+    twoPending();
+    const [oldest, newer] = await cards();
+    if (!oldest || !newer) throw new Error("two cards expected");
+
+    expect(within(oldest).getByRole("button", { name: "Allow once" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Control+Alt+Enter Meta+Alt+Enter",
+    );
+    expect(within(oldest).getByRole("button", { name: "Deny" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Control+Alt+Backspace Meta+Alt+Backspace",
+    );
+    expect(within(newer).getByRole("button", { name: "Allow once" })).not.toHaveAttribute(
+      "aria-keyshortcuts",
+    );
+  });
+
+  it("answers the focused card with a and d, never from a field inside it", async () => {
+    const view = twoPending();
+    const [, newer] = await cards();
+    if (!newer) throw new Error("two cards expected");
+
+    const message = within(newer).getByLabelText("Message to Claude if you deny (optional)");
+    await userEvent.type(message, "ad");
+    expect(posts(view.requests, "/permissions/req-2")).toHaveLength(0);
+    await userEvent.clear(message);
+
+    newer.focus();
+    await userEvent.keyboard("d");
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-2")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/permissions/req-2")[0])).toEqual({
+      decision: "deny",
+    });
+    expect(posts(view.requests, "/permissions/req-1")).toHaveLength(0);
+  });
+
+  it("allows the focused card with a", async () => {
+    const view = twoPending();
+    const [oldest] = await cards();
+    oldest?.focus();
+
+    await userEvent.keyboard("a");
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-1")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/permissions/req-1")[0])).toEqual({
+      decision: "allow",
+    });
+  });
+
+  it("leaves the chords to the open command palette", async () => {
+    const view = renderWithApi(
+      <AppShell>
+        <AgentSessionScreen />
+      </AppShell>,
+      {
+        routes: {
+          ...routes({
+            [SESSION]: anAgentSession({
+              status: "waiting_permission",
+              last_seq: 3,
+              open_permission: aPermissionRequest({ request_id: "req-2" }),
+            }),
+            [`POST ${SESSION}/permissions/req-2`]: anAgentSession({ status: "running" }),
+          }),
+          "/api/v1/projects": aPage([aProjectSummary()]),
+        },
+        path: `/agent-sessions/${ID}`,
+        route: "/agent-sessions/:agentSessionId",
+      },
+    );
+    await cards();
+    fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Command palette" });
+    const input = within(palette).getByRole("combobox");
+
+    fireEvent.keyDown(input, { key: "Backspace", metaKey: true, altKey: true });
+    await act(() => Promise.resolve());
+
+    expect(posts(view.requests, "/permissions/req-2")).toHaveLength(0);
+  });
+
+  it("leaves Ctrl+Alt+Enter to the open slash menu", async () => {
+    const view = twoPending();
+    await cards();
+    await userEvent.type(box(), "/");
+    expect(screen.getByRole("listbox", { name: "Commands" })).toBeInTheDocument();
+
+    fireEvent.keyDown(box(), { key: "Enter", ctrlKey: true, altKey: true });
+    await act(() => Promise.resolve());
+
+    expect(posts(view.requests, "/permissions/req-1")).toHaveLength(0);
+  });
+
+  it("ignores a repeated or composing chord", async () => {
+    const view = twoPending();
+    await cards();
+
+    fireEvent.keyDown(document.body, { key: "Enter", ctrlKey: true, altKey: true, repeat: true });
+    fireEvent.keyDown(document.body, {
+      key: "Backspace",
+      metaKey: true,
+      altKey: true,
+      isComposing: true,
+    });
+    await act(() => Promise.resolve());
+
+    expect(view.requests.filter((r) => r.method === "POST")).toHaveLength(0);
+  });
+
+  it.each([
+    ["plan_approval", "ExitPlanMode", "Claude finished a plan", "Keep planning"],
+    ["ask_user_question", "AskUserQuestion", "Claude has a question", "Deny"],
+  ] as const)("answers a %s card neither by chord nor by d", async (kind, tool, name, deny) => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 3,
+          open_permission: aPermissionRequest({
+            request_id: "req-k",
+            request_kind: kind,
+            tool,
+            summary: "Asked",
+            suggestions: [],
+            input: { plan: "## Plan", questions: [{ question: "Which?", options: [] }] },
+          }),
+        }),
+        [`POST ${SESSION}/permissions/req-k`]: anAgentSession({ status: "running" }),
+      }),
+    );
+    const card = await screen.findByRole("region", { name });
+    expect(within(card).getByRole("button", { name: deny })).not.toHaveAttribute(
+      "aria-keyshortcuts",
+    );
+
+    fireEvent.keyDown(document.body, { key: "Backspace", ctrlKey: true, altKey: true });
+    fireEvent.keyDown(document.body, { key: "Enter", metaKey: true, altKey: true });
+    card.focus();
+    fireEvent.keyDown(card, { key: "d" });
+    fireEvent.keyDown(card, { key: "a" });
+    await act(() => Promise.resolve());
+
+    expect(posts(view.requests, "/permissions/req-k")).toHaveLength(0);
+  });
+
+  it("allows the oldest pending tool permission past an older question card", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 4,
+          open_permission: aPermissionRequest({ request_id: "req-2", summary: "ls" }),
+        }),
+        [EVENTS]: {
+          items: [
+            ...log(),
+            aLogRecord("permission.request", {
+              seq: 4,
+              body: {
+                request_id: "req-q",
+                request_kind: "ask_user_question",
+                tool: "AskUserQuestion",
+                input: { questions: [{ question: "Which?", options: [] }] },
+              },
+            }),
+          ],
+          next_after: null,
+        },
+        [`POST ${SESSION}/permissions/req-q`]: anAgentSession({ status: "running" }),
+        [`POST ${SESSION}/permissions/req-2`]: anAgentSession({ status: "running" }),
+      }),
+    );
+    await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+
+    fireEvent.keyDown(document.body, { key: "Enter", ctrlKey: true, altKey: true });
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-2")).toHaveLength(1);
+    });
+    expect(posts(view.requests, "/permissions/req-q")).toHaveLength(0);
+  });
+
+  it("focuses the composer on Shift+Esc without stopping the turn", async () => {
+    const view = twoPending({ [`POST ${SESSION}/interrupt`]: anAgentSession({ status: "idle" }) });
+    const [oldest] = await cards();
+    oldest?.focus();
+
+    await userEvent.keyboard("{Shift>}{Escape}{/Shift}");
+    expect(box()).toHaveFocus();
+    await userEvent.keyboard("{Shift>}{Escape}{/Shift}");
+
+    expect(box()).toHaveFocus();
+    expect(posts(view.requests, "/interrupt")).toHaveLength(0);
+  });
+
+  it("recalls the last prompt with ArrowUp in an empty composer only", async () => {
+    renderChat();
+    await screen.findByText("Starting.");
+
+    await userEvent.type(box(), "draft{ArrowUp}");
+    expect(box()).toHaveValue("draft");
+
+    await userEvent.clear(box());
+    await userEvent.keyboard("{ArrowUp}");
+    expect(box()).toHaveValue("Run the tests.");
+  });
+
+  it("keeps focus in a composer holding text when a request arrives", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    await userEvent.type(box(), "half a thought");
+
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit("record.permission.request", aLogRecord("permission.request", { seq: 4 }), "4");
+    });
+
+    expect(await screen.findByRole("region", { name: /Claude wants to use Bash/ })).toBeVisible();
+    expect(box()).toHaveFocus();
+  });
+
+  it("moves focus to a request that arrives while the composer is empty", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    expect(box()).toHaveFocus();
+
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit("record.permission.request", aLogRecord("permission.request", { seq: 4 }), "4");
+    });
+
+    expect(await screen.findByRole("region", { name: /Claude wants to use Bash/ })).toHaveFocus();
+  });
+});
+
+describe("AgentSessionScreen (axe)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    scrolled.top = 0;
+  });
+
+  /** The log, named by its visually hidden h2, and no serious axe violation in the page. */
+  async function accessible(container: Element, busy: boolean) {
+    const conversation = screen.getByRole("log", { name: "Conversation" });
+    const heading = screen.getByRole("heading", { level: 2, name: "Conversation" });
+    expect(heading).toHaveClass("ah-sr");
+    expect(conversation).toHaveAttribute("aria-labelledby", heading.id);
+    expect(conversation).toHaveAttribute("aria-busy", String(busy));
+    expect(await seriousViolations(container)).toEqual([]);
+  }
+
+  it("is accessible when empty", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 0 }),
+        [EVENTS]: { items: [], next_after: null },
+      }),
+    );
+    await screen.findByText(/No messages yet/);
+    await accessible(view.container, false);
+  });
+
+  it("is accessible while a block streams", async () => {
+    const runFrame = manualFrames();
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    act(() => {
+      view.stream(STREAM).open();
+      view
+        .stream(STREAM)
+        .emit("delta", aDeltaFrame({ after_seq: 3, block: 1, text: "Hel" }), "3.0");
+    });
+    runFrame();
+    expect(screen.getAllByRole("article", { name: "Claude" })[1]).toHaveTextContent("Hel");
+    await accessible(view.container, true);
+  });
+
+  it("is accessible while a permission waits", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          open_permission: aPermissionRequest(),
+        }),
+      }),
+    );
+    await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+    await accessible(view.container, false);
+  });
+
+  it("is accessible when detached, with the jump button", async () => {
+    stubScrolling();
+    const view = renderChat();
+    const conversation = await screen.findByRole("log", { name: "Conversation" });
+    const scroller = conversation.closest(".as-scroll");
+    if (!scroller) throw new Error("no scroller");
+    await waitFor(() => {
+      expect(scrolled.top).toBe(600);
+    });
+    scrollUp(scroller);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+    await accessible(view.container, false);
+  });
+
+  it("is accessible with the slash menu open", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    await userEvent.type(screen.getByRole("textbox", { name: "Message Claude" }), "/");
+    expect(screen.getByRole("option", { name: "/feature" })).toBeVisible();
+    await accessible(view.container, false);
+  });
+
+  it("is accessible once ended", async () => {
+    const view = renderChat(
+      routes({ [SESSION]: anAgentSession({ status: "ended", end_reason: "closed" }) }),
+    );
+    await screen.findByText(/Ended · closed/);
+    await accessible(view.container, false);
+  });
+
+  it("animates no caret or working dot under reduced motion", () => {
+    const css = readFileSync(
+      join(process.cwd(), "src/screens/agent-session/agent-session.css"),
+      "utf8",
+    );
+    const animated = [...css.matchAll(/([^{}]+)\{[^{}]*\banimation:(?!\s*none)[^;]+;/g)].map(
+      (match) => match[1]?.trim(),
+    );
+    expect(animated).toEqual([".as-caret", ".as-working::before"]);
+    const reduced =
+      /@media \(prefers-reduced-motion: reduce\) \{\s*([^{]+)\{\s*animation: none;/.exec(css);
+    expect(reduced?.[1]?.split(",").map((selector) => selector.trim())).toEqual(animated);
   });
 });
 
