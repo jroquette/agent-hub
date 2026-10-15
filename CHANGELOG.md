@@ -39,7 +39,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   repo (AGH-223).
 - `hub workflow run issue-to-pr --live --input issue=ISSUE --input repo=REPO` gives what `hub run ISSUE --repo REPO --live`
   gives: it reads the issue (filling `issue_text`), writes the same `.agent-runs` records and events, makes ADR 0030's
-  tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed) (AGH-223).
+  tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed); its runs
+  cannot be resumed or abandoned (exit 2) (AGH-223).
 
 ### Fixed
 

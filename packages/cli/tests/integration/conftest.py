@@ -1555,9 +1555,6 @@ def commit():
         subprocess.run(["git", *identity, "commit", "-q", "-m", subject], check=True)
 summary = os.environ.get("FAKE_CLAUDE_SUMMARY", RUN_SUMMARY)
 verdict = {"status": "done", "summary": summary, "tests": "make check-fast"}
-# The issue-to-pr workflow's verdict also says whether the loop is done; hub run ignores it.
-done = {"done": True} if os.environ.get("FAKE_CLAUDE_DONE") else {}
-verdict = {**done, **verdict}
 if mode == "hang":
     time.sleep(600)
 if mode in (
@@ -1588,7 +1585,7 @@ if mode in (
 ):
     answer("Done.\\n" + json.dumps(verdict))
 elif mode == "blocked":
-    answer("Stopping.\\n" + json.dumps({**done, "status": "blocked", "summary": "needs a plan"}))
+    answer("Stopping.\\n" + json.dumps({"status": "blocked", "summary": "needs a plan"}))
 elif mode == "blocked-text":
     answer("BLOCKED: the issue has an open question")
 elif mode == "error":
@@ -1627,6 +1624,9 @@ if os.environ.get("FAKE_MAKE_GRANDCHILD"):
 time.sleep(float(os.environ.get("FAKE_MAKE_SLEEP", "0")))
 code = int(os.environ.get("FAKE_MAKE_EXIT", "0"))
 sys.stdout.write("x" * int(os.environ.get("FAKE_MAKE_BYTES", "0")))
+if os.environ.get("FAKE_MAKE_STDOUT"):
+    # A gate that also explains itself on stdout, before its stderr line.
+    print("gate stdout line", flush=True)
 print("synthetic gate output", file=sys.stderr if code else sys.stdout)
 sys.exit(code)
 """

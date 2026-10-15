@@ -10,8 +10,11 @@ usage checks, the tracker key, the one issue read and the input brief (ADR 0026)
 node events are not sent for this workflow. After the run, ``LiveRun.finish`` makes ADR 0030's
 tracker writes, the ``reported`` record and the inbox line from ``run.end``'s outcome (the
 ``report`` node's ``delivery``). A run that failed before ``report`` has no outcome: it failed at
-the failed node's stage (``NODE_STAGES``), with that node's diagnosis. The exit is ``hub run``'s:
-0 delivered or no changes, 3 blocked, 1 failed or a tracker write that failed.
+the failed node's stage (``NODE_STAGES``), with that node's diagnosis (its last attempt's). The
+exit is ``hub run``'s: 0 delivered or no changes, 3 blocked, 1 failed or a tracker write that
+failed; a record that cannot be written stops the run, naming what is left undone. The run's
+folder and snapshot are made before the issue is read and removed if the read fails; such a
+run is never resumed nor abandoned (``hub workflow run`` exits 2 for either).
 """
 
 import contextlib
@@ -24,7 +27,6 @@ from typing import Final
 
 import typer
 
-from agent_hub.cli.errors import RunLogError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.run_children import RunOptions
 from agent_hub.cli.run_command import begin_live_run, refuse_usage, run_setup
@@ -50,6 +52,7 @@ from agent_hub.core.workflows.run_state import RunReport
 # The workflow whose parent this is, named as the built-in names it (the smallest marker).
 ISSUE_TO_PR: Final = "issue-to-pr"
 ISSUE_TEXT: Final = "issue_text"
+DELIVERY_INPUTS: Final = frozenset({"issue", "repo", ISSUE_TEXT})
 NODE_STAGES: Final[Mapping[str, Stage]] = {
     "worktree": Stage.WORKTREE,
     "implement": Stage.IMPLEMENTING,
@@ -108,7 +111,6 @@ class IssueToPr:
     outputs: dict[str, Output] = field(default_factory=dict)
     failed: dict[str, str] = field(default_factory=dict)
     session: SessionReply | None = None
-    log_error: RunLogError | None = None
 
     @property
     def issue_text(self) -> str:
@@ -122,23 +124,20 @@ class IssueToPr:
             self.live.log.state = NODE_STAGES[node]
 
     def ended(self, end: StepEnd) -> None:
+        """Record the stage as ``hub run`` does; a ``RunLogError`` stops the run, as there."""
         if end.status == "failed":
-            self.failed.setdefault(end.node, end.detail)
-        try:
-            if end.node == _IMPLEMENT and (reply := self.replies.pop(_IMPLEMENT, None)):
-                self.session = reply
-                self.live.record_session(reply)
-            if end.status == "ok":
-                output = end.output if isinstance(end.output, dict) else {}
-                self.outputs[end.node] = output
-                self._record(end.node, output)
-        except RunLogError as error:
-            self.log_error = self.log_error or error
+            # The last failed attempt's detail, under the node that failed first.
+            self.failed[end.node] = end.detail
+        if end.node == _IMPLEMENT and (reply := self.replies.pop(_IMPLEMENT, None)):
+            self.session = reply
+            self.live.record_session(reply)
+        if end.status == "ok":
+            output = end.output if isinstance(end.output, dict) else {}
+            self.outputs[end.node] = output
+            self._record(end.node, output)
 
     def finish(self, report: RunReport) -> int:
         """ADR 0030's writes, the ``reported`` record and the inbox line; the run's exit."""
-        if self.log_error is not None:
-            return self.live.stop_on_log_error(self.log_error)
         outcome, delivery = report.outcome, self.outputs.get("report", {})
         if outcome == RunOutcome.DELIVERED:
             pr = self.outputs.get("pr", {})
