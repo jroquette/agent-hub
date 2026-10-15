@@ -428,3 +428,25 @@ def test_ends_run_cancelled_when_abandoned(sample: SampleRun, tmp_path: Path) ->
     stored = open_event_store(tmp_path / "events.db").read_all()
     ends = sorted(event.source_id for event in stored if event.type == "run.end")
     assert ends == ["r1:run:0:end", "r1:run:1:end"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("sample", "--live", "--run-id", "r" * 201),
+        ("sample", "--live", "--run-id", "../escape"),
+        ("--resume", "R1"),
+        ("--abandon", "x" * 33),
+    ],
+)
+def test_exits_two_before_running_when_run_id_is_malformed(
+    sample: SampleRun, args: tuple[str, ...]
+) -> None:
+    result = (
+        sample.run(*args, "--input", "issue=DEM-1") if args[0] == "sample" else sample.run(*args)
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "use 1 to 32 of a-z 0-9 -" in result.stderr
+    assert sample.fakes.calls("claude") == []
+    assert not (sample.hub / ".agent-runs").exists()
