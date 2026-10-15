@@ -173,7 +173,8 @@ function EntryBody({ entry, tool, tools, calls, request, onAnswerPermission }: E
       return (
         <details className="as-thinking">
           <summary>
-            <Icon name="lightbulb" size="sm" /> Thinking
+            <Icon name="lightbulb" size="sm" />{" "}
+            {entry.seconds === null ? "Thinking" : `Thought for ${String(entry.seconds)} s`}
             {entry.redacted && <StoredCopyLabel />}
           </summary>
           <div className="as-thinking-text">{entry.text}</div>

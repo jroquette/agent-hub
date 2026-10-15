@@ -77,7 +77,7 @@ describe("Transcript (transcript)", () => {
     show(scripted());
 
     expect(screen.getByText("Check the failing test first.")).not.toBeVisible();
-    expect(screen.getByText("Thinking").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Thought for 1 s").closest("details")).not.toHaveAttribute("open");
   });
 
   it("expands a tool call to its diff and result when clicked and collapses it again", async () => {
@@ -469,6 +469,44 @@ describe("Transcript (tool-cards) attached permission", () => {
 
     expect(screen.getAllByRole("button", { name: /^Read/ })).toHaveLength(2);
     expect(renders.tool).toBe(0);
+  });
+});
+
+describe("Transcript (thinking) duration", () => {
+  const thinking = (at: string): StreamItem => ({
+    type: "record",
+    record: aLogRecord("thinking", { seq: 3, at }),
+  });
+  const before: StreamItem = {
+    type: "record",
+    record: aLogRecord("user.message", { seq: 2, at: "2026-01-01T10:00:00.000Z" }),
+  };
+
+  it.each([
+    [
+      "from the previous record's time",
+      [before, thinking("2026-01-01T10:00:07.400Z")],
+      "Thought for 7 s",
+    ],
+    ["at least a second", [before, thinking("2026-01-01T10:00:00.200Z")], "Thought for 1 s"],
+    ["without a previous record", [thinking("2026-01-01T10:00:07.000Z")], "Thinking"],
+    ["when the times run backwards", [before, thinking("2026-01-01T09:59:00.000Z")], "Thinking"],
+  ] as const)("reads the thinking time %s", (_, items, label) => {
+    show([...items]);
+
+    expect(document.querySelector(".as-thinking summary")).toHaveTextContent(
+      new RegExp(`^${label}$`),
+    );
+  });
+
+  it("counts from the previous record, not from text deltas after it", () => {
+    show([
+      before,
+      { type: "delta", delta: aDeltaFrame({ after_seq: 2, index: 0, text: "Hm" }) },
+      thinking("2026-01-01T10:00:03.000Z"),
+    ]);
+
+    expect(screen.getByText("Thought for 3 s")).toBeInTheDocument();
   });
 });
 
