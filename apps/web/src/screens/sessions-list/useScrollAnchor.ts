@@ -23,18 +23,30 @@ function scrollerOf(element: Element): Element {
 const sectionOf = (row: Element) =>
   row.closest("section")?.getAttribute("aria-labelledby") ?? undefined;
 
+/** A section past 100 rows scrolls in its own bounded region: the page anchors on it, not its rows. */
+const REGION = ".ah-table-wrap > div[tabindex]";
+
+/** What the page can anchor on, in page order: rows outside a bounded region, and the regions. */
+function candidates(container: Element): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>(`${ROW}, ${REGION}`)].filter(
+    (element) => element.matches(REGION) || !element.closest(REGION),
+  );
+}
+
+const keyOf = (element: HTMLElement) => element.dataset.key ?? `region:${sectionOf(element) ?? ""}`;
+
 function rowByKey(container: Element, key: string) {
   return [...container.querySelectorAll<HTMLElement>(ROW)].find((row) => row.dataset.key === key);
 }
 
-/** The first visible rows (by key, section and offset from the scroller's top). */
+/** The first visible candidates (by key, section and offset from the scroller's top). */
 function measure(container: Element, scroller: Element): Anchor[] {
   const top = scroller === document.scrollingElement ? 0 : scroller.getBoundingClientRect().top;
   const anchors: Anchor[] = [];
-  for (const row of container.querySelectorAll<HTMLElement>(ROW)) {
-    const rect = row.getBoundingClientRect();
+  for (const element of candidates(container)) {
+    const rect = element.getBoundingClientRect();
     if (rect.bottom <= top) continue;
-    anchors.push({ key: row.dataset.key ?? "", section: sectionOf(row), top: rect.top });
+    anchors.push({ key: keyOf(element), section: sectionOf(element), top: rect.top });
     if (anchors.length === CANDIDATES) break;
   }
   return anchors;
@@ -54,8 +66,9 @@ export function useScrollAnchor(container: RefObject<HTMLElement | null>): void 
     const root = container.current;
     if (!root) return;
     const scroller = scrollerOf(root);
+    const now = candidates(root);
     const kept = anchors.current
-      .map((anchor) => ({ anchor, row: rowByKey(root, anchor.key) }))
+      .map((anchor) => ({ anchor, row: now.find((element) => keyOf(element) === anchor.key) }))
       .find(({ anchor, row }) => row && sectionOf(row) === anchor.section);
     if (kept?.row && scroller.scrollTop > 0) {
       scroller.scrollTop += kept.row.getBoundingClientRect().top - kept.anchor.top;
