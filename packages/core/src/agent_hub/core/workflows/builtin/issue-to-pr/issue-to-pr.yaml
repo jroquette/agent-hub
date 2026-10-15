@@ -2,11 +2,13 @@
 # verdict read as hub run reads it, the commits, the repo's gate, the PR, then the delivery
 # (ADR 0030). No node retries, as hub run never does. A failed node fails the run and skips the
 # report (no outcome: the delivery is failed); no_changes and blocked end it done. No node writes
-# the tracker: hub workflow run does, from run.end's outcome.
+# the tracker: hub workflow run does, from run.end's outcome. start: verify (hub run --from
+# verify) skips the session and its verdict: the gate, PR and report run on the commits made.
+# The parent runs the hub step nodes in process with hub run's own per-call timeouts: no timeout.
 version: 1
 name: issue-to-pr
 description: One tracker issue to a PR, as hub run takes it.
-revision: 1
+revision: 2
 inputs:
   issue:
     required: true
@@ -17,6 +19,9 @@ inputs:
   issue_text:
     required: true
     description: The issue as a fenced block of untrusted text, read from the tracker by the parent.
+  start:
+    default: implement
+    description: Where the run starts, implement or verify (the gate on the commits already made).
 returns: report
 outcome_field: delivery
 nodes:
@@ -25,7 +30,6 @@ nodes:
     description: Make (or keep) the issue's worktree from a fresh fetch; print the repo's target.
     command: [hub, step, worktree, --issue, $INPUTS.issue, --repo, $INPUTS.repo]
     retry: {max_attempts: 0}
-    timeout: 2h
     output_format:
       type: object
       properties:
@@ -67,6 +71,7 @@ nodes:
     type: agent
     description: The implementing session, one claude -p in the worktree, as hub run runs it.
     depends_on: [worktree]
+    when: "$INPUTS.start != 'verify'"
     prompt_file: implement.md
     cwd: $worktree.output.path
     retry: {max_attempts: 0}
@@ -90,7 +95,8 @@ nodes:
   - id: commits
     type: shell
     description: The commits on the branch, and whether a tracked change sits beside them.
-    depends_on: [verdict]
+    depends_on: [worktree, implement, verdict]
+    trigger_rule: none_failed_min_one_success
     when: "$verdict.output.status != 'blocked'"
     command: [hub, step, commits, --target, $worktree.output.target]
     retry: {max_attempts: 0}
@@ -108,7 +114,7 @@ nodes:
     description: >-
       The repo's gate (its check) on the commits, without the GitHub tokens and without positional
       parameters; its stdout, then the last 64 KiB of its stderr, go to stderr, so a failure's
-      detail reads as hub run's; the exit is the gate's.
+      detail reads as hub run's (its last line breaks kept); the exit is the gate's.
     depends_on: [commits]
     when: "$commits.output.count > 0 && $commits.output.dirty == false"
     cwd: $worktree.output.path
@@ -116,12 +122,12 @@ nodes:
       - bash
       - -c
       - >-
-        c=$1; shift; { e=$(eval "$c" 2>&1 1>&3 3>&- | tail -c 65536; exit "${PIPESTATUS[0]}");
-        s=$?; } 3>&2; printf %s "$e" >&2; exit $s
+        c=$1; shift; { e=$(eval "$c" 2>&1 1>&3 3>&- | tail -c 65536; s=${PIPESTATUS[0]}; echo .;
+        exit "$s"); s=$?; } 3>&2; printf %s "${e%.}" >&2; exit $s
       - bash
       - $worktree.output.check
+    # No timeout of its own: the default, hub run's gate timeout (30 minutes).
     retry: {max_attempts: 0}
-    timeout: 30m
 
   - id: pr
     type: shell
@@ -138,7 +144,6 @@ nodes:
       - --summary
       - $verdict.output.summary
     retry: {max_attempts: 0}
-    timeout: 30m
     output_format:
       type: object
       properties:
