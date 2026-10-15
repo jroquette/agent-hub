@@ -1,6 +1,6 @@
 import "./agent-session.css";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import {
@@ -28,7 +28,7 @@ import {
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
-import { modeLabel, pendingPermissions } from "./transcript";
+import { modeLabel, pendingPermissions, type TranscriptState } from "./transcript";
 import { useStickToBottom } from "./useStickToBottom";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
@@ -38,6 +38,54 @@ function problemText(error: unknown): string {
   if (error instanceof ApiProblem)
     return error.detail ? `${error.title}: ${error.detail}` : error.title;
   return "Something went wrong. Try again.";
+}
+
+/** The last prompt sent, for ArrowUp in the empty composer; none when its stored copy is redacted. */
+function lastPrompt(state: TranscriptState): string | null {
+  const sending = state.sending.at(-1);
+  if (sending) return sending.text;
+  const sent = state.entries.findLast((entry) => entry.kind === "user");
+  return sent?.kind === "user" && !sent.redacted ? sent.text : null;
+}
+
+/** The Allow once or Deny button of request `id`'s card, when it can be pressed. */
+function answerButton(id: string, which: "allow" | "deny"): HTMLButtonElement | null {
+  const card = Array.from(document.querySelectorAll<HTMLElement>("[data-request-id]")).find(
+    (element) => element.dataset.requestId === id,
+  );
+  const button = card?.querySelector<HTMLButtonElement>(`[data-shortcut="${which}"]`);
+  return button && !button.disabled ? button : null;
+}
+
+/**
+ * The chat's keys anywhere on the page (AC-234.29): Ctrl/Cmd+Alt+Enter allows and
+ * Ctrl/Cmd+Alt+Backspace denies the oldest pending request, through its card's button (inert when
+ * none); Shift+Esc focuses the composer.
+ */
+function useChatKeys(pending: readonly string[], composer: { current: HTMLElement | null }) {
+  const oldest = useRef(pending[0]);
+  useEffect(() => {
+    oldest.current = pending[0];
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && event.shiftKey) {
+        event.preventDefault();
+        composer.current?.focus({ preventScroll: true });
+        return;
+      }
+      if (!event.altKey || !(event.ctrlKey || event.metaKey)) return;
+      const which = event.key === "Enter" ? "allow" : event.key === "Backspace" ? "deny" : null;
+      const button = which && oldest.current ? answerButton(oldest.current, which) : null;
+      if (!button) return;
+      event.preventDefault();
+      button.click();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [composer]);
 }
 
 /**
@@ -62,6 +110,12 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const [busy, setBusy] = useState(false);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const follow = useStickToBottom(scroller);
+  const composer = useRef<HTMLTextAreaElement | null>(null);
+  const pending = pendingPermissions(transcript.state);
+  useChatKeys(pending, composer);
+  const setComposer = useCallback((element: HTMLTextAreaElement | null) => {
+    composer.current = element;
+  }, []);
 
   const problem = snapshot.error ?? transcript.error;
   const session = snapshot.data;
@@ -223,7 +277,9 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
             commands={state.slashCommands}
             draftId={agentSessionId}
-            focusOnOpen={pendingPermissions(state).length === 0}
+            focusOnOpen={pending.length === 0}
+            lastPrompt={lastPrompt(state)}
+            inputRef={setComposer}
             disabledReason={cloud ? "A cloud session is driven from claude.ai." : null}
           />
         </div>
