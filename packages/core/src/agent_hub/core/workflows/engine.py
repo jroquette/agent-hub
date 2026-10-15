@@ -176,6 +176,8 @@ class _Run:
         # attempts run at once across the run, nested group layers included.
         self.recorder: RunRecorder = _LockedRecorder(ports.recorder)
         self.permits = threading.BoundedSemaphore(max(1, ports.max_parallel))
+        # Set when a concurrent layer is interrupted: no attempt, retry or iteration starts after.
+        self.stopped = threading.Event()
 
     def execute(self) -> RunReport:
         nodes = {node.id: node for node in self.plan.document.nodes}
@@ -207,7 +209,9 @@ class _Run:
                 for future in futures:
                     future.result()
             except BaseException:
-                # Ctrl-C (or an engine bug): the running children stop before the pool waits.
+                # Ctrl-C (or an engine bug): nothing new starts, and the running children stop
+                # before the pool waits for its threads.
+                self.stopped.set()
                 for future in futures:
                     future.cancel()
                 if self.ports.interrupt is not None:
@@ -359,23 +363,28 @@ class _Run:
     def _step(
         self, node: ExecutableNode, run: Callable[[int], tuple[Turn, bool]]
     ) -> tuple[Turn, bool]:
-        """One attempt, from its start to its end; a failure ends it and raises again.
+        """One attempt, once it holds a permit and the run has not stopped, from its start to
+        its end; a failure ends it and raises again.
 
         Any error a port raises fails the attempt ``unknown``, its type named but not its
         message (it may hold output text). A recorder's own error is not caught: it is the
         composition root's bug.
         """
+        with self.permits:
+            self._check_stop()
+            return self._attempt_step(node, run)
+
+    def _attempt_step(
+        self, node: ExecutableNode, run: Callable[[int], tuple[Turn, bool]]
+    ) -> tuple[Turn, bool]:
         attempt = self._attempt(node)
         self.recorder.step_started(StepStart(node.id, attempt, self.ports.clock.now()))
         try:
-            with self.permits:
-                before = self._checkout_status(node)
-                turn, done = run(attempt)
-                if before is not None and self._checkout_status(node) != before:
-                    detail = (
-                        "the checkout changed, though the node declares mutates_checkout: false"
-                    )
-                    raise NodeFailedError("config", detail)
+            before = self._checkout_status(node)
+            turn, done = run(attempt)
+            if before is not None and self._checkout_status(node) != before:
+                detail = "the checkout changed, though the node declares mutates_checkout: false"
+                raise NodeFailedError("config", detail)
         except NodeFailedError as failure:
             self._record_failure(node, attempt, failure)
             raise
@@ -428,11 +437,17 @@ class _Run:
             return False
         record = RetryRecord(self.attempts[node.id], failure.kind, decision.delay)
         self.recorder.retry_scheduled(node.id, record)
+        self._check_stop()
         try:
-            self.ports.clock.sleep(decision.delay)
+            self.ports.clock.sleep(decision.delay, self.stopped)
         except Exception:  # noqa: BLE001 - a port's unexpected error: no retry
             return False
+        self._check_stop()
         return True
+
+    def _check_stop(self) -> None:
+        if self.stopped.is_set():
+            raise _RunStoppedError
 
     def _complete(self, node: ExecutableNode, turn: Turn | NodeFailedError) -> None:
         if isinstance(turn, NodeFailedError):
@@ -516,6 +531,7 @@ class _Run:
         iteration = 0
         while True:
             iteration += 1
+            self._check_stop()
             if (failure := self._run_body(group, body, iteration)) is not None:
                 return failure
             output = {local_id(group, n): self.results[n].output for n in body}
@@ -539,6 +555,7 @@ class _Run:
                 self.ends.pop(node_id, None)
                 self.results.pop(node_id, None)
         for layer in self.plan.bodies[group.id]:
+            self._check_stop()
             self._run_layer([body[node_id] for node_id in layer])
             if self.halted_by is not None:
                 return NodeFailedError("cancelled", "a halt in the body ended the run")
@@ -582,6 +599,10 @@ class _Run:
             raise NodeFailedError("output_contract", "the output is not one JSON value") from None
         self.ports.outputs.check(node.output_format, value)
         return value
+
+
+class _RunStoppedError(BaseException):
+    """The run stopped (an interrupted concurrent layer): a thread's work ends here."""
 
 
 class _LockedRecorder:

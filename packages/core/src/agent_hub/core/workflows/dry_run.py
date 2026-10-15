@@ -19,6 +19,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from threading import Event
 from typing import Final, Self
 
 from pydantic import JsonValue, StrictInt, StrictStr, model_validator
@@ -260,7 +261,7 @@ class _StillClock:
     def now(self) -> datetime:
         return self.current
 
-    def sleep(self, delay: timedelta) -> None:
+    def sleep(self, delay: timedelta, stop: Event | None = None) -> None:
         self.current += delay
 
 
