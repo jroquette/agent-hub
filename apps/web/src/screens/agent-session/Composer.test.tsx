@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -213,6 +213,58 @@ describe("Composer (composer)", () => {
     expect(box).toHaveFocus();
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     focus.mockRestore();
+  });
+
+  /** Presses Enter and lets a send that started reach `onSend`. */
+  const pressEnter = async (box: HTMLElement, init: object = {}) => {
+    await act(async () => {
+      fireEvent.keyDown(box, { key: "Enter", ...init });
+      await Promise.resolve();
+    });
+  };
+
+  it.each([
+    ["the key event says so", true],
+    ["only the composition events say so", false],
+  ])("never sends on Enter while an IME composes (%s)", async (_, isComposing) => {
+    const { box, props } = open();
+    fireEvent.change(box, { target: { value: "にほん" } });
+
+    if (!isComposing) fireEvent.compositionStart(box);
+
+    await pressEnter(box, { isComposing });
+
+    expect(props.onSend).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(box);
+  });
+
+  it.each([
+    [499, false],
+    [500, true],
+  ])("sends on Enter %i ms after the composition ends: %s", async (after, sends) => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(1000);
+    const { box, props } = open();
+    fireEvent.change(box, { target: { value: "日本" } });
+    fireEvent.compositionStart(box);
+    fireEvent.compositionEnd(box);
+
+    now.mockReturnValue(1000 + after);
+    await pressEnter(box);
+
+    expect(props.onSend).toHaveBeenCalledTimes(sends ? 1 : 0);
+    now.mockRestore();
+  });
+
+  it("keeps Enter as a new line under a coarse pointer; Send sends", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(pointer: coarse)" }));
+    const { box, props } = open();
+    await userEvent.type(box, "one{Enter}two");
+
+    expect(box).toHaveValue("one\ntwo");
+    expect(props.onSend).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(props.onSend).toHaveBeenCalledWith("one\ntwo");
+    vi.unstubAllGlobals();
   });
 
   it("has no serious violation (composer a11y)", async () => {
