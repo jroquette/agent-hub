@@ -6,12 +6,19 @@ from typing import Any
 
 import pytest
 
-from agent_hub.core.testing.workflow_fakes import KeysOutputs
+from agent_hub.core.testing.workflow_fakes import (
+    FakeClock,
+    KeysOutputs,
+    ListRecorder,
+    ScriptedRunner,
+)
 from agent_hub.core.workflows.document import WorkflowDocument, WorkflowLoadError, parse_workflow
 from agent_hub.core.workflows.dry_run import Stub, dry_run
-from agent_hub.core.workflows.includes import MAX_INCLUDE_DEPTH
+from agent_hub.core.workflows.engine import EnginePorts, run_workflow
+from agent_hub.core.workflows.includes import MAX_EXPANDED_NODES, MAX_INCLUDE_DEPTH
 from agent_hub.core.workflows.nodes import AgentNode, FromBinding, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
+from agent_hub.core.workflows.substitution import SubstitutionError
 
 DELIVERY = {
     "type": "object",
@@ -369,3 +376,84 @@ def test_keeps_the_document_when_it_includes_nothing() -> None:
 
     assert plan_workflow(raw, includes=resolver()).document is raw
     assert isinstance(raw.nodes[0], ShellNode)
+
+
+def test_renders_a_block_prompt_file_in_its_own_scope_when_an_included_agent_runs() -> None:
+    child = document(
+        "child",
+        shell("prep"),
+        {"id": "write", "type": "agent", "prompt_file": "write.md", "depends_on": ["prep"]},
+        inputs={"issue": {"required": True}},
+    )
+    plan = plan_of(include("c", "child", **{"with": {"issue": "CHILD"}}), library=(child,))
+    runner = ScriptedRunner({"c__prep": ["P"]})
+    ports = EnginePorts(runner, ListRecorder(), FakeClock(), KeysOutputs(), lambda: 0.5)
+
+    run_workflow(plan, {}, ports)
+
+    call = runner.calls[1]
+    template = "Fix $INPUTS.issue after $prep.output; cost $$5."
+    assert call.scope.render(template, call.context) == "Fix CHILD after P; cost $5."
+    with pytest.raises(SubstitutionError):
+        call.scope.render("$main_node.output", call.context)
+
+
+def test_escapes_dollars_when_a_default_or_a_non_text_value_is_put_in_place() -> None:
+    noted = document(
+        "noted",
+        shell("go", command=["echo", "$INPUTS.note", "$INPUTS.data"]),
+        inputs={"note": {"default": "$HOME and $go.output"}, "data": {}},
+    )
+
+    plan = plan_of(
+        include("n", "noted", **{"with": {"data": {"k": "$x.output"}}}), library=(noted,)
+    )
+
+    assert nodes_of(plan)["n__go"].command == (
+        "echo",
+        "$$HOME and $$go.output",
+        '{"k":"$$x.output"}',
+    )
+
+
+def counting(*documents: dict[str, Any]) -> tuple[Any, list[str]]:
+    asked: list[str] = []
+    inner = resolver(*documents)
+
+    def resolve(name: str) -> WorkflowDocument | None:
+        asked.append(name)
+        return inner(name)
+
+    return resolve, asked
+
+
+def test_expands_a_workflow_once_when_it_is_included_several_times() -> None:
+    resolve, asked = counting(FORK)
+    raw = document("main", include("a", "fork"), include("b", "fork"), include("c", "fork"))
+
+    plan = plan_workflow(parse_workflow(raw), includes=resolve)
+
+    assert asked == ["fork"]
+    assert len(plan.document.nodes) == 6
+
+
+def wide(own: int) -> list[dict[str, Any]]:
+    return [shell(f"n{index}") for index in range(own)] + [
+        include(f"i{index}", "hundred") for index in range(5)
+    ]
+
+
+HUNDRED = document("hundred", *(shell(f"s{index}") for index in range(100)))
+
+
+def test_expands_the_document_when_it_holds_exactly_the_node_cap() -> None:
+    plan = plan_of(*wide(MAX_EXPANDED_NODES - 500), library=(HUNDRED,))
+
+    assert len(plan.document.nodes) == MAX_EXPANDED_NODES
+
+
+def test_refuses_the_include_when_the_expansion_passes_the_node_cap() -> None:
+    [(key, message)] = problems_of(*wide(MAX_EXPANDED_NODES - 499), library=(HUNDRED,))
+
+    assert key == f"nodes[{MAX_EXPANDED_NODES - 499 + 4}].include"
+    assert message == f"the expanded workflow passes {MAX_EXPANDED_NODES} nodes"
