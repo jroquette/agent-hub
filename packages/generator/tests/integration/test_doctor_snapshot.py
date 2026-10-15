@@ -186,3 +186,22 @@ def test_reads_hub_workflows_when_workflows_rule_selected(hub_root: Path) -> Non
     assert [(file, where) for file, _, where, _ in catalog.problems] == [
         ("workflows/demo/lint.yaml", "nodes[0].promt")
     ]
+
+
+def test_lists_pack_folders_when_workflows_rule_selected(hub_root: Path) -> None:
+    # The control plane's cache watches each pack folder, even one git does not list (empty).
+    config = a_config()
+    (hub_root / "workflows" / "empty").mkdir(parents=True)
+    (hub_root / "workflows" / "loose.yaml").write_text("x\n", encoding="utf-8")
+    (hub_root / "workflows" / "linked").symlink_to(hub_root / "workflows" / "empty")
+
+    snapshot = build_doctor_snapshot(
+        str(hub_root),
+        config=config,
+        running=RUNNING,
+        selection=every_rule(config),
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+
+    assert snapshot.workflow_folders == ("workflows/empty",)

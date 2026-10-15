@@ -221,8 +221,9 @@ def _rendered_verdict(
     held: frozenset[str] = frozenset(),
 ) -> _Verdict:
     if rendered.ownership is Ownership.SEEDED:
-        if is_held(rendered.path, held):
-            # A seed unit the hub already has (seed_units.py): none of its files is written.
+        if is_held(rendered.path, held) and rendered.path not in entries:
+            # An absent file of a seed unit the hub already has (seed_units.py): not written.
+            # A present one keeps the seeded rule below (a link or folder is a conflict).
             return None
         return _seeded_verdict(rendered, entry, entries)
     return _managed_verdict(rendered, entry, entries)

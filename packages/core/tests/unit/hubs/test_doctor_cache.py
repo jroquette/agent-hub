@@ -137,3 +137,24 @@ def test_runs_again_when_workflow_added() -> None:
     cache.findings(HUB)
 
     assert reader.snapshots == {HUB: 2}
+
+
+def test_watches_empty_pack_folder_when_workflows_listed() -> None:
+    # F2: a pack folder git does not list (empty, or untracked) is watched from the listing of
+    # workflows/ itself, so a workflow added to it makes the run stale.
+    reader = a_reader(folders=("workflows/empty",))
+
+    run = run_doctor(reader, HUB, running_version=RUNNING)
+
+    assert "workflows/empty" in run.watched
+
+
+def test_watches_at_most_three_levels_when_workflow_paths_nest_deeply() -> None:
+    deep = "workflows/demo/fixtures/a/b/c.yaml"
+    reader = a_reader(files={"AGENTS.md": b"# Demo\n", deep: b"x\n"})
+
+    watched = set(run_doctor(reader, HUB, running_version=RUNNING).watched)
+
+    assert {"workflows", "workflows/demo", "workflows/demo/fixtures", deep} <= watched
+    assert "workflows/demo/fixtures/a" not in watched
+    assert "workflows/demo/fixtures/a/b" not in watched
