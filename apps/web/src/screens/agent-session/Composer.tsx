@@ -11,6 +11,12 @@ export const MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan
 export const DEFAULT_MESSAGE_MAX_BYTES = 64 * 1024;
 /** The composer grows with its text up to this share of the viewport, then scrolls (AC-234.26). */
 const MAX_HEIGHT_SHARE = 0.4;
+/** Safari sends the Enter that ends an IME composition after `compositionend`. */
+const AFTER_COMPOSITION_MS = 500;
+
+/** On a touch screen Enter is a new line and the Send button sends (AC-234.26). */
+const coarsePointer = () =>
+  typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
 
 export interface SettingsChange {
   mode?: PermissionMode;
@@ -69,6 +75,8 @@ export function Composer({
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
   const box = useRef<HTMLTextAreaElement | null>(null);
+  const composing = useRef(false);
+  const composedAt = useRef(-Infinity);
   const stopping = useRef(false);
   const inputId = useId();
   const hintId = useId();
@@ -169,16 +177,23 @@ export function Composer({
         onChange={(event) => {
           setText(event.target.value);
         }}
+        onCompositionStart={() => {
+          composing.current = true;
+        }}
+        onCompositionEnd={() => {
+          composing.current = false;
+          composedAt.current = performance.now();
+        }}
         onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing) return;
+          if (event.nativeEvent.isComposing || composing.current) return;
           // Esc stops only from an empty box (no menu exists yet): typed text keeps its Esc.
           if (event.key === "Escape" && text === "" && canStop) {
             event.preventDefault();
             stop();
           }
-          if (event.key !== "Enter" || event.shiftKey) return;
+          if (event.key !== "Enter" || event.shiftKey || coarsePointer()) return;
           event.preventDefault();
-          send();
+          if (performance.now() - composedAt.current >= AFTER_COMPOSITION_MS) send();
         }}
       />
       <div className="as-composer-bar">
@@ -223,7 +238,9 @@ export function Composer({
         <span id={hintId} className="ah-small ah-subtle ah-grow">
           {tooLong
             ? `Too long: ${String(Math.ceil(size / 1024))} KiB of ${String(Math.floor(maxBytes / 1024))} KiB`
-            : "Enter to send, Shift+Enter for a new line"}
+            : coarsePointer()
+              ? "Send to send, Enter for a new line"
+              : "Enter to send, Shift+Enter for a new line"}
         </span>
         <Button icon="circle-stop" disabled={!canStop} onClick={stop}>
           Stop
