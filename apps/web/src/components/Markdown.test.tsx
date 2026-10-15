@@ -413,7 +413,7 @@ describe("Markdown a11y", () => {
 });
 
 describe("Markdown code blocks (AC-234.23)", () => {
-  it("labels a fenced block with its language and copies exactly its code", () => {
+  it("labels a fenced block with its language and copies exactly its code", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     render(
@@ -425,7 +425,7 @@ describe("Markdown code blocks (AC-234.23)", () => {
     fireEvent.click(within(block).getByRole("button", { name: "Copy code" }));
 
     expect(writeText).toHaveBeenCalledWith("const a = 1;\nlet b = a;");
-    expect(within(block).getByRole("button", { name: "Copied" })).toBeInTheDocument();
+    expect(await within(block).findByRole("button", { name: "Copied" })).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 

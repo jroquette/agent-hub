@@ -15,7 +15,7 @@ import {
 } from "./trace";
 
 describe("CodeBlock", () => {
-  it("copies its command", () => {
+  it("copies its command", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     render(<CodeBlock code="hub web" label="Start" wrap />);
@@ -23,7 +23,7 @@ describe("CodeBlock", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
 
     expect(writeText).toHaveBeenCalledWith("hub web");
-    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 

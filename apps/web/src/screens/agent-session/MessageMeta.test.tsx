@@ -56,7 +56,7 @@ describe("MessageMeta (message-meta)", () => {
     expect(screen.getByText("1 min ago")).toHaveAttribute("datetime", at(0));
   });
 
-  it("copies the raw markdown when Copy is pressed", () => {
+  it("copies the raw markdown when Copy is pressed", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     render(<MessageMeta at={at(0)} text={"Hello **bold**\n\n```ts\nx\n```"} />);
@@ -64,7 +64,7 @@ describe("MessageMeta (message-meta)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
 
     expect(writeText).toHaveBeenCalledWith("Hello **bold**\n\n```ts\nx\n```");
-    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
   it("shows only Copy when the message has no time yet", () => {
