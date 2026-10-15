@@ -107,6 +107,14 @@ WORKFLOW_PATHS: frozenset[tuple[str, str]] = frozenset(
     ("get", f"{API_PREFIX}{path}") for path in ("/workflows", "/workflows/{project}/{name}")
 )
 
+# A workflow gate from hub web (AGH-231, AC-213.18): what answers it, and its decision (strict).
+GATE_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("get", f"{API_PREFIX}/approvals/{{approval_id}}/gate"),
+        ("post", f"{API_PREFIX}/approvals/{{approval_id}}/decision"),
+    }
+)
+
 # The run commands (AGH-232, AC-213.19): start, cancel, resume and abandon, strict writes.
 RUN_COMMAND_PATHS: frozenset[tuple[str, str]] = frozenset(
     ("post", f"{API_PREFIX}{path}")
@@ -127,6 +135,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | AGENT_SESSION_PATHS
     | WORKFLOW_PATHS
     | RUN_COMMAND_PATHS
+    | GATE_PATHS
 )
 
 

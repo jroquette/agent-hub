@@ -29,6 +29,7 @@ from agent_hub.core.readmodels.read_ports import EntityNotFoundError, EventReadM
 from agent_hub.core.runs.workflow_run import WorkflowRun
 from agent_hub.core.workflows.engine import WorkflowEngineError, start_inputs
 from agent_hub.core.workflows.events import issue_key
+from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.substitution import echo
 from agent_hub.core.workflows.workflow_reads import ProjectHubs
@@ -119,6 +120,11 @@ class RunLauncher(Protocol):
 
     def abandon(self, hub_path: str, run_id: str) -> None:
         """End the run cancelled (``--abandon``), waiting for it; ``RunConflictError`` refused."""
+        ...
+
+    def decide(self, hub_path: str, run_id: str, *, gate_id: str, answer: GateAnswer) -> None:
+        """Record ``answer`` to the run's open gate ``gate_id`` (``hub workflow decide``),
+        waiting for it, without resuming; ``RunConflictError`` when the record refuses it."""
         ...
 
     def cancel(self, hub_path: str, run_id: str) -> bool:
@@ -265,24 +271,33 @@ class ControlWorkflowRun:
         return RunAccepted(run_id=run_id, project=run.project, action="abandon")
 
     def _idle(self, run_id: str) -> tuple[WorkflowRun, str]:
-        """The run and its hub, refused when it ended done or cancelled or its child runs."""
         run, hub_path = self._target(run_id)
-        if run.status in {"done", "cancelled"}:
-            reason = f"the run already ended {run.status}"
-            raise RunConflictError(code="ended", reason=reason, run_id=run_id)
-        if run_id in self._launcher.live_runs(hub_path):
-            reason = "the run's child is still running; cancel it first"
-            raise RunConflictError(code="in_use", reason=reason, run_id=run_id)
+        refuse_busy(run, hub_path, self._launcher)
         return run, hub_path
 
     def _target(self, run_id: str) -> tuple[WorkflowRun, str]:
-        run = self._runs.get_run(run_id)
-        if run.content_hash is None:
-            reason = "the run is not a workflow engine run; use hub run for it"
-            raise RunConflictError(code="not_engine_run", reason=reason, run_id=run_id)
-        hub_path = next(
-            (path for name, path in self._hubs.project_hubs() if name == run.project), None
-        )
-        if hub_path is None:
-            raise EntityNotFoundError(entity="project", entity_id=run.project)
-        return run, hub_path
+        return engine_run_target(self._runs, self._hubs, run_id)
+
+
+def engine_run_target(
+    runs: EventReadModels, hubs: ProjectHubs, run_id: str
+) -> tuple[WorkflowRun, str]:
+    """The engine run (one with a pinned ``content_hash``) and its project's hub folder."""
+    run = runs.get_run(run_id)
+    if run.content_hash is None:
+        reason = "the run is not a workflow engine run; use hub run for it"
+        raise RunConflictError(code="not_engine_run", reason=reason, run_id=run_id)
+    hub_path = next((path for name, path in hubs.project_hubs() if name == run.project), None)
+    if hub_path is None:
+        raise EntityNotFoundError(entity="project", entity_id=run.project)
+    return run, hub_path
+
+
+def refuse_busy(run: WorkflowRun, hub_path: str, launcher: RunLauncher) -> None:
+    """``RunConflictError`` when the run ended done or cancelled, or its child still runs."""
+    if run.status in {"done", "cancelled"}:
+        reason = f"the run already ended {run.status}"
+        raise RunConflictError(code="ended", reason=reason, run_id=run.id)
+    if run.id in launcher.live_runs(hub_path):
+        reason = "the run's child is still running; cancel it first"
+        raise RunConflictError(code="in_use", reason=reason, run_id=run.id)

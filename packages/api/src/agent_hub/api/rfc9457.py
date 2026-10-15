@@ -50,6 +50,7 @@ from agent_hub.core.learnings.brain_change_requests import (
 from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_view import SkillFileTooLargeError
+from agent_hub.core.workflows.gate_decisions import ResumeAfterDecisionError
 from agent_hub.core.workflows.launch import RunConflictError, RunInputError, RunLaunchError
 from agent_hub.storage.errors import DatabaseAccessError
 
@@ -314,6 +315,12 @@ def _run_launch_problem(_: RunLaunchError) -> Problem:
     return Problem(502, "Could not run hub workflow run", detail, members)
 
 
+def _resume_after_decision_problem(_: ResumeAfterDecisionError) -> Problem:
+    members: dict[str, JsonValue] = {"type": f"{WORKFLOW_RUN_PROBLEM_PREFIX}resume-failed"}
+    detail = "The decision is recorded, but the run did not resume; resume the run to continue."
+    return Problem(502, "Could not resume the workflow run", detail, members)
+
+
 def _not_implemented_problem(error: NotImplementedInBuildError) -> Problem:
     return Problem(501, "Not implemented in this build", str(error))
 
@@ -538,6 +545,7 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     RunInputError: _run_input_problem,
     RunConflictError: _run_conflict_problem,
     RunLaunchError: _run_launch_problem,
+    ResumeAfterDecisionError: _resume_after_decision_problem,
     LearningConflictError: _learning_conflict_problem,
     HubReadOnlyError: _hub_read_only_problem,
     ChangeRequestError: _change_request_error_problem,
