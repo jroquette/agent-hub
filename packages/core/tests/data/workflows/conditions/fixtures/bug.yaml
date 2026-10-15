@@ -1,0 +1,7 @@
+workflow: conditions
+stubs:
+  classify: {output: {kind: bug, score: 2}}
+  fix-bug: {text: fixed}
+  summary: {text: summary}
+expect: {status: done}
+reached: [classify, fix-bug, summary]
