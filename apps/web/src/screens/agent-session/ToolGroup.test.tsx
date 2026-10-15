@@ -36,7 +36,13 @@ const explored: GroupItem[] = [
 
 function show(items: GroupItem[], onAnswerPermission = vi.fn()) {
   return render(
-    <ToolGroup items={items} tools={{}} calls={{}} onAnswerPermission={onAnswerPermission} />,
+    <ToolGroup
+      items={items}
+      tools={{}}
+      calls={{}}
+      requests={{}}
+      onAnswerPermission={onAnswerPermission}
+    />,
   );
 }
 
@@ -112,6 +118,7 @@ describe("ToolGroup (tool-cards)", () => {
         ]}
         tools={{}}
         calls={{}}
+        requests={{}}
         onAnswerPermission={vi.fn()}
       />,
     );
@@ -146,6 +153,7 @@ describe("ToolGroup (tool-cards)", () => {
         ]}
         tools={{}}
         calls={{}}
+        requests={{}}
         onAnswerPermission={onAnswerPermission}
       />,
     );

@@ -16,6 +16,8 @@ export interface ToolGroupProps {
   items: readonly GroupItem[];
   tools: TranscriptState["tools"];
   calls: TranscriptState["children"];
+  /** Every permission, for the state of a subagent's calls. */
+  requests: TranscriptState["permissions"];
   onAnswerPermission: AnswerPermission;
 }
 
@@ -31,7 +33,7 @@ export function groupSummary(tools: readonly ToolView[]): string {
  * or more as one disclosure that opens when a call waits for you or fails, starts collapsed
  * otherwise, and only the reader closes. A run keeps this one component as it grows, so its
  * cards keep their state and focus; a call the reader worked with keeps its run open. */
-function ToolGroupView({ items, tools, calls, onAnswerPermission }: ToolGroupProps) {
+function ToolGroupView({ items, tools, calls, requests, onAnswerPermission }: ToolGroupProps) {
   const listId = useId();
   const many = items.length > 1;
   const needsYou = items.some((item) => {
@@ -79,7 +81,13 @@ function ToolGroupView({ items, tools, calls, onAnswerPermission }: ToolGroupPro
         >
           {items.map(({ tool, request }) => (
             <li key={tool.id} role={many ? undefined : "presentation"}>
-              <ToolCallCard tool={tool} tools={tools} calls={calls} request={request} />
+              <ToolCallCard
+                tool={tool}
+                tools={tools}
+                calls={calls}
+                request={request}
+                requests={requests}
+              />
               {request && <RequestCard request={request} onAnswerPermission={onAnswerPermission} />}
             </li>
           ))}
@@ -94,6 +102,7 @@ function sameProps(a: ToolGroupProps, b: ToolGroupProps): boolean {
   return (
     a.tools === b.tools &&
     a.calls === b.calls &&
+    a.requests === b.requests &&
     a.onAnswerPermission === b.onAnswerPermission &&
     a.items.length === b.items.length &&
     a.items.every((item, i) => {
