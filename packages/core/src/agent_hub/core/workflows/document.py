@@ -110,6 +110,11 @@ class WorkflowInput(WorkflowObject):
             raise ValueError(msg)
         return self
 
+    def fits(self, value: JsonValue) -> bool:
+        """Whether ``value`` is of this input's type (a boolean fits only a boolean input)."""
+        is_bool = isinstance(value, bool)
+        return is_bool == (self.type == "boolean") and isinstance(value, _INPUT_TYPES[self.type])
+
 
 class WorkflowDocument(WorkflowObject):
     """A workflow file's content: a graph of typed nodes."""

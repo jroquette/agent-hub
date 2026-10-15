@@ -251,7 +251,14 @@ def _abandon(hub: Path, run_id: str) -> None:
     with run_lock(folder):
         drop_torn_tail(folder)
         records = _ended_check(folder)
-        events = _events(hub, folder.name, records[0], end_index=len(ends_of(records)))
+        inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
+        events = _events(
+            hub,
+            folder.name,
+            records[0],
+            end_index=len(ends_of(records)),
+            issue=_issue(inputs if isinstance(inputs, dict) else {}),
+        )
         RecordedRun(folder=folder, events=events, sink=EventSink()).run_ended(
             RunEnd("cancelled", now())
         )
@@ -296,7 +303,7 @@ def _execute(
     }
     recorder = RecordedRun(
         folder=folder,
-        events=_events(hub, folder.name, header, end_index=end_index),
+        events=_events(hub, folder.name, header, end_index=end_index, issue=_issue(inputs)),
         sink=EventSink(),
     )
     runner = WorkflowExecutors(
@@ -315,8 +322,20 @@ def _execute(
     return 0 if report.status == "done" else 1
 
 
+def _issue(inputs: dict[str, JsonValue]) -> str | None:
+    """The run's ``issue`` input, when the workflow declares one and it is given: its events
+    carry it, so hub web finds an issue's live run."""
+    issue = inputs.get("issue")
+    return issue if isinstance(issue, str) and issue else None
+
+
 def _events(
-    hub: Path, run_id: str, header: dict[str, JsonValue], *, end_index: int
+    hub: Path,
+    run_id: str,
+    header: dict[str, JsonValue],
+    *,
+    end_index: int,
+    issue: str | None = None,
 ) -> WorkflowEvents:
     revision = header.get("revision")
     return WorkflowEvents(
@@ -326,6 +345,7 @@ def _events(
         revision=revision if isinstance(revision, int) else 0,
         content_hash=str(header.get("content_hash")),
         end_index=end_index,
+        issue=issue,
     )
 
 
