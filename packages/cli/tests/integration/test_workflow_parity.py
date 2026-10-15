@@ -30,6 +30,9 @@ from typer.testing import Result
 from agent_hub.cli import run_command as run_module
 from agent_hub.cli import run_log
 from agent_hub.cli.errors import RunLogError
+from agent_hub.cli.workflow_delivery import NODE_STAGES
+from agent_hub.core.runner.run_record import Stage
+from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS, discover_workflows
 from agent_hub.storage.event_store import open_event_store
 
 pytestmark = pytest.mark.disable_socket
@@ -47,6 +50,9 @@ SCENARIOS: Mapping[str, tuple[Mapping[str, str], int, str]] = {
     "blocked": ({"FAKE_CLAUDE_MODE": "blocked"}, 3, "blocked"),
     "blocked-text": ({"FAKE_CLAUDE_MODE": "blocked-text"}, 3, "blocked"),
     "done-dirty": ({"FAKE_CLAUDE_MODE": "done-dirty"}, 1, "failed"),
+    # A reply longer than one argument holds, then one holding NUL: both reach the verdict.
+    "long-reply": ({"FAKE_CLAUDE_MODE": "blocked", "FAKE_CLAUDE_PAD": "131073"}, 3, "blocked"),
+    "nul-reply": ({"FAKE_CLAUDE_NUL": "1"}, 0, "delivered"),
     "error": ({"FAKE_CLAUDE_MODE": "error"}, 1, "failed"),
     "gate-fail": ({"FAKE_MAKE_EXIT": "2"}, 1, "failed"),
     "gate-fail-stdout": ({"FAKE_MAKE_EXIT": "2", "FAKE_MAKE_STDOUT": "1"}, 1, "failed"),
@@ -349,3 +355,12 @@ def test_stops_run_when_record_cannot_be_written(
     assert "No space left on device" in result.stderr
     assert run_workspace.calls("claude") == []
     assert [call[0] for call in run_tracker.calls] == ["get_issue"]
+
+
+def test_maps_each_builtin_node_to_hub_run_stage_when_it_fails() -> None:
+    found = discover_workflows(BUILTIN_WORKFLOWS, builtin_root=BUILTIN_WORKFLOWS)
+    (workflow,) = [item for item in found.workflows if item.name == "issue-to-pr"]
+    nodes = [node["id"] for node in workflow.document["nodes"]]
+
+    assert set(nodes) == set(NODE_STAGES)
+    assert NODE_STAGES["verdict"] is Stage.IMPLEMENTING
