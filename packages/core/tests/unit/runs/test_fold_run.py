@@ -318,3 +318,28 @@ def test_derives_stage_and_kinds_when_engine_runs_issue_to_pr() -> None:
     assert [step.kind for step in runs["9c0d1e2f"].steps] == [None, None]
     assert runs["3a4b5c6d"].steps[-1].kind == "shell"
     assert (runs["3a4b5c6d"].stage, runs["3a4b5c6d"].delivery) == (Stage.REPORTED, "delivered")
+
+
+def test_keeps_pinned_document_when_run_starts_with_skipped_node() -> None:
+    visits = [NodeVisit("gate", "skipped", skip_cause="condition"), NodeVisit("build")]
+    events = as_stored(a_workflow_run_events(visits, status="done"))
+
+    run = fold_runs(events)["5e6f7a8b"]
+
+    assert (run.revision, run.content_hash) == (3, WORKFLOW_HASH)
+
+
+def test_runs_again_when_engine_run_resumed_after_its_last_end() -> None:
+    first = a_workflow_run_events([NodeVisit("build", "failed")], status="failed")
+    later = SCENARIO_START + timedelta(hours=1)
+    resumed = a_workflow_run_events([NodeVisit("deploy", "running")], start=later)
+    ended = a_workflow_run_events(
+        [], status="done", end_index=1, start=later + timedelta(minutes=5)
+    )
+
+    running = fold_runs(as_stored([*first, *resumed]))["5e6f7a8b"]
+    done = fold_runs(as_stored([*first, *resumed, *ended]))["5e6f7a8b"]
+
+    assert (running.status, running.ended_at, running.failure) == ("running", None, None)
+    assert running.delivery is None
+    assert (done.status, done.ended_at) == ("done", later + timedelta(minutes=5))
