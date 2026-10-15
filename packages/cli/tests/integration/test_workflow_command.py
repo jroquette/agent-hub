@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from click import unstyle
 from typer.testing import CliRunner, Result
@@ -748,6 +749,95 @@ def test_warns_with_the_command_and_still_resumes_when_approve_finds_no_event_st
     assert result.exit_code == 0, result.output
     assert "hub workflow approve: event store unavailable" in result.stderr
     assert [r["choice"] for r in sample.records() if r["event"] == "decision"] == ["approve"]
+
+
+def decided(sample: SampleRun, *args: str, text: str | bytes | None = None) -> Result:
+    env = {"AGENT_HUB_ROOT": str(sample.hub)}
+    return CliRunner().invoke(app, ["workflow", "decide", RUN_ID, *args], input=text, env=env)
+
+
+def test_records_web_decision_with_stdin_text_without_resuming_when_decide_names_the_gate(
+    sample: SampleRun, tmp_path: Path
+) -> None:
+    gated(sample)
+
+    result = decided(
+        sample, "--gate", "r1:ship:1", "--choice", "reject", "--text-stdin", text="no\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == ["run r1: ship reject"]
+    [decision] = [r for r in sample.records() if r["event"] == "decision"]
+    assert (decision["gate_id"], decision["choice"], decision["text"]) == (
+        "r1:ship:1",
+        "reject",
+        "no\n",
+    )
+    assert not [r for r in sample.records() if r["event"] == "step_end" and r["node"] == "ship"]
+    stored = open_event_store(tmp_path / "events.db").read_all()
+    [answer] = [event for event in stored if event.type == "gate.result"]
+    assert (answer.payload["where"], answer.payload["result"]) == ("web", "rejected")
+
+
+def test_records_decision_without_text_when_decide_reads_no_stdin(sample: SampleRun) -> None:
+    gated(sample)
+
+    result = decided(sample, "--gate", "r1:ship:1", "--choice", "approve")
+
+    assert result.exit_code == 0, result.output
+    [decision] = [r for r in sample.records() if r["event"] == "decision"]
+    assert (decision["choice"], decision.get("text")) == ("approve", None)
+
+
+@pytest.mark.parametrize(
+    ("args", "text", "message"),
+    [
+        (("--gate", "r1:ship:2", "--choice", "approve"), None, "no open gate r1:ship:2"),
+        (("--gate", "r1:ship:1"), None, "needs a decision: one of approve, reject"),
+        (("--gate", "r1:ship:1", "--choice", "merge"), None, 'no decision "merge"'),
+        (
+            ("--gate", "r1:ship:1", "--choice", "approve", "--text-stdin"),
+            "x" * 65537,
+            "longer than 65536 bytes",
+        ),
+        (
+            ("--gate", "r1:ship:1", "--choice", "approve", "--text-stdin"),
+            b"\xff",
+            "the text on stdin is not UTF-8",
+        ),
+    ],
+)
+def test_refuses_without_recording_when_decide_cannot_answer_the_gate(
+    sample: SampleRun, *, args: tuple[str, ...], text: str | bytes | None, message: str
+) -> None:
+    gated(sample)
+
+    result = decided(sample, *args, text=text)
+
+    assert result.exit_code == 1
+    assert message in click.unstyle(result.stderr)
+    assert not [r for r in sample.records() if r["event"] == "decision"]
+
+
+def test_refuses_second_decision_when_decide_meets_a_decided_gate(sample: SampleRun) -> None:
+    gated(sample)
+    decided(sample, "--gate", "r1:ship:1", "--choice", "approve")
+
+    again = decided(sample, "--gate", "r1:ship:1", "--choice", "reject")
+
+    assert again.exit_code == 1
+    assert "the gate r1:ship:1 is already decided" in click.unstyle(again.stderr)
+    assert [r["choice"] for r in sample.records() if r["event"] == "decision"] == ["approve"]
+
+
+def test_refuses_usage_when_decide_gate_belongs_to_another_run(sample: SampleRun) -> None:
+    gated(sample)
+
+    result = decided(sample, "--gate", "r2:ship:1", "--choice", "approve")
+
+    assert result.exit_code == 2
+    assert "a gate of run r1" in click.unstyle(result.stderr)
+    assert not [r for r in sample.records() if r["event"] == "decision"]
 
 
 REWORK_YAML = """\

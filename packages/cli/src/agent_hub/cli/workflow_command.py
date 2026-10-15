@@ -28,7 +28,9 @@ one open gate; a single word after RUN that names no open gate is the TEXT. ``ap
 ``reject`` give those decisions; ``respond`` answers with ``--choice`` (a declared decision or
 option) and/or TEXT. The decision and its text go to the run's record, a ``control_plane``
 ``gate.result`` to the events; a gate that is not open, already decided or cannot take the
-answer is refused (exit 1).
+answer is refused (exit 1). ``decide RUN --gate GATE`` (hidden: hub web's decisions) records one
+decision for that exact open gate, ``--choice`` and the text read from stdin with ``--text-stdin``
+(UTF-8, at most 64 KiB), where ``--where`` (``web`` by default) says, and does not resume the run.
 
 ``test [NAME]...`` dry-runs each fixture of the discovered packs (or the NAMEs', each file once)
 in memory through the engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line
@@ -92,6 +94,7 @@ from agent_hub.cli.workflow_runs import (
     snapshot_run,
 )
 from agent_hub.core.approvals.decide_gate import (
+    MAX_TEXT_BYTES,
     DecideGate,
     GateDecision,
     GateDecisionError,
@@ -259,29 +262,97 @@ def respond(
 def _decide(
     command: str, run_id: str, *, node: str | None, text: str | None, choice: str | None
 ) -> int:
-    if not RUN_ID_PATTERN.fullmatch(run_id):
-        hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
-        raise typer.BadParameter(hint, param_hint="RUN")
-    root = hub_root_or_exit(os.environ, command=COMMAND)
-    hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
+    hub = _decision_hub(run_id)
     try:
         folder = _existing_run(hub, run_id)
         with run_lock(folder):
             drop_torn_tail(folder)
             book = RecordedGates(folder, _ended_check(folder))
             gate, text = _gate_of(book, node, text)
-            decision = GateDecision(
-                gate.gate_id, GateAnswer(choice, text), _approver(), "cli", now()
+            _record_decision(
+                command, hub, book=book, gate=gate, answer=GateAnswer(choice, text), where="cli"
             )
-            project = hub_project_name(hub) or hub.name
-            decided = DecideGate(book, _ingest, project=project).execute(decision)
-            if decided.event_error is not None:
-                unavailable = f"hub workflow {command}: event store unavailable"
-                typer.echo(f"{unavailable}: {decided.event_error}", err=True)
-            typer.echo(f"run {run_id}: {gate.node} {choice or 'answered'}")
             return _continue(hub, folder)
     except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
         fail(f"hub workflow {command}: {error}")
+
+
+@workflow_app.command("decide", hidden=True)
+def decide(
+    run_id: Annotated[str, _RUN_ARG],
+    *,
+    gate_id: Annotated[str, typer.Option("--gate", help="The open gate's id.")],
+    choice: Annotated[
+        str | None, typer.Option("--choice", help="A declared decision or option id.")
+    ] = None,
+    text_stdin: Annotated[
+        bool, typer.Option("--text-stdin", help="Read the answer's text from stdin.")
+    ] = False,
+    where: Annotated[
+        str, typer.Option("--where", help="Where the decision was taken (cli or web).")
+    ] = "web",
+) -> None:
+    """Record one decision for the open gate GATE of a paused run, without resuming it (hub
+    web's decisions: the text comes on stdin, never in argv)."""
+    if gate_id.split(":", 1)[0] != run_id:
+        raise typer.BadParameter(f"give a gate of run {run_id}", param_hint="--gate")
+    if where not in _WHERE:
+        raise typer.BadParameter(f"use one of {', '.join(_WHERE)}", param_hint="--where")
+    hub = _decision_hub(run_id)
+    try:
+        text = _stdin_text() if text_stdin else None
+        folder = _existing_run(hub, run_id)
+        with run_lock(folder):
+            drop_torn_tail(folder)
+            book = RecordedGates(folder, _ended_check(folder))
+            gate = book.open_gate(gate_id)
+            if gate is None:
+                raise GateDecisionError(f"no open gate {gate_id}")
+            answer = GateAnswer(choice, text)
+            _record_decision("decide", hub, book=book, gate=gate, answer=answer, where=where)
+    except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
+        fail(f"hub workflow decide: {error}")
+
+
+_WHERE: Final = ("cli", "web")
+
+
+def _decision_hub(run_id: str) -> Path:
+    if not RUN_ID_PATTERN.fullmatch(run_id):
+        hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
+        raise typer.BadParameter(hint, param_hint="RUN")
+    root = hub_root_or_exit(os.environ, command=COMMAND)
+    return hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
+
+
+def _stdin_text() -> str:
+    """The answer's text from stdin: UTF-8, at most ``MAX_TEXT_BYTES`` (read one byte past)."""
+    data = sys.stdin.buffer.read(MAX_TEXT_BYTES + 1)
+    if len(data) > MAX_TEXT_BYTES:
+        raise GateDecisionError(f"the text is longer than {MAX_TEXT_BYTES} bytes")
+    try:
+        return data.decode()
+    except UnicodeDecodeError:
+        raise GateDecisionError("the text on stdin is not UTF-8") from None
+
+
+def _record_decision(
+    command: str,
+    hub: Path,
+    *,
+    book: RecordedGates,
+    gate: RequestedGate,
+    answer: GateAnswer,
+    where: str,
+) -> None:
+    """``DecideGate`` under the run's lock (held by the caller); one stdout line."""
+    decision = GateDecision(gate.gate_id, answer, _approver(), where, now())
+    project = hub_project_name(hub) or hub.name
+    decided = DecideGate(book, _ingest, project=project).execute(decision)
+    if decided.event_error is not None:
+        unavailable = f"hub workflow {command}: event store unavailable"
+        typer.echo(f"{unavailable}: {decided.event_error}", err=True)
+    typer.echo(f"run {gate.run}: {gate.node} {answer.choice or 'answered'}")
 
 
 def _gate_of(
