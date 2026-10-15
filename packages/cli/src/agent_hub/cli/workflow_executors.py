@@ -57,7 +57,7 @@ from agent_hub.core.runner.session_prompt import (
     gate_tools,
     implementing_argv,
 )
-from agent_hub.core.runner.verdict import last_json_line, parse_session_output
+from agent_hub.core.runner.verdict import SessionReply, last_json_line, parse_session_output
 from agent_hub.core.workflows.failures import NodeFailedError, kind_for_exit
 from agent_hub.core.workflows.nodes import (
     AgentNode,
@@ -97,6 +97,8 @@ class WorkflowExecutors:
     environ: Mapping[str, str]
     hub_program: tuple[str, ...]
     child: ChildRunner = field(default=run_child)
+    # Each agent node's last ``claude`` result (cost, turns, verdict), for issue-to-pr's records.
+    replies: dict[str, SessionReply] = field(default_factory=dict)
 
     def run(self, call: NodeCall) -> NodeReply:
         node = call.node
@@ -160,6 +162,7 @@ class WorkflowExecutors:
             output_limit=SESSION_OUTPUT_LIMIT,
         )
         reply = parse_session_output(result.stdout.decode(errors="replace"))
+        self.replies[node.id] = reply
         if result.returncode != 0 or reply.is_error:
             detail = f"claude ended with exit {result.returncode} ({reply.subtype or 'no result'})"
             raise NodeFailedError("exec_failed", detail)

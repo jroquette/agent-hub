@@ -55,7 +55,11 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
   token. A `hub step` node (`command[0:2]` is `[hub, step]`) runs the engine's own hub (absolute path) with `child_env`
   (GitHub tokens), refuses `env` and a referenced `cwd`, and narrows per call as today: `untrusted_env` for git reads
   and the gate, `push_env` for fetch, push and gh. Tracker writes (ADR 0030) happen only in the parent (`hub workflow
-  run`, `hub run`) after the run ends, from `run.end`'s outcome; `hub step report` only computes the delivery.
+  run`, `hub run`) after the run ends, from `run.end`'s outcome; `hub step report` only computes the delivery. For the
+  workflow named `issue-to-pr`, `hub workflow run` reads the issue (its `issue_text` input), writes `hub run`'s
+  `.agent-runs` records as nodes end (whose events stand for the run's; the engine's node events are not sent), then
+  makes ADR 0030's writes and exits as `hub run` does; a run that failed before `report` is `failed` at the failed
+  node's stage.
 - `loop`: `max_iterations` (1–50) and at least one channel: `until` (text the final line equals), `until_field` (a
   `required` boolean of its `output_format`), `until_bash` (argv; exit 0 is done). `fresh_context: false` (default)
   resumes the previous iteration's session. The output is the last iteration's; past the cap it fails `max_iterations`.

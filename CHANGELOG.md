@@ -36,6 +36,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `done`), `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's
   outcome. Its fixtures (delivered, no commit, blocked, error, gate failure, PR failure) run in `hub workflow test`.
   Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured repo (AGH-223).
+- `hub workflow run issue-to-pr --live --input issue=ISSUE --input repo=REPO` gives what `hub run ISSUE --repo REPO --live`
+  gives: it reads the issue (filling `issue_text`), writes the same `.agent-runs` records and events, makes ADR 0030's
+  tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed) (AGH-223).
 
 ### Fixed
 
