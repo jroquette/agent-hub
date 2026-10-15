@@ -328,6 +328,10 @@ class HubFilesReadModels:
             file_id=file_id,
         )
 
+    def project_hubs(self) -> Iterator[tuple[str, str]]:
+        """Each project and its hub folder (``ProjectHubs``, the workflow reads)."""
+        return ((found.name, found.path) for found in self._projects())
+
     def _feature(self, project: str, slug: str) -> tuple[_Project, FeatureFolder]:
         missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
         try:

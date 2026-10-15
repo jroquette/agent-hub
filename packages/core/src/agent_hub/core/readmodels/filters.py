@@ -12,6 +12,7 @@ from agent_hub.core.learnings.learning import LearningStatus
 from agent_hub.core.readmodels.page import MAX_CURSOR_CHARS
 from agent_hub.core.runner.run_record import Stage
 from agent_hub.core.sessions.session import Outcome, SessionStatus
+from agent_hub.core.workflows.failures import FailureKind
 
 DEFAULT_PAGE_LIMIT = 50
 MAX_PAGE_LIMIT = 200
@@ -78,6 +79,8 @@ class RunFilter(PageRequest):
     failure_stage: Stage | None = None
     mode: Literal["live", "dry_run"] | None = None
     issue: str | None = None
+    workflow: str | None = None
+    failure_kind: FailureKind | None = None
 
 
 class ApprovalFilter(PageRequest):
