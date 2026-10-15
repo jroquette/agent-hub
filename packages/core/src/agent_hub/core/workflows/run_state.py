@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.workflows.failures import FailureKind
 from agent_hub.core.workflows.gates import OpenGate
 from agent_hub.core.workflows.nodes import Node
 from agent_hub.core.workflows.ports import ReportStatus, RunStatus, SkipCause
@@ -26,17 +27,30 @@ class NodeEnd:
     result: NodeResult
     cause: SkipCause | None = None
     origin: str | None = None
+    failure_kind: FailureKind | None = None
+
+
+@dataclass(frozen=True)
+class HeldGroup:
+    """A ``loop_group`` paused inside an iteration: its attempt, that iteration, the results of
+    the iteration before (``$LOOP_PREV``) and the body nodes this one already ended."""
+
+    attempt: int
+    iteration: int
+    previous: Mapping[str, NodeResult] = field(default_factory=dict)
+    current: Mapping[str, NodeResult] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class RunState:
     """What a run leaves for its resume: each node's result, its attempts, agent sessions and
-    the gates it paused on."""
+    the gates it paused on, with the groups paused around one."""
 
     nodes: Mapping[str, NodeResult] = field(default_factory=dict)
     attempts: Mapping[str, int] = field(default_factory=dict)
     sessions: Mapping[str, str] = field(default_factory=dict)
     gates: Mapping[str, OpenGate] = field(default_factory=dict)
+    groups: Mapping[str, HeldGroup] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

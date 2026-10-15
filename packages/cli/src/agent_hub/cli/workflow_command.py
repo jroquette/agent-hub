@@ -1,4 +1,4 @@
-"""``hub workflow list|validate|run``: the hub's workflows, loaded, planned and run (AGH-218, 221).
+"""``hub workflow list|validate|run|test``: the hub's workflows, loaded, planned, run and tested.
 
 The generator's ``discover_workflows`` finds the hub's ``workflows/<pack>/`` files, then the
 built-ins (a hub workflow overrides a built-in of its name), through the strict YAML loader; core's
@@ -24,6 +24,7 @@ option) and/or TEXT. The decision and its text go to the run's record, a ``contr
 ``gate.result`` to the events; a gate that is not open, already decided or cannot take the
 answer is refused (exit 1). It makes no tracker write: issue-to-pr's
 writes stay ``hub run``'s.
+
 ``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
 engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
 warnings indented, then a count; a failed fixture exits 1. ``--stubs-init`` writes NAME's
@@ -50,6 +51,7 @@ from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, shown_command, without
 from agent_hub.cli.run_log import new_run_id, now, open_default_event_store
+from agent_hub.cli.workflow_checkout import GitCheckoutProbe
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_runs import (
     DOCUMENT,
@@ -64,12 +66,14 @@ from agent_hub.cli.workflow_runs import (
     append_record,
     drop_torn_tail,
     ends_of,
+    held_record,
     make_run,
     prior_state,
     read_records,
     run_folder,
     run_lock,
     snapshot_hash,
+    snapshot_includes,
     snapshot_run,
 )
 from agent_hub.core.approvals.decide_gate import (
@@ -107,6 +111,7 @@ from agent_hub.generator.workflow_discovery import (
     DiscoveredWorkflow,
     WorkflowDiscovery,
     discover_workflows,
+    pack_resolver,
 )
 from agent_hub.generator.workflow_fixtures import (
     FIXTURE_SUFFIX,
@@ -115,6 +120,7 @@ from agent_hub.generator.workflow_fixtures import (
     skeleton_yaml,
 )
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
+from agent_hub.generator.workflow_yaml import WorkflowMapping
 
 # How a built-in's file is shown: it lives in the installed package, not in the hub.
 BUILTIN_PREFIX: Final = "<builtin>"
@@ -297,7 +303,11 @@ def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | 
     _exit_on_problems(catalog)
     if not catalog.plans:
         fail(f"no workflow named {shown_path(name)} in {HUB_WORKFLOWS}/ or the built-ins")
-    plan, found = catalog.plans[0], source.found[name]
+    found = source.found[name]
+    # Planned again to keep each workflow it includes for the snapshot (resume reads those).
+    included: dict[str, WorkflowMapping] = {}
+    resolver = pack_resolver(source.discovery, found.pack_root, used=included)
+    plan = plan_workflow(parse_workflow(found.document), includes=resolver)
     inputs = _inputs(plan, given)
     if not live:
         _print_plan(plan)
@@ -308,7 +318,11 @@ def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | 
     with run_lock(folder):
         try:
             pack, content_hash = snapshot_run(
-                folder, document=dict(found.document), plan=plan, pack_root=found.pack_root
+                folder,
+                document=dict(found.document),
+                plan=plan,
+                pack_root=found.pack_root,
+                includes=included,
             )
         except WorkflowRunError:
             # Nothing ran: a half-made run is not left to resume.
@@ -351,7 +365,8 @@ def _continue(hub: Path, folder: Path) -> int:
         )
     try:
         document = (folder / SNAPSHOT / DOCUMENT).read_bytes()
-        plan = plan_workflow(parse_workflow(_json(document)))
+        includes = snapshot_includes(folder / SNAPSHOT)
+        plan = plan_workflow(parse_workflow(_json(document)), includes=includes)
     except (OSError, WorkflowLoadError) as error:
         raise WorkflowRunError(f"cannot load the run's snapshot: {error}") from None
     inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
@@ -431,17 +446,24 @@ def _execute(
         environ=os.environ,
         hub_program=own_hub_program(),
     )
+    # The checkouts git can read: the hub and each repo cloned next to it.
+    repos = (hub.parent / repo.dir for repo in config.repos)
+    roots = tuple(root for root in (hub, *repos) if (root / ".git").exists())
+    checkout = GitCheckoutProbe(roots=roots, environ=os.environ)
     ports = EnginePorts(
         runner,
         recorder,
         SystemClock(),
         JsonSchemaOutputs(),
         _JITTER.random,
-        answers or RecordedAnswers([]),
+        checkout,
+        interrupt=runner.stop_children,
+        gates=answers or RecordedAnswers([]),
     )
     report = run_workflow(plan, inputs, ports, prior=prior)
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
     if report.status == "paused":
+        append_record(folder, held_record(report.state))
         gate = report.state.gates.get(report.reason or "")
         due = "" if gate is None or gate.due is None else f" until {gate.due.isoformat()}"
         typer.echo(f"run {folder.name}: paused at {report.reason}{due}")
@@ -543,9 +565,10 @@ class _DiscoveredSource:
         self.only = only
         self.builtin_root = builtin_root
         self.found: dict[str, DiscoveredWorkflow] = {}
+        self.discovery = WorkflowDiscovery(workflows=(), overridden=(), problems=())
 
     def workflow_files(self) -> Iterator[WorkflowFile | LoadProblem]:
-        discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
+        self.discovery = discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
         for problem in discovery.problems:
             # A folder's problem (a linked workflows/, an unreadable pack, the file budget)
             # bears on every name; a file's only on its own.
@@ -557,7 +580,9 @@ class _DiscoveredSource:
         for found in discovery.workflows:
             if self.only is None or found.name == self.only:
                 self.found[found.name] = found
-                yield WorkflowFile(self._shown(found.path), found.name, found.document, found.lines)
+                includes = pack_resolver(discovery, found.pack_root)
+                shown = self._shown(found.path)
+                yield WorkflowFile(shown, found.name, found.document, found.lines, includes)
 
     def _shown(self, path: Path) -> str:
         if path.is_relative_to(self.root):
@@ -610,7 +635,8 @@ def _write_skeleton(root: Path, discovery: WorkflowDiscovery, name: str | None) 
     if found.origin != "hub":
         fail(f"{name!r} is a built-in workflow; its fixtures ship with it")
     try:
-        skeleton = skeleton_yaml(plan_workflow(parse_workflow(found.document)))
+        includes = pack_resolver(discovery, found.pack_root)
+        skeleton = skeleton_yaml(plan_workflow(parse_workflow(found.document), includes=includes))
     except (WorkflowLoadError, WorkflowEngineError) as error:
         fail(f"{_shown_fixture(root, found.path)}: {error}")
     target = _skeleton_target(root, found.pack_root, name)

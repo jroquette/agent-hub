@@ -1,0 +1,11 @@
+# Each include runs its own namespaced copy of checks; the test block fails, the report still runs.
+workflow: includes
+stubs:
+  build: {text: built}
+  lint__run: {text: ok}
+  lint__verdict: {output: {verdict: pass}}
+  test__run: {fail: exec_failed}
+  report: {output: {delivery: failed}}
+expect: {status: failed, outcome: failed}
+failed: [test__run]
+reached: [build, lint__run, lint__verdict, test__run, report]
