@@ -146,12 +146,15 @@ describe("SessionsListScreen section-error", () => {
 
     const ended = await screen.findByRole("region", { name: /^Ended or failed/ });
     expect(await within(ended).findByText("Could not load ended or failed sessions")).toBeVisible();
+    // No query returned a count: the header shows the ellipsis, not 0.
+    expect(headers()).toEqual(["Waiting · 1", "Live · 1", "Ended or failed · …"]);
     expect(screen.getByText("/asker")).toBeInTheDocument();
     expect(screen.getByText("/runner")).toBeInTheDocument();
 
     failing = false;
     fireEvent.click(within(ended).getByRole("button", { name: "Try again" }));
     expect(await within(ended).findByText("/done")).toBeInTheDocument();
+    expect(headers()).toEqual(["Waiting · 1", "Live · 1", "Ended or failed · 1"]);
     await waitFor(() => {
       expect(sessionRequests(requests).map((url) => url.searchParams.get("status"))).toHaveLength(
         5,
