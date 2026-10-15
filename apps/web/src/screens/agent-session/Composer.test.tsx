@@ -191,12 +191,18 @@ describe("Composer (stop)", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
 
-    expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+    const pending = screen.getByRole("button", { name: "Stopping…" });
+    expect(pending).toHaveAttribute("aria-disabled", "true");
+    // Not `disabled`: a browser drops keyboard focus from a disabled button (jsdom does not).
+    expect(pending).not.toBeDisabled();
+    await userEvent.click(pending);
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
     await act(async () => {
       done();
       await Promise.resolve();
     });
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Stop" })).not.toHaveAttribute("aria-disabled");
   });
 
   it.each([
