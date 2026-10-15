@@ -1,3 +1,7 @@
+"""The workflow ``NodeRunner`` (AGH-221 AC: agent, shell and script nodes run as children with
+scoped environments; a failure's kind comes from where it happened)."""
+
+import dataclasses
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -6,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from agent_hub.cli import workflow_executors
 from agent_hub.cli.child_process import ChildResult
 from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.workflow_executors import MAX_OUTPUT_BYTES, WorkflowExecutors
@@ -182,9 +187,10 @@ def test_runs_argv_without_shell_when_shell_node_called(tmp_path: Path, pack: Pa
     assert reply.text == "lint ok\n"
     assert (sent["argv"], sent["cwd"], sent["own_session"]) == (
         ["make", "lint"],
-        tmp_path / "hub" / "sub",
-        False,
+        (tmp_path / "hub" / "sub").resolve(),
+        True,
     )
+    assert callable(sent["on_start"])
     assert sent["env"]["LEVEL"] == "2"
     assert not {"LINEAR_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "GIT_DIR"} & set(sent["env"])
 
@@ -208,6 +214,7 @@ def test_runs_own_hub_with_child_env_when_node_is_hub_step(tmp_path: Path, pack:
 
     sent = child.calls[0]
     assert sent["argv"] == [*HUB_PROGRAM, "step", "worktree"]
+    assert sent["cwd"] == (tmp_path / "hub").resolve()
     assert sent["env"]["GH_TOKEN"] == GITHUB_VALUE
     assert "LINEAR_API_KEY" not in sent["env"]
 
@@ -273,6 +280,7 @@ def test_fails_output_contract_when_stdout_past_cap(tmp_path: Path, pack: Path) 
         executors(tmp_path, pack, child).run(call(spec, argv=("make",)))
 
     assert raised.value.kind == "output_contract"
+    assert child.calls[0]["output_limit"] == MAX_OUTPUT_BYTES + 1
 
 
 def test_returns_exit_code_when_until_bash_runs(tmp_path: Path, pack: Path) -> None:
@@ -294,3 +302,80 @@ def test_reads_upstream_reference_when_prompt_file_renders(tmp_path: Path, pack:
     executors(tmp_path, pack, child).run(NodeCall(node(spec), 1, context))
 
     assert child.calls[0]["argv"][2] == "Fix E1\n"
+
+
+def test_runs_in_repo_when_cwd_names_a_configured_repo(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild()
+    spec = {"id": "st", "type": "shell", "command": ["git", "status"], "cwd": "../demo-api"}
+
+    executors(tmp_path, pack, child).run(call(spec, argv=("git", "status"), cwd="../demo-api"))
+
+    assert child.calls[0]["cwd"] == (tmp_path / "demo-api").resolve()
+
+
+@pytest.mark.parametrize("cwd", ["/etc", "../elsewhere", "out"])
+def test_fails_config_when_cwd_leaves_hub_and_repos(tmp_path: Path, pack: Path, cwd: str) -> None:
+    (tmp_path / "hub").mkdir()
+    (tmp_path / "hub" / "out").symlink_to(tmp_path / "elsewhere")
+    child = FakeChild()
+    spec = {"id": "st", "type": "shell", "command": ["ls"], "cwd": cwd}
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(spec, argv=("ls",), cwd=cwd))
+
+    assert raised.value.kind == "config"
+    assert child.calls == []
+
+
+def test_fails_config_when_prompt_file_leaves_pack(tmp_path: Path, pack: Path) -> None:
+    (pack / "prompts" / "out.md").symlink_to(tmp_path / "secret.md")
+    (tmp_path / "secret.md").write_text("x")
+    spec = {"id": "plan", "type": "agent", "prompt_file": "out.md"}
+    child = FakeChild()
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(spec))
+
+    assert raised.value.kind == "config"
+    assert child.calls == []
+
+
+@pytest.mark.parametrize("session", ["", "-p", "a b", "x" * 200, "s;rm"])
+def test_fails_config_when_resumed_session_id_is_unsafe(
+    tmp_path: Path, pack: Path, session: str
+) -> None:
+    child = FakeChild()
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(AGENT, prompt="x", resume_session=session))
+
+    assert raised.value.kind == "config"
+    assert child.calls == []
+
+
+def test_drops_session_id_when_claude_reports_an_unsafe_one(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild([claude_result("ok", session_id="--dangerous")])
+
+    reply = executors(tmp_path, pack, child).run(call(AGENT, prompt="x"))
+
+    assert reply.session is None
+
+
+def test_kills_child_group_when_interrupted(
+    tmp_path: Path, pack: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    killed: list[int] = []
+    monkeypatch.setattr(workflow_executors.os, "killpg", lambda group, _: killed.append(group))
+
+    def interrupted(argv: Sequence[str], **options: Any) -> ChildResult:
+        options["on_start"](4242)
+        raise KeyboardInterrupt
+
+    runner = executors(tmp_path, pack, FakeChild())
+    runner = dataclasses.replace(runner, child=interrupted)
+    spec = {"id": "lint", "type": "shell", "command": ["make"]}
+
+    with pytest.raises(KeyboardInterrupt):
+        runner.run(call(spec, argv=("make",)))
+
+    assert killed == [4242]
