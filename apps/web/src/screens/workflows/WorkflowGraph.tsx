@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useSearchParams } from "react-router";
 
 import { Button, DataTable, Icon, SegmentedControl } from "../../components";
 import type { IconName } from "../../components";
@@ -71,25 +72,32 @@ function GraphCanvas<N extends GraphNode>({
 }: WorkflowGraphProps<N>) {
   const ref = useRef<HTMLDivElement>(null);
   const [boxes, setBoxes] = useState<Record<string, Box>>({});
-  const [height, setHeight] = useState(0);
+  const [size, setSize] = useState({ width: 0, height: 0 });
   const edges = edgesOf(layers);
+  // Re-measure when the shape changes, not on every render (a live run re-renders each second).
+  const shape = layers
+    .map((layer) => layer.map((node) => `${node.id}<${node.depends_on.join(",")}`).join(" "))
+    .join("|");
 
   useLayoutEffect(() => {
     const root = ref.current;
     if (!root) return;
+    // Content coordinates: the SVG scrolls with the nodes, so add the scroll offsets.
     const measure = () => {
       const origin = root.getBoundingClientRect();
+      const dx = root.scrollLeft - origin.left;
+      const dy = root.scrollTop - origin.top;
       const next: Record<string, Box> = {};
       root.querySelectorAll<HTMLElement>("[data-node-id]").forEach((el) => {
         const r = el.getBoundingClientRect();
         next[el.dataset.nodeId ?? ""] = {
-          left: r.left - origin.left,
-          right: r.right - origin.left,
-          mid: r.top - origin.top + r.height / 2,
+          left: r.left + dx,
+          right: r.right + dx,
+          mid: r.top + dy + r.height / 2,
         };
       });
       setBoxes(next);
-      setHeight(root.scrollHeight);
+      setSize({ width: root.scrollWidth, height: root.scrollHeight });
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -98,7 +106,7 @@ function GraphCanvas<N extends GraphNode>({
     return () => {
       observer.disconnect();
     };
-  }, [layers]);
+  }, [shape]);
 
   return (
     <div
@@ -109,9 +117,10 @@ function GraphCanvas<N extends GraphNode>({
     >
       <svg
         aria-hidden="true"
-        width="100%"
-        height={height}
-        style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+        data-edges=""
+        width={size.width}
+        height={size.height}
+        style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}
       >
         {edges.map(([from, to]) => {
           const a = boxes[from];
@@ -258,20 +267,70 @@ export function WorkflowGraph<N extends GraphNode>(props: WorkflowGraphProps<N>)
   );
 }
 
-/** The selected node's side panel: focused when it opens, Close gives focus back to the node. */
+/**
+ * The selected node (`?node=`): `open` remembers the element that opened the panel (a node button
+ * or a list row) and `close` gives focus back to it, else to the node's button.
+ */
+export function useNodeParam(): {
+  nodeId: string | null;
+  openedByUser: boolean;
+  open: (id: string) => void;
+  close: () => void;
+} {
+  const [params, setParams] = useSearchParams();
+  const opener = useRef<HTMLElement | null>(null);
+  const [openedByUser, setOpenedByUser] = useState(false);
+  const nodeId = params.get("node");
+  const setNode = useCallback(
+    (id: string | null) => {
+      setParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          if (id === null) next.delete("node");
+          else next.set("node", id);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+  const open = (id: string) => {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setOpenedByUser(true);
+    setNode(id);
+  };
+  const close = () => {
+    const back = opener.current?.isConnected
+      ? opener.current
+      : nodeId
+        ? document.getElementById(nodeDomId(nodeId))
+        : null;
+    opener.current = null;
+    setOpenedByUser(false);
+    setNode(null);
+    back?.focus();
+  };
+  return { nodeId, openedByUser, open, close };
+}
+
+/** The selected node's side panel; Close gives focus back to what opened it. */
 export function NodePanel({
   id,
   onClose,
+  focusOnOpen,
   children,
 }: {
   id: string;
   onClose: () => void;
+  /** Move focus into the panel: on a user's choice, not on a `?node=` link at load. */
+  focusOnOpen: boolean;
   children: ReactNode;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
-    heading.current?.focus();
-  }, [id]);
+    if (focusOnOpen) heading.current?.focus();
+  }, [id, focusOnOpen]);
   return (
     <aside className="ah-card" aria-label={`Node ${id}`} style={{ padding: "12px 16px" }}>
       <div className="ah-row" style={{ gap: 8, marginBottom: 8 }}>
@@ -279,15 +338,7 @@ export function NodePanel({
           {id}
         </h2>
         <span className="ah-grow" />
-        <Button
-          size="sm"
-          variant="ghost"
-          icon="x"
-          onClick={() => {
-            onClose();
-            document.getElementById(nodeDomId(id))?.focus();
-          }}
-        >
+        <Button size="sm" variant="ghost" icon="x" onClick={onClose}>
           Close
         </Button>
       </div>
