@@ -216,7 +216,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             mode={mode}
             model={model}
             models={models}
-            onSend={commands.send}
+            onSend={(text) => transcript.send(text, commands.send)}
             onInterrupt={commands.interrupt}
             onSettings={commands.settings}
             onSending={follow.pin}

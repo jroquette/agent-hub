@@ -662,6 +662,46 @@ describe("AgentSessionScreen (composer)", () => {
   });
 });
 
+describe("AgentSessionScreen (sending-feedback)", () => {
+  it("shows Sending… until the echoed record, which reads Queued while the turn runs", async () => {
+    const view = renderChat(routes({ [`POST ${SESSION}/messages`]: { seq: 4 } }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "Also lint{Enter}");
+
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(within(log).getByText("Also lint").closest(".as-msg")).toHaveTextContent("Sending…");
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit(
+          "record.user.message",
+          aLogRecord("user.message", { seq: 4, body: { text: "Also lint" } }),
+          "4",
+        );
+    });
+    expect(within(log).getAllByText("Also lint")).toHaveLength(1);
+    expect(within(log).queryByText("Sending…")).toBeNull();
+    expect(within(log).getByText("Also lint").closest(".as-msg")).toHaveTextContent(
+      "Queued: Claude reads it after this turn",
+    );
+  });
+
+  it("removes the Sending… bubble and keeps the text when the send fails", async () => {
+    renderChat(routes({ [`POST ${SESSION}/messages`]: aProblem({ status: 409, title: "Busy" }) }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "Also lint{Enter}");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Busy");
+    expect(screen.queryByText("Sending…")).toBeNull();
+    expect(box).toHaveValue("Also lint");
+  });
+});
+
 describe("AgentSessionScreen (unavailable)", () => {
   it("tells the user to open the token link once when the cookie is missing", async () => {
     renderChat(
