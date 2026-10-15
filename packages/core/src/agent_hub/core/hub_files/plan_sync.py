@@ -48,6 +48,7 @@ from agent_hub.core.hub_files.plan_init import (
 from agent_hub.core.hub_files.rendered_file import Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
+from agent_hub.core.hub_files.seed_units import held_units, is_held
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEntry, TreeSnapshot
 
 
@@ -213,9 +214,16 @@ def _seeded_verdict(
 
 
 def _rendered_verdict(
-    rendered: _Rendered, entry: LockEntry | None, entries: Mapping[str, TreeEntry]
+    rendered: _Rendered,
+    entry: LockEntry | None,
+    entries: Mapping[str, TreeEntry],
+    *,
+    held: frozenset[str] = frozenset(),
 ) -> _Verdict:
     if rendered.ownership is Ownership.SEEDED:
+        if is_held(rendered.path, held):
+            # A seed unit the hub already has (seed_units.py): none of its files is written.
+            return None
         return _seeded_verdict(rendered, entry, entries)
     return _managed_verdict(rendered, entry, entries)
 
@@ -325,8 +333,10 @@ def plan_sync(
     _check_render(rendered)
     entries = tree.entries
     items: list[_Rendered] = [*rendered.files, *rendered.links]
+    held = held_units(rendered, entries, lock.files)
     verdicts: dict[str, _Verdict] = {
-        each.path: _rendered_verdict(each, lock.files.get(each.path), entries) for each in items
+        each.path: _rendered_verdict(each, lock.files.get(each.path), entries, held=held)
+        for each in items
     }
     gone = {
         path: _unrendered_verdict(path, entry, entries)

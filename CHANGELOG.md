@@ -55,9 +55,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed); its runs
   cannot be resumed or abandoned (exit 2) (AGH-223).
 - `hub init` and `hub sync` seed the built-in `issue-to-pr` pack into the hub once, byte for byte as shipped
-  (`workflows/issue-to-pr/`: the workflow, its prompt and its fixtures). The hub then owns its copy, which `hub run` and
-  `hub workflow` read instead of the built-in; a later release's built-in reaches the hub only if it removes or updates
-  that copy (AGH-227).
+  (`workflows/issue-to-pr/`: the workflow, its prompt and its fixtures), as a whole: never into a hub whose `hub.lock`
+  already lists the pack or whose folder holds files of its own, so a later release never adds a file to the hub's
+  pack. The hub then owns its copy, which `hub run` and `hub workflow` read instead of the built-in; delete
+  `workflows/issue-to-pr/` to follow the built-in again (AGH-227).
 - `hub doctor` rule `workflows.valid` (error): every workflow of the hub's `workflows/` and the built-ins loads and
   plans, as `hub workflow validate` checks them, one finding per problem at its file and line (AGH-227).
 

@@ -2010,7 +2010,9 @@ the render and `hub.json` only, never `hub.local.json` (`build_hub_lock`), writt
      else conflict. No entry or a seeded one: absent → write, `created` (never `restored`); present → conflict.
    - **Rendered seeded.** No entry: absent → write, `created`; a regular file → recorded; a link, folder or other →
      conflict. Seeded entry: nothing, whatever is on disk (deleted stays deleted). Managed entry (managed → seeded):
-     the file, or its absence, stays; recorded seeded.
+     the file, or its absence, stays; recorded seeded. A workflow pack (`workflows/<pack>/`) is one unit, at init
+     and adopt too: held when the lock lists one of its paths or its folder holds anything but the render's folders
+     and bytes, and then none of its absent files is written (still recorded seeded) (AGH-227).
    - **In the lock, not rendered.** Seeded → entry dropped. Managed: gone → dropped; equal to the entry → deleted,
      `deleted`; else conflict. A rename is a delete plus a create.
    - **Type.** A file or folder where a link is rendered, or the reverse, is a conflict even when equal to its entry
