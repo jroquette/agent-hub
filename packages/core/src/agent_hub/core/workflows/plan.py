@@ -7,7 +7,9 @@ that node's ``output_format``; argv lists follow ``check_argv`` (a whole element
 program nor a ``-c`` script); a ``stdin`` is a literal or one whole reference; a hub step node's
 ``cwd`` holds none; ``context.resume`` names an
 upstream agent; and ``returns``/``outcome_field`` name a node and a required boolean or enum
-string of its output.
+string of its output. The layers are then split where nodes may not run concurrently: a read-only
+node (``mutates_checkout: false``) never shares one with a node that may change the checkout, and
+two agents resuming one session never share one.
 
 A ``loop_group``'s body is planned the same way inside the group: its ids unique and new to the
 document, its ``depends_on`` inside the body, no cycle. A body node reads body nodes upstream of
@@ -317,14 +319,130 @@ def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
 
 
 def _recorded(document: WorkflowDocument, layers: tuple[tuple[str, ...], ...]) -> WorkflowPlan:
-    """The plan, each ``loop_group``'s body recorded as ``<group>__<id>``."""
+    """The plan, each ``loop_group``'s body recorded as ``<group>__<id>``, every layer split
+    where its nodes may not run together (``_split``)."""
+    layers = _split(layers, document.nodes)
     groups = [node for node in document.nodes if isinstance(node, LoopGroupNode)]
     if not groups:
         return WorkflowPlan(document, layers)
     recorded = {group.id: record_body(group) for group in groups}
     nodes = tuple(recorded.get(node.id, node) for node in document.nodes)
-    bodies = {group_id: _kahn_layers(group.nodes)[0] for group_id, group in recorded.items()}
+    bodies = {
+        group_id: _split(_kahn_layers(group.nodes)[0], group.nodes)
+        for group_id, group in recorded.items()
+    }
     return WorkflowPlan(document.model_copy(update={"nodes": nodes}), layers, bodies)
+
+
+def _split(
+    layers: tuple[tuple[str, ...], ...], nodes: Sequence[Node]
+) -> tuple[tuple[str, ...], ...]:
+    """Each layer as runs of nodes that may run concurrently, first fit in declaration order: a
+    node that reads the checkout (``mutates_checkout: false``, or a group whose body holds one)
+    never beside one that may change it, and two agents never resuming one session at once. A node
+    goes to the first batch that fits after the last one resuming its session."""
+    traits = {node.id: _Traits.of(node) for node in nodes}
+    split: list[tuple[str, ...]] = []
+    for layer in layers:
+        batches: list[_Batch] = []
+        # The last batch resuming each session: the batches after it hold none of them.
+        last: dict[str, int] = {}
+        # Per checkout kind, the batches that may still take it, skipping those that cannot.
+        skips = {kind: _Skips() for kind in _KINDS}
+        for node_id in layer:
+            node = traits[node_id]
+            start = max((last[s] + 1 for s in node.resumed if s in last), default=0)
+            index = skips[node.kind].find(start)
+            if index == len(batches):
+                batches.append(_Batch())
+                for kind_skips in skips.values():
+                    kind_skips.grow()
+            batch = batches[index]
+            batch.add(node_id, node)
+            last.update(dict.fromkeys(node.resumed, index))
+            for kind, kind_skips in skips.items():
+                if not batch.takes(*kind):
+                    kind_skips.close(index)
+        split.extend(tuple(batch.ids) for batch in batches)
+    return tuple(split)
+
+
+# A node's checkout kind: whether it reads the checkout, and whether it may write it.
+_KINDS: Final = ((False, False), (False, True), (True, False), (True, True))
+
+
+class _Skips:
+    """The batches one kind may still go to: ``find(i)`` is the first at or after ``i``, else
+    the next new batch. A batch that stops taking the kind is closed for good (its flags only
+    grow), and paths are compressed, so a layer's search is near-linear work."""
+
+    def __init__(self) -> None:
+        self.next: list[int] = []
+        # The links followed in all, for the linear-work tests.
+        self.hops = 0
+
+    def grow(self) -> None:
+        self.next.append(len(self.next))
+
+    def close(self, index: int) -> None:
+        self.next[index] = index + 1
+
+    def find(self, index: int) -> int:
+        root = index
+        while root < len(self.next) and self.next[root] != root:
+            root = self.next[root]
+            self.hops += 1
+        while index < len(self.next) and self.next[index] != index:
+            self.next[index], index = root, self.next[index]
+            self.hops += 1
+        return root
+
+
+@dataclass(frozen=True)
+class _Traits:
+    """What a node does to the checkout and which sessions it resumes."""
+
+    reads: bool
+    writes: bool
+    resumed: frozenset[str]
+
+    @property
+    def kind(self) -> tuple[bool, bool]:
+        return self.reads, self.writes
+
+    @classmethod
+    def of(cls, node: Node) -> _Traits:
+        parts = node.nodes if isinstance(node, LoopGroupNode) else (node,)
+        executable = [
+            p for p in parts if isinstance(p, AgentNode | ShellNode | ScriptNode | LoopNode)
+        ]
+        resumed = frozenset(
+            p.context.resume
+            for p in executable
+            if isinstance(p, AgentNode | LoopNode) and not isinstance(p.context, str)
+        )
+        reads = any(not p.mutates_checkout for p in executable)
+        return cls(reads, any(p.mutates_checkout for p in executable), resumed)
+
+
+@dataclass
+class _Batch:
+    """Nodes that run together: whether any reads or writes the checkout, the sessions resumed."""
+
+    ids: list[str] = field(default_factory=list)
+    reads: bool = False
+    writes: bool = False
+    resumed: set[str] = field(default_factory=set)
+
+    def takes(self, reads: bool, writes: bool) -> bool:  # noqa: FBT001 - a kind's two flags
+        """Whether a node of this checkout kind may join, sessions aside."""
+        return not (reads and self.writes) and not (writes and self.reads)
+
+    def add(self, node_id: str, traits: _Traits) -> None:
+        self.ids.append(node_id)
+        self.reads |= traits.reads
+        self.writes |= traits.writes
+        self.resumed |= traits.resumed
 
 
 def _reference_problems(

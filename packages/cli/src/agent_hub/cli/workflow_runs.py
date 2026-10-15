@@ -1,7 +1,8 @@
 """A workflow run's record and events, for ``hub workflow run`` (ADR 0032).
 
 A run lives in ``<hub>/.agent-runs/workflows/<run>/``: ``snapshot/`` holds the document as
-``workflow.json`` and the prompts and scripts its nodes name, copied at start, so a resume runs
+``workflow.json``, each workflow it includes as ``includes/<name>.json``, and the prompts and
+scripts its nodes name, copied at start, so a resume runs
 what the run started with (``content_hash`` is ``sha256:`` over those files, each framed by its
 path and length); ``records.jsonl`` holds one JSON line per start, resume, step start, step end
 (with its output and detail), retry, end and the agent sessions left. A resume rebuilds the
@@ -21,10 +22,11 @@ import json
 import os
 import re
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Event
 from typing import Final
 
 import typer
@@ -35,8 +37,10 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event_store import EventStore
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.workflows.document import WorkflowDocument, parse_workflow
 from agent_hub.core.workflows.events import WorkflowEvents
 from agent_hub.core.workflows.failures import RetryRecord
+from agent_hub.core.workflows.includes import IncludeResolver
 from agent_hub.core.workflows.nodes import AgentNode, LoopNode, ScriptNode
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import RunEnd, StepEnd, StepStart
@@ -47,6 +51,8 @@ from agent_hub.generator.workflow_discovery import PackFolder, PackPathError, re
 RUNS_ROOT: Final = Path(".agent-runs", "workflows")
 SNAPSHOT: Final = "snapshot"
 DOCUMENT: Final = "workflow.json"
+INCLUDES: Final = "includes"
+INCLUDE_NAME: Final = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 RECORDS: Final = "records.jsonl"
 LOCK: Final = "lock"
 MAX_SNAPSHOT_FILE_BYTES: Final = 1 << 20
@@ -98,12 +104,20 @@ def run_lock(folder: Path) -> Iterator[None]:
 
 
 def snapshot_run(
-    folder: Path, *, document: JsonValue, plan: WorkflowPlan, pack_root: Path
+    folder: Path,
+    *,
+    document: JsonValue,
+    plan: WorkflowPlan,
+    pack_root: Path,
+    includes: Mapping[str, JsonValue] | None = None,
 ) -> tuple[Path, str]:
     """Write the run's snapshot; its pack root and content hash. Each pack file is read once
-    and at most ``MAX_SNAPSHOT_FILE_BYTES``."""
+    and at most ``MAX_SNAPSHOT_FILE_BYTES``; each included workflow is kept as
+    ``includes/<name>.json`` (``snapshot_includes`` resolves them on resume)."""
     snapshot = folder / SNAPSHOT
     files = {DOCUMENT: json.dumps(document, sort_keys=True).encode()}
+    for name, included in (includes or {}).items():
+        files[f"{INCLUDES}/{name}.json"] = json.dumps(included, sort_keys=True).encode()
     for pack_folder, relative in sorted(set(_pack_files(plan))):
         name = f"{pack_folder}/{relative}"
         try:
@@ -142,6 +156,21 @@ def snapshot_hash(snapshot: Path) -> str:
     except OSError as error:
         raise WorkflowRunError(f"cannot read the run's snapshot: {error}") from None
     return f"sha256:{digest.hexdigest()}"
+
+
+def snapshot_includes(snapshot: Path) -> IncludeResolver:
+    """Resolve an include from the run's snapshot: the workflow as the run started with it."""
+
+    def resolve(name: str) -> WorkflowDocument | None:
+        path = snapshot / INCLUDES / f"{name}.json"
+        if not INCLUDE_NAME.fullmatch(name) or not path.is_file():
+            return None
+        try:
+            return parse_workflow(json.loads(path.read_bytes()))
+        except (OSError, ValueError) as error:
+            raise WorkflowRunError(f"cannot read the snapshot of {name}: {error}") from None
+
+    return resolve
 
 
 def _pack_files(plan: WorkflowPlan) -> Iterator[tuple[PackFolder, str]]:
@@ -307,5 +336,8 @@ class SystemClock:
     def now(self) -> datetime:
         return now()
 
-    def sleep(self, delay: timedelta) -> None:
-        time.sleep(delay.total_seconds())
+    def sleep(self, delay: timedelta, stop: Event | None = None) -> None:
+        if stop is None:
+            time.sleep(delay.total_seconds())
+        else:
+            stop.wait(delay.total_seconds())

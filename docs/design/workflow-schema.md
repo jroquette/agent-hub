@@ -70,15 +70,15 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 ### Running: joins, conditions, outputs, status, retry and events
 
 Kahn layers over `depends_on`, in declaration order inside a layer. A cycle, an unknown id, a reference to a node not
-upstream, or a bad `returns` or `outcome_field` is a load error. Layers run in order, in v1 one node at a time; a
-failure does not stop later layers. A node first checks its `trigger_rule` against its dependencies: `all_success`
-(default: every one completed), `one_success` (at least one), `none_failed_min_one_success` (none failed, at least one
-completed) or `all_done` (every one ended). Then `when:`: `atom (('&&' | '||') atom)*`, `&&` binding tighter, no
-parentheses or negation; an atom is `<ref> <op> <literal>` (op `==`, `!=`, `<`, `>`, `<=`, `>=`; literal `'text'`, a
-number, `true`, `false`). A numeric literal compares numerically (a non-numeric value is a parse failure); other
-literals compare canonical text with `==`, `!=`. A skipped producer reads as empty text; a failed one fails the node.
-A node that does not run is skipped with a `skip_cause`: `upstream_failed` or `upstream_skipped` (`reason` names the
-origin node, carried down the chain), `condition`, `condition_parse_error`, or `prior_success` (reused on resume).
+upstream, or a bad `returns` or `outcome_field` is a load error. Layers run in order, a layer's nodes concurrently (≤ 4
+at once); a failure does not stop later layers. A node first checks its `trigger_rule` against its dependencies:
+`all_success` (default: every one completed), `one_success` (at least one), `none_failed_min_one_success` (none failed,
+at least one completed) or `all_done` (every one ended). Then `when:`: `atom (('&&' | '||') atom)*`, `&&` binding
+tighter, no parentheses or negation; an atom is `<ref> <op> <literal>` (op `==`, `!=`, `<`, `>`, `<=`, `>=`; literal
+`'text'`, a number, `true`, `false`). A numeric literal compares numerically (a non-numeric value is a parse failure);
+other literals compare canonical text with `==`, `!=`. A skipped producer reads as empty text; a failed one fails the
+node. A node that does not run is skipped with a `skip_cause`: `upstream_failed` or `upstream_skipped` (`reason` names
+the origin node, carried down the chain), `condition`, `condition_parse_error`, or `prior_success` (reused on resume).
 
 References are `$INPUTS.<name>`, `$<node>.output`, `$<node>.output.<path>` (dot segments, `.0` for an array item; a
 path needs the producer's `output_format`), `$LOOP_PREV…` and `$WITH.<name>`, in prompts, `command`, `args`, `cwd`,
@@ -147,4 +147,4 @@ out, fails the test, except an approval or wait with no stub: it pauses the run 
 
 ## Open questions
 
-- UI edits beside git; concurrent layers (`mutates_checkout`); the `content_hash` framing; the reference regex.
+- UI edits beside git; the `content_hash` framing; the reference regex.

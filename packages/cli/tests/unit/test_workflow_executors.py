@@ -10,14 +10,15 @@ from typing import Any
 
 import pytest
 
-from agent_hub.cli import workflow_executors
+from agent_hub.cli import workflow_command, workflow_executors
 from agent_hub.cli.child_process import ChildResult
 from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.run_children import RunChildren, RunOptions
 from agent_hub.cli.workflow_executors import MAX_OUTPUT_BYTES, WorkflowExecutors
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_models_document, an_issue
-from agent_hub.core.testing.workflow_fakes import a_plan
+from agent_hub.core.testing.workflow_fakes import ListRecorder, a_plan
+from agent_hub.core.workflows.engine import MAX_PARALLEL
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.nodes import ExecutableNode
 from agent_hub.core.workflows.ports import NodeCall
@@ -490,3 +491,16 @@ def test_bounds_agent_reply_at_session_cap_when_claude_answers(
         with pytest.raises(NodeFailedError) as raised:
             executors(tmp_path, pack, child).run(call(AGENT, prompt="Go."))
         assert raised.value.kind == "output_contract"
+
+
+def test_runs_one_attempt_at_a_time_when_hub_steps_run_in_process(
+    tmp_path: Path, pack: Path
+) -> None:
+    in_process = dataclasses.replace(
+        executors(tmp_path, pack, FakeChild()), hub_steps=lambda *_: "{}"
+    )
+
+    ports = workflow_command._ports(in_process, ListRecorder(), None)
+
+    assert ports.max_parallel == 1
+    assert executors(tmp_path, pack, FakeChild()).max_parallel == MAX_PARALLEL
