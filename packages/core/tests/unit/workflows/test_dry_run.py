@@ -277,3 +277,18 @@ def test_gives_minimal_values_when_the_schema_is_past_the_node_budget() -> None:
     value = placeholder(schema)
 
     assert value == {**{name: ["TODO"] for name in names[:-1]}, names[-1]: []}
+
+
+def test_lists_the_failed_body_node_and_its_group_when_a_body_node_fails() -> None:
+    group = {
+        "id": "g",
+        "type": "loop_group",
+        "max_iterations": 2,
+        "until_when": "$b.output == 'done'",
+        "nodes": [{"id": "b", "type": "shell", "command": ["true"]}],
+    }
+
+    report = dry_run(a_plan(group), {}, {"g__b": Stub(fail="exec_failed")}, outputs=KeysOutputs())
+
+    assert report.failed == ("g", "g__b")
+    assert report.reached == ("g", "g__b")
