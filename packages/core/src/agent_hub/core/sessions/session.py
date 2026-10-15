@@ -2,9 +2,9 @@
 
 from datetime import date
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, model_validator
 
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.stored_event import EventId
@@ -112,6 +112,9 @@ class Session(DerivedView):
 
     ``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.
     ``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.
+    The tile fields (``waiting_reason`` to ``sparkline_60s``) are what a Live tile shows,
+    derived by the same code (D5); lists and the session read fill them, other reads leave them
+    ``null``. ``sparkline_60s`` is ``null`` once the session has ended.
     """
 
     id: str
@@ -148,6 +151,19 @@ class Session(DerivedView):
     actors: tuple[Actor, ...] = ()
     problems: ProblemCounts = ProblemCounts()
     agent_session_id: str | None = None
+    waiting_reason: str | None = None
+    last_action: str | None = None
+    last_tool: str | None = None
+    needs_you_problem: str | None = None
+    failing_notice: str | None = None
+    sparkline_60s: tuple[int, ...] | None = None
+
+    @model_validator(mode="after")
+    def _no_sparkline_when_ended(self) -> Self:
+        if self.status == SessionStatus.ENDED and self.sparkline_60s is not None:
+            msg = "sparkline_60s must be null once the session has ended"
+            raise ValueError(msg)
+        return self
 
 
 class SummaryLine(ViewModel):
