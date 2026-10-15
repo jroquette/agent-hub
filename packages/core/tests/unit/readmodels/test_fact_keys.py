@@ -57,6 +57,9 @@ def test_keys_each_engine_run_end_by_index_when_source_id_numbers_it() -> None:
     assert end("r1:run:x:end") == "run.end:r1"
     assert end("r1:run::end") == "run.end:r1"
     assert end("r2:run:3:end") == "run.end:r1"
+    assert end("r1:run:123456789:end") == "run.end:r1:123456789"
+    assert end("r1:run:1234567890:end") == "run.end:r1"
+    assert end("r1:run:" + "9" * 5000 + ":end") == "run.end:r1"
 
 
 def test_has_no_key_when_event_has_no_shared_identity() -> None:

@@ -103,13 +103,19 @@ def fact_key(event: Event) -> str | None:
     return None
 
 
+# An engine run ends at most once per resume; a longer number is not an engine end (and
+# ``int`` refuses digit runs past 4300).
+MAX_END_INDEX_DIGITS = 9
+
+
 def engine_end_index(run: str, source_id: str) -> int | None:
     """``n`` when ``source_id`` is a workflow engine's ``<run>:run:<n>:end``, else None."""
     prefix, suffix = f"{run}:run:", ":end"
     if not (source_id.startswith(prefix) and source_id.endswith(suffix)):
         return None
     index = source_id[len(prefix) : len(source_id) - len(suffix)]
-    return int(index) if index.isascii() and index.isdecimal() else None
+    is_index = 0 < len(index) <= MAX_END_INDEX_DIGITS and index.isascii() and index.isdecimal()
+    return int(index) if is_index else None
 
 
 def usage_key(event: Event) -> str | None:
