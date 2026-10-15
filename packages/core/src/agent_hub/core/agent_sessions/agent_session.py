@@ -172,9 +172,18 @@ class MessageAccepted(ViewModel):
     seq: int = Field(ge=1)
 
 
+class Screenshot(ViewModel):
+    """A PNG of the screen sent with the first prompt, base64-encoded; its decoded size and
+    signature are checked by ``decode_screenshot`` (413, 422)."""
+
+    media_type: Literal["image/png"]
+    data: str = Field(min_length=1)
+
+
 class CreateAgentSession(ViewModel):
     """``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is
-    checked against the message limit, 413), or a past session to resume (and fork)."""
+    checked against the message limit, 413), or a past session to resume (and fork).
+    ``screenshot`` goes with the first prompt as an image, so it needs one."""
 
     project: ProjectName
     workdir_id: WorkdirId
@@ -183,11 +192,19 @@ class CreateAgentSession(ViewModel):
     prompt: str | None = Field(default=None, min_length=1)
     resume_session_id: str | None = Field(default=None, pattern=UUID_PATTERN)
     fork: bool = False
+    screenshot: Screenshot | None = None
 
     @model_validator(mode="after")
     def _fork_needs_resume(self) -> CreateAgentSession:
         if self.fork and self.resume_session_id is None:
             msg = "fork needs resume_session_id"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _screenshot_needs_prompt(self) -> CreateAgentSession:
+        if self.screenshot is not None and self.prompt is None:
+            msg = "screenshot needs prompt"
             raise ValueError(msg)
         return self
 

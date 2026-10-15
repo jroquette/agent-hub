@@ -6,11 +6,13 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
     CreateAgentSession,
     PermissionDecision,
+    Screenshot,
     SessionSettings,
     StartCloud,
 )
 
 WORKDIR_ID = "0123456789abcdef"
+PNG_DATA = "iVBORw0KGgo="
 
 
 def test_refuses_decision_when_always_without_suggestion() -> None:
@@ -74,3 +76,39 @@ def test_refuses_cloud_task_when_it_starts_with_dash() -> None:
 
 def test_marks_ended_and_failed_terminal_when_statuses_listed() -> None:
     assert {AgentSessionStatus.ENDED, AgentSessionStatus.FAILED} == TERMINAL_STATUSES
+
+
+def test_refuses_screenshot_when_prompt_missing() -> None:
+    with pytest.raises(ValidationError):
+        CreateAgentSession.model_validate(
+            {
+                "project": "demo",
+                "workdir_id": WORKDIR_ID,
+                "screenshot": {"media_type": "image/png", "data": PNG_DATA},
+            }
+        )
+
+
+def test_refuses_screenshot_when_media_type_not_png() -> None:
+    with pytest.raises(ValidationError):
+        CreateAgentSession.model_validate(
+            {
+                "project": "demo",
+                "workdir_id": WORKDIR_ID,
+                "prompt": "What is on this screen?",
+                "screenshot": {"media_type": "image/jpeg", "data": PNG_DATA},
+            }
+        )
+
+
+def test_accepts_screenshot_when_prompt_given() -> None:
+    request = CreateAgentSession.model_validate(
+        {
+            "project": "demo",
+            "workdir_id": WORKDIR_ID,
+            "prompt": "What is on this screen?",
+            "screenshot": {"media_type": "image/png", "data": PNG_DATA},
+        }
+    )
+
+    assert request.screenshot == Screenshot(media_type="image/png", data=PNG_DATA)

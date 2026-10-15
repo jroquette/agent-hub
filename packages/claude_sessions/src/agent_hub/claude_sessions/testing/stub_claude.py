@@ -389,7 +389,11 @@ def _user_text(message: Message) -> str:
     content = message.get("message", {}).get("content", "")
     if isinstance(content, str):
         return content
-    return " ".join(str(block.get("text", "")) for block in content if isinstance(block, dict))
+    return " ".join(
+        str(block.get("text", ""))
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
 
 
 def _json_object(value: object) -> Message:

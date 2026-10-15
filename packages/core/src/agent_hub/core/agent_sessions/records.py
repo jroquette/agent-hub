@@ -103,10 +103,20 @@ class RecordBody(ViewModel):
         return body
 
 
+class Attachment(RecordBody):
+    """What a message carried besides its text: a marker only, never the image's bytes."""
+
+    kind: Literal["screenshot"]
+    media_type: Literal["image/png"]
+    bytes: int = Field(ge=1)
+
+
 class UserMessageBody(RecordBody):
-    """``user.message``: what the owner sent (redacted when stored)."""
+    """``user.message``: what the owner sent (redacted when stored), and the marker of each
+    attachment sent with it."""
 
     text: str
+    attachments: tuple[Attachment, ...] | None = None
 
 
 class PermissionRequestBody(RecordBody):

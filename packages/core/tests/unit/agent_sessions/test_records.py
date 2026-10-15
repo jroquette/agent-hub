@@ -7,12 +7,14 @@ from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus
 from agent_hub.core.agent_sessions.records import (
     AUDIT_RECORD_KINDS,
     DRIVER_RECORD_KINDS,
+    Attachment,
     DeltaFrame,
     LogRecord,
     PermissionDecisionBody,
     RecordKind,
     StatusFrame,
     StreamItem,
+    UserMessageBody,
 )
 
 AT = datetime(2026, 10, 13, 9, 0, 0, 250000, tzinfo=UTC)
@@ -58,3 +60,19 @@ def test_tells_frames_apart_when_stream_item_parsed() -> None:
 
     assert delta == DeltaFrame(after_seq=3, block=0, index=1, text="Hi")
     assert status == StatusFrame(status=AgentSessionStatus.IDLE)
+
+
+def test_omits_attachments_when_none() -> None:
+    assert UserMessageBody(text="Hi").as_body() == {"text": "Hi"}
+
+
+def test_serialises_screenshot_attachments_when_given() -> None:
+    body = UserMessageBody(
+        text="What is on this screen?",
+        attachments=(Attachment(kind="screenshot", media_type="image/png", bytes=1234),),
+    )
+
+    assert body.as_body() == {
+        "text": "What is on this screen?",
+        "attachments": [{"kind": "screenshot", "media_type": "image/png", "bytes": 1234}],
+    }
