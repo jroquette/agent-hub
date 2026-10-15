@@ -16,6 +16,14 @@
   line-height: 20px;
   font-weight: 600;
 }
+.sl-section-updating {
+  margin-left: var(--space-2);
+  font-weight: 400;
+}
+/* The previous pages stay readable but muted until the new ones arrive. */
+.sl-section[data-updating] .ah-table-wrap {
+  opacity: 0.6;
+}
 .sl-section-toggle {
   all: unset;
   display: inline-flex;

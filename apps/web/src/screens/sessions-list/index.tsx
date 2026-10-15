@@ -1092,7 +1092,8 @@ export function SessionsListScreen() {
                   ? `Showing ${fmtInt(sectionRows.length)} of ~${fmtInt(count)}`
                   : `Showing all ${fmtInt(sectionRows.length)}`}
               </span>
-              {pages.hasNextPage && (
+              {/* On placeholder pages TanStack would refetch page 1, not the next one. */}
+              {pages.hasNextPage && !pages.isPlaceholderData && (
                 <Button
                   size="sm"
                   disabled={pages.isFetchingNextPage}
@@ -1136,6 +1137,7 @@ export function SessionsListScreen() {
                 : section.count
             }
             approximate={section.pages.hasNextPage}
+            updating={section.pages.isPlaceholderData}
             collapsed={collapsed.has(section.id)}
             onToggle={() => {
               toggleCollapsed(section.id);
