@@ -55,9 +55,9 @@ interface NavItem {
 }
 
 /**
- * The sitemap (D20, AGH-201 D3): Metrics, Bench, Tracker queue and Workflows are not shipped and not
- * shown; Knowledge holds Learnings, the selected project's Brain (`BRAIN_ID`, see `brainLink`) and
- * its Skills (`SKILLS_ID`, see `skillsLink`).
+ * The sitemap (D20, AGH-201 D3): Metrics, Bench and Tracker queue are not shipped and not shown;
+ * Workflows sits in Improve (AGH-226); Knowledge holds Learnings, the selected project's Brain
+ * (`BRAIN_ID`, see `brainLink`) and its Skills (`SKILLS_ID`, see `skillsLink`).
  */
 export const NAV: readonly { group: string; items: NavItem[] }[] = [
   {
@@ -113,6 +113,10 @@ export const NAV: readonly { group: string; items: NavItem[] }[] = [
       },
       { id: "features", label: "Features", to: "/features", icon: "list-checks" },
     ],
+  },
+  {
+    group: "Improve",
+    items: [{ id: "workflows", label: "Workflows", to: "/workflows", icon: "workflow" }],
   },
   {
     group: "Hub",

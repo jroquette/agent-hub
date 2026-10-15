@@ -33,6 +33,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `hub run` runs read as before (AGH-225).
 - `GET /api/v1/workflows` lists each project's workflows (source `hub` or `builtin`) and the files that do not load;
   `GET /api/v1/workflows/{project}/{name}` gives a workflow's document and its layers (AGH-225).
+- `hub web` has a Workflows page (sidebar group Improve): each workflow with its source (hub or built-in), the files
+  that do not load, and a workflow's graph by layers (a column per layer, arrows for `depends_on`, a list view, a
+  keyboard-reachable node panel) with its document, read-only (AGH-226).
 - `hub step worktree|verdict|commits|pr|report` run `hub run`'s stages one at a time and print one JSON object each (the
   worktree and the repo's target, the session's verdict, the branch's commits, the PR's url, the delivery), for the issue-to-pr
   workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
