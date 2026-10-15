@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` can start a Claude session from any project screen by shaking the mouse, with a screenshot of the
+  screen: a "Shake to start a session" setting (off by default) opens New session with the prompt focused and an
+  "Attach a screenshot" checkbox; `POST /api/v1/agent-sessions` takes an optional PNG `screenshot` (at most
+  3,932,160 bytes decoded, 8 MiB body on that route only) sent to `claude` as an image block with the first prompt;
+  the stored conversation keeps only an `attachments` marker. Under `make dev` it preselects the served checkout and
+  Accept edits, so Claude's edits show through Vite's live reload (AGH-260).
 - `hub web` can start, cancel, resume and abandon workflow runs: `POST /api/v1/workflow-runs` and
   `/workflow-runs/{run_id}/cancel|resume|abandon` run `hub workflow run --live` as a detached child (no
   `LINEAR_API_KEY`, a pid file under `.agent-runs/web/`), keep one live run per issue across starts and resumes,
