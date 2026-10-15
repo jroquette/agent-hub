@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { ToolCallCard, resultText } from "./ToolCallCard";
-import type { ToolView } from "./transcript";
+import type { PermissionView, ToolResultView, ToolView } from "./transcript";
 
 function aTool(overrides: Partial<ToolView> = {}): ToolView {
   return {
@@ -81,6 +81,129 @@ describe("ToolCallCard (transcript)", () => {
     const diff = screen.getByLabelText("Diff of a.py");
     expect(within(diff).getByText("+y")).toBeInTheDocument();
     expect(within(diff).getByText("+q")).toBeInTheDocument();
+  });
+});
+
+function aRequest(overrides: Partial<PermissionView> = {}): PermissionView {
+  return {
+    requestId: "toolu_01",
+    tool: "Bash",
+    requestKind: "tool",
+    summary: "make check",
+    input: null,
+    suggestions: [],
+    askedAt: "2026-01-01T00:00:00Z",
+    deadlineAt: null,
+    decision: null,
+    redacted: false,
+    ...overrides,
+  };
+}
+const decided = (decision: "allow" | "deny") => ({
+  decision,
+  by: null,
+  message: null,
+  at: "2026-01-01T00:00:01Z",
+});
+const ok: ToolResultView = { content: "ok", isError: false, truncated: false, originalBytes: null };
+const failed: ToolResultView = { ...ok, content: "no", isError: true };
+
+describe("ToolCallCard (tool-cards) states", () => {
+  it.each([
+    ["running", {}, undefined, "Running", "loader"],
+    ["waiting for you", {}, aRequest(), "Waiting for you", "hand"],
+    ["done", { result: ok }, aRequest({ decision: decided("allow") }), "Done", "circle-check"],
+    ["error", { result: failed }, undefined, "Error", "circle-x"],
+    ["denied", { result: failed }, aRequest({ decision: decided("deny") }), "Denied", "shield-x"],
+  ] as const)("reads %s with an icon and text", (_, tool, request, text, icon) => {
+    render(<ToolCallCard tool={aTool(tool)} tools={{}} calls={{}} request={request} />);
+
+    const head = screen.getByRole("button", { name: `Bash make check (${text})` });
+    const state = within(head).getByText(text);
+    expect(state.closest(".as-tool-state")?.querySelector(`[data-icon="${icon}"]`)).not.toBeNull();
+  });
+
+  it("reads Waiting for you only while the permission is open", () => {
+    const { rerender } = render(
+      <ToolCallCard tool={aTool()} tools={{}} calls={{}} request={aRequest()} />,
+    );
+    expect(screen.getByText("Waiting for you")).toBeInTheDocument();
+
+    rerender(
+      <ToolCallCard
+        tool={aTool()}
+        tools={{}}
+        calls={{}}
+        request={aRequest({ decision: decided("allow") })}
+      />,
+    );
+    expect(screen.getByText("Running")).toBeInTheDocument();
+  });
+});
+
+describe("ToolCallCard (tool-cards) long output", () => {
+  const output = (length: number) => aTool({ result: { ...ok, content: "x".repeat(length) } });
+
+  it("shows 10,000 characters whole", async () => {
+    await expand(output(10_000));
+
+    expect(screen.getAllByText("x".repeat(10_000))).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+  });
+
+  it("cuts 10,001 characters to 10,000 and Show all brings the rest, focus on the output", async () => {
+    await expand(output(10_001));
+
+    const pre = screen.getByText("x".repeat(10_000));
+    expect(pre.tagName).toBe("PRE");
+    await userEvent.click(screen.getByRole("button", { name: "Show all (10,001 characters)" }));
+
+    expect(pre).toHaveTextContent(/^x{10001}$/);
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+    expect(pre).toHaveFocus();
+  });
+
+  it("counts an emoji as one character and never cuts it in half", async () => {
+    const smile = "\u{1F600}";
+    await expand(aTool({ result: { ...ok, content: `${"x".repeat(9_999)}${smile}` } }));
+
+    expect(screen.getByText(`${"x".repeat(9_999)}${smile}`).tagName).toBe("PRE");
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+  });
+
+  it("cuts after a whole emoji and counts the rest in characters", async () => {
+    const smile = "\u{1F600}";
+    await expand(aTool({ result: { ...ok, content: `${"x".repeat(9_999)}${smile}y` } }));
+
+    expect(screen.getByText(`${"x".repeat(9_999)}${smile}`).tagName).toBe("PRE");
+    expect(
+      screen.getByRole("button", { name: "Show all (10,001 characters)" }),
+    ).toBeInTheDocument();
+  });
+
+  /** A structured result whose JSON text is `length` characters. */
+  const structured = (length: number) => {
+    const pad = JSON.stringify({ data: "" }, null, 2).length;
+    return aTool({ result: { ...ok, content: { data: "x".repeat(length - pad) } } });
+  };
+
+  it("shows a structured result of 10,000 characters whole as JSON", async () => {
+    await expand(structured(10_000));
+
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+    expect(screen.getByText(/^"?x{100}/)).toBeInTheDocument();
+  });
+
+  it("cuts a structured result over 10,000 characters as text and Show all brings the rest", async () => {
+    await expand(structured(10_001));
+
+    const pre = screen.getByText(/^\{\s+"data": "x+"$/);
+    expect(pre.tagName).toBe("PRE");
+    expect(pre.textContent).toHaveLength(10_000);
+    await userEvent.click(screen.getByRole("button", { name: "Show all (10,001 characters)" }));
+
+    expect(pre.textContent).toHaveLength(10_001);
+    expect(pre).toHaveFocus();
   });
 });
 
