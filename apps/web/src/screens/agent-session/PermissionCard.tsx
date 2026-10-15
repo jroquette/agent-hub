@@ -12,6 +12,7 @@ import type { components } from "../../api/schema";
 import { Button, Icon, Markdown } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
+import { goSequencePending } from "../../shell/goSequence";
 import { fmtClock } from "../../lib/format";
 import { StoredCopyLabel } from "./SessionStatus";
 import {
@@ -227,6 +228,8 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget || disabled) return;
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    // The second key of a `g` sequence is the shell's: `g a` goes to Approvals, never allows.
+    if (goSequencePending()) return;
     if (event.key === "a" && request.requestKind === "tool") submit({ decision: "allow" });
     else if (event.key === "d") deny();
     else return;

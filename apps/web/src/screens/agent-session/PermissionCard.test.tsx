@@ -1,9 +1,16 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
-import { aPermissionRequest, anAgentSession } from "../../testing/builders";
+import { AppShell } from "../../shell/AppShell";
+import {
+  aPage,
+  aPermissionRequest,
+  aProjectSummary,
+  anAgentSession,
+  renderWithApi,
+} from "../../testing/builders";
 import { seriousViolations } from "../../testing/axe";
 import { PermissionCard, type PermissionAnswer } from "./PermissionCard";
 import { applySnapshot, initialTranscript, type PermissionView } from "./transcript";
@@ -209,5 +216,47 @@ describe("PermissionCard (permission)", () => {
 
     expect(screen.getByText(/Denied automatically at/)).toBeInTheDocument();
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("PermissionCard (g sequence)", () => {
+  /** A pending tool card, focused, inside the shell that owns the `g` sequences. */
+  function inShell() {
+    const onAnswer = vi.fn<(answer: PermissionAnswer) => Promise<void>>(() => Promise.resolve());
+    const view = renderWithApi(
+      <AppShell>
+        <PermissionCard request={aView()} onAnswer={onAnswer} />
+      </AppShell>,
+      { routes: { "/api/v1/projects": aPage([aProjectSummary()]) } },
+    );
+    const card = screen.getByRole("region", { name: "Claude wants to use Bash" });
+    card.focus();
+    return { ...view, onAnswer, card };
+  }
+
+  it("goes to Approvals on g then a over a focused card, without answering it", async () => {
+    const { card, onAnswer, router } = inShell();
+
+    fireEvent.keyDown(card, { key: "g" });
+    fireEvent.keyDown(card, { key: "a" });
+    fireEvent.keyDown(card, { key: "g" });
+    fireEvent.keyDown(card, { key: "d" });
+    await act(() => Promise.resolve());
+
+    expect(within(card).queryByText("Sending your answer…")).toBeNull();
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(router.state.location.pathname).toBe("/approvals");
+  });
+
+  it("still allows on a alone, and the shell leaves the handled key alone", async () => {
+    const { card, onAnswer, router } = inShell();
+
+    const notPrevented = fireEvent.keyDown(card, { key: "a" });
+
+    expect(notPrevented).toBe(false);
+    await waitFor(() => {
+      expect(onAnswer).toHaveBeenCalledWith({ decision: "allow" });
+    });
+    expect(router.state.location.pathname).toBe("/");
   });
 });
