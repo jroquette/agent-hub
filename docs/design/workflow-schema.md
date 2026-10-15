@@ -56,12 +56,8 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 - `loop`: `max_iterations` (1–50) and at least one channel: `until` (text the final line equals), `until_field` (a
   `required` boolean of its `output_format`), `until_bash` (argv; exit 0 is done). `fresh_context: false` (default)
   resumes the previous iteration's session. The output is the last iteration's; past the cap it fails `max_iterations`.
-- `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's
-  body outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first). The output maps body id → output.
-  The body (no `include` or `loop_group` inside) has ids new to the document and `depends_on` inside it; a body
-  node reads body nodes upstream of it and outer nodes upstream of the group. A failed body node does not stop the
-  iteration (`all_done` body nodes still run); then the group fails with its kind. A group is never retried, and
-  without `fresh_context` a body agent resumes its own session of the previous iteration.
+- `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's body
+  outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first); the output maps body id → output.
 - `approval`: `decisions` lists `{id, label}` (kebab-case; default `approve`, `reject`); the output is `{decision}`,
   plus `text` with `capture_response: true`. Rework is a `loop_group` whose `until_when` reads the decision.
 - `wait`: `duration` (≤ 7d), `until` (ISO-8601 with offset, or a whole reference) or `attention` (a message answered
