@@ -31,6 +31,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `failure_kind` and `skip_cause`; a run has `status`, `outcome`, `revision` and `content_hash`, and its latest
   `run.end` decides how a resumed run ended. `GET /api/v1/workflow-runs` filters by `workflow` and `failure_kind`;
   `hub run` runs read as before (AGH-225).
+- `GET /api/v1/workflows` lists each project's workflows (source `hub` or `builtin`) and the files that do not load;
+  `GET /api/v1/workflows/{project}/{name}` gives a workflow's document and its layers (AGH-225).
 
 ### Fixed
 

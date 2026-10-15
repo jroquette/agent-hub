@@ -27,7 +27,6 @@ import os
 import random
 import shutil
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated, Final
 
@@ -60,12 +59,10 @@ from agent_hub.cli.workflow_runs import (
     snapshot_hash,
     snapshot_run,
 )
-from agent_hub.core.hub_config.problems import ROOT_PATH
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.catalog import (
     LoadProblem,
     WorkflowCatalog,
-    WorkflowFile,
     check_workflows,
 )
 from agent_hub.core.workflows.document import WorkflowLoadError, parse_workflow
@@ -83,8 +80,6 @@ from agent_hub.core.workflows.run_state import RunState
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
     HUB_WORKFLOWS,
-    WORKFLOW_SUFFIXES,
-    DiscoveredWorkflow,
     WorkflowDiscovery,
     discover_workflows,
 )
@@ -95,9 +90,7 @@ from agent_hub.generator.workflow_fixtures import (
     skeleton_yaml,
 )
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
-
-# How a built-in's file is shown: it lives in the installed package, not in the hub.
-BUILTIN_PREFIX: Final = "<builtin>"
+from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 
 COMMAND: Final = "workflow"
 _PREFIX: Final = "hub workflow run"
@@ -177,7 +170,7 @@ def run(
 
 
 def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | None) -> int:
-    source = _DiscoveredSource(hub, only=name, builtin_root=BUILTIN_WORKFLOWS)
+    source = DiscoveredWorkflowSource(hub, only=name, builtin_root=BUILTIN_WORKFLOWS)
     catalog = check_workflows(source)
     _exit_on_problems(catalog)
     if not catalog.plans:
@@ -393,7 +386,9 @@ def _json(data: bytes) -> object:
 
 def _catalog(*, name: str | None) -> WorkflowCatalog:
     root = hub_root_or_exit(os.environ, command=COMMAND)
-    return check_workflows(_DiscoveredSource(root, only=name, builtin_root=BUILTIN_WORKFLOWS))
+    return check_workflows(
+        DiscoveredWorkflowSource(root, only=name, builtin_root=BUILTIN_WORKFLOWS)
+    )
 
 
 def _exit_on_problems(catalog: WorkflowCatalog) -> None:
@@ -404,38 +399,6 @@ def _exit_on_problems(catalog: WorkflowCatalog) -> None:
 def _problem_line(problem: LoadProblem) -> str:
     where = shown_path(problem.file) + ("" if problem.line is None else f":{problem.line}")
     return f"{where}: {problem.key}: {problem.message}"
-
-
-class _DiscoveredSource:
-    """The ``WorkflowSource`` over the generator's discovery; ``only`` keeps one name's files."""
-
-    def __init__(self, root: Path, *, only: str | None, builtin_root: Path) -> None:
-        self.root = root
-        self.only = only
-        self.builtin_root = builtin_root
-        self.found: dict[str, DiscoveredWorkflow] = {}
-
-    def workflow_files(self) -> Iterator[WorkflowFile | LoadProblem]:
-        discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
-        for problem in discovery.problems:
-            # A folder's problem (a linked workflows/, an unreadable pack, the file budget)
-            # bears on every name; a file's only on its own.
-            on_folder = problem.path.suffix not in WORKFLOW_SUFFIXES
-            if self.only is None or on_folder or problem.path.stem == self.only:
-                yield LoadProblem(
-                    self._shown(problem.path), problem.line, ROOT_PATH, problem.reason
-                )
-        for found in discovery.workflows:
-            if self.only is None or found.name == self.only:
-                self.found[found.name] = found
-                yield WorkflowFile(self._shown(found.path), found.name, found.document, found.lines)
-
-    def _shown(self, path: Path) -> str:
-        if path.is_relative_to(self.root):
-            return path.relative_to(self.root).as_posix()
-        if path.is_relative_to(self.builtin_root):
-            return f"{BUILTIN_PREFIX}/{path.relative_to(self.builtin_root).as_posix()}"
-        return str(path)
 
 
 # ``hub workflow test`` (AGH-222): the packs' fixtures, dry-run in memory through the engine.
@@ -516,4 +479,4 @@ def _skeleton_target(root: Path, pack_root: Path, name: str) -> Path:
 
 
 def _shown_fixture(root: Path, path: Path) -> str:
-    return _DiscoveredSource(root, only=None, builtin_root=BUILTIN_WORKFLOWS)._shown(path)
+    return DiscoveredWorkflowSource(root, builtin_root=BUILTIN_WORKFLOWS)._shown(path)
