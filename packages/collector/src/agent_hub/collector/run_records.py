@@ -4,8 +4,9 @@ A run's stages are its record ``state``s. The first record in a new state ends t
 it (``step.end`` ``ok``, unless a ``failed`` record already ended it) and starts the new one
 (``step.start``, ``attempt`` = how many times the run entered that stage). ``picked`` carries the
 caps, ``gate_ok`` is a passed ``gate.result``, ``failed`` ends its stage ``failed`` with the first
-line of the reason, and ``reported`` is the ``run.end``: ``done`` only when the run did not fail
-and its report was made. Every event has session ``run:<run id>`` and workflow ``issue-to-pr``.
+line of the reason and its ``failure_kind`` when it has one (AGH-224), and ``reported`` is the
+``run.end``: ``done`` only when the run did not fail and its report was made. Every event has
+session ``run:<run id>`` and workflow ``issue-to-pr``.
 
 The ``run.end`` also carries the run's ``outcome`` (AGH-140), apart from its status: the
 ``reported`` record's own, or for a record written before it, ``delivered`` when it names a PR
@@ -30,6 +31,7 @@ from agent_hub.core.events.event import MAX_ID_CHARS, Event, EventSource, EventT
 from agent_hub.core.events.payload_keys import CAPS_KEYS
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.run_record import NOT_DELIVERED, RunOutcome, Stage
+from agent_hub.core.workflows.failures import FAILURE_KINDS
 
 RUN_WORKFLOW: Final = "issue-to-pr"
 # A run's events are the session ``run:<run>``, which must fit the id cap.
@@ -153,7 +155,13 @@ class RunEventMapper:
         progress.failure = (stage, reason)
         if progress.open_stage is None or STAGE_KEYS.get(stage) != progress.open_stage:
             return []
-        return [self._step_end(record, progress, state=stage, status="failed", reason=reason)]
+        kind = text(record.raw, "failure_kind")
+        payload: Payload = {"failure_kind": kind} if kind in FAILURE_KINDS else {}
+        return [
+            self._step_end(
+                record, progress, state=stage, status="failed", reason=reason, extra=payload
+            )
+        ]
 
     def _step_end(
         self,
@@ -163,6 +171,7 @@ class RunEventMapper:
         state: str,
         status: str,
         reason: str | None = None,
+        extra: Payload | None = None,
     ) -> Event:
         key = progress.open_stage or STAGE_KEYS[state]
         progress.open_stage = None
@@ -173,7 +182,7 @@ class RunEventMapper:
         }
         if reason is not None:
             payload["reason"] = reason
-        return self._event(record, EventType.STEP_END, payload, step=key)
+        return self._event(record, EventType.STEP_END, payload | (extra or {}), step=key)
 
     def _run_end(self, record: _Record, progress: _RunProgress) -> Event:
         failed_stage = text(record.raw, "failed_stage")

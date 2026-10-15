@@ -457,3 +457,23 @@ def test_refuses_the_include_when_the_expansion_passes_the_node_cap() -> None:
 
     assert key == f"nodes[{MAX_EXPANDED_NODES - 499 + 4}].include"
     assert message == f"the expanded workflow passes {MAX_EXPANDED_NODES} nodes"
+
+
+def test_rewrites_stdin_and_agent_cwd_when_an_included_node_reads_its_block() -> None:
+    piped = document(
+        "piped",
+        shell("prep"),
+        shell("read", "prep", command=["cat"], stdin="$prep.output"),
+        {
+            "id": "work",
+            "type": "agent",
+            "prompt": "Go",
+            "cwd": "$prep.output",
+            "depends_on": ["prep"],
+        },
+    )
+
+    nodes = nodes_of(plan_of(include("p", "piped"), library=(piped,)))
+
+    assert nodes["p__read"].stdin == "$p__prep.output"
+    assert nodes["p__work"].cwd == "$p__prep.output"
