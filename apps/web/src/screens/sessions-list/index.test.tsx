@@ -287,34 +287,129 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
     expect(new URL(workdirs?.url ?? "").searchParams.get("project")).toBe("agent-hub");
   });
 
-  it("lists the agent sessions with their status and links to each chat", async () => {
-    renderList(routes({ [AGENT]: { items: [anAgentSession({ status: "idle" })] } }));
-
-    const link = await screen.findByRole("link", { name: "Run the tests" });
-    expect(link).toHaveAttribute("href", `/agent-sessions/${anAgentSession().id}`);
-    expect(
-      within(screen.getByRole("list", { name: "Agent sessions" })).getByText("Idle"),
-    ).toBeInTheDocument();
-  });
 });
 
-describe("SessionsListScreen agent sessions (permission)", () => {
-  it("highlights a session waiting for a permission answer", async () => {
-    renderList(
-      routes({
-        [AGENT]: {
-          items: [
-            anAgentSession({
-              status: "waiting_permission",
-              open_permission: aPermissionRequest(),
-            }),
-          ],
-        },
-      }),
-    );
+/** Observed rows plus a twin of driven session A; driven B..F have no twin (AC-234.8). */
+function drivenFixture(twinStatus: "idle" | "waiting_permission" = "idle") {
+  const twin = aSession({
+    id: anId(3, "aaaa0003"),
+    label: named("twin"),
+    status: "live",
+    outcome: null,
+    agent_session_id: anId(11, "0192a5e5"),
+  });
+  const driven = [
+    anAgentSession({
+      id: anId(11, "0192a5e5"),
+      title: "Twin chat",
+      status: twinStatus,
+      observed_session_id: twin.id,
+    }),
+    anAgentSession({ id: anId(12, "0192a5e5"), title: "Fix the build", status: "running" }),
+    anAgentSession({
+      id: anId(13, "0192a5e5"),
+      title: "Approve me",
+      status: "waiting_permission",
+      open_permission: aPermissionRequest(),
+    }),
+    anAgentSession({ id: anId(14, "0192a5e5"), title: "Older idle", created_at: at(10) }),
+    anAgentSession({ id: anId(15, "0192a5e5"), title: "Newer idle", created_at: at(200) }),
+    anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" }),
+  ];
+  return routes({
+    [SESSIONS]: aSessionsByStatus([...sessions(), twin]),
+    [AGENT]: { items: driven },
+  });
+}
 
-    expect(await screen.findByText("1 waiting for you")).toBeInTheDocument();
-    expect(screen.getByText(/Waiting for you: Bash/)).toBeInTheDocument();
+const table = (name: string) => screen.getByRole("table", { name: `${name} sessions` });
+const rowOf = (text: string) => screen.getByText(text).closest("tr");
+
+describe("SessionsListScreen driven sessions in the list (driven-in-list)", () => {
+  it("shows a twin once with a Chat badge, and twinless ones in their section with their counts", async () => {
+    const view = renderList(drivenFixture());
+
+    await screen.findByText("Fix the build");
+    expect(within(table("Live")).getByText("/twin")).toBeInTheDocument();
+    expect(within(rowOf("/twin") ?? document.body).getByText("Chat")).toBeInTheDocument();
+    expect(screen.queryByText("Twin chat")).toBeNull();
+    expect(within(table("Live")).getByText("Fix the build")).toBeInTheDocument();
+    expect(within(table("Waiting")).getByText("Approve me")).toBeInTheDocument();
+    expect(within(table("Ended or failed")).getByText("Broke")).toBeInTheDocument();
+    const idle = within(table("Idle")).getAllByText(/idle$/).map((node) => node.textContent);
+    expect(idle).toEqual(["Newer idle", "Older idle"]);
+    expect(screen.getByRole("button", { name: "Waiting · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Live · 3" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Idle · 2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ended or failed · 2" })).toBeInTheDocument();
+
+    fireEvent.click(rowOf("/twin") as HTMLElement);
+    expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(11, "0192a5e5")}`);
+  });
+
+  it("opens a twinless driven session's chat from its row", async () => {
+    const view = renderList(drivenFixture());
+
+    fireEvent.click((await screen.findByText("Fix the build")).closest("tr") as HTMLElement);
+    expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(12, "0192a5e5")}`);
+  });
+
+  it("moves a twin whose driven session waits on a permission into Waiting, out of Live's count", async () => {
+    renderList(drivenFixture("waiting_permission"));
+
+    await screen.findByText("/twin");
+    expect(within(table("Waiting")).getByText("/twin")).toBeInTheDocument();
+    expect(within(rowOf("/twin") ?? document.body).getByText("Waiting")).toBeInTheDocument();
+    expect(within(table("Live")).queryByText("/twin")).toBeNull();
+    expect(screen.getByRole("button", { name: "Waiting · 2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Live · 2" })).toBeInTheDocument();
+  });
+
+  it("leaves twinless driven sessions out while a filter they cannot match is on", async () => {
+    renderList(drivenFixture(), "/sessions?repo=agent-hub");
+
+    await screen.findByText("/twin");
+    expect(within(rowOf("/twin") ?? document.body).getByText("Chat")).toBeInTheDocument();
+    expect(screen.queryByText("Fix the build")).toBeNull();
+    expect(screen.queryByText("Approve me")).toBeNull();
+  });
+
+  it("has New session in the page header, no driven region, and cloud guidance closed below the sections", async () => {
+    renderList(routes({ [AGENT]: { items: [anAgentSession()] } }));
+
+    const button = await screen.findByRole("button", { name: "New session" });
+    const heading = screen.getByRole("heading", { level: 1, name: "Sessions" });
+    expect(heading.parentElement).toContainElement(button);
+    expect(screen.queryByRole("region", { name: "Driven from hub web" })).toBeNull();
+    const cloud = screen.getByText("Cloud sessions").closest("details");
+    expect(cloud).not.toHaveAttribute("open");
+    expect(
+      table("Live").compareDocumentPosition(cloud as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it.each([
+    [aProblem({ status: 401, title: "Locked" }), "Session control is locked in this browser."],
+    [
+      aProblem({ status: 404, title: "Off", type: "urn:agent-hub:problem:agent-sessions-off" }),
+      "Session control is off in the container.",
+    ],
+    [
+      aProblem({ status: 503, title: "Unavailable", detail: "Install agent-hub[sessions]" }),
+      "Sessions cannot start here. Install agent-hub[sessions]",
+    ],
+  ])("shows the existing banner instead of New session on %#", async (problem, text) => {
+    renderList(routes({ [AGENT]: problem, [`${AGENT}/capabilities`]: problem }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(text);
+    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.getByRole("table", { name: "Live sessions" })).toBeInTheDocument();
+  });
+
+  it("offers a retry when the agent list fails otherwise", async () => {
+    renderList(routes({ [AGENT]: aProblem({ status: 500, title: "Boom" }) }));
+
+    expect(await screen.findByText("Could not load the agent sessions")).toBeInTheDocument();
   });
 });
 
