@@ -139,7 +139,15 @@ export type TranscriptEntry =
       lastDelta: number;
       redacted: boolean;
     }
-  | { kind: "thinking"; key: string; seq: number; text: string; redacted: boolean }
+  | {
+      kind: "thinking";
+      key: string;
+      seq: number;
+      text: string;
+      redacted: boolean;
+      /** Whole seconds from the previous record to this one, null when unknown (AC-234.25). */
+      seconds: number | null;
+    }
   | { kind: "tool"; key: string; toolId: string }
   | { kind: "permission"; key: string; requestId: string }
   | { kind: "notice"; key: string; seq: number; tone: NoticeTone; text: string };
@@ -158,6 +166,8 @@ export interface TranscriptState {
   mode: PermissionMode | null;
   slashCommands: string[];
   lastSeq: number;
+  /** When the last record was written: a thinking block's start. */
+  lastAt: string | null;
   /** A text block is streaming (its bubble is open). */
   streaming: boolean;
   /** An interrupt was recorded: the turn's result reads "Turn interrupted" (AC-234.21). */
@@ -184,6 +194,7 @@ export function initialTranscript(): TranscriptState {
     mode: null,
     slashCommands: [],
     lastSeq: 0,
+    lastAt: null,
     streaming: false,
     interrupted: false,
     reset: null,
@@ -643,9 +654,15 @@ function applySend(state: TranscriptState, item: SendItem): TranscriptState {
   }
 }
 
+/** Whole seconds (at least 1) between two record times; null when unknown or backwards. */
+function thoughtSeconds(start: string | null, end: string): number | null {
+  const ms = start === null ? NaN : Date.parse(end) - Date.parse(start);
+  return Number.isFinite(ms) && ms >= 0 ? Math.max(1, Math.round(ms / 1000)) : null;
+}
+
 function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState {
   if (record.seq <= state.lastSeq) return state;
-  const s = { ...state, lastSeq: record.seq };
+  const s = { ...state, lastSeq: record.seq, lastAt: record.at };
   const body = record.body;
   switch (record.kind) {
     case "user.message": {
@@ -676,6 +693,7 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
         seq: record.seq,
         text,
         redacted: isRedacted(text),
+        seconds: thoughtSeconds(state.lastAt, record.at),
       });
     }
     case "tool.call":
