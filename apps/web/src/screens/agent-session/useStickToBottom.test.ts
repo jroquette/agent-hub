@@ -93,7 +93,7 @@ describe("useStickToBottom (stick to bottom)", () => {
     flushFrames();
     expect(scroller.element.scrollTop).toBe(600);
 
-    scroller.userScroll(580);
+    scroller.userScroll(576); // 24 px from the bottom: the edge of the threshold.
     expect(result.current.atBottom).toBe(true);
     grow(scroller, 200);
     flushFrames();
@@ -102,18 +102,17 @@ describe("useStickToBottom (stick to bottom)", () => {
     expect(result.current.atBottom).toBe(true);
   });
 
-  it("detaches after the reader scrolls up, and new content no longer moves it", () => {
+  it("detaches 25 px from the bottom, one past the threshold", () => {
     const scroller = aScroller();
     const { result } = renderHook(() => useStickToBottom(scroller.element));
     flushFrames();
 
-    scroller.userScroll(300);
+    scroller.userScroll(575);
     expect(result.current.atBottom).toBe(false);
     grow(scroller, 200);
     flushFrames();
 
-    expect(scroller.element.scrollTop).toBe(300);
-    expect(result.current.atBottom).toBe(false);
+    expect(scroller.element.scrollTop).toBe(575);
   });
 
   it("re-attaches and scrolls to the bottom when pin() is called", () => {

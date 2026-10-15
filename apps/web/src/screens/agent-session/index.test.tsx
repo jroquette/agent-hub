@@ -201,11 +201,18 @@ describe("AgentSessionScreen (layout)", () => {
   });
 });
 
+/** Where each permission card sits in the transcript: the older one above the newer one. */
+const CARD_TOP: Record<string, number> = { "req-1": 300, "req-2": 700 };
+
 /** jsdom lays nothing out: a 1000 px transcript in a 400 px scroller, frames run at once. */
 function stubScrolling() {
   vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1000);
   vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(400);
-  vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockReturnValue(300);
+  vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return CARD_TOP[this.dataset.requestId ?? ""] ?? 0;
+  });
   const writes = vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation((value) => {
     scrolled.top = Math.min(value, 600);
   });
@@ -263,7 +270,7 @@ describe("AgentSessionScreen (open-position)", () => {
     await waitFor(() => {
       expect(writes.mock.contexts).toContain(scroller);
     });
-    // The first card's top, less a 16 px margin; never the bottom.
+    // The older card's top (300), less a 16 px margin; never the newer card (700) or the bottom.
     expect(writes.mock.calls).toEqual([[284]]);
   });
 });
@@ -330,6 +337,34 @@ describe("AgentSessionScreen (jump-to-latest)", () => {
 
     expect(smooth).toHaveBeenCalledTimes(1);
     expect(scrolled.top).toBe(600);
+  });
+
+  it("leaves End to a text field inside the transcript", async () => {
+    stubScrolling();
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 3,
+          open_permission: aPermissionRequest(),
+        }),
+      }),
+    );
+    const card = await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+    const scroller = card.closest(".as-scroll");
+    if (!scroller) throw new Error("no scroller");
+    const smooth = vi.fn();
+    Object.defineProperty(scroller, "scrollTo", { value: smooth, configurable: true });
+    scrollUp(scroller);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+
+    const input = within(card).getByLabelText("Message to Claude if you deny (optional)");
+    const notPrevented = fireEvent.keyDown(input, { key: "End" });
+
+    expect(notPrevented).toBe(true);
+    expect(smooth).not.toHaveBeenCalled();
+    expect(scrolled.top).toBe(100);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
   });
 });
 
