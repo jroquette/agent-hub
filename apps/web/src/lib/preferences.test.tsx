@@ -101,6 +101,62 @@ describe("PreferencesProvider", () => {
   });
 });
 
+describe("shake to session", () => {
+  function ShakeProbe() {
+    const prefs = usePreferences();
+    return (
+      <div>
+        <span data-testid="shake">{String(prefs.shakeToSession)}</span>
+        <button
+          type="button"
+          onClick={() => {
+            prefs.setShakeToSession(!prefs.shakeToSession);
+          }}
+        >
+          toggle
+        </button>
+      </div>
+    );
+  }
+
+  it("shake: off by default, stored on, removed off, kept after remount", () => {
+    const first = render(
+      <PreferencesProvider>
+        <ShakeProbe />
+      </PreferencesProvider>,
+    );
+    expect(screen.getByTestId("shake")).toHaveTextContent("false");
+    expect(window.localStorage.getItem("ah.shakeToSession")).toBeNull();
+
+    act(() => {
+      screen.getByRole("button", { name: "toggle" }).click();
+    });
+    expect(screen.getByTestId("shake")).toHaveTextContent("true");
+    expect(window.localStorage.getItem("ah.shakeToSession")).toBe("on");
+
+    first.unmount();
+    const second = render(
+      <PreferencesProvider>
+        <ShakeProbe />
+      </PreferencesProvider>,
+    );
+    expect(screen.getByTestId("shake")).toHaveTextContent("true");
+
+    act(() => {
+      screen.getByRole("button", { name: "toggle" }).click();
+    });
+    expect(screen.getByTestId("shake")).toHaveTextContent("false");
+    expect(window.localStorage.getItem("ah.shakeToSession")).toBeNull();
+    second.unmount();
+  });
+
+  it("shake: the context default is off without a provider", () => {
+    render(<ShakeProbe />);
+
+    expect(screen.getByTestId("shake")).toHaveTextContent("false");
+  });
+});
+
 describe("storage", () => {
   it("returns null and keeps going when storage throws", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
