@@ -111,6 +111,32 @@ describe("useDraft", () => {
     expect(stored()).toBe(JSON.stringify("Leaving"));
   });
 
+  it("saves a pending draft when the page goes away before 500 ms (reload, tab close)", () => {
+    typeDraft("Reloading");
+
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    expect(stored()).toBe(JSON.stringify("Reloading"));
+  });
+
+  it("saves a pending draft when the page is hidden, not when it shows again", () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    typeDraft("Switching tabs");
+
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(stored()).toBeNull();
+
+    visibility.mockReturnValue("hidden");
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(stored()).toBe(JSON.stringify("Switching tabs"));
+  });
+
   it("swallows a quota error and a blocked storage (quota)", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new DOMException("full", "QuotaExceededError");

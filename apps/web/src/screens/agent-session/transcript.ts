@@ -660,6 +660,16 @@ function thoughtSeconds(start: string | null, end: string): number | null {
   return Number.isFinite(ms) && ms >= 0 ? Math.max(1, Math.round(ms / 1000)) : null;
 }
 
+/**
+ * Drops the send a user.message record echoes: the one with its seq or, since core publishes the
+ * record before the POST answers with that seq, the oldest unanswered send of the same text.
+ */
+function withoutEcho(sending: SendingView[], seq: number, text: string): SendingView[] {
+  let index = sending.findIndex((send) => send.seq === seq);
+  if (index < 0) index = sending.findIndex((send) => send.seq === null && send.text === text);
+  return index < 0 ? sending : sending.filter((_, i) => i !== index);
+}
+
 function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState {
   if (record.seq <= state.lastSeq) return state;
   const s = { ...state, lastSeq: record.seq, lastAt: record.at };
@@ -667,7 +677,7 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
   switch (record.kind) {
     case "user.message": {
       const text = str(body, "text") ?? "";
-      const sending = s.sending.filter((send) => send.seq !== record.seq);
+      const sending = withoutEcho(s.sending, record.seq, text);
       // Core refuses a send while an interrupt awaits its result, so a message after an
       // interrupt means that interrupt cut no turn short (it landed on an idle session).
       return push(

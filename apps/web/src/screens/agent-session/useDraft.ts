@@ -35,8 +35,8 @@ export interface Draft {
 
 /**
  * The composer's text, kept in this browser per session (AC-234.26): saved 500 ms after the last
- * change (or when the chat closes), restored on open, cleared once its send is accepted. Storage
- * that is off or full only loses the draft.
+ * change (or when the chat closes or the page is hidden), restored on open, cleared once its
+ * send is accepted. Storage that is off or full only loses the draft.
  */
 export function useDraft(id: string | null): Draft {
   const [text, setText] = useState(() => readDraft(id));
@@ -73,7 +73,19 @@ export function useDraft(id: string | null): Draft {
     [id],
   );
 
-  useEffect(() => flush, [flush]);
+  useEffect(() => {
+    // A reload or a closed tab never unmounts the chat: save the pending draft as the page goes.
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHidden);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHidden);
+      flush();
+    };
+  }, [flush]);
 
   return { text, setText: change, accepted };
 }

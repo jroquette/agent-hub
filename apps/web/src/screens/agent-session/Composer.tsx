@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "../../components";
 import { ApiProblem } from "../../lib/api";
@@ -103,14 +103,23 @@ export function Composer({
     if (focusOnMount.current) box.current?.focus({ preventScroll: true });
   }, []);
 
-  useLayoutEffect(() => {
+  // One layout read per fit; a window resize moves the 40vh cap, so it fits again.
+  const fit = useCallback(() => {
     const element = box.current;
     if (!element) return;
     const max = Math.floor(window.innerHeight * MAX_HEIGHT_SHARE);
     element.style.height = "auto";
-    element.style.height = `${String(Math.min(element.scrollHeight, max))}px`;
-    element.style.overflowY = element.scrollHeight > max ? "auto" : "hidden";
-  }, [text]);
+    const content = element.scrollHeight;
+    element.style.height = `${String(Math.min(content, max))}px`;
+    element.style.overflowY = content > max ? "auto" : "hidden";
+  }, []);
+  useLayoutEffect(fit, [fit, text]);
+  useEffect(() => {
+    window.addEventListener("resize", fit);
+    return () => {
+      window.removeEventListener("resize", fit);
+    };
+  }, [fit]);
 
   const run = (action: () => Promise<unknown> | undefined, what: string, done?: () => void) => {
     setError(null);
