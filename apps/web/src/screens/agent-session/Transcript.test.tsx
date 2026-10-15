@@ -505,6 +505,27 @@ describe("Transcript (tool-cards) attached permission", () => {
     expect(message).toHaveFocus();
   });
 
+  it("reads a subagent's call Waiting for you while its permission is open, its card where it arrived", () => {
+    const nested: StreamItem = {
+      type: "record",
+      record: aLogRecord("tool.call", {
+        seq: 2,
+        body: {
+          tool_use_id: "n1",
+          name: "Bash",
+          input: { command: "ls" },
+          parent_tool_use_id: "t1",
+        },
+      }),
+    };
+    show([call(1, "t1", "Task"), nested, text(3), ask(4, "n1")]);
+
+    const calls = screen.getByRole("list", { name: "Calls made by Task" });
+    expect(within(calls).getByRole("button", { name: "Bash ls (Waiting for you)" })).toBeVisible();
+    const log = screen.getByRole("log");
+    expect(log.lastElementChild?.querySelector("[data-request-id='n1']")).not.toBeNull();
+  });
+
   it("re-renders no grouped call when text streams below the group", () => {
     const grouped = [call(1, "a", "Read"), call(2, "b", "Read")].reduce(
       reduceTranscript,
