@@ -196,7 +196,10 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   const modeId = useId();
   const pending = request.decision === null;
   const focus = autoFocus ?? pending;
-  const chords = useContext(OldestPendingContext) === request.requestId;
+  // The keys answer tool permissions only, never a question or a plan (AC-234.29).
+  const keyed = request.requestKind === "tool";
+  const oldest = useContext(OldestPendingContext) === request.requestId;
+  const chords = keyed && oldest;
 
   useEffect(() => {
     if (focus && !typingText(document.activeElement)) card.current?.focus();
@@ -226,11 +229,11 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   };
   // `a` / `d` while the card itself has focus, not a field or button inside it.
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.target !== event.currentTarget || disabled) return;
+    if (event.target !== event.currentTarget || disabled || !keyed) return;
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     // The second key of a `g` sequence is the shell's: `g a` goes to Approvals, never allows.
     if (goSequencePending()) return;
-    if (event.key === "a" && request.requestKind === "tool") submit({ decision: "allow" });
+    if (event.key === "a") submit({ decision: "allow" });
     else if (event.key === "d") deny();
     else return;
     event.preventDefault();
@@ -388,7 +391,7 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
             <Button
               variant="danger"
               disabled={disabled}
-              data-shortcut="deny"
+              data-shortcut={keyed ? "deny" : undefined}
               aria-keyshortcuts={chords ? DENY_KEYS : undefined}
               onClick={deny}
             >
