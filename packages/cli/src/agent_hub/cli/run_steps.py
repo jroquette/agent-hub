@@ -1,4 +1,10 @@
-"""The live stages of ``hub run``: worktree, implementing session, gate, PR, then the report.
+"""The report of a live ``hub run``: its run state, ADR 0030's tracker writes, its records and exit.
+
+The stages themselves are the ``issue-to-pr`` workflow's nodes, run through the engine
+(``workflow_delivery``, AGH-224); this module keeps what they share with v0.14's stage machine:
+the timeouts and output caps (read at call time by ``ship_steps``, ``step_command`` and
+``workflow_executors``, where the tests patch them), the worktree's git runner, and ``LiveRun``,
+which records the session and reports the run.
 
     PICKED -> WORKTREE -> IMPLEMENTING -> VERIFYING -> PR_OPEN -> REPORTED
     any stage can end in FAILED(stage, reason) -> REPORTED (failed label and diagnosis)
@@ -9,15 +15,8 @@ asked for a human). Those record ``not_delivered`` instead of ``failed`` and get
 their own (ADR 0030): ``no_changes`` a comment and no label, exit 0; ``blocked`` the blocked
 label (``tracker.blocked_label``, else the failed label) and a comment with the session's
 question, exit ``BLOCKED_EXIT`` (3). Every outcome but ``failed`` removes the outcome labels the
-issue carries; a tracker write that fails makes the exit 1 whatever the outcome.
-
-Each stage raises ``StageFailure`` naming itself and the reason; the report then runs through
-the tracker port. The worktree is made in process with ``hub worktree``'s steps (D7, E18), each
-git call capped at ``WORKTREE_GIT_TIMEOUT``. Every child runs in the caller's process group
-(``own_session=False``) with the environments of ``run_children``: none holds
-``LINEAR_API_KEY`` (D10). A timeout kills the timed-out child alone; its own children are left
-to the caller's group kill (the residual of E6). The session's verdict is a hint: the commits on
-the branch and the command's own gate decide (the old runner's rule).
+issue carries; a tracker write that fails makes the exit 1 whatever the outcome. A ``failed``
+record names its stage, reason and, from the failed node, its ``failure_kind`` (AGH-179).
 
 Residual risk: the implementing session and the gate run code as the user. Without the tokens
 in their environment they can still read what the user's account can, such as gh's stored
@@ -29,9 +28,8 @@ still change the config between that check and the call (a time-of-check gap, al
 
 import json
 import os
-import shutil
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -39,32 +37,14 @@ import typer
 
 from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.command_exits import FAILURE
-from agent_hub.cli.errors import ChildTimedOutError, PrStepError, RunLogError, WorktreeError
+from agent_hub.cli.errors import RunLogError
 from agent_hub.cli.init_report import shown_text
-from agent_hub.cli.pr_steps import MAX_ERROR_TAIL_CHARS as MAX_ERROR_TAIL_CHARS
-from agent_hub.cli.pr_steps import MAX_PR_URL_CHARS as MAX_PR_URL_CHARS
-from agent_hub.cli.pr_steps import (
-    PrTarget,
-    StepTimeouts,
-    git_output,
-    open_or_find_pr,
-    push_branch,
-    refuse_risky_config,
-    refuse_uncommitted,
-    run_gate,
-    titled_pr,
-    unmatched_warning,
-)
 from agent_hub.cli.run_children import (
     RunChildren,
     RunOptions,
-    push_env,
-    session_env,
-    untrusted_env,
 )
 from agent_hub.cli.run_log import RunLog
 from agent_hub.cli.run_report import apply_writes
-from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.report_writes import (
     TrackerWrite,
@@ -83,19 +63,15 @@ from agent_hub.core.runner.run_record import (
 )
 from agent_hub.core.runner.run_texts import (
     blocked_comment,
-    commit_summary,
     failure_comment,
     inbox_line,
     no_changes_comment,
-    pr_body,
     success_comment,
 )
 from agent_hub.core.runner.verdict import (
     Outcome,
-    OutcomeKind,
     SessionReply,
     last_json_line,
-    parse_session_output,
     session_outcome,
 )
 from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
@@ -151,40 +127,18 @@ class LiveRun:
     issue: Issue
     client: TrackerClient
     log: RunLog
-    environ: Mapping[str, str]
     cost_usd: float = 0.0
     summary: str = ""
     pr_url: str = ""
-    worktree: Path = field(init=False)
     # The report's writes not made yet; None until the report starts.
     pending: tuple[TrackerWrite, ...] | None = None
 
-    def __post_init__(self) -> None:
-        self.worktree = self.children.worktree
-
-    def run(self) -> int:
-        """Run every stage, then report; 0 when the PR opened and the report was made.
+    def finish(self, failure: StageFailure | None) -> int:
+        """Report the run its stages (the issue-to-pr workflow's nodes) made: delivered with
+        ``pr_url`` and ``summary`` set, else ``failure``; its exit.
 
         A record that cannot be written stops the run: what is left undone is named.
         """
-        try:
-            return self._run_stages()
-        except RunLogError as error:
-            return self.stop_on_log_error(error)
-
-    def _run_stages(self) -> int:
-        try:
-            self._make_worktree()
-            self._implement()
-            self._verify()
-            self._open_pr()
-        except StageFailure as failure:
-            return self._report_failure(failure)
-        return self._report_success()
-
-    def finish(self, failure: StageFailure | None) -> int:
-        """Report a run whose stages ran elsewhere (the issue-to-pr workflow): delivered with
-        ``pr_url`` and ``summary`` set, else ``failure``; its exit, as ``run`` gives it."""
         try:
             return self._report_success() if failure is None else self._report_failure(failure)
         except RunLogError as error:
@@ -205,174 +159,6 @@ class LiveRun:
             },
         )
         return session_outcome(reply)
-
-    # stages
-
-    def _make_worktree(self) -> None:
-        self._enter(Stage.WORKTREE)
-        git = shutil.which("git", path=self.environ.get("PATH", ""))
-        if git is None:
-            raise StageFailure(Stage.WORKTREE, "git is not on PATH; install git")
-        git = os.path.abspath(git)
-        if os.path.lexists(self.children.repo_path / ".git"):
-            # The fetch is the run's first call with the GitHub tokens: the clone's config is
-            # checked first (a missing clone is the worktree step's own error).
-            self._refuse_risky_config(
-                stage=Stage.WORKTREE,
-                cwd=self.children.repo_path,
-                use="a fetch would use",
-                outcome="nothing was fetched",
-            )
-        try:
-            task = worktree_task(
-                self.children.config,
-                name=self.children.slug,
-                branch_prefix=self.children.branch_prefix,
-                only=self.children.repo,
-                hub=self.children.hub,
-                git=git,
-                # Only the fetch may need the GitHub tokens, and it runs as the push does: hooks
-                # and fsmonitor off (a hook planted in the clone would see the tokens). The add
-                # and the repo's setup script run without them, every hook off for the add.
-                env=untrusted_env(self.environ),
-                fetch_env=push_env(self.environ),
-                fetch_options=HOOKS_OFF,
-                add_options=("-c", f"core.hooksPath={os.devnull}"),
-                git_timeout=WORKTREE_GIT_TIMEOUT,
-                runner=bounded_child,
-            )
-            check_branches(task)
-            self.worktree = create_worktree(task, self.children.repo, echo=typer.echo)
-        except (WorktreeError, ChildTimedOutError) as error:
-            raise StageFailure(Stage.WORKTREE, str(error).replace(git, "git")) from None
-        except OSError as error:
-            reason = f"git could not run: {error.strerror or error}"
-            raise StageFailure(Stage.WORKTREE, reason) from None
-        self.log.record("worktree_ready", {"path": str(self.worktree)})
-
-    def _implement(self) -> None:
-        self._enter(Stage.IMPLEMENTING)
-        if self.options.start == "verify":
-            self.log.record("skip_implement", {"reason": "--from verify"})
-        else:
-            self._run_session()
-        commits = self._git_output("log", "--format=%s", f"{self.children.base}..HEAD")
-        subjects = [line for line in commits.splitlines() if line]
-        if not subjects:
-            reason = "no commit on the branch (the session reported done or gave no verdict)"
-            raise StageFailure(Stage.IMPLEMENTING, reason, RunOutcome.NO_CHANGES)
-        if not self.summary:
-            messages = self._git_output("log", "--format=%B", f"{self.children.base}..HEAD")
-            self.summary = commit_summary(messages, workspace=self._workspace)
-        self.log.record("commits", {"commits": list(subjects)})
-
-    def _run_session(self) -> None:
-        env = session_env(
-            self.environ,
-            repo=self.children.repo,
-            issue_id=self.issue.id,
-            run_id=self.log.run_id,
-        )
-        argv = self.children.session_argv(self.issue, self.options)
-        result = self._child(
-            argv, env=env, timeout=SESSION_TIMEOUT, output_limit=SESSION_OUTPUT_LIMIT
-        )
-        reply = parse_session_output(result.stdout.decode(errors="replace"))
-        outcome = self.record_session(reply)
-        if outcome.kind is OutcomeKind.STOPPED:
-            raise StageFailure(
-                Stage.IMPLEMENTING, outcome.text, RunOutcome.BLOCKED, question=outcome.question
-            )
-        if outcome.kind is not OutcomeKind.DONE:
-            raise StageFailure(Stage.IMPLEMENTING, outcome.text)
-        self.summary = outcome.text
-
-    def _verify(self) -> None:
-        self._enter(Stage.VERIFYING)
-        timeouts = self._timeouts()
-        try:
-            refuse_uncommitted(self._child, environ=self.environ, timeout=timeouts.git)
-        except PrStepError as error:
-            raise StageFailure(Stage.VERIFYING, error.reason) from None
-        gate = self.children.gate
-        result = run_gate(self._child, gate=gate, environ=self.environ, timeout=timeouts.gate)
-        if result.returncode != 0:
-            output = (result.stdout + result.stderr).decode(errors="replace")
-            # The output's end says why; with the header the reason fits the logged length.
-            header = f"gate failed: {gate[:MAX_GATE_SHOWN_CHARS]}\n"
-            reason = header + output[-(MAX_LOGGED_REASON_CHARS - len(header)) :]
-            raise StageFailure(Stage.VERIFYING, reason)
-        self.log.record("gate_ok", {"gate": gate[:80]})
-
-    def _open_pr(self) -> None:
-        self._enter(Stage.PR_OPEN)
-        timeouts = self._timeouts()
-        target = PrTarget(
-            github=self.children.github,
-            base_branch=self.children.default_branch,
-            branch=self.children.branch,
-        )
-        try:
-            push_branch(self._child, target=target, environ=self.environ, timeouts=timeouts)
-            subject = git_output(
-                self._child, "log", "-1", "--format=%s", environ=self.environ, timeout=timeouts.git
-            )
-            body = pr_body(
-                issue_id=self.issue.id,
-                summary=self.summary,
-                gate=self.children.gate,
-                workspace=self._workspace,
-            )
-            opened = open_or_find_pr(
-                self._child,
-                target=target,
-                title=self._pr_title(subject),
-                body=body,
-                draft=False,
-                environ=self.environ,
-                timeout=timeouts.gh,
-            )
-        except PrStepError as error:
-            raise StageFailure(Stage.PR_OPEN, error.reason) from None
-        self.pr_url = opened.url
-        # A rerun finds the branch's PR already open, and the push updated it.
-        self.log.record("pr_exists" if opened.found else "pr_open", {"url": opened.url})
-
-    def _pr_title(self, subject: str) -> str:
-        """The PR title of the newest commit ``subject``, following the repo's conventions.
-
-        When titles are configured and the subject does not match ``commit_title``, the run
-        records ``title_unmatched`` with the subject's cleaned first line (cut as a title,
-        empty when nothing is left, E20) and warns once on stderr (E12).
-        """
-        conventions = self.children.conventions
-        titled = titled_pr(
-            subject, conventions=conventions, issue_id=self.issue.id, workspace=self._workspace
-        )
-        if titled.unmatched is not None:
-            line = titled.unmatched
-            self.log.record(
-                "title_unmatched", {"subject": line, "pattern": conventions.commit_title}
-            )
-            warning = unmatched_warning(_PREFIX, line=line, commit_title=conventions.commit_title)
-            typer.echo(warning, err=True)
-        return titled.title
-
-    def _refuse_risky_config(self, *, stage: Stage, cwd: Path, use: str, outcome: str) -> None:
-        """No token-bearing call (the fetch, the push) when the repo's config in ``cwd`` holds
-        a key it would act on, or origin is not the repo's GitHub url (push_guard)."""
-        try:
-            refuse_risky_config(
-                self._child,
-                github=self.children.github,
-                environ=self.environ,
-                timeout=self._timeouts().git,
-                use=use,
-                outcome=outcome,
-                cwd=cwd,
-            )
-        except PrStepError as error:
-            raise StageFailure(stage, error.reason) from None
 
     # report
 
@@ -488,36 +274,9 @@ class LiveRun:
             )
         )
 
-    # children
-
-    def _enter(self, stage: Stage) -> None:
-        self.log.state = stage
-
     @property
     def _workspace(self) -> str:
         return str(self.children.workspace)
-
-    def _git_output(
-        self, *arguments: str, accept: tuple[int, ...] = (0,), cwd: Path | None = None
-    ) -> str:
-        """git's stdout in the worktree (or ``cwd``), with the untrusted environment; an exit
-        code outside ``accept`` fails the stage."""
-        try:
-            return git_output(
-                self._child,
-                *arguments,
-                environ=self.environ,
-                timeout=self._timeouts().git,
-                accept=accept,
-                cwd=cwd,
-            )
-        except PrStepError as error:
-            raise StageFailure(self.log.state, error.reason) from None
-
-    def _timeouts(self) -> StepTimeouts:
-        """The shared steps' timeouts, read from this module's constants at call time (the
-        tests patch them here)."""
-        return StepTimeouts(gate=GATE_TIMEOUT, push=PUSH_TIMEOUT, gh=GH_TIMEOUT, git=GIT_TIMEOUT)
 
     def stop_on_log_error(self, error: RunLogError) -> int:
         """Name the open PR and the report's writes not made; the tracker is left as it is."""
@@ -530,40 +289,6 @@ class LiveRun:
         for write in pending or ():
             typer.echo(f"not done: {shown_text(call_line(write))}", err=True)
         return FAILURE
-
-    def _child(
-        self,
-        argv: Sequence[str],
-        *,
-        env: dict[str, str],
-        timeout: float,
-        output_limit: int = CHILD_OUTPUT_LIMIT,
-        cwd: Path | None = None,
-    ) -> ChildResult:
-        """Run ``argv`` in the worktree, in the caller's group; a problem fails the stage.
-
-        In the caller's group (E6), a timeout kills the direct child only: a process it started
-        survives until the caller's own group is killed (Ctrl-C, a supervisor). The run reports
-        the stage as FAILED either way.
-        """
-        stage = self.log.state
-        name = argv[0]
-        program = shutil.which(name, path=env.get("PATH", ""))
-        if program is None:
-            raise StageFailure(stage, f"{name} is not on PATH")
-        try:
-            return run_child(
-                [os.path.abspath(program), *argv[1:]],
-                cwd=self.worktree if cwd is None else cwd,
-                env=env,
-                timeout=timeout,
-                own_session=False,
-                output_limit=output_limit,
-            )
-        except ChildTimedOutError:
-            raise StageFailure(stage, f"{name} timed out after {timeout:g} s") from None
-        except OSError as error:
-            raise StageFailure(stage, f"{name} could not run: {error.strerror or error}") from None
 
 
 def bounded_child(

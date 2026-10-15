@@ -147,7 +147,6 @@ def begin_live_run(
         issue=picked,
         client=client,
         log=log,
-        environ=os.environ,
         cost_usd=tracker_cost(client),
     )
 
