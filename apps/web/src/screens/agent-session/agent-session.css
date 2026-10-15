@@ -229,10 +229,21 @@
   min-width: 0;
 }
 .as-tool-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text-subtle);
 }
-.as-tool-error .as-tool-state {
+.as-tool-error .as-tool-state,
+.as-tool-denied .as-tool-state {
   color: var(--failed);
+}
+.as-tool-waiting {
+  border-color: var(--waiting);
+}
+.as-tool-waiting .as-tool-state {
+  color: var(--waiting);
+  font-weight: 600;
 }
 .as-tool-body {
   display: flex;

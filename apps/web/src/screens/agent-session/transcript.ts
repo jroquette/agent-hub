@@ -289,6 +289,17 @@ export function ruleLabel(rule: unknown): string {
   return value ? `${type} ${value}` : type;
 }
 
+/** Where a tool call stands (AC-234.24). */
+export type ToolState = "running" | "waiting" | "done" | "error" | "denied";
+
+/** A call's state from its result and the permission asked for it (by `tool_use_id`): an open
+ * request waits for you, a denied one reads denied whatever result the CLI then sent. */
+export function toolState(tool: ToolView, request?: PermissionView): ToolState {
+  if (request?.decision?.decision === "deny") return "denied";
+  if (tool.result === null) return request && request.decision === null ? "waiting" : "running";
+  return tool.result.isError ? "error" : "done";
+}
+
 /* ---------- Diffs ---------- */
 
 const DIFF_MAX_LINES = 2000;
