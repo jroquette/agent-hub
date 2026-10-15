@@ -322,3 +322,28 @@ describe("tool helpers (transcript)", () => {
     expect(ruleLabel("odd")).toBe("odd");
   });
 });
+
+describe("reduceTranscript (stop)", () => {
+  const notices = (state: TranscriptState) =>
+    state.entries.flatMap((entry) => (entry.kind === "notice" ? [entry.text] : []));
+  const aborted = { body: { subtype: "error_during_execution", terminal_reason: "aborted_tools" } };
+
+  it("follows an interrupted turn's result with one Turn interrupted notice", () => {
+    const state = run([
+      record("interrupt", { seq: 1 }),
+      record("result", { seq: 2 }),
+      record("result", { seq: 3 }),
+      record("interrupt", { seq: 4 }),
+      record("result", { seq: 5, ...aborted }),
+      record("result", { seq: 6, ...aborted }),
+    ]);
+
+    expect(notices(state)).toEqual([
+      "You interrupted the turn",
+      "Turn interrupted",
+      "You interrupted the turn",
+      "Turn interrupted",
+      "Turn interrupted",
+    ]);
+  });
+});

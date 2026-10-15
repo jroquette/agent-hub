@@ -569,6 +569,25 @@ describe("AgentSessionScreen (composer)", () => {
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
   });
 
+  it("stops on Esc in the empty composer and notes the interrupted turn after its result", async () => {
+    const view = renderChat(
+      routes({ [`POST ${SESSION}/interrupt`]: anAgentSession({ status: "running" }) }),
+    );
+    await screen.findByText("Starting.");
+
+    await userEvent.type(screen.getByRole("textbox", { name: "Message Claude" }), "{Escape}");
+    await waitFor(() => {
+      expect(posts(view.requests, "/interrupt")).toHaveLength(1);
+    });
+    act(() => {
+      const source = view.stream(STREAM);
+      source.emit("record.interrupt", aLogRecord("interrupt", { seq: 4 }), "4");
+      source.emit("record.result", aLogRecord("result", { seq: 5 }), "5");
+    });
+
+    expect(screen.getByText("Turn interrupted")).toBeInTheDocument();
+  });
+
   it("posts settings when the mode or the model changes", async () => {
     const view = renderChat(
       routes({ [`POST ${SESSION}/settings`]: anAgentSession({ status: "running" }) }),

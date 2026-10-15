@@ -137,6 +137,8 @@ export interface TranscriptState {
   lastSeq: number;
   /** A text block is streaming (its bubble is open). */
   streaming: boolean;
+  /** An interrupt was recorded: the turn's result reads "Turn interrupted" (AC-234.21). */
+  interrupted: boolean;
   /** Why the stream reset; the caller reloads, then clears it with a fresh state. */
   reset: string | null;
 }
@@ -156,6 +158,7 @@ export function initialTranscript(): TranscriptState {
     slashCommands: [],
     lastSeq: 0,
     streaming: false,
+    interrupted: false,
     reset: null,
   };
 }
@@ -534,9 +537,10 @@ function applyResult(state: TranscriptState, record: LogRecord): TranscriptState
         : null,
     turns: state.meter.turns + 1,
   };
-  const next = { ...state, meter, streaming: false };
+  const next = { ...state, meter, streaming: false, interrupted: false };
   const reason = str(body, "terminal_reason");
-  if (reason?.startsWith("aborted")) return notice(next, record.seq, "Turn interrupted", "warning");
+  if (state.interrupted || reason?.startsWith("aborted"))
+    return notice(next, record.seq, "Turn interrupted", "warning");
   const subtype = str(body, "subtype");
   if (subtype !== null && subtype !== "success")
     return notice(next, record.seq, `Turn ended: ${subtype.replace(/_/g, " ")}`, "warning");
@@ -625,7 +629,7 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
     case "settings":
       return applySettings(s, record);
     case "interrupt":
-      return notice(s, record.seq, "You interrupted the turn", "warning");
+      return notice({ ...s, interrupted: true }, record.seq, "You interrupted the turn", "warning");
     case "close":
       return notice(s, record.seq, "Session closed");
     case "error":
