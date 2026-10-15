@@ -411,3 +411,75 @@ describe("Markdown a11y", () => {
     expect(await seriousViolations(container)).toEqual([]);
   });
 });
+
+describe("Markdown code blocks (AC-234.23)", () => {
+  it("labels a fenced block with its language and copies exactly its code", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(
+      <Markdown source={["Before", "", "```ts", "const a = 1;", "let b = a;", "```"].join("\n")} />,
+    );
+
+    const block = screen.getByRole("group", { name: "ts code" });
+    expect(within(block).getByText("ts", { selector: ".ah-md-lang" })).toBeInTheDocument();
+    fireEvent.click(within(block).getByRole("button", { name: "Copy code" }));
+
+    expect(writeText).toHaveBeenCalledWith("const a = 1;\nlet b = a;");
+    expect(within(block).getByRole("button", { name: "Copied" })).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows no label but still a Copy button when the fence has no language", () => {
+    const { container } = render(<Markdown source={["```", "plain", "```"].join("\n")} />);
+
+    expect(container.querySelector(".ah-md-lang")).toBeNull();
+    expect(screen.getByRole("group", { name: "Code" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeInTheDocument();
+  });
+
+  it("shows an odd info string as plain text when it holds HTML", () => {
+    const { container } = render(
+      <Markdown source={["```<img/src=x/onerror=alert(1)>", "x", "```"].join("\n")} />,
+    );
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(attributesOf(container).filter((name) => name.startsWith("on"))).toEqual([]);
+    expect(container.querySelector(".ah-md-lang")?.textContent).toBe(
+      "<img/src=x/onerror=alert(1)>",
+    );
+  });
+});
+
+describe("Markdown agent text (AC-234.23)", () => {
+  it("keeps an <img onerror> in agent text as inert text", () => {
+    const alert = vi.spyOn(window, "alert").mockImplementation(() => undefined);
+    const { container } = render(
+      <Markdown source={"Look: <img src=x onerror=alert(1)> done"} className="as-md" />,
+    );
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(attributesOf(container).filter((name) => name.startsWith("on"))).toEqual([]);
+    expect(container.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect(alert).not.toHaveBeenCalled();
+  });
+});
+
+describe("Markdown tables (AC-234.23)", () => {
+  it("puts a wide table in a keyboard-scrollable, labelled region", () => {
+    const head = Array.from({ length: 12 }, (_, i) => `Column ${String(i)} with a long title`);
+    render(
+      <Markdown
+        source={[
+          `| ${head.join(" | ")} |`,
+          `|${head.map(() => "---").join("|")}|`,
+          `| ${head.map((_, i) => `value ${String(i)}`).join(" | ")} |`,
+        ].join("\n")}
+      />,
+    );
+
+    const region = screen.getByRole("region", { name: "Table" });
+    expect(region).toHaveAttribute("tabindex", "0");
+    expect(region).toHaveClass("ah-md-table");
+    expect(within(region).getByRole("table")).toBeInTheDocument();
+  });
+});
