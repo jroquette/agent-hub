@@ -516,7 +516,9 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
   duplicate and is skipped; a different event with the same key is a conflict and fails the batch. Nothing stored is
   ever overwritten. One exception keeps a widened allow-list from failing re-ingestion: two events with the same key
   that are equal once the keys a release added to their type (`ADDED_KEYS_V2`: `skill` and `to` on `tool.call`,
-  `error_message` on `tool.result`, `git_branch` on every type but `session.start`) are removed from both are duplicates, and the stored row is kept ([ADR 0023](adr/0023-short-error-message.md)).
+  `error_message` on `tool.result`, `git_branch` on every type but `session.start`, and the workflow engine's
+  `revision` and `content_hash` on `step.start` and `run.end`, `failure_kind` and `skip_cause` on `step.end`) are
+  removed from both are duplicates, and the stored row is kept ([ADR 0023](adr/0023-short-error-message.md)).
 - The input format of `hub collect` is JSON Lines, UTF-8, one event per line (records split on `\n`); blank lines are
   skipped and duplicate JSON keys are rejected.
 - The store adds two fields of its own at append: `event_id` (a UUIDv7, the SSE id and the API's event id) and
