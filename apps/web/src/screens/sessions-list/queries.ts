@@ -1,4 +1,9 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import type { components } from "../../api/schema";
 import { apiGet, apiKey, apiPost, useApi, type ApiParams, type ApiProblem } from "../../lib/api";
@@ -30,6 +35,8 @@ export function useSessionPages(query: SessionQuery | null) {
         signal,
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
+    // A filter or sort change keeps the shown pages until the new ones arrive: no flash, no jump.
+    placeholderData: keepPreviousData,
   });
 }
 
