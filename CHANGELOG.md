@@ -31,7 +31,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   up to 7 days, an `until` instant, or `attention` answered with text or one of `options`) pauses the run: `hub
   workflow run` prints `run <id>: paused at <node>` and records a `gate.request` (an approval or attention wait shows
   in Approvals). `--resume RUN` takes the same gate up again and goes on once it has its decision or its time. The
-  output (`{decision}`, `{at}`, `{text}`, `{choice, text}`) is readable from `when:`. `hub workflow test` stubs gates
+  output (`{decision}`, `{at}`, `{text}`, `{choice, text}`) is readable from `when:`; rejecting the default decisions
+  cancels the run unless a `when:` reads the decision. An `until` is at most 7 days ahead; a timed wait ends on a
+  resume past its time. `hub workflow test` stubs gates
   with `{decision, text}`, `{text}`, `{choice}` or `{}`; without a stub the run pauses (`expect.status: paused`)
   (AGH-230).
 - `hub workflow approve|reject|respond RUN [NODE] [TEXT]` decide a paused run's open gate (`respond` takes
