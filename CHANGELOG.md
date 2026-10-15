@@ -42,6 +42,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed); its runs
   cannot be resumed or abandoned (exit 2) (AGH-223).
 
+### Changed
+
+- `hub run --live` now runs the `issue-to-pr` workflow through the workflow engine, with its options, records, events,
+  tracker writes and exit codes unchanged: a hub's own `workflows/<pack>/issue-to-pr.yaml` replaces the built-in (it
+  must load, else exit 1, and declare the inputs `issue`, `repo`, `issue_text`, plus `start` for `--from verify`, else
+  exit 2). `--model`, `--effort`, `--max-turns` and `--budget` apply to its `implement` node. A failed stage's `failed`
+  record and its `step.end` event now carry the failure kind (`failure_kind`, e.g. `exec_failed`, `timeout`). The dry
+  run is unchanged. The built-in `issue-to-pr` gains the input `start` (`verify` skips the session), runs its `hub step`
+  nodes in process as `hub run` does, and keeps the gate output's last line break (AGH-224).
+
 ### Fixed
 
 - Releases are annotated tags again. The tags `v0.9.0` to `v0.14.0` were pushed as lightweight tags, so `release.yml`

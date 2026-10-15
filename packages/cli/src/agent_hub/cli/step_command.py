@@ -17,16 +17,24 @@ worktree add and the repo's setup script get ``untrusted_env``; only the fetch, 
 writes the tracker: ``report`` only computes the delivery (``delivered``, ``no_changes``,
 ``blocked`` or ``failed``) from what the earlier steps printed; ADR 0030's writes are the
 parent's (``hub workflow run``, ``hub run``).
+
+That parent runs its ``hub step`` nodes in process (``run_in_process``): the same code with
+``hub run``'s children (in the caller's group), timeouts and lines (the worktree's on stdout, a
+warning naming ``hub run``), its output kept instead of printed and a failure raised with its
+reason as written.
 """
 
 import json
 import os
 import shutil
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Final, NoReturn
 
 import typer
+from typer._click.exceptions import ClickException
 
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import effective_with_prefix_or_fail
@@ -58,6 +66,7 @@ from agent_hub.core.runner.verdict import (
     last_json_line,
     session_outcome,
 )
+from agent_hub.core.workflows.failures import NodeFailedError
 
 COMMAND: Final = "step"
 NO_COMMIT: Final = "no commit on the branch (the session reported done or gave no verdict)"
@@ -73,6 +82,42 @@ Repo = Annotated[str, typer.Option("--repo", metavar="REPO", help="The repo's di
 Target = Annotated[
     str, typer.Option("--target", metavar="JSON", help="The target hub step worktree printed.")
 ]
+
+
+class StepFailedError(Exception):
+    """An in-process step failed: its reason, as ``hub run`` records it."""
+
+
+@dataclass
+class InProcess:
+    """A step run by the issue-to-pr parent: where its lines go, whom a warning names, and
+    the output it made."""
+
+    echo: Callable[[str], None]
+    prefix: str
+    output: dict[str, JsonValue] | None = None
+
+
+_IN_PROCESS: ContextVar[InProcess | None] = ContextVar("in_process", default=None)
+
+
+def run_in_process(arguments: Sequence[str], *, echo: Callable[[str], None], prefix: str) -> str:
+    """``hub step <arguments>`` run here; its JSON output. A step's failure is ``exec_failed``
+    with its reason, a usage problem (or any other exit) ``config``."""
+    mode = InProcess(echo, prefix)
+    token = _IN_PROCESS.set(mode)
+    try:
+        command = typer.main.get_command(step_app)
+        code = command.main(list(arguments), prog_name="hub step", standalone_mode=False)
+    except StepFailedError as error:
+        raise NodeFailedError("exec_failed", str(error)) from None
+    except ClickException as error:
+        raise NodeFailedError("config", error.format_message()) from None
+    finally:
+        _IN_PROCESS.reset(token)
+    if mode.output is None:
+        raise NodeFailedError("config", f"hub step exited {code} without an output")
+    return json.dumps(mode.output, sort_keys=True)
 
 
 @step_app.command("worktree")
@@ -103,7 +148,7 @@ def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
             runner=bounded_child,
         )
         check_branches(task)
-        path = create_worktree(task, repo, echo=lambda line: typer.echo(line, err=True))
+        path = create_worktree(task, repo, echo=_note)
     except (WorktreeError, ChildTimedOutError) as error:
         _fail(name, str(error).replace(git, "git"))
     except OSError as error:
@@ -198,8 +243,11 @@ def pr(
         conventions = facts.conventions
         titled = titled_pr(subject, conventions=conventions, issue_id=issue, workspace=workspace)
         if titled.unmatched is not None:
+            mode = _IN_PROCESS.get()
             line = unmatched_warning(
-                "hub step pr", line=titled.unmatched, commit_title=conventions.commit_title
+                "hub step pr" if mode is None else mode.prefix,
+                line=titled.unmatched,
+                commit_title=conventions.commit_title,
             )
             typer.echo(line, err=True)
         body = pr_body(issue_id=issue, summary=summary, gate=facts.gate, workspace=workspace)
@@ -372,9 +420,21 @@ def _commit_summary(facts: StepTarget) -> str:
     return commit_summary(messages, workspace=str(facts.workspace))
 
 
+def _note(line: str) -> None:
+    if (mode := _IN_PROCESS.get()) is not None:
+        mode.echo(line)
+        return
+    typer.echo(line, err=True)
+
+
 def _print(value: dict[str, JsonValue]) -> None:
+    if (mode := _IN_PROCESS.get()) is not None:
+        mode.output = value
+        return
     typer.echo(json.dumps(value, sort_keys=True))
 
 
 def _fail(name: str, reason: str) -> NoReturn:
+    if _IN_PROCESS.get() is not None:
+        raise StepFailedError(reason)
     fail(f"hub {COMMAND} {name}: {reason.rstrip()}")

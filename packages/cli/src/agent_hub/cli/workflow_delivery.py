@@ -1,7 +1,8 @@
 """The parent's side of the issue-to-pr workflow: ``hub run``'s tracker read, records and report.
 
-``hub workflow run issue-to-pr --live`` is ``hub run`` as a graph (ADR 0032), so around the engine
-it does what ``hub run`` does around its stages, with ``hub run``'s own code. Before the run: the
+``hub run --live`` runs ``issue-to-pr`` through the engine (AGH-224), and ``hub workflow run
+issue-to-pr --live`` is the same run (ADR 0032), so around the engine this parent does what
+v0.14's ``hub run`` did around its stages, with its code. Before the run: the
 usage checks, the tracker key, the one issue read and the input brief (ADR 0026), then the
 ``picked`` record; the issue becomes the ``issue_text`` input. As nodes end, each stage's records
 (``worktree_ready``, ``agent_finished`` per session, ``commits``, ``gate_ok``,
@@ -10,32 +11,37 @@ usage checks, the tracker key, the one issue read and the input brief (ADR 0026)
 node events are not sent for this workflow. After the run, ``LiveRun.finish`` makes ADR 0030's
 tracker writes, the ``reported`` record and the inbox line from ``run.end``'s outcome (the
 ``report`` node's ``delivery``). A run that failed before ``report`` has no outcome: it failed at
-the failed node's stage (``NODE_STAGES``), with that node's diagnosis (its last attempt's). The
+the failed node's stage (``NODE_STAGES``), with that node's diagnosis (its last attempt's) and
+failure kind (AGH-179, on the ``failed`` record and so on its ``step.end`` event). Its children
+run as ``hub run``'s (``executor_options``): the ``hub step`` nodes in process, the others in the
+caller's group, the ``implement`` node with the run's model, effort and caps; with the input
+``start`` set to ``verify`` (``--from verify``) the session is skipped and recorded so. The
 exit is ``hub run``'s: 0 delivered or no changes, 3 blocked, 1 failed or a tracker write that
 failed; a record that cannot be written stops the run, naming what is left undone. The run's
 folder and snapshot are made before the issue is read and removed if the read fails; such a
 run is never resumed nor abandoned (``hub workflow run`` exits 2 for either).
 """
 
-import contextlib
-import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import typer
 
+from agent_hub.cli import child_process
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.run_children import RunOptions
-from agent_hub.cli.run_command import begin_live_run, refuse_usage, run_setup
+from agent_hub.cli.run_command import RunStart, begin_live_run, refuse_usage, run_setup
 from agent_hub.cli.run_steps import (
     MAX_GATE_SHOWN_CHARS,
     MAX_LOGGED_REASON_CHARS,
     LiveRun,
     StageFailure,
 )
+from agent_hub.cli.step_command import run_in_process
 from agent_hub.cli.workflow_executors import AGENT_EFFORT
 from agent_hub.cli.workflow_runs import RecordedRun
 from agent_hub.core.hub_config.model_tiers import RUN_TIER
@@ -52,6 +58,7 @@ from agent_hub.core.workflows.run_state import RunReport
 # The workflow whose parent this is, named as the built-in names it (the smallest marker).
 ISSUE_TO_PR: Final = "issue-to-pr"
 ISSUE_TEXT: Final = "issue_text"
+START: Final = "start"
 DELIVERY_INPUTS: Final = frozenset({"issue", "repo", ISSUE_TEXT})
 NODE_STAGES: Final[Mapping[str, Stage]] = {
     "worktree": Stage.WORKTREE,
@@ -61,12 +68,10 @@ NODE_STAGES: Final[Mapping[str, Stage]] = {
     "pr": Stage.PR_OPEN,
     "report": Stage.PR_OPEN,
 }
-_PREFIX: Final = "hub workflow run"
 _IMPLEMENT: Final = "implement"
-# A failed child's detail starts with "<program> exited <code>: "; a hub step's reason is its
-# last stderr line, "hub step <name>: <reason>" (JSON-quoted when the reason held a line break).
+# A failed child's detail starts with "<program> exited <code>: " (an in-process hub step's is
+# its reason, as written).
 _EXITED: Final = re.compile(r"^.+? exited -?[0-9]+: ?")
-_STEP_LINE: Final = re.compile(r"^hub step [a-z]+: ")
 
 type Output = Mapping[str, JsonValue]
 
@@ -96,10 +101,20 @@ def begin_delivery(
         max_turns=limits.max_turns,
         budget=limits.max_cost_usd,
         model=children.config.models.model_for(tier),
-        start="implement",
+        start=RunStart.VERIFY if inputs.get(START) == RunStart.VERIFY else RunStart.IMPLEMENT,
         effort=AGENT_EFFORT,
     )
     return IssueToPr(begin_live_run(children, client, options=options, run_id=run_id))
+
+
+def delivery_problem(plan: WorkflowPlan, *, start: str = RunStart.IMPLEMENT) -> str | None:
+    """Why the parent cannot run ``plan`` (a hub's own issue-to-pr may lack an input it fills)."""
+    declared = set(plan.document.inputs)
+    if not declared >= DELIVERY_INPUTS:
+        return f"{ISSUE_TO_PR} must declare the inputs issue, repo and {ISSUE_TEXT}"
+    if start == RunStart.VERIFY and START not in declared:
+        return f"--from verify needs the input {START} in {ISSUE_TO_PR}"
+    return None
 
 
 @dataclass
@@ -110,14 +125,26 @@ class IssueToPr:
     replies: dict[str, SessionReply] = field(default_factory=dict)
     outputs: dict[str, Output] = field(default_factory=dict)
     failed: dict[str, str] = field(default_factory=dict)
+    kinds: dict[str, str | None] = field(default_factory=dict)
     session: SessionReply | None = None
 
     @property
     def issue_text(self) -> str:
         return issue_block(self.live.issue)
 
-    def recorder(self, inner: RecordedRun) -> DeliveryRecorder:
+    def recorder(self, inner: RecordedRun | None) -> DeliveryRecorder:
         return DeliveryRecorder(self, inner)
+
+    def executor_options(self) -> dict[str, Any]:
+        """``WorkflowExecutors``' options for a run with ``hub run``'s children and caps; the
+        child is looked up now, not at import (the tests spy on ``run_child``)."""
+        return {
+            "replies": self.replies,
+            "hub_steps": partial(run_in_process, echo=typer.echo, prefix="hub run"),
+            "in_session": False,
+            "session": self.live.options,
+            "child": child_process.run_child,
+        }
 
     def started(self, node: str) -> None:
         if node in NODE_STAGES and node != "report":
@@ -126,8 +153,12 @@ class IssueToPr:
     def ended(self, end: StepEnd) -> None:
         """Record the stage as ``hub run`` does; a ``RunLogError`` stops the run, as there."""
         if end.status == "failed":
-            # The last failed attempt's detail, under the node that failed first.
+            # The last failed attempt's detail and kind, under the node that failed first.
             self.failed[end.node] = end.detail
+            self.kinds[end.node] = end.failure_kind
+        if end.node == _IMPLEMENT and end.status == "skipped" and self._from_verify:
+            self.live.log.state = Stage.IMPLEMENTING
+            self.live.log.record("skip_implement", {"reason": "--from verify"})
         if end.node == _IMPLEMENT and (reply := self.replies.pop(_IMPLEMENT, None)):
             self.session = reply
             self.live.record_session(reply)
@@ -140,8 +171,6 @@ class IssueToPr:
         """ADR 0030's writes, the ``reported`` record and the inbox line; the run's exit."""
         outcome, delivery = report.outcome, self.outputs.get("report", {})
         if outcome == RunOutcome.DELIVERED:
-            pr = self.outputs.get("pr", {})
-            self.live.pr_url, self.live.summary = _text(pr, "url"), _text(pr, "summary")
             return self.live.finish(None)
         if isinstance(outcome, str) and outcome in set(RunOutcome) and delivery:
             stage = _text(delivery, "stage")
@@ -154,7 +183,12 @@ class IssueToPr:
             return self.live.finish(failure)
         node = report.reason if report.reason in self.failed else next(iter(self.failed), "")
         stage = NODE_STAGES.get(node, Stage.PR_OPEN)
-        return self.live.finish(StageFailure(stage, self._reason(node)))
+        kind = self.kinds.get(node)
+        return self.live.finish(StageFailure(stage, self._reason(node), failure_kind=kind))
+
+    @property
+    def _from_verify(self) -> bool:
+        return self.live.options.start == RunStart.VERIFY
 
     def _record(self, node: str, output: Output) -> None:
         log, children = self.live.log, self.live.children
@@ -165,6 +199,8 @@ class IssueToPr:
         elif node == "verify":
             log.record("gate_ok", {"gate": children.gate[:80]})
         elif node == "pr":
+            # The PR is open: a record that fails from here on names it and the writes left.
+            self.live.pr_url, self.live.summary = _text(output, "url"), _text(output, "summary")
             unmatched = output.get("title_unmatched")
             if isinstance(unmatched, str):
                 pattern = children.conventions.commit_title
@@ -177,16 +213,11 @@ class IssueToPr:
         detail = self.failed.get(node, "")
         if node == _IMPLEMENT and self.session is not None and self.session.is_error:
             return session_outcome(self.session).text
-        if node == "verify":
+        if node == "verify" and self.kinds.get(node) == "exec_failed":
             header = f"gate failed: {self.live.children.gate[:MAX_GATE_SHOWN_CHARS]}\n"
             output = _EXITED.sub("", detail, count=1)
             return header + output[-(MAX_LOGGED_REASON_CHARS - len(header)) :]
-        lines = detail.splitlines() or [""]
-        last = _EXITED.sub("", lines[-1], count=1) if len(lines) == 1 else lines[-1]
-        if last.startswith('"'):
-            with contextlib.suppress(ValueError):
-                last = str(json.loads(last))
-        return _STEP_LINE.sub("", last, count=1) or "the run ended without a delivery"
+        return detail or "the run ended without a delivery"
 
 
 @dataclass
@@ -194,21 +225,26 @@ class DeliveryRecorder:
     """The run's ``RunRecorder``: the workflow's record first, then ``hub run``'s."""
 
     parent: IssueToPr
-    inner: RecordedRun
+    # None for hub run's own run: its RunLog records are its only record.
+    inner: RecordedRun | None
 
     def step_started(self, start: StepStart) -> None:
-        self.inner.step_started(start)
+        if self.inner is not None:
+            self.inner.step_started(start)
         self.parent.started(start.node)
 
     def step_ended(self, end: StepEnd) -> None:
-        self.inner.step_ended(end)
+        if self.inner is not None:
+            self.inner.step_ended(end)
         self.parent.ended(end)
 
     def retry_scheduled(self, node: str, retry: RetryRecord) -> None:
-        self.inner.retry_scheduled(node, retry)
+        if self.inner is not None:
+            self.inner.retry_scheduled(node, retry)
 
     def run_ended(self, end: RunEnd) -> None:
-        self.inner.run_ended(end)
+        if self.inner is not None:
+            self.inner.run_ended(end)
 
 
 def _text(output: Output, key: str) -> str:

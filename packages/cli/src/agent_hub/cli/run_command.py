@@ -1,4 +1,6 @@
-"""``hub run``: one tracker issue to a PR, every tracker read and write through the port.
+"""``hub run``'s options, checks and dry run, every tracker read and write through the port.
+
+The command itself is ``run_engine``'s: a live run is the ``issue-to-pr`` workflow (AGH-224).
 
 The hub is ``AGENT_HUB_ROOT`` or the cwd; run from a worktree of the hub repo, its main checkout
 is the hub (its ``hub.json``, Q-23). Usage problems exit 2 before any tracker call or child
@@ -16,22 +18,17 @@ import math
 import os
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Final
+from typing import Final
 
 import typer
-from typer._click.core import ParameterSource
 
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import effective_with_prefix_or_fail
 from agent_hub.cli.errors import RunLogError
-from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
-from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import (
-    CHILD_HIDDEN,
     RunChildren,
     RunOptions,
-    without,
     would_run_line,
 )
 from agent_hub.cli.run_log import RunLog, new_run_id
@@ -81,75 +78,18 @@ class Effort(StrEnum):
     HIGH = "high"
 
 
-def _budget(value: float) -> float:
+def check_budget(value: float) -> float:
     if not math.isfinite(value) or value <= 0:
         msg = "use a number of USD above 0"
         raise typer.BadParameter(msg)
     return value
 
 
-def _model(value: str) -> str:
+def check_model(value: str) -> str:
     if not MODEL_NAME_PATTERN.fullmatch(value):
         msg = "use 1 to 64 of A-Z a-z 0-9 . _ -"
         raise typer.BadParameter(msg)
     return value
-
-
-def run(
-    context: typer.Context,
-    issue: Annotated[
-        str, typer.Argument(metavar="ISSUE", help="The tracker issue, <team>-<n> (DEM-1).")
-    ],
-    *,
-    repo: Annotated[
-        str,
-        typer.Option("--repo", metavar="REPO", help="The repo to change (its dir in hub.json)."),
-    ],
-    live: Annotated[
-        bool, typer.Option("--live", help="Run it; without it, print what would run.")
-    ] = False,
-    max_turns: Annotated[
-        int, typer.Option("--max-turns", min=1, help="Turns of the implementing session.")
-    ] = DEFAULT_MAX_TURNS,
-    budget: Annotated[
-        float,
-        typer.Option("--budget", callback=_budget, help="USD cap of the implementing session."),
-    ] = DEFAULT_BUDGET_USD,
-    model: Annotated[
-        str,
-        typer.Option(
-            "--model",
-            callback=_model,
-            help="Model of the implementing session; unset, hub.json's models.tiers.medium.",
-        ),
-    ] = DEFAULT_MODEL,
-    start: Annotated[
-        RunStart,
-        typer.Option("--from", help="verify: gate, PR and report on the commits already made."),
-    ] = RunStart.IMPLEMENT,
-    effort: Annotated[
-        Effort, typer.Option("--effort", help="effortLevel of the implementing session.")
-    ] = Effort.MEDIUM,
-) -> None:
-    """Take one tracker issue to a PR: worktree, implementing session, gate, PR, report."""
-    root = hub_root_or_exit(os.environ, command=COMMAND)
-    hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
-    hub_config = load_hub_config_or_exit(hub / FILE_LABEL)
-    refuse_usage(context, hub_config, issue=issue, repo=repo)
-    children, client = run_setup(context, hub_config, hub=hub, issue=issue, repo=repo)
-    if context.get_parameter_source("model") is ParameterSource.DEFAULT:
-        # Not given: the tier's model, the default itself while hub.json sets none (AGH-180).
-        model = hub_config.models.model_for(RUN_TIER)
-    options = RunOptions(
-        live=live, max_turns=max_turns, budget=budget, model=model, start=start, effort=effort
-    )
-    if not options.live:
-        picked = _read_issue_or_exit(client, issue, log=None)
-        _refuse_incomplete_brief(picked, issue, log=None)
-        _print_dry_run(children, picked, options=options, run_id=new_run_id())
-        return
-    live_run = begin_live_run(children, client, options=options, run_id=new_run_id())
-    raise typer.Exit(live_run.run())
 
 
 def run_setup(
@@ -233,6 +173,13 @@ def _refuse_incomplete_brief(issue: Issue, issue_id: str, *, log: RunLog | None)
         with contextlib.suppress(RunLogError):
             log.record("failed", {"stage": Stage.PICKED.value, "reason": reason})
     fail(f"{_PREFIX}: {reason}")
+
+
+def dry_run(children: RunChildren, client: TrackerClient, *, options: RunOptions) -> None:
+    """The issue read once and its brief checked (exit 1 otherwise), then ``_print_dry_run``."""
+    picked = _read_issue_or_exit(client, children.issue_id, log=None)
+    _refuse_incomplete_brief(picked, children.issue_id, log=None)
+    _print_dry_run(children, picked, options=options, run_id=new_run_id())
 
 
 def _print_dry_run(

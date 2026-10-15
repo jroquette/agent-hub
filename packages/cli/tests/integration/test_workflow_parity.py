@@ -1,24 +1,27 @@
-"""v0.14 ``hub run`` and ``hub workflow run issue-to-pr --live`` give the same run (AC-213.12).
+"""``hub run`` and ``hub workflow run issue-to-pr --live`` give v0.14 ``hub run``'s run (AC-213.12).
 
-Each scenario runs twice in one copy of the ``DEMO`` workspace, with the same fakes (``claude``,
-``gh``, ``make``) and a fresh recording tracker each time: first ``hub run``, then, after the
-worktree and the branch are removed, the built-in workflow. Both must make the same tracker calls,
-write the same ``.agent-runs`` records, store the same events and end with the same delivery and
-exit code (delivered 0, no_changes 0, blocked 3, failed 1).
+``golden/parity/<scenario>.json`` holds what v0.14 ``hub run`` (its own stage machine, before
+AGH-224 put it on the engine) left in each scenario: its exit code, tracker calls, ``.agent-runs``
+records and stored events. It was recorded once from that code and is not regenerated: no code
+left can produce it. Each scenario runs twice in one copy of the ``DEMO`` workspace, with the same
+fakes (``claude``, ``gh``, ``make``) and a fresh recording tracker each time: first ``hub run``,
+then, after the worktree and the branch are removed, the built-in workflow. Both must match the
+golden (delivered 0, no_changes 0, blocked 3, failed 1).
 
 Intended differences, left out of the comparison:
 
-- the run id (each run has its own) and every timestamp;
-- a failure's diagnosis loses its trailing line break: the workflow reads it from the failed
-  node's record, whose detail is stripped, so the comment bodies and the ``failed`` record's
-  ``reason`` are compared without trailing whitespace (the gate's stdout and stderr are kept, in
-  ``hub run``'s order);
-- the workflow's own record (``.agent-runs/workflows/<run>/``) exists only for the workflow; its
-  node events are not sent for issue-to-pr, so the events are ``hub run``'s.
+- the run id (each run has its own), every timestamp, and the workspace's path (``<ws>``);
+- a failure's diagnosis is compared without trailing whitespace, in the comment bodies and the
+  ``failed`` record's ``reason`` (the gate's stdout and stderr are kept, in ``hub run``'s order);
+- the ``failed`` record and its ``step.end`` event gain ``failure_kind`` (AGH-179, AGH-224),
+  checked apart;
+- the workflow's own record (``.agent-runs/workflows/<run>/``) exists only for ``hub workflow
+  run``; the engine's node events are not sent for issue-to-pr, so the events are ``hub run``'s.
 """
 
 import copy
 import json
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +42,8 @@ type Workspace = Any
 
 KEY_VARIABLE = "LINEAR_API_KEY"
 BRANCH = "jdoe/dem-1"
+GOLDEN = Path(__file__).parent / "golden" / "parity"
+FAILED_NODE = frozenset({"error", "gate-fail", "gate-fail-stdout", "pr-fail"})
 SCENARIOS: Mapping[str, tuple[Mapping[str, str], int, str]] = {
     "done": ({}, 0, "delivered"),
     "no-commit": ({"FAKE_CLAUDE_MODE": "done-no-commit"}, 0, "no_changes"),
@@ -119,6 +124,28 @@ def unrun(value: object, run_id: str) -> object:
     return value.replace(run_id, "<run>") if isinstance(value, str) else value
 
 
+def golden_form(seen: Seen, workspace: Workspace) -> tuple[dict[str, Any], list[str]]:
+    """``seen`` as the golden holds it: the workspace's path as ``<ws>``, ``failure_kind`` taken
+    out; the kinds taken out, records' then events'."""
+    kinds: list[str] = []
+
+    def kept(payload: dict[str, Any]) -> dict[str, Any]:
+        if "failure_kind" in payload:
+            kinds.append(payload["failure_kind"])
+        return {k: v for k, v in payload.items() if k != "failure_kind"}
+
+    form = {
+        "exit_code": seen.exit_code,
+        "calls": seen.calls,
+        "records": [kept(record) for record in seen.records],
+        "events": [[kind, step, kept(payload)] for kind, step, payload in seen.events],
+    }
+    text = json.dumps(form, sort_keys=True)
+    for path in {str(workspace.ws), os.path.realpath(workspace.ws)}:
+        text = text.replace(json.dumps(path)[1:-1], "<ws>")
+    return json.loads(text), kinds
+
+
 def reset(workspace: Workspace) -> None:
     """Remove the run's worktree and its branch, in the clone and the origin."""
     clone = workspace.ws / "demo-api"
@@ -168,13 +195,17 @@ def test_matches_hub_run_when_same_scenario_runs(
         db=db,
     )
 
-    assert (hub_run.exit_code, workflow.exit_code) == (exit_code, exit_code)
-    assert workflow.calls == hub_run.calls
-    assert workflow.records == hub_run.records
-    assert workflow.records[-1]["outcome"] == delivery
-    assert workflow.events == hub_run.events
-    (end,) = [payload for kind, _, payload in workflow.events if kind == "run.end"]
-    assert end["outcome"] == delivery
+    golden = json.loads((GOLDEN / f"{scenario}.json").read_text())
+    for seen in (hub_run, workflow):
+        form, kinds = golden_form(seen, workspace)
+        assert form == golden
+        assert seen.exit_code == exit_code
+        assert seen.records[-1]["outcome"] == delivery
+        (end,) = [payload for kind, _, payload in seen.events if kind == "run.end"]
+        assert end["outcome"] == delivery
+        # A failed node names its kind on the failed record and its step.end event; done-dirty
+        # fails on the delivery the report node computed, where no node failed.
+        assert kinds == (["exec_failed"] * 2 if scenario in FAILED_NODE else [])
 
 
 def test_refuses_issue_text_when_given_as_input(

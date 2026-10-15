@@ -122,7 +122,8 @@ HOOKS_OFF: Final = ("-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=
 
 class StageFailure(Exception):  # noqa: N818 - a stage's outcome, read as "the stage failed"
     """A stage ended the run: the stage, why, and the run's outcome (``failed`` unless the run
-    ended without a PR yet without failing); ``question`` is what a blocked session asked."""
+    ended without a PR yet without failing); ``question`` is what a blocked session asked,
+    ``failure_kind`` the failed node's kind (AGH-179), recorded on ``failed``."""
 
     def __init__(
         self,
@@ -131,12 +132,14 @@ class StageFailure(Exception):  # noqa: N818 - a stage's outcome, read as "the s
         outcome: RunOutcome = RunOutcome.FAILED,
         *,
         question: str = "",
+        failure_kind: str | None = None,
     ) -> None:
         super().__init__(reason)
         self.stage = stage
         self.reason = reason
         self.outcome = outcome
         self.question = question
+        self.failure_kind = failure_kind
 
 
 @dataclass(kw_only=True, slots=True)
@@ -401,7 +404,10 @@ class LiveRun:
         reason = failure.reason[:MAX_LOGGED_REASON_CHARS]
         is_failed = failure.outcome not in NOT_DELIVERED
         if is_failed:
-            self.log.record("failed", {"stage": failure.stage.value, "reason": reason})
+            data: dict[str, JsonValue] = {"stage": failure.stage.value, "reason": reason}
+            if failure.failure_kind is not None:
+                data["failure_kind"] = failure.failure_kind
+            self.log.record("failed", data)
             ended = "FAILED"
         else:
             data = not_delivered_data(outcome=failure.outcome, stage=failure.stage, reason=reason)
