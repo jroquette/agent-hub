@@ -94,8 +94,10 @@ from agent_hub.core.workflows.substitution import (
     resolve,
 )
 
-# The most nodes of one layer that run at once.
+# The most attempts that run at once in a run.
 MAX_PARALLEL: Final = 4
+# The most threads one layer starts; they wait for the run's permits.
+MAX_LAYER_THREADS: Final = 64
 
 
 class WorkflowEngineError(AgentHubError):
@@ -203,7 +205,8 @@ class _Run:
                 if self.halted_by is not None:
                     return
             return
-        with ThreadPoolExecutor(max_workers=min(len(nodes), self.ports.max_parallel)) as pool:
+        # A thread per node: the run-wide permits bound how many attempts run at once.
+        with ThreadPoolExecutor(max_workers=min(len(nodes), MAX_LAYER_THREADS)) as pool:
             futures = [pool.submit(self._visit, node) for node in nodes]
             try:
                 for future in futures:
@@ -435,14 +438,15 @@ class _Run:
             return False
         if not decision.retry:
             return False
+        # Stopped: no retry is scheduled. A stop during the backoff wakes it, and the next
+        # attempt's check (after its permit) ends the node.
+        self._check_stop()
         record = RetryRecord(self.attempts[node.id], failure.kind, decision.delay)
         self.recorder.retry_scheduled(node.id, record)
-        self._check_stop()
         try:
             self.ports.clock.sleep(decision.delay, self.stopped)
         except Exception:  # noqa: BLE001 - a port's unexpected error: no retry
             return False
-        self._check_stop()
         return True
 
     def _check_stop(self) -> None:
@@ -531,9 +535,10 @@ class _Run:
         iteration = 0
         while True:
             iteration += 1
-            self._check_stop()
             if (failure := self._run_body(group, body, iteration)) is not None:
                 return failure
+            # Stopped during the body: no ``until_bash`` child and no next iteration.
+            self._check_stop()
             output = {local_id(group, n): self.results[n].output for n in body}
             try:
                 if self._group_done(group, iteration):

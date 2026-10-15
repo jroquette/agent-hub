@@ -343,26 +343,57 @@ def _split(
     split: list[tuple[str, ...]] = []
     for layer in layers:
         batches: list[_Batch] = []
-        # The last batch resuming each session, and per checkout kind the first batch that may
-        # still take a node of that kind: a search starts past both, so a layer is linear work.
+        # The last batch resuming each session: the batches after it hold none of them.
         last: dict[str, int] = {}
-        first: dict[tuple[bool, bool], int] = {}
+        # Per checkout kind, the batches that may still take it, skipping those that cannot.
+        skips = {kind: _Skips() for kind in _KINDS}
         for node_id in layer:
             node = traits[node_id]
-            kind = (node.reads, node.writes)
-            start = max([first.get(kind, 0), *(last[s] + 1 for s in node.resumed if s in last)])
-            index = next((i for i in range(start, len(batches)) if batches[i].fits(node)), None)
-            if index is None:
-                index = len(batches)
+            start = max((last[s] + 1 for s in node.resumed if s in last), default=0)
+            index = skips[node.kind].find(start)
+            if index == len(batches):
                 batches.append(_Batch())
-            batches[index].add(node_id, node)
+                for kind_skips in skips.values():
+                    kind_skips.grow()
+            batch = batches[index]
+            batch.add(node_id, node)
             last.update(dict.fromkeys(node.resumed, index))
-            while first.get(kind, 0) < len(batches) and not batches[first.get(kind, 0)].fits(
-                _Traits(node.reads, node.writes, frozenset())
-            ):
-                first[kind] = first.get(kind, 0) + 1
+            for kind, kind_skips in skips.items():
+                if not batch.takes(*kind):
+                    kind_skips.close(index)
         split.extend(tuple(batch.ids) for batch in batches)
     return tuple(split)
+
+
+# A node's checkout kind: whether it reads the checkout, and whether it may write it.
+_KINDS: Final = ((False, False), (False, True), (True, False), (True, True))
+
+
+class _Skips:
+    """The batches one kind may still go to: ``find(i)`` is the first at or after ``i``, else
+    the next new batch. A batch that stops taking the kind is closed for good (its flags only
+    grow), and paths are compressed, so a layer's search is near-linear work."""
+
+    def __init__(self) -> None:
+        self.next: list[int] = []
+        # The links followed in all, for the linear-work tests.
+        self.hops = 0
+
+    def grow(self) -> None:
+        self.next.append(len(self.next))
+
+    def close(self, index: int) -> None:
+        self.next[index] = index + 1
+
+    def find(self, index: int) -> int:
+        root = index
+        while root < len(self.next) and self.next[root] != root:
+            root = self.next[root]
+            self.hops += 1
+        while index < len(self.next) and self.next[index] != index:
+            self.next[index], index = root, self.next[index]
+            self.hops += 1
+        return root
 
 
 @dataclass(frozen=True)
@@ -372,6 +403,10 @@ class _Traits:
     reads: bool
     writes: bool
     resumed: frozenset[str]
+
+    @property
+    def kind(self) -> tuple[bool, bool]:
+        return self.reads, self.writes
 
     @classmethod
     def of(cls, node: Node) -> _Traits:
@@ -390,18 +425,16 @@ class _Traits:
 
 @dataclass
 class _Batch:
-    """Nodes that run together: whether any reads or writes the checkout, the sessions resumed.
-    ``fits`` is constant work in the batch's size."""
+    """Nodes that run together: whether any reads or writes the checkout, the sessions resumed."""
 
     ids: list[str] = field(default_factory=list)
     reads: bool = False
     writes: bool = False
     resumed: set[str] = field(default_factory=set)
 
-    def fits(self, traits: _Traits) -> bool:
-        if (traits.reads and self.writes) or (traits.writes and self.reads):
-            return False
-        return self.resumed.isdisjoint(traits.resumed)
+    def takes(self, reads: bool, writes: bool) -> bool:  # noqa: FBT001 - a kind's two flags
+        """Whether a node of this checkout kind may join, sessions aside."""
+        return not (reads and self.writes) and not (writes and self.reads)
 
     def add(self, node_id: str, traits: _Traits) -> None:
         self.ids.append(node_id)
