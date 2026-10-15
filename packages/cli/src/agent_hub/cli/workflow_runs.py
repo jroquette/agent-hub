@@ -32,13 +32,14 @@ import typer
 
 from agent_hub.cli.errors import CliError
 from agent_hub.cli.run_log import now, open_default_event_store
+from agent_hub.core.approvals.decide_gate import GateDecision, RequestedGate
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event_store import EventStore
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.events import WorkflowEvents
 from agent_hub.core.workflows.failures import RetryRecord
-from agent_hub.core.workflows.gates import GateAnswer, OpenGate, gate_id
+from agent_hub.core.workflows.gates import GateAnswer, GateForm, OpenGate, gate_id
 from agent_hub.core.workflows.nodes import AgentNode, LoopNode, ScriptNode
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import GateRequest, RunEnd, StepEnd, StepStart
@@ -56,6 +57,7 @@ MAX_RECORDS_BYTES: Final = 64 << 20
 RUN_ID_PATTERN: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 UNAVAILABLE: Final = "hub workflow run: event store unavailable"
 _STATES: Final = {"ok": "completed", "failed": "failed", "skipped": "skipped"}
+_FORMS: Final = frozenset({"decision", "choice", "text", "timer"})
 
 type Record = dict[str, JsonValue]
 
@@ -256,6 +258,55 @@ class RecordedAnswers:
 
     def answer(self, node: str, attempt: int) -> GateAnswer | None:
         return self.answers.get((node, attempt))
+
+
+class RecordedGates:
+    """The ``GateBook`` of a run: its gate records still open, and its decision records."""
+
+    def __init__(self, folder: Path, records: list[Record]) -> None:
+        self.folder = folder
+        workflow = str(records[0].get("workflow")) if records else ""
+        opened: dict[str, RequestedGate] = {}
+        self.decisions: set[str] = set()
+        for record in records:
+            node, event = record.get("node"), record.get("event")
+            if event == "decision":
+                self.decisions.add(str(record.get("gate_id")))
+            if not isinstance(node, str) or not isinstance(attempt := record.get("attempt"), int):
+                continue
+            if event == "gate" and record.get("form") in _FORMS:
+                given = record.get("choices")
+                choices = tuple(str(c) for c in given) if isinstance(given, list) else ()
+                form: GateForm = record["form"]  # type: ignore[assignment]
+                identifier = gate_id(folder.name, node, attempt)
+                opened[node] = RequestedGate(
+                    identifier, folder.name, workflow, node, attempt, form, choices
+                )
+            elif event == "step_end":
+                opened.pop(node, None)
+        self.open = {gate.gate_id: gate for gate in opened.values()}
+
+    def open_gate(self, gate_id: str) -> RequestedGate | None:
+        return self.open.get(gate_id)
+
+    def decided(self, gate_id: str) -> bool:
+        return gate_id in self.decisions
+
+    def record(self, gate: RequestedGate, decision: GateDecision) -> None:
+        record: Record = {"event": "decision", "gate_id": gate.gate_id, "node": gate.node}
+        answer = decision.answer
+        append_record(
+            self.folder,
+            record
+            | {
+                "attempt": gate.attempt,
+                "choice": answer.choice,
+                "text": answer.text,
+                "approver": decision.approver,
+                "where": decision.where,
+            },
+        )
+        self.decisions.add(gate.gate_id)
 
 
 def ends_of(records: list[Record]) -> list[Record]:

@@ -15,7 +15,14 @@ on its snapshot, reusing what completed; ``--abandon RUN`` ends it ``cancelled``
 reaches an ``approval`` or ``wait`` without its answer or time pauses there (``run <id>: paused at
 <node>``, exit 0); its resume takes the gate up again, and pauses again until the gate's decision
 is recorded or its time has come. A run that ends ``done`` exits 0, any other end 1; a bad input
-exits 2. It makes no tracker write: issue-to-pr's
+exits 2.
+``approve|reject|respond RUN [NODE] [TEXT]`` decide a paused run's open gate (``DecideGate``)
+under the run's lock, then resume it as ``--resume`` does. NODE may be left out while the run has
+one open gate; a single word after RUN that names no open gate is the TEXT. ``approve`` and
+``reject`` give those decisions; ``respond`` answers with ``--choice`` (a declared decision or
+option) and/or TEXT. The decision and its text go to the run's record, a ``control_plane``
+``gate.result`` to the events; a gate that is not open, already decided or cannot take the
+answer is refused (exit 1). It makes no tracker write: issue-to-pr's
 writes stay ``hub run``'s.
 ``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
 engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
@@ -24,6 +31,7 @@ skeleton fixture to ``<pack>/fixtures/<NAME>.yaml``, never over an existing file
 linked folder, and notes when the skeleton's own dry run did not end ``done``.
 """
 
+import getpass
 import json
 import os
 import random
@@ -41,14 +49,16 @@ from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, shown_command, without
-from agent_hub.cli.run_log import new_run_id, now
+from agent_hub.cli.run_log import new_run_id, now, open_default_event_store
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_runs import (
     DOCUMENT,
     RUN_ID_PATTERN,
     SNAPSHOT,
+    UNAVAILABLE,
     EventSink,
     RecordedAnswers,
+    RecordedGates,
     RecordedRun,
     SystemClock,
     WorkflowRunError,
@@ -63,7 +73,15 @@ from agent_hub.cli.workflow_runs import (
     snapshot_hash,
     snapshot_run,
 )
+from agent_hub.core.approvals.decide_gate import (
+    DecideGate,
+    GateDecision,
+    GateDecisionError,
+    RequestedGate,
+)
+from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_config.problems import ROOT_PATH
+from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.catalog import (
     LoadProblem,
@@ -79,6 +97,7 @@ from agent_hub.core.workflows.engine import (
     start_inputs,
 )
 from agent_hub.core.workflows.events import WorkflowEvents
+from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.nodes import ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import RunEnd
@@ -177,6 +196,106 @@ def run(
             raise typer.Exit(_start(hub, name or "", given or [], live=live, run_id=run_id))
     except (WorkflowRunError, WorkflowEngineError) as error:
         fail(f"{_PREFIX}: {error}")
+
+
+_RUN_ARG = typer.Argument(help="The paused run.")
+_NODE_ARG = typer.Argument(help="The gate's node (optional with one open gate).")
+_TEXT_ARG = typer.Argument(help="The answer's text.")
+
+
+@workflow_app.command("approve")
+def approve(
+    run_id: Annotated[str, _RUN_ARG],
+    node: Annotated[str | None, _NODE_ARG] = None,
+    text: Annotated[str | None, _TEXT_ARG] = None,
+) -> None:
+    """Approve a paused run's gate, then resume the run."""
+    raise typer.Exit(_decide("approve", run_id, node=node, text=text, choice="approve"))
+
+
+@workflow_app.command("reject")
+def reject(
+    run_id: Annotated[str, _RUN_ARG],
+    node: Annotated[str | None, _NODE_ARG] = None,
+    text: Annotated[str | None, _TEXT_ARG] = None,
+) -> None:
+    """Reject a paused run's gate, then resume the run."""
+    raise typer.Exit(_decide("reject", run_id, node=node, text=text, choice="reject"))
+
+
+@workflow_app.command("respond")
+def respond(
+    run_id: Annotated[str, _RUN_ARG],
+    node: Annotated[str | None, _NODE_ARG] = None,
+    text: Annotated[str | None, _TEXT_ARG] = None,
+    *,
+    choice: Annotated[
+        str | None, typer.Option("--choice", help="A declared decision or option id.")
+    ] = None,
+) -> None:
+    """Answer a paused run's gate with a choice and/or a text, then resume the run."""
+    raise typer.Exit(_decide("respond", run_id, node=node, text=text, choice=choice))
+
+
+def _decide(
+    command: str, run_id: str, *, node: str | None, text: str | None, choice: str | None
+) -> int:
+    if not RUN_ID_PATTERN.fullmatch(run_id):
+        hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
+        raise typer.BadParameter(hint, param_hint="RUN")
+    root = hub_root_or_exit(os.environ, command=COMMAND)
+    hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
+    try:
+        folder = _existing_run(hub, run_id)
+        with run_lock(folder):
+            drop_torn_tail(folder)
+            book = RecordedGates(folder, _ended_check(folder))
+            gate, text = _gate_of(book, node, text)
+            decision = GateDecision(
+                gate.gate_id, GateAnswer(choice, text), _approver(), "cli", now()
+            )
+            project = hub_project_name(hub) or hub.name
+            decided = DecideGate(book, _ingest(), project=project).execute(decision)
+            if decided.event_error is not None:
+                typer.echo(f"{UNAVAILABLE}: {decided.event_error}", err=True)
+            typer.echo(f"run {run_id}: {gate.node} {choice or 'answered'}")
+            return _continue(hub, folder)
+    except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
+        fail(f"hub workflow {command}: {error}")
+
+
+def _gate_of(
+    book: RecordedGates, node: str | None, text: str | None
+) -> tuple[RequestedGate, str | None]:
+    """The open gate NODE names, else the one open gate; a lone word naming none is the text."""
+    gates = {gate.node: gate for gate in book.open.values()}
+    if node is not None and text is None and node not in gates:
+        node, text = None, node
+    if node is not None:
+        if node not in gates:
+            raise GateDecisionError(f"the run has no open gate at {node}")
+        return gates[node], text
+    if len(gates) != 1:
+        open_nodes = ", ".join(sorted(gates)) or "none"
+        raise GateDecisionError(f"name the gate's node; open gates: {open_nodes}")
+    return next(iter(gates.values())), text
+
+
+def _approver() -> str:
+    try:
+        return getpass.getuser()
+    except KeyError, OSError:
+        return "unknown"
+
+
+def _ingest() -> IngestEvents | None:
+    try:
+        return IngestEvents(open_default_event_store())
+    except (AgentHubError, OSError) as error:
+        typer.echo(
+            f"{UNAVAILABLE}: {' '.join(str(error).split()) or type(error).__name__}", err=True
+        )
+        return None
 
 
 def _start(hub: Path, name: str, given: list[str], *, live: bool, run_id: str | None) -> int:
