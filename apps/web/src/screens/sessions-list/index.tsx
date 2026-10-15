@@ -681,7 +681,9 @@ export function SessionsListScreen() {
   ) as Record<SectionId, Session[]>;
   // A driven session without a twin has none of the observed fields a filter (beyond status and period) reads.
   const narrowed = chips.some((chip) => chip.key !== "period" && chip.key !== "status");
-  const driven = (driving.list.data?.items ?? []).filter((a) => a.observed_session_id || !narrowed);
+  const driven = (driving.list.data?.items ?? []).filter(
+    (a) => Boolean(a.observed_session_id) || !narrowed,
+  );
   const placed = placeDriven(
     observed,
     driven,

@@ -33,7 +33,10 @@ function when(iso: string, tz: Tz): ReactNode {
 const DRIVEN_CELLS: Record<string, (a: AgentSession, tz: Tz) => ReactNode> = {
   started: (a, tz) => when(a.created_at, tz),
   session: (a) => (
-    <span className="ah-stack" style={{ gap: 0, padding: "4px 0" }}>
+    <span
+      className="ah-stack"
+      style={{ gap: 0, maxWidth: 260, padding: "4px 0", whiteSpace: "normal" }}
+    >
       <span className="ah-row" style={{ gap: 6 }}>
         <span>{a.title ?? "Untitled session"}</span>
         <ChatBadge />

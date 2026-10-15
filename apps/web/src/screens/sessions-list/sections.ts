@@ -69,7 +69,9 @@ export function placeDriven(
   asked: ReadonlySet<SectionId>,
 ): Record<SectionId, Placed> {
   const waitingTwins = new Set(
-    driven.filter((a) => a.status === "waiting_permission" && a.observed_session_id).map((a) => a.id),
+    driven
+      .filter((a) => a.status === "waiting_permission" && a.observed_session_id)
+      .map((a) => a.id),
   );
   const twinless = driven
     .filter((a) => !a.observed_session_id && asked.has(sectionOf(a.status)))
@@ -89,7 +91,11 @@ export function placeDriven(
   for (const { id } of SECTIONS) {
     const own = twinless.filter((a) => sectionOf(a.status) === id);
     const rows = kept(id);
-    placed[id] = { rows: [...own, ...rows], added: own.length, removed: observed[id].length - rows.length };
+    placed[id] = {
+      rows: [...own, ...rows],
+      added: own.length,
+      removed: observed[id].length - rows.length,
+    };
   }
   placed.waiting.rows.splice(placed.waiting.added, 0, ...moved);
   placed.waiting.added += moved.length;
