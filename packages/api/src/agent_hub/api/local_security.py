@@ -7,9 +7,10 @@ actions and the workflow-run writes also need that ``Origin``, a same-origin fet
 body (S7), so do the hub
 registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is refused too,
 A11: a registered hub is a folder sessions may start in), bodies stop at
-1 MiB, API answers are never cached, a CSP keeps the app to its own origin, and no CORS header
-is ever sent. No route speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with
-1008 before it is accepted, so an upgrade never skips these checks (P7, AC-165.54).
+1 MiB (8 MiB for ``POST /agent-sessions``, which may carry a screenshot), API answers are
+never cached, a CSP keeps the app to its own origin, and no CORS header is ever sent. No route
+speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008 before it is
+accepted, so an upgrade never skips these checks (P7, AC-165.54).
 
 ``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``
 names, for example the host port a container publishes; never a wildcard.
@@ -18,6 +19,7 @@ names, for example the host port a container publishes; never a wildcard.
 import ipaddress
 import re
 from collections.abc import Iterable
+from typing import Final
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -46,6 +48,11 @@ HUB_REGISTRY_WRITES = (
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs$")),
     ("DELETE", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+$")),
 )
+# The one route with a larger body cap: a session's first prompt may carry a PNG screenshot
+# (at most ``MAX_SCREENSHOT_BYTES`` decoded, about 5 MiB of base64). Every other route keeps
+# ``max_body_bytes``.
+AGENT_SESSION_CREATE_BODY_BYTES: Final = 8 * 1024 * 1024
+AGENT_SESSION_CREATE_PATH: Final = f"{API_PREFIX}/agent-sessions"
 JSON_MEDIA_TYPE = "application/json"
 CONTENT_SECURITY_POLICY = "; ".join(
     (
@@ -213,24 +220,28 @@ class LocalSecurityMiddleware:
             if strict is not None:
                 return strict
         length = headers.get("content-length")
-        if length is not None and (not length.isdigit() or int(length) > self._max_body_bytes):
-            return 413, "Request body too large", self._too_large_detail()
+        cap = self._body_cap(scope)
+        if length is not None and (not length.isdigit() or int(length) > cap):
+            return 413, "Request body too large", _too_large_detail(cap)
         return None
 
-    def _too_large_detail(self) -> str:
-        return f"Request bodies are limited to {self._max_body_bytes} bytes."
+    def _body_cap(self, scope: Scope) -> int:
+        if scope["method"] == "POST" and scope["path"] == AGENT_SESSION_CREATE_PATH:
+            return AGENT_SESSION_CREATE_BODY_BYTES
+        return self._max_body_bytes
 
     async def _serve_capped(self, scope: Scope, receive: Receive, send: Send) -> None:
         received = 0
         started = False
+        cap = self._body_cap(scope)
 
         async def counting_receive() -> Message:
             nonlocal received
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self._max_body_bytes:
-                    raise BodyTooLargeError(self._max_body_bytes)
+                if received > cap:
+                    raise BodyTooLargeError(cap)
             return message
 
         secured_send = _with_headers(send, scope)
@@ -249,10 +260,14 @@ class LocalSecurityMiddleware:
             response = problem(
                 413,
                 title="Request body too large",
-                detail=self._too_large_detail(),
+                detail=_too_large_detail(cap),
                 instance=scope["path"],
             )
             await response(scope, receive, secured_send)
+
+
+def _too_large_detail(cap: int) -> str:
+    return f"Request bodies are limited to {cap} bytes."
 
 
 def _with_headers(send: Send, scope: Scope) -> Send:

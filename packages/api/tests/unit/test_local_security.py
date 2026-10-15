@@ -4,12 +4,17 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.types import Receive, Scope, Send
 from starlette.websockets import WebSocketDisconnect
 
 from agent_hub.api.app import create_app
 from agent_hub.api.local_security import (
+    AGENT_SESSION_CREATE_BODY_BYTES,
     CONTENT_SECURITY_POLICY,
     WEBSOCKET_POLICY_VIOLATION,
+    LocalSecurityMiddleware,
     allowed_hosts,
     allowed_origins,
     is_hub_registry_write,
@@ -19,6 +24,7 @@ from agent_hub.api.local_security import (
     parse_allowed_hosts,
 )
 from agent_hub.api.settings import ApiSettings
+from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
 
 
 def test_allows_loopback_names_with_port_when_hosts_listed() -> None:
@@ -131,7 +137,7 @@ def test_marks_strict_write_when_post_to_learning_action(path: str) -> None:
     ("method", "path"),
     [
         ("GET", "/api/v1/learnings/learning-1/accept"),
-        ("POST", "/api/v1/hubs"),
+        ("PATCH", "/api/v1/agent-sessions"),
         ("POST", "/api/v1/events/hooks"),
         ("DELETE", "/api/v1/hubs/hub-1"),
         ("POST", "/api/v1/learnings/learning-1/archive"),
@@ -211,7 +217,7 @@ def test_refuses_hub_registration_when_origin_not_exactly_this_server(
 @pytest.mark.parametrize(
     ("method", "path"),
     [
-        ("POST", "/api/v1/hubs"),
+        ("PATCH", "/api/v1/agent-sessions"),
         ("DELETE", "/api/v1/hubs/hub-1"),
         ("DELETE", "/api/v1/hubs/a/b"),
         ("POST", "/api/v1/hubsx"),
@@ -295,3 +301,73 @@ def test_turns_run_commands_off_when_sessions_off(
     assert response.status_code == 404
     assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"
     assert listed.status_code != 404
+
+
+async def _body_length_app(scope: Scope, receive: Receive, send: Send) -> None:
+    # Not started as a context manager: the client sends no lifespan messages.
+    body = await Request(scope, receive).body()
+    await JSONResponse({"length": len(body)})(scope, receive, send)
+
+
+def _capped_client() -> TestClient:
+    return TestClient(
+        LocalSecurityMiddleware(_body_length_app, port=7420), base_url="http://127.0.0.1:7420"
+    )
+
+
+def _streamed(size: int) -> Any:
+    chunk = 65_536
+    for start in range(0, size, chunk):
+        yield b"a" * min(chunk, size - start)
+
+
+def test_accepts_large_body_when_create_session_under_create_body_cap() -> None:
+    body = b"a" * AGENT_SESSION_CREATE_BODY_BYTES
+
+    client = _capped_client()
+    sized = client.post("/api/v1/agent-sessions", content=body)
+    streamed = client.post(
+        "/api/v1/agent-sessions", content=_streamed(AGENT_SESSION_CREATE_BODY_BYTES)
+    )
+
+    assert AGENT_SESSION_CREATE_BODY_BYTES == 8 * 1024 * 1024
+    assert (sized.status_code, sized.json()) == (200, {"length": len(body)})
+    assert (streamed.status_code, streamed.json()) == (200, {"length": len(body)})
+
+
+def test_refuses_body_when_create_session_over_create_body_cap() -> None:
+    over = AGENT_SESSION_CREATE_BODY_BYTES + 1
+
+    client = _capped_client()
+    sized = client.post("/api/v1/agent-sessions", content=b"a" * over)
+    streamed = client.post("/api/v1/agent-sessions", content=_streamed(over))
+
+    for response in (sized, streamed):
+        assert response.status_code == 413
+        assert response.json()["title"] == "Request body too large"
+        assert response.json()["detail"] == (
+            f"Request bodies are limited to {AGENT_SESSION_CREATE_BODY_BYTES} bytes."
+        )
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/v1/agent-sessions/0123/messages"),
+        ("PUT", "/api/v1/agent-sessions"),
+        ("POST", "/api/v1/agent-sessions/"),
+        ("PATCH", "/api/v1/agent-sessions"),
+    ],
+)
+def test_keeps_default_cap_when_other_route_or_method(method: str, path: str) -> None:
+    over = MAX_BODY_BYTES + 1
+
+    client = _capped_client()
+    sized = client.request(method, path, content=b"a" * over)
+    streamed = client.request(method, path, content=_streamed(over))
+
+    for response in (sized, streamed):
+        assert response.status_code == 413
+        assert response.json()["detail"] == (
+            f"Request bodies are limited to {MAX_BODY_BYTES} bytes."
+        )
