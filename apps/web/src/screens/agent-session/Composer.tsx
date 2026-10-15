@@ -201,7 +201,12 @@ export function Composer({
             ? `Too long: ${String(Math.ceil(size / 1024))} KiB of ${String(Math.floor(maxBytes / 1024))} KiB`
             : "Enter to send, Shift+Enter for a new line"}
         </span>
-        <Button icon="circle-stop" disabled={!canStop || stoppingShown} onClick={stop}>
+        <Button
+          icon="circle-stop"
+          disabled={!canStop}
+          aria-disabled={stoppingShown || undefined}
+          onClick={stop}
+        >
           {stoppingShown ? "Stopping…" : "Stop"}
         </Button>
         <Button type="submit" variant="primary" icon="arrow-up" disabled={!canSend}>
