@@ -30,6 +30,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   resume past its time. `hub workflow test` stubs gates with `{decision, text}`, `{text}`, `{choice}` or `{}`; without
   a stub the run pauses (`expect.status: paused`). A gate in a `loop_group` body pauses its iteration, and the resume
   goes on in it (rework: reject, fix, approve); two gates with no order between them are a load error (AGH-230).
+- `hub workflow approve|reject|respond RUN [NODE] [TEXT]` decide a paused run's open gate (`respond` takes
+  `--choice` for a declared decision or option) and resume the run. One decision per gate: a second, a gate that is
+  not open or an answer the gate does not take is refused. The text stays in the run's record; the event database
+  gets a `control_plane` `gate.result`, so Approvals shows the gate decided. A workflow gate closed without a decision
+  (run abandoned, gate skipped or failed on resume) shows declined, and its "How to decide" names these commands
+  (AGH-230).
 - `hub workflow run NAME --input name=value` prints the nodes a run would start; with `--live` it runs them: agent
   nodes as `claude -p` in the hub with its settings and plugin, shell and script nodes as programs without a shell,
   each child with a scoped environment (none gets `LINEAR_API_KEY`). The run is recorded under

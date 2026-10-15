@@ -9,7 +9,10 @@ A request is decided, in this order of evidence:
    Claude Code writes when the person says no (declined, inferred);
 4. the session's turn ending after the request (its next user prompt or ``session.end``)
    without the tool running: declined, inferred. For a permission prompt, a tool that ran
-   before that is taken as approved (inferred).
+   before that is taken as approved (inferred);
+5. for a workflow run's gate (session ``run:<id>``), the run ending or the gate's step ending
+   other than ``ok`` after the request (abandoned, skipped or failed on resume): declined,
+   inferred. Its "How to decide" is ``hub workflow approve|reject|respond <run>``.
 
 Stop hooks yield no event (E4); a Stop after a refused ask shows up through the transcript
 tail it triggers (rule 3). The fold only reads events: it is pure and order-independent.
@@ -33,6 +36,7 @@ _RESULT_STATUS: Mapping[str, ApprovalStatus] = {
     "declined": "declined",
 }
 _TOOL_RAN = frozenset({"ok", "error"})
+_RUN_SESSION = "run:"
 
 
 class Decision(NamedTuple):
@@ -122,6 +126,21 @@ def _by_turn_end(
     return None
 
 
+def _by_run_close(request: StoredEvent, session_events: Sequence[StoredEvent]) -> Decision | None:
+    for stored in session_events:
+        event = stored.event
+        if event.timestamp <= request.event.timestamp:
+            continue
+        step_closed = (
+            event.type == EventType.STEP_END
+            and event.step == request.event.step
+            and event.payload.get("status") != "ok"
+        )
+        if event.type == EventType.RUN_END or step_closed:
+            return Decision("declined", stored, inferred=True)
+    return None
+
+
 def _decide(
     request: StoredEvent, kind: ApprovalKind, session_events: Sequence[StoredEvent]
 ) -> Decision | None:
@@ -132,6 +151,8 @@ def _decide(
         decision = _by_transcript_result(results)
     if decision is None and kind in {ApprovalKind.GUARD_ASK, ApprovalKind.PERMISSION}:
         decision = _by_turn_end(request, session_events, kind)
+    if decision is None and request.event.session.startswith(_RUN_SESSION):
+        decision = _by_run_close(request, session_events)
     return decision
 
 
@@ -161,6 +182,8 @@ def _approval(
     event = request.event
     payload = event.payload
     resume = f"claude --resume {event.session}"
+    if event.session.startswith(_RUN_SESSION):
+        resume = f"hub workflow approve|reject|respond {event.session.removeprefix(_RUN_SESSION)}"
     return Approval(
         id=_gate_id(request),
         project=event.project,
