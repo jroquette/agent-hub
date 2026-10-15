@@ -32,13 +32,15 @@ class ScopeStep:
     ``names`` maps an id as written to its id one level up; ``refused`` names ids whose reading
     is an error (an include with several sinks and no ``returns``). ``inputs`` replaces each
     ``$INPUTS.<name>`` (``None`` keeps them). In a ``hermetic`` step (an include's block) a node
-    outside ``names`` is an error.
+    outside ``names`` is an error. ``keep`` names ids left as written: a loop group's body ids,
+    local to the group, in a body node's scope.
     """
 
     names: Mapping[str, str] = field(default_factory=dict)
     inputs: Mapping[str, str] | None = None
     hermetic: bool = False
     refused: frozenset[str] = frozenset()
+    keep: frozenset[str] = frozenset()
 
     def apply(self, text: str) -> str:
         return rewrite_refs(text, self._replace)
@@ -49,6 +51,8 @@ class ScopeStep:
                 raise SubstitutionError("unknown_input", spelling, "its workflow has no such input")
             return self.inputs[ref.name]
         if isinstance(ref, NodeRef | LoopPrevRef):
+            if ref.node in self.keep:
+                return spelling
             if ref.node in self.refused:
                 raise SubstitutionError("unknown_node", spelling, "it has several sinks")
             if ref.node in self.names:

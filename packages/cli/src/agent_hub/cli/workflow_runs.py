@@ -145,7 +145,7 @@ def snapshot_hash(snapshot: Path) -> str:
 
 
 def _pack_files(plan: WorkflowPlan) -> Iterator[tuple[PackFolder, str]]:
-    for node in plan.document.nodes:
+    for node in plan.all_nodes():
         if isinstance(node, AgentNode | LoopNode) and node.prompt_file is not None:
             yield "prompts", node.prompt_file
         elif isinstance(node, ScriptNode):

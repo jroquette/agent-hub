@@ -23,9 +23,8 @@ refused. Planning runs on the expanded document; ``Expansion.locate`` puts its p
 the parent's node (an included node's problem on its ``include``, naming the namespaced id).
 """
 
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final
 
 from pydantic import JsonValue
@@ -38,19 +37,8 @@ from agent_hub.core.workflows.document import (
     WorkflowLoadError,
     WorkflowProblem,
 )
-from agent_hub.core.workflows.nodes import (
-    AgentNode,
-    ApprovalNode,
-    FromBinding,
-    HaltNode,
-    IncludeNode,
-    LoopNode,
-    Node,
-    ResumeContext,
-    ScriptNode,
-    ShellNode,
-    read_only,
-)
+from agent_hub.core.workflows.nodes import IncludeNode, LoopGroupNode, Node
+from agent_hub.core.workflows.rewrite import SEPARATOR, Rewrite, RewriteError, map_node
 from agent_hub.core.workflows.scope import RefScope, ScopeStep
 from agent_hub.core.workflows.substitution import (
     InputRef,
@@ -61,27 +49,15 @@ from agent_hub.core.workflows.substitution import (
     canonical_text,
     echo,
     find_refs,
-    rewrite_refs,
     spell,
 )
 
 type IncludeResolver = Callable[[str], WorkflowDocument | None]
-# Rewrites one text at a key path of its node; may raise ``_IncludeError``.
-type _TextMap = Callable[[Loc, str], str]
-type _Replace = Callable[[Ref, str], str]
 
 MAX_INCLUDE_DEPTH: Final = 3
-# The most nodes an expanded document may hold: a few small includes cannot grow past it.
+# The most nodes an expanded document may hold, group bodies included: a few small includes
+# cannot grow past it.
 MAX_EXPANDED_NODES: Final = 512
-SEPARATOR: Final = "__"
-
-
-class _IncludeError(Exception):
-    """A problem at ``loc`` inside the node being expanded."""
-
-    def __init__(self, loc: Loc, message: str) -> None:
-        super().__init__(message)
-        self.loc, self.message = loc, message
 
 
 @dataclass(frozen=True)
@@ -129,7 +105,7 @@ class _Resolver:
     """One expansion's resolver: each workflow is expanded once per depth, then reused."""
 
     resolve: IncludeResolver | None
-    cache: dict[tuple[str, int], _Block | _IncludeError] = field(default_factory=dict)
+    cache: dict[tuple[str, int], _Block | RewriteError] = field(default_factory=dict)
 
 
 def _expand(document: WorkflowDocument, resolver: _Resolver, stack: tuple[str, ...]) -> Expansion:
@@ -141,13 +117,16 @@ def _expand(document: WorkflowDocument, resolver: _Resolver, stack: tuple[str, .
     parent = _Parent(_blocks(nodes, resolver, stack))
     expanded: list[Node] = []
     origins: list[tuple[int, bool]] = []
+    # Every node the expanded document holds, a loop group's body included.
+    count = 0
     for index, node in enumerate(nodes):
         try:
             copies = parent.place(node)
-            if len(expanded) + len(copies) > MAX_EXPANDED_NODES:
+            count += sum(_size(copy) for copy in copies)
+            if count > MAX_EXPANDED_NODES:
                 message = f"the expanded workflow passes {MAX_EXPANDED_NODES} nodes"
-                raise _IncludeError(("include",) if isinstance(node, IncludeNode) else (), message)
-        except _IncludeError as error:
+                raise RewriteError(("include",) if isinstance(node, IncludeNode) else (), message)
+        except RewriteError as error:
             problems.append(WorkflowProblem(("nodes", index, *error.loc), error.message))
             break
         expanded.extend(copies)
@@ -155,14 +134,33 @@ def _expand(document: WorkflowDocument, resolver: _Resolver, stack: tuple[str, .
     returns = document.returns
     try:
         returns = None if returns is None else parent.resume(returns, ("returns",))
-    except _IncludeError as error:
+    except RewriteError as error:
         problems.append(WorkflowProblem(error.loc, error.message))
     if problems:
         raise WorkflowLoadError(problems)
     update = {"nodes": tuple(expanded), "returns": returns}
     step = parent.step()
-    scopes = {node.id: parent.scopes.get(node.id, RefScope()).then(step) for node in expanded}
+    scopes = {
+        key: parent.scopes.get(key, RefScope()).then(replace(step, keep=keep))
+        for node in expanded
+        for key, keep in scope_keys(node)
+    }
     return Expansion(document.model_copy(update=update), tuple(origins), scopes)
+
+
+def scope_keys(node: Node) -> Iterator[tuple[str, frozenset[str]]]:
+    """The scope keys of ``node``: its id, and a group's body ids as they will be recorded
+    (``<group>__<id>``), with the body ids a body node's scope leaves as written."""
+    yield node.id, frozenset()
+    if isinstance(node, LoopGroupNode):
+        body = frozenset(child.id for child in node.nodes)
+        for child in node.nodes:
+            yield f"{node.id}{SEPARATOR}{child.id}", body
+
+
+def _size(node: Node) -> int:
+    """The nodes ``node`` stands for: itself, and a loop group's body."""
+    return 1 + len(node.nodes) if isinstance(node, LoopGroupNode) else 1
 
 
 def _repeated_ids(nodes: Sequence[Node]) -> Iterator[WorkflowProblem]:
@@ -182,7 +180,7 @@ def _blocks(
         if isinstance(node, IncludeNode):
             try:
                 blocks[node.id] = _cached_block(node.include, resolver, stack)
-            except _IncludeError as error:
+            except RewriteError as error:
                 problems.append(WorkflowProblem(("nodes", index, *error.loc), error.message))
     if problems:
         raise WorkflowLoadError(problems)
@@ -194,10 +192,10 @@ def _cached_block(name: str, resolver: _Resolver, stack: tuple[str, ...]) -> _Bl
     if key not in resolver.cache:
         try:
             resolver.cache[key] = _block(name, resolver, stack)
-        except _IncludeError as error:
+        except RewriteError as error:
             resolver.cache[key] = error
     found = resolver.cache[key]
-    if isinstance(found, _IncludeError):
+    if isinstance(found, RewriteError):
         raise found
     return found
 
@@ -205,20 +203,20 @@ def _cached_block(name: str, resolver: _Resolver, stack: tuple[str, ...]) -> _Bl
 def _block(name: str, resolver: _Resolver, stack: tuple[str, ...]) -> _Block:
     resolve = resolver.resolve
     if resolve is None:
-        raise _IncludeError(("include",), "this workflow cannot include others here")
+        raise RewriteError(("include",), "this workflow cannot include others here")
     if name in stack:
         cycle = " → ".join((*stack[stack.index(name) :], name))
-        raise _IncludeError(("include",), f"an include cycle: {cycle}")
+        raise RewriteError(("include",), f"an include cycle: {cycle}")
     if len(stack) > MAX_INCLUDE_DEPTH:
-        raise _IncludeError(("include",), f"more than {MAX_INCLUDE_DEPTH} levels of include")
+        raise RewriteError(("include",), f"more than {MAX_INCLUDE_DEPTH} levels of include")
     try:
         found = resolve(name)
         if found is None:
-            raise _IncludeError(("include",), f"no workflow is named {echo(name)}")
+            raise RewriteError(("include",), f"no workflow is named {echo(name)}")
         expansion = _expand(found, resolver, (*stack, name))
     except WorkflowLoadError as error:
         details = "; ".join(f"{problem.key}: {problem.message}" for problem in error.problems)
-        raise _IncludeError(("include",), f"{echo(name)} does not load: {details}") from None
+        raise RewriteError(("include",), f"{echo(name)} does not load: {details}") from None
     expanded = expansion.document
     waited = {target for node in expanded.nodes for target in node.depends_on}
     sinks = tuple(node.id for node in expanded.nodes if node.id not in waited)
@@ -226,23 +224,7 @@ def _block(name: str, resolver: _Resolver, stack: tuple[str, ...]) -> _Block:
     return _Block(name, expanded, sinks, primary, expansion.scopes)
 
 
-class _Rewrite(ABC):
-    """How one node's ids and references are rewritten as it is copied."""
-
-    def text(self, loc: Loc, text: str) -> str:
-        return _rewritten(loc, text, lambda ref, spelling: self.reference(loc, ref, spelling))
-
-    @abstractmethod
-    def reference(self, loc: Loc, ref: Ref, spelling: str) -> str: ...
-
-    @abstractmethod
-    def ids(self, targets: Sequence[str]) -> tuple[str, ...]: ...
-
-    @abstractmethod
-    def resume(self, target: str, loc: Loc) -> str: ...
-
-
-class _Parent(_Rewrite):
+class _Parent(Rewrite):
     """The parent's references to its includes: every sink of one, or its primary sink."""
 
     def __init__(self, blocks: Mapping[str, _Block]) -> None:
@@ -257,7 +239,7 @@ class _Parent(_Rewrite):
             nodes = inside.nodes()
             self.scopes |= inside.scopes()
             return nodes
-        return [_map_node(node, self)]
+        return [map_node(node, self)]
 
     def step(self) -> ScopeStep:
         """This rewrite as a scope step: an include's id to its primary sink."""
@@ -290,11 +272,11 @@ class _Parent(_Rewrite):
         if block.primary is None:
             where = "" if spelling is None else f"{echo(spelling)}: "
             message = f"{where}{echo(block.name)} has several sinks and no 'returns'"
-            raise _IncludeError(loc, message)
+            raise RewriteError(loc, message)
         return f"{include}{SEPARATOR}{block.primary}"
 
 
-class _Inside(_Rewrite):
+class _Inside(Rewrite):
     """A block's references, as ``include`` places it: its own nodes namespaced, its inputs
     replaced by their values."""
 
@@ -309,7 +291,7 @@ class _Inside(_Rewrite):
         when = None if include.when is None else self.parent.text(("when",), include.when)
         nodes: list[Node] = []
         for node in self.block.document.nodes:
-            copied = _map_node(node, self)
+            copied = map_node(node, self)
             _check_when(node.when, copied.when, self.prefix + node.id)
             update: dict[str, object] = {"id": self.prefix + node.id}
             if not node.depends_on:
@@ -333,12 +315,12 @@ class _Inside(_Rewrite):
         if isinstance(ref, InputRef):
             if ref.name not in self.values:
                 message = f"{name} reads {echo(spelling)}, an input it does not declare"
-                raise _IncludeError(("include",), message)
+                raise RewriteError(("include",), message)
             return self.values[ref.name]
         if isinstance(ref, NodeRef | LoopPrevRef):
             if ref.node not in self.own:
                 message = f"{name} reads {echo(spelling)}, which is not one of its nodes"
-                raise _IncludeError(("include",), message)
+                raise RewriteError(("include",), message)
             return spell(type(ref)(self.prefix + ref.node, ref.path))
         return spelling
 
@@ -354,7 +336,11 @@ class _Inside(_Rewrite):
             names={own: self.prefix + own for own in self.own}, inputs=self.values, hermetic=True
         )
         inner = self.block.scopes
-        return {self.prefix + own: inner.get(own, RefScope()).then(step) for own in self.own}
+        return {
+            self.prefix + key: inner.get(key, RefScope()).then(replace(step, keep=keep))
+            for node in self.block.document.nodes
+            for key, keep in scope_keys(node)
+        }
 
 
 def _input_texts(include: IncludeNode, block: _Block, parent: _Parent) -> dict[str, str]:
@@ -362,13 +348,13 @@ def _input_texts(include: IncludeNode, block: _Block, parent: _Parent) -> dict[s
     declared = block.document.inputs
     if unknown := sorted(set(include.with_) - set(declared)):
         message = f"{echo(block.name)} has no input named {echo(unknown[0])}"
-        raise _IncludeError(("with",), message)
+        raise RewriteError(("with",), message)
     texts: dict[str, str] = {}
     for name, spec in declared.items():
         if name not in include.with_:
             if spec.required:
                 message = f"the input {echo(name)} of {echo(block.name)} is required"
-                raise _IncludeError(("with",), message)
+                raise RewriteError(("with",), message)
             texts[name] = _literal(spec.default)
             continue
         value: JsonValue = include.with_[name]
@@ -389,16 +375,9 @@ def _check_with_refs(loc: Loc, value: str) -> None:
     try:
         refs = find_refs(value)
     except SubstitutionError as error:
-        raise _IncludeError(loc, str(error)) from None
+        raise RewriteError(loc, str(error)) from None
     if any(not isinstance(ref, InputRef | NodeRef) for ref in refs):
-        raise _IncludeError(loc, "an include's 'with' reads only $INPUTS and node outputs")
-
-
-def _rewritten(loc: Loc, text: str, replace: _Replace) -> str:
-    try:
-        return rewrite_refs(text, replace)
-    except SubstitutionError as error:
-        raise _IncludeError(loc, str(error)) from None
+        raise RewriteError(loc, "an include's 'with' reads only $INPUTS and node outputs")
 
 
 def _check_when(before: str | None, after: str | None, node_id: str) -> None:
@@ -408,7 +387,7 @@ def _check_when(before: str | None, after: str | None, node_id: str) -> None:
         parse_condition(after)
     except ConditionParseError as error:
         message = f'{echo(node_id)}: when: no longer parses once "with" is filled in: {error}'
-        raise _IncludeError(("include",), message) from None
+        raise RewriteError(("include",), message) from None
 
 
 def _parses(expr: str) -> bool:
@@ -427,75 +406,5 @@ def _joined(include_when: str | None, own: str | None) -> str | None:
             message = (
                 "cannot join a 'when:' holding '||' with a root's own: there are no parentheses"
             )
-            raise _IncludeError(("when",), message)
+            raise RewriteError(("when",), message)
     return f"{include_when} && {own}"
-
-
-def _map_node(node: Node, rewrite: _Rewrite) -> Node:
-    """``node`` with its ids and the references in its texts rewritten."""
-    update: dict[str, object] = {"depends_on": rewrite.ids(node.depends_on)}
-    if node.when is not None:
-        update["when"] = rewrite.text(("when",), node.when)
-    if isinstance(node, AgentNode | LoopNode):
-        update |= _agent_update(node, rewrite)
-    elif isinstance(node, ShellNode | ScriptNode):
-        update |= _command_update(node, rewrite)
-    elif isinstance(node, ApprovalNode):
-        update["message"] = rewrite.text(("message",), node.message)
-    elif isinstance(node, HaltNode):
-        update["reason"] = rewrite.text(("reason",), node.reason)
-    return node.model_copy(update=update)
-
-
-def _agent_update(node: AgentNode | LoopNode, rewrite: _Rewrite) -> dict[str, object]:
-    update: dict[str, object] = {"with_": read_only(_bindings(node, rewrite))}
-    if node.prompt is not None:
-        update["prompt"] = rewrite.text(("prompt",), node.prompt)
-    if isinstance(node.context, ResumeContext):
-        target = rewrite.resume(node.context.resume, ("context", "resume"))
-        update["context"] = ResumeContext(resume=target)
-    if node.cwd is not None:
-        update["cwd"] = rewrite.text(("cwd",), node.cwd)
-    if isinstance(node, LoopNode) and node.until_bash is not None:
-        update["until_bash"] = _argv(("until_bash",), node.until_bash, rewrite)
-    return update
-
-
-def _bindings(node: AgentNode | LoopNode, rewrite: _Rewrite) -> dict[str, object]:
-    bindings: dict[str, object] = {}
-    for name, binding in node.with_.items():
-        if isinstance(binding, FromBinding):
-            source = rewrite.text(("with", name, "from"), binding.from_)
-            bindings[name] = binding.model_copy(update={"from_": source})
-        else:
-            bindings[name] = _json_texts(("with", name), binding, rewrite)
-    return bindings
-
-
-def _command_update(node: ShellNode | ScriptNode, rewrite: _Rewrite) -> dict[str, object]:
-    update: dict[str, object] = {
-        "env": read_only({name: rewrite.text(("env", name), v) for name, v in node.env.items()})
-    }
-    if isinstance(node, ShellNode):
-        update["command"] = _argv(("command",), node.command, rewrite)
-    else:
-        update["args"] = _argv(("args",), node.args, rewrite)
-    if node.cwd is not None:
-        update["cwd"] = rewrite.text(("cwd",), node.cwd)
-    if node.stdin is not None:
-        update["stdin"] = rewrite.text(("stdin",), node.stdin)
-    return update
-
-
-def _argv(key: Loc, argv: Sequence[str], rewrite: _Rewrite) -> tuple[str, ...]:
-    return tuple(rewrite.text((*key, index), element) for index, element in enumerate(argv))
-
-
-def _json_texts(loc: Loc, value: JsonValue, rewrite: _Rewrite) -> JsonValue:
-    if isinstance(value, str):
-        return rewrite.text(loc, value)
-    if isinstance(value, list):
-        return [_json_texts((*loc, index), item, rewrite) for index, item in enumerate(value)]
-    if isinstance(value, dict):
-        return {key: _json_texts((*loc, key), item, rewrite) for key, item in value.items()}
-    return value
