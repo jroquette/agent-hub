@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +7,7 @@ import { seriousViolations } from "../testing/axe";
 import {
   AppLink,
   Button,
+  CopyButton,
   IconButton,
   IdChip,
   IssueLink,
@@ -139,6 +140,66 @@ describe("IdChip", () => {
       copyText("x");
     }).not.toThrow();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("CopyButton", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("says Copied once the clipboard accepted the text", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<CopyButton text="hub web" label="Copy command" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+
+    expect(writeText).toHaveBeenCalledWith("hub web");
+    expect(await screen.findByRole("button", { name: "Copied" })).toHaveTextContent("Copied");
+    expect(screen.getByRole("status")).toHaveTextContent("Copied");
+  });
+
+  it("says Copy failed when the browser has no clipboard (plain http)", async () => {
+    vi.stubGlobal("navigator", {});
+    render(<CopyButton text="hub web" label="Copy command" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+
+    const button = await screen.findByRole("button", { name: "Copy failed" });
+    expect(button).toHaveTextContent("Copy failed");
+    expect(screen.getByRole("status")).toHaveTextContent("Copy failed");
+    expect(screen.queryByText("Copied")).not.toBeInTheDocument();
+  });
+
+  it("says Copy failed when the clipboard refuses the write", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<CopyButton text="hub web" label="Copy command" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+
+    expect(await screen.findByRole("button", { name: "Copy failed" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Copy failed");
+    });
+    expect(screen.queryByText("Copied")).not.toBeInTheDocument();
+  });
+
+  it("returns to Copy after a moment", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("navigator", {});
+    render(<CopyButton text="x" label="Copy command" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("button", { name: "Copy failed" })).toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    expect(screen.getByRole("button", { name: "Copy command" })).toBeInTheDocument();
   });
 });
 
