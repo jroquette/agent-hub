@@ -74,6 +74,14 @@
   gap: var(--space-3);
   padding-block: var(--space-4);
 }
+.as-entry {
+  display: flex;
+  flex-direction: column;
+}
+.as-settled {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
+}
 .as-empty {
   margin: 0;
 }
@@ -117,8 +125,22 @@
     opacity: 0;
   }
 }
+.as-working {
+  margin: 0 auto var(--space-4);
+}
+.as-working::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: var(--accent);
+  animation: as-blink 1s steps(2) infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-  .as-caret {
+  .as-caret,
+  .as-working::before {
     animation: none;
   }
 }

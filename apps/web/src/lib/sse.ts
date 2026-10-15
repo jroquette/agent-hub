@@ -106,8 +106,12 @@ export function useEventStream(url: string | null, handlers: StreamHandlers): St
     // Decided here, not in a state updater: a queued update that changes nothing still renders.
     let shown: StreamHealth | null = null;
     return openStream(url, proxies, (next) => {
-      const sameState = shown?.open === next.open && shown.closedSince === next.closedSince;
-      if (sameState && next.lastMessageAt - shown.lastMessageAt < 1_000) return;
+      const quiet =
+        shown !== null &&
+        shown.open === next.open &&
+        shown.closedSince === next.closedSince &&
+        next.lastMessageAt - shown.lastMessageAt < 1_000;
+      if (quiet) return;
       shown = next;
       setHealth(next);
     });
