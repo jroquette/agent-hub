@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli import workflow_command, workflow_runs
@@ -666,6 +667,34 @@ def test_runs_only_the_named_workflow_fixtures_when_test_gets_a_name(hub: Path) 
 
     assert result.exit_code == 0, result.output
     assert "x.yaml" not in result.stdout
+
+
+def test_runs_each_named_workflow_fixtures_once_when_test_gets_several_names(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/fixtures/green.yaml", PASSING_FIXTURE)
+    write(hub, "workflows/demo/other.yaml", CHECK_YAML.replace("name: check", "name: other"))
+    write(hub, "workflows/demo/fixtures/x.yaml", PASSING_FIXTURE.replace("check", "other"))
+    write(hub, "workflows/demo/third.yaml", CHECK_YAML.replace("name: check", "name: third"))
+    write(hub, "workflows/demo/fixtures/y.yaml", FAILING_FIXTURE.replace("check", "third"))
+
+    result = run(hub, "test", "check", "other", "check")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "workflows/demo/fixtures/green.yaml: ok",
+        "workflows/demo/fixtures/x.yaml: ok",
+        "2 fixtures: 2 passed, 0 failed",
+    ]
+
+
+def test_exits_one_when_stubs_init_gets_several_names(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+
+    result = run(hub, "test", "check", "check", "--stubs-init")
+
+    assert result.exit_code == 1
+    assert "--stubs-init needs one workflow name" in unstyle(result.stderr)
+    assert not (hub / "workflows/demo/fixtures").exists()
 
 
 def test_exits_one_when_the_named_workflow_has_no_fixture(hub: Path) -> None:
