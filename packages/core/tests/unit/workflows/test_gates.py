@@ -16,8 +16,11 @@ from agent_hub.core.testing.workflow_fakes import (
     ScriptedRunner,
     a_plan,
 )
+from agent_hub.core.workflows.document import parse_workflow
 from agent_hub.core.workflows.engine import EnginePorts, run_workflow
+from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.gates import GateAnswer, OpenGate, answer_problem, gate_id
+from agent_hub.core.workflows.plan import plan_workflow
 from agent_hub.core.workflows.ports import NodeCall, NodeReply
 from agent_hub.core.workflows.run_state import RunReport, RunState
 from agent_hub.core.workflows.substitution import NodeResult
@@ -369,25 +372,36 @@ def test_pauses_again_without_rerunning_the_iteration_when_resumed_before_an_ans
     assert (again.status, again.reason) == ("paused", "g__ok")
     assert sorted(runner.ran()) == ["g__side", "g__work"]
     assert recorder.starts == []
+    assert recorder.gates == []
+    assert recorder.ends == []
     assert again.state.groups == first.state.groups
 
 
 def test_opens_no_gate_after_an_interrupt_when_a_parallel_layer_is_stopped() -> None:
-    interrupted = threading.Event()
+    # The body layer's pool runs two shells; the gate waits for a free worker, which only comes
+    # once the interrupt has stopped the run, so the gate is visited after the stop.
+    started, interrupted = threading.Event(), threading.Event()
 
     class Stopping(ScriptedRunner):
         def run(self, call: NodeCall) -> NodeReply:
             if call.node.id == "a":
-                threading.Event().wait(0.05)
+                assert started.wait(timeout=5)
                 raise KeyboardInterrupt
-            threading.Event().wait(0.2)
+            started.set()
+            assert interrupted.wait(timeout=5)
             return super().run(call)
 
-    gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["work"]}
-    group = REWORK | {"nodes": [shell("work"), gate]}
+    gate = {"id": "ok", "type": "approval", "message": "Ship?"}
+    group = REWORK | {"nodes": [shell("w1"), shell("w2"), gate]}
     recorder = ListRecorder()
     ports = EnginePorts(
-        Stopping(), recorder, FakeClock(), KeysOutputs(), lambda: 0.5, interrupt=interrupted.set
+        Stopping(),
+        recorder,
+        FakeClock(),
+        KeysOutputs(),
+        lambda: 0.5,
+        max_parallel=2,
+        interrupt=interrupted.set,
     )
 
     with pytest.raises(KeyboardInterrupt):
@@ -395,3 +409,94 @@ def test_opens_no_gate_after_an_interrupt_when_a_parallel_layer_is_stopped() -> 
 
     assert interrupted.is_set()
     assert recorder.gates == []
+
+
+def body_failure_kind(*, pause: bool) -> str | None:
+    """The group's failure kind when a body node failed before its gate: paused and resumed
+    on the gate, or answered at once."""
+    gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["work"]}
+    group = REWORK | {"nodes": [shell("bad"), shell("work"), gate]}
+    plan = a_plan(group)
+    runner = ScriptedRunner({"g__bad": [NodeFailedError("exec_failed", "exit 1")]})
+    answer = AnswerBook({("g__ok", 1): GateAnswer("approve")})
+    prior = None
+    if pause:
+        first = EnginePorts(runner, ListRecorder(), FakeClock(), KeysOutputs(), lambda: 0.5)
+        prior = run_workflow(plan, {}, first).state
+    recorder = ListRecorder()
+    ports = EnginePorts(runner, recorder, FakeClock(), KeysOutputs(), lambda: 0.5, gates=answer)
+    report = run_workflow(plan, {}, ports, prior=prior)
+    assert report.status == "failed"
+    return recorder.end_of("g").failure_kind
+
+
+def test_fails_the_group_with_the_body_kind_when_a_failed_iteration_is_resumed() -> None:
+    assert body_failure_kind(pause=True) == body_failure_kind(pause=False) == "exec_failed"
+
+
+def test_keeps_the_run_going_when_a_body_condition_reads_the_previous_decision() -> None:
+    gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["work"]}
+    redo = shell("redo", when="$LOOP_PREV.ok.output.decision == 'reject'")
+    group = REWORK | {"until_when": "$work.output == 'never'", "nodes": [shell("work"), gate, redo]}
+    plan = a_plan(group)
+    answers = AnswerBook({("g__ok", 1): GateAnswer("reject"), ("g__ok", 2): GateAnswer("approve")})
+    runner = ScriptedRunner()
+    ports = EnginePorts(
+        runner, ListRecorder(), FakeClock(), KeysOutputs(), lambda: 0.5, gates=answers
+    )
+
+    report = run_workflow(plan, {}, ports)
+
+    assert (report.status, report.reason) == ("paused", "g__ok")
+    assert runner.ran().count("g__redo") == 1
+
+
+def test_lets_the_sibling_finish_before_the_pause_when_a_gate_shares_a_concurrent_layer() -> None:
+    gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["a"]}
+    plan = a_plan(shell("a"), gate, shell("side", "a"), shell("after", "ok", "side"))
+    runner = ScriptedRunner()
+    first = Gated(shell("a"), gate, shell("side", "a"), shell("after", "ok", "side"))
+
+    assert (first.report.status, first.report.reason) == ("paused", "ok")
+    assert first.runner.ran() == ["a", "side"]
+    assert first.recorder.end_of("side").status == "ok"
+    recorder = ListRecorder()
+    answers = AnswerBook({("ok", 1): GateAnswer("approve")})
+    ports = EnginePorts(runner, recorder, FakeClock(), KeysOutputs(), lambda: 0.5, gates=answers)
+    resumed_report = run_workflow(plan, {}, ports, prior=first.report.state)
+    assert resumed_report.status == "done"
+    assert runner.ran() == ["after"]
+    assert recorder.end_of("side").skip_cause == "prior_success"
+
+
+def test_reworks_through_namespaced_ids_when_the_gated_group_comes_from_an_include() -> None:
+    included = parse_workflow({"version": 1, "name": "rework", "revision": 1, "nodes": [REWORK]})
+    document = {
+        "version": 1,
+        "name": "main",
+        "revision": 1,
+        "nodes": [{"id": "i", "type": "include", "include": "rework"}],
+    }
+    plan = plan_workflow(parse_workflow(document), includes={"rework": included}.get)
+    runner, state = ScriptedRunner(), RunState()
+    ids: list[tuple[str | None, list[str]]] = []
+    for answers in (
+        {},
+        {("i__g__ok", 1): GateAnswer("reject")},
+        {("i__g__ok", 2): GateAnswer("approve")},
+    ):
+        ports = EnginePorts(
+            runner,
+            ListRecorder(),
+            FakeClock(),
+            KeysOutputs(),
+            lambda: 0.5,
+            gates=AnswerBook(answers),
+        )
+        report = run_workflow(plan, {}, ports, prior=state)
+        state = report.state
+        ids.append((report.reason, sorted(state.groups)))
+
+    assert ids[:2] == [("i__g__ok", ["i__g"]), ("i__g__ok", ["i__g"])]
+    assert report.status == "done"
+    assert runner.ran().count("i__g__work") == 2
