@@ -284,14 +284,21 @@ def untrusted_env(environ: Mapping[str, str]) -> dict[str, str]:
 
 
 def session_env(
-    environ: Mapping[str, str], *, repo: str, issue_id: str, run_id: str, attempt: int = 1
+    environ: Mapping[str, str],
+    *,
+    repo: str,
+    issue_id: str,
+    run_id: str,
+    attempt: int = 1,
+    step: str = IMPLEMENT_STEP,
 ) -> dict[str, str]:
     """The implementing session's environment: ``untrusted_env``, its telemetry tags and the
-    run variables the hook sensor attributes the session's events with (D6)."""
+    run variables the hook sensor attributes the session's events with (D6). A workflow's
+    agent node passes its ``step`` (the node id as recorded) and run-wide ``attempt``."""
     env = untrusted_env(environ)
     env[OTEL_VARIABLE] = f"repo={repo},issue={issue_id},agent_run={run_id}"
     env[RUN_ID_VARIABLE] = run_id
-    env[STEP_VARIABLE] = IMPLEMENT_STEP
+    env[STEP_VARIABLE] = step
     env[ATTEMPT_VARIABLE] = str(attempt)
     return env
 

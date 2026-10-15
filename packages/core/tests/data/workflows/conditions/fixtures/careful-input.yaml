@@ -1,0 +1,8 @@
+# A given input overrides its default.
+workflow: conditions
+inputs: {mode: careful}
+stubs:
+  classify: {output: {kind: feature, score: 1}}
+  careful-review: {text: reviewed}
+expect: {status: done}
+reached: [classify, careful-review]
