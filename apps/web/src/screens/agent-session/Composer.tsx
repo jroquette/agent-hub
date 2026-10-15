@@ -231,8 +231,9 @@ export function Composer({
             event.preventDefault();
             setText(lastPrompt);
           }
-          // Ctrl/Cmd+Alt+Enter answers a permission (the chat's chord), never sends.
-          if (event.key !== "Enter" || event.shiftKey || event.altKey || coarsePointer()) return;
+          // Ctrl/Cmd+Alt+Enter answers a permission (the chat's chord), never sends; Alt+Enter sends.
+          const chord = event.altKey && (event.ctrlKey || event.metaKey);
+          if (event.key !== "Enter" || event.shiftKey || chord || coarsePointer()) return;
           event.preventDefault();
           if (performance.now() - composedAt.current >= AFTER_COMPOSITION_MS) send();
         }}
