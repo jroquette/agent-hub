@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Profiler } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -40,7 +40,10 @@ function routes(overrides: ApiRoutes = {}): ApiRoutes {
   };
 }
 
-// The composer keeps drafts in this browser: no test sees another's.
+// The composer keeps drafts in this browser (and saves one on unmount): no test sees another's.
+beforeEach(() => {
+  window.localStorage.clear();
+});
 afterEach(() => {
   window.localStorage.clear();
 });
@@ -688,6 +691,29 @@ describe("AgentSessionScreen (sending-feedback)", () => {
     expect(within(log).getByText("Also lint").closest(".as-msg")).toHaveTextContent(
       "Queued: Claude reads it after this turn",
     );
+  });
+
+  it("shows a message once when its record arrives before the answer to its POST", async () => {
+    const view = renderChat(routes({ [`POST ${SESSION}/messages`]: "pending" }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "Also lint{Enter}");
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit(
+          "record.user.message",
+          aLogRecord("user.message", { seq: 4, body: { text: "Also lint" } }),
+          "4",
+        );
+    });
+
+    const bubbles = [...view.container.querySelectorAll(".as-msg")];
+    expect(bubbles.filter((bubble) => bubble.textContent.includes("Also lint"))).toHaveLength(1);
+    expect(bubbles.filter((bubble) => bubble.textContent.includes("Sending…"))).toEqual([]);
   });
 
   it("removes the Sending… bubble and keeps the text when the send fails", async () => {
