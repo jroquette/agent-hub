@@ -93,11 +93,9 @@ describe("SessionsListScreen controls", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: "Remove filter Cost from $2" }));
     expect(router.state.location.search).not.toContain("cost_min");
-    fireEvent.click(
-      within(screen.getByRole("table", { name: "Waiting sessions" })).getByRole("button", {
-        name: /^Cost/,
-      }),
-    );
+    // The filtered Waiting section shows its table once it has loaded.
+    const waiting = await screen.findByRole("table", { name: "Waiting sessions" });
+    fireEvent.click(within(waiting).getByRole("button", { name: /^Cost/ }));
     expect(router.state.location.search).toContain("sort=-cost");
     fireEvent.click(screen.getByRole("button", { name: "30 d" }));
     expect(router.state.location.search).toContain("period=30+d");
@@ -116,11 +114,6 @@ describe("SessionsListScreen controls", () => {
     expect(router.state.location.search).toContain("guard_denial=1");
     expect(router.state.location.search).toContain("period=30+d");
     expect(router.state.location.search).not.toContain("outcome");
-    fireEvent.click(screen.getByRole("button", { name: "Columns" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Repo" }));
-    expect(screen.queryAllByRole("columnheader", { name: "Repo" })).toEqual([]);
-    fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
-    expect(screen.getAllByRole("columnheader", { name: "Repo" }).length).toBeGreaterThan(0);
     // Each section shows its own rows; a lookup inside one table stays cheap while others load.
     for (const [section, badge] of [
       ["Ended or failed", "Ended"],
@@ -130,6 +123,12 @@ describe("SessionsListScreen controls", () => {
       const table = await screen.findByRole("table", { name: `${section} sessions` });
       expect(await within(table).findByText(badge)).toBeInTheDocument();
     }
+    fireEvent.click(screen.getByRole("button", { name: "Columns" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Repo" }));
+    expect(screen.getAllByRole("table")).toHaveLength(3);
+    expect(screen.queryAllByRole("columnheader", { name: "Repo" })).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
+    expect(screen.getAllByRole("columnheader", { name: "Repo" })).toHaveLength(3);
   });
 
   it("widens the period and shows all time from the empty states", async () => {

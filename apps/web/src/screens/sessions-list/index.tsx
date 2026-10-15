@@ -19,6 +19,7 @@ import {
   SavedViewMenu,
   SegmentedControl,
   SessionLabel,
+  Skeleton,
   StatusBadge,
   Tooltip,
   type DataTableColumn,
@@ -1015,6 +1016,8 @@ export function SessionsListScreen() {
         </div>
       );
     }
+    // A light placeholder: four skeleton tables at once made role queries crawl under coverage.
+    if (pages.isPending) return <Skeleton lines={2} />;
     const keys = new Set(sectionRows.map((s) => s.id));
     return (
       <DataTable
@@ -1022,7 +1025,6 @@ export function SessionsListScreen() {
         columns={tableColumns}
         rows={sectionRows}
         rowKey={(s) => s.id}
-        loading={pages.isPending}
         density={density === "compact" ? "compact" : undefined}
         sort={
           sortColumn ? { id: sortColumn.id, dir: sort.startsWith("-") ? "desc" : "asc" } : undefined
