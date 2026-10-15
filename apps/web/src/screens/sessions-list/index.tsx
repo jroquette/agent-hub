@@ -45,22 +45,20 @@ import {
   sortOf,
   type Period,
 } from "./filters";
-import { AgentSessionList, agentSessionHref, sessionControlUnavailable } from "./AgentSessionList";
+import { AgentSessionList, sessionControlUnavailable } from "./AgentSessionList";
 import { CloudPanel } from "./CloudPanel";
-import { NewSessionDialog } from "./NewSessionDialog";
 import {
   useAgentCapabilities,
   useAgentSessions,
   useCloudSessions,
-  useCreateAgentSession,
   useProjects,
-  useResumable,
   useSectionPages,
   useWorkdirs,
   type Session,
 } from "./queries";
 import { SECTIONS, sectionCount, sectionQueries } from "./sections";
 import { SessionSection, useCollapsed } from "./SessionSection";
+import { StartSessionDialog } from "./StartSessionDialog";
 
 const COLUMNS_KEY = "ah.sessions.columns";
 /** A section past VIRTUAL_THRESHOLD rows scrolls inside this height (as the learnings table). */
@@ -621,10 +619,8 @@ function AgentSessionsPanel({
   scope: string | null;
   projects: readonly string[];
 }) {
-  const navigate = useNavigate();
   const [chosen, setChosen] = useState<string | null>(null);
   const [dialog, setDialog] = useState(false);
-  const [resumeFor, setResumeFor] = useState<string | null>(null);
   const project =
     scope ?? (chosen !== null && projects.includes(chosen) ? chosen : null) ?? projects[0] ?? null;
   const list = useAgentSessions(scope);
@@ -633,9 +629,7 @@ function AgentSessionsPanel({
   const caps = capabilities.data;
   const canDrive = caps !== undefined && sessionControlUnavailable(problem, caps) === null;
   const workdirs = useWorkdirs(project, canDrive);
-  const resumable = useResumable(dialog ? project : null, dialog ? resumeFor : null);
   const cloudSessions = useCloudSessions(project, canDrive && caps.cloud);
-  const create = useCreateAgentSession();
   const folders = workdirs.data?.items;
 
   return (
@@ -647,7 +641,6 @@ function AgentSessionsPanel({
         onNewSession={
           canDrive && folders
             ? () => {
-                create.reset();
                 setDialog(true);
               }
             : undefined
@@ -697,23 +690,11 @@ function AgentSessionsPanel({
         </details>
       )}
       {dialog && canDrive && project !== null && folders && (
-        <NewSessionDialog
+        <StartSessionDialog
           project={project}
           workdirs={folders}
           capabilities={caps}
-          resumable={resumable.data?.items}
-          onWorkdirChange={setResumeFor}
-          pending={create.isPending}
-          error={create.error}
-          onSubmit={(body) => {
-            create.mutate(body, {
-              onSuccess: (created) => {
-                setDialog(false);
-                void navigate(agentSessionHref(created.id));
-              },
-            });
-          }}
-          onCancel={() => {
+          onClose={() => {
             setDialog(false);
           }}
         />
