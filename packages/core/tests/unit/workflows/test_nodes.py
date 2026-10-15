@@ -85,7 +85,7 @@ def test_refuses_key_when_it_is_not_in_the_type_row(raw: dict[str, object]) -> N
     assert any(message == "Extra inputs are not permitted" for _, message in errors_of(raw))
 
 
-@pytest.mark.parametrize("node_type", ["loop_group", "wait", "bash"])
+@pytest.mark.parametrize("node_type", ["wait", "bash"])
 def test_refuses_type_when_it_is_not_a_node_type_yet(node_type: str) -> None:
     [(loc, message)] = errors_of({"id": "a", "type": node_type})
 

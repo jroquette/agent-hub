@@ -39,7 +39,7 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 | `shell` | `command` (argv list), `cwd`, `env`, `stdin` | runs the program, never through a shell; exit 0 passes |
 | `script` | `runtime` (`sh` or `python`), `script`, `args`, `cwd`, `env`, `stdin` | `sh <file>` or `uv run <file>`; exit 0 passes |
 | `loop` | the `agent` keys, `max_iterations`, `until`, `until_field`, `until_bash`, `fresh_context` | repeats one agent turn until done |
-| `loop_group` | `nodes`, `max_iterations`, `until_bash`, `until_when` | repeats a body sub-graph until done |
+| `loop_group` | `nodes`, `max_iterations`, `until_bash`, `until_when`, `fresh_context` | repeats a body sub-graph until done |
 | `approval` | `message`, `decisions`, `capture_response` | pauses the run for a human decision |
 | `wait` | one of `duration`, `until`, `attention` (with `options`) | pauses the run until its condition holds |
 | `halt` | `reason` | ends the run `cancelled`; nodes not yet run never run |
@@ -57,8 +57,8 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
 - `loop`: `max_iterations` (1–50) and at least one channel: `until` (text the final line equals), `until_field` (a
   `required` boolean of its `output_format`), `until_bash` (argv; exit 0 is done). `fresh_context: false` (default)
   resumes the previous iteration's session. The output is the last iteration's; past the cap it fails `max_iterations`.
-- `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's
-  body outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first). The output maps body id → output.
+- `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's body
+  outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first); the output maps body id → output.
 - `approval`: `decisions` lists `{id, label}` (kebab-case; default `approve`, `reject`); the output is `{decision}`,
   plus `text` with `capture_response: true`. Rework is a `loop_group` whose `until_when` reads the decision.
 - `wait`: `duration` (≤ 7d), `until` (ISO-8601 with offset, or a whole reference) or `attention` (a message answered

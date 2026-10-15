@@ -9,8 +9,10 @@ A single stub answers every attempt and iteration of its node; a list answers th
 reached node with no stub, or whose list ran out, fails ``config`` and is listed as missing,
 except under an ``all_done`` join: it gets a placeholder that fits its ``output_format``
 (``skeleton_stub``), is listed as tolerated, and never sets the outcome. ``until_bash`` reads
-the iteration's ``until_exit`` (default 0, done). ``approval`` and ``wait`` pause in the engine
-(AGH-230); until then a plan holding one is refused as a real run refuses it.
+the iteration's ``until_exit`` (default 0, done); a ``loop_group``'s ``until_bash`` has no stub
+and reads 0, so a group that loops in a fixture ends through ``until_when``. ``approval`` and
+``wait`` pause in the engine (AGH-230); until then a plan holding one is refused as a real run
+refuses it.
 """
 
 import json
@@ -100,7 +102,7 @@ def dry_run(
     runner, recorder = _StubRunner(stubs), _MemoryRecorder()
     ports = EnginePorts(runner, recorder, _StillClock(), outputs, lambda: 0.0)
     report = run_workflow(plan, inputs, ports)
-    order = [node.id for node in plan.document.nodes]
+    order = [node.id for node in plan.all_nodes()]
     returns = plan.document.returns
     return DryRunReport(
         run=report,

@@ -776,3 +776,32 @@ def test_spawns_no_child_and_records_nothing_when_fixtures_run(
     assert result.exit_code == 0, result.output
     assert not (hub / ".agent-runs").exists()
     assert not (tmp_path / "xdg").exists()
+
+
+# AGH-228: a loop group body's prompt file is part of the run's snapshot.
+GROUP_YAML = """\
+version: 1
+name: rounds
+revision: 1
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 1
+    until_when: $w.output == 'x'
+    nodes:
+      - id: w
+        type: agent
+        prompt_file: body.md
+"""
+
+
+def test_snapshots_a_body_prompt_file_when_a_group_runs_live(sample: SampleRun) -> None:
+    write(sample.hub, "workflows/sample/rounds.yaml", GROUP_YAML)
+    write(sample.hub, "workflows/sample/prompts/body.md", "Round after $LOOP_PREV.w.output\n")
+
+    sample.run("rounds", "--live", "--run-id", "g1")
+
+    snapshot = sample.hub / ".agent-runs" / "workflows" / "g1" / "snapshot"
+    assert (snapshot / "prompts" / "body.md").is_file()
+    [round_one] = sample.fakes.calls("claude")
+    assert round_one["argv"][1] == "Round after \n"
