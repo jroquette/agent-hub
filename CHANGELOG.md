@@ -27,15 +27,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
   `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
   `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
-- `hub step worktree|commits|pr --issue ISSUE --repo REPO` and `hub step report` run `hub run`'s stages one at a time and
-  print one JSON object each (the worktree's path and branch, the branch's commits, the PR's url, the delivery), for the issue-to-pr
+- `hub step worktree|verdict|commits|pr|report` run `hub run`'s stages one at a time and print one JSON object each (the
+  worktree and the repo's target, the session's verdict, the branch's commits, the PR's url, the delivery), for the issue-to-pr
   workflow's `hub step` nodes. Only the fetch, the push and `gh` get the GitHub tokens; none reads or writes the
   tracker (AGH-223).
 - The built-in `issue-to-pr` workflow (inputs `issue`, `repo`, `issue_text`) takes one issue to a PR as `hub run` does:
-  `hub step worktree`, an implementing loop in the worktree with `hub run`'s prompt (its verdict now a JSON line with
-  `done`), `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's
-  outcome. Its fixtures (delivered, no commit, blocked, error, gate failure, PR failure) run in `hub workflow test`.
-  Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured repo (AGH-223).
+  `hub step worktree`, one implementing session in the worktree with `hub run`'s prompt, `hub step verdict`,
+  `hub step commits`, the repo's `check`, `hub step pr`, then `hub step report`, whose `delivery` is the run's outcome;
+  no node retries. Its fixtures (delivered, no commit, blocked, dirty tree, error, gate failure, PR failure) run in
+  `hub workflow test`. Agent and loop nodes take an optional `cwd`, a reference allowed, inside the hub or a configured
+  repo (AGH-223).
 - `hub workflow run issue-to-pr --live --input issue=ISSUE --input repo=REPO` gives what `hub run ISSUE --repo REPO --live`
   gives: it reads the issue (filling `issue_text`), writes the same `.agent-runs` records and events, makes ADR 0030's
   tracker writes from the run's delivery and exits 0 (delivered, no changes), 3 (blocked) or 1 (failed) (AGH-223).
