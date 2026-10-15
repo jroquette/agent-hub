@@ -122,10 +122,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   button, and wide tables scroll sideways in their own region (AGH-241).
 - A hub's `make check` also runs `./hub workflow test`, the workflow packs' fixtures, after `hub doctor` and before the
   hub's own tests (AGH-227).
-- Sessions groups its table into Waiting, Live, Idle and Ended or failed sections, each with its own count, table,
-  sort and "Load more"; a header button collapses a section (remembered in this browser), empty sections are hidden,
-  a status facet shows only its section, and the period now filters only Ended or failed, so a running session older
-  than the period still shows (AGH-243).
+- Sessions groups its table into Waiting, Live, Idle and Ended or failed sections, each with its own count, table
+  and "Load more", and one shared sort applied within each section; a header button collapses a section (remembered
+  in this browser), empty sections are hidden, a section past 100 rows scrolls in its own window, a status facet
+  shows only its section, and the period now filters only Ended or failed (the count line says so), so a running
+  session older than the period still shows (AGH-243).
 
 ### Fixed
 
