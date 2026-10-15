@@ -68,6 +68,7 @@ from agent_hub.core.readmodels.filters import (
 from agent_hub.core.readmodels.fold_memo import FoldMemo
 from agent_hub.core.readmodels.live_tiles import (
     WAITING_REASONS,
+    TileFields,
     has_tile,
     live_tiles,
     tile_fields,
@@ -211,10 +212,13 @@ class _FoldMemos:
         str, tuple[_Group, frozenset[tuple[str, str]], dict[str, tuple[_CanonicalKey, Approval]]]
     ]
     learnings: tuple[_Group, dict[str, Learning]]
+    # Tile fields per (session, waits on a permission request), derived at read time for the
+    # rows asked; valid while the group, ``now`` and the folded problems are the same.
+    tiles: dict[tuple[str, bool], tuple[_Group, datetime, SessionProblems, TileFields]]
 
     @classmethod
     def empty(cls) -> _FoldMemos:
-        return cls(sessions={}, runs={}, approvals={}, learnings=((), {}))
+        return cls(sessions={}, runs={}, approvals={}, learnings=((), {}), tiles={})
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -230,6 +234,7 @@ class _Snapshot:
     runs: Mapping[str, WorkflowRun]
     approvals: Mapping[str, Approval]
     learnings: Mapping[str, Learning]
+    tiles: dict[tuple[str, bool], tuple[_Group, datetime, SessionProblems, TileFields]]
 
 
 def _microseconds(moment: datetime | None) -> int:
@@ -431,6 +436,7 @@ class FoldedEventReadModels:
                 runs=_fold_runs(index, sessions, memos),
                 approvals=_fold_approvals(index, hub_paths, memos),
                 learnings=_fold_learnings(index, memos),
+                tiles=memos.tiles,
             )
 
     def _fold_sessions(
@@ -798,17 +804,31 @@ def _with_tile_fields(
     ``waiting`` tile, while it keeps its own status."""
     filled: list[Session] = []
     for session, waits in decorated:
-        shown = _waiting(session) if waits else session
-        fields = tile_fields(
-            shown,
-            snapshot.by_session[session.id],
-            now=snapshot.now,
-            problems=snapshot.problems[session.id],
-        )
-        if waits and shown.status == SessionStatus.WAITING:
-            fields = replace(fields, waiting_reason=_permission_reason(fields.waiting_reason))
+        fields = _tile_fields_of(snapshot, session, waits=waits)
         filled.append(session.model_copy(update=asdict(fields)))
     return filled
+
+
+def _tile_fields_of(snapshot: _Snapshot, session: Session, *, waits: bool) -> TileFields:
+    """The tile fields of one row, folded again only when its events, ``now`` or problems
+    changed (AC-234.5: a read at the same mark, or after an append to another session, does
+    not fold every row's events)."""
+    group = snapshot.by_session[session.id]
+    problems = snapshot.problems[session.id]
+    found = snapshot.tiles.get((session.id, waits))
+    if (
+        found is not None
+        and found[0] is group
+        and found[1] == snapshot.now
+        and found[2] is problems
+    ):
+        return found[3]
+    shown = _waiting(session) if waits else session
+    fields = tile_fields(shown, group, now=snapshot.now, problems=problems)
+    if waits and shown.status == SessionStatus.WAITING:
+        fields = replace(fields, waiting_reason=_permission_reason(fields.waiting_reason))
+    snapshot.tiles[(session.id, waits)] = (group, snapshot.now, problems, fields)
+    return fields
 
 
 def _waiting(session: Session) -> Session:
