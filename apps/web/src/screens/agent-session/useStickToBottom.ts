@@ -72,6 +72,8 @@ export function useStickToBottom(
     if (!scroller) return undefined;
     lastTop.current = scroller.scrollTop;
     const detach = () => {
+      // Nothing above to scroll to: no scroll event would follow to clear goingUp.
+      if (scroller.scrollTop <= 0) return;
       goingUp.current = true;
       follow(false);
     };
