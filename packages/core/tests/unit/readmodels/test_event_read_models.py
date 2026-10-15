@@ -262,6 +262,10 @@ def test_fills_tile_fields_when_sessions_listed(store: InMemoryEventStore) -> No
     assert rows["s-web"].waiting_reason == tiles["s-web"].waiting_reason == "Permission prompt"
     assert linked.get_session("s-web").waiting_reason == "Permission prompt"
     assert rows["s-cli"].waiting_reason is None
+    own = _linked_service({}).get_session("s-web").status
+    assert own in {SessionStatus.LIVE, SessionStatus.IDLE}
+    assert rows["s-web"].status == linked.get_session("s-web").status == own
+    assert rows["s-web"].sparkline_60s == linked.get_session("s-web").sparkline_60s == ()
 
 
 def test_folds_tile_fields_for_page_rows_only_when_page_smaller_than_matches(
@@ -281,6 +285,51 @@ def test_folds_tile_fields_for_page_rows_only_when_page_smaller_than_matches(
 
     assert calls == [item.id for item in page.items]
     assert len(calls) == 1
+
+
+def test_reuses_tile_fields_when_read_again_at_same_mark(
+    store: InMemoryEventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _service(store, NOW)[0]
+    calls: list[str] = []
+    real = event_read_models.tile_fields
+
+    def counting(session: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(session.id)
+        return real(session, *args, **kwargs)
+
+    monkeypatch.setattr(event_read_models, "tile_fields", counting)
+    first = service.list_sessions(SessionFilter())
+    one = service.get_session("s-b")
+    calls.clear()
+
+    again = service.list_sessions(SessionFilter())
+    same = service.get_session("s-b")
+
+    assert calls == []
+    assert again == first
+    assert same == one
+
+
+def test_refolds_tile_fields_of_changed_session_only_when_store_grows(
+    store: InMemoryEventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _service(store, NOW)[0]
+    calls: list[str] = []
+    real = event_read_models.tile_fields
+
+    def counting(session: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(session.id)
+        return real(session, *args, **kwargs)
+
+    monkeypatch.setattr(event_read_models, "tile_fields", counting)
+    service.list_sessions(SessionFilter())
+    calls.clear()
+
+    store.append([an_event(session="s-b", timestamp=NOW - timedelta(minutes=1))])
+    service.list_sessions(SessionFilter())
+
+    assert calls == ["s-b"]
 
 
 def test_pages_session_events_when_limit_smaller_than_events(store: InMemoryEventStore) -> None:
