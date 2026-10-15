@@ -641,8 +641,8 @@ class _Run:
 
     def _start_iterations(
         self, group: LoopGroupNode, held: HeldGroup | None
-    ) -> tuple[int, dict[str, NodeResult]]:
-        """The iteration before the first to run, and the body results a pause left of it."""
+    ) -> tuple[int, dict[str, NodeEnd]]:
+        """The iteration before the first to run, and the body ends a pause left of it."""
         with self.lock:
             if held is None:
                 for body in group.nodes:
@@ -655,7 +655,7 @@ class _Run:
     def _hold(self, group: LoopGroupNode, attempt: int, iteration: int) -> None:
         """Keep the paused iteration for the resume: what it ended, and ``$LOOP_PREV``."""
         with self.lock:
-            current = {n.id: self.results[n.id] for n in group.nodes if n.id in self.results}
+            current = {n.id: self.ends[n.id] for n in group.nodes if n.id in self.ends}
             previous = dict(self.loop_prevs[group.id])
         self.held[group.id] = HeldGroup(attempt, iteration, previous, current)
 
@@ -665,7 +665,7 @@ class _Run:
         body: Mapping[str, Node],
         iteration: int,
         *,
-        restored: Mapping[str, NodeResult],
+        restored: Mapping[str, NodeEnd],
     ) -> NodeFailedError | _Paused | None:
         """One iteration of the body's layers, after the nodes ``restored`` from a pause; why
         it fails the group, if it does, or a pause once a body layer leaves a gate open."""
@@ -673,8 +673,8 @@ class _Run:
             for node_id in body:
                 self.ends.pop(node_id, None)
                 self.results.pop(node_id, None)
-            for node_id, result in restored.items():
-                self.ends[node_id], self.results[node_id] = NodeEnd(result), result
+            for node_id, end in restored.items():
+                self.ends[node_id], self.results[node_id] = end, end.result
         for layer in self.plan.bodies[group.id]:
             self._check_stop()
             if waiting := [body[node_id] for node_id in layer if node_id not in restored]:
