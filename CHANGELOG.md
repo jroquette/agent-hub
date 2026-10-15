@@ -13,6 +13,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` can start, cancel, resume and abandon workflow runs: `POST /api/v1/workflow-runs` and
+  `/workflow-runs/{run_id}/cancel|resume|abandon` run `hub workflow run` as a detached child (no `LINEAR_API_KEY`, a
+  pid file under `.agent-runs/web/`), keep one live run per `issue` input, refuse `issue-to-pr`, and are strict
+  writes that need the launch cookie. A run's events now carry its `issue` input (AGH-232).
 - `hub workflow list` and `hub workflow validate [NAME]` load and plan the hub's `workflows/<pack>/` files (YAML through
   the strict loader, or JSON), then the built-ins, against the graph workflow format (ADR 0032): unknown keys, unknown
   or non-upstream node references, argv references that are not a whole element, cycles and a bad

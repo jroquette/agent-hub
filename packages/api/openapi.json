@@ -2651,6 +2651,34 @@
         "title": "HubView",
         "type": "object"
       },
+      "InputName": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "InputNumber": {
+        "type": "number"
+      },
+      "InputText": {
+        "maxLength": 16384,
+        "pattern": "^[^\\x00]*$",
+        "type": "string"
+      },
+      "InputValue": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "$ref": "#/components/schemas/InputNumber"
+          },
+          {
+            "$ref": "#/components/schemas/InputText"
+          }
+        ]
+      },
       "IssueRef": {
         "additionalProperties": false,
         "description": "The tracker issue a run works on; title and url need Linear (``null`` in Phase 2).",
@@ -5363,6 +5391,39 @@
         "title": "ResumableList",
         "type": "object"
       },
+      "RunAccepted": {
+        "additionalProperties": false,
+        "description": "What a run command did: the run, its project and the action taken.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RunAction"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "project",
+          "action"
+        ],
+        "title": "RunAccepted",
+        "type": "object"
+      },
+      "RunAction": {
+        "enum": [
+          "start",
+          "cancel",
+          "resume",
+          "abandon"
+        ],
+        "type": "string"
+      },
       "RunCaps": {
         "additionalProperties": false,
         "description": "The limits a run started with.",
@@ -7028,6 +7089,46 @@
           "task"
         ],
         "title": "StartCloud",
+        "type": "object"
+      },
+      "StartRunRequest": {
+        "additionalProperties": false,
+        "description": "The body of ``POST /workflow-runs``: a project's workflow, its inputs, dry or live.",
+        "properties": {
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/InputValue"
+            },
+            "maxProperties": 64,
+            "propertyNames": {
+              "$ref": "#/components/schemas/InputName"
+            },
+            "title": "Inputs",
+            "type": "object"
+          },
+          "live": {
+            "default": false,
+            "title": "Live",
+            "type": "boolean"
+          },
+          "project": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project",
+            "type": "string"
+          },
+          "workflow": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Workflow",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "workflow"
+        ],
+        "title": "StartRunRequest",
         "type": "object"
       },
       "Step": {
@@ -12662,6 +12763,56 @@
         "tags": [
           "runs"
         ]
+      },
+      "post": {
+        "description": "Start a project's workflow as a ``hub workflow run`` child; its events tell its status.",
+        "operationId": "start_run_api_v1_workflow_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Start Run",
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/workflow-runs/{run_id}": {
@@ -12714,6 +12865,168 @@
           }
         },
         "summary": "Get Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/workflow-runs/{run_id}/abandon": {
+      "post": {
+        "description": "End a failed or unended run cancelled.",
+        "operationId": "abandon_run_api_v1_workflow_runs__run_id__abandon_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Abandon Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/workflow-runs/{run_id}/cancel": {
+      "post": {
+        "description": "Stop the run's child (SIGINT, then SIGKILL), then end the run cancelled.",
+        "operationId": "cancel_run_api_v1_workflow_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Cancel Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/workflow-runs/{run_id}/resume": {
+      "post": {
+        "description": "Continue a failed or unended run in a new child, reusing what completed.",
+        "operationId": "resume_run_api_v1_workflow_runs__run_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Resume Run",
         "tags": [
           "runs"
         ]
