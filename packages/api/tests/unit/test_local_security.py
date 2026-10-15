@@ -137,7 +137,7 @@ def test_marks_strict_write_when_post_to_learning_action(path: str) -> None:
     ("method", "path"),
     [
         ("GET", "/api/v1/learnings/learning-1/accept"),
-        ("PATCH", "/api/v1/agent-sessions"),
+        ("POST", "/api/v1/hubs"),
         ("POST", "/api/v1/events/hooks"),
         ("DELETE", "/api/v1/hubs/hub-1"),
         ("POST", "/api/v1/learnings/learning-1/archive"),
@@ -217,7 +217,7 @@ def test_refuses_hub_registration_when_origin_not_exactly_this_server(
 @pytest.mark.parametrize(
     ("method", "path"),
     [
-        ("PATCH", "/api/v1/agent-sessions"),
+        ("POST", "/api/v1/hubs"),
         ("DELETE", "/api/v1/hubs/hub-1"),
         ("DELETE", "/api/v1/hubs/a/b"),
         ("POST", "/api/v1/hubsx"),
@@ -359,7 +359,7 @@ def test_refuses_body_when_create_session_over_create_body_cap() -> None:
         ("PATCH", "/api/v1/agent-sessions"),
     ],
 )
-def test_keeps_default_cap_when_other_route_or_method(method: str, path: str) -> None:
+def test_keeps_default_body_cap_when_other_route_or_method(method: str, path: str) -> None:
     over = MAX_BODY_BYTES + 1
 
     client = _capped_client()
