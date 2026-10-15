@@ -850,7 +850,9 @@ def test_names_twin_when_hook_posts_same_id_observed_session_id(
 ) -> None:
     token = "o" * 43
     origin = f"http://127.0.0.1:{composed_settings.port}"
-    app = open_composed(replace(composed_settings, session_token=token))
+    app = open_composed(
+        replace(composed_settings, session_token=token), session_driver=InMemorySessionDriver()
+    )
     app.client.headers["Origin"] = origin
     app.client.cookies.set(cookie_name(composed_settings.port), token)
     hub = app.client.post("/api/v1/hubs", json={"path": str(make_hub())})
