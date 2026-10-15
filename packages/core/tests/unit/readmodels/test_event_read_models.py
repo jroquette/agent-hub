@@ -254,6 +254,14 @@ def test_fills_tile_fields_when_sessions_listed(store: InMemoryEventStore) -> No
     ended = listed["s-a"]
     assert ended.last_tool is not None
     assert ended.sparkline_60s is None
+    linked = _linked_service(
+        {("demo", "s-web"): AgentSessionLink(agent_session_id="a-1", waiting=True)}
+    )
+    tiles = {tile.id: tile for tile in linked.list_live_sessions(Scope()).items}
+    rows = {s.id: s for s in linked.list_sessions(SessionFilter()).items}
+    assert rows["s-web"].waiting_reason == tiles["s-web"].waiting_reason == "Permission prompt"
+    assert linked.get_session("s-web").waiting_reason == "Permission prompt"
+    assert rows["s-cli"].waiting_reason is None
 
 
 def test_folds_tile_fields_for_page_rows_only_when_page_smaller_than_matches(
