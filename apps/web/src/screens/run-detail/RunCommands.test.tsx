@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { anEngineRun, aProblem, aRun, renderWithApi, type ApiRoutes } from "../../testing/builders";
+import { apiKey } from "../../lib/api";
 import { RunCommands } from "./RunCommands";
 
 const failed = anEngineRun();
@@ -42,8 +43,18 @@ describe("RunCommands", () => {
     expect(names()).toEqual(["Resume", "Abandon"]);
   });
 
-  it("offers nothing on an ended or issue-to-pr run", () => {
+  it("offers nothing on a run that ended done", () => {
     renderCommands(anEngineRun({ status: "done", failure: null }));
+    expect(names()).toEqual([]);
+  });
+
+  it("offers nothing on a run that ended cancelled", () => {
+    renderCommands(anEngineRun({ status: "cancelled", failure: null }));
+    expect(names()).toEqual([]);
+  });
+
+  it("offers nothing on an issue-to-pr run even with a pinned definition", () => {
+    renderCommands(anEngineRun({ workflow: "issue-to-pr", status: "running", failure: null }));
     expect(names()).toEqual([]);
   });
 
@@ -74,6 +85,22 @@ describe("RunCommands", () => {
     );
     expect(post?.headers.get("content-type")).toContain("application/json");
     expect(await screen.findByRole("status")).toHaveTextContent(/sent|ended|resumes/i);
+  });
+
+  it("marks the open gates stale after a command", async () => {
+    const { queryClient } = renderCommands(live, {
+      [command(live, "abandon")]: accepted(live, "abandon"),
+    });
+    const gates = apiKey("/api/v1/approvals", { query: { kind: "human_gate", status: "open" } });
+    queryClient.setQueryData(gates, { items: [], next_cursor: null, total_estimate: 0 });
+
+    await userEvent.click(screen.getByRole("button", { name: "Abandon" }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Abandon run" }),
+    );
+
+    await screen.findByRole("status");
+    expect(queryClient.getQueryState(gates)?.isInvalidated).toBe(true);
   });
 
   it("keeps the dialog with the reason when the server refuses", async () => {
