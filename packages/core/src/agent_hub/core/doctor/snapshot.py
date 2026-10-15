@@ -100,20 +100,20 @@ type LockState = HubLock | LockAbsent | LockNotRegular | tuple[ConfigProblem, ..
 class DoctorSnapshot:
     """The input of every rule: the config, the running release, the hub's files and its lock.
 
-        ``lock`` is ``None`` when it was not read: no selected rule reads it, the config failed, or
-        ``hub.lock`` could not be read (the hub's files then say why, as ``hub.lock`` is a fixed path).
-        ``base_hooks`` is the ``hooks`` block of the running release's managed settings, ``None``
-        when no selected rule reads it or the config failed. ``repos`` holds one entry per
-        ``repos[].dir``, in ``hub.json`` order, when a selected rule reads them; else it is empty.
-        ``local`` is the developer's ``hub.local.json`` (``LocalConfig()`` when absent) or its
-        problems, read on every run. ``branch_prefix`` is the developer's effective prefix and its
-        source when a selected rule reads the developer identity on a valid config and local file;
-        else ``None``, as when no source gives one. ``remote_probes`` holds one probe per git checkout
-        of ``repos``, in ``hub.json`` order, when a selected rule reads the remotes and the caller
-        runs inside a Claude Code session (its commands sandboxed when the settings say so); else
-        ``None``. ``workflows`` is the hub's workflows and the built-ins, as ``hub workflow`` reads
-        them, when a selected rule reads them; else ``None``; ``workflow_folders`` lists the pack folders
-    then, so the control plane's cache sees a pack git does not list.
+    ``lock`` is ``None`` when it was not read: no selected rule reads it, the config failed, or
+    ``hub.lock`` could not be read (the hub's files then say why, as ``hub.lock`` is a fixed path).
+    ``base_hooks`` is the ``hooks`` block of the running release's managed settings, ``None``
+    when no selected rule reads it or the config failed. ``repos`` holds one entry per
+    ``repos[].dir``, in ``hub.json`` order, when a selected rule reads them; else it is empty.
+    ``local`` is the developer's ``hub.local.json`` (``LocalConfig()`` when absent) or its
+    problems, read on every run. ``branch_prefix`` is the developer's effective prefix and its
+    source when a selected rule reads the developer identity on a valid config and local file;
+    else ``None``, as when no source gives one. ``remote_probes`` holds one probe per git checkout
+    of ``repos``, in ``hub.json`` order, when a selected rule reads the remotes and the caller
+    runs inside a Claude Code session (its commands sandboxed when the settings say so); else
+    ``None``. ``workflows`` is the hub's workflows and the built-ins, as ``hub workflow`` reads
+    them, when a selected rule reads them; else ``None``. ``workflow_folders`` then lists the pack
+    folders, so the control plane's cache sees a pack git does not list.
     """
 
     config: HubConfig | ConfigFailure
