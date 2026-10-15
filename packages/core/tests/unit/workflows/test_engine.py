@@ -1,8 +1,10 @@
 """The engine: layers, trigger rules, skip causes, retries, outputs, resume, status, outcome."""
 
+import dataclasses
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import timedelta
+from typing import Any
 
 import pytest
 
@@ -15,6 +17,7 @@ from agent_hub.core.testing.workflow_fakes import (
     ScriptedRunner,
     a_plan,
 )
+from agent_hub.core.workflows import engine as engine_module
 from agent_hub.core.workflows import plan as plan_module
 from agent_hub.core.workflows.engine import (
     MAX_PARALLEL,
@@ -798,13 +801,13 @@ def test_splits_a_wide_layer_in_linear_work_when_read_only_and_writing_nodes_alt
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = []
-    fits = plan_module._Batch.fits
+    find = plan_module._Skips.find
 
-    def counted(batch: object, node: object) -> bool:
+    def counted(skips: object, index: int) -> int:
         calls.append(1)
-        return fits(batch, node)  # type: ignore[arg-type]
+        return find(skips, index)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(plan_module._Batch, "fits", counted)
+    monkeypatch.setattr(plan_module._Skips, "find", counted)
     nodes = [shell(f"n{i}", mutates_checkout=bool(i % 2)) for i in range(4000)]
 
     plan = plan_of(*nodes)
@@ -861,16 +864,229 @@ def test_splits_a_wide_layer_in_linear_work_when_many_agents_resume_one_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = []
-    fits = plan_module._Batch.fits
+    find = plan_module._Skips.find
 
-    def counted(batch: object, node: object) -> bool:
+    def counted(skips: object, index: int) -> int:
         calls.append(1)
-        return fits(batch, node)  # type: ignore[arg-type]
+        return find(skips, index)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(plan_module._Batch, "fits", counted)
+    monkeypatch.setattr(plan_module._Skips, "find", counted)
     resumers = [agent(f"a{i}", "plan", context={"resume": "plan"}) for i in range(2000)]
 
     plan = plan_of(agent("plan"), *resumers)
 
     assert len(plan.layers) == 1 + len(resumers)
     assert len(calls) <= 2 * len(resumers)
+
+
+def test_splits_in_linear_work_when_readers_follow_session_writers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    made: list[plan_module._Skips] = []
+
+    class Counted(plan_module._Skips):
+        def __init__(self) -> None:
+            super().__init__()
+            made.append(self)
+
+    monkeypatch.setattr(plan_module, "_Skips", Counted)
+    readers = [agent(f"r{i}", "plan", mutates_checkout=False) for i in range(500)]
+    writers = [agent(f"w{i}", "plan", context={"resume": "plan"}) for i in range(1000)]
+    # Each second reader of a session skips every writer batch to a batch of its own kind.
+    pairs = [
+        agent(
+            f"p{i}",
+            "plan",
+            "s" + str(i // 2),
+            mutates_checkout=False,
+            context={"resume": f"s{i // 2}"},
+        )
+        for i in range(1000)
+    ]
+    sessions = [agent(f"s{i}") for i in range(500)]
+
+    plan = plan_of(agent("plan"), *sessions, *readers, *writers, *pairs)
+
+    placed = len(readers) + len(writers) + len(pairs)
+    assert sum(len(layer) for layer in plan.layers) == 1 + len(sessions) + placed
+    assert sum(skips.hops for skips in made) <= 4 * placed
+
+
+# One test per stop point: node ``k`` raises Ctrl-C once ``fire`` is set, at a known step of
+# another node; ``late`` holds every attempt that starts after the interrupt.
+
+
+class Stops:
+    """The events of one stop test, and a runner that answers through them."""
+
+    def __init__(self) -> None:
+        self.fire, self.interrupted = threading.Event(), threading.Event()
+        self.late: list[str] = []
+
+    def ports(self, runner: ScriptedRunner, clock: FakeClock | None = None) -> EnginePorts:
+        return EnginePorts(
+            runner,
+            ListRecorder(),
+            clock or FakeClock(),
+            KeysOutputs(),
+            lambda: 0.5,
+            interrupt=self.interrupted.set,
+        )
+
+    def runner(self, answer: Callable[[NodeCall], NodeReply | None]) -> ScriptedRunner:
+        stops = self
+
+        class Answering(ScriptedRunner):
+            def run(self, call: NodeCall) -> NodeReply:
+                if stops.interrupted.is_set():
+                    stops.late.append(call.node.id)
+                if call.node.id == "k":
+                    stops.fire.wait(5)
+                    raise KeyboardInterrupt
+                reply = answer(call)
+                return super().run(call) if reply is None else reply
+
+        return Answering()
+
+    def run(self, plan: WorkflowPlan, ports: EnginePorts) -> EnginePorts:
+        with pytest.raises(KeyboardInterrupt):
+            run_workflow(plan, {}, ports)
+        assert self.interrupted.is_set()
+        return ports
+
+
+def signalling(waiting: threading.Event) -> type:
+    """A ``BoundedSemaphore`` that sets ``waiting`` when an acquire has to wait."""
+    bounded = threading.BoundedSemaphore
+
+    class Signalling(bounded):  # type: ignore[misc, valid-type]
+        def acquire(self, blocking: bool = True, timeout: float | None = None) -> bool:  # noqa: FBT001, FBT002
+            if super().acquire(blocking=False):
+                return True
+            waiting.set()
+            return super().acquire(blocking, timeout)
+
+        __enter__ = acquire
+
+    return Signalling
+
+
+class RaisingClock(FakeClock):
+    """k's backoff holds no permit: it raises Ctrl-C once another node waits for one."""
+
+    def __init__(self, waiting: threading.Event) -> None:
+        super().__init__()
+        self.waiting = waiting
+
+    def sleep(self, delay: timedelta, stop: threading.Event | None = None) -> None:
+        self.waiting.wait(5)
+        raise KeyboardInterrupt
+
+
+class Holding(ScriptedRunner):
+    """k fails once (into its backoff); h1 and h2 hold the two permits until the interrupt."""
+
+    def __init__(self, stops: Stops) -> None:
+        super().__init__()
+        self.stops = stops
+        self.holding = {"h1": threading.Event(), "h2": threading.Event()}
+
+    def run(self, call: NodeCall) -> NodeReply:
+        if self.stops.interrupted.is_set():
+            self.stops.late.append(call.node.id)
+        if call.node.id == "k":
+            raise fails("transient")
+        if call.node.id in self.holding:
+            self.holding[call.node.id].set()
+            self.stops.interrupted.wait(5)
+        return super().run(call)
+
+
+def test_starts_no_attempt_when_the_stop_lands_while_a_node_waits_for_its_permit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stops, waiting = Stops(), threading.Event()
+    runner = Holding(stops)
+    step = engine_module._Run._step
+
+    def ordered(run: Any, node: Any, attempt: Any) -> Any:
+        if node.id == "x":  # x asks for a permit only once h1 and h2 hold both
+            for event in runner.holding.values():
+                event.wait(5)
+        return step(run, node, attempt)
+
+    monkeypatch.setattr(threading, "BoundedSemaphore", signalling(waiting))
+    monkeypatch.setattr(engine_module._Run, "_step", ordered)
+    plan = plan_of(shell("k"), shell("h1"), shell("h2"), shell("x"))
+    ports = stops.ports(runner, RaisingClock(waiting))
+
+    stops.run(plan, dataclasses.replace(ports, max_parallel=2))
+
+    assert stops.late == []
+
+
+def test_schedules_no_retry_when_the_stop_lands_before_a_backoff() -> None:
+    stops = Stops()
+
+    def answer(call: NodeCall) -> NodeReply | None:
+        stops.fire.set()
+        stops.interrupted.wait(5)
+        raise fails("transient")
+
+    ports = stops.run(plan_of(shell("k"), shell("r")), stops.ports(stops.runner(answer)))
+
+    assert ports.recorder.retries == []  # type: ignore[attr-defined]
+    assert ports.clock.sleeps == []  # type: ignore[attr-defined]
+
+
+def test_starts_no_attempt_when_the_stop_lands_during_a_backoff() -> None:
+    stops = Stops()
+
+    class Firing(FakeClock):
+        def sleep(self, delay: timedelta, stop: threading.Event | None = None) -> None:
+            super().sleep(delay)
+            stops.fire.set()
+            stops.interrupted.wait(5)
+
+    tried: list[str] = []
+
+    def answer(call: NodeCall) -> NodeReply | None:
+        tried.append(call.node.id)
+        raise fails("transient")
+
+    stops.run(plan_of(shell("k"), shell("r")), stops.ports(stops.runner(answer), Firing()))
+
+    assert tried == ["r"]
+    assert stops.late == []
+
+
+def body_firing(stops: Stops) -> Callable[[NodeCall], NodeReply | None]:
+    def answer(call: NodeCall) -> NodeReply | None:
+        if call.node.id == "g__b0":
+            stops.fire.set()
+            stops.interrupted.wait(5)
+        return None
+
+    return answer
+
+
+def test_runs_no_until_bash_or_iteration_when_the_stop_lands_in_a_group_body() -> None:
+    stops = Stops()
+    runner = stops.runner(body_firing(stops))
+    group = a_group(shell("b0"), max_iterations=3, until_when=None, until_bash=["true"])
+    del group["until_when"]
+
+    stops.run(plan_of(shell("k"), group), stops.ports(runner))
+
+    assert runner.until_calls == []
+    assert runner.ran() == ["g__b0"]
+
+
+def test_visits_no_later_body_layer_when_the_stop_lands_in_a_group_body() -> None:
+    stops = Stops()
+    group = a_group(shell("b0"), shell("b1", "b0", when=NEVER))
+
+    ports = stops.run(plan_of(shell("k"), group), stops.ports(stops.runner(body_firing(stops))))
+
+    ends = ports.recorder.ends  # type: ignore[attr-defined]
+    assert [end.node for end in ends] == ["g__b0"]
