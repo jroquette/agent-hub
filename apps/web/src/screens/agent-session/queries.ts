@@ -162,10 +162,53 @@ export function streamHandlers(
 
 /* ---------- The transcript hook ---------- */
 
-type Action = { type: "item"; item: StreamItem } | { type: "replace"; state: TranscriptState };
+type Action = { type: "items"; items: StreamItem[] } | { type: "replace"; state: TranscriptState };
 
 function reducer(state: TranscriptState, action: Action): TranscriptState {
-  return action.type === "replace" ? action.state : reduceTranscript(state, action.item);
+  return action.type === "replace" ? action.state : action.items.reduce(reduceTranscript, state);
+}
+
+export interface FrameBatcher {
+  push: (item: StreamItem) => void;
+  /** Drops what is queued and the pending frame (a reset, an unmount). */
+  drop: () => void;
+}
+
+/**
+ * Deltas wait for the next animation frame and go out together, so a burst renders once per
+ * frame (AC-234.20); a record or status frame flushes the queued deltas first, in order.
+ */
+export function frameBatcher(dispatch: (items: StreamItem[]) => void): FrameBatcher {
+  let queued: StreamItem[] = [];
+  let frame: number | null = null;
+  const drop = () => {
+    if (frame !== null) cancelAnimationFrame(frame);
+    frame = null;
+    queued = [];
+  };
+  const flush = (item?: StreamItem) => {
+    const items = item ? [...queued, item] : queued;
+    drop();
+    if (items.length > 0) dispatch(items);
+  };
+  return {
+    push: (item) => {
+      if (item.type !== "delta") {
+        flush(item);
+        return;
+      }
+      queued.push(item);
+      if (frame === null) {
+        frame = -1; // A frame that runs at once (tests) must not leave a stale id behind.
+        const id = requestAnimationFrame(() => {
+          frame = null;
+          flush();
+        });
+        if (frame === -1) frame = id;
+      }
+    },
+    drop,
+  };
 }
 
 /** The log and the snapshot folded into one transcript (the snapshot's raw open request wins). */
@@ -232,15 +275,30 @@ export function useAgentTranscript(id: string): AgentTranscript {
     setGeneration((g) => g + 1);
   }, []);
 
+  const batcher = useMemo(
+    () =>
+      frameBatcher((items) => {
+        dispatch({ type: "items", items });
+      }),
+    [],
+  );
+  useEffect(() => batcher.drop, [batcher]);
+
   const handlers = useMemo(
     () =>
-      streamHandlers((item) => {
-        dispatch({ type: "item", item });
-        if (item.type === "status") {
-          void queryClient.invalidateQueries({ queryKey: sessionKey(id) });
-        }
-      }, reload),
-    [id, queryClient, reload],
+      streamHandlers(
+        (item) => {
+          batcher.push(item);
+          if (item.type === "status") {
+            void queryClient.invalidateQueries({ queryKey: sessionKey(id) });
+          }
+        },
+        () => {
+          batcher.drop();
+          reload();
+        },
+      ),
+    [batcher, id, queryClient, reload],
   );
 
   const current = loaded?.key === key ? loaded : null;

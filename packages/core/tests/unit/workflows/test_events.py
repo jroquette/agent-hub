@@ -164,3 +164,13 @@ def test_tags_every_event_with_issue_when_run_has_one() -> None:
 
     assert [event.payload["issue"] for event in recorder.events] == ["DEM-7"] * 3
     assert all(kept_payload(e.type, e.payload) == e.payload for e in recorder.events)
+
+
+def test_leaves_issue_out_when_input_is_not_tracker_key() -> None:
+    recorder = WorkflowEvents(
+        project="demo", run_id="r1", workflow="fix", revision=1, content_hash=HASH, issue="dem 7"
+    )
+
+    recorder.run_ended(RunEnd("done", START))
+
+    assert "issue" not in recorder.events[0].payload

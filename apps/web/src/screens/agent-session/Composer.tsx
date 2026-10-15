@@ -23,6 +23,8 @@ export interface ComposerProps {
   onSend: (text: string) => Promise<unknown> | undefined;
   onInterrupt: () => Promise<unknown> | undefined;
   onSettings: (change: SettingsChange) => Promise<unknown> | undefined;
+  /** Called as a message goes out: the chat pins the transcript to its bottom (AC-234.18). */
+  onSending?: (() => void) | undefined;
   maxBytes?: number | undefined;
   /** Why nothing can be sent (log full, control off…); the session's end is detected on its own. */
   disabledReason?: string | null | undefined;
@@ -37,8 +39,9 @@ function problemText(error: unknown, what: string): string {
 }
 
 /**
- * The message box of a session (D10, AC-165.45): Enter sends, Shift+Enter starts a new line. Stop
- * interrupts and is enabled only while a turn runs. The mode and model selectors post settings.
+ * The message box of a session (D10, AC-165.45): Enter sends, Shift+Enter starts a new line. Stop,
+ * or Esc in the empty box, interrupts while a turn runs or waits on a permission (AC-234.21), once
+ * until that interrupt answers, with Stop disabled and reading "Stopping…" meanwhile. The mode and model selectors post settings.
  */
 export function Composer({
   status,
@@ -48,13 +51,17 @@ export function Composer({
   onSend,
   onInterrupt,
   onSettings,
+  onSending,
   maxBytes = DEFAULT_MESSAGE_MAX_BYTES,
   disabledReason,
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  // Shown, not only guarded: a POST that never settles leaves a visibly pending Stop.
+  const [stoppingShown, setStoppingShown] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+  const stopping = useRef(false);
   const inputId = useId();
   const hintId = useId();
   const modeId = useId();
@@ -67,20 +74,33 @@ export function Composer({
   const size = bytesOf(text);
   const tooLong = size > maxBytes;
   const canSend = reason === null && !sending && !tooLong && text.trim() !== "";
+  const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
 
-  const run = (action: () => Promise<unknown> | undefined, what: string) => {
+  const run = (action: () => Promise<unknown> | undefined, what: string, done?: () => void) => {
     setError(null);
     void Promise.resolve()
       .then(action)
       .catch((cause: unknown) => {
         setError(problemText(cause, what));
-      });
+      })
+      .finally(done);
+  };
+
+  const stop = () => {
+    if (!canStop || stopping.current) return;
+    stopping.current = true;
+    setStoppingShown(true);
+    run(onInterrupt, "stop the turn", () => {
+      stopping.current = false;
+      setStoppingShown(false);
+    });
   };
 
   const send = () => {
     if (!canSend || busy.current) return;
+    onSending?.();
     busy.current = true;
     setSending(true);
     setError(null);
@@ -126,7 +146,13 @@ export function Composer({
           setText(event.target.value);
         }}
         onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+          if (event.nativeEvent.isComposing) return;
+          // Esc stops only from an empty box (no menu exists yet): typed text keeps its Esc.
+          if (event.key === "Escape" && text === "" && canStop) {
+            event.preventDefault();
+            stop();
+          }
+          if (event.key !== "Enter" || event.shiftKey) return;
           event.preventDefault();
           send();
         }}
@@ -177,12 +203,11 @@ export function Composer({
         </span>
         <Button
           icon="circle-stop"
-          disabled={status !== "running"}
-          onClick={() => {
-            run(onInterrupt, "stop the turn");
-          }}
+          disabled={!canStop}
+          aria-disabled={stoppingShown || undefined}
+          onClick={stop}
         >
-          Stop
+          {stoppingShown ? "Stopping…" : "Stop"}
         </Button>
         <Button type="submit" variant="primary" icon="arrow-up" disabled={!canSend}>
           {sending ? "Sending…" : "Send"}

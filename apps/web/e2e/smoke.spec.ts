@@ -284,11 +284,19 @@ test("Agent session started from Sessions survives a reload while waiting and af
   await composer.getByLabel("Message Claude").fill(AGENT_FOLLOW_UP);
   await composer.getByRole("button", { name: "Send" }).click();
   await expect(conversation.getByText("The tests ran.")).toBeVisible();
+  // AGH-237 (AC-234.16): after the reply the header and the composer are still on screen; the
+  // transcript scrolls, the page does not.
+  await expect(page.getByRole("heading", { level: 1 })).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Close session" })).toBeInViewport();
+  await expect(composer).toBeInViewport();
+  expect(await page.locator("main").evaluate((main) => main.scrollHeight > main.clientHeight)).toBe(
+    false,
+  );
   await page.reload();
   await expect(conversation.getByText("The build ran.")).toBeVisible();
   await expect(conversation.getByText(AGENT_PROMPT)).toBeVisible();
   await expect(conversation.getByText(AGENT_FOLLOW_UP)).toBeVisible();
-  await expect(conversation.getByText("The tests ran.")).toBeVisible();
+  await expect(conversation.getByText("The tests ran.")).toBeInViewport();
   await expectAccessible(page);
   expect(problems).toEqual([]);
 });

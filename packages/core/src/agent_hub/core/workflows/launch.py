@@ -2,12 +2,14 @@
 
 ``StartWorkflowRun`` mints the run id first, checks the inputs against the workflow's declared
 ``inputs`` (each one's type, then ``start_inputs``), refuses a second live run of one issue and
-hands the run to a ``RunLauncher``, which starts ``hub workflow run`` as a child. A run's issue
-is its ``issue`` input, when the workflow declares one; a run is live while the read model folds
-it ``running`` or the launcher still holds its child (a run just started has no event yet).
-``issue-to-pr`` is refused: its tracker writes are its parent's and need ``LINEAR_API_KEY``,
-which no launched child gets. ``ControlWorkflowRun`` cancels, resumes and abandons an engine
-run of a registered hub. Status is never tracked here: it comes from the run's events.
+hands the run to a ``RunLauncher``, which starts ``hub workflow run --live`` as a child (a dry
+run belongs to the CLI). A run's issue is its ``issue`` input when the workflow declares one and
+it is a tracker key (``DEM-7``); a run is live while the read model folds it ``running`` or the
+launcher still holds its child (a run just started has no event yet). A start and a resume share
+one ``RunGuard``: its lock is held from the live check through the launch, so two launches of
+one issue never race. ``issue-to-pr`` is refused: its tracker writes are its parent's and need
+``LINEAR_API_KEY``, which no launched child gets. ``ControlWorkflowRun`` cancels, resumes and
+abandons an engine run of a registered hub. Status is never tracked here: it comes from events.
 """
 
 import re
@@ -26,6 +28,7 @@ from agent_hub.core.readmodels.filters import MAX_PAGE_LIMIT, RunFilter
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, EventReadModels
 from agent_hub.core.runs.workflow_run import WorkflowRun
 from agent_hub.core.workflows.engine import WorkflowEngineError, start_inputs
+from agent_hub.core.workflows.events import issue_key
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.substitution import echo
 from agent_hub.core.workflows.workflow_reads import ProjectHubs
@@ -52,7 +55,7 @@ type RunAction = Literal["start", "cancel", "resume", "abandon"]
 
 
 class StartRunRequest(BaseModel):
-    """The body of ``POST /workflow-runs``: a project's workflow, its inputs, dry or live."""
+    """The body of ``POST /workflow-runs``: a project's workflow and its inputs (always live)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -61,7 +64,6 @@ class StartRunRequest(BaseModel):
     inputs: Annotated[dict[InputName, InputValue], Field(max_length=MAX_INPUTS)] = Field(
         default_factory=dict
     )
-    live: StrictBool = False
 
 
 class RunAccepted(BaseModel):
@@ -92,14 +94,13 @@ class RunLaunchError(AgentHubError):
 
 @dataclass(frozen=True)
 class LaunchSpec:
-    """A run to start: its id, hub folder, workflow, the inputs given, live or dry, issue."""
+    """A live run to start: its id, hub folder, workflow, the inputs given and its issue."""
 
     run_id: str
     project: str
     hub_path: str
     workflow: str
     inputs: Mapping[str, JsonValue]
-    live: bool
     issue: str | None
 
 
@@ -110,8 +111,8 @@ class RunLauncher(Protocol):
         """Start the run detached; ``RunLaunchError`` when it cannot start."""
         ...
 
-    def resume(self, hub_path: str, run_id: str) -> None:
-        """Continue the run detached (``--resume``)."""
+    def resume(self, hub_path: str, run_id: str, *, issue: str | None) -> None:
+        """Continue the run detached (``--resume``); ``issue`` goes to its pid file."""
         ...
 
     def abandon(self, hub_path: str, run_id: str) -> None:
@@ -151,19 +152,49 @@ def launch_inputs(plan: WorkflowPlan, given: Mapping[str, JsonValue]) -> dict[st
         raise RunInputError(str(error)) from None
 
 
+class RunGuard:
+    """What every run command shares: one lock, held from the live check through the launch,
+    so a start and a resume of one issue never race; the read model and the launcher."""
+
+    def __init__(self, runs: EventReadModels, launcher: RunLauncher) -> None:
+        self.runs, self.launcher = runs, launcher
+        self.lock = threading.Lock()
+
+    def refuse_live(
+        self, project: str, hub_path: str, issue: str, *, besides: str | None = None
+    ) -> None:
+        """``RunConflictError`` (``live_run``) when a run of ``issue`` other than ``besides`` is
+        live: held by the launcher, or folded ``running``. Call it holding ``lock``."""
+        launched = self.launcher.live_runs(hub_path)
+        live = next((run for run, of in launched.items() if of == issue and run != besides), None)
+        live = live or self._folded_live(project, issue, besides)
+        if live is not None:
+            reason = f"the issue already has a live run ({live}); cancel or abandon it first"
+            raise RunConflictError(code="live_run", reason=reason, run_id=live)
+
+    def _folded_live(self, project: str, issue: str, besides: str | None) -> str | None:
+        cursor: str | None = None
+        for _ in range(MAX_LIVE_PAGES):
+            page = self.runs.list_runs(
+                RunFilter(project=project, issue=issue, cursor=cursor, limit=MAX_PAGE_LIMIT)
+            )
+            found = next(
+                (run.id for run in page.items if run.status == "running" and run.id != besides),
+                None,
+            )
+            if found is not None or page.next_cursor is None:
+                return found
+            cursor = page.next_cursor
+        return None
+
+
 class StartWorkflowRun:
-    """``POST /workflow-runs``: one launch at a time, so two starts of an issue never race."""
+    """``POST /workflow-runs``: always a live run (a dry run belongs to the CLI)."""
 
     def __init__(
-        self,
-        plans: WorkflowPlans,
-        runs: EventReadModels,
-        launcher: RunLauncher,
-        *,
-        mint: Callable[[], str] = new_run_id,
+        self, plans: WorkflowPlans, guard: RunGuard, *, mint: Callable[[], str] = new_run_id
     ) -> None:
-        self._plans, self._runs, self._launcher, self._mint = plans, runs, launcher, mint
-        self._guard = threading.Lock()
+        self._plans, self._guard, self._mint = plans, guard, mint
 
     def __call__(self, request: StartRunRequest) -> RunAccepted:
         run_id = self._mint()
@@ -172,49 +203,29 @@ class StartWorkflowRun:
             raise RunConflictError(code="tracker_workflow", reason=reason)
         hub_path, plan = self._plans.workflow_plan(request.project, request.workflow)
         inputs = launch_inputs(plan, request.inputs)
-        issue = inputs.get(ISSUE_INPUT) if ISSUE_INPUT in plan.document.inputs else None
-        issue = issue if isinstance(issue, str) and issue else None
+        declared = ISSUE_INPUT in plan.document.inputs
+        issue = issue_key(inputs.get(ISSUE_INPUT)) if declared else None
         spec = LaunchSpec(
             run_id=run_id,
             project=request.project,
             hub_path=hub_path,
             workflow=plan.document.name,
             inputs=dict(request.inputs),
-            live=request.live,
             issue=issue,
         )
-        with self._guard:
+        with self._guard.lock:
             if issue is not None:
-                self._refuse_live(request.project, hub_path, issue)
-            self._launcher.start(spec)
+                self._guard.refuse_live(request.project, hub_path, issue)
+            self._guard.launcher.start(spec)
         return RunAccepted(run_id=run_id, project=request.project, action="start")
-
-    def _refuse_live(self, project: str, hub_path: str, issue: str) -> None:
-        launched = self._launcher.live_runs(hub_path)
-        live = next((run for run, of in launched.items() if of == issue), None)
-        live = live or self._folded_live(project, issue)
-        if live is not None:
-            reason = f"the issue already has a live run ({live}); cancel or abandon it first"
-            raise RunConflictError(code="live_run", reason=reason, run_id=live)
-
-    def _folded_live(self, project: str, issue: str) -> str | None:
-        cursor: str | None = None
-        for _ in range(MAX_LIVE_PAGES):
-            page = self._runs.list_runs(
-                RunFilter(project=project, issue=issue, cursor=cursor, limit=MAX_PAGE_LIMIT)
-            )
-            found = next((run.id for run in page.items if run.status == "running"), None)
-            if found is not None or page.next_cursor is None:
-                return found
-            cursor = page.next_cursor
-        return None
 
 
 class ControlWorkflowRun:
     """Cancel, resume and abandon an engine run (one with a pinned ``content_hash``)."""
 
-    def __init__(self, hubs: ProjectHubs, runs: EventReadModels, launcher: RunLauncher) -> None:
-        self._hubs, self._runs, self._launcher = hubs, runs, launcher
+    def __init__(self, hubs: ProjectHubs, guard: RunGuard) -> None:
+        self._hubs, self._guard = hubs, guard
+        self._runs, self._launcher = guard.runs, guard.launcher
 
     def cancel(self, run_id: str) -> RunAccepted:
         run, hub_path = self._target(run_id)
@@ -224,8 +235,14 @@ class ControlWorkflowRun:
         return RunAccepted(run_id=run_id, project=run.project, action="cancel")
 
     def resume(self, run_id: str) -> RunAccepted:
-        run, hub_path = self._idle(run_id)
-        self._launcher.resume(hub_path, run_id)
+        """Resume under the start's lock and its one-live-run-per-issue rule."""
+        with self._guard.lock:
+            run, hub_path = self._idle(run_id)
+            ref = run.issue
+            issue = None if ref is None else issue_key(ref.key)
+            if issue is not None:
+                self._guard.refuse_live(run.project, hub_path, issue, besides=run_id)
+            self._launcher.resume(hub_path, run_id, issue=issue)
         return RunAccepted(run_id=run_id, project=run.project, action="resume")
 
     def abandon(self, run_id: str) -> RunAccepted:
