@@ -21,6 +21,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
   `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
   `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
+- `hub workflow run NAME --input name=value` prints the nodes a run would start; with `--live` it runs them: agent
+  nodes as `claude -p` in the hub with its settings and plugin, shell and script nodes as programs without a shell,
+  each child with a scoped environment (none gets `LINEAR_API_KEY`). The run is recorded under
+  `.agent-runs/workflows/<run>/` with a snapshot of its document, prompts and scripts, and its events go to the
+  event database. `--resume RUN` continues a failed run on its snapshot, reusing what completed; `--abandon RUN` ends
+  it cancelled. It makes no tracker write (AGH-221).
 - A workflow node of type `include` copies in another workflow of the same pack at load: its nodes become
   `<include id>__<id>`, `with:` fills its `inputs`, the include's `depends_on`/`when`/`trigger_rule` go to the block's
   roots, and `$<include>.output` reads its `returns` node (or its single sink); at most 3 levels and 512 nodes, no
