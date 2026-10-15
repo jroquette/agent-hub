@@ -78,7 +78,12 @@ export function useTileStreamInvalidation(
       if (!target.collapsed && missed.current.delete(target.id)) void target.refetch();
     }
   });
-  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(
+    () => () => {
+      clearTimeout(timer.current);
+    },
+    [],
+  );
   const changed = () => {
     if (timer.current !== undefined) return;
     timer.current = setTimeout(() => {
