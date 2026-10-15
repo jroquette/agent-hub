@@ -22,6 +22,7 @@ import {
   Skeleton,
   StatusBadge,
   Tooltip,
+  VIRTUAL_THRESHOLD,
   type DataTableColumn,
   type Facet,
   type Status,
@@ -62,6 +63,8 @@ import { SECTIONS, sectionCount, sectionQueries } from "./sections";
 import { SessionSection, useCollapsed } from "./SessionSection";
 
 const COLUMNS_KEY = "ah.sessions.columns";
+/** A section past VIRTUAL_THRESHOLD rows scrolls inside this height (as the learnings table). */
+const SECTION_MAX_HEIGHT = 640;
 const DENSITY_KEY = "ah.sessions.density";
 const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
 /** The session's issue: the label's (S1), else the run's. */
@@ -118,12 +121,26 @@ function zeroSubtle(value: number, danger = false): ReactNode {
   );
 }
 
+/** A session's duration; only a running one reads the second clock, so a tick re-renders just its cell. */
+function Elapsed({ session }: { session: Session }) {
+  return session.ended_at ? (
+    fmtDuration((Date.parse(session.ended_at) - Date.parse(session.started_at)) / 1000)
+  ) : (
+    <RunningFor start={session.started_at} />
+  );
+}
+
+function RunningFor({ start }: { start: string }) {
+  const now = useNow(1000);
+  return fmtDuration((now - Date.parse(start)) / 1000);
+}
+
 interface ColumnDef {
   id: string;
   label: string;
   on: boolean;
   sort?: "started_at" | "last_activity_at" | "cost" | undefined;
-  column: (ctx: { now: number; tz: "local" | "utc" }) => DataTableColumn<Session>;
+  column: (ctx: { tz: "local" | "utc" }) => DataTableColumn<Session>;
 }
 
 const COLUMN_DEFS: ColumnDef[] = [
@@ -148,14 +165,11 @@ const COLUMN_DEFS: ColumnDef[] = [
     id: "duration",
     label: "Duration",
     on: true,
-    column: ({ now }) => ({
+    column: () => ({
       id: "duration",
       label: "Duration",
       align: "right",
-      render: (s) =>
-        fmtDuration(
-          ((s.ended_at ? Date.parse(s.ended_at) : now) - Date.parse(s.started_at)) / 1000,
-        ),
+      render: (s) => <Elapsed session={s} />,
     }),
   },
   {
@@ -361,7 +375,7 @@ const COMFORTABLE: ColumnDef[] = [
     label: "Started",
     on: true,
     sort: "started_at",
-    column: ({ now, tz }) => ({
+    column: ({ tz }) => ({
       id: "started",
       label: "Started",
       sortable: true,
@@ -372,9 +386,7 @@ const COMFORTABLE: ColumnDef[] = [
             {fmtClock(s.started_at, tz)}
           </span>
           <span className="ah-small ah-subtle">
-            {fmtDuration(
-              ((s.ended_at ? Date.parse(s.ended_at) : now) - Date.parse(s.started_at)) / 1000,
-            )}
+            <Elapsed session={s} />
           </span>
         </div>
       ),
@@ -710,13 +722,19 @@ function AgentSessionsPanel({
   );
 }
 
+/** The stale stamp while the collector is offline; its second clock re-renders only this stamp. */
+function OfflineStamp({ tz }: { tz: "local" | "utc" }) {
+  const collector = useCollectorState();
+  return collector.state === "offline" ? (
+    <AsOfStamp stale time={fmtClock(collector.asOf, tz)} source="collector heartbeat" />
+  ) : null;
+}
+
 export function SessionsListScreen() {
   const [params, setParams] = useSearchParams();
   const [scope] = useScope();
   const navigate = useNavigate();
   const { tz } = usePreferences();
-  const now = useNow(1000);
-  const collector = useCollectorState();
   const [anchor] = useState(() => Date.now());
   const queries = useMemo(() => sectionQueries(params, scope, anchor), [params, scope, anchor]);
   const sections = useSectionPages(queries);
@@ -765,11 +783,14 @@ export function SessionsListScreen() {
   const period: Period = periodOf(params);
   const sort = sortOf(params);
   const chips = chipsOf(params);
-  const visible =
-    density === "compact"
-      ? COLUMN_DEFS.filter((def) => columns.has(def.id) && !(def.id === "project" && scope))
-      : COMFORTABLE.filter((def) => !(def.id === "project" && scope));
-  const tableColumns = visible.map((def) => def.column({ now, tz }));
+  const visible = useMemo(
+    () =>
+      density === "compact"
+        ? COLUMN_DEFS.filter((def) => columns.has(def.id) && !(def.id === "project" && scope))
+        : COMFORTABLE.filter((def) => !(def.id === "project" && scope)),
+    [density, columns, scope],
+  );
+  const tableColumns = useMemo(() => visible.map((def) => def.column({ tz })), [visible, tz]);
   const sortColumn = visible.find((def) => def.sort === sort.replace("-", ""));
   const projectCount = new Set(rows.map((s) => s.project)).size;
   const filtered = chips.some((chip) => chip.key !== "period");
@@ -1019,9 +1040,13 @@ export function SessionsListScreen() {
     // A light placeholder: four skeleton tables at once made role queries crawl under coverage.
     if (pages.isPending) return <Skeleton lines={2} />;
     const keys = new Set(sectionRows.map((s) => s.id));
+    // Past the threshold a section scrolls in its own window, so only the rows in view render.
+    const bounded = sectionRows.length > VIRTUAL_THRESHOLD;
     return (
       <DataTable
         caption={`${title} sessions`}
+        maxHeight={bounded ? SECTION_MAX_HEIGHT : undefined}
+        scrollLabel={bounded ? `Scrollable ${title.toLowerCase()} sessions` : undefined}
         columns={tableColumns}
         rows={sectionRows}
         rowKey={(s) => s.id}
@@ -1109,9 +1134,7 @@ export function SessionsListScreen() {
     <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
       <div className="ah-row ah-wrap" style={{ gap: 8 }}>
         <h1 className="ah-h1">Sessions</h1>
-        {collector.state === "offline" && (
-          <AsOfStamp stale time={fmtClock(collector.asOf, tz)} source="collector heartbeat" />
-        )}
+        <OfflineStamp tz={tz} />
         <span className="ah-grow" />
         <SavedViewMenu
           views={VIEWS.map((view) => ({ name: view.name }))}
