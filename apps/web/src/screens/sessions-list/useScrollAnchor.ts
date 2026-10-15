@@ -110,11 +110,11 @@ function nearView(element: Element, scroller: Element): boolean {
  */
 export function useScrollAnchor(
   container: RefObject<HTMLElement | null>,
-  updatedAt: Partial<Record<SectionId, number>>,
+  sections: Partial<Record<SectionId, { at: number; fetching: boolean }>>,
 ): (ids: SectionId[]) => void {
   const anchors = useRef(new Map<string, Anchor[]>());
   const armed = useRef(new Set<SectionId>());
-  const seen = useRef(updatedAt);
+  const seen = useRef(sections);
   const frame = useRef(0);
   /** The focused row; `header` holds focus for it while the row is between sections. */
   const focused = useRef<{
@@ -137,11 +137,13 @@ export function useScrollAnchor(
   useLayoutEffect(() => {
     const root = container.current;
     if (!root) return;
-    const changed = Object.entries(updatedAt).filter(
-      ([id, at]) => seen.current[id as SectionId] !== at,
-    );
-    seen.current = updatedAt;
-    const act = changed.some(([id]) => armed.current.delete(id as SectionId));
+    const changed = Object.entries(sections)
+      .filter(([id, now]) => seen.current[id as SectionId]?.at !== now.at)
+      .map(([id]) => id as SectionId);
+    seen.current = sections;
+    const act = changed.filter((id) => armed.current.has(id)).length > 0;
+    // A flag ends with its refetch, answered (this commit) or not (failed, no new data).
+    for (const id of armed.current) if (!sections[id]?.fetching) armed.current.delete(id);
     if (act) {
       for (const [key, { scroller, items }] of scopes(root)) {
         restore(scroller, items, anchors.current.get(key) ?? []);

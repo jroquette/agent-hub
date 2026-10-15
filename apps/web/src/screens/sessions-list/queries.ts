@@ -84,7 +84,8 @@ export function useSectionRefresh(
 ): void {
   const latest = useRef({ targets, onRefetch });
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const missed = useRef(new Set<SectionId>());
+  /** Sections a tick skipped, and why: opening one catches up at once, a fetch at the next edge. */
+  const missed = useRef(new Map<SectionId, "collapsed" | "fetching">());
   const refetch = (ids: SectionTarget[]) => {
     if (ids.length === 0) return;
     latest.current.onRefetch(ids.map((target) => target.id));
@@ -95,26 +96,34 @@ export function useSectionRefresh(
     timer.current = setTimeout(() => {
       timer.current = undefined;
       const due = latest.current.targets.filter((target) => {
-        const later = target.collapsed || target.fetching;
-        if (later) missed.current.add(target.id);
-        return !later;
+        if (target.collapsed) missed.current.set(target.id, "collapsed");
+        else if (target.fetching) missed.current.set(target.id, "fetching");
+        else missed.current.delete(target.id);
+        return !target.collapsed && !target.fetching;
       });
       refetch(due);
     }, STREAM_REFETCH_MS);
   });
   useEffect(() => {
     latest.current = { targets, onRefetch };
+    const idle = targets.filter((target) => !target.collapsed && !target.fetching);
+    if (idle.some((target) => missed.current.get(target.id) === "fetching")) schedule.current();
     refetch(
-      targets.filter(
-        (target) => !target.collapsed && !target.fetching && missed.current.delete(target.id),
+      idle.filter(
+        (target) =>
+          missed.current.get(target.id) === "collapsed" && missed.current.delete(target.id),
       ),
     );
   });
-  const seen = useRef(agentsUpdatedAt);
+  // Only a newer answer for the same project's list: a project switch changes the query, not data.
+  const seen = useRef({ project, at: agentsUpdatedAt });
   useEffect(() => {
-    if (seen.current !== 0 && agentsUpdatedAt !== seen.current) schedule.current();
-    seen.current = agentsUpdatedAt;
-  }, [agentsUpdatedAt]);
+    const last = seen.current;
+    if (last.project === project && last.at !== 0 && agentsUpdatedAt > last.at) {
+      schedule.current();
+    }
+    seen.current = { project, at: agentsUpdatedAt };
+  }, [project, agentsUpdatedAt]);
   useEffect(() => {
     const changed = () => {
       schedule.current();

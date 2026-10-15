@@ -294,7 +294,13 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
 });
 
 /** Observed rows plus a twin of driven session A; driven B..F have no twin (AC-234.8). */
-function drivenFixture(twinStatus: "idle" | "waiting_permission" = "idle") {
+/** An ISO time `days` before now: the period bounds Ended against the real clock. */
+const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+
+function drivenFixture(
+  twinStatus: "idle" | "waiting_permission" = "idle",
+  observed: ApiRoutes[string] | null = null,
+) {
   const twin = aSession({
     id: anId(3, "aaaa0003"),
     label: named("twin"),
@@ -318,10 +324,21 @@ function drivenFixture(twinStatus: "idle" | "waiting_permission" = "idle") {
     }),
     anAgentSession({ id: anId(14, "0192a5e5"), title: "Older idle", created_at: at(10) }),
     anAgentSession({ id: anId(15, "0192a5e5"), title: "Newer idle", created_at: at(200) }),
-    anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" }),
+    anAgentSession({
+      id: anId(16, "0192a5e5"),
+      title: "Broke",
+      status: "failed",
+      created_at: daysAgo(1),
+    }),
+    anAgentSession({
+      id: anId(17, "0192a5e5"),
+      title: "Ancient",
+      status: "failed",
+      created_at: daysAgo(30),
+    }),
   ];
   return routes({
-    [SESSIONS]: aSessionsByStatus([...sessions(), twin]),
+    [SESSIONS]: observed ?? aSessionsByStatus([...sessions(), twin]),
     [AGENT]: { items: driven },
   });
 }
@@ -351,6 +368,55 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
 
     fireEvent.click(rowOf("/twin") as HTMLElement);
     expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(11, "0192a5e5")}`);
+  });
+
+  it("bounds Ended's twinless driven sessions by the period, rows and count alike", async () => {
+    const view = renderList(drivenFixture());
+
+    await screen.findByText("Broke");
+    expect(screen.queryByText("Ancient")).toBeNull();
+    expect(screen.getByRole("button", { name: "Ended or failed · 2" })).toBeInTheDocument();
+    // Waiting, Live and Idle are not bounded (O-4): the idle one from T0 still shows.
+    expect(screen.getByText("Older idle")).toBeInTheDocument();
+    view.unmount();
+
+    renderList(drivenFixture(), "/sessions?period=All");
+    expect(await screen.findByText("Ancient")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ended or failed · 3" })).toBeInTheDocument();
+  });
+
+  it("shows a twinless row's folder, mode, model and cost", async () => {
+    renderList(drivenFixture());
+
+    const row = (await screen.findByText("Fix the build")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("agent-hub-hub · Ask before edits · sonnet")).toBeInTheDocument();
+    expect(within(row).getByText("$0.0012")).toBeInTheDocument();
+  });
+
+  it("adds placed rows and drops moved ones once in the paged footer and the count line", async () => {
+    const twin = aSession({
+      id: anId(3, "aaaa0003"),
+      label: named("twin"),
+      status: "live",
+      outcome: null,
+      agent_session_id: anId(11, "0192a5e5"),
+    });
+    const others = aSessionsByStatus(sessions());
+    const observed = (request: Request) =>
+      new URL(request.url).searchParams.get("status") === "live"
+        ? { items: [sessions()[0], twin], next_cursor: "c2", total_estimate: 120 }
+        : others(request);
+    renderList(drivenFixture("waiting_permission", observed));
+
+    await screen.findByText("Fix the build");
+    // Live: 120 observed, + "Fix the build", - the twin moved to Waiting; 2 rows loaded.
+    expect(screen.getByRole("button", { name: "Live · ~120" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Live · ~120" })).getByText("Showing 2 of ~120"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Waiting · 2" })).toBeInTheDocument();
+    // Waiting 2 + Live 2 + Idle 2 + Ended 2 rows; 2 + 120 + 2 + 2 counted.
+    expect(screen.getByText(/^Showing 8 of ~126 ·/)).toBeInTheDocument();
   });
 
   it("opens a twinless driven session's chat from its row", async () => {
@@ -383,7 +449,8 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
   it("has New session in the page header, no driven region, and cloud guidance closed below the sections", async () => {
     renderList(routes({ [AGENT]: { items: [anAgentSession()] } }));
 
-    const button = await screen.findByRole("button", { name: "New session" });
+    // New session waits on three queries (list, capabilities, folders); a loaded runner needs > 1 s.
+    const button = await screen.findByRole("button", { name: "New session" }, { timeout: 5000 });
     const heading = screen.getByRole("heading", { level: 1, name: "Sessions" });
     expect(heading.parentElement).toContainElement(button);
     expect(screen.queryByRole("region", { name: "Driven from hub web" })).toBeNull();
@@ -412,10 +479,16 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(screen.getByRole("table", { name: "Live sessions" })).toBeInTheDocument();
   });
 
-  it("offers a retry when the agent list fails otherwise", async () => {
-    renderList(routes({ [AGENT]: aProblem({ status: 500, title: "Boom" }) }));
+  it("offers a retry when the agent list fails otherwise, and the retry asks again", async () => {
+    const { requests } = renderList(routes({ [AGENT]: aProblem({ status: 500, title: "Boom" }) }));
+    const asked = (path: string) => requests.filter((r) => new URL(r.url).pathname === path).length;
 
     expect(await screen.findByText("Could not load the agent sessions")).toBeInTheDocument();
+    const [list, caps] = [asked(AGENT), asked(`${AGENT}/capabilities`)];
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => {
+      expect([asked(AGENT), asked(`${AGENT}/capabilities`)]).toEqual([list + 1, caps + 1]);
+    });
   });
 });
 

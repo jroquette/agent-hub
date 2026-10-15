@@ -353,6 +353,47 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/approvals/{approval_id}/decision": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Decide Gate
+     * @description Record a person's answer to an open workflow gate, then resume its run; its events tell
+     *     the rest.
+     */
+    post: operations["decide_gate_api_v1_approvals__approval_id__decision_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/approvals/{approval_id}/gate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Gate
+     * @description What answers an open workflow gate: its decisions or options and whether it takes text.
+     */
+    get: operations["get_gate_api_v1_approvals__approval_id__gate_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/collector/status": {
     parameters: {
       query?: never;
@@ -2073,6 +2114,42 @@ export interface components {
       value: components["schemas"]["SkillFrontmatterValue"];
     };
     FrontmatterValue: string | string[];
+    /**
+     * GateChoice
+     * @description A decision or option a person may pick, with its label.
+     */
+    GateChoice: {
+      /** Id */
+      id: string;
+      /** Label */
+      label: string;
+    };
+    /**
+     * GateDecided
+     * @description What a decision did: the gate's approval, its run and project, and the answer's id.
+     */
+    GateDecided: {
+      /** Approval Id */
+      approval_id: string;
+      /** Decision */
+      decision: string | null;
+      /** Project */
+      project: string;
+      /** Run Id */
+      run_id: string;
+    };
+    /**
+     * GateDecisionRequest
+     * @description The body of ``POST /approvals/{id}/decision``: a decision or option id and/or a text.
+     */
+    GateDecisionRequest: {
+      /** Decision */
+      decision?: string | null;
+      /** Text */
+      text?: string | null;
+    };
+    /** @enum {string} */
+    GateForm: "decision" | "choice" | "text" | "timer";
     /**
      * GoldenPath
      * @description The feature's steps in their fixed order; ``phase`` is the first step neither done nor
@@ -3847,6 +3924,8 @@ export interface components {
       /** Text */
       text: string;
     };
+    /** @enum {string} */
+    TextUse: "off" | "optional" | "required";
     /**
      * TicketEdge
      * @description A "blocked by" edge to the ticket ``ref`` (a row's ``ref`` or an external issue id).
@@ -4155,6 +4234,28 @@ export interface components {
       /** Revision */
       revision: number;
       source: components["schemas"]["WorkflowOrigin"];
+    };
+    /**
+     * WorkflowGate
+     * @description An open gate a person answers: where it is and what answers it.
+     */
+    WorkflowGate: {
+      /** Approval Id */
+      approval_id: string;
+      /** Attempt */
+      attempt: number;
+      /** Choices */
+      choices: components["schemas"]["GateChoice"][];
+      form: components["schemas"]["GateForm"];
+      /** Node */
+      node: string;
+      /** Project */
+      project: string;
+      /** Run Id */
+      run_id: string;
+      text: components["schemas"]["TextUse"];
+      /** Workflow */
+      workflow: string;
     };
     /**
      * WorkflowNodeView
@@ -5101,6 +5202,90 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Approval"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  decide_gate_api_v1_approvals__approval_id__decision_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        approval_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["GateDecisionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GateDecided"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_gate_api_v1_approvals__approval_id__gate_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        approval_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkflowGate"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
