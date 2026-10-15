@@ -1,7 +1,8 @@
 """The engine's ports (ADR 0032): what runs a node, records a run, tells the time, checks outputs.
 
-The engine (``engine.py``) is a pure interpreter over these four. The cli implements
-``NodeRunner`` (``claude -p``, programs, scripts) and ``Clock``; ``generator`` implements
+The engine (``engine.py``) is a pure interpreter over these four, plus a ``CheckoutProbe`` for
+``mutates_checkout: false`` nodes. The cli implements ``NodeRunner`` (``claude -p``, programs,
+scripts), ``Clock`` and ``CheckoutProbe`` (``git status``); ``generator`` implements
 ``OutputValidator`` with JSON Schema; ``events.py`` builds the run's events from a
 ``RunRecorder``'s calls, and the cli also writes them to the run's record under ``.agent-runs/``.
 """
@@ -9,6 +10,7 @@ The engine (``engine.py``) is a pure interpreter over these four. The cli implem
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from threading import Event
 from typing import Literal, Protocol
 
 from agent_hub.core.json_form import JsonValue
@@ -77,8 +79,16 @@ class Clock(Protocol):
         """The current instant, with an offset."""
         ...
 
-    def sleep(self, delay: timedelta) -> None:
-        """Wait ``delay`` (a retry's backoff)."""
+    def sleep(self, delay: timedelta, stop: Event | None = None) -> None:
+        """Wait ``delay`` (a retry's backoff), or less once ``stop`` is set (the run stops)."""
+        ...
+
+
+class CheckoutProbe(Protocol):
+    """The checkout's state as text (the cli's ``git status``), read around a read-only node."""
+
+    def status(self) -> str:
+        """The current status; the same text before and after means nothing changed."""
         ...
 
 

@@ -8,6 +8,7 @@ object schema's ``required`` keys; JSON Schema itself is ``generator``'s, tested
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from threading import Event
 
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.document import parse_workflow
@@ -36,7 +37,7 @@ class FakeClock:
     def now(self) -> datetime:
         return self.current
 
-    def sleep(self, delay: timedelta) -> None:
+    def sleep(self, delay: timedelta, stop: Event | None = None) -> None:
         self.sleeps.append(delay)
         self.current += delay
 

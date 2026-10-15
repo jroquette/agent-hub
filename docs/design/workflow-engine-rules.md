@@ -3,8 +3,8 @@
 ## Purpose
 
 The rules of the workflow engine that [workflow-schema.md](workflow-schema.md) states in short: how an `include` is
-expanded, how the run reads the files of an included node, and how a loop group's body runs. The format is the
-schema's contract; the reasons are in [ADR 0032](../adr/0032-workflow-engine.md).
+expanded, how the run reads the files of an included node, how a loop group's body runs, and how a layer's nodes run
+together. The format is the schema's contract; the reasons are in [ADR 0032](../adr/0032-workflow-engine.md).
 
 ## Contract
 
@@ -48,6 +48,21 @@ schema's contract; the reasons are in [ADR 0032](../adr/0032-workflow-engine.md)
   `max_iterations` it fails `max_iterations`. A group is never retried. A completed group is reused whole on resume.
 - Without `fresh_context` (the default) a body agent resumes its own session of the previous iteration.
 - A group's body counts toward the 512-node cap of an expansion.
+
+### Concurrent layers
+
+- A layer's nodes run concurrently in threads; at most 4 attempts run at once across the run, nested group layers
+  included. Nodes record as they end, through one lock; the run's `reason` is the first failed node in declaration
+  order.
+- Planning splits a layer, first fit in declaration order: a node that reads the checkout (`mutates_checkout: false`,
+  or a group whose body holds one) never shares a run with one that may change it, and two agents resuming one session
+  never run together. Each kind skips, for good, the batches that can no longer take it, so splitting is near-linear.
+- A layer holding a `halt`, or a group whose body holds one, runs one node at a time and stops at the halt.
+- A read-only node's attempt reads `git status` of the hub and its repos before and after; a change fails it `config`
+  (never retried). A folder that is not a git checkout is not watched; the run's start record lists it
+  (`checkout_unwatched`).
+- Ctrl-C stops the run: no attempt, retry or group iteration starts after it, a retry's backoff wakes, and the
+  running children's process groups are killed.
 
 ## Invariants
 
