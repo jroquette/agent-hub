@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -54,20 +54,23 @@ describe("Composer (composer)", () => {
   it.each([
     ["running", true],
     ["idle", false],
-    ["waiting_permission", false],
+    ["waiting_permission", true],
     ["ended", false],
-  ] as const)("enables Stop only while running when the status is %s", async (status, enabled) => {
-    const { props } = open({ status });
-    const stop = screen.getByRole("button", { name: "Stop" });
+  ] as const)(
+    "enables stop while running or waiting when the status is %s",
+    async (status, enabled) => {
+      const { props } = open({ status });
+      const stop = screen.getByRole("button", { name: "Stop" });
 
-    if (enabled) {
-      expect(stop).toBeEnabled();
-      await userEvent.click(stop);
-      expect(props.onInterrupt).toHaveBeenCalledTimes(1);
-    } else {
-      expect(stop).toBeDisabled();
-    }
-  });
+      if (enabled) {
+        expect(stop).toBeEnabled();
+        await userEvent.click(stop);
+        expect(props.onInterrupt).toHaveBeenCalledTimes(1);
+      } else {
+        expect(stop).toBeDisabled();
+      }
+    },
+  );
 
   it("offers only the three web modes and posts a mode change", async () => {
     const { props } = open();
@@ -150,5 +153,41 @@ describe("Composer (composer)", () => {
     const { container } = open({ status: "running" });
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("Composer (stop)", () => {
+  it("interrupts once on Esc in an empty composer while the interrupt is in flight", async () => {
+    let done: (value?: unknown) => void = () => undefined;
+    const onInterrupt = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          done = resolve;
+        }),
+    );
+    const { box } = open({ status: "waiting_permission", onInterrupt });
+
+    await userEvent.type(box, "{Escape}{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      done();
+      await Promise.resolve();
+    });
+    await userEvent.type(box, "{Escape}");
+    expect(onInterrupt).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["the composer holds text", "running", "Keep going"],
+    ["no turn runs", "idle", ""],
+  ] as const)("leaves Esc alone when %s", async (_, status, text) => {
+    const { box, props } = open({ status });
+
+    await userEvent.type(box, `${text}{Escape}`);
+
+    expect(props.onInterrupt).not.toHaveBeenCalled();
+    expect(box).toHaveValue(text);
   });
 });

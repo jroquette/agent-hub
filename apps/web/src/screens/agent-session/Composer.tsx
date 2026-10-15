@@ -39,8 +39,9 @@ function problemText(error: unknown, what: string): string {
 }
 
 /**
- * The message box of a session (D10, AC-165.45): Enter sends, Shift+Enter starts a new line. Stop
- * interrupts and is enabled only while a turn runs. The mode and model selectors post settings.
+ * The message box of a session (D10, AC-165.45): Enter sends, Shift+Enter starts a new line. Stop,
+ * or Esc in the empty box, interrupts while a turn runs or waits on a permission (AC-234.21), once
+ * until that interrupt answers. The mode and model selectors post settings.
  */
 export function Composer({
   status,
@@ -58,6 +59,7 @@ export function Composer({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+  const stopping = useRef(false);
   const inputId = useId();
   const hintId = useId();
   const modeId = useId();
@@ -70,16 +72,26 @@ export function Composer({
   const size = bytesOf(text);
   const tooLong = size > maxBytes;
   const canSend = reason === null && !sending && !tooLong && text.trim() !== "";
+  const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
 
-  const run = (action: () => Promise<unknown> | undefined, what: string) => {
+  const run = (action: () => Promise<unknown> | undefined, what: string, done?: () => void) => {
     setError(null);
     void Promise.resolve()
       .then(action)
       .catch((cause: unknown) => {
         setError(problemText(cause, what));
-      });
+      })
+      .finally(done);
+  };
+
+  const stop = () => {
+    if (!canStop || stopping.current) return;
+    stopping.current = true;
+    run(onInterrupt, "stop the turn", () => {
+      stopping.current = false;
+    });
   };
 
   const send = () => {
@@ -130,7 +142,13 @@ export function Composer({
           setText(event.target.value);
         }}
         onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+          if (event.nativeEvent.isComposing) return;
+          // Esc stops only from an empty box (no menu exists yet): typed text keeps its Esc.
+          if (event.key === "Escape" && text === "" && canStop) {
+            event.preventDefault();
+            stop();
+          }
+          if (event.key !== "Enter" || event.shiftKey) return;
           event.preventDefault();
           send();
         }}
@@ -179,13 +197,7 @@ export function Composer({
             ? `Too long: ${String(Math.ceil(size / 1024))} KiB of ${String(Math.floor(maxBytes / 1024))} KiB`
             : "Enter to send, Shift+Enter for a new line"}
         </span>
-        <Button
-          icon="circle-stop"
-          disabled={status !== "running"}
-          onClick={() => {
-            run(onInterrupt, "stop the turn");
-          }}
-        >
+        <Button icon="circle-stop" disabled={!canStop} onClick={stop}>
           Stop
         </Button>
         <Button type="submit" variant="primary" icon="arrow-up" disabled={!canSend}>
