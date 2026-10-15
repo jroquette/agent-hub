@@ -17,6 +17,7 @@ from agent_hub.core.workflows.launch import (
     ControlWorkflowRun,
     LaunchSpec,
     RunConflictError,
+    RunGuard,
     RunInputError,
     StartRunRequest,
     StartWorkflowRun,
@@ -91,8 +92,9 @@ class Launcher:
         self.calls.append(("start", spec))
         self.live[spec.run_id] = spec.issue
 
-    def resume(self, hub_path: str, run_id: str) -> None:
+    def resume(self, hub_path: str, run_id: str, *, issue: str | None) -> None:
         self.calls.append(("resume", (hub_path, run_id)))
+        self.live[run_id] = issue
 
     def abandon(self, hub_path: str, run_id: str) -> None:
         self.calls.append(("abandon", (hub_path, run_id)))
@@ -107,7 +109,8 @@ class Launcher:
 
 def start(runs: Runs, launcher: Launcher, **body: Any) -> Any:
     ids = iter(["run-1", "run-2"])
-    use_case = StartWorkflowRun(Plans(), runs, launcher, mint=lambda: next(ids))  # type: ignore[arg-type]
+    guard = RunGuard(runs, launcher)  # type: ignore[arg-type]
+    use_case = StartWorkflowRun(Plans(), guard, mint=lambda: next(ids))
     return use_case(StartRunRequest.model_validate({"project": "demo", **body}))
 
 
@@ -118,7 +121,7 @@ def engine_run(**overrides: object) -> WorkflowRun:
 def test_launches_with_minted_id_and_issue_when_inputs_fit() -> None:
     launcher = Launcher()
 
-    accepted = start(Runs(), launcher, workflow="fix", inputs={"issue": "DEM-7"}, live=True)
+    accepted = start(Runs(), launcher, workflow="fix", inputs={"issue": "DEM-7"})
 
     assert accepted.run_id == "run-1"
     assert accepted.action == "start"
@@ -131,7 +134,6 @@ def test_launches_with_minted_id_and_issue_when_inputs_fit() -> None:
                 hub_path="/hubs/demo",
                 workflow="fix",
                 inputs={"issue": "DEM-7"},
-                live=True,
                 issue="DEM-7",
             ),
         )
@@ -219,7 +221,7 @@ def test_mints_ids_in_cli_pattern_when_none_given() -> None:
 
 
 def control(launcher: Launcher, *runs: WorkflowRun) -> ControlWorkflowRun:
-    return ControlWorkflowRun(Plans(), Runs(*runs), launcher)  # type: ignore[arg-type]
+    return ControlWorkflowRun(Plans(), RunGuard(Runs(*runs), launcher))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("action", ["resume", "abandon"])
@@ -279,3 +281,52 @@ def test_answers_not_found_when_run_or_its_hub_unknown() -> None:
         control(Launcher()).cancel("run-9")
     with pytest.raises(EntityNotFoundError, match="project"):
         control(Launcher(), engine_run(project="gone")).resume("run-9")
+
+
+def test_refuses_live_flag_when_start_sent_one() -> None:
+    with pytest.raises(ValidationError):
+        StartRunRequest.model_validate({"project": "demo", "workflow": "fix", "live": False})
+
+
+def test_launches_without_issue_when_input_is_not_tracker_key() -> None:
+    launcher = Launcher({"run-0": None})
+    runs = Runs()
+
+    start(runs, launcher, workflow="fix", inputs={"issue": "fix the login page"})
+
+    assert launcher.calls[0][1].issue is None
+    assert runs.filters == []
+
+
+def test_refuses_resume_when_other_run_of_issue_is_live() -> None:
+    launcher = Launcher({"run-2": "DEM-7"})
+    guard = RunGuard(Runs(engine_run(status="failed")), launcher)  # type: ignore[arg-type]
+
+    with pytest.raises(RunConflictError) as caught:
+        ControlWorkflowRun(Plans(), guard).resume("run-9")  # type: ignore[arg-type]
+
+    assert (caught.value.code, caught.value.run_id) == ("live_run", "run-2")
+    assert launcher.calls == []
+
+
+def test_refuses_start_when_resumed_run_of_issue_is_live() -> None:
+    runs = Runs(engine_run(status="failed"))
+    launcher = Launcher()
+    guard = RunGuard(runs, launcher)  # type: ignore[arg-type]
+    ControlWorkflowRun(Plans(), guard).resume("run-9")  # type: ignore[arg-type]
+
+    with pytest.raises(RunConflictError) as caught:
+        StartWorkflowRun(Plans(), guard)(  # type: ignore[arg-type]
+            StartRunRequest(project="demo", workflow="fix", inputs={"issue": "DEM-7"})
+        )
+
+    assert (caught.value.code, caught.value.run_id) == ("live_run", "run-9")
+    assert launcher.live == {"run-9": "DEM-7"}
+
+
+def test_resumes_when_only_the_run_itself_folds_running() -> None:
+    launcher = Launcher()
+
+    control(launcher, engine_run()).resume("run-9")
+
+    assert launcher.calls == [("resume", ("/hubs/demo", "run-9"))]

@@ -4,19 +4,29 @@ Each attempt is a ``step.start`` and a ``step.end``; a skipped node emits only `
 Source ``executor``, session ``run:<run>``, ``workflow`` the name and ``step`` the node id as
 recorded; ``source_id`` is ``<run>:<step>:<attempt>:<type>``, and ``<run>:run:<n>:end`` for
 the run's ``n``-th end (0 first, one more per resume). Outputs, details and rendered text stay
-in the run's record, never here (ADR 0019): ``reason`` holds only a node id; ``issue`` (the run's
-``issue`` input, when given) rides on every event, so the read model can tell an issue's live
-runs apart. A retry adds no
-event: its failed attempt already ended with its kind. The composition root passes
+in the run's record, never here (ADR 0019): ``reason`` holds only a node id. ``issue`` (the
+run's ``issue`` input, when it is a tracker key such as ``DEM-7``) rides on every event, so the
+read model can tell an issue's live runs apart. A retry adds no event: its failed attempt
+already ended with its kind. The composition root passes
 ``events`` to ``IngestEvents``, which redacts and trims them like any other.
 """
 
+import re
 from datetime import datetime
+from typing import Final
 
 from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.failures import RetryRecord
 from agent_hub.core.workflows.ports import RunEnd, StepEnd, StepStart
+
+# A tracker issue key (``DEM-7``): the only ``issue`` input a run's events carry.
+ISSUE_KEY: Final = re.compile(r"^[A-Z][A-Z0-9]{0,9}-[0-9]{1,9}$")
+
+
+def issue_key(value: object) -> str | None:
+    """``value`` when it is a tracker issue key, else None."""
+    return value if isinstance(value, str) and ISSUE_KEY.fullmatch(value) else None
 
 
 class WorkflowEvents:
@@ -36,7 +46,7 @@ class WorkflowEvents:
     ) -> None:
         self.project, self.run_id, self.workflow, self.repo = project, run_id, workflow, repo
         self.tagged: dict[str, JsonValue] = {"run": run_id}
-        if issue is not None:
+        if issue_key(issue) is not None:
             self.tagged["issue"] = issue
         self.pinned: dict[str, JsonValue] = {"revision": revision, "content_hash": content_hash}
         self.end_index = end_index
