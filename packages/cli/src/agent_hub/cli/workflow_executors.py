@@ -14,8 +14,10 @@ A ``shell`` node runs its rendered argv, never through a shell; a ``script`` nod
 ``sh <file>`` or ``uv run <file>`` from the pack's ``scripts/``, its ``args`` after the file. The
 output is stdout, at most ``MAX_OUTPUT_BYTES``: the child writes to a temporary file and only
 its last bytes are read back, so the memory is bounded, not the disk; past the cap the node fails
-once the child ends (``run_child`` has no early stop). The cwd is the node's ``cwd`` (relative
-to the hub), else the hub; its real path must stay in the hub or in one of its repos.
+once the child ends (``run_child`` has no early stop). A ``stdin``, at most as large, is written
+to the child from a temporary file (NUL and any length are safe there). The cwd is the node's
+``cwd`` (relative to the hub), else the hub; its real path must stay in the hub or in one of its
+repos.
 
 Every child runs in a session of its own, so a timeout or Ctrl-C kills its whole group, and the
 group is killed again once the child ends: nothing it left in the background outlives the
@@ -105,7 +107,14 @@ class WorkflowExecutors:
         if isinstance(node, AgentNode | LoopNode):
             return self._agent(call, node)
         argv, env = self._command(call)
-        result = self._spawn(argv, env=env, cwd=self._cwd(call.cwd), timeout=_timeout(node))
+        stdin = None
+        if call.stdin is not None:
+            stdin = call.stdin.encode(errors="surrogatepass")
+            if len(stdin) > MAX_OUTPUT_BYTES:
+                raise NodeFailedError("config", f"stdin is larger than {MAX_OUTPUT_BYTES} bytes")
+        result = self._spawn(
+            argv, env=env, cwd=self._cwd(call.cwd), timeout=_timeout(node), stdin=stdin
+        )
         if (kind := kind_for_exit(result.returncode)) is not None:
             raise NodeFailedError(kind, _detail(argv, result))
         return NodeReply(_bounded(result.stdout))
@@ -222,6 +231,7 @@ class WorkflowExecutors:
         cwd: Path,
         timeout: float,
         output_limit: int = MAX_OUTPUT_BYTES + 1,
+        stdin: bytes | None = None,
     ) -> ChildResult:
         groups: list[int] = []
         try:
@@ -233,12 +243,16 @@ class WorkflowExecutors:
                 own_session=True,
                 output_limit=output_limit,
                 on_start=groups.append,
+                **({} if stdin is None else {"stdin": stdin}),
             )
         except ChildTimedOutError as error:
             raise NodeFailedError("timeout", str(error)) from None
         except OSError as error:
             detail = f"{argv[0]} could not start: {error.strerror or type(error).__name__}"
             raise NodeFailedError("config", detail) from None
+        except ValueError as error:
+            # An argument or variable the OS cannot take (a NUL byte, for one).
+            raise NodeFailedError("config", f"cannot start {argv[0]}: {error}") from None
         finally:
             for group in groups:
                 # The leader has ended; what it left running ends with it.
