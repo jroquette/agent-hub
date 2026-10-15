@@ -1,6 +1,12 @@
 # Live sessions
 
-**Phase:** P2 (Pause and Cancel P4) · **Route:** `/live?group=repo|run|agent|flat&scope=` · **Answers:** "What are the agents doing right now, and does any of them need me?"
+> **Retired ([ADR 0033](../../../adr/0033-sessions-and-chat-interaction-model.md)), see
+> [14-sessions-list.md](14-sessions-list.md).** Live sessions is no longer a screen: `/live` redirects (replace) to
+> `/sessions?view=grid`, `group=repo|run|workflow` becomes `within=`, and the tiles, troubled edge, sparkline, digest,
+> offline stamp and empty state below live on in the Sessions grid view, grouped in status sections. This file is kept
+> as the record of the tile anatomy and wording that grid reuses.
+
+**Phase:** P2 (Pause and Cancel P4) · **Route:** `/live?group=repo|run|workflow|flat&scope=` · **Answers:** "What are the agents doing right now, and does any of them need me?"
 
 ## Purpose and primary user
 
@@ -75,13 +81,13 @@ Order on the page (fixed, top to bottom):
 
 ### Grouping toggle
 
-`SegmentedControl` "Project › repo | Run | Agent | Flat" (`v` cycles), in `?group=`. Default project › repo; with scope set to one project the project level is dropped ("agent-hub" header becomes repo headers only).
+`SegmentedControl` "Project › repo | Run | Workflow | Flat" (`v` cycles), in `?group=`. Default project › repo; with scope set to one project the project level is dropped ("agent-hub" header becomes repo headers only).
 
 | Grouping | Group header | Notes |
 |---|---|---|
 | Project › repo (default) | "agent-hub › agent-hub · 2 live" | Repos with no live session are not listed |
 | Run | "Run AGH-112 Cap the tracker team list · implementing · $2.14 of $10.00" | Sessions not in a run under "Not in a run"; the run header carries the run budget bar once instead of per tile |
-| Agent | "hub-workflow:researcher · 1" | Subagents appear as their own tiles only here (role is the question) |
+| Workflow | the session label's workflow name | Sessions without one under "No workflow", last (the code groups by workflow, not agent) |
 | Flat | none | Sorted as rule 2 above |
 
 ### Subagents
