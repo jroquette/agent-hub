@@ -15,7 +15,9 @@ on its snapshot, reusing what completed; ``--abandon RUN`` ends it ``cancelled``
 ``done`` exits 0, any other end 1; a bad input exits 2. It makes no tracker write, except for
 the workflow named ``issue-to-pr``, whose parent is ``hub run``'s (``workflow_delivery``): the
 issue read before, ``hub run``'s records (and so its events) during, ADR 0030's writes after,
-and ``hub run``'s exit codes; there ``issue_text`` comes from the tracker, never from ``--input``.
+and ``hub run``'s exit codes; there ``issue_text`` comes from the tracker, never from ``--input``,
+the workflow must declare ``issue``, ``repo`` and ``issue_text``, and ``--resume`` or
+``--abandon`` of such a run exits 2.
 ``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
 engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
 warnings indented, then a count; a failed fixture exits 1. ``--stubs-init`` writes NAME's
@@ -33,18 +35,27 @@ from pathlib import Path
 from typing import Annotated, Final
 
 import typer
+from typer._click.exceptions import ClickException
 
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.command_exits import FAILURE, fail
+from agent_hub.cli.errors import RunLogError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, shown_command, without
 from agent_hub.cli.run_log import new_run_id, now
-from agent_hub.cli.workflow_delivery import ISSUE_TEXT, ISSUE_TO_PR, IssueToPr, begin_delivery
+from agent_hub.cli.workflow_delivery import (
+    DELIVERY_INPUTS,
+    ISSUE_TEXT,
+    ISSUE_TO_PR,
+    IssueToPr,
+    begin_delivery,
+)
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_runs import (
     DOCUMENT,
+    RECORDS,
     RUN_ID_PATTERN,
     SNAPSHOT,
     EventSink,
@@ -168,6 +179,7 @@ def run(
             raise typer.BadParameter(hint, param_hint=option)
     root = hub_root_or_exit(os.environ, command=COMMAND)
     hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
+    _refuse_delivery_resume(hub, resume or abandon)
     try:
         if abandon is not None:
             _abandon(hub, abandon)
@@ -178,6 +190,23 @@ def run(
             raise typer.Exit(started)
     except (WorkflowRunError, WorkflowEngineError) as error:
         fail(f"{_PREFIX}: {error}")
+
+
+def _refuse_delivery_resume(hub: Path, run_id: str | None) -> None:
+    """Exit 2 when ``run_id`` is an issue-to-pr run: its tracker side (the issue read, the
+    records, ADR 0030's writes) belongs to one process, so a resume or an abandon could not
+    report it. Only the start record is read; nothing is written or locked."""
+    if run_id is None:
+        return
+    folder = run_folder(hub, run_id)
+    try:
+        with (folder / RECORDS).open("rb") as file:
+            first = json.loads(file.readline() or b"{}")
+    except OSError, ValueError:
+        return
+    if isinstance(first, dict) and first.get("workflow") == ISSUE_TO_PR:
+        message = f"resume and abandon are not supported for {ISSUE_TO_PR}; start a new run"
+        raise typer.BadParameter(message, param_hint="--resume/--abandon")
 
 
 def _start(
@@ -197,6 +226,12 @@ def _start(
     plan, found = catalog.plans[0], source.found[name]
     values = _given_values(plan, given)
     delivery = name == ISSUE_TO_PR
+    if delivery and not set(plan.document.inputs) >= DELIVERY_INPUTS:
+        # A hub's own issue-to-pr overrides the built-in: the parent needs these to run it.
+        raise typer.BadParameter(
+            f"{ISSUE_TO_PR} must declare the inputs issue, repo and {ISSUE_TEXT}",
+            param_hint="NAME",
+        )
     if delivery and ISSUE_TEXT in values:
         raise typer.BadParameter(f"{ISSUE_TEXT} is read from the tracker", param_hint="--input")
     # Checked before the tracker is read; the parent fills issue_text from the issue.
@@ -205,18 +240,19 @@ def _start(
         _print_plan(plan)
         return 0
     run_id = run_id or new_run_id()
-    parent = None
-    if delivery:
-        parent = begin_delivery(context, hub, plan=plan, inputs=inputs, run_id=run_id)
-        inputs[ISSUE_TEXT] = parent.issue_text
     folder = run_folder(hub, run_id)
     make_run(folder)
     with run_lock(folder):
+        parent = None
         try:
             pack, content_hash = snapshot_run(
                 folder, document=dict(found.document), plan=plan, pack_root=found.pack_root
             )
-        except WorkflowRunError:
+            if delivery:
+                # After the snapshot, so the picked record names a run that can start.
+                parent = begin_delivery(context, hub, plan=plan, inputs=inputs, run_id=run_id)
+                inputs[ISSUE_TEXT] = parent.issue_text
+        except WorkflowRunError, typer.Exit, ClickException:
             # Nothing ran: a half-made run is not left to resume.
             shutil.rmtree(folder, ignore_errors=True)
             raise
@@ -351,7 +387,14 @@ def _execute(
     )
     recorder = recorded if parent is None else parent.recorder(recorded)
     ports = EnginePorts(runner, recorder, SystemClock(), JsonSchemaOutputs(), _JITTER.random)
-    report = run_workflow(plan, inputs, ports, prior=prior)
+    try:
+        report = run_workflow(plan, inputs, ports, prior=prior)
+    except RunLogError as error:
+        if parent is None:
+            raise
+        # hub run's record could not be written: the run stops there, as hub run does.
+        append_record(folder, {"event": "end", "status": "failed", "outcome": None})
+        return parent.live.stop_on_log_error(error)
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
     outcome = "" if report.outcome is None else f", outcome {report.outcome}"
     typer.echo(f"run {folder.name}: {report.status}{outcome}")
