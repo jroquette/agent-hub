@@ -378,7 +378,9 @@ def _print_plan(plan: WorkflowPlan) -> None:
             if isinstance(node, ScriptNode):
                 argv = (node.runtime, f"scripts/{node.script}", *node.args)
             line = f"would run: {node_id} ({node.type})"
-            typer.echo(f"{line}: {shown_command(argv)}" if argv else line)
+            line = f"{line}: {shown_command(argv)}" if argv else line
+            stdin = node.stdin if isinstance(node, ShellNode | ScriptNode) else None
+            typer.echo(line if stdin is None else f"{line}   stdin: {shown_text(stdin)}")
 
 
 def _json(data: bytes) -> object:
