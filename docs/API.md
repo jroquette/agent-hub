@@ -344,8 +344,8 @@ no status: it comes from those events.
   `action`) and `Location: /api/v1/workflow-runs/{run_id}`. A web start is always live (`--live`); a dry run belongs
   to the CLI (`hub workflow run NAME` without `--live`), and a `live` member is refused like any unknown one (422).
   The run id is minted first (8 hex digits, the CLI's pattern). `inputs` (at most 64, names `^[a-z][a-z0-9_]*$`,
-  strings up to 16,384 characters without NUL, finite numbers, booleans) must fit the workflow's `inputs` (422
-  `workflow-run-invalid-inputs`). `issue-to-pr` is refused (409 `workflow-run-tracker-workflow`): its tracker writes
+  strings up to 16,384 characters without NUL, finite numbers, booleans, at most 262,144 bytes in all as
+  `name=value` argv text) must fit the workflow's `inputs` (422 `workflow-run-invalid-inputs`). `issue-to-pr` is refused (409 `workflow-run-tracker-workflow`): its tracker writes
   need `LINEAR_API_KEY`, which no child gets; use `hub run`.
 - **One live run per issue.** A run's issue is its `issue` input when the workflow declares one and the value is a
   tracker key (`^[A-Z][A-Z0-9]{0,9}-[0-9]{1,9}$`); only then do its events carry `issue`. A run folded `running`, or
@@ -368,8 +368,9 @@ no status: it comes from those events.
 A started child runs in its own session with stdin empty and both streams appended to
 `<hub>/.agent-runs/web/<run>.log`; its pid file `<hub>/.agent-runs/web/<run>.pid` (pid, start time, issue) is created
 exclusively, owner-only, never through a link, and removed when the child ends. A pid file whose process is gone or
-started at another time is removed when the folder is next read (at most 64 files); one whose start time cannot be
-read is kept, counted live and never signalled. A `.agent-runs/web` that is a link is refused (502). `run_id` in a path
+started at another time is removed when the folder is next read (at most 64 files, start times read outside the
+launcher's lock within a 2 s budget); one whose start time cannot be read in time is kept, counted live and never
+signalled. A `.agent-runs/web` that is a link is refused (502). `run_id` in a path
 must match `^[a-z0-9][a-z0-9-]{0,31}$` (else 400). All four are strict writes ([Local security](#local-security)) and
 need the launch cookie, like the agent-session writes; with `AGENT_HUB_IN_CONTAINER=1` they answer 404
 `urn:agent-hub:problem:run-control-off`.
