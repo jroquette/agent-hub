@@ -69,18 +69,24 @@ def run_doctor(reader: HubFileReader, hub_path: str, *, running_version: str) ->
             local=local,
         )
     looked_at = {*snapshot.hub.entries, *snapshot.hub.listed}
-    folders = {HUB_WORKFLOWS_FOLDER, *_workflow_folders(looked_at)}
+    folders = {HUB_WORKFLOWS_FOLDER, *snapshot.workflow_folders, *_workflow_folders(looked_at)}
     watched = tuple(sorted({HUB_JSON, HUB_LOCK_PATH, LOCAL_FILE, *looked_at, *folders}))
     return DoctorRun(findings=run_rules(selection, snapshot), watched=watched)
 
 
+# ``workflows``, ``workflows/<pack>`` and a pack's own folders (``fixtures``, ``prompts``).
+_WATCHED_DEPTH: Final = 3
+
+
 def _workflow_folders(paths: Iterable[str]) -> set[str]:
-    """The folders under ``workflows/`` that hold ``paths``: ``workflows.valid`` reads them all."""
+    """The folders under ``workflows/`` that hold ``paths``, at most three levels deep:
+    ``workflows.valid`` reads them all."""
     found: set[str] = set()
     for path in paths:
         parts = path.split("/")
         if parts[0] == HUB_WORKFLOWS_FOLDER:
-            found.update("/".join(parts[:end]) for end in range(1, len(parts)))
+            top = min(len(parts), _WATCHED_DEPTH + 1)
+            found.update("/".join(parts[:end]) for end in range(1, top))
     return found
 
 

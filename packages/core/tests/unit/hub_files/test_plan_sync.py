@@ -1330,3 +1330,20 @@ def test_seeds_whole_pack_when_folder_and_lock_entries_absent(
     assert plan.changes == tuple(SyncChange(path=p, verb=Verb.CREATED) for p in PACK_FILES)
     assert written_paths(plan) == [*PACK_FILES, HUB_LOCK_PATH]
     assert plan.folders == PACK_FOLDERS
+
+
+def test_reports_conflict_when_held_pack_path_is_a_link(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    # A held pack skips only absent files: a present path keeps the seeded type rule.
+    rendered = with_pack(a_rendered_hub, *PACK_FILES)
+    lock = a_lock(rendered, config, files={PACK_FILES[1]: None})
+    link = LinkEntry(target="../elsewhere.yaml", outside=False)
+    tree = (
+        synced_tree(rendered) | dict.fromkeys(PACK_FOLDERS, FolderEntry()) | {PACK_FILES[1]: link}
+    )
+
+    result = run(rendered, lock, tree)
+
+    assert isinstance(result, SyncConflicts)
+    assert [problem.path for problem in result.problems] == [PACK_FILES[1]]

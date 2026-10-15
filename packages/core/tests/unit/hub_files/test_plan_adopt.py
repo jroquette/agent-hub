@@ -900,3 +900,18 @@ def test_creates_nothing_in_pack_when_hub_holds_its_folder(a_rendered_hub: HubFa
     assert PACK_FILES[1] not in written_paths(plan)
     assert PACK_FILES[1] not in changed_paths(plan)
     assert SyncChange(path=PACK_FILES[0], verb=Verb.RECORDED) in plan.changes
+
+
+def test_reports_conflict_when_held_pack_path_is_a_link(a_rendered_hub: HubFactory) -> None:
+    rendered = a_rendered_hub(files=(*a_rendered_hub().files, *map(seeded_file, PACK_FILES)))
+    tree = without(hand_made_tree(rendered), *PACK_FILES) | {
+        "workflows": FolderEntry(),
+        PACK: FolderEntry(),
+        f"{PACK}/mine.yaml": FileEntry(executable=False, content=b"ours\n"),
+        PACK_FILES[0]: LinkEntry(target="../elsewhere.yaml", outside=False),
+    }
+
+    plan = adopted(rendered, tree)
+
+    assert [problem.path for problem in plan.conflicts] == [PACK_FILES[0]]
+    assert PACK_FILES[0] not in written_paths(plan)
