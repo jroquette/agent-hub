@@ -7173,7 +7173,7 @@
       },
       "StartRunRequest": {
         "additionalProperties": false,
-        "description": "The body of ``POST /workflow-runs``: a project's workflow, its inputs, dry or live.",
+        "description": "The body of ``POST /workflow-runs``: a project's workflow and its inputs (always live).",
         "properties": {
           "inputs": {
             "additionalProperties": {
@@ -7185,11 +7185,6 @@
             },
             "title": "Inputs",
             "type": "object"
-          },
-          "live": {
-            "default": false,
-            "title": "Live",
-            "type": "boolean"
           },
           "project": {
             "maxLength": 200,

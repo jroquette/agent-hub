@@ -3772,18 +3772,13 @@ export interface components {
     };
     /**
      * StartRunRequest
-     * @description The body of ``POST /workflow-runs``: a project's workflow, its inputs, dry or live.
+     * @description The body of ``POST /workflow-runs``: a project's workflow and its inputs (always live).
      */
     StartRunRequest: {
       /** Inputs */
       inputs?: {
         [key: string]: components["schemas"]["InputValue"];
       };
-      /**
-       * Live
-       * @default false
-       */
-      live: boolean;
       /** Project */
       project: string;
       /** Workflow */
