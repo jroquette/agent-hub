@@ -1,0 +1,36 @@
+version: 1
+name: conditions
+description: Routes an issue by a classifier's output and an input, with when conditions.
+revision: 1
+inputs:
+  mode: {default: normal}
+nodes:
+  - id: classify
+    type: agent
+    prompt: Classify the issue.
+    output_format:
+      type: object
+      properties:
+        kind: {type: string, enum: [bug, feature, question]}
+        score: {type: number}
+      required: [kind, score]
+  - id: fix-bug
+    type: agent
+    prompt: Fix the bug.
+    depends_on: [classify]
+    when: "$classify.output.kind == 'bug'"
+  - id: build-feature
+    type: agent
+    prompt: Build the feature.
+    depends_on: [classify]
+    when: "$classify.output.kind == 'feature' && $classify.output.score >= 3"
+  - id: careful-review
+    type: agent
+    prompt: Review carefully.
+    depends_on: [classify]
+    when: "$INPUTS.mode == 'careful' || $classify.output.score > 8"
+  - id: summary
+    type: agent
+    prompt: Summarise the work.
+    depends_on: [fix-bug, build-feature]
+    trigger_rule: none_failed_min_one_success

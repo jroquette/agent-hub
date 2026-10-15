@@ -7,18 +7,39 @@ built-ins (a hub workflow overrides a built-in of its name), through the strict 
 in <layers> layers)``. Each problem is one stderr line, ``<file>[:<line>]: <key>: <message>`` (the
 key is ``$`` for a file that does not read), and any problem exits 1. A folder that is not a hub
 exits 2. Nothing is written and no network is used.
+
+``test [NAME]`` dry-runs each fixture of the discovered packs (or NAME's) in memory through the
+engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line each, its problems and
+warnings indented, then a count; a failed fixture exits 1. ``--stubs-init`` writes NAME's
+skeleton fixture to ``<pack>/fixtures/<NAME>.yaml``, never over an existing file nor through a
+linked folder, and notes when the skeleton's own dry run did not end ``done``.
 """
 
 import os
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from agent_hub.cli.command_exits import fail
+from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.hub_root import hub_root_or_exit
-from agent_hub.cli.init_report import shown_path
+from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.core.workflows.catalog import LoadProblem, WorkflowCatalog, check_workflows
-from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS, HUB_WORKFLOWS
+from agent_hub.core.workflows.document import WorkflowLoadError, parse_workflow
+from agent_hub.core.workflows.engine import WorkflowEngineError
+from agent_hub.core.workflows.plan import plan_workflow
+from agent_hub.generator.workflow_discovery import (
+    BUILTIN_WORKFLOWS,
+    HUB_WORKFLOWS,
+    WorkflowDiscovery,
+    discover_workflows,
+)
+from agent_hub.generator.workflow_fixtures import (
+    FIXTURE_SUFFIX,
+    FIXTURES,
+    run_fixtures,
+    skeleton_yaml,
+)
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 
 workflow_app = typer.Typer(name="workflow", no_args_is_help=True, help="List and check workflows.")
@@ -65,3 +86,84 @@ def _exit_on_problems(catalog: WorkflowCatalog) -> None:
 def _problem_line(problem: LoadProblem) -> str:
     where = shown_path(problem.file) + ("" if problem.line is None else f":{problem.line}")
     return f"{where}: {problem.key}: {problem.message}"
+
+
+# ``hub workflow test`` (AGH-222): the packs' fixtures, dry-run in memory through the engine.
+
+
+@workflow_app.command("test")
+def test_workflows(
+    name: Annotated[str | None, typer.Argument(help="Run only this workflow's fixtures.")] = None,
+    *,
+    stubs_init: Annotated[
+        bool, typer.Option("--stubs-init", help="Write a skeleton fixture for NAME.")
+    ] = False,
+) -> None:
+    """Run each pack's fixtures/*.yaml in memory, no child or event; exit 1 on a failure."""
+    root = hub_root_or_exit(os.environ, command="workflow")
+    discovery = discover_workflows(root, builtin_root=BUILTIN_WORKFLOWS)
+    if stubs_init:
+        _write_skeleton(root, discovery, name)
+        return
+    runs = run_fixtures(discovery, only=name)
+    if name is not None and not runs:
+        fail(f"no fixture for the workflow {name!r} in its pack's {FIXTURES}/")
+    for fixture_run in runs:
+        where = shown_text(_shown_fixture(root, fixture_run.path))
+        typer.echo(f"{where}: {'FAILED' if fixture_run.problems else 'ok'}")
+        for problem in fixture_run.problems:
+            typer.echo(f"  {shown_text(problem)}")
+        for warning in fixture_run.warnings:
+            typer.echo(f"  warning: {shown_text(warning)}")
+    failed = sum(1 for fixture_run in runs if fixture_run.problems)
+    noun = "fixture" if len(runs) == 1 else "fixtures"
+    typer.echo(f"{len(runs)} {noun}: {len(runs) - failed} passed, {failed} failed")
+    if failed:
+        raise typer.Exit(FAILURE)
+
+
+def _write_skeleton(root: Path, discovery: WorkflowDiscovery, name: str | None) -> None:
+    if name is None:
+        fail("--stubs-init needs a workflow name")
+    found = next((w for w in discovery.workflows if w.name == name), None)
+    if found is None:
+        fail(f"no workflow named {shown_path(name)} in {HUB_WORKFLOWS}/ or the built-ins")
+    if found.origin != "hub":
+        fail(f"{name!r} is a built-in workflow; its fixtures ship with it")
+    try:
+        skeleton = skeleton_yaml(plan_workflow(parse_workflow(found.document)))
+    except (WorkflowLoadError, WorkflowEngineError) as error:
+        fail(f"{_shown_fixture(root, found.path)}: {error}")
+    target = _skeleton_target(root, found.pack_root, name)
+    try:
+        with target.open("x", encoding="utf-8") as file:
+            file.write(skeleton.text)
+    except FileExistsError:
+        fail(f"{_shown_fixture(root, target)} already exists; it is not overwritten")
+    except OSError as error:
+        fail(f"{_shown_fixture(root, target)}: {error.strerror or error}")
+    typer.echo(f"wrote {_shown_fixture(root, target)}")
+    if skeleton.status != "done":
+        typer.echo(
+            f"note: its own dry run ended {skeleton.status}; fill in the stubs the placeholders"
+            " could not satisfy"
+        )
+
+
+def _skeleton_target(root: Path, pack_root: Path, name: str) -> Path:
+    """``<pack>/fixtures/<name>.yaml``, its folder made and checked: not a link, inside the pack."""
+    folder = pack_root / FIXTURES
+    if folder.is_symlink():
+        fail(f"{_shown_fixture(root, folder)} is a link; nothing is written")
+    try:
+        folder.mkdir(exist_ok=True)
+        inside = folder.resolve(strict=True).is_relative_to(pack_root.resolve(strict=True))
+    except OSError as error:
+        fail(f"{_shown_fixture(root, folder)}: {error.strerror or error}")
+    if not inside or not folder.is_dir():
+        fail(f"{_shown_fixture(root, folder)} is not a folder inside its pack; nothing is written")
+    return folder / f"{name}{FIXTURE_SUFFIX}"
+
+
+def _shown_fixture(root: Path, path: Path) -> str:
+    return DiscoveredWorkflowSource(root, builtin_root=BUILTIN_WORKFLOWS)._shown(path)

@@ -1,0 +1,11 @@
+# test fails: all_success and none_failed_min_one_success skip (upstream_failed, carried down to
+# after-all-green); one_success still runs; the all_done report always runs.
+workflow: joins
+stubs:
+  lint: {text: ok}
+  test: {fail: exec_failed}
+  any-green: {text: ok}
+  report: {output: {delivery: failed}}
+expect: {status: failed, outcome: failed}
+failed: [test]
+reached: [lint, test, any-green, report]
