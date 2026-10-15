@@ -79,6 +79,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   record and its `step.end` event now carry the failure kind (`failure_kind`, e.g. `exec_failed`, `timeout`). The dry
   run is unchanged. The built-in `issue-to-pr` gains the input `start` (`verify` skips the session), runs its `hub step`
   nodes in process as `hub run` does, and keeps the gate output's last line break (AGH-224).
+- The chat composer grows with its text up to 40% of the window, keeps an unsent draft per session in the browser
+  (restored after a reload), has focus on open unless a permission waits, ignores Enter while an IME composes (and on
+  touch screens Enter is a new line); a message shows "Sending…" at once, and "Queued: Claude reads it after this
+  turn" when sent during a running turn (AGH-239).
 
 ### Fixed
 
