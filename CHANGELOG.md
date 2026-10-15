@@ -13,6 +13,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub workflow list` and `hub workflow validate [NAME]` load and plan the hub's `workflows/<pack>/` files (YAML through
+  the strict loader, or JSON), then the built-ins, against the graph workflow format (ADR 0032): unknown keys, unknown
+  or non-upstream node references, argv references that are not a whole element, cycles and a bad
+  `returns`/`outcome_field` are reported as `<file>:<line>: <key>: <message>`, exit 1 (AGH-218).
+- `hub workflow test [NAME]` dry-runs each pack's `fixtures/*.yaml` through the workflow engine with stubbed node
+  results, in memory (no child, network, tracker write or event), and checks `expect` (status, outcome) and the exact
+  `failed` and `reached` sets; a reached node without a stub fails its fixture, and any failure exits 1.
+  `--stubs-init` writes a passing skeleton fixture for NAME without overwriting a file (AGH-222).
 - `GET /api/v1/sessions` and `GET /api/v1/sessions/{session_id}` carry the Live tile fields (`waiting_reason`,
   `last_action`, `last_tool`, `needs_you_problem`, `failing_notice`, and `sparkline_60s` until the session ends), derived
   by the same code as the Live tiles, so a sessions list can show what Live shows (AGH-236).

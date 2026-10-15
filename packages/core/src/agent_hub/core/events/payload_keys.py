@@ -52,6 +52,10 @@ _GATE: Final = frozenset(
 _EXECUTOR: Final = frozenset(
     {"issue", "repo", "status", "stage", "reason", "caps", "pr_url", "cost_usd", "mode", "outcome"}
 )
+# The workflow engine's run pins its document (ADR 0032): on step.start and run.end.
+_PINNED: Final = frozenset({"revision", "content_hash"})
+# How an engine step ended: its failure kind or skip cause, on step.end.
+_STEP_ENDING: Final = frozenset({"failure_kind", "skip_cause"})
 _LEARNING: Final = frozenset(
     {
         "text",
@@ -120,9 +124,9 @@ _BY_TYPE: Final[dict[EventType, frozenset[str]]] = {
     EventType.LEARNING_PROPOSED: _LEARNING,
     EventType.LEARNING_ACCEPTED: _LEARNING,
     EventType.LEARNING_REJECTED: _LEARNING,
-    EventType.STEP_START: _EXECUTOR,
-    EventType.STEP_END: _EXECUTOR,
-    EventType.RUN_END: _EXECUTOR,
+    EventType.STEP_START: _EXECUTOR | _PINNED,
+    EventType.STEP_END: _EXECUTOR | _STEP_ENDING,
+    EventType.RUN_END: _EXECUTOR | _PINNED,
     # A stored summary is short lines written for the reader (D17).
     EventType.SESSION_SUMMARY: frozenset({"text", "lines"}),
 }
@@ -133,11 +137,15 @@ PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = MappingProxyType(
 
 # The (event type, key) pairs this release added to the allow-list (ADR 0023): ``git_branch`` on
 # every type but ``session.start`` (which stored it before), ``skill`` and ``to`` on
-# ``tool.call``, ``error_message`` on ``tool.result``. An event stored before them that is
-# re-ingested with them is the same event: equal once its type's added keys are removed.
+# ``tool.call``, ``error_message`` on ``tool.result``, and the workflow engine's keys (ADR 0032).
+# An event stored before them that is re-ingested with them is the same event: equal once its
+# type's added keys are removed.
 _ADDED_BY_TYPE_V2: Final[dict[EventType, frozenset[str]]] = {
     EventType.TOOL_CALL: frozenset({"skill", "to"}),
     EventType.TOOL_RESULT: frozenset({"error_message"}),
+    EventType.STEP_START: _PINNED,
+    EventType.STEP_END: _STEP_ENDING,
+    EventType.RUN_END: _PINNED,
 }
 ADDED_KEYS_V2: Final[Mapping[EventType, frozenset[str]]] = MappingProxyType(
     {
