@@ -42,6 +42,23 @@ header.
   editing with nothing changed drops the draft. The accept dialog adds "Writes the note as you edited it, in the
   same commit", and the accept sends `note_body`; a successful accept drops the draft. Title and labels are not
   editable (the design's title and label editing is not built).
+- **Review with Claude.** A **Review** section on a proposal that can be decided and has its note: "Review with
+  Claude" starts a hub-web session in the project's hub folder (the reason shows beside the disabled button when
+  this machine cannot drive Claude or the hub has no folder). Its first message holds the note to `/learn`'s bar
+  (non-obvious, verified, not a duplicate, well written), asks for a brain target among the learning's
+  `target_choices`, and lets it write only `review.json` (verdict `ready` | `needs_changes` | `not_for_brain`, a
+  summary, named checks pass / fail / could not tell, a target) and, when the note should change, `note.md` (the
+  revised body) in a draft folder; it never edits, accepts, commits or pushes. The section follows the session
+  ("Claude is checking…", waiting on a permission, ended without a verdict, a verdict it cannot read) and shows the
+  verdict as a `StatusBadge` ("Ready for the brain", "Needs changes", "Not for the brain") marked "Claude's
+  recommendation · you decide", each check with an icon and a word, "Use Claude's revision" (it becomes the edit
+  draft) and "Use target brain/{target}" (it fills Target), "Open the conversation" and "Review again". The link
+  between a learning and its review session is kept in this browser.
+- **Discuss.** The learning and a Brain note register a Discuss target with one-click starters (the Discuss panel's
+  "Start with" group): a proposal offers "Is this worth keeping?", "Improve the note", "Duplicate or overlap?" and
+  opens Discuss on arrival; an accepted note offers "Is this still true?", "Improve the note", "Duplicate or
+  overlap?". The brief names where the note is, the `/learn` criteria and, for a missing note, that its title is
+  all there is.
 
 ## Acceptance criteria
 
@@ -61,3 +78,7 @@ header.
 | AC-272.12 | Given a learning that cannot be decided, when it is open, then no edit is offered | `LearningDetail.test.tsx` "offers no edit when the learning cannot be decided" |
 | AC-272.13 | Given a note only in the hub checkout, when it is accepted, then the PR adds it from the checkout, which stays untouched; a link there is refused | `test_brain_change_requests.py` "adds note from checkout when never pushed", "refuses checkout note when it is a link" |
 | AC-272.14 | Given an `origin` through an ssh alias `github.com-<account>`, when availability is checked, then it is GitHub; look-alike hosts stay refused | `test_github_remote.py` |
+| AC-272.15 | Given a proposal that can be decided, when the owner clicks Review with Claude, then a session starts in the hub folder with the review prompt (the note, the `/learn` bar, the draft folder, that the owner decides) | `ReviewPanel.test.tsx` "starts a review session in the hub folder with the review prompt", `review.test.ts` "names the note, the bar, the draft folder and that the owner decides" |
+| AC-272.16 | Given the session wrote its verdict and revision, when the learning is open, then the verdict, checks, revision and target show, and Use Claude's revision / Use target fill the edit draft and Target | `ReviewPanel.test.tsx` "shows Claude's verdict and hands its revision and target to the learning", `review.test.ts` (parse, writes, waiting and malformed) |
+| AC-272.17 | Given this machine cannot drive Claude, when the Review section shows, then the button is disabled and says why | `ReviewPanel.test.tsx` "says why a review cannot start on this machine" |
+| AC-272.18 | Given a learning or a Brain note, when Discuss opens, then it offers its starters and one click starts the conversation with that message; a target without starters offers none | `discussLearning.test.ts`, `DiscussPanel.test.tsx` "starts the conversation with a starter's message in one click", "offers no starters when the target has none", `LearningDetail.test.tsx` "offers to talk with Claude about the learning" |
