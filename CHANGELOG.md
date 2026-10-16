@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Review a learning with Claude: a session in the hub folder checks the note against `/learn`'s bar and writes its
+  verdict, checks, a suggested target and, when needed, a revised body into a draft folder; the learning shows
+  them as Claude's recommendation, with Use Claude's revision (it becomes your edit) and Use target. Nothing is
+  decided by the agent (AGH-272).
+- Discuss offers one-click starters: "Is this worth keeping?" on a proposed learning (Discuss opens on arrival),
+  "Is this still true?", "Improve the note" and "Duplicate or overlap?" on a learning or a Brain note (AGH-272).
 - Edit a learning's note before accepting it: Edit note opens a Write / Preview editor of the body in place, the edit
   is a draft kept in this browser (it survives a reload; Discard edits asks first; a warning shows when the hub's
   note changed since), and Accept sends it as `note_body`, so the hub PR's one commit moves the note and writes the
