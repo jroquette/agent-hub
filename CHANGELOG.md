@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
+  action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
+  it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
+  switch views; `view=` in the URL wins over the last choice, kept in the browser (AGH-245).
+
 ## [0.15.0] - 2026-10-16
 
 ### Added
@@ -36,10 +43,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   (with labels) and whether it takes a text, and `POST /api/v1/approvals/{id}/decision` (a strict write that needs
   the launch cookie) records the answer through the new hidden `hub workflow decide RUN --gate ID` (text on stdin,
   no resume, `gate.result` where `web`), then resumes the run detached (AGH-231).
-- Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
-  action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
-  it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
-  switch views; `view=` in the URL wins over the last choice, kept in the browser (AGH-245).
 - `hub web` can start, cancel, resume and abandon workflow runs: `POST /api/v1/workflow-runs` and
   `/workflow-runs/{run_id}/cancel|resume|abandon` run `hub workflow run --live` as a detached child (no
   `LINEAR_API_KEY`, a pid file under `.agent-runs/web/`), keep one live run per issue across starts and resumes,
