@@ -33,6 +33,7 @@ import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
 import { readStored, writeStored } from "../../lib/storage";
 import { useCollectorState } from "../../shell/GlobalStream";
+import { typingIn } from "../../shell/goSequence";
 import {
   FILTER_KEYS,
   OUTCOMES,
@@ -617,16 +618,6 @@ function OfflineStamp({ tz }: { tz: "local" | "utc" }) {
   return collector.state === "offline" ? (
     <AsOfStamp stale time={fmtClock(collector.asOf, tz)} source="collector heartbeat" />
   ) : null;
-}
-
-/** A key typed into a field or a dialog is not a screen shortcut. */
-function typingIn(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return (
-    target.isContentEditable ||
-    ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
-    target.closest("[role=dialog]") !== null
-  );
 }
 
 /** The grid or the table: the URL's `view`, else `ah.sessions.view`, else the grid; `v` switches (AC-234.3). */
