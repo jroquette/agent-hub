@@ -1,11 +1,32 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+import { Dialog } from "../components/Dialog";
+import { ConfirmDialog } from "../components/feedback";
 
 import { seriousViolations } from "../testing/axe";
 import { aPage, aProjectSummary, aStreamCounts, renderWithApi } from "../testing/builders";
-import { AppShell } from "./AppShell";
+import { AppShell, useShell } from "./AppShell";
 
 const routes = { "/api/v1/projects": aPage([aProjectSummary()]) };
+
+/** A Dialog whose buttons open the shell's palette and shortcut sheet over it. */
+function ShellLayersOver({ onClose }: { onClose: () => void }) {
+  const shell = useShell();
+  return (
+    <Dialog title="Edit" onClose={onClose}>
+      <button
+        onClick={() => {
+          shell.openPalette();
+        }}
+      >
+        Search
+      </button>
+      <button onClick={shell.openShortcuts}>Keys</button>
+    </Dialog>
+  );
+}
 
 describe("AppShell", () => {
   it("places the sidebar, top bar and page content", () => {
@@ -91,6 +112,75 @@ describe("AppShell", () => {
 
     expect(router.state.location.pathname).toBe("/");
     expect(screen.getByRole("button", { name: "UTC" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("opens no palette, sheet or single-key shortcut over a confirmation", () => {
+    const { router } = renderWithApi(
+      <AppShell>
+        <ConfirmDialog title="Delete this session?" confirmLabel="Delete" onCancel={vi.fn()} />
+      </AppShell>,
+      { routes },
+    );
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+
+    for (const target of [cancel, document.body]) {
+      fireEvent.keyDown(target, { key: "k", ctrlKey: true });
+      fireEvent.keyDown(target, { key: "?" });
+      fireEvent.keyDown(target, { key: "g" });
+      fireEvent.keyDown(target, { key: "l" });
+      fireEvent.keyDown(target, { key: "t" });
+    }
+
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/");
+    expect(screen.getByRole("button", { name: "UTC" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("closes only the palette over a Dialog on Escape and keeps Tab in it", async () => {
+    const onClose = vi.fn();
+    renderWithApi(
+      <AppShell>
+        <ShellLayersOver onClose={onClose} />
+      </AppShell>,
+      { routes },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    const search = screen.getByRole("combobox");
+    expect(search).toHaveFocus();
+    expect(fireEvent.keyDown(search, { key: "Tab" })).toBe(true);
+    expect(search).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "k", ctrlKey: true });
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes only the shortcut sheet over a Dialog on Escape and keeps Tab in it", async () => {
+    const onClose = vi.fn();
+    renderWithApi(
+      <AppShell>
+        <ShellLayersOver onClose={onClose} />
+      </AppShell>,
+      { routes },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Keys" }));
+    const close = screen.getByRole("button", { name: "Close (Esc)" });
+    close.focus();
+    expect(fireEvent.keyDown(close, { key: "Tab" })).toBe(true);
+    expect(close).toHaveFocus();
+    screen.getByRole("button", { name: "Keys" }).focus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("toggles UTC with t and collapses the sidebar from the top bar", () => {

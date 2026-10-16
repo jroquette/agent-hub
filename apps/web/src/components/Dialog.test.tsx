@@ -169,6 +169,73 @@ describe("Dialog", () => {
     expect(lower).toHaveBeenCalledTimes(1);
   });
 
+  it("pulls focus from a lower dialog back into the topmost on Tab", async () => {
+    const lowerDialog = (
+      <Dialog key="lower" title="Lower" onClose={vi.fn()} footer={<button>Lower save</button>} />
+    );
+    const { rerender } = render(stack(lowerDialog));
+    rerender(stack(lowerDialog, <Dialog key="upper" title="Upper" onClose={vi.fn()} />));
+    screen.getByRole("button", { name: "Lower save" }).focus();
+
+    await userEvent.tab();
+
+    const upper = screen.getByRole("dialog", { name: "Upper" });
+    expect(within(upper).getByRole("button", { name: "Close" })).toHaveFocus();
+  });
+
+  it("leaves an Escape that a control inside already handled", () => {
+    const onClose = vi.fn();
+    render(
+      <Dialog title="Edit" onClose={onClose}>
+        <input
+          aria-label="Assignee"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") event.preventDefault();
+          }}
+        />
+      </Dialog>,
+    );
+
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Assignee" }), { key: "Escape" });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("ignores Escape while an input method is composing", () => {
+    const onClose = vi.fn();
+    render(
+      <Dialog title="Edit" onClose={onClose}>
+        <input aria-label="Name" />
+      </Dialog>,
+    );
+
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Name" }), {
+      key: "Escape",
+      isComposing: true,
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("leaves Escape and Tab inside another modal layer above it to that layer", () => {
+    const onClose = vi.fn();
+    render(
+      stack(
+        <Dialog key="dialog" title="Edit" onClose={onClose} footer={<button>Save</button>} />,
+        <div key="other" role="dialog" aria-modal="true" aria-label="Other layer">
+          <input aria-label="Search" />
+        </div>,
+      ),
+    );
+    const search = screen.getByRole("textbox", { name: "Search" });
+    search.focus();
+
+    expect(fireEvent.keyDown(search, { key: "Tab" })).toBe(true);
+    expect(search).toHaveFocus();
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("ignores Escape, the X and the scrim while pending", async () => {
     const lower = vi.fn();
     const upper = vi.fn();
