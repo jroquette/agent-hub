@@ -280,7 +280,15 @@ describe("LearningsScreen", () => {
     expect(second.textContent).toContain("a note nobody pushed");
     expect(second.textContent).not.toContain("Proposal:");
     expect(within(second).getByText("Note not in the hub checkout")).toBeVisible();
-    expect(screen.getByText(/1 ready · 1 blocked/)).toBeInTheDocument();
+    const decision = screen.getByRole("group", { name: "Decision" });
+    expect(within(decision).getByRole("button", { name: "Ready to decide · 1" })).toBeVisible();
+    expect(within(decision).getByRole("button", { name: "Blocked · 1" })).toBeVisible();
+
+    await userEvent.click(within(decision).getByRole("button", { name: "Blocked · 1" }));
+    await waitFor(() => {
+      expect(within(table).queryByText(/Retry flaky CI/)).not.toBeInTheDocument();
+    });
+    expect(within(table).getByText(/a note nobody pushed/)).toBeInTheDocument();
   });
 
   it("keeps the status in the URL", async () => {
@@ -335,14 +343,33 @@ describe("LearningsScreen filters", () => {
     const table = await screen.findByRole("table", { name: "Proposed learnings" });
     await within(table).findByText("Order book snapshot before diff replay");
 
-    const projects = screen.getByRole("group", { name: "Project" });
-    await userEvent.click(within(projects).getByRole("button", { name: "loki-trader · 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Project: All" }));
+    const menu = screen.getByRole("dialog", { name: "Project filter" });
+    await userEvent.click(within(menu).getByRole("checkbox", { name: /loki-trader/ }));
 
     await waitFor(() => {
       expect(within(table).queryByText(/Retry flaky CI/)).not.toBeInTheDocument();
     });
     expect(within(table).getByText("Order book snapshot before diff replay")).toBeInTheDocument();
     expect(router.state.location.search).toContain("project=loki-trader");
+    expect(screen.getByRole("button", { name: "Project: loki-trader" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+  });
+
+  it("closes a filter menu on Escape and on a click outside it", async () => {
+    open();
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Order book snapshot before diff replay");
+
+    await userEvent.click(screen.getByRole("button", { name: "Project: All" }));
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Project filter" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Project: All" }));
+    await userEvent.click(screen.getByRole("heading", { level: 1, name: "Knowledge" }));
+    expect(screen.queryByRole("dialog", { name: "Project filter" })).not.toBeInTheDocument();
   });
 
   it("says nothing matches when the search finds no learning", async () => {
