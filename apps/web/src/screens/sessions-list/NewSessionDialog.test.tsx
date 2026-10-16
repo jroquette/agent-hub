@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
 import { seriousViolations } from "../../testing/axe";
-import { T0, aCapabilities, aWorkdir } from "../../testing/builders";
+import { aCapabilities, aWorkdir } from "../../testing/builders";
 import {
   NewSessionDialog,
   withSkill,
@@ -131,36 +131,6 @@ describe("NewSessionDialog (new-session)", () => {
 
     expect(props.onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ model: "claude-sonnet-4-5[1m]", prompt: null }),
-    );
-  });
-
-  it("resumes or forks a past session of the folder when one is chosen", async () => {
-    const onWorkdirChange = vi.fn();
-    const { dialog, props } = open({
-      onWorkdirChange,
-      resumable: [
-        {
-          session_id: "5091b986-0000-7000-8000-000000000009",
-          title: "Old work",
-          cwd: "/x",
-          last_activity: T0,
-        },
-      ],
-    });
-    expect(onWorkdirChange).toHaveBeenCalledWith(aWorkdir().workdir_id);
-
-    await userEvent.selectOptions(
-      within(dialog).getByRole("combobox", { name: "Start from" }),
-      "5091b986-0000-7000-8000-000000000009",
-    );
-    await userEvent.click(within(dialog).getByRole("checkbox", { name: /Fork/ }));
-    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
-
-    expect(props.onSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        resume_session_id: "5091b986-0000-7000-8000-000000000009",
-        fork: true,
-      }),
     );
   });
 
@@ -369,10 +339,7 @@ describe("NewSessionDialog (new-session-dialog)", () => {
   const STORED = "ah.sessions.workdir.agent-hub";
 
   it("shows only Where and the focused Prompt; Mode and Model wait in Options", async () => {
-    const { dialog } = open({
-      resumable: undefined,
-      projects: ["agent-hub", "ops"],
-    });
+    const { dialog } = open({ projects: ["agent-hub", "ops"] });
 
     const where = within(dialog).getByRole("group", { name: "Where" });
     expect(within(where).getByRole("combobox", { name: "Project" })).toHaveValue("agent-hub");
@@ -440,6 +407,20 @@ describe("NewSessionDialog (new-session-dialog)", () => {
     );
     expect(window.localStorage.getItem(STORED)).toBe(aWorkdir().workdir_id);
     expect(window.localStorage.getItem("ah.sessions.workdir.ops")).toBeNull();
+  });
+
+  it("keeps the stored folder when the choice changes and the dialog is cancelled", async () => {
+    window.localStorage.setItem(STORED, WORKTREE.workdir_id);
+    const { dialog, props } = open();
+
+    await userEvent.selectOptions(
+      within(dialog).getByRole("combobox", { name: "Working folder" }),
+      aWorkdir().workdir_id,
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(props.onCancel).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem(STORED)).toBe(WORKTREE.workdir_id);
   });
 
   it("starts on Ctrl+Enter and Cmd+Enter, never on a plain Enter in the prompt", async () => {

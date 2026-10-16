@@ -1,9 +1,9 @@
 import "../agent-session/agent-session.css";
 
-import { useEffect, useId, useState, type KeyboardEvent } from "react";
+import { useId, useState, type KeyboardEvent } from "react";
 
 import type { components } from "../../api/schema";
-import { Button, Dialog, Time } from "../../components";
+import { Button, Dialog } from "../../components";
 import { readStored, writeStored } from "../../lib/storage";
 import type { ApiProblem } from "../../lib/api";
 import { MODES, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
@@ -12,7 +12,6 @@ import { modeLabel, type PermissionMode } from "../agent-session/transcript";
 type Schemas = components["schemas"];
 export type Workdir = Schemas["Workdir"];
 export type DriverCapabilities = Schemas["DriverCapabilities"];
-export type PastSession = Schemas["PastSession"];
 export type CreateAgentSession = Schemas["CreateAgentSession"];
 
 /** The screen a shake captured (AGH-260), or the capture that failed. */
@@ -53,10 +52,6 @@ export interface NewSessionDialogProps {
   /** Why the folders could not be listed, said in place of the picker. */
   workdirsProblem?: string | undefined;
   capabilities: DriverCapabilities;
-  /** Past Claude sessions of the chosen folder to resume or fork (T14); a plain New session has none. */
-  resumable?: readonly PastSession[] | undefined;
-  /** Called with the chosen folder (on open and on change), to load its resumable sessions. */
-  onWorkdirChange?: ((workdirId: string) => void) | undefined;
   pending: boolean;
   error: ApiProblem | null;
   maxPromptBytes?: number | undefined;
@@ -90,8 +85,6 @@ export function NewSessionDialog({
   workdirs,
   workdirsProblem,
   capabilities,
-  resumable,
-  onWorkdirChange,
   pending,
   error,
   maxPromptBytes = DEFAULT_MESSAGE_MAX_BYTES,
@@ -109,8 +102,6 @@ export function NewSessionDialog({
   const [model, setModel] = useState(capabilities.models[0] ?? "default");
   const [otherModel, setOtherModel] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [resume, setResume] = useState("");
-  const [fork, setFork] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [firstProject] = useState(project);
   const modeName = useId();
@@ -123,8 +114,6 @@ export function NewSessionDialog({
   const otherHint = useId();
   const promptField = useId();
   const promptHint = useId();
-  const resumeField = useId();
-  const forkField = useId();
   const attachField = useId();
 
   const folders = workdirs ?? [];
@@ -137,15 +126,10 @@ export function NewSessionDialog({
     folders.find((w) => w.workdir_id === picked) ?? folders.find((w) => w.workdir_id === preferred);
   const workdirId = workdir?.workdir_id ?? "";
 
-  useEffect(() => {
-    if (workdirId) onWorkdirChange?.(workdirId);
-  }, [workdirId, onWorkdirChange]);
-
   const chosenModel = model === OTHER_MODEL ? otherModel.trim() : model;
   const modelValid = MODEL_PATTERN.test(chosenModel);
   const promptBytes = new TextEncoder().encode(prompt).length;
   const promptTooLong = promptBytes > maxPromptBytes;
-  const past = resumable ?? [];
   const attached = attach && shot !== null;
   const needsPrompt = attached && prompt.trim() === "";
   const reason = pending
@@ -175,8 +159,8 @@ export function NewSessionDialog({
       mode,
       model: chosenModel,
       prompt: text ? text : null,
-      resume_session_id: resume || null,
-      fork: resume ? fork : false,
+      resume_session_id: null,
+      fork: false,
     };
     onSubmit(
       attached
@@ -258,7 +242,6 @@ export function NewSessionDialog({
                 disabled={pending}
                 onChange={(event) => {
                   setPicked(null);
-                  setResume("");
                   onProjectChange?.(event.target.value);
                 }}
               >
@@ -288,7 +271,6 @@ export function NewSessionDialog({
                 disabled={pending}
                 onChange={(event) => {
                   setPicked(event.target.value);
-                  setResume("");
                 }}
               >
                 {folders.map((w) => (
@@ -300,51 +282,6 @@ export function NewSessionDialog({
             )}
           </div>
         </div>
-        {past.length > 0 && (
-          <div className="ah-stack" style={{ gap: 4 }}>
-            <label htmlFor={resumeField} className="ah-small">
-              Start from
-            </label>
-            <select
-              id={resumeField}
-              className="ah-input"
-              value={resume}
-              disabled={pending}
-              onChange={(event) => {
-                setResume(event.target.value);
-              }}
-            >
-              <option value="">A new conversation</option>
-              {past.map((s) => (
-                <option key={s.session_id} value={s.session_id}>
-                  Resume: {s.title ?? s.session_id}
-                </option>
-              ))}
-            </select>
-            {resume && (
-              <>
-                <label htmlFor={forkField} className="ah-row ah-small" style={{ gap: 6 }}>
-                  <input
-                    id={forkField}
-                    type="checkbox"
-                    className="ah-check"
-                    checked={fork}
-                    disabled={pending}
-                    onChange={(event) => {
-                      setFork(event.target.checked);
-                    }}
-                  />
-                  Fork: continue in a new session and keep the original unchanged
-                </label>
-                <span className="ah-small ah-subtle">
-                  Last active{" "}
-                  <Time iso={past.find((s) => s.session_id === resume)?.last_activity ?? ""} />
-                </span>
-              </>
-            )}
-          </div>
-        )}
-
         <div className="ah-stack" style={{ gap: 4 }}>
           <label htmlFor={promptField} className="ah-small">
             Prompt
