@@ -1,6 +1,6 @@
 import "./agent-session.css";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import {
@@ -20,6 +20,7 @@ import { sessionControlUnavailable } from "../sessions-list/control";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
 import { CostMeter } from "./CostMeter";
+import { FILES_PANEL_ID, FilesPanel } from "./FilesPanel";
 import {
   isTerminal,
   useAgentSession,
@@ -30,7 +31,7 @@ import {
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
-import { modeLabel, pendingPermissions, type TranscriptState } from "./model";
+import { changedFiles, modeLabel, pendingPermissions, type TranscriptState } from "./model";
 import { useStickToBottom } from "./useStickToBottom";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
@@ -120,6 +121,10 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const closeFiles = useCallback(() => {
+    setFilesOpen(false);
+  }, []);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const follow = useStickToBottom(scroller);
   const composer = useRef<HTMLTextAreaElement | null>(null);
@@ -135,6 +140,9 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const problem = snapshot.error ?? transcript.error;
   const session = snapshot.data;
   const { state } = transcript;
+  const { tools, permissions } = state;
+  // Only the calls and their permissions change the list, not every streamed text delta.
+  const files = useMemo(() => changedFiles({ tools, permissions }), [tools, permissions]);
   const crumbs = [
     { label: "Sessions", href: "/sessions" },
     { label: session?.title ?? `Agent session ${short(agentSessionId)}` },
@@ -219,6 +227,21 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             </h1>
             <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
             <span className="ah-grow" />
+            {files.length > 0 && (
+              <Button
+                size="sm"
+                variant={filesOpen ? "primary" : "default"}
+                icon="git-compare"
+                aria-expanded={filesOpen}
+                aria-controls={filesOpen ? FILES_PANEL_ID : undefined}
+                onClick={() => {
+                  setFilesOpen((open) => !open);
+                }}
+              >
+                Changed files
+                <span className="as-files-count">{files.length}</span>
+              </Button>
+            )}
             {session.claude_session_id && (
               <AppLink
                 className="ah-row ah-small"
@@ -283,6 +306,12 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           scrollerRef={setScroller}
           follow={follow}
           screenshotUrl={screenshotUrl}
+          onActivityOpen={closeFiles}
+          sidePanel={
+            filesOpen ? (
+              <FilesPanel files={files} sessionId={agentSessionId} onClose={closeFiles} />
+            ) : undefined
+          }
         />
       </OldestPendingContext.Provider>
       <footer className="as-footer">

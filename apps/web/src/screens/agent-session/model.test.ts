@@ -8,6 +8,9 @@ import {
 } from "../../testing/builders";
 import {
   applySnapshot,
+  changedFiles,
+  commonDir,
+  diffStats,
   initialTranscript,
   keepSending,
   pendingPermissions,
@@ -521,5 +524,52 @@ describe("reduceTranscript (init-commands)", () => {
 
   it("has no commands when the record lists none", () => {
     expect(init({ slash_commands: "compact" })).toEqual([]);
+  });
+});
+
+describe("changedFiles (review)", () => {
+  const tool = (id: string, name: string, input: Record<string, unknown>, isError = false) => ({
+    id,
+    name,
+    input,
+    parentId: null,
+    diff: null,
+    result: { content: "ok", isError, truncated: false, originalBytes: null },
+  });
+
+  it("groups the changes by file in order, counting only the lines of applied changes", () => {
+    const files = changedFiles({
+      tools: {
+        t1: tool("t1", "Write", { file_path: "/repo/src/a.ts", content: "one\ntwo" }),
+        t2: tool("t2", "Read", { file_path: "/repo/src/b.ts" }),
+        t3: tool("t3", "Edit", { file_path: "/repo/src/b.ts", old_string: "x", new_string: "y" }),
+        t4: tool("t4", "Edit", { file_path: "/repo/src/a.ts", old_string: "two", new_string: "2" }),
+        t5: tool(
+          "t5",
+          "Edit",
+          { file_path: "/repo/src/b.ts", old_string: "y", new_string: "z" },
+          true,
+        ),
+      },
+      permissions: {},
+    });
+
+    expect(files.map((file) => [file.path, file.created, file.changes.length])).toEqual([
+      ["/repo/src/a.ts", true, 2],
+      ["/repo/src/b.ts", false, 2],
+    ]);
+    expect(files[0]).toMatchObject({ added: 3, removed: 1, lastChangeId: "t4" });
+    expect(files[1]).toMatchObject({ added: 1, removed: 1, lastChangeId: "t5" });
+    expect(files[1]?.changes[1]?.state).toBe("error");
+  });
+
+  it("finds the folder the paths share", () => {
+    expect(commonDir(["/repo/src/a.ts", "/repo/src/ui/b.ts"])).toBe("/repo/src/");
+    expect(commonDir(["/repo/a.ts", "/other/b.ts"])).toBe("/");
+    expect(commonDir([])).toBe("");
+  });
+
+  it("counts the added and removed lines of a diff, headers left out", () => {
+    expect(diffStats(unifiedDiff("a", "x\ny", "x\nz\nw"))).toEqual({ added: 2, removed: 1 });
   });
 });
