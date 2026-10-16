@@ -292,7 +292,46 @@ describe("SessionsListScreen keep-previous", () => {
     expect(headers()).toEqual(["Waiting · 1", "Live · 1", "Ended or failed · 1"]);
     expect(screen.getByText("/runner")).toBeInTheDocument();
   });
+
+  it("marks a section busy and hides Load more while it shows the previous pages", async () => {
+    renderWithApi(<SessionsListScreen />, {
+      routes: routes((request: Request) =>
+        new URL(request.url).searchParams.get("sort") === "-cost"
+          ? "pending"
+          : aSessionsByStatus(SAMPLE, { next_cursor: "c2" })(request),
+      ),
+      path: "/sessions",
+    });
+    await screen.findByText("/runner");
+    const section = screen.getByRole("region", { name: /^Live/ });
+    expect(section).not.toHaveAttribute("aria-busy");
+    expect(within(section).getByRole("button", { name: "Load more" })).toBeInTheDocument();
+
+    fireEvent.click(within(section).getByRole("button", { name: /^Cost/ }));
+    await waitFor(() => {
+      expect(section).toHaveAttribute("aria-busy", "true");
+    });
+    expect(within(section).getByText("Updating…")).toBeInTheDocument();
+    // A Load more on placeholder pages would refetch page 1 instead of the next one.
+    expect(within(section).queryByRole("button", { name: "Load more" })).toBeNull();
+  });
 });
+
+/**
+ * A browser-like layout: a scroll element is as tall as its table's rows (40 px each), capped by its
+ * own max-height, so an unbounded section measures its full content and a bounded one its window.
+ */
+function layOutTables() {
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const table = this.style.overflow === "auto" ? this.querySelector("table") : null;
+    if (!table) return 0;
+    const rows = Number(table.getAttribute("aria-rowcount") ?? table.querySelectorAll("tr").length);
+    const cap = this.style.maxHeight ? Number.parseFloat(this.style.maxHeight) : Infinity;
+    return Math.min(rows * 40, cap);
+  });
+}
 
 describe("SessionsListScreen table-sections", () => {
   it("gives each section its own table with the chosen columns, density and sort", async () => {
@@ -363,48 +402,32 @@ describe("SessionsListScreen table-sections", () => {
     expect(await within(endedRegion).findByText("Showing all 151")).toBeInTheDocument();
     // 250 rendered rows: slow under a loaded CPU, not a budget.
   }, 20_000);
-});
 
-/**
- * A browser-like layout: a scroll element is as tall as its table's rows (40 px each), capped by its
- * own max-height, so an unbounded section measures its full content and a bounded one its window.
- */
-function layOutTables() {
-  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    const table = this.style.overflow === "auto" ? this.querySelector("table") : null;
-    if (!table) return 0;
-    const rows = Number(table.getAttribute("aria-rowcount") ?? table.querySelectorAll("tr").length);
-    const cap = this.style.maxHeight ? Number.parseFloat(this.style.maxHeight) : Infinity;
-    return Math.min(rows * 40, cap);
-  });
-}
-
-describe("SessionsListScreen virtual-bounded", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("bounds and virtualises a section past 100 rows only, in a measured layout", async () => {
-    layOutTables();
-    const rows = [...many(100, "live", 1000), ...many(101, "ended", 3000)];
-    renderWithApi(<SessionsListScreen />, {
-      routes: routes(aSessionsByStatus(rows)),
-      path: "/sessions",
+  describe("virtual-bounded", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
     });
-    await screen.findByText("/live-0");
 
-    const live = screen.getByRole("table", { name: "Live sessions" });
-    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
-    // 100 rows stay in the page flow, whole; 101 get a bounded, focusable scroll region.
-    expect(within(live).getAllByRole("row")).toHaveLength(101);
-    expect(screen.queryByRole("region", { name: "Scrollable live sessions" })).toBeNull();
-    const scroller = screen.getByRole("region", { name: "Scrollable ended or failed sessions" });
-    expect(scroller).toHaveAttribute("tabindex", "0");
-    expect(scroller.style.maxHeight).toBe("640px");
-    expect(scroller).toContainElement(ended);
-    // 640 px of 40 px rows plus overscan, not all 101.
-    expect(ended.querySelectorAll("tbody tr[data-index]").length).toBeLessThan(50);
-  }, 20_000);
+    it("bounds and virtualises a section past 100 rows only, in a measured layout", async () => {
+      layOutTables();
+      const rows = [...many(100, "live", 1000), ...many(101, "ended", 3000)];
+      renderWithApi(<SessionsListScreen />, {
+        routes: routes(aSessionsByStatus(rows)),
+        path: "/sessions",
+      });
+      await screen.findByText("/live-0");
+
+      const live = screen.getByRole("table", { name: "Live sessions" });
+      const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
+      // 100 rows stay in the page flow, whole; 101 get a bounded, focusable scroll region.
+      expect(within(live).getAllByRole("row")).toHaveLength(101);
+      expect(screen.queryByRole("region", { name: "Scrollable live sessions" })).toBeNull();
+      const scroller = screen.getByRole("region", { name: "Scrollable ended or failed sessions" });
+      expect(scroller).toHaveAttribute("tabindex", "0");
+      expect(scroller.style.maxHeight).toBe("640px");
+      expect(scroller).toContainElement(ended);
+      // 640 px of 40 px rows plus overscan, not all 101.
+      expect(ended.querySelectorAll("tbody tr[data-index]").length).toBeLessThan(50);
+    }, 20_000);
+  });
 });
