@@ -129,6 +129,8 @@ _BY_TYPE: Final[dict[EventType, frozenset[str]]] = {
     EventType.RUN_END: _EXECUTOR | _PINNED,
     # A stored summary is short lines written for the reader (D17).
     EventType.SESSION_SUMMARY: frozenset({"text", "lines"}),
+    # The short title Claude Code gives a session, or the one the user set (80 chars, ADR 0034).
+    EventType.SESSION_TITLE: frozenset({"text", "origin"}),
 }
 
 PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = MappingProxyType(

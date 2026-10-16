@@ -1542,7 +1542,8 @@
           "step.start",
           "step.end",
           "run.end",
-          "session.summary"
+          "session.summary",
+          "session.title"
         ],
         "title": "EventType",
         "type": "string"
@@ -6471,7 +6472,7 @@
       },
       "SessionLabel": {
         "additionalProperties": false,
-        "description": "What a session is about, derived on read (S1): issue, workflow, repo and branch.\n\n``issue`` is ``<TEAM>-<n>`` found in ``branch`` or ``worktree`` with the hub's tracker teams,\nelse ``None``, never a guess. ``workflow`` is the session's main slash command or skill\n(``/feature``); ``workflows`` lists every one in order. ``worktree`` is the folder name under\n``.claude/worktrees/`` in the session's ``cwd``.",
+        "description": "What a session is about, derived on read (S1): issue, workflow, repo and branch.\n\n``issue`` is ``<TEAM>-<n>`` found in ``branch`` or ``worktree`` with the hub's tracker teams,\nelse ``None``, never a guess. ``workflow`` is the session's main slash command or skill\n(``/feature``); ``workflows`` lists every one in order. ``worktree`` is the folder name under\n``.claude/worktrees/`` in the session's ``cwd``. ``title`` is the session's short name: the\none the user set (``/rename``), else the one Claude Code wrote (ADR 0034), else ``None``.",
         "properties": {
           "branch": {
             "anyOf": [
@@ -6510,6 +6511,17 @@
               }
             ],
             "title": "Repo"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           },
           "workflow": {
             "anyOf": [

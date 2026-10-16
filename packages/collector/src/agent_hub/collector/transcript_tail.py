@@ -4,9 +4,10 @@ Only a regular file whose real path is under the Claude Code projects folder is 
 path component is opened with ``O_NOFOLLOW`` (a symlink is refused, never followed) and
 ``O_NONBLOCK`` (a FIFO swapped in cannot block), then ``fstat`` must show a regular file. Each
 read takes at most ``max_bytes`` and stops at the last complete line, so a line being written is
-read next time. A line longer than ``max_line_bytes`` is skipped and counted. Offsets, turns and
-the usage message ids seen live in memory per path, the newest ``max_paths`` kept; after a
-restart a file is read again from the start and the store's idempotency drops the duplicates.
+read next time. A line longer than ``max_line_bytes`` is skipped and counted. Offsets, turns, the
+usage message ids and titles seen and the last line's timestamp live in memory per path, the
+newest ``max_paths`` kept; after a restart a file is read again from the start and the store's
+idempotency drops the duplicates.
 A read is two-phase: it leaves the progress as it was and returns a position; ``commit`` moves
 the progress there once the events are stored, so a failed append loses no line. Only the
 newest read of a path can be committed; an older position is ignored.
@@ -18,6 +19,7 @@ import stat
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
@@ -36,6 +38,8 @@ class _Progress:
     offset: int = 0
     turn: int = 0
     seen_messages: frozenset[str] = frozenset()
+    seen_titles: frozenset[str] = frozenset()
+    last_timestamp: datetime | None = None
     # Inside a line longer than the limit: drop bytes up to its newline.
     is_skipping: bool = False
 
@@ -154,6 +158,8 @@ class TranscriptTail:
             origin=origin,
             start_turn=progress.turn,
             seen_messages=progress.seen_messages,
+            seen_titles=progress.seen_titles,
+            last_timestamp=progress.last_timestamp,
             max_line_bytes=self._max_line_bytes,
         )
         reached = replace(
@@ -161,5 +167,7 @@ class TranscriptTail:
             offset=progress.offset + len(complete),
             turn=batch.end_turn,
             seen_messages=batch.seen_messages,
+            seen_titles=batch.seen_titles,
+            last_timestamp=batch.last_timestamp,
         )
         return batch.events, skipped + len(batch.problems), reached
