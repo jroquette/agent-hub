@@ -1,5 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChangedFilesChip, FilesPanel, reviewedKey } from "./FilesPanel";
@@ -147,5 +150,41 @@ describe("ChangedFilesChip (review)", () => {
     });
     expect(done).not.toHaveClass("as-files-chip-due");
     expect(done).toHaveAttribute("aria-expanded", "true");
+  });
+});
+
+describe("FilesPanel (long-files)", () => {
+  it("numbers a change Claude reported and keeps every change whole for the body to scroll", async () => {
+    const reported = "--- a/a.ts\n+++ b/a.ts\n@@ -40,1 +40,2 @@\n-x\n+y\n+z\n";
+    const edited: ToolView = {
+      ...tool("t1", "Edit", { file_path: "/r/a.ts", old_string: "x", new_string: "y\nz" }),
+      result: {
+        content: "ok",
+        isError: false,
+        truncated: false,
+        originalBytes: null,
+        diff: reported,
+      },
+    };
+    render(
+      <FilesPanel
+        files={filesOf([
+          edited,
+          tool("t2", "Edit", { file_path: "/r/a.ts", old_string: "q", new_string: "r" }),
+        ])}
+        sessionId="s1"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /a\.ts/ }));
+
+    expect(screen.getByLabelText("Change 1 to r/a.ts")).toHaveClass("as-diff-numbered");
+    expect(screen.getByLabelText("Change 2 to r/a.ts")).not.toHaveClass("as-diff-numbered");
+    const css = readFileSync(
+      join(process.cwd(), "src/screens/agent-session/agent-session.css"),
+      "utf8",
+    );
+    expect(/\.as-files-change \{[^}]*\bflex: none;/.exec(css)).not.toBeNull();
   });
 });

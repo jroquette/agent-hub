@@ -416,6 +416,24 @@ async def test_truncates_tool_result_when_over_limit(make_rig: MakeRig) -> None:
     assert stored.body["original_bytes"] == 70 * KIB
 
 
+async def test_keeps_engine_diff_on_result_record_when_reported(make_rig: MakeRig) -> None:
+    patched = "--- a/x.py\n+++ b/x.py\n@@ -7,1 +7,1 @@\n-a\n+b\n"
+    turn = (
+        ToolCall(tool_use_id="toolu_1", name="Edit", input={"file_path": "x.py"}),
+        ToolResult(tool_use_id="toolu_1", content="updated", diff=patched),
+        ToolCall(tool_use_id="toolu_2", name="Read", input={"file_path": "y.py"}),
+        ToolResult(tool_use_id="toolu_2", content="text"),
+    )
+    rig = make_rig(replies={"Edit it.": turn})
+    created = await rig.create("Edit it.")
+    await rig.until_status(created.id, "idle")
+
+    results = [r.body for r in rig.records(created.id) if r.kind == "tool.result"]
+
+    assert results[0]["diff"] == patched
+    assert "diff" not in results[1]
+
+
 async def test_adds_diff_when_edit_called(make_rig: MakeRig) -> None:
     edit = ToolCall(
         tool_use_id="toolu_1",
