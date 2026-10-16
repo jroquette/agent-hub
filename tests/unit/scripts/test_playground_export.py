@@ -31,6 +31,8 @@ from scripts.playground_export import (
     routes_of,
     screens_of,
     slug_of,
+    snapshot,
+    snapshot_branch,
     uncommitted,
     uncommitted_patch,
 )
@@ -363,6 +365,50 @@ def test_patches_new_and_changed_files_but_local_ones_when_uncommitted(tmp_path:
     assert "+edited" in patch
     assert "+brand new" in patch
     assert git("diff", "--cached", "--name-only", cwd=repo) == ""
+
+
+def test_names_snapshot_after_branch_prefix_else_email_when_branch_named() -> None:
+    stamp = "20261016T120000Z"
+    assert snapshot_branch("roquettejh/agh-live-dev", "x@y.z", stamp) == (
+        "roquettejh/playground-snapshot/20261016T120000Z"
+    )
+    assert snapshot_branch("main", "owner@example.com", stamp) == (
+        "owner/playground-snapshot/20261016T120000Z"
+    )
+
+
+def test_commits_uncommitted_work_on_branch_and_leaves_checkout_when_snapshot_taken(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    head = git("rev-parse", "HEAD", cwd=repo).strip()
+    (repo / "app.py").write_text("edited\n", "utf-8")
+    (repo / "new.py").write_text("brand new\n", "utf-8")
+    git("config", "user.email", "someone-else@example.com", cwd=repo)
+
+    commit = snapshot(
+        "owner/playground-snapshot/s1",
+        message="chore(dev): playground snapshot s1",
+        in_progress=uncommitted(cwd=repo),
+        cwd=repo,
+    )
+
+    branch = "owner/playground-snapshot/s1"
+    assert git("rev-parse", branch, cwd=repo).strip() == commit
+    assert git("rev-parse", f"{commit}^", cwd=repo).strip() == head
+    assert git("show", f"{commit}:app.py", cwd=repo) == "edited\n"
+    assert git("show", f"{commit}:new.py", cwd=repo) == "brand new\n"
+    assert git("log", "-1", "--format=%ae", commit, cwd=repo).strip() == "owner@example.com"
+    assert git("rev-parse", "HEAD", cwd=repo).strip() == head
+    assert git("branch", "--show-current", cwd=repo).strip() == "main"
+    assert git("status", "--porcelain", cwd=repo).split("\n")[:2] == [" M app.py", "?? new.py"]
+
+
+def test_says_how_to_go_back_when_brief_has_snapshot() -> None:
+    brief = render_brief(
+        "a" * 40, "b" * 40, requests=[], commits=[], snapshot="o/playground-snapshot/s"
+    )
+    assert "`git switch -c <name> o/playground-snapshot/s`" in brief
 
 
 def test_lists_only_owner_files_when_hub_changes_read(tmp_path: Path) -> None:
