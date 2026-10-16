@@ -62,6 +62,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A shake opens New session on every screen, Settings and "All projects" included: with no project in the route
   or the scope, it starts in the first registered project, as Sessions' New session does. It still does nothing
   when no project is registered (AGH-262).
+- The chat's permission card is easier to read and answer: it says what the call is for, wraps the command as a
+  terminal line, names the Always allow rule on one line and shows the A / D keys only while it has focus. Questions
+  are radio or checkbox rows with Claude's descriptions in view, a Recommended tag, an Other field in place and a
+  neutral Skip question; several questions go one page at a time with numbered steps; an answered question keeps
+  each answer, and its outcome reads Answered, Skipped, Plan approved or Kept planning (AGH-264).
 
 ### Fixed
 
