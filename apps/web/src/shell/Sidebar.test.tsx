@@ -3,7 +3,7 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
-import { Sidebar } from "./Sidebar";
+import { NAV, Sidebar } from "./Sidebar";
 
 function renderSidebar(path = "/", props: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   const router = createMemoryRouter(
@@ -133,6 +133,12 @@ describe("Sidebar", () => {
     expect(sessions.querySelector(".ah-pulse")).not.toBeNull();
     expect(screen.queryByRole("link", { name: /Live sessions/ })).not.toBeInTheDocument();
     expect(container.querySelector('a[href="/live"]')).toBeNull();
+  });
+
+  it("one-tab: draws Sessions with the list icon (spec 01)", () => {
+    const sessions = NAV.flatMap((group) => group.items).find((item) => item.id === "sessions");
+
+    expect(sessions?.icon).toBe("list");
   });
 
   it("one-tab: names Sessions alone when nothing is live", () => {
