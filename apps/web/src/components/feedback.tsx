@@ -1,8 +1,9 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import { cx } from "../lib/cx";
 import { Button, type Phase } from "./core";
+import { Dialog } from "./Dialog";
 import { Icon, type IconName } from "./Icon";
 import { CodeBlock } from "./trace";
 
@@ -197,7 +198,8 @@ export function Toast({ children, tone = "ok", action, onUndo }: ToastProps) {
   );
 }
 
-/* Confirmation only for irreversible actions; states consequences; verb on the button */
+/* Confirmation only for irreversible actions; states consequences; verb on the button. On Dialog:
+   Escape, the X and the scrim cancel; focus starts on Cancel (or the text to type). */
 export interface ConfirmDialogProps {
   title: string;
   children?: ReactNode;
@@ -225,43 +227,15 @@ export function ConfirmDialog({
   phase,
 }: ConfirmDialogProps) {
   const [typed, setTyped] = useState("");
-  const titleId = useId();
   const ok = !requireText || typed === requireText;
   return (
-    <div className={cx("ah-scrim", inline && "ah-scrim-inline")}>
-      <div className="ah-dialog" role="alertdialog" aria-modal="true" aria-labelledby={titleId}>
-        <div className="ah-dialog-body">
-          <h2 id={titleId} className="ah-h3">
-            {title}
-          </h2>
-          {children && <div className="ah-muted">{children}</div>}
-          {consequences.length > 0 && (
-            <ul className="ah-consequences">
-              {consequences.map((c, i) => (
-                <li key={i}>{c}</li>
-              ))}
-            </ul>
-          )}
-          {requireText && (
-            <label className="ah-stack" style={{ gap: 4 }}>
-              <span className="ah-small ah-muted">
-                Type{" "}
-                <b className="ah-mono" style={{ color: "var(--text)" }}>
-                  {requireText}
-                </b>{" "}
-                to confirm
-              </span>
-              <input
-                className="ah-input"
-                value={typed}
-                onChange={(e) => {
-                  setTyped(e.target.value);
-                }}
-              />
-            </label>
-          )}
-        </div>
-        <div className="ah-dialog-foot">
+    <Dialog
+      title={title}
+      role="alertdialog"
+      onClose={onCancel}
+      inline={inline}
+      footer={
+        <>
           <Button onClick={onCancel}>{cancelLabel}</Button>
           <Button
             variant={tone === "danger" ? "danger" : "primary"}
@@ -271,8 +245,35 @@ export function ConfirmDialog({
           >
             {confirmLabel}
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {children && <div className="ah-muted">{children}</div>}
+      {consequences.length > 0 && (
+        <ul className="ah-consequences">
+          {consequences.map((c, i) => (
+            <li key={i}>{c}</li>
+          ))}
+        </ul>
+      )}
+      {requireText && (
+        <label className="ah-stack" style={{ gap: 4 }}>
+          <span className="ah-small ah-muted">
+            Type{" "}
+            <b className="ah-mono" style={{ color: "var(--text)" }}>
+              {requireText}
+            </b>{" "}
+            to confirm
+          </span>
+          <input
+            className="ah-input"
+            value={typed}
+            onChange={(e) => {
+              setTyped(e.target.value);
+            }}
+          />
+        </label>
+      )}
+    </Dialog>
   );
 }
