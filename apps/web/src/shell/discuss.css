@@ -1,0 +1,67 @@
+/* The Discuss with Claude panel: a fixed column on the right, under the top bar. */
+.ah-discuss {
+  position: fixed;
+  top: var(--topbar);
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-sidebar);
+  width: var(--discuss-width);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+}
+.ah-shell[data-discuss="true"] {
+  --discuss-width: min(460px, 40vw);
+}
+.ah-shell[data-discuss="true"] .ah-shell-main,
+.ah-shell[data-discuss="true"] .ah-shell-banner {
+  margin-right: var(--discuss-width);
+}
+.ah-discuss-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.ah-discuss-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ah-discuss-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-discuss-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ah-discuss-meta {
+  flex: none;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+.ah-discuss-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-discuss-note {
+  padding: var(--space-3);
+}
+/* The chat's column is narrower here than on its page. */
+.ah-discuss .as-column {
+  max-width: none;
+  padding-inline: var(--space-3);
+}
+.ah-discuss .as-page {
+  flex: 1 1 auto;
+  min-height: 0;
+}

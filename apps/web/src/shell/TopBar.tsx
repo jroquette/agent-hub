@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
-import { IconButton, Kbd, MenuItem, Popover, SegmentedControl, Tooltip } from "../components/core";
+import { Button, IconButton, Kbd, MenuItem, Popover, SegmentedControl, Tooltip } from "../components/core";
 import { CollectorPill } from "../components/CollectorPill";
 import { Icon, type IconName } from "../components/Icon";
 import { useApi } from "../lib/api";
+import { useDiscuss } from "./discuss";
 import { usePreferences, type ThemeChoice } from "../lib/preferences";
 import type { StreamHealth } from "../lib/sse";
 
@@ -78,6 +79,31 @@ export function ProjectSwitcher({ scope, onScope }: ProjectSwitcherProps) {
   );
 }
 
+/** Opens or closes the Discuss with Claude panel; it names what the screen offers to discuss. */
+function DiscussToggle() {
+  const { open, setOpen, target } = useDiscuss();
+  const label = open
+    ? "Close Discuss with Claude"
+    : target
+      ? `Discuss this ${target.kind.toLowerCase()} with Claude`
+      : "Discuss with Claude";
+  return (
+    <Tooltip label={label}>
+      <Button
+        size="sm"
+        variant={open ? "primary" : "default"}
+        icon="message-square"
+        aria-pressed={open}
+        onClick={() => {
+          setOpen(!open);
+        }}
+      >
+        Discuss
+      </Button>
+    </Tooltip>
+  );
+}
+
 export interface TopBarProps {
   scope: string | null;
   onScope: (project: string | null) => void;
@@ -110,6 +136,7 @@ export function TopBar({
         <Kbd>Ctrl K</Kbd>
       </button>
       <span className="ah-grow" />
+      <DiscussToggle />
       <CollectorPill health={health} />
       <SegmentedControl
         label="Time zone"
