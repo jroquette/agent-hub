@@ -1,9 +1,40 @@
-import { screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
-import { anEvalRecord, renderWithApi } from "../../testing/builders";
-import { EvalTab } from "./EvalTab";
+import {
+  aBrainNote,
+  aCapabilities,
+  aWorkdir,
+  anAgentSession,
+  anEvalRecord,
+  anId,
+  renderWithApi,
+  type ApiRoutes,
+} from "../../testing/builders";
+import { EvalTab, evalPrompt, pickEval, type EvalTabProps } from "./EvalTab";
+
+const AGENT = "/api/v1/agent-sessions";
+
+function tab(props: Partial<EvalTabProps> = {}) {
+  return (
+    <EvalTab
+      project="agent-hub"
+      slug="control-plane"
+      tickets={["AGH-201", "AGH-202"]}
+      evals={[]}
+      selected={undefined}
+      onSelect={() => undefined}
+      {...props}
+    />
+  );
+}
+
+const driving: ApiRoutes = {
+  [`${AGENT}/capabilities`]: aCapabilities(),
+  [`${AGENT}/workdirs`]: { items: [aWorkdir()], warnings: [] },
+};
 
 const evals = [
   anEvalRecord(),
@@ -41,14 +72,92 @@ const evals = [
 ];
 
 function rowOf(delivery: string): HTMLElement {
-  const row = screen.getByText(delivery, { selector: "b" }).closest("tr");
+  const row = screen.getByRole("button", { name: new RegExp(`^${delivery},`) }).closest("tr");
   if (!row) throw new Error(`no row ${delivery}`);
   return row;
 }
 
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
+describe("pickEval", () => {
+  it("takes the asked delivery, else the newest by date, else the last by name", () => {
+    const old = anEvalRecord({ delivery: "a", path: "a.md", evaluated_at: "2026-10-01" });
+    const recent = anEvalRecord({
+      delivery: "b",
+      path: "b.md",
+      evaluated_at: "2026-10-14T15:46:51Z",
+    });
+    const undated = anEvalRecord({ delivery: "c", path: "c.md", evaluated_at: null });
+
+    expect(pickEval([recent, old, undated], "a")).toBe(old);
+    expect(pickEval([old, recent, undated], null)).toBe(recent);
+    expect(pickEval([old, recent], "missing")).toBe(recent);
+    expect(pickEval([undated, { ...undated, delivery: "d", path: "d.md" }], null)?.delivery).toBe(
+      "d",
+    );
+    expect(pickEval([], null)).toBeUndefined();
+  });
+});
+
+describe("evalPrompt", () => {
+  it("asks the evaluator for one scope and never to touch an existing eval", () => {
+    expect(evalPrompt("agent-hub", "control-plane", "feature")).toContain(
+      "Scope: the whole feature.",
+    );
+    const ticket = evalPrompt("agent-hub", "control-plane", "AGH-202");
+    expect(ticket).toContain("Scope: ticket AGH-202.");
+    expect(ticket).toContain("never edit an existing eval");
+  });
+});
+
 describe("EvalTab", () => {
+  it("selects an eval from its row and reads the selected one below", async () => {
+    const onSelect = vi.fn();
+    renderWithApi(tab({ evals, selected: evals[1], onSelect }), {
+      routes: { "/api/v1/projects/agent-hub/brain/note": aBrainNote() },
+    });
+
+    expect(rowOf("agh-202")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("article", { name: "Eval agh-202" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^agh-201,/ }));
+    expect(onSelect).toHaveBeenCalledWith("agh-201");
+  });
+
+  it("starts the evaluator in the hub folder for the chosen scope", async () => {
+    const created = anAgentSession({ id: anId(8, "0192a5e5"), status: "running" });
+    const view = renderWithApi(tab({ evals }), {
+      routes: {
+        ...driving,
+        [`POST ${AGENT}`]: created,
+        [`${AGENT}/${created.id}`]: created,
+      },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "AGH-202" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Evaluate AGH-202" }));
+
+    const post = await waitFor(() => {
+      const found = view.requests.find(
+        (r) => r.method === "POST" && new URL(r.url).pathname === AGENT,
+      );
+      if (!found) throw new Error("no POST");
+      return found;
+    });
+    const body = JSON.parse(await post.clone().text()) as Record<string, unknown>;
+    expect(body).toMatchObject({ project: "agent-hub", mode: "acceptEdits" });
+    expect(String(body.prompt)).toContain("Scope: ticket AGH-202.");
+    expect(await screen.findByText("Evaluating")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open chat/ })).toHaveAttribute(
+      "href",
+      `/agent-sessions/${created.id}`,
+    );
+    expect(screen.getByRole("button", { name: /An evaluation is already running/ })).toBeDisabled();
+  });
+
   it("lists every delivery's eval with its verdict, scope and note (golden)", () => {
-    renderWithApi(<EvalTab project="agent-hub" evals={evals} />);
+    renderWithApi(tab({ evals }));
 
     const table = screen.getByRole("table", { name: "Evals" });
     expect(within(table).getAllByRole("row")).toHaveLength(5);
@@ -72,19 +181,43 @@ describe("EvalTab", () => {
   });
 
   it("names the ACs of a scope in the cell's title (golden)", () => {
-    renderWithApi(<EvalTab project="agent-hub" evals={[anEvalRecord()]} />);
+    renderWithApi(tab({ evals: [anEvalRecord()] }));
 
     expect(screen.getByText("3 ACs")).toHaveAttribute("title", "AC-200.1, AC-200.2, AC-200.3");
   });
 
   it("says no eval was written yet when there is none (golden states)", () => {
-    renderWithApi(<EvalTab project="agent-hub" evals={[]} />);
+    renderWithApi(tab());
 
     expect(screen.getByText("No evals yet.")).toBeInTheDocument();
   });
 
+  it("puts a run waiting for the owner up front, scope locked (golden a11y)", async () => {
+    const waiting = anAgentSession({ id: anId(9, "0192a5e5"), status: "waiting_permission" });
+    window.localStorage.setItem(
+      "agent-hub:eval-run:agent-hub:control-plane",
+      JSON.stringify({
+        id: waiting.id,
+        scope: "AGH-201",
+        started_at: new Date().toISOString(),
+        known: evals.map((e) => e.path),
+      }),
+    );
+    const { container } = renderWithApi(tab({ evals }), {
+      routes: { ...driving, [`${AGENT}/${waiting.id}`]: waiting },
+    });
+
+    expect(await screen.findByRole("link", { name: /Answer in chat/ })).toHaveAttribute(
+      "href",
+      `/agent-sessions/${waiting.id}`,
+    );
+    expect(screen.getByRole("button", { name: "AGH-201" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Whole feature" })).toBeDisabled();
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
   it("has no serious axe violation (golden a11y)", async () => {
-    const { container } = renderWithApi(<EvalTab project="agent-hub" evals={evals} />);
+    const { container } = renderWithApi(tab({ evals }));
 
     await screen.findByRole("table", { name: "Evals" });
     expect(await seriousViolations(container)).toEqual([]);
