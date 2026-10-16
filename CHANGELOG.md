@@ -42,6 +42,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   short explanation of each, kind tiles with 30-day use, a sort, and hooks grouped by lifecycle event (AGH-262).
 - A message to an ended local session (hub web stopped, idle timeout, closed, failed) reopens the same session on its
   Claude conversation and plays it (AGH-262).
+- `make playground-export [SINCE=<ref>]`: the playground's commits since the last export (a local
+  `playground-export/*` tag), as a delivery's input in `.playground/exports/<stamp>/` (ignored by git): `export.json`
+  grouped by screen or package, `brief.md` with the owner's requests from the conductor's sessions, `reference.patch`,
+  and each touched screen captured by Playwright from the `HEAD` build on synthetic data (AGH-263).
 
 ### Changed
 
