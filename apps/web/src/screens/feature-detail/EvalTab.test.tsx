@@ -238,7 +238,10 @@ describe("EvalTab", () => {
 
   it("does not read a run idle without a new eval as done (AC-269.5)", async () => {
     const idle = anAgentSession({ id: anId(10, "0192a5e5"), status: "idle" });
-    storeRun(idle.id, evals.map((e) => e.path));
+    storeRun(
+      idle.id,
+      evals.map((e) => e.path),
+    );
     renderWithApi(tab({ evals }), { routes: { ...driving, [`${AGENT}/${idle.id}`]: idle } });
 
     expect(await screen.findByText("Finished without a new eval")).toBeInTheDocument();
@@ -248,7 +251,10 @@ describe("EvalTab", () => {
   it("shows the eval a finished run wrote and clears the run (AC-269.5)", async () => {
     const onSelect = vi.fn();
     const idle = anAgentSession({ id: anId(11, "0192a5e5"), status: "idle" });
-    storeRun(idle.id, evals.slice(1).map((e) => e.path));
+    storeRun(
+      idle.id,
+      evals.slice(1).map((e) => e.path),
+    );
     renderWithApi(tab({ evals, onSelect }), {
       routes: { ...driving, [`${AGENT}/${idle.id}`]: idle },
     });
