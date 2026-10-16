@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -23,10 +23,11 @@ import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
 import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
-import { NoteView, type NoteViewMode } from "../brain/NoteView";
+import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
 import { EvalTab, pickEval } from "./EvalTab";
+import { RecordSummary, summaryRequest } from "./RecordSummary";
 import { StateBadge } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
 import { useFeature, useFeatureTickets } from "./queries";
@@ -88,9 +89,12 @@ function ownerLine(text: string | undefined): string {
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
+/** How a record tab shows its record: its human summary, or the file the agents read. */
+type RecordView = "humans" | "agent";
+
 /**
- * A record tab (Spec, Research, Plan): the note itself, read through the brain route (D3). It opens
- * readable, laid out for a person; Agent shows the file as the agents write and read it.
+ * A record tab (Spec, Research, Plan): it opens on the record's human summary, the one-minute
+ * version people read; Agent markdown shows the record itself, read through the brain route (D3).
  */
 function RecordTab({
   detail,
@@ -100,8 +104,8 @@ function RecordTab({
 }: {
   detail: Detail;
   tab: string;
-  view: NoteViewMode;
-  onView: (view: NoteViewMode) => void;
+  view: RecordView;
+  onView: (view: RecordView, anchor?: string) => void;
 }) {
   const meta = RECORDS[tab];
   if (!meta) return null;
@@ -126,20 +130,20 @@ function RecordTab({
           label="Show the record"
           value={view}
           onChange={(id) => {
-            onView(id === "agent" ? "agent" : "readable");
+            onView(id === "agent" ? "agent" : "humans");
           }}
           options={[
             {
-              id: "readable",
-              label: "Readable",
+              id: "humans",
+              label: "For humans",
               icon: "book-open",
-              title: "Laid out for a person: the agents' references kept short",
+              title: "A short summary of the record, written for people",
             },
             {
               id: "agent",
               label: "Agent markdown",
               icon: "file-text",
-              title: "The file exactly as the agents write and read it",
+              title: "The whole record, as the agents write and read it",
             },
           ]}
         />
@@ -147,13 +151,24 @@ function RecordTab({
           Open in Brain
         </Link>
       </div>
-      <NoteView
-        key={record.path}
-        project={detail.project}
-        path={record.path}
-        missing={`No ${file} yet.`}
-        view={view}
-      />
+      {view === "humans" ? (
+        <RecordSummary
+          key={record.path}
+          project={detail.project}
+          record={meta.name}
+          recordPath={record.path}
+          onReadRecord={(anchor) => {
+            onView("agent", anchor);
+          }}
+        />
+      ) : (
+        <NoteView
+          key={record.path}
+          project={detail.project}
+          path={record.path}
+          missing={`No ${file} yet.`}
+        />
+      )}
     </div>
   );
 }
@@ -247,6 +262,14 @@ function featureDiscussTarget(
     title: detail.slug,
     path,
     openOnArrive: true,
+    starters: record
+      ? [
+          {
+            label: `Write the human summary of ${record.name}`,
+            message: summaryRequest(detail.slug, record.name),
+          },
+        ]
+      : undefined,
     brief: [
       `The whole feature record lives in \`${folder}/\`. Before answering, read all of it: ${[...new Set(files)].join(", ")}.`,
       detail.problem ? `The problem it solves: ${detail.problem}` : "",
@@ -268,6 +291,7 @@ export function FeatureDetailScreen() {
   const { project = "", slug = "" } = useParams();
   const feature = useFeature(project, slug);
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
   const tab = tabOf(params.get("doc"), feature.data?.phase);
@@ -360,15 +384,13 @@ export function FeatureDetailScreen() {
       <RecordTab
         detail={detail}
         tab={tab}
-        view={params.get("view") === "agent" ? "agent" : "readable"}
-        onView={(view) => {
-          setParams(
-            (current) => {
-              const next = new URLSearchParams(current);
-              if (view === "agent") next.set("view", "agent");
-              else next.delete("view");
-              return next;
-            },
+        view={params.get("view") === "agent" ? "agent" : "humans"}
+        onView={(view, anchor) => {
+          const next = new URLSearchParams(params);
+          if (view === "agent") next.set("view", "agent");
+          else next.delete("view");
+          void navigate(
+            { search: `?${next.toString()}`, hash: anchor ? `#${encodeURIComponent(anchor)}` : "" },
             { replace: true },
           );
         }}

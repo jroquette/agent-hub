@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -399,6 +400,14 @@ def test_returns_note_when_path_valid() -> None:
     assert note.frontmatter == {"type": "decision-log", "tags": ["a", "b"]}
     assert note.frontmatter_problem is None
     assert note.markdown == "# Decisions\n"
+
+
+def test_returns_hash_of_file_bytes_when_note_read() -> None:
+    models, _, _ = read_models({DEMO: a_brain_hub()}, DEMO)
+
+    note = models.brain_note("demo", "decisions/index.md")
+
+    assert note.sha256 == hashlib.sha256(DECISIONS).hexdigest()
 
 
 def test_reports_frontmatter_problem_when_note_frontmatter_unclosed() -> None:

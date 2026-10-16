@@ -128,6 +128,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/research/SKILL.md",
     "plugin/hub-workflow/skills/retro/SKILL.md",
     "plugin/hub-workflow/skills/review/SKILL.md",
+    "plugin/hub-workflow/skills/summarize/SKILL.md",
     "plugin/hub-workflow/skills/triage/SKILL.md",
     "plugin/hub-workflow/skills/upgrade/SKILL.md",
     "scripts/cloud-setup.sh",
@@ -194,6 +195,7 @@ BASE_SKILLS = (
     "research",
     "retro",
     "review",
+    "summarize",
     "triage",
     "upgrade",
 )
@@ -302,12 +304,12 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
     # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix and the ten AGH-99
-    # skills: 25, sorted by path.
+    # skills, and /summarize: 26, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 25
+    assert len(rendered.links) == 26
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -2001,6 +2003,7 @@ SKILL_FRONTMATTER_KEYS = {
     "research": ["name", "description", "argument-hint"],
     "retro": ["name", "description", "disable-model-invocation", "argument-hint"],
     "review": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "summarize": ["name", "description", "argument-hint"],
     "triage": ["name", "description", "disable-model-invocation", "argument-hint"],
     "upgrade": ["name", "description", "disable-model-invocation", "argument-hint"],
 }

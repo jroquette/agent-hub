@@ -722,6 +722,17 @@
             "title": "Project",
             "type": "string"
           },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
           "size": {
             "minimum": 0.0,
             "title": "Size",
@@ -5946,7 +5957,7 @@
                 "items": {
                   "$ref": "#/components/schemas/Screenshot"
                 },
-                "maxItems": 4,
+                "maxItems": 10,
                 "minItems": 1,
                 "type": "array"
               },
