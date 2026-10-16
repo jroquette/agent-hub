@@ -1,6 +1,7 @@
 /* The Studio's drafts in this browser: which session writes each draft, and the list the catalog
  * offers to continue. Only ids and labels are kept; the files live in the hub folder. */
 import type { ItemKind } from "./filters";
+import type { SkillRef } from "./queries";
 
 export interface StoredDraft {
   draftId: string;
@@ -11,6 +12,8 @@ export interface StoredDraft {
   name: string | null;
   updatedAt: string;
   published: boolean;
+  /** The existing item the draft changes; absent for a new item. */
+  target?: SkillRef | null;
 }
 
 const KEY = "ah.studio.drafts";
@@ -37,6 +40,18 @@ function writeAll(drafts: readonly StoredDraft[]) {
 /** The drafts of `project` not yet published, most recent first. */
 export function openDrafts(project: string): StoredDraft[] {
   return readAll().filter((d) => d.project === project && !d.published);
+}
+
+/** The open edit draft of `target` in `project`, so a second Edit reopens it. */
+export function openEditDraft(project: string, target: SkillRef): StoredDraft | null {
+  return (
+    openDrafts(project).find(
+      (d) =>
+        d.target?.kind === target.kind &&
+        d.target.source === target.source &&
+        d.target.name === target.name,
+    ) ?? null
+  );
 }
 
 export function storedDraft(draftId: string): StoredDraft | null {
