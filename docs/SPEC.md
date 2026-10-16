@@ -502,7 +502,7 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
 - **Session names.** A session's name is the title Claude Code writes in its transcript, or the user's `/rename`,
   stored as `session.title` ([ADR 0035](adr/0035-session-titles.md), below).
 
-**Skills tab (AGH-164, built).** Knowledge › Skills shows what a hub's agents can do, read from its files on request
+**Skills tab (AGH-164, built; named Toolkit since AGH-271).** Knowledge › Toolkit shows what a hub's agents can do, read from its files on request
 and never stored:
 
 - **Catalog.** `GET /api/v1/projects/{project}/skills` lists the hub's skills, agents and hooks: the base plugin
@@ -522,6 +522,9 @@ and never stored:
   role (text served inert by a server-issued id), an approximate context cost (characters / 4), and diagnostics
   (`name_invalid`, `description_missing`, `reference_not_found`, `not_linked`, `modified_since_sync`, …). A hook shows
   its event, matcher, command, source file and active / not-synced state. Nothing is run.
+  A step that states its type (a leading `` `agent` ``, `` `script` ``, `` `gate` `` or `` `human` ``) carries it as
+  `declared_type`, which wins over the word guesses (only declared gates show as gates when a step declares one), and
+  `summary`, the plain rest of its first line (AGH-271).
 - **Bounds.** The tree is listed stat-only through `HubFileReader.skill_sources` and read through
   `read_skill_file`, never through a link (a link that leaves the hub is `link_outside_hub`); at most 500 items per
   kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog

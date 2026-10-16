@@ -16,17 +16,16 @@ import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { CountCell, KnowledgeProjectIndex } from "../knowledge-index";
 import { NotFoundBody } from "../not-found";
+import { AboutRail } from "./AboutRail";
 import { BodyView, scrollToAnchor, type BodyMode } from "./BodyView";
 import { BundledFiles } from "./BundledFiles";
 import { Catalog } from "./Catalog";
-import { ContextCost } from "./ContextCost";
 import { DetailHeader } from "./DetailHeader";
 import { Diagnostics } from "./Diagnostics";
 import { KINDS, type ItemKind } from "./filters";
 import { FrontmatterTable } from "./FrontmatterTable";
 import { HookDetail } from "./HookDetail";
 import { useSkillCatalog, useSkillDetail, type SkillRef } from "./queries";
-import { Relations } from "./Relations";
 import { StructurePanel } from "./StructurePanel";
 import { editDraftRoute } from "./Studio";
 import { CreateMenu } from "./CreateMenu";
@@ -81,15 +80,15 @@ export function SkillsScreen() {
         items={[
           { label: "Portfolio", href: "/" },
           { label: project, href: `/projects/${encodeURIComponent(project)}` },
-          { label: "Skills" },
+          { label: "Toolkit" },
         ]}
       />
       <header className="ah-skills-head">
         <div className="ah-stack ah-grow" style={{ gap: 4 }}>
-          <h1 className="ah-h1">Skills</h1>
+          <h1 className="ah-h1">Toolkit</h1>
           <p className="ah-muted" style={{ margin: 0 }}>
-            What {project}&apos;s agents can do, read from its hub&apos;s files. Nothing here runs
-            them.
+            The skills, agents and hooks {project}&apos;s agents work with, read from its hub&apos;s
+            files. Nothing here runs them.
           </p>
         </div>
         <CreateMenu project={project} />
@@ -150,7 +149,7 @@ function DetailBody({
         now={now}
         usageDays={USAGE_DAYS}
         action={
-          <div className="ah-row" style={{ gap: 8 }}>
+          <>
             <DiscussButton />
             <Button
               size="sm"
@@ -160,41 +159,83 @@ function DetailBody({
             >
               Edit with Claude
             </Button>
-          </div>
+          </>
         }
       />
-      <Diagnostics diagnostics={detail.diagnostics} />
-      {detail.hook ? (
-        <HookDetail hook={detail.hook} sourcePath={detail.source_path} />
-      ) : (
-        <>
-          <StructurePanel structure={detail.structure ?? null} onStep={onStep} />
-          <BodyView
-            body={detail.body ?? null}
-            raw={detail.raw ?? null}
-            toc={detail.toc}
-            localLink={localLink}
-            view={view}
-            onViewChange={setView}
-          />
-        </>
-      )}
-      {detail.frontmatter.length > 0 && <FrontmatterTable pairs={detail.frontmatter} />}
-      {detail.kind !== "hook" && (
-        <ContextCost cost={detail.context_cost ?? null} kind={detail.kind} />
-      )}
-      {detail.kind !== "hook" && (
-        <Relations project={project} uses={detail.uses} usedBy={detail.used_by} />
-      )}
-      {isSkill && (
-        <BundledFiles
-          project={project}
-          item={item}
-          files={detail.files}
-          openId={openId}
-          onOpenChange={setOpenId}
-        />
-      )}
+      <div className="ah-skill-layout">
+        <div className="ah-skill-main">
+          <Diagnostics diagnostics={detail.diagnostics} />
+          {detail.hook ? (
+            <HookDetail hook={detail.hook} />
+          ) : (
+            <>
+              <StructurePanel structure={detail.structure ?? null} onStep={onStep} />
+              <BodyView
+                body={detail.body ?? null}
+                raw={detail.raw ?? null}
+                toc={detail.toc}
+                localLink={localLink}
+                view={view}
+                onViewChange={setView}
+              />
+            </>
+          )}
+          {isSkill && detail.files.length > 0 && (
+            <BundledFiles
+              project={project}
+              item={item}
+              files={detail.files}
+              openId={openId}
+              onOpenChange={setOpenId}
+            />
+          )}
+          {detail.frontmatter.length > 0 && (
+            <details className="ah-card ah-skill-section ah-skill-fold">
+              <summary className="ah-card-head">
+                <Icon name="chevron-right" size="sm" />
+                <span className="ah-h3">Frontmatter</span>
+                <span className="ah-small ah-muted">
+                  {detail.frontmatter.length} {detail.frontmatter.length === 1 ? "key" : "keys"}
+                </span>
+              </summary>
+              <div className="ah-card-body">
+                <FrontmatterTable pairs={detail.frontmatter} />
+              </div>
+            </details>
+          )}
+        </div>
+        <AboutRail project={project} detail={detail} />
+      </div>
+    </div>
+  );
+}
+
+/** The detail's loading shape: the header, then the main column beside the About rail. */
+function DetailSkeleton({ name }: { name: string }) {
+  return (
+    <div
+      aria-busy="true"
+      aria-label={`Loading ${name}`}
+      role="status"
+      className="ah-stack"
+      style={{ gap: 16 }}
+    >
+      <div className="ah-card ah-skill-header">
+        <Skeleton lines={4} />
+      </div>
+      <div className="ah-skill-layout">
+        <div className="ah-skill-main">
+          <div className="ah-card ah-card-body">
+            <Skeleton lines={5} />
+          </div>
+          <div className="ah-card ah-card-body">
+            <Skeleton lines={8} />
+          </div>
+        </div>
+        <div className="ah-skill-rail">
+          <Skeleton lines={8} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -216,11 +257,7 @@ function DetailLoaded({ project, item }: { project: string; item: SkillRef }) {
     );
   }
   if (detail.isPending) {
-    return (
-      <div aria-busy="true" aria-label={`Loading ${item.name}`} role="status">
-        <Skeleton lines={8} />
-      </div>
-    );
+    return <DetailSkeleton name={item.name} />;
   }
   return <DetailBody project={project} item={item} detail={detail.data} />;
 }
@@ -238,7 +275,7 @@ export function SkillDetailScreen() {
         items={[
           { label: "Portfolio", href: "/" },
           { label: project, href: `/projects/${encodeURIComponent(project)}` },
-          { label: "Skills", href: skillsHome(project) },
+          { label: "Toolkit", href: skillsHome(project) },
           { label: name, mono: true },
         ]}
       />
@@ -310,7 +347,7 @@ export function SkillsPickerScreen() {
   if (scope !== null) return <Navigate to={skillsHome(scope)} replace />;
   return (
     <KnowledgeProjectIndex
-      title="Skills"
+      title="Toolkit"
       intro="What each project's agents can do: the skills, agents and hooks its hub installs. Open a project to browse them."
       caption="Projects and their skills, agents and hooks"
       emptyLine="Register a hub to see its skills."

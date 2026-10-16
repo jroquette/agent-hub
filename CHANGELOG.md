@@ -57,6 +57,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- Knowledge › Skills is now Toolkit (its tabs stay Skills, Agents and Hooks), and agents come first. A skill, agent or
+  hook detail reads at a glance: a lean header (how to use it, state, health), Steps and Text first, an About rail
+  (source, `hub.lock`, tools, context cost, relations), diagnostics only when there are findings. Steps carry the
+  type they declare and a plain summary, and only declared gates show as gates (AGH-271).
 - The Skills catalog stays on the design system (neutral kind badges, type on the scale, no dashed outline on the
   managed tag and New link, full text on hover when truncated) and lays out at every width: tiles four across or two
   by two, hook rows aligned per event (AGH-271).

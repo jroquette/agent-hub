@@ -241,7 +241,7 @@ describe("StudioScreen (edit an existing item)", () => {
         "POST /api/v1/agent-sessions": anAgentSession({ id: ID, status: "running" }),
       }),
     );
-    expect(await screen.findByRole("link", { name: "Skills" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Toolkit" })).toBeInTheDocument();
     expect(screen.getByText("Edit feature")).toBeInTheDocument();
     const box = await screen.findByRole("textbox", { name: "Message Claude" });
     await waitFor(() => {

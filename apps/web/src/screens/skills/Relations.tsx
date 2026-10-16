@@ -22,8 +22,8 @@ function RelationList({
   empty: string;
 }) {
   return (
-    <div className="ah-skill-relations-col">
-      <h3 className="ah-caption ah-muted" style={{ margin: "0 0 6px" }}>
+    <section className="ah-skill-rail-section" aria-label={label}>
+      <h3 className="ah-caption" style={{ margin: "0 0 6px" }}>
         {label}
       </h3>
       {relations.length === 0 ? (
@@ -34,10 +34,7 @@ function RelationList({
         <ul className="ah-skill-relations" aria-label={label}>
           {relations.map((relation) => (
             <li key={relation.id}>
-              <span className="ah-skill-kind">
-                <Icon name={KIND_ICON[relation.kind]} size="sm" />
-                {KIND_NAME[relation.kind]}
-              </span>
+              <Icon name={KIND_ICON[relation.kind]} size="sm" title={KIND_NAME[relation.kind]} />
               <AppLink className="ah-mono" href={skillRoute(project, relation)}>
                 {relation.name}
               </AppLink>
@@ -48,7 +45,7 @@ function RelationList({
           ))}
         </ul>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -58,29 +55,22 @@ export interface RelationsProps {
   usedBy: readonly Relation[];
 }
 
-/** The relations card; each entry is an in-app link to that item's detail. */
+/** Uses and Used by, two sections of the About rail; each entry links to that item's detail. */
 export function Relations({ project, uses, usedBy }: RelationsProps) {
   return (
-    <section className="ah-card ah-skill-section" aria-labelledby="skill-relations">
-      <div className="ah-card-head">
-        <h2 id="skill-relations" className="ah-h3">
-          Relations
-        </h2>
-      </div>
-      <div className="ah-card-body ah-skill-relations-grid">
-        <RelationList
-          label="Uses"
-          project={project}
-          relations={uses}
-          empty="Names no skill or agent of this hub."
-        />
-        <RelationList
-          label="Used by"
-          project={project}
-          relations={usedBy}
-          empty="No other item names it."
-        />
-      </div>
-    </section>
+    <>
+      <RelationList
+        label="Uses"
+        project={project}
+        relations={uses}
+        empty="Names no skill or agent of this hub."
+      />
+      <RelationList
+        label="Used by"
+        project={project}
+        relations={usedBy}
+        empty="No other item names it."
+      />
+    </>
   );
 }
