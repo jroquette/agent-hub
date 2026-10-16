@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Feature detail's Tickets tab opens on a live flow of the tickets: the parallel groups left to right, then the
+  settled tickets, each card with its Linear status, readiness, AC progress, review and critical path, and the
+  feature's epic (a ticket that parents others: the plan's new `parent`, else Linear's parent issue) above it with its
+  children's progress. A started ticket reads "In progress", never "Can start now"; Implement counts the tickets in
+  progress and ends once every ticket is In Review or Done. The tab rereads Linear every 30 s and the Features list
+  its records every 30 s; `hub doctor` checks the plan's `parent` (AGH-268).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
