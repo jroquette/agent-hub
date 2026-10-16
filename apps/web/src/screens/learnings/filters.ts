@@ -4,9 +4,18 @@ import type { components } from "../../api/schema";
 type Learning = components["schemas"]["Learning"];
 export type Provenance = NonNullable<Learning["provenance"]>;
 export type Readiness = "ready" | "blocked";
-/** Claude's recommendation on a learning: a review verdict, a review still running, or none. */
+/** Claude's recommendation on a learning: a review verdict, where a running review stands
+ * (reviewing it now, queued behind others, stopped until you answer), a review that ended without
+ * a verdict, or none asked for. */
 export type ClaudeVerdict =
-  "ready" | "needs_changes" | "not_for_brain" | "reviewing" | "unreviewed";
+  | "ready"
+  | "needs_changes"
+  | "not_for_brain"
+  | "reviewing"
+  | "queued"
+  | "waiting"
+  | "no_verdict"
+  | "unreviewed";
 /** How a learning's verdict is looked up; without reviews, every learning is unreviewed. */
 export type VerdictOf = (l: Learning) => ClaudeVerdict;
 const NO_VERDICTS: VerdictOf = () => "unreviewed";
@@ -23,6 +32,9 @@ export const CLAUDE_VERDICTS: readonly ClaudeVerdict[] = [
   "needs_changes",
   "not_for_brain",
   "reviewing",
+  "queued",
+  "waiting",
+  "no_verdict",
   "unreviewed",
 ];
 /** The longest search kept from the URL; longer text is cut. */
