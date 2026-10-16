@@ -3,12 +3,13 @@ import "./Skills.css";
 
 import { useSearchParams } from "react-router";
 
-import { Banner, Button, EmptyState, FilterRail, Icon } from "../../components";
+import { Banner, Button, EmptyState, FilterRail, Icon, Tabs } from "../../components";
 import type { Facet } from "../../components";
 import type { components } from "../../api/schema";
 import { useNow } from "../../lib/clock";
 import {
   KINDS,
+  KIND_HELP,
   KIND_LABEL,
   MAX_QUERY_CHARS,
   MODES,
@@ -126,18 +127,24 @@ export function Catalog({ catalog, now }: CatalogProps) {
 
   const items = filterItems(catalog.items, filters);
   const counts = facetCounts(catalog.items, filters);
+  // The kind is picked with tabs above the cards: one kind, or all of them. A URL naming
+  // several kinds (an older link) reads as All, and picking a tab replaces it.
+  const tab = filters.kind.length === 1 ? (filters.kind[0] ?? "all") : "all";
+  const allCount = KINDS.reduce((sum, kind) => sum + counts.kind[kind], 0);
+  const tabs = [
+    { id: "all", label: "All", count: allCount },
+    ...KINDS.map((kind) => ({
+      id: kind,
+      label: KIND_LABEL[kind],
+      icon: KIND_ICON[kind],
+      count: counts.kind[kind],
+    })),
+  ];
+  const onTab = (id: string) => {
+    const kind = KINDS.find((value) => value === id);
+    setFilters({ ...filters, kind: kind ? [kind] : [] });
+  };
   const facets: Facet[] = [
-    {
-      id: "kind",
-      title: "Kind",
-      options: KINDS.map((kind) => ({
-        id: kind,
-        label: KIND_LABEL[kind],
-        count: counts.kind[kind],
-        checked: filters.kind.includes(kind),
-        icon: <Icon name={KIND_ICON[kind]} size="sm" />,
-      })),
-    },
     {
       id: "origin",
       title: "Origin",
@@ -167,10 +174,7 @@ export function Catalog({ catalog, now }: CatalogProps) {
     },
   ];
   const onToggle = (facet: string, option: string) => {
-    if (facet === "kind") {
-      const kind = KINDS.find((value) => value === option);
-      if (kind) setFilters({ ...filters, kind: toggle(filters.kind, kind) });
-    } else if (facet === "origin") {
+    if (facet === "origin") {
       const origin = ORIGINS.find((value) => value === option);
       if (origin) setFilters({ ...filters, origin: toggle(filters.origin, origin) });
     } else if (facet === "mode") {
@@ -203,6 +207,7 @@ export function Catalog({ catalog, now }: CatalogProps) {
           }
         />
         <div className="ah-skills-main">
+          <Tabs tabs={tabs} value={tab} onChange={onTab} label="Kind" />
           <div className="ah-row ah-wrap">
             <div className="ah-search ah-skills-search ah-grow">
               <Icon name="search" size="sm" />
@@ -246,6 +251,7 @@ export function Catalog({ catalog, now }: CatalogProps) {
                     <Icon name={KIND_ICON[kind]} size="sm" />
                     {KIND_LABEL[kind]} <span className="ah-count">{group.length}</span>
                   </h2>
+                  <p className="ah-skills-group-help">{KIND_HELP[kind]}</p>
                   <ul className="ah-skills-grid">
                     {group.map((item) => (
                       <SkillCard
