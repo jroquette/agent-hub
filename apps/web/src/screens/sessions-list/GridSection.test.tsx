@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { seriousViolations } from "../../testing/axe";
 import {
   aCapabilities,
   aPage,
@@ -178,7 +179,7 @@ describe("SessionsListScreen grid", () => {
       anAgentSession({ id: anId(12, "0192a5e5"), title: "Fix the build", status: "running" }),
       anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" }),
     ];
-    const { router } = renderWithApi(<SessionsListScreen />, {
+    const { router, container } = renderWithApi(<SessionsListScreen />, {
       routes: routes(aSessionsByStatus([]), driven),
       path: "/sessions",
     });
@@ -187,6 +188,8 @@ describe("SessionsListScreen grid", () => {
     expect(within(tileOf("Fix the build")).queryByRole("link", { name: /^Resume/ })).toBeNull();
     const resume = within(tileOf("Broke")).getByRole("link", { name: "Resume Broke" });
     expect(resume).toHaveAttribute("href", `/agent-sessions/${anId(16, "0192a5e5")}`);
+    // The link sits inside a focusable tile (article tabIndex=0).
+    expect(await seriousViolations(container)).toEqual([]);
     resume.focus();
     await userEvent.keyboard("{Enter}");
     expect(router.state.location.pathname).toBe(`/agent-sessions/${anId(16, "0192a5e5")}`);
