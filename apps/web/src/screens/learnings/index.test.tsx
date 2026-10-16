@@ -258,6 +258,40 @@ describe("LearningsScreen", () => {
     });
   });
 
+  it("lists decidable proposals before blocked ones and says why each is blocked", async () => {
+    const blocked = aLearning({
+      id: "l-gone",
+      text: "Proposal: a note nobody pushed",
+      proposed_at: at(10),
+      summary: null,
+      note_unavailable: "Note not in the hub checkout",
+      actions_unavailable: "Note not in the hub checkout",
+    });
+    open({
+      "/api/v1/learnings": aPage([blocked, older]),
+      "/api/v1/learnings/l-gone": detailOf(blocked),
+    });
+
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Retry flaky CI before calling a run failed");
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows[0]?.textContent).toContain("Retry flaky CI");
+    expect(rows[1]?.textContent).toContain("a note nobody pushed");
+    expect(rows[1]?.textContent).not.toContain("Proposal:");
+    expect(within(rows[1]!).getByText("Note not in the hub checkout")).toBeVisible();
+    expect(screen.getByText(/1 ready · 1 blocked/)).toBeInTheDocument();
+  });
+
+  it("keeps the status in the URL", async () => {
+    open({}, "/knowledge/learnings?status=rejected");
+
+    await screen.findByRole("table", { name: "Proposed learnings" });
+    expect(screen.getByRole("button", { name: "Rejected" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
   it("has no serious a11y violations (a11y)", async () => {
     const { container } = open();
     const detail = await screen.findByRole("region", { name: "Proposal" });
