@@ -45,6 +45,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The chat folds what Claude does between two messages, its calls and the thoughts between them, into one line
+  ("Ran 3 commands, read 2 files, thought 12 s", or the call it is on while it works, and how many failed). The line
+  opens the steps in an Activity drawer over the right of the page; a permission card stays under the line. The
+  session page's "What went wrong" folds the problems the agent or you already dealt with into one line, "Nothing
+  needs you · …", behind "Show N handled" (AGH-265).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to
