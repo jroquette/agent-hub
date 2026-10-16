@@ -19,7 +19,6 @@ export type TimelineEventBody = Schemas["TimelineEvent"];
 export type WorkflowRun = Schemas["WorkflowRun"];
 export type Approval = Schemas["Approval"];
 export type Learning = Schemas["Learning"];
-export type LiveTile = Schemas["LiveTile"];
 export type ProjectSummary = Schemas["ProjectSummary"];
 export type FeatureView = Schemas["FeatureView"];
 export type FindingView = Schemas["FindingView"];
@@ -438,46 +437,6 @@ export function aBrainNote(overrides: Partial<BrainNote> = {}): BrainNote {
     path: "index.md",
     project: "agent-hub",
     size: 180,
-    ...overrides,
-  };
-}
-
-export function aLiveTile(overrides: Partial<LiveTile> = {}): LiveTile {
-  return {
-    actors: [anActor()],
-    agent: "claude",
-    agent_session_id: null,
-    attempt: null,
-    budget_usd: null,
-    cost_usd: "0.8000",
-    derived: true,
-    ended_at: null,
-    errors: 0,
-    failing_notice: null,
-    files_touched: 2,
-    group: "live",
-    guard_denials: 0,
-    id: anId(1, "5091b986"),
-    is_subagent: false,
-    issue: "AGH-48",
-    label: aSessionLabel(),
-    last_action: "make check-fast",
-    last_activity_at: at(590),
-    last_tool: "Bash",
-    needs_you_problem: null,
-    outcome: null,
-    problems: { by_you: 0, handled: 0, needs_you: 0, open: 0 },
-    project: "agent-hub",
-    repo: "agent-hub",
-    run_id: null,
-    sources_missing: [],
-    sparkline_60s: [0, 1, 2, 0, 3, 1, 0, 0, 2, 1, 0, 1],
-    started_at: T0,
-    status: "live",
-    step: null,
-    tokens_total: 6400,
-    turns: 5,
-    waiting_reason: null,
     ...overrides,
   };
 }

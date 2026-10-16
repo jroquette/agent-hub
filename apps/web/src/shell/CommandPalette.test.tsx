@@ -9,11 +9,20 @@ describe("CommandPalette", () => {
   it("lists screens when the query is empty", () => {
     renderWithApi(<CommandPalette onClose={vi.fn()} />);
 
-    expect(screen.getByRole("option", { name: /Live sessions/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /^Sessions/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Portfolio/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );
+  });
+
+  it("one-tab: lists Sessions with g s and no Live sessions screen", () => {
+    renderWithApi(<CommandPalette onClose={vi.fn()} />);
+
+    const sessions = screen.getAllByRole("option").filter((o) => /sessions/i.test(o.textContent));
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toHaveTextContent(/^Sessions/);
+    expect(sessions[0]).toHaveTextContent("g s");
   });
 
   it("groups search hits by kind when the query matches", async () => {

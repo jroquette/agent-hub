@@ -3,7 +3,7 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
-import { Sidebar } from "./Sidebar";
+import { NAV, Sidebar } from "./Sidebar";
 
 function renderSidebar(path = "/", props: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   const router = createMemoryRouter(
@@ -24,7 +24,6 @@ describe("Sidebar", () => {
     expect(names).toEqual([
       "Portfolio",
       "Approvals",
-      "Live sessions",
       "Sessions",
       "Workflow runs",
       "Knowledge",
@@ -120,9 +119,32 @@ describe("Sidebar", () => {
     renderSidebar("/", { counts: { approvals: 2, live: 3, learnings: 4, health: 1 } });
 
     expect(screen.getByRole("link", { name: "Approvals, 2 waiting" })).toHaveTextContent("2");
-    expect(screen.getByRole("link", { name: "Live sessions, 3 live" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sessions, 3 live" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Learnings, 4 to triage" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Health, 1 doctor error" })).toBeInTheDocument();
+  });
+
+  it("one-tab: has one Sessions entry carrying the live badge and no Live sessions entry", () => {
+    const { container } = renderSidebar("/", { counts: { live: 3 } });
+
+    const sessions = screen.getByRole("link", { name: "Sessions, 3 live" });
+    expect(sessions).toHaveAttribute("href", "/sessions");
+    expect(sessions.querySelector(".ah-nav-count")).toHaveAttribute("data-tone", "live");
+    expect(sessions.querySelector(".ah-pulse")).not.toBeNull();
+    expect(screen.queryByRole("link", { name: /Live sessions/ })).not.toBeInTheDocument();
+    expect(container.querySelector('a[href="/live"]')).toBeNull();
+  });
+
+  it("one-tab: draws Sessions with the list icon (spec 01)", () => {
+    const sessions = NAV.flatMap((group) => group.items).find((item) => item.id === "sessions");
+
+    expect(sessions?.icon).toBe("list");
+  });
+
+  it("one-tab: names Sessions alone when nothing is live", () => {
+    renderSidebar("/", { counts: { live: 0 } });
+
+    expect(screen.getByRole("link", { name: "Sessions" })).not.toHaveTextContent("0");
   });
 
   it("caps a badge at 99+ when the count is larger", () => {

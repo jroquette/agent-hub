@@ -90,14 +90,13 @@ describe("SessionTile", () => {
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
 
-  it("shows the waiting reason, the budget and the last events on hover", () => {
+  it("shows the waiting reason, the cost so far and the last events on hover", () => {
     render(
       <SessionTile
         s={{
           ...tile,
           status: "waiting",
           reason: "Guard asks to edit a migration",
-          budget: 5,
           problems: null,
           needsYou: false,
         }}
@@ -106,7 +105,10 @@ describe("SessionTile", () => {
     );
 
     expect(screen.getByText("Guard asks to edit a migration")).toBeInTheDocument();
-    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    expect(screen.getByText("Cost so far")).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    // @ts-expect-error A tile has no run budget since Live sessions retired (ADR 0033 D8).
+    expect(<SessionTile s={{ ...tile, budget: 5 }} />).toBeTruthy();
     fireEvent.mouseEnter(screen.getByRole("article"));
     expect(screen.getByText("Last 5 events")).toBeInTheDocument();
     fireEvent.mouseLeave(screen.getByRole("article"));
