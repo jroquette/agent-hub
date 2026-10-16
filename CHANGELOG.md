@@ -65,6 +65,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Fixed
 
+- A session started from hub web takes Claude Code's title during its first turn (checked every 5 s until it has
+  one) and when it ends, so a session stopped during its first turn (a hub web restart) no longer keeps its first
+  prompt as its name for good; the first sweep after a restart names the sessions that ended unnamed (AGH-267).
 - `make dev` on macOS no longer shows a blank page: the chat's model module `transcript.ts` is now `model.ts`, so
   `./Transcript` no longer resolves to it on a case-insensitive file system (AGH-262).
 - New session is short: Where (the project, then the working folder last used for it) and the Prompt, which has
