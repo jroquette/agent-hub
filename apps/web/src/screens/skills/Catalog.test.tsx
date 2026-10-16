@@ -21,6 +21,7 @@ const cards = () =>
 const shown = () =>
   screen.queryAllByRole("article").map((card) => within(card).getByRole("heading").textContent);
 const box = (name: RegExp) => screen.getByRole("checkbox", { name });
+const tab = (name: RegExp) => screen.getByRole("tab", { name });
 
 describe("Catalog search_facets", () => {
   it("filters on name or description, ignoring case, and restores all when cleared (AC-164.14)", () => {
@@ -45,11 +46,12 @@ describe("Catalog search_facets", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
       target: { value: "spec" },
     });
-    expect(box(/^Skills/)).toHaveAccessibleName("Skills1");
-    expect(box(/^Agents/)).toHaveAccessibleName("Agents1");
-    expect(box(/^Hooks/)).toHaveAccessibleName("Hooks0");
+    expect(tab(/^All/)).toHaveAccessibleName("All2");
+    expect(tab(/^Skills/)).toHaveAccessibleName("Skills1");
+    expect(tab(/^Agents/)).toHaveAccessibleName("Agents1");
+    expect(tab(/^Hooks/)).toHaveAccessibleName("Hooks0");
 
-    fireEvent.click(box(/^Agents/));
+    fireEvent.click(tab(/^Agents/));
     expect(shown()).toEqual(["evaluator"]);
     expect(box(/^Managed/)).toHaveAccessibleName("Managed1");
 
@@ -63,7 +65,7 @@ describe("Catalog search_facets", () => {
     if (inMessage) fireEvent.click(inMessage);
     expect(shown()).toHaveLength(4);
     expect(screen.getByRole("searchbox", { name: /Search/ })).toHaveValue("");
-    expect(box(/^Agents/)).not.toBeChecked();
+    expect(tab(/^All/)).toHaveAttribute("aria-selected", "true");
   });
 
   it("offers the four modes with Hidden for neither (L2)", () => {
@@ -86,23 +88,32 @@ describe("Catalog url_query", () => {
     open("/projects/demo/skills?q=plan&kind=skill&mode=user-only");
 
     expect(screen.getByRole("searchbox", { name: /Search/ })).toHaveValue("plan");
-    expect(box(/^Skills/)).toBeChecked();
+    expect(tab(/^Skills/)).toHaveAttribute("aria-selected", "true");
     expect(box(/^User only/)).toBeChecked();
-    expect(box(/^Agents/)).not.toBeChecked();
+    expect(tab(/^Agents/)).toHaveAttribute("aria-selected", "false");
     expect(shown()).toEqual(["plan"]);
   });
 
-  it("updates the query in place when a facet changes", () => {
+  it("updates the query in place when a tab or facet changes", () => {
     const { router } = open("/projects/demo/skills?q=plan&kind=skill&mode=user-only");
 
-    fireEvent.click(box(/^Agents/));
+    fireEvent.click(tab(/^Agents/));
 
-    expect(router.state.location.search).toBe("?q=plan&kind=skill%2Cagent&mode=user-only");
+    expect(router.state.location.search).toBe("?q=plan&kind=agent&mode=user-only");
     expect(router.state.historyAction).toBe("REPLACE");
     fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
       target: { value: "" },
     });
-    expect(router.state.location.search).toBe("?kind=skill%2Cagent&mode=user-only");
+    expect(router.state.location.search).toBe("?kind=agent&mode=user-only");
+    fireEvent.click(tab(/^All/));
+    expect(router.state.location.search).toBe("?mode=user-only");
+  });
+
+  it("reads several kinds from an older link as All", () => {
+    open("/projects/demo/skills?kind=skill,agent");
+
+    expect(tab(/^All/)).toHaveAttribute("aria-selected", "true");
+    expect(shown()).toEqual(["feature", "plan", "evaluator"]);
   });
 
   it("ignores unknown values when the query is hand-written", () => {
@@ -123,6 +134,8 @@ describe("Catalog groups and notices", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Agents 1" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Hooks 1" })).toBeInTheDocument();
     expect(cards()).toHaveLength(4);
+    const hooks = screen.getByRole("region", { name: "Hooks 1" });
+    expect(hooks).toHaveTextContent(/Shell commands Claude Code runs by itself/);
   });
 
   it("lists third-party plugins as not in this hub (D1)", () => {
