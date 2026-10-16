@@ -16,7 +16,7 @@ import {
 import { fmtAgo, fmtClock, fmtDuration, fmtInt, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
-import { agentSessionHref } from "../sessions-list/AgentSessionList";
+import { agentSessionHref } from "../sessions-list/control";
 import type { Session } from "./queries";
 import { durationOf, isOpen, statusOf, tokensText } from "./session-status";
 
