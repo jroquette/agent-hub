@@ -5288,10 +5288,12 @@
       "Readiness": {
         "enum": [
           "can_start",
+          "in_progress",
           "waiting",
           "done",
           "canceled",
           "in_cycle",
+          "epic",
           "unknown"
         ],
         "type": "string"
@@ -7529,7 +7531,7 @@
       },
       "TicketPlan": {
         "additionalProperties": false,
-        "description": "The planning of the feature's tickets, every ticket named by its row's ``ref``.\n\n``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);\n``can_start`` the first layer's tickets that wait on nothing; ``order`` the recommended\norder; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle\n(left out of the layers); ``critical_path`` the longest chain of tickets not done.",
+        "description": "The planning of the feature's tickets, every ticket named by its row's ``ref``.\n\n``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);\n``can_start`` the first layer's tickets that wait on nothing and are not started yet;\n``order`` the recommended order; ``waiting`` the tickets with a blocker not done;\n``cycles`` each dependency cycle (left out of the layers); ``critical_path`` the longest\nchain of tickets not done; ``epics`` the rows that are a parent of other rows: they track\nthe work, are left out of the layers and never block.",
         "properties": {
           "can_start": {
             "items": {
@@ -7553,6 +7555,14 @@
               "type": "array"
             },
             "title": "Cycles",
+            "type": "array"
+          },
+          "epics": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Epics",
             "type": "array"
           },
           "external_blockers": {
@@ -7609,7 +7619,7 @@
       },
       "TicketRow": {
         "additionalProperties": false,
-        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).",
+        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).\n``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent\nissue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.",
         "properties": {
           "acs": {
             "items": {
@@ -7641,6 +7651,14 @@
               "type": "string"
             },
             "title": "Blocks",
+            "type": "array"
+          },
+          "children": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Children",
             "type": "array"
           },
           "estimate": {
@@ -7686,6 +7704,17 @@
               }
             ],
             "title": "Order"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
           },
           "priority": {
             "anyOf": [
