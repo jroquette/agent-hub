@@ -168,17 +168,14 @@ describe("FeatureDetailScreen", () => {
     );
   });
 
-  it("shows nine AC rows, then all of them on Show all", async () => {
+  it("shows every AC row at once, with no Show all fold", async () => {
     open();
 
     const table = await screen.findByRole("table", { name: "Acceptance criteria" });
     expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
-      9,
-    );
-    await userEvent.click(within(table).getByRole("button", { name: /Show all 13/ }));
-    expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
       13,
     );
+    expect(within(table).queryByRole("button", { name: /Show all/ })).toBeNull();
   });
 
   it("filters the ACs to owner steps and marks them", async () => {
