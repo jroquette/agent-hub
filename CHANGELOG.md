@@ -50,8 +50,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   and the Brain tree groups Start here, Folders (with note counts) and the unreviewed inbox, with a note filter (`/`)
   (AGH-270).
 
+- Edit an existing skill, agent or hook with Claude: its detail page has Edit with Claude beside Discuss, which opens
+  the Studio on an edit draft (the open one when there is one). Claude changes a copy in `.hub-drafts/<id>/`, the
+  preview shows the diff against the current version, and Publish writes it over the item; nothing is committed
+  (AGH-271).
+
 ### Changed
 
+- The Skills catalog stays on the design system (neutral kind badges, type on the scale, no dashed outline on the
+  managed tag and New link, full text on hover when truncated) and lays out at every width: tiles four across or two
+  by two, hook rows aligned per event (AGH-271).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to

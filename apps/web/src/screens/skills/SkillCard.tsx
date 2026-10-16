@@ -120,7 +120,7 @@ export function Invocation({ text }: { text: string }) {
   const [copied, markCopied] = useCopied();
   return (
     <div className="ah-skill-invocation">
-      <code>{text}</code>
+      <code title={text}>{text}</code>
       <Button
         size="sm"
         variant="ghost"
@@ -173,7 +173,9 @@ export function SkillCard({ item, project, now, usageDays, linked = true }: Skil
             {item.description ?? "No command"}
           </code>
         ) : (
-          <p className="ah-skill-desc">{item.description ?? "No description."}</p>
+          <p className="ah-skill-desc" title={item.description ?? undefined}>
+            {item.description ?? "No description."}
+          </p>
         )}
         {item.invocation && <Invocation text={item.invocation} />}
         {item.kind === "agent" && (

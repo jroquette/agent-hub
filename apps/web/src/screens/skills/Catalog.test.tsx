@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { seriousViolations } from "../../testing/axe";
 import { T0, aCatalogItem, aSkillCatalog, renderWithApi } from "../../testing/builders";
 import { Catalog } from "./Catalog";
+import { saveDraft } from "./studioDrafts";
 
 type SkillCatalog = ReturnType<typeof aSkillCatalog>;
 
@@ -209,5 +210,21 @@ describe("Catalog a11y", () => {
 
     expect(await seriousViolations(container)).toEqual([]);
     expect(screen.getByRole("status")).toHaveTextContent("Showing 1 of 4");
+  });
+});
+
+describe("Catalog drafts in progress", () => {
+  it("marks an edit draft of an existing item as editing", () => {
+    window.localStorage.clear();
+    saveDraft(
+      "skill-aaa111",
+      { project: "demo", kind: "skill" },
+      { name: "feature", target: { kind: "skill", source: "hub-workflow", name: "feature" } },
+    );
+    open();
+
+    const drafts = screen.getByRole("region", { name: "Drafts in progress" });
+    expect(within(drafts).getByRole("link")).toHaveTextContent("editingfeature");
+    window.localStorage.clear();
   });
 });

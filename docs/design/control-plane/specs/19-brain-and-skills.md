@@ -78,3 +78,26 @@ filter has the accessible name "Filter brain notes". Count cells are tabular num
 | Breadcrumb and purpose line | H1 visibility of where you are; five-second test |
 | Scope switcher follows the page | H4 consistency (`01-navigation.md`: changing scope on a project route opens that project's page of the same kind) |
 | Filter with `/` and `Esc` | Keyboard map (`01-navigation.md`) |
+
+## Toolkit catalog and Edit with Claude (AGH-271)
+
+The owner validated these in the playground too. They refine the Skills catalog of AGH-164 and the Studio of AGH-262.
+
+- **AC-271.1** Given the catalog, when it renders, then kind badges are neutral (they borrow neither the done or
+  waiting status colors nor the accent), its type sizes are on the type scale, the managed tag and the New link
+  have no dashed outline (kept for derived content), and a truncated invocation or description shows its full text
+  on hover.
+- **AC-271.2** Given the catalog at any width, when it lays out, then the group heading keeps its icon gap, kind tiles
+  go four across or two by two (never three and an orphan), card titles keep room between name and kind, the hook
+  rows of one event share one column grid (in a narrow column: name and tags over the command, the name never
+  hidden), and the main column stretches when the filter rail stacks.
+- **AC-271.3** Given a skill, agent or hook detail, when it renders, then "Edit with Claude" sits beside Discuss and
+  opens the Studio on an edit draft of that item, the one already open for it when there is one.
+- **AC-271.4** Given an edit draft, when its session starts, then Claude copies the item unchanged into
+  `.hub-drafts/<id>/`, changes only the copy, and leaves the original alone; the Studio is titled "Edit <name>" and
+  Drafts in progress marks it "editing".
+- **AC-271.5** Given an edit draft, when the preview renders, then it shows the change as a diff against the current
+  version, and its checks flag "no change yet" (not publishable), a rename and a managed item.
+- **AC-271.6** Given an approved edit, when Publish is confirmed, then Claude writes the draft's files over the
+  item's (a hook replaces only itself in its file), deletes the draft and commits nothing; the Studio settles on
+  Claude's PUBLISHED line as for a new item.
