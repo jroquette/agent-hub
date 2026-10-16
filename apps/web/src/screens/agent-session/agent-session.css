@@ -415,65 +415,170 @@
 .as-diff-head {
   color: var(--text-subtle);
 }
+/* A request waiting for you: a raised card with an amber halo, so it reads as "your turn". */
 .as-perm {
+  --perm-tint: var(--waiting);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--waiting);
-  border-radius: var(--radius-md);
-  background: var(--waiting-soft);
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--perm-tint) 45%, var(--border));
+  border-radius: var(--radius-xl);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--perm-tint) 9%, var(--surface)) 0,
+    var(--surface) 72px
+  );
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--perm-tint) 10%, transparent),
+    var(--shadow-popover);
 }
 .as-perm:focus-visible {
   outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
+/* Once answered it steps back: flat, quiet, one line of outcome. */
 .as-perm-done {
-  border-left-color: var(--border-strong);
+  --perm-tint: var(--idle);
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-color: var(--border);
   background: var(--surface);
+  box-shadow: none;
 }
 .as-perm-head {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.as-perm-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--perm-tint) 16%, transparent);
+  color: var(--perm-tint);
+}
+.as-perm-done .as-perm-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-md);
+}
+.as-perm-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+  padding-top: 5px;
+}
+.as-perm-done .as-perm-heading {
+  padding-top: 2px;
 }
 .as-perm-title {
   margin: 0;
   font-size: 14px;
+  line-height: 20px;
   font-weight: 600;
 }
-.as-perm-outcome {
-  margin: 0;
+.as-perm-done .as-perm-title {
+  font-size: 13px;
   font-weight: 500;
+  color: var(--text-muted);
+}
+.as-perm-purpose {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.as-perm-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--waiting) 14%, transparent);
+  color: var(--waiting);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.as-perm-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent);
+}
+/* The command as a terminal line: wrapped, never a sideways scrollbar. */
+.as-perm-command {
+  max-height: 200px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.as-perm-command[data-tool="Bash"]::before {
+  content: "$ ";
+  color: var(--done);
+  font-weight: 600;
+  user-select: none;
+}
+.as-perm-done .as-perm-command {
+  max-height: 120px;
+  opacity: 0.8;
+}
+.as-perm-outcome {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+}
+.as-perm-outcome::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.as-perm-outcome-allow {
+  background: var(--done-soft);
+  color: var(--done);
+}
+.as-perm-outcome-deny {
+  background: var(--failed-soft);
+  color: var(--failed);
 }
 .as-perm-actions {
   gap: var(--space-2);
   align-items: center;
 }
-.as-perm-pending .as-perm-head > svg {
-  color: var(--waiting);
+.as-perm .ah-btn {
+  height: 36px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-lg);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
-.as-perm-badge {
-  margin-left: auto;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--surface);
-  border: 1px solid var(--waiting);
-  color: var(--waiting);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
+.as-perm .ah-btn-primary {
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent);
 }
-.as-perm-purpose {
-  margin: calc(var(--space-1) * -1) 0 0;
-  color: var(--text-muted);
-}
-/* A long command wraps instead of hiding behind a horizontal scrollbar. */
-.as-perm-command {
-  max-height: 200px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.as-perm .ah-btn-primary:hover:not(:disabled) {
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 /* "Always allow" names its rule, which can be a whole command: one line, cut with an ellipsis. */
 .as-perm-always {
@@ -483,32 +588,71 @@
 .as-perm-rule {
   min-width: 0;
   max-width: 36ch;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font: 12px var(--font-mono);
   color: var(--text-muted);
 }
+/* Saying no is a quieter, second step: a message field with Deny at its end. */
 .as-perm-deny {
   display: flex;
   gap: var(--space-2);
   align-items: center;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.as-perm-deny:has(.ah-input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 .as-perm-deny > .ah-input {
   flex: 1;
   min-width: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.as-perm-deny > .ah-input:focus-visible {
+  outline: none;
 }
 .as-perm-deny > .ah-btn {
   flex: none;
+  height: 30px;
+}
+.as-perm .ah-btn-danger {
+  background: var(--surface);
+}
+.as-perm .ah-btn-danger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--failed) 50%, var(--border));
+  background: var(--failed-soft);
 }
 /* The `a` / `d` keys answer only while the card itself has focus: the hints show only then. */
 .as-perm-kbd {
   display: none;
+  height: 18px;
+  min-width: 18px;
+  font-size: 10px;
 }
 .as-perm:focus .as-perm-kbd {
   display: inline-flex;
+}
+.as-perm .ah-btn-primary .as-perm-kbd {
+  border-color: color-mix(in srgb, var(--on-accent) 45%, transparent);
+  background: transparent;
+  color: var(--on-accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .as-perm .ah-btn,
+  .as-perm-deny {
+    transition: none;
+  }
 }
 .as-question {
   border: 0;
@@ -554,30 +698,69 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-control);
-  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   background: var(--surface);
   cursor: pointer;
   transition:
     border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out);
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 .as-option:hover {
+  border-color: var(--border-control);
   background: var(--surface-hover);
 }
 .as-option-checked,
 .as-option-checked:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 .as-option:has(input:focus-visible) {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
+/* Our own radio and checkbox: a ring that fills with the accent and shows a dot or a tick. */
 .as-option .ah-check {
+  appearance: none;
   flex: none;
-  margin: 2px 0 0;
+  display: grid;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  border: 1.5px solid var(--border-control);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.as-option .ah-check[type="checkbox"] {
+  border-radius: 5px;
+}
+.as-option .ah-check:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.as-option .ah-check[type="radio"]:checked::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--on-accent);
+}
+.as-option .ah-check[type="checkbox"]:checked::before {
+  content: "";
+  width: 9px;
+  height: 5px;
+  margin-top: -2px;
+  border-left: 2px solid var(--on-accent);
+  border-bottom: 2px solid var(--on-accent);
+  transform: rotate(-45deg);
 }
 .as-option-body {
   display: flex;
@@ -598,20 +781,21 @@
   font-weight: 500;
 }
 .as-option-tag {
-  font-size: 12px;
+  font-size: 11px;
   line-height: 16px;
-  font-weight: 500;
-  color: var(--accent);
-  padding: 0 6px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
+  font-weight: 600;
+  color: var(--done);
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  background: var(--done-soft);
 }
 fieldset:disabled .as-option {
   cursor: default;
   opacity: 0.6;
 }
 @media (prefers-reduced-motion: reduce) {
-  .as-option {
+  .as-option,
+  .as-option .ah-check {
     transition: none;
   }
 }

@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import type { components } from "../../api/schema";
-import { Button, Icon, Markdown } from "../../components";
+import { Button, Icon, Markdown, type IconName } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import { goSequencePending } from "../../shell/goSequence";
@@ -98,6 +98,13 @@ const HEADING: Record<PermissionView["requestKind"], (tool: string) => string> =
   ask_user_question: () => "Claude has a question",
   plan_approval: () => "Claude finished a plan",
 };
+
+/** The icon of a pending card: a terminal for a shell command, else what is being asked. */
+function headIcon(request: PermissionView): IconName {
+  if (request.requestKind === "plan_approval") return "clipboard-list";
+  if (request.requestKind === "ask_user_question") return "list-checks";
+  return request.tool === "Bash" ? "terminal" : "hand";
+}
 
 function problemText(error: unknown): string {
   if (error instanceof ApiProblem)
@@ -340,18 +347,32 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
       onKeyDown={onKeyDown}
     >
       <header className="as-perm-head">
-        <Icon name={pending ? "hand" : "shield-check"} />
-        <h3 id={titleId} className="as-perm-title">
-          {HEADING[request.requestKind](request.tool)}
-        </h3>
+        <span className={cx("as-perm-icon", `as-perm-icon-${request.requestKind}`)}>
+          <Icon name={pending ? headIcon(request) : "shield-check"} />
+        </span>
+        <div className="as-perm-heading">
+          <h3 id={titleId} className="as-perm-title">
+            {HEADING[request.requestKind](request.tool)}
+          </h3>
+          {purpose && <p className="as-perm-purpose">{purpose}</p>}
+        </div>
         {request.redacted && <StoredCopyLabel />}
-        {pending && <span className="as-perm-badge">Waiting for you</span>}
+        {pending && (
+          <span className="as-perm-badge">
+            <span className="as-perm-dot" aria-hidden="true" />
+            Waiting for you
+          </span>
+        )}
       </header>
 
-      {purpose && <p className="as-perm-purpose">{purpose}</p>}
       {request.requestKind === "tool" && (
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        <pre className="as-pre as-perm-command" tabIndex={0} aria-label="What it will run">
+        <pre
+          className="as-pre as-perm-command"
+          data-tool={request.tool}
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+          tabIndex={0}
+          aria-label="What it will run"
+        >
           {request.summary}
         </pre>
       )}
@@ -361,7 +382,13 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
       )}
 
       {!pending && request.decision && (
-        <p className="as-perm-outcome" role="status">
+        <p
+          className={cx(
+            "as-perm-outcome",
+            request.decision.decision === "deny" ? "as-perm-outcome-deny" : "as-perm-outcome-allow",
+          )}
+          role="status"
+        >
           {outcomeText(request.decision)}
         </p>
       )}
