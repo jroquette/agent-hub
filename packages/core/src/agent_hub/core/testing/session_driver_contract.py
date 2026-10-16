@@ -24,6 +24,7 @@ from agent_hub.core.agent_sessions.driver import (
     Allow,
     DriverEvent,
     DriverHandle,
+    DriverImage,
     Exited,
     InitEvent,
     PermissionRequest,
@@ -37,6 +38,7 @@ from agent_hub.core.agent_sessions.driver import (
 )
 from agent_hub.core.agent_sessions.errors import SessionTerminalError
 from agent_hub.core.sessions.session import TokenUsage
+from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.session_driver_fakes import Hold, Turn
 
 # How long any one event may take to arrive, and how long "nothing comes" is watched.
@@ -210,6 +212,19 @@ class SessionDriverContract:
         _check(texts == ["Hello."], f"the completed text block arrives, got {texts}")
         deltas = "".join(event.text for event in turn if isinstance(event, TextDelta))
         _check(deltas in {"", "Hello."}, "deltas, when streamed, add up to the block")
+
+    async def test_runs_turn_when_message_carries_image(
+        self, session_driver: SessionDriver, scenario: ContractScenario
+    ) -> None:
+        image = DriverImage(media_type="image/png", data=a_png_bytes())
+        async with _session(session_driver, scenario) as (handle, pump):
+            await session_driver.send(handle, scenario.hello, images=(image,))
+            turn = await pump.turn()
+
+        _check(turn[0].kind == "init", f"the turn opens with init, got {_kinds(turn)}")
+        texts = [event.text for event in turn if isinstance(event, TextBlock)]
+        _check(texts == ["Hello."], f"the image turn answers as the text one, got {texts}")
+        _check(isinstance(turn[-1], TurnResult), f"the turn ends with a result: {_kinds(turn)}")
 
     async def test_ends_each_turn_with_result_when_messages_sent(
         self, session_driver: SessionDriver, scenario: ContractScenario

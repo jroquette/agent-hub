@@ -127,6 +127,8 @@ export type TranscriptEntry =
       redacted: boolean;
       /** Sent while a turn ran: Claude reads it after that turn. */
       queued: boolean;
+      /** A screenshot went with it (the record's `attachments` marker; the image is never stored). */
+      screenshot: boolean;
     }
   | {
       kind: "assistant";
@@ -713,6 +715,9 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
           text,
           redacted: isRedacted(text),
           queued: s.turnOpen,
+          screenshot: asArray(body.attachments).some(
+            (item) => asObject(item)?.kind === "screenshot",
+          ),
         },
       );
     }
