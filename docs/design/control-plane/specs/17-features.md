@@ -81,6 +81,15 @@ otherwise, this list wins. Each item is an acceptance criterion.
   (Evaluate opens Eval).
 - **AC-268.17 Header chips.** Given the feature's tickets, then each header chip shows the id with its Linear status
   and the title on hover; the "PR —" placeholder is gone while GitHub is not connected.
+- **AC-268.18 Sessions by issue.** Given `GET /sessions?issue=<id>` (any case), then it lists the sessions about that
+  issue: the issue their run names, else the one their branch or worktree names for the hub's tracker teams.
+- **AC-268.19 Ticket sessions.** Given the Tickets table, then each ticket lists its sessions (asked by its issue), each
+  linked to its detail (or its chat when driven), with its status (as the Sessions list shows it) and start time.
+- **AC-268.20 Scope column.** Given ticket titles with a conventional-commit scope, then the scope has its own column,
+  so the chips and the titles line up across rows.
+- **AC-268.21 Start a ticket.** Given a created ticket that can start now, then its card and row offer Start, which
+  starts a Claude session in the hub folder that works that one ticket with `/feature` from its workspace step and
+  opens its chat; disabled, with the reason, when this machine cannot drive Claude or the hub has no folder.
 
 ---
 

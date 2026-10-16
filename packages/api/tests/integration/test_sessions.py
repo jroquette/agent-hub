@@ -109,6 +109,24 @@ def test_reads_issue_from_worktree_when_label_has_no_branch(
     assert listed["label"]["branch"] is None
 
 
+def test_lists_only_sessions_of_issue_when_issue_filter_given(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    composed.client.post(
+        "/api/v1/hubs", json={"path": str(make_hub())}, headers={"Origin": "http://127.0.0.1:7420"}
+    )
+    _labelled_session(composed, ended=True)
+    composed.store.append(
+        a_session_events("session-2", cwd="/work/demo-api/.claude/worktrees/dem-77-x")
+    )
+
+    found = composed.client.get("/api/v1/sessions", params={"issue": "dem-42"}).json()["items"]
+    other = composed.client.get("/api/v1/sessions", params={"issue": "DEM-77"}).json()["items"]
+
+    assert [item["id"] for item in found] == ["session-1"]
+    assert [item["id"] for item in other] == ["session-2"]
+
+
 def test_marks_agent_deprecated_when_label_served(composed: Any) -> None:
     schemas = composed.client.get("/api/v1/openapi.json").json()["components"]["schemas"]
 

@@ -22,6 +22,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The ticket flow is a graph: an edge from each blocker to the ticket it holds back, cards that lead with id and
   title, and done tickets kept in their step. A feature opens on the tab of its phase, each golden path step opens
   the tab holding its evidence, and the header's ticket chips show their Linear status (AGH-268).
+- `GET /api/v1/sessions` takes `issue` (any case). The Tickets table lists each ticket's sessions, the title's scope in
+  its own column, and a ticket that can start now has Start: a Claude session in the hub folder that works it with
+  `/feature` (AGH-268).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
