@@ -224,11 +224,11 @@ def _title_events(
         return
     title = short_text(" ".join(raw.split()), NAME_LIMIT)
     digest = hashlib.sha256(title.encode()).hexdigest()[:16]
-    prefix = f"{session}:title:{title_origin}:"
-    kept = sorted(seen for seen in state.seen_titles if seen.startswith(prefix))
+    stem = f"{session}:title:{title_origin}:"
+    kept = sorted(seen for seen in state.seen_titles if seen.startswith(stem))
     if not title or (kept and kept[-1].endswith(f":{digest}")):
         return
-    source_id = f"{prefix}{len(kept):06d}:{digest}"
+    source_id = f"{stem}{len(kept):06d}:{digest}"
     state.seen_titles.add(source_id)
     yield Event(
         project=origin.project,

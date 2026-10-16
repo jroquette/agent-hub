@@ -18,7 +18,7 @@ import {
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
-import { pendingPermissions } from "./model";
+import { pendingPermissions, resumable } from "./model";
 import { useStickToBottom } from "./useStickToBottom";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
@@ -86,13 +86,14 @@ export function DiscussChatView({
 
   const status = state.status ?? session.status;
   const ended = isTerminal(status);
+  const endReason = state.endReason ?? session.end_reason;
   const pending = pendingPermissions(state).filter(
     (id) => state.permissions[id]?.requestKind === "tool",
   );
   return (
     <div className="as-page">
       <div className="ah-row ah-wrap ah-small ah-discuss-meta">
-        <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
+        <AgentStatusBadge status={status} endReason={endReason} />
         <CostMeter meter={state.meter} />
       </div>
       {transcript.streaming && (
@@ -125,6 +126,7 @@ export function DiscussChatView({
             commands={state.slashCommands}
             draftId={agentSessionId}
             focusOnOpen={pending.length === 0}
+            resumable={resumable(session, endReason)}
           />
         </div>
       </footer>

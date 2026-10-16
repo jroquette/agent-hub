@@ -1,7 +1,7 @@
 /* The Studio's draft (create a skill, agent or hook with Claude): the files Claude writes into a
  * draft folder of the hub, rebuilt from the session's Write and Edit calls, and what they read as. */
 import type { components } from "../../api/schema";
-import type { JsonObject, TranscriptState } from "../agent-session/model";
+import type { JsonObject, TranscriptEntry, TranscriptState } from "../agent-session/model";
 import type { ItemKind, Mode } from "./filters";
 
 type Schemas = components["schemas"];
@@ -94,15 +94,22 @@ function text(input: JsonObject, key: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
-/** The path inside the draft folder `file_path` names, or null when it is elsewhere. */
-export function insideDraft(filePath: string, draftId: string): string | null {
+/**
+ * Where `file_path` names a draft folder: the folder it sits in (`root`, "" when relative) and the
+ * path inside it; null when it is elsewhere. Only one root is the hub's: the caller picks it.
+ */
+export function insideDraft(
+  filePath: string,
+  draftId: string,
+): { root: string; path: string } | null {
   const dir = `${draftDir(draftId)}/`;
   const normal = filePath.replace(/\\/g, "/");
-  const at = normal.startsWith(dir) ? 0 : normal.indexOf(`/${dir}`);
-  if (at < 0) return null;
-  const rest = normal.slice(at + (at === 0 ? 0 : 1) + dir.length);
-  if (rest === "" || rest.split("/").some((part) => part === ".." || part === "")) return null;
-  return rest;
+  const at = normal.startsWith(dir) ? 0 : normal.indexOf(`/${dir}`) + 1;
+  if (at === 0 && !normal.startsWith(dir)) return null;
+  const root = normal.slice(0, at);
+  const path = normal.slice(at + dir.length);
+  if (path === "" || path.split("/").some((part) => part === ".." || part === "")) return null;
+  return { root, path };
 }
 
 function replaceText(content: string, before: string, after: string, all: boolean): string {
@@ -117,6 +124,8 @@ function replaceText(content: string, before: string, after: string, all: boolea
 export function draftWrites(state: TranscriptState, draftId: string): DraftWrites {
   const files = new Map<string, DraftFile>();
   const outside = new Set<string>();
+  // The first write into the draft folder fixes where it is; the same folder elsewhere is not it.
+  let root: string | null = null;
   for (const entry of state.entries) {
     if (entry.kind !== "tool") continue;
     const tool = state.tools[entry.toolId];
@@ -124,11 +133,13 @@ export function draftWrites(state: TranscriptState, draftId: string): DraftWrite
     if (tool.result?.isError) continue;
     const filePath = text(tool.input, "file_path");
     if (filePath === null) continue;
-    const path = insideDraft(filePath, draftId);
-    if (path === null) {
+    const inside = insideDraft(filePath, draftId);
+    root ??= inside?.root ?? null;
+    if (inside?.root !== root) {
       outside.add(filePath);
       continue;
     }
+    const { path } = inside;
     const pending = tool.result === null;
     const known = files.get(path);
     if (tool.name === "Write") {
@@ -588,5 +599,28 @@ export function publishPrompt(kind: ItemKind, draftId: string, to: string): stri
 
 /** The message the Discard button sends. */
 export function discardPrompt(draftId: string): string {
-  return `I am discarding this draft. Delete the folder ${draftDir(draftId)}/ and nothing else.`;
+  return [
+    `I am discarding this draft. Delete the folder ${draftDir(draftId)}/ and nothing else.`,
+    "Reply with one line starting with DISCARDED once it is gone.",
+  ].join("\n");
+}
+
+/** The line a reply starts with to confirm a publish or a discard (the prompts ask for it). */
+export type Confirmation = "PUBLISHED" | "DISCARDED";
+
+/**
+ * Whether Claude confirmed `sent` (posted when the transcript had `from` entries): true when a reply
+ * after it has a line starting with `marker`, false when none has, null while `sent` is not in yet.
+ */
+export function confirmedReply(
+  entries: readonly TranscriptEntry[],
+  sent: string,
+  from: number,
+  marker: Confirmation,
+): boolean | null {
+  const at = entries.findIndex((e, i) => i >= from && e.kind === "user" && e.text === sent);
+  if (at < 0) return null;
+  // Markdown around it (a list dash, bold, a code span) still counts.
+  const line = new RegExp(`^[\\s>*_\`-]*${marker}\\b`, "m");
+  return entries.slice(at + 1).some((e) => e.kind === "assistant" && line.test(e.text));
 }

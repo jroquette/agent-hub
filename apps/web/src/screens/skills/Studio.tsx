@@ -31,6 +31,7 @@ import { useAgentSessionCommands, useAgentTranscript } from "../agent-session/qu
 import { sessionControlUnavailable } from "../sessions-list/control";
 import { useAgentCapabilities, useCreateAgentSession, useWorkdirs } from "../sessions-list/queries";
 import {
+  confirmedReply,
   destination,
   discardPrompt,
   draftDir,
@@ -317,7 +318,7 @@ function StudioStart({
                 maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
                 draftId={`studio.${draftId}`}
                 focusOnOpen
-                disabledReason={reason}
+                disabledReason={reason ?? (create.isPending ? "Starting the session…" : null)}
               />
               {create.error instanceof ApiProblem && (
                 <p className="ah-small as-error" role="alert">
@@ -385,13 +386,24 @@ function StudioSession({
     if (summary.name) saveDraft(draftId, { project, kind }, { name: summary.name });
   }, [summary.name, draftId, project, kind]);
 
-  // A publish or discard settles once its turn has started and ended (adjusted while rendering).
-  const [sawTurn, setSawTurn] = useState(false);
-  const settling = phase === "publishing" || phase === "discarding";
-  if (settling && busy && !sawTurn) setSawTurn(true);
-  if (settling && sawTurn && !busy) {
-    setSawTurn(false);
-    setPhase(phase === "publishing" ? "published" : "discarded");
+  // The Publish or Discard message once accepted, and how far the transcript was when it went.
+  const [request, setRequest] = useState<{ text: string; from: number } | null>(null);
+  const [notice, setNotice] = useState<{ tone: "error" | "warning"; text: string } | null>(null);
+  // It settles when its turn has ended, on Claude's confirmation only (adjusted while rendering).
+  const publishing = phase === "publishing";
+  if (request && !busy && (publishing || phase === "discarding")) {
+    const marker = publishing ? "PUBLISHED" : "DISCARDED";
+    const confirmed = confirmedReply(state.entries, request.text, request.from, marker);
+    if (confirmed !== null) {
+      setRequest(null);
+      setPhase(confirmed ? (publishing ? "published" : "discarded") : "drafting");
+      if (!confirmed) {
+        setNotice({
+          tone: "warning",
+          text: `Claude did not confirm the ${publishing ? "publish" : "discard"}. Read its reply and check the hub folder before you try again.`,
+        });
+      }
+    }
   }
   useEffect(() => {
     if (phase === "published") {
@@ -409,6 +421,25 @@ function StudioSession({
       : null;
 
   const send = (text: string) => transcript.send(text, commands.send);
+  const ask = async (next: "publishing" | "discarding", text: string) => {
+    setConfirm(null);
+    setNotice(null);
+    setPhase(next);
+    const from = state.entries.length;
+    try {
+      await send(text);
+      setRequest({ text, from });
+    } catch (cause) {
+      setPhase("drafting");
+      setNotice({
+        tone: "error",
+        text:
+          cause instanceof ApiProblem
+            ? (cause.detail ?? cause.title)
+            : "The message did not reach Claude. Try again.",
+      });
+    }
+  };
   const actions =
     phase === "published" ? null : (
       <div className="ah-row" style={{ gap: 8 }}>
@@ -445,6 +476,11 @@ function StudioSession({
   return (
     <div className="ah-studio">
       <StudioHeader context={context} summary={summary} actions={actions} />
+      {notice && (
+        <Banner tone={notice.tone} boxed>
+          {notice.text}
+        </Banner>
+      )}
       {phase === "published" && (
         <Banner tone="info" boxed icon="circle-check">
           <b>Published.</b>{" "}
@@ -500,9 +536,7 @@ function StudioSession({
             setConfirm(null);
           }}
           onConfirm={() => {
-            setConfirm(null);
-            setPhase("publishing");
-            void send(publishPrompt(kind, draftId, to));
+            void ask("publishing", publishPrompt(kind, draftId, to));
           }}
         />
       )}
@@ -520,9 +554,7 @@ function StudioSession({
             setConfirm(null);
           }}
           onConfirm={() => {
-            setConfirm(null);
-            setPhase("discarding");
-            void send(discardPrompt(draftId));
+            void ask("discarding", discardPrompt(draftId));
           }}
         />
       )}
