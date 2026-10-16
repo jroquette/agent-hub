@@ -1186,3 +1186,41 @@ async def test_logs_marker_without_bytes_when_screenshot_sent(make_rig: MakeRig)
     for text in stored + streamed:
         assert PNG_BASE64 not in text
         assert "iVBORw0KGgo" not in text
+
+
+async def test_sends_message_with_images_when_screenshots_sent(make_rig: MakeRig) -> None:
+    rig = make_rig()
+    created = await rig.create("Say hello.")
+    await rig.until_status(created.id, "idle")
+
+    accepted = await rig.control.send(
+        created.id,
+        SendMessage.model_validate({"text": "Look.", "screenshots": [_screenshot()] * 2}),
+    )
+    await rig.until_status(created.id, "idle")
+
+    sends = [call.args for call in rig.driver.calls if call.method == "send"]
+    image = DriverImage(media_type="image/png", data=PNG)
+    assert sends[-1] == ("Look.", (image, image))
+    message = next(record for record in rig.records(created.id) if record.seq == accepted.seq)
+    assert message.body == {"text": "Look.", "attachments": [SCREENSHOT_MARKER] * 2}
+    assert PNG_BASE64 not in message.model_dump_json()
+
+
+async def test_refuses_message_image_before_logging_when_not_png(make_rig: MakeRig) -> None:
+    rig = make_rig()
+    created = await rig.create("Say hello.")
+    await rig.until_status(created.id, "idle")
+    before = rig.kinds(created.id)
+
+    with pytest.raises(InvalidScreenshotError) as refused:
+        await rig.control.send(
+            created.id,
+            SendMessage.model_validate(
+                {"text": "Look.", "screenshots": [_screenshot(), _screenshot(b"GIF89a")]}
+            ),
+        )
+
+    assert refused.value.pointer == "/screenshots/1/data"
+    assert rig.kinds(created.id) == before
+    assert [call.method for call in rig.driver.calls].count("send") == 1

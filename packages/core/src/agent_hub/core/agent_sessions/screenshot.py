@@ -1,4 +1,5 @@
-"""The screenshot sent with a first prompt: decoded and checked before anything starts.
+"""A screenshot sent with a message (the first prompt or a later one): decoded and checked
+before anything is logged or sent.
 
 The checks run in a fixed order (strict base64, then the decoded size, then the PNG
 signature), and a refusal names only the cause and the sizes, never the data.
@@ -16,14 +17,20 @@ MAX_SCREENSHOT_BYTES: Final = 3_932_160
 PNG_SIGNATURE: Final = b"\x89PNG\r\n\x1a\n"
 
 
-def decode_screenshot(screenshot: Screenshot, *, limit: int = MAX_SCREENSHOT_BYTES) -> DriverImage:
-    """The screenshot's PNG bytes; ``InvalidScreenshotError`` or ``ScreenshotTooLargeError``."""
+def decode_screenshot(
+    screenshot: Screenshot,
+    *,
+    limit: int = MAX_SCREENSHOT_BYTES,
+    pointer: str = "/screenshot/data",
+) -> DriverImage:
+    """The screenshot's PNG bytes; ``InvalidScreenshotError`` (naming ``pointer``) or
+    ``ScreenshotTooLargeError``."""
     try:
         data = base64.b64decode(screenshot.data, validate=True)
     except ValueError:  # binascii.Error, or a character outside ASCII
-        raise InvalidScreenshotError("not valid base64") from None
+        raise InvalidScreenshotError("not valid base64", pointer=pointer) from None
     if len(data) > limit:
         raise ScreenshotTooLargeError(size=len(data), limit=limit)
     if not data.startswith(PNG_SIGNATURE):
-        raise InvalidScreenshotError("not a PNG")
+        raise InvalidScreenshotError("not a PNG", pointer=pointer)
     return DriverImage(media_type="image/png", data=data)
