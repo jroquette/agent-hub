@@ -166,8 +166,9 @@ def test_looks_in_playground_folder_under_tmpdir_when_no_log_given(tmp_path: Pat
     assert conductor_logs(None, {"TMPDIR": str(tmp_path)})[0] == (
         tmp_path / folder / "agent-hub-conductor.log"
     )
-    assert conductor_logs(None, {"TMPDIR": ""})[0] == Path("/tmp", folder, "agent-hub-conductor.log")  # noqa: S108
-    assert conductor_logs(None, {})[0] == Path("/tmp", folder, "agent-hub-conductor.log")  # noqa: S108
+    default = Path("/tmp", folder, "agent-hub-conductor.log")  # noqa: S108
+    assert conductor_logs(None, {"TMPDIR": ""})[0] == default
+    assert conductor_logs(None, {})[0] == default
     assert conductor_logs(tmp_path / "x.log", {}) == [tmp_path / "x.log"]
 
 
