@@ -2909,7 +2909,7 @@ export interface components {
       suggestion?: number | null;
     };
     /** @enum {string} */
-    PermissionMode: "default" | "acceptEdits" | "plan";
+    PermissionMode: "default" | "acceptEdits" | "plan" | "auto";
     /**
      * PermissionSuggestion
      * @description A rule Claude suggests for "always allow"; ``index`` is its position in the request,

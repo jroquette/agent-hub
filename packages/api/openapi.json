@@ -4723,7 +4723,8 @@
         "enum": [
           "default",
           "acceptEdits",
-          "plan"
+          "plan",
+          "auto"
         ],
         "type": "string"
       },

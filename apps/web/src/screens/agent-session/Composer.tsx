@@ -2,12 +2,18 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 
 import { Button } from "../../components";
 import { ApiProblem } from "../../lib/api";
+import { servedCheckout } from "../../lib/devCheckout";
 import { useSlashMenu } from "./SlashMenu";
 import { useDraft } from "./useDraft";
 import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./model";
 
-/** The modes the web offers (D5): never bypassPermissions, dontAsk or auto. */
+/** The modes the web offers (D5): never bypassPermissions or dontAsk. */
 export const MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan"];
+
+/** The modes to offer: `auto` too in the dev app of `make playground`, where the agent works alone. */
+export function offeredModes(): readonly PermissionMode[] {
+  return servedCheckout() === null ? MODES : [...MODES, "auto"];
+}
 /** The user message limit's default (L3: 64 KiB of UTF-8). */
 export const DEFAULT_MESSAGE_MAX_BYTES = 64 * 1024;
 /** The composer grows with its text up to this share of the viewport, then scrolls (AC-234.26). */
@@ -259,11 +265,11 @@ export function Composer({
             value={mode}
             disabled={ended}
             onChange={(event) => {
-              const next = MODES.find((m) => m === event.target.value);
+              const next = offeredModes().find((m) => m === event.target.value);
               if (next) run(() => onSettings({ mode: next }), "change the mode");
             }}
           >
-            {MODES.map((m) => (
+            {offeredModes().map((m) => (
               <option key={m} value={m}>
                 {modeLabel(m)}
               </option>

@@ -327,7 +327,7 @@ describe("ShakeToSession (shake to start a session)", () => {
     expect(within(dialog).queryByRole("img")).toBeNull();
   });
 
-  it("live-edit: the served checkout's workdir and acceptEdits, no note", async () => {
+  it("live-edit: the served checkout's workdir and Auto, no note", async () => {
     vi.mocked(servedCheckout).mockReturnValue(ROOT);
     const view = mount();
     await ready(view);
@@ -336,7 +336,7 @@ describe("ShakeToSession (shake to start a session)", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "New session" });
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(REPO_ID);
-    expect(within(dialog).getByRole("radio", { name: /Accept edits/ })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
     expect(within(dialog).queryByRole("note")).toBeNull();
   });
 
@@ -367,7 +367,7 @@ describe("ShakeToSession (shake to start a session)", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "New session" });
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(REPO_ID);
-    expect(within(dialog).getByRole("radio", { name: /Accept edits/ })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
   });
 
   it("live-edit-fallback: no served checkout keeps the defaults and shows the note", async () => {

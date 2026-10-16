@@ -259,6 +259,7 @@ const MODE_LABEL: Record<PermissionMode, string> = {
   default: "Ask before edits",
   acceptEdits: "Accept edits",
   plan: "Plan",
+  auto: "Auto",
 };
 /** How a permission mode reads in the UI. */
 export function modeLabel(mode: PermissionMode): string {
