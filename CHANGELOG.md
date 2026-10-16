@@ -13,6 +13,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Discuss with Claude works on every screen: a screen that names no feature, workflow, skill, agent, hook or note is
+  itself the subject, and the first message takes along the screen's text and a screenshot of it (AGH-273).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
