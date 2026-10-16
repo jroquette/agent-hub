@@ -18,6 +18,11 @@ MESSAGE: Final = "message"
 # Line types mapped; every other one is ignored.
 USER: Final = "user"
 ASSISTANT: Final = "assistant"
+# Title lines (no uuid, no timestamp): their type, the key holding the title, and its origin.
+TITLE_LINES: Final = (
+    ("ai-title", "aiTitle", "ai"),
+    ("custom-title", "customTitle", "custom"),
+)
 
 # Message keys.
 MESSAGE_ID: Final = "id"

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { aDeltaFrame, aLogRecord } from "../../testing/builders";
 import { frameBatcher } from "./queries";
-import type { StreamItem } from "./transcript";
+import type { StreamItem } from "./model";
 
 const delta = (index: number): StreamItem => ({
   type: "delta",

@@ -19,11 +19,28 @@ export function decodedBytes(dataUrl: string): number {
 
 const TIMED_OUT = Symbol("timeout");
 
+/**
+ * Whether a node can show in the viewport: an element entirely outside it (a long chat's earlier
+ * messages, a list's hidden rows) is left out of the clone, so a shake on a long page captures
+ * fast. A zero-size element (`display: contents`, a wrapper) is kept, as its children may show.
+ */
+export function onScreen(node: Node): boolean {
+  if (!(node instanceof Element)) return true;
+  const box = node.getBoundingClientRect();
+  if (box.width === 0 && box.height === 0) return true;
+  return (
+    box.bottom >= 0 &&
+    box.right >= 0 &&
+    box.top <= window.innerHeight &&
+    box.left <= window.innerWidth
+  );
+}
+
 async function render(node: HTMLElement, maxBytes: number): Promise<CaptureResult> {
-  const first = await toPng(node, { cacheBust: false });
+  const first = await toPng(node, { cacheBust: false, filter: onScreen });
   if (decodedBytes(first) <= maxBytes)
     return { ok: true, dataUrl: first, bytes: decodedBytes(first) };
-  const smaller = await toPng(node, { cacheBust: false, pixelRatio: 1 });
+  const smaller = await toPng(node, { cacheBust: false, filter: onScreen, pixelRatio: 1 });
   const bytes = decodedBytes(smaller);
   return bytes <= maxBytes
     ? { ok: true, dataUrl: smaller, bytes }

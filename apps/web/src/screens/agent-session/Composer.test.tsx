@@ -3,8 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
+import { servedCheckout } from "../../lib/devCheckout";
 import { seriousViolations } from "../../testing/axe";
 import { Composer, type ComposerProps } from "./Composer";
+
+vi.mock("../../lib/devCheckout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
+  return { ...actual, servedCheckout: vi.fn(() => null) };
+});
 
 function open(overrides: Partial<ComposerProps> = {}) {
   const props: ComposerProps = {
@@ -87,7 +93,19 @@ describe("Composer (composer)", () => {
     },
   );
 
+  it("offers Auto too in the dev app of make playground", () => {
+    vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
+    open();
+
+    expect(
+      within(screen.getByRole("combobox", { name: "Mode" }))
+        .getAllByRole("option")
+        .map((option) => option.getAttribute("value")),
+    ).toEqual(["default", "acceptEdits", "plan", "auto"]);
+  });
+
   it("offers only the three web modes and posts a mode change", async () => {
+    vi.mocked(servedCheckout).mockReturnValue(null);
     const { props } = open();
     const mode = screen.getByRole("combobox", { name: "Mode" });
 
@@ -99,6 +117,15 @@ describe("Composer (composer)", () => {
     await userEvent.selectOptions(mode, "plan");
 
     expect(props.onSettings).toHaveBeenCalledWith({ mode: "plan" });
+  });
+
+  it("shows a session in Auto as Auto in the built app, without offering it", () => {
+    vi.mocked(servedCheckout).mockReturnValue(null);
+    open({ mode: "auto" });
+    const mode = screen.getByRole("combobox", { name: "Mode" });
+
+    expect(mode).toHaveValue("auto");
+    expect(within(mode).getByRole("option", { name: "Auto" })).toBeDisabled();
   });
 
   it("posts a model change and keeps a custom current model in the list", async () => {
@@ -117,8 +144,22 @@ describe("Composer (composer)", () => {
     expect(screen.getByRole("textbox")).toBeDisabled();
     expect(screen.getByRole("textbox")).toHaveAttribute(
       "placeholder",
-      "This session has ended. Resume it to continue.",
+      "This session has ended. Start a new session to continue.",
     );
+    expect(screen.getByRole("combobox", { name: "Mode" })).toBeDisabled();
+  });
+
+  it("sends to an ended session a message resumes", async () => {
+    const { props } = open({ status: "ended", resumable: true });
+    const box = screen.getByRole("textbox");
+
+    expect(box).toHaveAttribute(
+      "placeholder",
+      "This session has ended. Send a message to resume it.",
+    );
+    await userEvent.type(box, "Go on.{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith("Go on.");
     expect(screen.getByRole("combobox", { name: "Mode" })).toBeDisabled();
   });
 

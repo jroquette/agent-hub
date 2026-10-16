@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ToolGroup, groupSummary, type GroupItem } from "./ToolGroup";
-import type { PermissionView, ToolResultView, ToolView } from "./transcript";
+import type { PermissionView, ToolResultView, ToolView } from "./model";
 
 const ok: ToolResultView = { content: "ok", isError: false, truncated: false, originalBytes: null };
 

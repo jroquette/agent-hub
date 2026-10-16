@@ -14,7 +14,7 @@ import {
   type ToolResultView,
   type ToolState,
   type ToolView,
-} from "./transcript";
+} from "./model";
 
 /** Each state reads as an icon and a word, never colour alone (AC-234.24). */
 export const TOOL_STATE: Record<ToolState, { icon: IconName; text: string }> = {
