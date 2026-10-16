@@ -153,6 +153,9 @@ type HookState = Literal["synced", "not synced"]
 type FileRole = Literal["scripts", "references", "assets", "other"]
 # What a step of a skill's body does (S6).
 type StepTag = Literal["gate", "agent", "command", "script", "human"]
+# The type a step declares for itself with a leading backticked token, as the hub's workflow
+# skills do ("`agent` **Scope**: ..."): who acts in it.
+type StepType = Literal["agent", "script", "gate", "human"]
 # A frontmatter value: a scalar, a list, or a one-level map of strings (L1, A4).
 type SkillFrontmatterValue = str | tuple[str, ...] | dict[str, str]
 
@@ -268,10 +271,16 @@ class TocEntry(ViewModel):
 
 
 class Step(ViewModel):
-    """One top-level ordered list item of a body (S6); ``index`` is 1-based, as ``#step-<n>``."""
+    """One top-level ordered list item of a body (S6); ``index`` is 1-based, as ``#step-<n>``.
+
+    ``declared_type`` is the type the step states itself, when it starts with one; ``summary`` is
+    the rest of its first line as plain text (Markdown marks dropped), empty when there is none.
+    """
 
     index: int = Field(ge=1)
     title: str
+    declared_type: StepType | None = None
+    summary: str = ""
     tags: tuple[StepTag, ...] = ()
     agents: tuple[str, ...] = ()
     skills: tuple[str, ...] = ()

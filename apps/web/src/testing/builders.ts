@@ -1353,6 +1353,7 @@ export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail 
           scripts: [],
           skills: [],
           tags: ["agent"],
+          summary: "the requirements-analyst agent writes spec.md.",
           title: "Spec",
         },
         {
@@ -1362,6 +1363,7 @@ export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail 
           scripts: [],
           skills: [],
           tags: ["gate", "human"],
+          summary: "Stop until they do.",
           title: "Gate: user approves the spec",
         },
         {
@@ -1371,6 +1373,7 @@ export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail 
           scripts: [],
           skills: ["create-plan"],
           tags: [],
+          summary: "run /create-plan on the approved spec.",
           title: "Plan",
         },
         {
@@ -1380,6 +1383,7 @@ export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail 
           scripts: [],
           skills: [],
           tags: ["command"],
+          summary: "in a worktree; run make check before the PR.",
           title: "Implement",
         },
         {
@@ -1389,6 +1393,7 @@ export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail 
           scripts: [],
           skills: [],
           tags: ["command"],
+          summary: "run ./hub doctor and fix what it finds.",
           title: "Doctor",
         },
       ],
