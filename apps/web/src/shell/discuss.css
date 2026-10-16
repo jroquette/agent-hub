@@ -65,3 +65,38 @@
   flex: 1 1 auto;
   min-height: 0;
 }
+/* The parts the next message is about. */
+.ah-discuss-refs {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+.ah-discuss-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0 0 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: 12px;
+}
+.ah-discuss-ref-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+/* The floating "Discuss selection" button over text selected on the page. */
+.ah-discuss-select {
+  position: fixed;
+  z-index: var(--z-popover);
+  transform: translate(-50%, calc(-100% - 6px));
+  box-shadow: var(--shadow-popover);
+}
