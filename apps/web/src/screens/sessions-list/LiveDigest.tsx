@@ -62,20 +62,20 @@ export function LiveDigest({
   settled: boolean;
 }) {
   const [message, setMessage] = useState("");
-  const [, wake] = useState(0);
+  const [tick, wake] = useState(0);
   const known = useRef<Known | null>(null);
   const last = useRef(Number.NEGATIVE_INFINITY);
   useEffect(() => {
     if (!settled) {
       known.current = null;
-      return;
+      return undefined;
     }
     const before = known.current;
     const now = knownOf(sections);
     const news = before ? newsOf(before, sections) : [];
     if (news.length === 0) {
       known.current = now;
-      return;
+      return undefined;
     }
     // Inside the window the baseline stays, so the change is said at its end unless undone.
     const wait = last.current + DIGEST_MS - Date.now();
@@ -90,7 +90,8 @@ export function LiveDigest({
     known.current = now;
     last.current = Date.now();
     setMessage(news.join(" "));
-  });
+    return undefined;
+  }, [sections, settled, tick]);
   return (
     <div className="ah-sr" aria-live="polite" aria-atomic="true" data-testid="live-digest">
       {message}

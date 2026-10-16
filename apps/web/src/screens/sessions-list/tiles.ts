@@ -16,7 +16,7 @@ type Session = Schemas["Session"];
 type AgentSession = Schemas["AgentSession"];
 type Outcome = Schemas["Outcome"];
 
-/** The fields a tile reads, shared by `Session` and the Live screen's `LiveTile`. */
+/** The fields a tile reads from an observed session. */
 export type TileSource = Pick<
   Session,
   | "id"
@@ -96,19 +96,6 @@ export function problemsLine(
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-/** Idle last, troubled first, then the oldest start first. */
-export function sortTiles<T extends Pick<TileSource, "id" | "status" | "started_at" | "problems">>(
-  tiles: readonly T[],
-): T[] {
-  return [...tiles].sort(
-    (a, b) =>
-      Number(a.status === "idle") - Number(b.status === "idle") ||
-      Number(troubled(b)) - Number(troubled(a)) ||
-      Date.parse(a.started_at) - Date.parse(b.started_at) ||
-      a.id.localeCompare(b.id),
-  );
-}
-
 /**
  * Where a waiting tile sends the owner: a session hub web drives to its chat, where the
  * permission card answers it (AC-165.25); any other wait, a hook-observed permission prompt
@@ -122,8 +109,8 @@ export function waitingLink(tile: Pick<TileSource, "agent_session_id">): {
   return { href: "/approvals", label: "Open approval" };
 }
 
-/** The tile of an observed session; `tokens` and `subagent` are where `Session` and `LiveTile` differ. */
-export function tileFrom(
+/** The tile of an observed session's fields, with its `tokens` total and whether it is a subagent. */
+function tileFrom(
   tile: TileSource,
   now: number,
   { tokens, subagent }: { tokens: number; subagent: boolean },
