@@ -1,6 +1,6 @@
 /* The Studio's drafts in this browser: which session writes each draft, and the list the catalog
  * offers to continue. Only ids and labels are kept; the files live in the hub folder. */
-import type { ItemKind } from "./filters";
+import { KINDS, type ItemKind } from "./filters";
 
 export interface StoredDraft {
   draftId: string;
@@ -17,10 +17,27 @@ const KEY = "ah.studio.drafts";
 /** Older drafts drop off the list; their folders stay in the hub until discarded there. */
 const MAX_DRAFTS = 20;
 
+const nullableText = (value: unknown) => value === null || typeof value === "string";
+
+/** Whether a stored entry has a draft's shape: storage is this browser's, not this app's alone. */
+function isStoredDraft(value: unknown): value is StoredDraft {
+  if (typeof value !== "object" || value === null) return false;
+  const d = value as Record<string, unknown>;
+  return (
+    typeof d.draftId === "string" &&
+    typeof d.project === "string" &&
+    KINDS.some((kind) => kind === d.kind) &&
+    nullableText(d.sessionId) &&
+    nullableText(d.name) &&
+    typeof d.updatedAt === "string" &&
+    typeof d.published === "boolean"
+  );
+}
+
 function readAll(): StoredDraft[] {
   try {
     const parsed: unknown = JSON.parse(window.localStorage.getItem(KEY) ?? "[]");
-    return Array.isArray(parsed) ? (parsed as StoredDraft[]) : [];
+    return Array.isArray(parsed) ? parsed.filter(isStoredDraft) : [];
   } catch {
     return [];
   }

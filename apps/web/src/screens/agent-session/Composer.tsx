@@ -116,6 +116,9 @@ export function Composer({
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
+  // A mode set elsewhere (`auto` outside the playground) is shown, but cannot be picked here.
+  const modes = offeredModes();
+  const unofferedMode = modes.includes(mode) ? null : mode;
 
   const attachBox = useCallback(
     (element: HTMLTextAreaElement | null) => {
@@ -265,15 +268,20 @@ export function Composer({
             value={mode}
             disabled={ended}
             onChange={(event) => {
-              const next = offeredModes().find((m) => m === event.target.value);
+              const next = modes.find((m) => m === event.target.value);
               if (next) run(() => onSettings({ mode: next }), "change the mode");
             }}
           >
-            {offeredModes().map((m) => (
+            {modes.map((m) => (
               <option key={m} value={m}>
                 {modeLabel(m)}
               </option>
             ))}
+            {unofferedMode && (
+              <option value={unofferedMode} disabled>
+                {modeLabel(unofferedMode)}
+              </option>
+            )}
           </select>
         </label>
         <label htmlFor={modelId} className="ah-row ah-small" style={{ gap: 4 }}>

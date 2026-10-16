@@ -12,6 +12,7 @@ import {
   keepSending,
   pendingPermissions,
   reduceTranscript,
+  resumable,
   ruleLabel,
   toolDiff,
   toolSummary,
@@ -521,5 +522,14 @@ describe("reduceTranscript (init-commands)", () => {
 
   it("has no commands when the record lists none", () => {
     expect(init({ slash_commands: "compact" })).toEqual([]);
+  });
+});
+
+describe("resumable (resume)", () => {
+  it("resumes a local session Claude still holds, unless its log is full", () => {
+    expect(resumable(anAgentSession({ status: "ended" }), "closed")).toBe(true);
+    expect(resumable(anAgentSession({ status: "ended" }), "log_full")).toBe(false);
+    expect(resumable(anAgentSession({ claude_session_id: null }), "closed")).toBe(false);
+    expect(resumable(anAgentSession({ kind: "cloud" }), "closed")).toBe(false);
   });
 });

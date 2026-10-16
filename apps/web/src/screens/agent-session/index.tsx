@@ -30,7 +30,7 @@ import {
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
-import { modeLabel, pendingPermissions, type TranscriptState } from "./model";
+import { modeLabel, pendingPermissions, resumable, type TranscriptState } from "./model";
 import { useStickToBottom } from "./useStickToBottom";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
@@ -189,8 +189,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const models = capabilities.data?.models ?? DEFAULT_MODELS;
   const cloud = session.kind === "cloud";
   const endReason = state.endReason ?? session.end_reason;
-  // Claude keeps the conversation under its own id: a message resumes it, unless the log is full.
-  const resumable = !cloud && session.claude_session_id != null && endReason !== "log_full";
+  const canResume = resumable(session, endReason);
 
   const act = (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -302,7 +301,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             lastPrompt={lastPrompt(state)}
             inputRef={setComposer}
             disabledReason={cloud ? "A cloud session is driven from claude.ai." : null}
-            resumable={resumable}
+            resumable={canResume}
           />
         </div>
       </footer>
