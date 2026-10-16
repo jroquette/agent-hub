@@ -5,15 +5,23 @@ from pathlib import Path
 import pytest
 
 from agent_hub.claude_sessions.sdk_driver import PROTOCOL_EXIT_CODE, ClaudeSdkSessionDriver
-from agent_hub.claude_sessions.testing.scenarios import Scenario, TextStep, read_records
+from agent_hub.claude_sessions.testing.scenarios import (
+    Scenario,
+    TextStep,
+    read_records,
+    simple_turn,
+)
 from agent_hub.core.agent_sessions.driver import (
     DriverError,
     DriverEvent,
+    DriverImage,
     Exited,
     InitEvent,
     StartSpec,
+    TurnResult,
 )
 from agent_hub.core.agent_sessions.errors import SessionsUnavailableError
+from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.session_driver_contract import ContractScenario, SessionDriverContract
 
 from .conftest import stub_environ, stub_scenario
@@ -98,3 +106,30 @@ async def test_refuses_start_when_claude_missing(tmp_path: Path) -> None:
     capabilities = await driver.capabilities()
 
     assert not capabilities.available
+
+
+async def test_passes_image_to_cli_when_message_carries_image(tmp_path: Path) -> None:
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    environ = stub_environ(tmp_path, Scenario(replies={"What is this?": simple_turn("A page.")}))
+    driver = ClaudeSdkSessionDriver(environ=environ, lister=lambda _d, _l: [])
+    png = a_png_bytes()
+
+    handle = await driver.start(StartSpec(cwd=str(cwd), mode="default"))
+    await driver.send(
+        handle, "What is this?", images=(DriverImage(media_type="image/png", data=png),)
+    )
+    async for event in driver.events(handle):
+        if isinstance(event, TurnResult):
+            break
+    await driver.send(handle, "What is this?")
+    async for event in driver.events(handle):
+        if isinstance(event, TurnResult):
+            break
+    await driver.close(handle)
+
+    users = [r for r in read_records(Path(environ["STUB_CLAUDE_RECORD"])) if r.event == "user"]
+    assert [(r.data, r.images) for r in users] == [
+        ({"text": "What is this?"}, [{"media_type": "image/png", "bytes": len(png)}]),
+        ({"text": "What is this?"}, None),
+    ]

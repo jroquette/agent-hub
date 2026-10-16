@@ -14,6 +14,7 @@ from agent_hub.api.rfc9457 import (
     not_found_problem,
     problem,
 )
+from agent_hub.core.agent_sessions.errors import InvalidScreenshotError, ScreenshotTooLargeError
 from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
 from agent_hub.core.brain.brain_path import BrainPathError
 from agent_hub.core.learnings.brain_change_requests import (
@@ -280,3 +281,29 @@ def test_answers_bad_gateway_when_other_change_request_error_raised() -> None:
 
     assert (found.status, found.title) == (502, "Could not open the pull request")
     assert "secret-host" not in str(found.detail)
+
+
+def test_maps_screenshot_errors_when_raised() -> None:
+    too_large = _mapped(ScreenshotTooLargeError(size=4_000_000, limit=3_932_160))
+    invalid = _mapped(InvalidScreenshotError("not a PNG"))
+
+    assert (too_large.status, too_large.title) == (413, "Screenshot too large")
+    assert too_large.detail == (
+        "Screenshots are limited to 3932160 bytes (decoded); this one has 4000000."
+    )
+    assert dict(too_large.members) == {
+        "type": "urn:agent-hub:problem:agent-session-screenshot-too-large",
+        "limit": 3_932_160,
+        "size": 4_000_000,
+    }
+    assert (invalid.status, invalid.title) == (422, "Invalid screenshot")
+    assert invalid.detail == "The screenshot must be a base64-encoded PNG."
+    assert dict(invalid.members) == {
+        "type": "urn:agent-hub:problem:agent-session-invalid-screenshot",
+        "errors": [
+            {
+                "pointer": "/screenshot/data",
+                "message": "The screenshot must be a base64-encoded PNG.",
+            }
+        ],
+    }

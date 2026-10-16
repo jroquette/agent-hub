@@ -67,7 +67,7 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   phrase) until a specific problem type is defined; `detail` is specific to this occurrence.
 - Each named domain exception maps to one problem in one place, `agent_hub/api/rfc9457.py`: unknown id → 404 naming
   the id; a bad parameter or cursor → 400 with `errors[]` naming the parameter; an invalid body → 422; a body over
-  1 MiB → 413; an unregistrable hub → 422 ("No hub.json", "Invalid hub.json" with JSON-pointer `errors[]`); a
+  1 MiB → 413 (8 MiB for `POST /api/v1/agent-sessions`, which may carry a screenshot); an unregistrable hub → 422 ("No hub.json", "Invalid hub.json" with JSON-pointer `errors[]`); a
   project registered twice → 409; an event conflict → 409; a busy or unreadable database or hub registry → 503.
   Anything else is a generic 500 problem; the server logs it as structured JSON without payload strings, so neither
   the answer nor the log holds a secret or a traceback.
@@ -217,7 +217,7 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 | `GET /workdirs?project=` | `{items, warnings}`: the hub, its repos and their worktrees, by opaque `workdir_id` (16 hex) |
 | `GET /capabilities` | `{available, reason, engine, cli_version, models, cloud, cloud_followup}`; 200 even when unavailable |
 | `GET /resumable?project=&workdir_id=` | past Claude sessions of that workdir (at most 200, newest first) |
-| `GET ""` · `POST ""` | the sessions, newest first · start one: `{project, workdir_id, mode?, model?, prompt?, resume_session_id?, fork?}` → 201, `Location` |
+| `GET ""` · `POST ""` | the sessions, newest first · start one: `{project, workdir_id, mode?, model?, prompt?, resume_session_id?, fork?, screenshot?}` → 201, `Location` |
 | `GET /{id}` · `DELETE /{id}` | the session with its open permission request · delete an ended one with its log → 204 (409 when live) |
 | `GET /{id}/events?after=&limit=` | the persisted log, `seq` order, `limit` 1 to 500 (default 200), `next_after` |
 | `GET /{id}/stream` | the log over SSE (below) |
@@ -233,6 +233,17 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   `opus`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything else is 422 and the driver is
   not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`; without a first prompt a new
   session is `idle` with no `init` yet.
+- **Workdir ids.** A `workdir_id` is the first 16 hex digits of SHA-256 over `<kind>\0<real path>` (`kind` is `hub`,
+  `repo` or `worktree`). The server resolves an id only by looking it up in `GET /workdirs`; the dev client computes it
+  to preselect the checkout Vite serves.
+- **Screenshot.** `POST ""` may carry `screenshot: {media_type: "image/png", data: <base64>}`, sent to Claude as an
+  image before the first prompt's text, in the same message. It needs `prompt` (else 422) and only `image/png` is
+  accepted (else 422 "Invalid request body"). `data` must be strict base64 of a PNG (else 422 `invalid-screenshot`)
+  of at most 3,932,160 bytes decoded (3.75 MiB, so its base64 fits the Anthropic API's 5 MiB image limit; else 413
+  `screenshot-too-large`); every check runs before the session starts. The request body of this route alone may be
+  up to 8 MiB (413 "Request body too large" above it). No image byte is stored, streamed, logged or echoed: the first
+  `user.message` record's body carries a marker instead,
+  `attachments: [{kind: "screenshot", media_type: "image/png", bytes: <decoded size>}]`.
 - **Observed twin.** `GET ""` and `GET /{id}` carry `observed_session_id`: the `claude_session_id` once the hooks or
   transcripts observed that Claude session (it is then a row of `GET /api/v1/sessions`), else `null`, so a list shows a
   driven session once, with or without its twin. The other routes answer it `null`.
@@ -289,6 +300,8 @@ text or a value the browser sent):
 | `limit` | 429 | a fifth live session (`limit`) |
 | `invalid-workdir` · `unknown-resume` · `invalid-decision` | 422 | an id not in `GET /workdirs` or `GET /resumable` (`errors[]`) · an answer that does not fit the request |
 | `message-too-large` | 413 | a prompt or message over the limit (`limit`, `size`) |
+| `screenshot-too-large` | 413 | a screenshot over 3,932,160 bytes decoded (`limit`, `size`) |
+| `invalid-screenshot` | 422 | a screenshot that is not strict base64 of a PNG (`errors[]` points at `/screenshot/data`) |
 | `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
 | `cloud-unavailable` · `cloud-failed` · `cloud-timeout` | 501 · 502 · 504 | link-out guidance (`guidance`) · the step that failed (`step`) · the 60 s deadline (`seconds`) |
 

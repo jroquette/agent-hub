@@ -16,6 +16,7 @@ import { CommandPalette } from "./CommandPalette";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
 import { armGoSequence, clearGoSequence, goSequencePending } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
+import { ShakeToSession } from "./ShakeToSession";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
@@ -175,6 +176,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
         <CommandPalette onClose={closeAll} initialQuery={palette.query} project={scope} />
       )}
       {sheet && <ShortcutSheet onClose={closeAll} />}
+      {preferences.shakeToSession && <ShakeToSession />}
     </ShellContext.Provider>
   );
 }

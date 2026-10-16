@@ -22,6 +22,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverError,
     DriverEvent,
     DriverHandle,
+    DriverImage,
     Exited,
     InitEvent,
     PastSession,
@@ -140,9 +141,12 @@ class InMemorySessionDriver:
         self._sessions[handle] = _Live(spec=spec, session_id=session_id or minted)
         return handle
 
-    async def send(self, handle: DriverHandle, text: str) -> None:
-        """Queue a message; it plays one turn once the running one ends."""
-        live = self._open(handle, "send", text)
+    async def send(
+        self, handle: DriverHandle, text: str, *, images: tuple[DriverImage, ...] = ()
+    ) -> None:
+        """Queue a message (its call records the images); it plays one turn once the running
+        one ends."""
+        live = self._open(handle, "send", text, images)
         live.inbox.put_nowait(text)
 
     async def interrupt(self, handle: DriverHandle) -> None:
