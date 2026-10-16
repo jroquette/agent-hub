@@ -32,7 +32,7 @@ LIVE_API_PORT ?= 7421
 
 .PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
         imports migrations coverage check llms-txt hub-schema output-schemas web-install web-fast web-build web-dist-check \
-        openapi openapi-check test-docker test-live run up down logs ps dev live demo connect
+        openapi openapi-check test-docker test-live run up down logs ps dev live playground playground-stop demo connect
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -155,6 +155,15 @@ live: web-install ## live loop: API on 7421 (restarts on change), web app on 517
 	$(RUN) python -m scripts.live_api --port $(LIVE_API_PORT) & \
 	AH_API_TARGET=http://127.0.0.1:$(LIVE_API_PORT) AH_SESSIONS_TARGET=$(URL) $(WEB) run dev & \
 	wait
+
+playground: ## the whole live playground (conductor, make live, hub registration), then opens http://127.0.0.1:5173
+	./scripts/playground.sh
+
+playground-stop: ## stop the playground's servers
+	-@pkill -f "[h]ub web"
+	-@pkill -f "[n]ode_modules/.bin/vite"
+	-@pkill -f "[s]cripts.live_api"
+	-@pkill -f "[a]gent_hub.cli web"
 
 demo: ## load synthetic demo data into the running control plane (make run or make up)
 	$(RUN) python -m scripts.seed_demo --url $(URL)
