@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiProblem } from "../../lib/api";
 import { servedCheckout } from "../../lib/devCheckout";
 import { seriousViolations } from "../../testing/axe";
-import { Composer, type ComposerProps } from "./Composer";
+import { Composer, DEFAULT_MESSAGE_MAX_BYTES, type ComposerProps } from "./Composer";
 
 vi.mock("../../lib/pastedImage", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/pastedImage")>();
@@ -190,6 +190,16 @@ describe("Composer (composer)", () => {
     expect(box).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText("Too long: 2 KiB of 1 KiB")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("takes a long text up to 1 MiB by default (AC-266.9)", () => {
+    const { box } = open();
+
+    fireEvent.change(box, { target: { value: "x".repeat(200 * 1024) } });
+
+    expect(box).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText(/Too long/)).not.toBeInTheDocument();
+    expect(DEFAULT_MESSAGE_MAX_BYTES).toBe(1024 * 1024);
   });
 
   it("keeps the text and shows the problem when sending fails", async () => {
@@ -432,7 +442,7 @@ describe("Composer (stop)", () => {
 describe("Composer (images)", () => {
   const image = (name: string) => new File(["x"], name, { type: "image/png" });
 
-  it("adds a pasted image above the text and sends it with the message", async () => {
+  it("adds a pasted image above the text and sends it with the message (AC-266.6)", async () => {
     const { box, props } = open({ acceptsImages: true });
 
     fireEvent.paste(box, { clipboardData: { files: [image("shot.png")] } });
@@ -455,32 +465,31 @@ describe("Composer (images)", () => {
     });
   });
 
-  it("takes dropped images, removes one, and refuses past four", async () => {
+  it("takes dropped images, removes one, and refuses past ten (AC-266.6)", async () => {
     const { box, props } = open({ acceptsImages: true });
     const form = screen.getByRole("form", { name: "Message composer" });
 
     fireEvent.drop(form, {
       dataTransfer: {
-        files: ["a", "b", "c", "d", "e"].map((n) => image(`${n}.png`)),
+        files: "abcdefghijk".split("").map((n) => image(`${n}.png`)),
         types: ["Files"],
       },
     });
 
     const strip = await screen.findByRole("list", { name: "Images in this message" });
     await waitFor(() => {
-      expect(within(strip).getAllByRole("img")).toHaveLength(4);
+      expect(within(strip).getAllByRole("img")).toHaveLength(10);
     });
-    expect(screen.getByRole("alert")).toHaveTextContent("A message takes up to 4 images.");
+    expect(screen.getByRole("alert")).toHaveTextContent("A message takes up to 10 images.");
     expect(screen.getByRole("button", { name: "Add an image" })).toBeDisabled();
 
     await userEvent.click(within(strip).getByRole("button", { name: "Remove image 2" }));
     await userEvent.type(box, "Compare{Enter}");
 
-    expect(props.onSend).toHaveBeenCalledWith("Compare", [
-      "data:image/png;base64,a.png",
-      "data:image/png;base64,c.png",
-      "data:image/png;base64,d.png",
-    ]);
+    expect(props.onSend).toHaveBeenCalledWith(
+      "Compare",
+      "acdefghij".split("").map((n) => `data:image/png;base64,${n}.png`),
+    );
   });
 
   it("pastes text as usual and takes no image where images are not accepted", () => {

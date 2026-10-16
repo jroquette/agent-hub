@@ -46,6 +46,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   server still stores no image bytes). A screenshot thumbnail opens it large, and in New session it opens a markup
   editor (arrow, box, ellipse, pen, highlighter, text, crop, colours, undo) whose marks go into the PNG that is sent
   (AGH-266).
+- A chat message can carry up to ten images: paste, drop or pick them into the composer, mark them up, and they go
+  to Claude before the text; the record keeps a marker per image, never its bytes. A message's text may be up to
+  1 MiB by default (`--message-max-bytes` up to 4 MiB). The composer's mode and model are compact pills (AGH-266).
 
 
 ### Changed

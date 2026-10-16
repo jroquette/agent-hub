@@ -1,7 +1,7 @@
 import { flattenScreenshot } from "../components/ScreenshotLightbox";
 
 /** The most images one message carries (the API's `MAX_MESSAGE_SCREENSHOTS`). */
-export const MAX_MESSAGE_IMAGES = 4;
+export const MAX_MESSAGE_IMAGES = 10;
 
 /** The image files of a paste, a drop or a file input, in order. */
 export function imageFiles(source: { files: ArrayLike<File> | null } | null): File[] {

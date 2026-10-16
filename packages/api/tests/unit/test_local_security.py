@@ -335,7 +335,7 @@ def test_accepts_large_body_when_create_session_under_create_body_cap() -> None:
         "/api/v1/agent-sessions", content=_streamed(AGENT_SESSION_CREATE_BODY_BYTES)
     )
 
-    assert AGENT_SESSION_CREATE_BODY_BYTES == 8 * 1024 * 1024
+    assert AGENT_SESSION_CREATE_BODY_BYTES == 16 * 1024 * 1024
     assert (sized.status_code, sized.json()) == (200, {"length": len(body)})
     assert (streamed.status_code, streamed.json()) == (200, {"length": len(body)})
 
@@ -386,7 +386,7 @@ def test_caps_message_body_at_message_cap_when_images_may_be_pasted() -> None:
     at_cap = client.post(path, content=_streamed(AGENT_SESSION_MESSAGE_BODY_BYTES))
     over = client.post(path, content=_streamed(AGENT_SESSION_MESSAGE_BODY_BYTES + 1))
 
-    assert AGENT_SESSION_MESSAGE_BODY_BYTES == 24 * 1024 * 1024
+    assert AGENT_SESSION_MESSAGE_BODY_BYTES == 64 * 1024 * 1024
     assert at_cap.status_code == 200
     assert over.status_code == 413
     assert over.json()["detail"] == (

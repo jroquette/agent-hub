@@ -218,7 +218,7 @@ class CreateAgentSession(ViewModel):
 
 
 # The most images one message carries: each is a PNG of at most ``MAX_SCREENSHOT_BYTES``.
-MAX_MESSAGE_SCREENSHOTS: Final = 4
+MAX_MESSAGE_SCREENSHOTS: Final = 10
 
 
 class SendMessage(ViewModel):
