@@ -19,6 +19,12 @@ export const KIND_LABEL: Record<ItemKind, string> = {
   agent: "Agents",
   hook: "Hooks",
 };
+/** What each kind is, in a few words: the kind tiles and the Create menu. */
+export const KIND_SUMMARY: Record<ItemKind, string> = {
+  skill: "Packaged instructions, run as /commands",
+  agent: "Specialists the session delegates to",
+  hook: "Commands run at lifecycle events",
+};
 /** What each kind is, in one or two sentences, for someone new to Claude Code. */
 export const KIND_HELP: Record<ItemKind, string> = {
   skill:

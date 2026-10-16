@@ -21,6 +21,7 @@ import {
   KINDS,
   KIND_HELP,
   KIND_LABEL,
+  KIND_SUMMARY,
   MAX_QUERY_CHARS,
   MODES,
   MODE_LABEL,
@@ -83,7 +84,7 @@ function KindTiles({
       id: kind,
       label: KIND_LABEL[kind],
       icon: KIND_ICON[kind],
-      line: KIND_LINE[kind],
+      line: KIND_SUMMARY[kind],
     })),
   ];
   return (
@@ -120,13 +121,6 @@ function KindTiles({
     </div>
   );
 }
-
-/** One line per kind, for the tiles (the full help sits under each group's heading). */
-const KIND_LINE: Record<ItemKind, string> = {
-  skill: "Packaged instructions, run as /commands",
-  agent: "Specialists the session delegates to",
-  hook: "Commands run at lifecycle events",
-};
 
 /** A hook as one row: event, matcher, command, where it comes from and its state. */
 function HookRow({ item, project }: { item: CatalogItem; project: string }) {
