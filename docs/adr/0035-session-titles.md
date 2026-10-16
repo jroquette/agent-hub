@@ -32,10 +32,12 @@ Option 3. The closed list of event types gains `session.title`, with payload key
 `short_text` as a skill or subagent description: redacted with `r1`, then 80 characters) and `origin` (`ai` for
 `ai-title`, `custom` for `custom-title`). The transcript mapper maps each title line: the title's whitespace runs
 collapse to one space; the event takes the timestamp of the last user or assistant line before it (a title before any
-such line is skipped: Claude Code writes it again later); its `source_id` is
-`<sessionId>:title:<origin>:<first 16 hex of sha256(kept text)>`, and a parse keeps each one once (the live tail
-carries the titles seen and the last timestamp from one read to the next), so a title repeated hundreds of times is
-one event, and a file read whole or in pieces gives the same events. The session's `label` gains `title`: the newest
+such line is skipped: Claude Code writes it again later). A title is kept only when it differs from the last one
+kept of its origin, so a title repeated hundreds of times is one event and a rename back to an earlier title is kept
+again; its `source_id` is `<sessionId>:title:<origin>:<n>:<first 16 hex of sha256(kept text)>`, `n` (six digits)
+counting the titles of that origin kept so far, so titles that share a timestamp still sort in file order. The live
+tail carries the titles kept and the last timestamp from one read to the next, so a file read whole or in pieces
+gives the same events. The session's `label` gains `title`: the newest
 `custom` title, else the newest `ai` title, else `null`; it is derived on read with the rest of the label. Lists and
 tiles show the title as the session's name, with issue, workflow, repo and branch below it; without one they show the
 label as before.

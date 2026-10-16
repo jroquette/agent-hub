@@ -12,6 +12,8 @@ from agent_hub.collector.transcript import (
 )
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.payload_keys import PAYLOAD_KEYS, kept_payload
+from agent_hub.core.sessions.session_label import label_signals, session_label
+from agent_hub.core.testing.session_scenarios import as_stored, shuffled
 from agent_hub.core.testing.transcript_lines import (
     TRANSCRIPT_BRANCH,
     TRANSCRIPT_MODEL,
@@ -317,6 +319,24 @@ def test_maps_title_once_when_file_is_read_in_pieces() -> None:
     )
 
     assert [*head.events, *tail.events] == list(whole.events)
+
+
+def test_keeps_rename_back_and_file_order_when_titles_share_timestamp() -> None:
+    lines = [
+        a_user_line(),
+        a_title_line("Alpha", origin="custom"),
+        a_title_line("Beta", origin="custom"),
+        a_title_line("Beta", origin="custom"),
+        a_title_line("Alpha", origin="custom"),
+    ]
+
+    titles = [event for event in _parse(lines) if event.type == "session.title"]
+
+    assert [event.payload["text"] for event in titles] == ["Alpha", "Beta", "Alpha"]
+    assert len({event.timestamp for event in titles}) == 1
+    for seed in range(5):
+        stored = as_stored(shuffled(titles, seed))
+        assert session_label(label_signals(stored)).title == "Alpha"
 
 
 def test_ignores_line_when_type_is_not_mapped() -> None:

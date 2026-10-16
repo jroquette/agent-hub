@@ -9,12 +9,14 @@
 #
 # A hub for agent-hub itself makes this checkout a session folder, so a shake opens Claude in it.
 set -euo pipefail
+# The conductor's log holds its launch address (token included): nothing here is for other users.
+umask 077
 
-AH="$(cd "$(dirname "$0")/.." && pwd)"
+AH="$(cd "$(dirname "$0")/.." && pwd -P)"
 WORKSPACE="$(dirname "$AH")"
 AHH="$WORKSPACE/agent-hub-hub"
 CONDUCTOR="$AH/.claude/worktrees/conductor"
-LOGS="${TMPDIR:-/tmp}"
+LOGS="${TMPDIR:-/tmp}/agent-hub-playground-$(id -u)"
 step() { printf '\n== %s\n' "$*"; }
 up() { curl -s -o /dev/null --max-time 2 "$1"; }
 wait_for() {
@@ -41,6 +43,14 @@ step "stop the old servers"
 stop_servers
 sleep 2
 
+# A private folder for the logs, refused when someone else owns it or can read it.
+mkdir -p "$LOGS"
+if [ -L "$LOGS" ] || [ ! -O "$LOGS" ]; then
+  echo "$LOGS is not yours: remove it, or set TMPDIR" >&2
+  exit 1
+fi
+chmod 700 "$LOGS"
+
 step "a hub for agent-hub (once)"
 if [ ! -f "$AHH/hub.json" ]; then
   mkdir -p "$AHH"
@@ -52,6 +62,12 @@ if [ ! -f "$AHH/hub.json" ]; then
 fi
 
 step "conductor on 7420"
+# A folder there that is not a worktree of its own (an interrupted `worktree add`) would send the
+# git commands below up to this checkout, whose uncommitted work `checkout -f` would drop.
+if [ -d "$CONDUCTOR" ] && [ "$(git -C "$CONDUCTOR" rev-parse --show-toplevel 2> /dev/null)" != "$CONDUCTOR" ]; then
+  git -C "$AH" worktree remove --force "$CONDUCTOR" 2> /dev/null || rm -rf "$CONDUCTOR"
+  git -C "$AH" worktree prune
+fi
 if [ ! -d "$CONDUCTOR" ]; then
   git -C "$AH" worktree add --detach "$CONDUCTOR" HEAD
 else
@@ -107,7 +123,10 @@ wait_for http://127.0.0.1:5173/
 
 # The playground trades the conductor's token for its session cookie (devProxy.ts), so the one
 # address to open signs you in and lands on the playground.
-token=$(grep -o 'http://127.0.0.1:7420/?token=[^ "]*' "$LOGS/agent-hub-conductor.log" | tail -1)
+token=$(grep -o 'http://127.0.0.1:7420/?token=[^ "]*' "$LOGS/agent-hub-conductor.log" | tail -1) || {
+  echo "no launch address in $LOGS/agent-hub-conductor.log" >&2
+  exit 1
+}
 url="http://127.0.0.1:5173/__playground/session?token=${token##*token=}"
 if command -v open > /dev/null; then open "$url"; fi
 cat <<EOF

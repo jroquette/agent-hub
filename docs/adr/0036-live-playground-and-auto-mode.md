@@ -35,9 +35,13 @@ Option 3, for the developer's own checkout of agent-hub only.
   cookie and redirects to the app.
 - The dev app offers `auto` besides the three modes, and a shake or New session preselects it, with the project and
   the folder of the served checkout (a hub listing it, `agent-hub-hub`, makes it a session folder). Built apps and
-  every other screen keep the three modes; `bypassPermissions` and `dontAsk` stay refused by the server.
+  every other screen keep the three modes and show `auto` only as a session's current mode, never as a choice. The
+  server accepts `auto` from any client holding the launch cookie, as it accepts `acceptEdits` (the cookie holder is
+  the owner, who can already allow any request); `bypassPermissions` and `dontAsk` stay refused by the server.
+- The playground's logs, which hold the conductor's launch address, are written to a private folder (mode 700).
 - The conductor keeps 16 live sessions and a day of idleness (the limits' ceilings), not 4 and 30 minutes.
-- A `CLAUDE.local.md` in the checkout (never committed) gives the playground's sessions their working rules.
+- A `CLAUDE.local.md` in the checkout (ignored by git, never committed) gives the playground's sessions their working
+  rules.
 
 ### Consequences
 
