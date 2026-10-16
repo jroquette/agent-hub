@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
-import { Button } from "../../components";
+import { Button, Icon } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { servedCheckout } from "../../lib/devCheckout";
 import { useSlashMenu } from "./SlashMenu";
@@ -257,63 +257,74 @@ export function Composer({
         }}
       />
       <div className="as-composer-bar">
-        <label htmlFor={modeId} className="ah-row ah-small" style={{ gap: 4 }}>
-          <span className="ah-subtle">Mode</span>
-          <select
-            id={modeId}
-            className="ah-input as-select"
-            value={mode}
-            disabled={ended}
-            onChange={(event) => {
-              const next = offeredModes().find((m) => m === event.target.value);
-              if (next) run(() => onSettings({ mode: next }), "change the mode");
-            }}
+        <div className="as-composer-settings">
+          <label htmlFor={modeId} className="as-pill" data-mode={mode} title="Permission mode">
+            <Icon name="shield" size="sm" />
+            <span className="ah-sr">Mode</span>
+            <select
+              id={modeId}
+              className="as-pill-select"
+              value={mode}
+              disabled={ended}
+              onChange={(event) => {
+                const next = offeredModes().find((m) => m === event.target.value);
+                if (next) run(() => onSettings({ mode: next }), "change the mode");
+              }}
+            >
+              {offeredModes().map((m) => (
+                <option key={m} value={m}>
+                  {modeLabel(m)}
+                </option>
+              ))}
+            </select>
+            <Icon name="chevron-down" size="sm" className="as-pill-caret" />
+          </label>
+          <label htmlFor={modelId} className="as-pill" title="Model">
+            <Icon name="cpu" size="sm" />
+            <span className="ah-sr">Model</span>
+            <select
+              id={modelId}
+              className="as-pill-select"
+              value={currentModel}
+              disabled={ended}
+              onChange={(event) => {
+                const next = event.target.value;
+                run(() => onSettings({ model: next }), "change the model");
+              }}
+            >
+              {modelOptions.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <Icon name="chevron-down" size="sm" className="as-pill-caret" />
+          </label>
+        </div>
+        <div className="as-composer-actions">
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="circle-stop"
+            className="as-composer-stop"
+            disabled={!canStop}
+            aria-disabled={stoppingShown || undefined}
+            onClick={stop}
           >
-            {offeredModes().map((m) => (
-              <option key={m} value={m}>
-                {modeLabel(m)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label htmlFor={modelId} className="ah-row ah-small" style={{ gap: 4 }}>
-          <span className="ah-subtle">Model</span>
-          <select
-            id={modelId}
-            className="ah-input as-select"
-            value={currentModel}
-            disabled={ended}
-            onChange={(event) => {
-              const next = event.target.value;
-              run(() => onSettings({ model: next }), "change the model");
-            }}
-          >
-            {modelOptions.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span id={hintId} className="ah-small ah-subtle ah-grow">
-          {tooLong
-            ? `Too long: ${String(Math.ceil(size / 1024))} KiB of ${String(Math.floor(maxBytes / 1024))} KiB`
-            : coarsePointer()
-              ? "Send to send, Enter for a new line"
-              : "Enter to send, Shift+Enter for a new line"}
-        </span>
-        <Button
-          icon="circle-stop"
-          disabled={!canStop}
-          aria-disabled={stoppingShown || undefined}
-          onClick={stop}
-        >
-          {stoppingShown ? "Stopping…" : "Stop"}
-        </Button>
-        <Button type="submit" variant="primary" icon="arrow-up" disabled={!canSend}>
-          {sending ? "Sending…" : "Send"}
-        </Button>
+            {stoppingShown ? "Stopping…" : "Stop"}
+          </Button>
+          <Button type="submit" size="sm" variant="primary" icon="arrow-up" disabled={!canSend}>
+            {sending ? "Sending…" : "Send"}
+          </Button>
+        </div>
       </div>
+      <span id={hintId} className="as-composer-hint" data-warn={tooLong || undefined}>
+        {tooLong
+          ? `Too long: ${String(Math.ceil(size / 1024))} KiB of ${String(Math.floor(maxBytes / 1024))} KiB`
+          : coarsePointer()
+            ? "Send to send, Enter for a new line"
+            : "Enter to send, Shift+Enter for a new line"}
+      </span>
       {error && (
         <p className="ah-small as-error" role="alert">
           {error}
