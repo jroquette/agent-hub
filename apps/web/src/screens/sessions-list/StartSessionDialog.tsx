@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 
 import { rememberScreenshot } from "../../lib/screenshotCopy";
 import type { PermissionMode } from "../agent-session/transcript";
-import { agentSessionHref } from "./AgentSessionList";
+import { agentSessionHref } from "./control";
 import {
   NewSessionDialog,
   type DriverCapabilities,
