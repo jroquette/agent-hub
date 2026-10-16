@@ -101,8 +101,8 @@ def test_returns_none_when_log_missing(tmp_path: Path) -> None:
 def test_finds_log_in_playground_folder_when_tmpdir_set_or_not() -> None:
     folder = f"agent-hub-playground-{os.getuid()}"
 
-    assert conductor_log({"TMPDIR": "/var/tmp/me"}) == Path(
-        "/var/tmp/me", folder, "agent-hub-conductor.log"
+    assert conductor_log({"TMPDIR": "/home/me/tmp"}) == Path(
+        "/home/me/tmp", folder, "agent-hub-conductor.log"
     )
     assert conductor_log({"TMPDIR": ""}) == Path("/tmp", folder, "agent-hub-conductor.log")  # noqa: S108
     assert conductor_log({}) == Path("/tmp", folder, "agent-hub-conductor.log")  # noqa: S108
