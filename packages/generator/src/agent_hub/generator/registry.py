@@ -182,6 +182,7 @@ _BASE_SKILLS: Final = (
     "research",
     "retro",
     "review",
+    "summarize",
     "triage",
     "upgrade",
 )
