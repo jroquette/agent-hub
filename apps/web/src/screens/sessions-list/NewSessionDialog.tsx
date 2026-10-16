@@ -118,6 +118,7 @@ export function NewSessionDialog({
   const optionsId = useId();
   const summaryId = useId();
   const reasonId = useId();
+  const modelField = useId();
   const otherField = useId();
   const otherHint = useId();
   const promptField = useId();
@@ -450,24 +451,25 @@ export function NewSessionDialog({
               </fieldset>
 
               <div className="ah-stack" style={{ gap: 4 }}>
-                <label className="ah-small ah-stack" style={{ gap: 4 }}>
+                <label htmlFor={modelField} className="ah-small">
                   Model
-                  <select
-                    className="ah-input"
-                    value={model}
-                    disabled={pending}
-                    onChange={(event) => {
-                      setModel(event.target.value);
-                    }}
-                  >
-                    {capabilities.models.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                    <option value={OTHER_MODEL}>Other model id…</option>
-                  </select>
                 </label>
+                <select
+                  id={modelField}
+                  className="ah-input"
+                  value={model}
+                  disabled={pending}
+                  onChange={(event) => {
+                    setModel(event.target.value);
+                  }}
+                >
+                  {capabilities.models.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                  <option value={OTHER_MODEL}>Other model id…</option>
+                </select>
                 {model === OTHER_MODEL && (
                   <>
                     <label htmlFor={otherField} className="ah-small">
