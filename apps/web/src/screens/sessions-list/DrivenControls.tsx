@@ -7,49 +7,32 @@ import { sessionControlUnavailable } from "./control";
 import { useAgentCapabilities, useAgentSessions, useCloudSessions, useWorkdirs } from "./queries";
 import { StartSessionDialog } from "./StartSessionDialog";
 
-/** The driven sessions of `scope`, whether this machine can start one, and in which project. */
+/**
+ * The driven sessions of `scope`, whether this machine can start one, and the project New session
+ * opens on; its "Where" switches to another of `projects` when no scope is set (AC-234.14).
+ */
 export function useDriving(scope: string | null, projects: readonly string[]) {
-  const [chosen, setChosen] = useState<string | null>(null);
-  const project =
-    scope ?? (chosen !== null && projects.includes(chosen) ? chosen : null) ?? projects[0] ?? null;
+  const project = scope ?? projects[0] ?? null;
   const list = useAgentSessions(scope);
   const capabilities = useAgentCapabilities();
   const problem = list.error ?? capabilities.error;
   const caps = capabilities.data;
   const canDrive = caps !== undefined && sessionControlUnavailable(problem, caps) === null;
   const workdirs = useWorkdirs(project, canDrive);
-  const pick = projects.length > 1 && !scope ? setChosen : null;
-  return { list, capabilities, problem, caps, canDrive, project, projects, pick, workdirs };
+  const choices = scope ? [] : projects;
+  return { list, capabilities, problem, caps, canDrive, project, choices, workdirs };
 }
 
 type Driving = ReturnType<typeof useDriving>;
 
-/** "New session" for the page header, with the project to start in when no scope is set. */
+/** "New session" for the page header; the dialog's "Where" picks the project. */
 export function NewSessionControl({ driving }: { driving: Driving }) {
   const [dialog, setDialog] = useState(false);
-  const { caps, canDrive, project, pick, workdirs } = driving;
+  const { caps, canDrive, project, choices, workdirs } = driving;
   const folders = workdirs.data?.items;
   if (!canDrive || !caps || project === null || !folders) return null;
   return (
     <>
-      {pick && (
-        <label className="ah-row ah-small" style={{ gap: 6 }}>
-          <span className="ah-subtle">Start sessions in</span>
-          <select
-            className="ah-input as-select"
-            value={project}
-            onChange={(event) => {
-              pick(event.target.value);
-            }}
-          >
-            {driving.projects.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
       <Button
         variant="primary"
         icon="plus"
@@ -62,6 +45,7 @@ export function NewSessionControl({ driving }: { driving: Driving }) {
       {dialog && (
         <StartSessionDialog
           project={project}
+          projects={choices}
           workdirs={folders}
           capabilities={caps}
           onClose={() => {

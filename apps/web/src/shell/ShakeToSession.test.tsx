@@ -317,7 +317,9 @@ describe("ShakeToSession (shake to start a session)", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "New session" });
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(REPO_ID);
-    expect(within(dialog).getByRole("radio", { name: /Accept edits/ })).toBeChecked();
+    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
+      /^Accept edits ·/,
+    );
     expect(within(dialog).queryByRole("note")).toBeNull();
   });
 
@@ -331,7 +333,9 @@ describe("ShakeToSession (shake to start a session)", () => {
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
       aWorkdir().workdir_id,
     );
-    expect(within(dialog).getByRole("radio", { name: /Ask/ })).toBeChecked();
+    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
+      /^Ask before edits ·/,
+    );
     expect(within(dialog).getByRole("note")).toHaveTextContent(LIVE_RELOAD_NOTE);
     expect(LIVE_RELOAD_NOTE).toBe("Live reload needs make dev in a listed folder");
   });
