@@ -314,6 +314,29 @@ def equivalent_on(branch: str, base: str, head: str, *, cwd: Path = ROOT) -> set
     return (in_range - not_on) | {line[2:] for line in marks if line.startswith("- ")}
 
 
+def repeated_changes(base: str, head: str, *, cwd: Path = ROOT) -> dict[str, str]:
+    """The range's commits that repeat an earlier one's change (a cherry-pick merged back),
+    each to the first: applying both would apply the change twice."""
+    log = git("log", "-p", "--reverse", "--no-merges", f"{base}..{head}", cwd=cwd)
+    ids = subprocess.run(  # noqa: S603 -- a fixed argv, no shell
+        ["git", "patch-id", "--stable"],
+        cwd=cwd,
+        input=log,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    first: dict[str, str] = {}
+    repeated: dict[str, str] = {}
+    for line in ids.splitlines():
+        patch_id, sha = line.split()
+        if patch_id in first:
+            repeated[sha] = first[patch_id]
+        else:
+            first[patch_id] = sha
+    return repeated
+
+
 def conductor_logs(given: Path | None, environ: Mapping[str, str]) -> list[Path]:
     """Where make playground writes the conductor's log: ``given``, else ``$TMPDIR``, else the
     user's own temp folder on macOS (a sandbox may move ``$TMPDIR``)."""
@@ -469,13 +492,18 @@ def build_requests(
     hub_root: Path | None = None,
     in_progress: Sequence[str] = (),
     checkout: Path = ROOT,
+    same_as: Mapping[str, str] | None = None,
 ) -> list[Request]:
     """One request per conversation (sessions sharing a title and folder are one), in the order
     the owner asked them, each with what it made: commits, files, screens, hub files and
     uncommitted files. What no session made is a last request, ``NO_SESSION``, so nothing of
-    the range is dropped."""
+    the range is dropped. A turn's commit that repeats an earlier change (``same_as``) counts as
+    that earlier commit."""
     by_sha = {commit.sha: commit for commit in commits}
     also_on = also_on or {}
+    for session in sessions:
+        for turn in session.turns:
+            turn.commits = list(dict.fromkeys((same_as or {}).get(s, s) for s in turn.commits))
     merged: dict[tuple[str | None, str], Request] = {}
     owners: dict[tuple[str | None, str], list[Session]] = {}
     for session in sessions:
@@ -608,6 +636,7 @@ def render_brief(
     hub: str | None = None,
     missing: Sequence[str] = (),
     snapshot: str | None = None,
+    repeated: Sequence[tuple[Commit, str]] = (),
 ) -> str:
     """The owner's requests in the order they asked them, each a delivery: its turns in their
     own words, then what it made."""
@@ -635,6 +664,12 @@ def render_brief(
     if shipped:
         lines += ["", f"## Already in {MAIN} (left out)", ""]
         lines += [f"- `{commit.sha[:8]}` {commit.subject}" for commit in shipped]
+    if repeated:
+        lines += ["", "## Repeated changes (left out, the same change as an exported commit)", ""]
+        lines += [
+            f"- `{commit.sha[:8]}` {commit.subject}: same as `{first[:8]}`"
+            for commit, first in repeated
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -994,8 +1029,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     everything = commits_between(base, head)
     shipped_shas = equivalent_on(MAIN, base, head) if everything else set()
+    repeated = repeated_changes(base, head) if everything else {}
     shipped = [commit for commit in everything if commit.sha in shipped_shas]
-    commits = [commit for commit in everything if commit.sha not in shipped_shas]
+    commits = [c for c in everything if c.sha not in shipped_shas and c.sha not in repeated]
     in_progress = uncommitted()
     if not commits and not in_progress:
         print("nothing to export")
@@ -1023,6 +1059,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         hub_files=hub_files,
         hub_root=args.hub,
         in_progress=in_progress,
+        same_as=repeated,
     )
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -1051,6 +1088,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         hub=args.hub.name,
         missing=missing,
         snapshot=branch,
+        repeated=[(c, repeated[c.sha]) for c in everything if c.sha in repeated],
     )
     (out / "brief.md").write_text(brief, "utf-8")
     document = {
@@ -1059,6 +1097,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "created_at": stamp,
         "requests": [asdict(request) for request in requests],
         "shipped": [{"sha": c.sha, "subject": c.subject} for c in shipped],
+        "repeated": [
+            {"sha": c.sha, "subject": c.subject, "same_as": repeated[c.sha]}
+            for c in everything
+            if c.sha in repeated
+        ],
         "hub": {"path": str(args.hub), "files": hub_files},
         "in_progress": in_progress,
         "screens_skipped": skipped,
