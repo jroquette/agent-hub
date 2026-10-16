@@ -121,7 +121,7 @@ def test_folds_owner_case_when_one_ticket_done() -> None:
         "evaluate": "partial",
         "shipped": "pending",
     }
-    assert _step(path, "implement").meta == "1/17 tickets · 3/36 ACs"
+    assert _step(path, "implement").meta == "1/17 tickets delivered · 3/36 ACs"
     assert _step(path, "review").meta == "1/17 reviewed"
     assert _step(path, "evaluate").meta == "partial: covers 3 of 36 ACs"
     assert _step(path, "evaluate").reason == "Implement is not done"
@@ -142,12 +142,12 @@ def test_counts_reviewed_when_done_or_approved_record() -> None:
     assert review.meta == "2/3 reviewed"
     assert review.progress is not None
     assert (review.progress.done, review.progress.total) == (2, 3)
-    assert review.state == "partial"
-    assert _step(path, "implement").meta == "1/3 tickets · 3/3 ACs"
+    assert review.state == "current"
+    assert _step(path, "implement").meta == "3/3 tickets delivered · 3/3 ACs"
     assert _step(path, "tickets").meta == "3 of 3 created"
 
 
-def test_keeps_review_pending_when_in_review_without_approved_record() -> None:
+def test_makes_review_current_when_in_review_without_approved_record() -> None:
     planned = (PlannedTicket(key="T1", id="DEMO-1520", order=1),)
     summary = an_issue_summary(
         id="DEMO-1520",
@@ -165,7 +165,8 @@ def test_keeps_review_pending_when_in_review_without_approved_record() -> None:
     (row,) = board.rows
     assert (row.state, row.reviewed) == (_IN_REVIEW, False)
     review = _step(path, "review")
-    assert review.state == "pending"
+    assert _step(path, "implement").state == "done"
+    assert review.state == "current"
     assert review.meta == "0/1 reviewed"
 
 
@@ -285,7 +286,7 @@ def test_excludes_withdrawn_when_counting_acs() -> None:
         _inputs(rows=rows, acs=acs, coverage=EvalGate(evals=1, covered=3, owner_steps=0))
     )
 
-    assert _step(path, "implement").meta == "1/1 tickets · 3/3 ACs"
+    assert _step(path, "implement").meta == "1/1 tickets delivered · 3/3 ACs"
     assert _step(path, "evaluate").meta == "covers 3 of 3 ACs"
     assert path.phase == "shipped"
 
@@ -366,8 +367,9 @@ def test_counts_in_progress_tickets_in_implement_meta_when_started() -> None:
     path = golden_path(_inputs(rows=rows, acs=_acs(18, passing=17)))
 
     implement = _step(path, "implement")
-    assert implement.meta == "0/3 tickets · 2 in progress · 17/18 ACs"
+    assert implement.meta == "1/3 tickets delivered · 1 in progress · 17/18 ACs"
     assert implement.state == "current"
+    assert implement.reason == "2 of 3 tickets not in review or Done yet"
 
 
 def test_counts_epic_only_under_tickets_when_it_has_children() -> None:
@@ -385,6 +387,32 @@ def test_counts_epic_only_under_tickets_when_it_has_children() -> None:
     path = golden_path(_inputs(rows=rows, acs=_acs(18, passing=17)))
 
     assert _step(path, "tickets").meta == "3 of 3 created"
-    assert _step(path, "implement").meta == "0/2 tickets · 2 in progress · 17/18 ACs"
+    assert _step(path, "implement").meta == "2/2 tickets delivered · 17/18 ACs"
+    assert _step(path, "implement").state == "done"
     assert _step(path, "review").meta == "2/2 reviewed"
     assert _step(path, "shipped").meta == "0/2 Done"
+
+
+def test_marks_implement_done_when_every_ticket_in_review_and_an_ac_fails() -> None:
+    rows = (
+        _ticket(1, state=_IN_REVIEW, readiness="in_progress"),
+        _ticket(2, state=_IN_REVIEW, readiness="in_progress"),
+    )
+
+    path = golden_path(
+        _inputs(
+            rows=rows, acs=_acs(3, passing=2), coverage=EvalGate(evals=1, covered=2, owner_steps=0)
+        )
+    )
+
+    implement = _step(path, "implement")
+    assert (implement.state, implement.meta) == ("done", "2/2 tickets delivered · 2/3 ACs")
+    assert path.phase == "review"
+    assert _step(path, "shipped").meta == "0/2 Done"
+
+
+def test_keeps_implement_current_when_no_tickets_and_an_ac_fails() -> None:
+    path = golden_path(_inputs(files=(*_FILES, "issues.md"), acs=_acs(3, passing=2)))
+
+    implement = _step(path, "implement")
+    assert (implement.state, implement.reason) == ("current", "1 of 3 ACs not passing")
