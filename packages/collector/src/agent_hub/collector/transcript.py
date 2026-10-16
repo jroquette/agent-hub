@@ -9,11 +9,18 @@ a size-0 ``message`` added before its first block when the response starts with 
 Every event of a line naming a ``gitBranch`` keeps it as ``git_branch`` (redacted,
 ``BRANCH_LIMIT`` characters). ``source_id``: ``<sessionId>:<uuid>[:<block index>]``.
 
+A title line (``ai-title``, or ``custom-title`` from ``/rename``) becomes a ``session.title``
+(ADR 0035): the title redacted and cut at ``NAME_LIMIT`` characters, at the timestamp of the last
+user or assistant line before it (a title before any such line is skipped). Claude Code repeats
+the line, so each distinct title of an origin is kept once:
+``source_id`` ``<sessionId>:title:<origin>:<hash of the kept text>``.
+
 A line that is not a JSON object, is too long, has no valid timestamp or names a session id
 longer than ``MAX_ID_CHARS`` is a problem reported with its line number; a line of another type,
 or without the keys it needs, is ignored.
 """
 
+import hashlib
 import json
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -72,6 +79,8 @@ class TranscriptBatch(BaseModel):
     problems: tuple[LineError, ...]
     end_turn: int
     seen_messages: frozenset[str]
+    seen_titles: frozenset[str] = frozenset()
+    last_timestamp: datetime | None = None
 
 
 class _BadLineError(Exception):
@@ -82,6 +91,8 @@ class _BadLineError(Exception):
 class _State:
     turn: int
     seen_messages: set[str] = field(default_factory=set)
+    seen_titles: set[str] = field(default_factory=set)
+    last_timestamp: datetime | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -119,14 +130,22 @@ def parse_transcript(
     origin: TranscriptOrigin,
     start_turn: int = 0,
     seen_messages: frozenset[str] = frozenset(),
+    seen_titles: frozenset[str] = frozenset(),
+    last_timestamp: datetime | None = None,
     max_line_bytes: int = MAX_LINE_BYTES,
 ) -> TranscriptBatch:
     """The events of every complete line of ``content``; bad lines become problems, never raise.
 
-    ``start_turn`` and ``seen_messages`` carry a previous parse of the same file forward, so a
-    file read in pieces yields the same events as one read whole.
+    ``start_turn``, ``seen_messages``, ``seen_titles`` and ``last_timestamp`` carry a previous
+    parse of the same file forward, so a file read in pieces yields the same events as one read
+    whole.
     """
-    state = _State(turn=start_turn, seen_messages=set(seen_messages))
+    state = _State(
+        turn=start_turn,
+        seen_messages=set(seen_messages),
+        seen_titles=set(seen_titles),
+        last_timestamp=last_timestamp,
+    )
     events: list[Event] = []
     problems: list[LineError] = []
     for number, line in enumerate(content.split("\n"), start=1):
@@ -141,6 +160,8 @@ def parse_transcript(
         problems=tuple(problems),
         end_turn=state.turn,
         seen_messages=frozenset(state.seen_messages),
+        seen_titles=frozenset(state.seen_titles),
+        last_timestamp=state.last_timestamp,
     )
 
 
@@ -164,6 +185,12 @@ def _record(line: str, max_line_bytes: int) -> Record:
 
 def _line_events(record: Record, origin: TranscriptOrigin, state: _State) -> Iterator[Event]:
     kind = text(record, fields.TYPE)
+    for title_type, title_key, title_origin in fields.TITLE_LINES:
+        if kind == title_type:
+            yield from _title_events(
+                record, origin, state, key=title_key, title_origin=title_origin
+            )
+            return
     uuid = text(record, fields.UUID)
     message = mapping(record, fields.MESSAGE)
     if kind not in {fields.USER, fields.ASSISTANT} or uuid is None or not message:
@@ -179,10 +206,37 @@ def _line_events(record: Record, origin: TranscriptOrigin, state: _State) -> Ite
         repo_root=repo_root_of(text(record, fields.CWD), origin.repo),
         git_branch=_git_branch(record),
     )
+    state.last_timestamp = line.timestamp
     if kind == fields.USER:
         yield from _user_events(line, message.get(fields.CONTENT), state)
     else:
         yield from _assistant_events(line, message, state)
+
+
+def _title_events(
+    record: Record, origin: TranscriptOrigin, state: _State, *, key: str, title_origin: str
+) -> Iterator[Event]:
+    raw = text(record, key)
+    session = text(record, fields.SESSION_ID) or origin.session
+    if raw is None or state.last_timestamp is None or len(session) > MAX_ID_CHARS:
+        return
+    title = short_text(" ".join(raw.split()), NAME_LIMIT)
+    digest = hashlib.sha256(title.encode()).hexdigest()[:16]
+    source_id = f"{session}:title:{title_origin}:{digest}"
+    if not title or source_id in state.seen_titles:
+        return
+    state.seen_titles.add(source_id)
+    yield Event(
+        project=origin.project,
+        session=session,
+        type=EventType.SESSION_TITLE,
+        timestamp=state.last_timestamp,
+        source=EventSource.TRANSCRIPT,
+        source_id=source_id,
+        payload={"text": title, "origin": title_origin},
+        repo=origin.repo,
+        agent=origin.agent,
+    )
 
 
 def _git_branch(record: Record) -> str | None:

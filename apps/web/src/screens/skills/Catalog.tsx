@@ -1,15 +1,27 @@
 /* The Skills catalog (D3, AC-164.14, AC-164.40): search, facets kept in the URL, cards by kind. */
 import "./Skills.css";
 
+import { useState } from "react";
 import { useSearchParams } from "react-router";
 
-import { Banner, Button, EmptyState, FilterRail, Icon } from "../../components";
-import type { Facet } from "../../components";
+import {
+  AppLink,
+  Banner,
+  Button,
+  EmptyState,
+  FilterRail,
+  Icon,
+  SegmentedControl,
+  Time,
+} from "../../components";
+import type { Facet, IconName } from "../../components";
 import type { components } from "../../api/schema";
 import { useNow } from "../../lib/clock";
 import {
   KINDS,
+  KIND_HELP,
   KIND_LABEL,
+  KIND_SUMMARY,
   MAX_QUERY_CHARS,
   MODES,
   MODE_LABEL,
@@ -22,12 +34,178 @@ import {
   hasFilters,
   withFilters,
   type CatalogFilters,
+  type ItemKind,
 } from "./filters";
-import { KIND_ICON, SkillCard } from "./SkillCard";
+import { skillRoute as skillRouteOf } from "./queries";
+import { HookStateTags, KIND_ICON, KIND_NAME, OriginBadge, SkillCard } from "./SkillCard";
+import { newDraftRoute, studioRoute } from "./Studio";
+import { openDrafts } from "./studioDrafts";
 
 type Schemas = components["schemas"];
 type SkillCatalog = Schemas["SkillCatalog"];
 type ExternalPlugin = Schemas["ExternalPlugin"];
+type CatalogItem = Schemas["CatalogItem"];
+
+type Sort = "name" | "used" | "recent";
+
+function sorted(items: readonly CatalogItem[], sort: Sort): CatalogItem[] {
+  if (sort === "name") return [...items];
+  const key = (item: CatalogItem) =>
+    sort === "used" ? (item.usage?.count ?? -1) : Date.parse(item.usage?.last_used_at ?? "") || 0;
+  return [...items].sort((a, b) => key(b) - key(a) || (a.name < b.name ? -1 : 1));
+}
+
+/** A hook's description, "Event (matcher): command", split back into its parts. */
+export function hookParts(item: CatalogItem): {
+  event: string;
+  matcher: string | null;
+  command: string | null;
+} {
+  const match = /^([A-Za-z]+)(?: \(([^)]*)\))?(?:: ([\s\S]*))?$/.exec(item.description ?? "");
+  if (!match) return { event: "Other", matcher: null, command: item.description };
+  return { event: match[1] ?? "Other", matcher: match[2] ?? null, command: match[3] ?? null };
+}
+
+/** The kinds as selectable tiles: what each is, how many there are, how many were used. */
+function KindTiles({
+  value,
+  counts,
+  used,
+  onChange,
+}: {
+  value: string;
+  counts: Record<ItemKind | "all", number>;
+  used: Record<ItemKind | "all", number>;
+  onChange: (id: string) => void;
+}) {
+  const tiles: { id: ItemKind | "all"; label: string; icon: IconName; line: string }[] = [
+    { id: "all", label: "All", icon: "layers", line: "Everything this hub's agents can do" },
+    ...KINDS.map((kind) => ({
+      id: kind,
+      label: KIND_LABEL[kind],
+      icon: KIND_ICON[kind],
+      line: KIND_SUMMARY[kind],
+    })),
+  ];
+  return (
+    <div className="ah-kind-tiles" role="tablist" aria-label="Kind">
+      {tiles.map((tile) => (
+        <button
+          key={tile.id}
+          type="button"
+          role="tab"
+          className="ah-kind-tile"
+          aria-selected={tile.id === value}
+          aria-label={`${tile.label} ${String(counts[tile.id])}`}
+          aria-describedby={`kind-tile-${tile.id}`}
+          onClick={() => {
+            onChange(tile.id);
+          }}
+        >
+          <span className="ah-kind-badge" data-kind={tile.id} aria-hidden="true">
+            <Icon name={tile.icon} size="sm" />
+          </span>
+          <span className="ah-kind-tile-text">
+            <span className="ah-kind-tile-label">
+              {tile.label} <span className="ah-kind-tile-count">{counts[tile.id]}</span>
+            </span>
+            <span className="ah-kind-tile-line" id={`kind-tile-${tile.id}`}>
+              {tile.line}
+            </span>
+            {tile.id !== "hook" && (
+              <span className="ah-kind-tile-used">{used[tile.id]} used in 30 days</span>
+            )}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** A hook as one row: event, matcher, command, where it comes from and its state. */
+function HookRow({ item, project }: { item: CatalogItem; project: string }) {
+  const parts = hookParts(item);
+  const headingId = `skill-card-${item.id}`;
+  return (
+    <li className="ah-hook-row-item">
+      <article className="ah-hook-row" aria-labelledby={headingId}>
+        <span className="ah-hook-matcher">{parts.matcher ?? "any"}</span>
+        <code className="ah-hook-command" title={parts.command ?? undefined}>
+          {parts.command ?? "No command"}
+        </code>
+        <h3 id={headingId} className="ah-hook-name">
+          <AppLink href={skillRouteOf(project, item)}>{item.name}</AppLink>
+        </h3>
+        <span className="ah-hook-tags">
+          <OriginBadge origin={item.origin} />
+          <HookStateTags active={item.active} state={item.state} />
+          {item.diagnostics_count > 0 && (
+            <span className="ah-skill-meta">
+              <Icon name="circle-alert" size="sm" />
+              {item.diagnostics_count}
+            </span>
+          )}
+        </span>
+      </article>
+    </li>
+  );
+}
+
+function HookGroups({ items, project }: { items: readonly CatalogItem[]; project: string }) {
+  const events = new Map<string, CatalogItem[]>();
+  for (const item of items) {
+    const event = hookParts(item).event;
+    events.set(event, [...(events.get(event) ?? []), item]);
+  }
+  return (
+    <div className="ah-hook-groups">
+      {[...events].map(([event, group]) => (
+        <div key={event} className="ah-hook-group">
+          <p className="ah-hook-event">
+            <span className="ah-mono">{event}</span>
+            <span className="ah-count">{group.length}</span>
+          </p>
+          <ul className="ah-hook-rows">
+            {group.map((item) => (
+              <HookRow key={item.id} item={item} project={project} />
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** The drafts this browser started in the Studio and did not publish. */
+function DraftsInProgress({ project, now }: { project: string; now: number }) {
+  const [drafts] = useState(() => openDrafts(project));
+  if (drafts.length === 0) return null;
+  return (
+    <section className="ah-drafts" aria-labelledby="skills-drafts">
+      <h2 id="skills-drafts" className="ah-studio-label">
+        Drafts in progress
+      </h2>
+      <ul className="ah-drafts-list">
+        {drafts.map((draft) => (
+          <li key={draft.draftId}>
+            <AppLink href={studioRoute(project, draft.draftId)} className="ah-draft-pill">
+              <span className="ah-kind-badge" data-kind={draft.kind} aria-hidden="true">
+                <Icon name={KIND_ICON[draft.kind]} size="sm" />
+              </span>
+              <span className="ah-mono">{draft.name ?? `untitled ${draft.kind}`}</span>
+              <span className="ah-muted">
+                <Time
+                  iso={draft.updatedAt}
+                  ago={Math.max(0, (now - Date.parse(draft.updatedAt)) / 1000)}
+                />
+              </span>
+            </AppLink>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 function toggle<T extends string>(values: readonly T[], value: T): T[] {
   return values.includes(value) ? values.filter((v) => v !== value) : [...values, value];
@@ -103,6 +281,7 @@ export interface CatalogProps {
 export function Catalog({ catalog, now }: CatalogProps) {
   const clock = useNow(60_000);
   const [params, setParams] = useSearchParams();
+  const [sort, setSort] = useState<Sort>("name");
   const filters = filtersFromParams(params);
   const setFilters = (next: CatalogFilters) => {
     setParams((current) => withFilters(current, next), { replace: true });
@@ -126,18 +305,21 @@ export function Catalog({ catalog, now }: CatalogProps) {
 
   const items = filterItems(catalog.items, filters);
   const counts = facetCounts(catalog.items, filters);
+  // The kind is picked with tabs above the cards: one kind, or all of them. A URL naming
+  // several kinds (an older link) reads as All, and picking a tab replaces it.
+  const tab = filters.kind.length === 1 ? (filters.kind[0] ?? "all") : "all";
+  const allCount = KINDS.reduce((sum, kind) => sum + counts.kind[kind], 0);
+  const tileCounts = { all: allCount, ...counts.kind };
+  const usedOf = (kind?: ItemKind) =>
+    catalog.items.filter(
+      (item) => (kind ? item.kind === kind : true) && (item.usage?.count ?? 0) > 0,
+    ).length;
+  const used = { all: usedOf(), skill: usedOf("skill"), agent: usedOf("agent"), hook: 0 };
+  const onTab = (id: string) => {
+    const kind = KINDS.find((value) => value === id);
+    setFilters({ ...filters, kind: kind ? [kind] : [] });
+  };
   const facets: Facet[] = [
-    {
-      id: "kind",
-      title: "Kind",
-      options: KINDS.map((kind) => ({
-        id: kind,
-        label: KIND_LABEL[kind],
-        count: counts.kind[kind],
-        checked: filters.kind.includes(kind),
-        icon: <Icon name={KIND_ICON[kind]} size="sm" />,
-      })),
-    },
     {
       id: "origin",
       title: "Origin",
@@ -167,10 +349,7 @@ export function Catalog({ catalog, now }: CatalogProps) {
     },
   ];
   const onToggle = (facet: string, option: string) => {
-    if (facet === "kind") {
-      const kind = KINDS.find((value) => value === option);
-      if (kind) setFilters({ ...filters, kind: toggle(filters.kind, kind) });
-    } else if (facet === "origin") {
+    if (facet === "origin") {
       const origin = ORIGINS.find((value) => value === option);
       if (origin) setFilters({ ...filters, origin: toggle(filters.origin, origin) });
     } else if (facet === "mode") {
@@ -203,7 +382,9 @@ export function Catalog({ catalog, now }: CatalogProps) {
           }
         />
         <div className="ah-skills-main">
-          <div className="ah-row ah-wrap">
+          <DraftsInProgress project={catalog.project} now={now ?? clock} />
+          <KindTiles value={tab} counts={tileCounts} used={used} onChange={onTab} />
+          <div className="ah-row ah-wrap ah-skills-toolbar">
             <div className="ah-search ah-skills-search ah-grow">
               <Icon name="search" size="sm" />
               <input
@@ -218,6 +399,18 @@ export function Catalog({ catalog, now }: CatalogProps) {
                 }}
               />
             </div>
+            <SegmentedControl
+              label="Sort"
+              value={sort}
+              onChange={(id) => {
+                setSort(id === "used" || id === "recent" ? id : "name");
+              }}
+              options={[
+                { id: "name", label: "A–Z" },
+                { id: "used", label: "Most used" },
+                { id: "recent", label: "Recent" },
+              ]}
+            />
             <p className="ah-skills-count" role="status" style={{ margin: 0 }}>
               Showing {items.length} of {catalog.items.length}
             </p>
@@ -237,26 +430,42 @@ export function Catalog({ catalog, now }: CatalogProps) {
             </div>
           ) : (
             KINDS.map((kind) => {
-              const group = items.filter((item) => item.kind === kind);
+              const group = sorted(
+                items.filter((item) => item.kind === kind),
+                sort,
+              );
               if (group.length === 0) return null;
               const headingId = `skills-group-${kind}`;
               return (
                 <section key={kind} className="ah-skills-group" aria-labelledby={headingId}>
-                  <h2 id={headingId} className="ah-h3">
-                    <Icon name={KIND_ICON[kind]} size="sm" />
-                    {KIND_LABEL[kind]} <span className="ah-count">{group.length}</span>
-                  </h2>
-                  <ul className="ah-skills-grid">
-                    {group.map((item) => (
-                      <SkillCard
-                        key={item.id}
-                        item={item}
-                        project={catalog.project}
-                        now={now ?? clock}
-                        usageDays={catalog.usage_days}
-                      />
-                    ))}
-                  </ul>
+                  <div className="ah-skills-group-head">
+                    <div className="ah-grow">
+                      <h2 id={headingId} className="ah-h3">
+                        <Icon name={KIND_ICON[kind]} size="sm" />
+                        {KIND_LABEL[kind]} <span className="ah-count">{group.length}</span>
+                      </h2>
+                      <p className="ah-skills-group-help">{KIND_HELP[kind]}</p>
+                    </div>
+                    <AppLink href={newDraftRoute(catalog.project, kind)} className="ah-skills-new">
+                      <Icon name="plus" size="sm" />
+                      New {KIND_NAME[kind].toLowerCase()} with Claude
+                    </AppLink>
+                  </div>
+                  {kind === "hook" ? (
+                    <HookGroups items={group} project={catalog.project} />
+                  ) : (
+                    <ul className="ah-skills-grid">
+                      {group.map((item) => (
+                        <SkillCard
+                          key={item.id}
+                          item={item}
+                          project={catalog.project}
+                          now={now ?? clock}
+                          usageDays={catalog.usage_days}
+                        />
+                      ))}
+                    </ul>
+                  )}
                 </section>
               );
             })

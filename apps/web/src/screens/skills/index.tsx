@@ -14,6 +14,7 @@ import { useNow } from "../../lib/clock";
 import { useScope } from "../../lib/scope";
 import { bundledFileAnchor, resolveSkillLink } from "../../lib/skillLinks";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
+import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { NotFoundBody } from "../not-found";
 import { BodyView, scrollToAnchor, type BodyMode } from "./BodyView";
 import { BundledFiles } from "./BundledFiles";
@@ -27,6 +28,7 @@ import { HookDetail } from "./HookDetail";
 import { useSkillCatalog, useSkillDetail, type SkillRef } from "./queries";
 import { Relations } from "./Relations";
 import { StructurePanel } from "./StructurePanel";
+import { CreateMenu } from "./CreateMenu";
 
 type SkillDetail = components["schemas"]["SkillDetail"];
 
@@ -74,13 +76,18 @@ export function SkillsScreen() {
   }
   return (
     <div className="ah-page" style={{ gap: 16 }}>
-      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-        <h1 className="ah-h1">Skills</h1>
-        <span className="ah-small ah-muted">{project}</span>
-      </div>
-      <p className="ah-muted" style={{ margin: 0 }}>
-        The skills, agents and hooks of this hub, read from its files. Nothing here runs them.
-      </p>
+      <header className="ah-skills-head">
+        <div className="ah-stack ah-grow" style={{ gap: 4 }}>
+          <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+            <h1 className="ah-h1">Skills</h1>
+            <span className="ah-small ah-muted">{project}</span>
+          </div>
+          <p className="ah-muted" style={{ margin: 0 }}>
+            The skills, agents and hooks of this hub, read from its files. Nothing here runs them.
+          </p>
+        </div>
+        <CreateMenu project={project} />
+      </header>
       {body}
     </div>
   );
@@ -99,6 +106,17 @@ function DetailBody({
   const [view, setView] = useState<BodyMode>("rendered");
   const [openId, setOpenId] = useState<string | null>(null);
   const isSkill = detail.kind === "skill";
+  useDiscussTarget({
+    key: `${detail.kind}:${project}:${item.source}/${item.name}`,
+    project,
+    kind: detail.kind === "skill" ? "Skill" : detail.kind === "agent" ? "Agent" : "Hook",
+    title: `${item.source}/${item.name}`,
+    path: detail.source_path,
+    brief:
+      detail.origin === "managed"
+        ? "It is managed by hub.lock: a local edit is overwritten by the next sync, so say so before changing it and propose where the change should live instead."
+        : undefined,
+  });
   const localLink: MarkdownProps["localLink"] = isSkill
     ? (href) => {
         const file = resolveSkillLink(href, detail.files);
@@ -120,7 +138,7 @@ function DetailBody({
   };
   return (
     <div className="ah-stack" style={{ gap: 16 }}>
-      <DetailHeader detail={detail} now={now} usageDays={USAGE_DAYS} />
+      <DetailHeader detail={detail} now={now} usageDays={USAGE_DAYS} action={<DiscussButton />} />
       <Diagnostics diagnostics={detail.diagnostics} />
       {detail.hook ? (
         <HookDetail hook={detail.hook} sourcePath={detail.source_path} />

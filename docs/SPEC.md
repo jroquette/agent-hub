@@ -360,7 +360,7 @@ GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hu
 ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)). The browser never contacts Linear. Agent sessions (AGH-165,
 below) add no outbound call of the server: the `claude` processes it starts reach Anthropic as when the user runs
 them. The approved UI design and the departures from it are in
-[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025, 0031, 0033 and 0034.
+[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025, 0031 and 0033 to 0036.
 
 **Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
 
@@ -368,7 +368,9 @@ them. The approved UI design and the departures from it are in
   else its task worktree name, matched against the hub's tracker teams and branch prefix (`TIP-1511`; no match gives
   `null`, never a guess); the workflow is its first slash command or skill that is not a routine one (`/kickoff`,
   `/handoff`, …). Its `actors` are the main agent and each subagent by type, linked to the Agent call that started it.
-  The stored `agent` value `main` is kept, never shown as a label, and deprecated in the API.
+  The stored `agent` value `main` is kept, never shown as a label, and deprecated in the API. The label's `title` is
+  the session's name: the user's `/rename`, else the short title Claude Code wrote in the transcript
+  ([ADR 0035](adr/0035-session-titles.md)); lists and tiles show it over issue, workflow, repo and branch.
 - **Problems.** A failed tool, a non-zero Bash exit, a guard denial, an open or declined guard ask, an interrupt, a
   failed gate and a failed hook are typed problems, each with its tool, `where`, message, time and actor, resolved as
   `recovered` or `agent_continued` ("Handled by the agent"), `open` ("Agent is on it", while the session is live and
@@ -536,8 +538,8 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
 
 - `type` is a closed list: `session.start`, `session.end`, `tool.call`, `tool.result`, `message`, `reasoning`, `decision`,
   `gate.request`, `gate.result`, `learning.proposed`, `learning.accepted`, `learning.rejected`, `step.start`,
-  `step.end`, `run.end` and `session.summary` (the last five added in Phase 2 for runs, rejected learnings and stored
-  summaries).
+  `step.end`, `run.end`, `session.summary` (the last five added in Phase 2 for runs, rejected learnings and stored
+  summaries) and `session.title` ([ADR 0035](adr/0035-session-titles.md)).
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github`, `linear` and `control_plane`
   (an action the user took in `hub web`, added by AGH-201: a learning decision). Widening either list later is a
   compatible change.
@@ -569,7 +571,8 @@ before anything is appended, and the data stays on the machine in v1:
   (`scheme://user:pass@`) and `secret` (a `NAME=value` or `"name": "value"` whose name says secret, token, password,
   passwd, api_key, apikey, private_key or credential, with a value of 8+ characters). Redaction is idempotent and runs
   before any truncation; a rule change is a new rule set version and a release note.
-- **Metadata only**: no prompt, message, reasoning, successful tool output, file content or diff text is stored. The
+- **Metadata only**: no prompt, message, reasoning, successful tool output, file content or diff text is stored. A
+  session's short title ([ADR 0035](adr/0035-session-titles.md)) is kept like the other short texts. The
   one body excerpt is a failed tool's short error message ([ADR 0023](adr/0023-short-error-message.md), partially
   superseding [ADR 0019](adr/0019-metadata-only-events-and-redaction.md)): `tool.result` with `status: error` keeps
   `error_message`, the error text redacted with `r1`, whitespace collapsed, redacted again and cut at 300 characters
@@ -602,6 +605,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `step.start`, `run.end` from the workflow engine | `revision` (the document's integer), `content_hash` (`sha256:` + 64 hex) |
 | `step.start`, `step.end`, `run.end` from the workflow engine | `issue` (the run's `issue` input, when it is a tracker key such as `DEM-7`), so hub web keeps one live run per issue (AGH-232) |
 | `session.summary` | `text`, `lines` |
+| `session.title` | `text` (the transcript's `ai-title` or `custom-title`, 80 chars), `origin` (`ai` or `custom`; ADR 0035) |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
 (its note's first paragraph) is computed on read.
