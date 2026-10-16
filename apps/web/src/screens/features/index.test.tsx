@@ -99,7 +99,7 @@ describe("FeaturesScreen", () => {
       .filter((t) => features.some((f) => f.slug === t));
     expect(slugs).toEqual(["layered-memory", "control-plane", "tracker-team-cap", "broken-record"]);
     expect(screen.getByText("4 features").parentElement).toHaveTextContent(
-      "4 features · 1 evaluated · 3 in progress",
+      "4 features · 4 in progress · 0 shipped · furthest along first",
     );
   });
 
@@ -142,7 +142,7 @@ describe("FeaturesScreen", () => {
       "blocked",
     ]);
     expect(within(row).getByText("plan.md")).toBeInTheDocument();
-    expect(within(row).getByText("--")).toBeInTheDocument();
+    expect(within(row).getByText("—", { selector: "td > span" })).toBeInTheDocument();
   });
 
   it("degrades only the malformed feature's ACs", async () => {
