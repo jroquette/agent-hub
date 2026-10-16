@@ -7,8 +7,153 @@
 }
 .ah-skill-header-top {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ah-skill-header-name {
+  display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  min-width: 0;
+}
+.ah-skill-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.ah-skill-howto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.ah-skill-howto .ah-skill-invocation {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+.ah-skill-when {
+  margin: 0;
+  max-width: 88ch;
+  font-size: 13px;
+}
+.ah-skill-when .ah-caption {
+  margin-right: var(--space-1);
+  color: var(--text-subtle);
+}
+.ah-skill-health {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* The page under the header: the reading column beside the About rail. */
+.ah-skill-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--space-4);
+  align-items: start;
+}
+.ah-skill-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.ah-skill-rail {
+  position: sticky;
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.ah-skill-rail-section {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  min-width: 0;
+}
+.ah-skill-rail-section + .ah-skill-rail-section {
+  border-top: 1px solid var(--border);
+}
+.ah-skill-rail-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.ah-skill-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: 6px;
+}
+.ah-skill-rail .ah-caption {
+  color: var(--text-subtle);
+}
+.ah-skill-rail .ah-skill-costs {
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-skill-rail .ah-skill-cost-value {
+  font-size: 14px;
+}
+.ah-skill-path {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px var(--space-2);
+  min-width: 0;
+}
+.ah-skill-rail-commands {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ah-skill-rail-commands code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+@media (max-width: 1199px) {
+  .ah-skill-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ah-skill-rail {
+    position: static;
+    order: -1;
+  }
+}
+
+/* Frontmatter, folded. */
+.ah-skill-fold > summary {
+  cursor: pointer;
+  list-style: none;
+  border-bottom: none;
+}
+.ah-skill-fold > summary::-webkit-details-marker {
+  display: none;
+}
+.ah-skill-fold > summary .ah-icon {
+  transition: transform var(--dur-fast) ease;
+}
+.ah-skill-fold[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+.ah-skill-fold[open] > summary .ah-icon {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ah-skill-fold > summary .ah-icon {
+    transition: none;
+  }
 }
 .ah-skill-title {
   font-family: var(--font-mono);
@@ -16,8 +161,9 @@
 }
 .ah-skill-lede {
   margin: 0;
-  max-width: 72ch;
-  color: var(--text-muted);
+  max-width: 88ch;
+  font-size: 15px;
+  line-height: 22px;
 }
 .ah-skill-facts {
   display: grid;
@@ -153,15 +299,9 @@
   align-items: center;
   gap: var(--space-1) var(--space-2);
 }
-.ah-skill-diags li[data-sev="warning"] .ah-icon {
-  color: var(--waiting);
-}
-.ah-skill-diags li[data-sev="info"] .ah-icon {
-  color: var(--live);
-}
 .ah-skill-diag-msg {
-  flex-basis: 100%;
-  padding-left: 22px;
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
 }
 .ah-skill-steps {
@@ -170,17 +310,70 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
 }
 .ah-skill-steps li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+.ah-skill-steps li + li {
+  border-top: 1px solid var(--border);
+}
+.ah-skill-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font: 500 12px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.ah-skill-steps li[data-type="gate"] .ah-skill-step-num,
+.ah-skill-steps li[data-type="human"] .ah-skill-step-num {
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+.ah-skill-step-main {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: var(--space-2) var(--space-3);
-  border-left: 2px solid var(--border-strong);
+  min-width: 0;
+}
+.ah-skill-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--space-2);
+  min-height: 24px;
 }
 .ah-skill-step-title {
+  font-weight: 600;
+}
+.ah-skill-step-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+.ah-skill-step-type[data-type="gate"],
+.ah-skill-step-type[data-type="human"] {
+  color: var(--text);
   font-weight: 500;
+}
+.ah-skill-step-summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ah-skill-step-meta {
   display: flex;

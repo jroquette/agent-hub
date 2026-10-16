@@ -101,3 +101,16 @@ The owner validated these in the playground too. They refine the Skills catalog 
 - **AC-271.6** Given an approved edit, when Publish is confirmed, then Claude writes the draft's files over the
   item's (a hook replaces only itself in its file), deletes the draft and commits nothing; the Studio settles on
   Claude's PUBLISHED line as for a new item.
+
+## Toolkit: readable detail, name and order (AGH-271)
+
+- **AC-271.7** Given a step that starts with its declared type (`` `gate` **Plan**: … ``), when the structure is read,
+  then the step carries that type, its bold title and the plain rest of its first line as its summary; a step that
+  declares a type other than gate is never tagged a gate from its words.
+- **AC-271.8** Given an item's detail, when it renders, then a lean header says how to use it, its state and its
+  health; a reading column shows Steps and Text first; an About rail shows the source, `hub.lock`, tools, context
+  cost and relations; a frontmatter fold is collapsed; diagnostics show only when there are findings.
+- **AC-271.9** Given the sidebar, the page head, the breadcrumbs, the Studio and the project index, when they name the
+  page, then it is "Toolkit"; its tabs stay Skills, Agents and Hooks.
+- **AC-271.10** Given the Toolkit, when it lists kinds (tabs, tiles, the Create menu, the index columns), then agents
+  come before skills and hooks.

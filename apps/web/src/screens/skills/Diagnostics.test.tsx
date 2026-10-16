@@ -28,11 +28,19 @@ describe("Diagnostics", () => {
     expect(screen.getByText(/never blocks/)).toBeInTheDocument();
   });
 
-  it("says there is nothing to report when the list is empty", () => {
-    render(<Diagnostics diagnostics={[]} />);
+  it("lists warnings before info", () => {
+    render(<Diagnostics diagnostics={[...FINDINGS].reverse()} />);
 
-    expect(screen.getByText(/No diagnostics/)).toBeInTheDocument();
-    expect(screen.queryByRole("list")).toBeNull();
+    const [first] = within(screen.getByRole("list", { name: "Diagnostics" })).getAllByRole(
+      "listitem",
+    );
+    expect(first).toHaveTextContent("Warning");
+  });
+
+  it("renders nothing when the list is empty: the header says so", () => {
+    const { container } = render(<Diagnostics diagnostics={[]} />);
+
+    expect(container).toBeEmptyDOMElement();
   });
 });
 

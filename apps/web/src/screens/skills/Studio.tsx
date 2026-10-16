@@ -184,7 +184,7 @@ export function StudioScreen() {
         items={[
           { label: "Portfolio", href: "/" },
           { label: project, href: `/projects/${encodeURIComponent(project)}` },
-          { label: "Skills", href: `/projects/${encodeURIComponent(project)}/skills` },
+          { label: "Toolkit", href: `/projects/${encodeURIComponent(project)}/skills` },
           { label },
         ]}
       />
@@ -195,7 +195,7 @@ export function StudioScreen() {
       ) : (
         <div className="ah-card">
           <EmptyState icon="file-x" title="This is not a Studio draft.">
-            Start one from the Skills catalog with Create.
+            Start one from the Toolkit with Create.
           </EmptyState>
         </div>
       )}
