@@ -984,3 +984,44 @@ def test_names_twin_when_hook_posts_same_id_observed_session_id(
     assert listed[twin["id"]]["observed_session_id"] == twin["claude_session_id"]
     assert listed[alone["id"]]["observed_session_id"] is None
     assert one["observed_session_id"] == twin["claude_session_id"]
+
+
+def test_sends_images_with_message_when_screenshots_pasted(agent_session_app: Any) -> None:
+    created = _created(agent_session_app, "Hello.")
+    agent_session_app.until_status(created["id"], "idle")
+
+    response = agent_session_app.client.post(
+        f"{BASE}/{created['id']}/messages",
+        json={"text": "And this?", "screenshots": [_screenshot(), _screenshot()]},
+    )
+    agent_session_app.until_status(created["id"], "idle")
+
+    assert response.status_code == 202, response.text
+    assert PNG_BASE64 not in response.text
+    sends = [call.args for call in agent_session_app.driver.calls if call.method == "send"]
+    text, images = sends[-1]
+    assert text == "And this?"
+    assert [(image.media_type, image.data) for image in images] == [("image/png", PNG)] * 2
+    marker = {"kind": "screenshot", "media_type": "image/png", "bytes": len(PNG)}
+    seq = response.json()["seq"]
+    message = next(
+        record for record in agent_session_app.rig.records(created["id"]) if record.seq == seq
+    )
+    assert message.kind == "user.message"
+    assert message.body == {"text": "And this?", "attachments": [marker, marker]}
+
+
+def test_refuses_message_image_when_not_png(agent_session_app: Any) -> None:
+    created = _created(agent_session_app, "Hello.")
+    agent_session_app.until_status(created["id"], "idle")
+    sends_before = len(agent_session_app.driver.calls)
+
+    response = agent_session_app.client.post(
+        f"{BASE}/{created['id']}/messages",
+        json={"text": "And this?", "screenshots": [_screenshot(b"GIF89a\x01\x00")]},
+    )
+
+    document = _problem(response, 422, "invalid-screenshot")
+    assert "/screenshots/0/data" in response.text
+    assert document["title"] == "Invalid screenshot"
+    assert len(agent_session_app.driver.calls) == sends_before

@@ -1,7 +1,13 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { rememberScreenshot, screenshotFor, useScreenshot } from "./screenshotCopy";
+import {
+  rememberMessageScreenshots,
+  rememberScreenshot,
+  screenshotFor,
+  useMessageScreenshots,
+  useScreenshot,
+} from "./screenshotCopy";
 
 describe("screenshotCopy", () => {
   it("returns the remembered screenshot for its session", () => {
@@ -44,5 +50,34 @@ describe("useScreenshot", () => {
     await waitFor(() => {
       expect(other.result.current).toBeUndefined();
     });
+  });
+});
+
+describe("useMessageScreenshots", () => {
+  it("shows a later message's images by its seq as soon as they are remembered", async () => {
+    const { result } = renderHook(() => useMessageScreenshots("as-9"));
+    expect(result.current).toEqual({});
+
+    act(() => {
+      rememberMessageScreenshots("as-9", 7, [
+        "data:image/png;base64,AA",
+        "data:image/png;base64,BB",
+      ]);
+      rememberMessageScreenshots("as-other", 7, ["data:image/png;base64,CC"]);
+    });
+
+    await waitFor(() => {
+      expect(result.current).toEqual({
+        7: ["data:image/png;base64,AA", "data:image/png;base64,BB"],
+      });
+    });
+    // The first prompt's screenshot keeps its own copy.
+    expect(screenshotFor("as-9")).toBeUndefined();
+  });
+
+  it("keeps nothing for a message without images", () => {
+    rememberMessageScreenshots("as-10", 3, []);
+
+    expect(renderHook(() => useMessageScreenshots("as-10")).result.current).toEqual({});
   });
 });

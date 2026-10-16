@@ -103,6 +103,66 @@ describe("Transcript (screenshot-thumbnail)", () => {
   });
 });
 
+describe("Transcript (pasted-images)", () => {
+  const twoShots = (seq: number): StreamItem => ({
+    type: "record",
+    record: aLogRecord("user.message", {
+      seq,
+      body: {
+        text: "Compare these.",
+        attachments: [
+          { kind: "screenshot", media_type: "image/png", bytes: 16 },
+          { kind: "screenshot", media_type: "image/png", bytes: 20 },
+        ],
+      },
+    }),
+  });
+
+  it("shows a later message's own images, never the first prompt's screenshot", () => {
+    const state = [withShot(1), twoShots(2)].reduce(reduceTranscript, initialTranscript());
+    render(
+      <Transcript
+        state={state}
+        screenshotUrl={SHOT}
+        messageScreenshots={{ 2: ["data:image/png;base64,A", "data:image/png;base64,B"] }}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "Screenshot sent with this message" })).toHaveAttribute(
+      "src",
+      SHOT,
+    );
+    expect(
+      screen
+        .getAllByRole("img", { name: /^Image \d sent with this message$/ })
+        .map((img) => img.getAttribute("src")),
+    ).toEqual(["data:image/png;base64,A", "data:image/png;base64,B"]);
+  });
+
+  it("says how many images went with a message whose copies this browser lacks", () => {
+    const state = [withShot(1), twoShots(2)].reduce(reduceTranscript, initialTranscript());
+    render(<Transcript state={state} screenshotUrl={SHOT} />);
+
+    expect(screen.getByText("2 images attached")).toBeInTheDocument();
+  });
+
+  it("shows the images of a message while it sends", () => {
+    const state = reduceTranscript(initialTranscript(), {
+      type: "sending",
+      key: "send-1",
+      text: "Look.",
+      screenshots: ["data:image/png;base64,P"],
+    });
+    render(<Transcript state={state} />);
+
+    expect(screen.getByRole("img", { name: "Screenshot sent with this message" })).toHaveAttribute(
+      "src",
+      "data:image/png;base64,P",
+    );
+    expect(screen.getByText("Sending…")).toBeInTheDocument();
+  });
+});
+
 describe("Transcript (transcript)", () => {
   it("appends deltas to one assistant bubble and renders markdown without raw HTML", () => {
     const { container } = show(scripted());

@@ -3323,8 +3323,9 @@ export interface components {
     };
     /**
      * Screenshot
-     * @description A PNG of the screen sent with the first prompt, base64-encoded; its decoded size and
-     *     signature are checked by ``decode_screenshot`` (413, 422).
+     * @description A PNG image sent with a message (a screenshot, or an image pasted in the chat),
+     *     base64-encoded; its decoded size and signature are checked by ``decode_screenshot`` (413,
+     *     422).
      */
     Screenshot: {
       /** Data */
@@ -3356,9 +3357,12 @@ export interface components {
       "session" | "run" | "approval" | "learning" | "feature" | "file" | "command" | "tool";
     /**
      * SendMessage
-     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413).
+     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413), with the images
+     *     pasted in it, sent to Claude before the text.
      */
     SendMessage: {
+      /** Screenshots */
+      screenshots?: components["schemas"]["Screenshot"][] | null;
       /** Text */
       text: string;
     };
