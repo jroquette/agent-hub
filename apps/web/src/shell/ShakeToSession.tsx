@@ -136,7 +136,7 @@ export function ShakeToSession() {
       capabilities={opened.capabilities}
       screenshot={opened.screenshot}
       initialWorkdirId={opened.workdirId ?? undefined}
-      initialMode={live ? "acceptEdits" : undefined}
+      initialMode={live ? "auto" : undefined}
       note={live ? undefined : LIVE_RELOAD_NOTE}
       onClose={() => {
         busy.current = false;

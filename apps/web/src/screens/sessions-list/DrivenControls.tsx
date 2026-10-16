@@ -75,7 +75,7 @@ export function NewSessionControl({ driving }: { driving: Driving }) {
           workdirs={folders}
           capabilities={caps}
           initialWorkdirId={live ? (served.workdirId ?? undefined) : undefined}
-          initialMode={live ? "acceptEdits" : undefined}
+          initialMode={live ? "auto" : undefined}
           onClose={() => {
             setDialog(false);
           }}

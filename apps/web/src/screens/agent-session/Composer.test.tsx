@@ -3,8 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
+import { servedCheckout } from "../../lib/devCheckout";
 import { seriousViolations } from "../../testing/axe";
 import { Composer, type ComposerProps } from "./Composer";
+
+vi.mock("../../lib/devCheckout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
+  return { ...actual, servedCheckout: vi.fn(() => null) };
+});
 
 function open(overrides: Partial<ComposerProps> = {}) {
   const props: ComposerProps = {
@@ -87,7 +93,19 @@ describe("Composer (composer)", () => {
     },
   );
 
+  it("offers Auto too in the dev app of make playground", () => {
+    vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
+    open();
+
+    expect(
+      within(screen.getByRole("combobox", { name: "Mode" }))
+        .getAllByRole("option")
+        .map((option) => option.getAttribute("value")),
+    ).toEqual(["default", "acceptEdits", "plan", "auto"]);
+  });
+
   it("offers only the three web modes and posts a mode change", async () => {
+    vi.mocked(servedCheckout).mockReturnValue(null);
     const { props } = open();
     const mode = screen.getByRole("combobox", { name: "Mode" });
 
