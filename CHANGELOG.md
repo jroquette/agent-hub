@@ -45,6 +45,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The sidebar is grouped by task: Portfolio, then Work (Sessions, Workflow runs, Workflows, Features), then
+  Knowledge (Learnings, Brain and Skills as items of their own), with Health and Settings pinned to the footer
+  (AGH-273).
 - The project overview is written for product people: what needs you and this week's numbers first, plain section
   names, the agents' tickets as one list with their step progress instead of seven mostly empty columns, recent work
   without turns and errors, and repositories, checks, doctor findings and hub configuration folded into a collapsed
@@ -66,6 +69,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A shake opens New session on every screen, Settings and "All projects" included: with no project in the route
   or the scope, it starts in the first registered project, as Sessions' New session does. It still does nothing
   when no project is registered (AGH-262).
+
+### Removed
+
+- The Approvals screen and its sidebar entry and `g a` shortcut: a workflow gate is answered in its run's page, any
+  other approval in its session, and Needs you, activity and search hits link there (AGH-273).
 
 ### Fixed
 

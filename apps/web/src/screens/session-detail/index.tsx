@@ -207,11 +207,7 @@ function SessionDetailBody({ session }: { session: Session }) {
       <Header session={session} now={now} staleSince={staleSince} />
       <div className="sd-body ah-stack">
         {session.status === "waiting" && (
-          <Banner
-            tone="warning"
-            icon="hand"
-            boxed
-          >
+          <Banner tone="warning" icon="hand" boxed>
             Waiting for approval{session.issue ? ` · ${session.issue}` : ""} ·{" "}
             {fmtDuration(waitingFor * 60)} · Approve in the terminal session
           </Banner>
