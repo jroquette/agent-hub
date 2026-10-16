@@ -18,6 +18,7 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { FeatureDetailScreen } from "./index";
+import { FEATURE_REFRESH_MS, TICKETS_REFRESH_MS } from "./queries";
 
 const API = "/api/v1/features/agent-hub/layered-memory";
 const TICKETS = `${API}/tickets`;
@@ -435,6 +436,33 @@ describe("FeatureDetailScreen", () => {
       expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
       expect(router.state.location.search).toBe("?doc=tickets");
       expect(asked(requests, TICKETS)).toBe(1);
+    });
+
+    it("rereads the record every 15 s and Linear every 30 s while the Tickets tab is open (refresh)", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const { requests } = open(
+          { [TICKETS]: tickets },
+          "/features/agent-hub/layered-memory?doc=tickets",
+        );
+        await screen.findByRole("table", { name: "Tickets" });
+        const record = asked(requests, API);
+        const linear = asked(requests, TICKETS);
+
+        await vi.advanceTimersByTimeAsync(FEATURE_REFRESH_MS);
+        await waitFor(() => {
+          expect(asked(requests, API)).toBeGreaterThan(record);
+        });
+        await vi.advanceTimersByTimeAsync(TICKETS_REFRESH_MS - FEATURE_REFRESH_MS);
+        await waitFor(() => {
+          expect(asked(requests, TICKETS)).toBeGreaterThan(linear);
+        });
+        expect(screen.getByText(/Live from Linear · read/)).toHaveTextContent(
+          "updates every 30 s while this tab is open",
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("opens the Tickets tab from an old ?doc=issues link (tickets)", async () => {
