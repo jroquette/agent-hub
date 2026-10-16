@@ -9,7 +9,6 @@ import { AppLink, IconButton, IdChip, IssueLink, Tooltip, Button, type Phase } f
 import { Sparkline } from "./data";
 import { Icon, type IconName } from "./Icon";
 import {
-  BudgetBar,
   MiniStageBar,
   ProvenanceBadge,
   StatusBadge,
@@ -21,7 +20,7 @@ import { CodeBlock } from "./trace";
 
 const NOT_CONNECTED = (source: string) => `${source} is not connected in this version.`;
 
-/* ---------- Session tile (Live sessions) ---------- */
+/* ---------- Session tile (the Sessions grid) ---------- */
 export interface LiveSession {
   id: string;
   status: "live" | "waiting" | "idle" | "ended";
@@ -56,8 +55,6 @@ export interface LiveSession {
   files: number | null;
   /** USD, null when unknown. */
   cost: number | null;
-  budget?: number | null | undefined;
-  projection?: string | undefined;
   /** The owner-facing problems line: "2 problems, handled by the agent" or "Needs you: …". */
   problems?: string | null | undefined;
   /** A problem needs the owner: the only case that edges the tile in red (AC-201.14). */
@@ -238,19 +235,10 @@ export function SessionTile({ s, times, onOpen, hoverEvents, action }: SessionTi
           Files<b>{s.files ?? "—"}</b>
         </span>
       </div>
-      {s.budget ? (
-        <BudgetBar
-          spent={s.cost ?? 0}
-          budget={s.budget}
-          label="Run budget"
-          projection={s.projection}
-        />
-      ) : (
-        <div className="ah-budget-label">
-          <span>Cost so far</span>
-          <b className="ah-num">{fmtMoney(s.cost)}</b>
-        </div>
-      )}
+      <div className="ah-budget-label">
+        <span>Cost so far</span>
+        <b className="ah-num">{fmtMoney(s.cost)}</b>
+      </div>
       <div className="ah-tile-foot">
         {s.status !== "ended" && (
           <>

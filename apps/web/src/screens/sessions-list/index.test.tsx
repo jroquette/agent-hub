@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -15,12 +15,14 @@ import {
   aSession,
   aSessionLabel,
   aSessionsByStatus,
+  aStreamCounts,
   anId,
   at,
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
 import { servedCheckout } from "../../lib/devCheckout";
+import { GLOBAL_STREAM, GlobalStreamProvider } from "../../shell/GlobalStream";
 import { SessionsListScreen } from "./index";
 
 vi.mock("../../lib/devCheckout", async (importOriginal) => {
@@ -208,11 +210,6 @@ describe("SessionsListScreen", () => {
 
     const empty = renderList(routes({ [SESSIONS]: aPage([]) }));
     expect(await screen.findByText("No sessions yet.")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Each Claude Code session in a registered hub is listed here after its first event.",
-      ),
-    ).toBeInTheDocument();
     empty.unmount();
 
     const filtered = renderList(routes({ [SESSIONS]: aPage([]) }), "/sessions?outcome=error");
@@ -241,6 +238,41 @@ describe("SessionsListScreen", () => {
       target: { value: "1,5" },
     });
     expect(screen.getByText("Use a decimal with a dot, e.g. 1.5")).toBeInTheDocument();
+  });
+
+  it("empty: says how to start a session with claude when there has never been one", async () => {
+    renderList(routes({ [SESSIONS]: aPage([]) }), "/sessions?period=All");
+
+    expect(await screen.findByText("No sessions yet.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Sessions appear when Claude Code runs in a registered hub with the collector on\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("cd ~/agent-hub-hub && claude")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show all time" })).not.toBeInTheDocument();
+  });
+
+  it("offline: shows the collector's as-of stamp only while the collector is offline", async () => {
+    // Without the shell's stream the collector has never answered: offline.
+    const offline = renderList(routes());
+    await screen.findByText("/evaluator");
+    expect(screen.getByText(/Stale · as of/)).toBeInTheDocument();
+    offline.unmount();
+
+    const { stream } = renderWithApi(
+      <GlobalStreamProvider project={null}>
+        <SessionsListScreen />
+      </GlobalStreamProvider>,
+      { routes: routes(), path: "/sessions" },
+    );
+    await screen.findByText("/evaluator");
+    act(() => {
+      stream(GLOBAL_STREAM).open();
+      stream(GLOBAL_STREAM).emit("counts", aStreamCounts());
+    });
+
+    expect(screen.queryByText(/Stale · as of/)).not.toBeInTheDocument();
   });
 
   it("has no serious or critical a11y violation", async () => {
