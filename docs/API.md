@@ -77,7 +77,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
 - The learning decisions ([Learning decisions](#learning-decisions)): every refusal is a 409 whose extension members
   `code` and `reason` say why, nothing pushed or stored. `code` is `learning_conflict` (already decided, with
   `pr_url` when its PR is known; another action running for the hub; no reason to reject; a target the brain rules
-  refuse), `change_request_conflict` (the note is not on `origin/<default branch>`, the destination or the branch
+  refuse), `change_request_conflict` (the note is neither on `origin/<default branch>` nor in the hub checkout
+  ([ADR 0037](adr/0037-learning-decisions-unpushed-notes-and-edits.md)), the destination or the branch
   exists, `origin` is not the hub repo), `push_refused` (the push guard refused the branch) or `hub_read_only`
   (actions unavailable for this hub, title "Learning actions unavailable", the same reason the learning's
   `actions_unavailable` shows). A git or `gh` step that fails → 502 "Could not open the pull request" with the

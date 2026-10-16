@@ -65,6 +65,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Fixed
 
+- Accept and Reject on a learning work for a note `/learn` wrote in the hub checkout and nobody pushed: the pull
+  request adds it from the checkout, which is only read (ADR 0037, AGH-272).
+- A hub whose `origin` is an ssh host alias `github.com-<account>` counts as on GitHub, so its learning actions are
+  on (ADR 0037, AGH-272).
 - `make dev` on macOS no longer shows a blank page: the chat's model module `transcript.ts` is now `model.ts`, so
   `./Transcript` no longer resolves to it on a case-insensitive file system (AGH-262).
 - New session is short: Where (the project, then the working folder last used for it) and the Prompt, which has
