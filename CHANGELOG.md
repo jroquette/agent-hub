@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- A feature's acceptance criteria read as sentences: the tab is "Acceptance criteria", every criterion is listed at
+  once with its status in words, the evidence in plain words ("4 tests passed", with the commit and date), how many
+  of the feature's records cite it and a labelled Discuss button; opening one shows what must be true, how it was
+  proven (commit, pull request, result, failed before the change, its eval), the command to check it, and every
+  record and section that cites it (AGH-269).
 - A feature's Eval tab runs the hub-workflow evaluator: pick the whole feature or one ticket and press Evaluate; a
   session starts in the project's hub folder and the tab follows it (Evaluating, Waiting for you with Answer in chat,
   Finished with a Show link to the new eval, Finished without a new eval) with a link to its chat. The selected eval
