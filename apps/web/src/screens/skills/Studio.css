@@ -38,13 +38,11 @@
   color: var(--accent);
   flex: none;
 }
-.ah-studio-kind[data-kind="agent"],
-.ah-kind-badge[data-kind="agent"] {
+.ah-studio-kind[data-kind="agent"] {
   background: var(--done-soft);
   color: var(--done);
 }
-.ah-studio-kind[data-kind="hook"],
-.ah-kind-badge[data-kind="hook"] {
+.ah-studio-kind[data-kind="hook"] {
   background: var(--waiting-soft);
   color: var(--waiting);
 }
