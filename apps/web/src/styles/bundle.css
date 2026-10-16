@@ -971,12 +971,6 @@ pre {
   place-items: center;
   padding: var(--space-6);
 }
-.ah-scrim-inline {
-  position: relative;
-  inset: auto;
-  min-height: 320px;
-  border-radius: var(--radius-lg);
-}
 .ah-dialog {
   width: 100%;
   max-width: 480px;
