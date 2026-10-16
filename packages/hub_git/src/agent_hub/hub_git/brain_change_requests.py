@@ -32,7 +32,7 @@ from agent_hub.core.brain.brain_path import (
     inbox_note,
     learning_branch,
 )
-from agent_hub.core.brain.frontmatter import FrontmatterError, with_frontmatter
+from agent_hub.core.brain.frontmatter import FrontmatterError, with_body, with_frontmatter
 from agent_hub.core.learnings.brain_change_requests import (
     BrainChange,
     ChangeRequestConflictError,
@@ -332,7 +332,8 @@ class _Action:
     def _commit(self, base: str, mode: str, text: str) -> str:
         change = self._change
         try:
-            moved = with_frontmatter(text, change.frontmatter)
+            edited = text if change.note_body is None else with_body(text, change.note_body)
+            moved = with_frontmatter(edited, change.frontmatter)
         except FrontmatterError:
             raise _conflict(f"Note frontmatter is not closed: brain/{change.note}") from None
         note_file = self._work / "note.md"

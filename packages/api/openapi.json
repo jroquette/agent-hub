@@ -95,8 +95,21 @@
       },
       "AcceptLearningBody": {
         "additionalProperties": false,
-        "description": "``POST /learnings/{learning_id}/accept``: the brain folder (or ``.md`` path) to move the\nnote to, relative to ``brain/``.",
+        "description": "``POST /learnings/{learning_id}/accept``: the brain folder (or ``.md`` path) to move the\nnote to, relative to ``brain/``, and optionally the note's edited text after its frontmatter\n(the frontmatter itself is kept; ``status`` and ``last_verified`` are set as for any accept).",
         "properties": {
+          "note_body": {
+            "anyOf": [
+              {
+                "maxLength": 262144,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Body"
+          },
           "target": {
             "maxLength": 200,
             "minLength": 1,
@@ -11046,7 +11059,7 @@
     },
     "/api/v1/learnings/{learning_id}/accept": {
       "post": {
-        "description": "Open a hub PR that moves the note into the brain; nothing changes until it is merged.",
+        "description": "Open a hub PR that moves the note into the brain, with the edited body when one is sent;\nnothing changes until it is merged.",
         "operationId": "accept_learning_api_v1_learnings__learning_id__accept_post",
         "parameters": [
           {

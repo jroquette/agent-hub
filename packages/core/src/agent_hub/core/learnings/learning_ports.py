@@ -65,8 +65,11 @@ class LearningReads(Protocol):
 class LearningDecisions(Protocol):
     """Accept or reject a learning through a hub pull request."""
 
-    def accept(self, learning_id: str, *, target: str) -> LearningActionResult:
-        """Open a PR that moves the note to ``target`` (a folder or a ``.md`` path)."""
+    def accept(
+        self, learning_id: str, *, target: str, note_body: str | None = None
+    ) -> LearningActionResult:
+        """Open a PR that moves the note to ``target`` (a folder or a ``.md`` path); with
+        ``note_body``, the same commit replaces the note's text after its frontmatter."""
         ...
 
     def reject(self, learning_id: str, *, reason: str) -> LearningActionResult:

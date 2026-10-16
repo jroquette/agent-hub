@@ -1,8 +1,10 @@
 import pytest
 
 from agent_hub.core.brain.frontmatter import (
+    FrontmatterError,
     first_paragraph,
     split_frontmatter,
+    with_body,
     with_frontmatter,
 )
 
@@ -107,3 +109,19 @@ def test_joins_lines_when_first_paragraph_wraps() -> None:
 
 def test_returns_empty_when_body_has_only_headings() -> None:
     assert first_paragraph("# Title\n\n## Sub\n") == ""
+
+
+class TestWithBody:
+    def test_replaces_body_and_keeps_frontmatter_bytes(self) -> None:
+        text = "---\ntype: learning\ntags:\n  - a\n---\n# Old\n\nOld body.\n"
+
+        assert with_body(text, "# New\n\nNew body.") == (
+            "---\ntype: learning\ntags:\n  - a\n---\n# New\n\nNew body.\n"
+        )
+
+    def test_returns_body_when_note_has_no_frontmatter(self) -> None:
+        assert with_body("# Old\n", "# New\n") == "# New\n"
+
+    def test_raises_when_frontmatter_not_closed(self) -> None:
+        with pytest.raises(FrontmatterError):
+            with_body("---\ntype: learning\n# Old\n", "# New\n")
