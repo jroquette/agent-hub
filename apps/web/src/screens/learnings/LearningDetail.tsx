@@ -4,8 +4,10 @@ import { Link, useNavigate } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
+  Banner,
   Button,
   ExternalLabel,
+  FrontmatterChips,
   IdChip,
   Icon,
   Markdown,
@@ -14,6 +16,7 @@ import {
   Skeleton,
   StatusBadge,
   Time,
+  type Frontmatter,
   type Status,
 } from "../../components";
 import { fmtAgo } from "../../lib/format";
@@ -55,28 +58,35 @@ export function LearningStateBadge({ state }: { state: LearningState }) {
   return <StatusBadge status={look.status} label={look.label} />;
 }
 
+/** A title without the "Proposal:" agents often prefix: every learning is a proposal here. */
+export function displayTitle(t: string): string {
+  return t.replace(/^\s*proposal:\s*/i, "");
+}
+
 /** Backticks in a learning title render as inline code (design). */
 export function Title({ t }: { t: string }) {
   return (
     <>
-      {t.split("`").map((part, i) =>
-        i % 2 ? (
-          <code
-            key={i}
-            className="ah-mono"
-            style={{
-              fontSize: "0.92em",
-              background: "var(--code-bg)",
-              padding: "0 3px",
-              borderRadius: 3,
-            }}
-          >
-            {part}
-          </code>
-        ) : (
-          <Fragment key={i}>{part}</Fragment>
-        ),
-      )}
+      {displayTitle(t)
+        .split("`")
+        .map((part, i) =>
+          i % 2 ? (
+            <code
+              key={i}
+              className="ah-mono"
+              style={{
+                fontSize: "0.92em",
+                background: "var(--code-bg)",
+                padding: "0 3px",
+                borderRadius: 3,
+              }}
+            >
+              {part}
+            </code>
+          ) : (
+            <Fragment key={i}>{part}</Fragment>
+          ),
+        )}
     </>
   );
 }
@@ -131,6 +141,30 @@ function PullRequestLink({ url }: { url: string }) {
   );
 }
 
+const PROVENANCES = new Set(["human", "agent", "agent-from-code", "agent-from-external"]);
+
+/** The note's frontmatter as the chips show it (a field of an unexpected shape is left out). */
+export function noteFrontmatter(fields: Record<string, unknown> | undefined): Frontmatter {
+  if (!fields) return {};
+  const text = (key: string) => {
+    const value = fields[key];
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  };
+  const repos = fields.repos;
+  const provenance = text("provenance");
+  return {
+    type: text("type"),
+    repos: Array.isArray(repos)
+      ? repos.filter((r): r is string => typeof r === "string")
+      : undefined,
+    last_verified: text("last_verified"),
+    provenance:
+      provenance && PROVENANCES.has(provenance)
+        ? (provenance as Frontmatter["provenance"])
+        : undefined,
+  };
+}
+
 function NoteBody({ detail, row }: { detail: LearningDetailView | undefined; row: Learning }) {
   const navigate = useNavigate();
   if (!detail) {
@@ -165,11 +199,18 @@ function NoteBody({ detail, row }: { detail: LearningDetailView | undefined; row
           />
         </div>
       ) : (
-        <span className="ah-small ah-muted">
-          {detail.note_unavailable ?? "The note could not be read."}
-        </span>
+        <div className="ah-stack" style={{ gap: 4 }}>
+          <span>{detail.note_unavailable ?? "The note could not be read."}</span>
+          {detail.note_path && (
+            <span className="ah-small ah-muted">
+              The agent recorded <span className="ah-mono">{detail.note_path}</span>, but the hub
+              checkout has no such file: it was likely written in another worktree and never pushed.
+              Pull the hub to bring it in; without the note there is nothing to put in the brain.
+            </span>
+          )}
+        </div>
       )}
-      {detail.note_path && (
+      {detail.note && detail.note_path && (
         <div className="ah-small ah-subtle" style={{ marginTop: 6 }}>
           As proposed in <span className="ah-mono">{detail.note_path}</span>, unedited.
         </div>
@@ -230,7 +271,9 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
     );
   }
 
-  const ext = isExternal(l);
+  const fm = noteFrontmatter(detail?.note?.frontmatter);
+  const provenance = l.provenance ?? fm.provenance ?? null;
+  const ext = isExternal({ provenance });
   const state = result?.state ?? stateOf(l);
   const prUrl = result?.pr_url ?? l.pr_url ?? null;
   const blocked = l.actions_unavailable ?? (result ? PR_OPEN : BLOCKED_BY_STATE[state]) ?? null;
@@ -283,9 +326,9 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
             </div>
             <div className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 8, marginTop: 6 }}>
               <LearningStateBadge state={state} />
-              {l.provenance && <ProvenanceBadge provenance={l.provenance} />}
+              {provenance && <ProvenanceBadge provenance={provenance} />}
               {ext && <ExternalLabel source="External content" />}
-              <span>
+              <span title={l.proposed_at ?? undefined}>
                 proposed {l.proposed_at ? `${ageOf(l, now)} ago` : ""} by{" "}
                 <span className="ah-mono" style={{ color: "var(--text)" }}>
                   {l.author ?? "an agent"}
@@ -302,6 +345,11 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
         </div>
 
         <div style={{ marginTop: 16 }}>
+          {(fm.type ?? fm.repos ?? fm.last_verified) && (
+            <Section label="Frontmatter">
+              <FrontmatterChips fm={{ ...fm, provenance: undefined }} />
+            </Section>
+          )}
           <Section label="Note">
             {query.isError ? (
               <ProblemError
@@ -430,10 +478,18 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
             Snooze 7 d
           </Button>
         </div>
-        <div className="ah-small ah-subtle" style={{ marginTop: 8 }}>
-          {blocked ??
-            "Accept or reject opens a pull request in the hub; the brain changes when you merge it."}
-        </div>
+        {blocked && state === "proposed" && !result ? (
+          <div style={{ marginTop: 10 }}>
+            <Banner tone="warning" boxed>
+              <b style={{ fontWeight: 600 }}>Cannot be decided here.</b> {blocked}
+            </Banner>
+          </div>
+        ) : (
+          <div className="ah-small ah-subtle" style={{ marginTop: 8 }}>
+            {blocked ??
+              "Accept or reject opens a pull request in the hub; the brain changes when you merge it."}
+          </div>
+        )}
       </div>
       {deciding && (
         <DecideDialog
