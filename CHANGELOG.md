@@ -13,6 +13,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub-workflow` ships two read-only review skills and a design agent (AGH-274). `/overengineering-review` reads a
+  diff, branch, PR or module for abstractions, options, layers and tests with no real consumer today, proves each
+  finding with a search and names the smaller shape (`references/patterns.md`). `/ux-review` holds a screen or a UI
+  diff to the design system the repo's `AGENTS.md` names, and to standard heuristics and WCAG 2.2
+  (`references/checklist.md`). The `ux-designer` agent writes one `ux-<new|change>-<screen>.md` design per screen a
+  feature touches, for your approval before the plan; `models.agents` takes `ux-designer`. `./hub sync` adds them
+  and links them into `.claude/`; a project skill or agent of the same name is a conflict, so rename yours first.
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
