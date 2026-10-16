@@ -59,6 +59,18 @@ describe("BrainScreen", () => {
     expect(links.map((link) => link.getAttribute("aria-current"))).toEqual(["page", null]);
   });
 
+  it("leads back to the project through the breadcrumb", async () => {
+    open();
+
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "agent-hub" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub",
+    );
+    expect(within(crumbs).getByText("Brain")).toHaveAttribute("aria-current", "page");
+    expect(await screen.findByText(/What agent-hub's agents know/)).toBeInTheDocument();
+  });
+
   it("lists the notes in their folders and opens the selected note's folder", async () => {
     open("/projects/agent-hub/brain/features/control-plane/plan.md");
 

@@ -5,6 +5,7 @@ import { Link, Navigate, useParams } from "react-router";
 import { AppLink, Banner, Icon, ProblemError, Skeleton } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
 import { useScope } from "../../lib/scope";
+import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { CountCell, KnowledgeProjectIndex } from "../knowledge-index";
 import { useProjectNow } from "../project-overview/queries";
@@ -116,15 +117,28 @@ export function BrainScreen() {
   });
   return (
     <div className="ah-page" style={{ gap: 16 }}>
-      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+      <Breadcrumbs
+        items={[
+          { label: "Portfolio", href: "/" },
+          { label: project, href: `/projects/${encodeURIComponent(project)}` },
+          { label: "Brain" },
+        ]}
+      />
+      <div className="ah-stack" style={{ gap: 4 }}>
         <h1 className="ah-h1">Brain</h1>
-        <span className="ah-small ah-muted">{project}</span>
+        <p className="ah-muted" style={{ margin: 0 }}>
+          What {project}&apos;s agents know, read from brain/ in its hub.
+        </p>
       </div>
       <div className="ah-brain-layout">
         <nav aria-label="Brain notes" className="ah-card ah-pad">
           <BrainTreePanel project={project} selected={path} />
         </nav>
-        <article aria-label={path} className="ah-card ah-pad ah-stack" style={{ gap: 12 }}>
+        <article
+          aria-label={path}
+          className="ah-card ah-pad ah-stack ah-brain-note"
+          style={{ gap: 12 }}
+        >
           <div className="ah-row" style={{ gap: 8 }}>
             <Icon name="file-text" size="sm" />
             <span className="ah-mono ah-small">brain/{path}</span>
