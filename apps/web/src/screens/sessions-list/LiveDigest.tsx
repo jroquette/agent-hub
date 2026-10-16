@@ -52,20 +52,30 @@ function newsOf(before: Known, sections: readonly DigestSection[]): string[] {
 
 /**
  * Announces new waiting and ended sessions, never routine changes. While `settled` is false (a
- * section loading, showing a placeholder or loading more) the next settled rows become the baseline.
+ * section loading, showing a placeholder or loading more), and when `resetKey` (the sections'
+ * queries) changes, the next settled rows become the baseline: another query's rows, cached or not,
+ * are not news.
  */
 export function LiveDigest({
   sections,
   settled,
+  resetKey = "",
 }: {
   sections: readonly DigestSection[];
   settled: boolean;
+  resetKey?: string;
 }) {
-  const [message, setMessage] = useState("");
+  // `n` re-creates the text node, so a message equal to the last one is still spoken.
+  const [message, setMessage] = useState({ text: "", n: 0 });
+  const askedFor = useRef(resetKey);
   const [tick, wake] = useState(0);
   const known = useRef<Known | null>(null);
   const last = useRef(Number.NEGATIVE_INFINITY);
   useEffect(() => {
+    if (askedFor.current !== resetKey) {
+      askedFor.current = resetKey;
+      known.current = null;
+    }
     if (!settled) {
       known.current = null;
       return undefined;
@@ -89,12 +99,12 @@ export function LiveDigest({
     }
     known.current = now;
     last.current = Date.now();
-    setMessage(news.join(" "));
+    setMessage((last) => ({ text: news.join(" "), n: last.n + 1 }));
     return undefined;
-  }, [sections, settled, tick]);
+  }, [sections, settled, resetKey, tick]);
   return (
     <div className="ah-sr" aria-live="polite" aria-atomic="true" data-testid="live-digest">
-      {message}
+      {message.text && <span key={message.n}>{message.text}</span>}
     </div>
   );
 }

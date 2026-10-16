@@ -39,7 +39,7 @@ describe("LiveDigest (digest)", () => {
       <LiveDigest sections={sections({ live: [named(1, "live"), named(2, "live")] })} settled />,
     );
     expect(region()).toHaveAttribute("aria-live", "polite");
-    expect(region()).toHaveTextContent("");
+    expect(region().textContent).toBe("");
 
     view.rerender(
       <LiveDigest
@@ -77,7 +77,7 @@ describe("LiveDigest (digest)", () => {
     const view = render(
       <LiveDigest sections={sections({ waiting: [named(1, "waiting")] })} settled />,
     );
-    expect(region()).toHaveTextContent("");
+    expect(region().textContent).toBe("");
 
     // Load more brings older ended rows; the waiting one is answered and goes live.
     view.rerender(
@@ -86,7 +86,7 @@ describe("LiveDigest (digest)", () => {
         settled
       />,
     );
-    expect(region()).toHaveTextContent("");
+    expect(region().textContent).toBe("");
   });
 
   it("takes the rows after an unsettled spell (loading, filter placeholder, Load more) as the new baseline", () => {
@@ -98,7 +98,7 @@ describe("LiveDigest (digest)", () => {
         settled
       />,
     );
-    expect(region()).toHaveTextContent("");
+    expect(region().textContent).toBe("");
 
     view.rerender(
       <LiveDigest
@@ -172,5 +172,41 @@ describe("LiveDigest (digest)", () => {
       vi.advanceTimersByTime(DIGEST_MS);
     });
     expect(region()).toHaveTextContent("1 session waiting for approval: /s1.");
+  });
+
+  it("says a repeated message again: the same session waits, is answered, and waits again past 15 s", () => {
+    const view = render(<LiveDigest sections={sections({ live: [named(1, "live")] })} settled />);
+    view.rerender(<LiveDigest sections={sections({ waiting: [named(1, "waiting")] })} settled />);
+    const first = region().firstElementChild;
+    expect(first).toHaveTextContent("1 session waiting for approval: /s1.");
+
+    view.rerender(<LiveDigest sections={sections({ live: [named(1, "live")] })} settled />);
+    act(() => {
+      vi.advanceTimersByTime(DIGEST_MS);
+    });
+    view.rerender(<LiveDigest sections={sections({ waiting: [named(1, "waiting")] })} settled />);
+
+    const second = region().firstElementChild;
+    expect(second).toHaveTextContent("1 session waiting for approval: /s1.");
+    expect(second).not.toBe(first);
+  });
+
+  it("takes the rows of another query (resetKey) as the new baseline", () => {
+    const view = render(
+      <LiveDigest sections={sections({ live: [named(1, "live")] })} settled resetKey="a" />,
+    );
+    view.rerender(
+      <LiveDigest sections={sections({ waiting: [named(1, "waiting")] })} settled resetKey="b" />,
+    );
+    expect(region().textContent).toBe("");
+
+    view.rerender(
+      <LiveDigest
+        sections={sections({ waiting: [named(1, "waiting"), named(2, "waiting")] })}
+        settled
+        resetKey="b"
+      />,
+    );
+    expect(region()).toHaveTextContent("1 session waiting for approval: /s2.");
   });
 });

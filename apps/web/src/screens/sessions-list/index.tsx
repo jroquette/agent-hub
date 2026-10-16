@@ -746,7 +746,8 @@ export function SessionsListScreen() {
   const shown = asked.reduce((sum, section) => sum + section.rows.length, 0);
   const total = asked.reduce((sum, section) => sum + section.count, 0);
   const pending = asked.some((section) => section.pages.isPending);
-  // The digest takes rows that only loaded (first page, a filter, Load more) as its baseline.
+  // The digest takes rows that only loaded (first page, Load more) or another query's rows as its baseline.
+  const digestKey = JSON.stringify([scope, queries]);
   const settled =
     !driving.list.isPending &&
     !asked.some(
@@ -1285,7 +1286,7 @@ export function SessionsListScreen() {
           <CloudSessions driving={driving} />
         </div>
       </div>
-      <LiveDigest sections={asked} settled={settled} />
+      <LiveDigest sections={asked} settled={settled} resetKey={digestKey} />
     </div>
   );
 }
