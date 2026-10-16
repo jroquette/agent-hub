@@ -51,3 +51,4 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0034](../adr/0034-syntax-highlighting-in-the-chat.md): completed chat code blocks are highlighted by lowlight, rendered without an HTML path.
 - [ADR 0035](../adr/0035-session-titles.md): a session's name is the short title Claude Code writes in its transcript, kept as `session.title`.
 - [ADR 0036](../adr/0036-live-playground-and-auto-mode.md): `make playground`, a live loop for agent-hub's own web app whose sessions run in Claude Code's `auto` mode.
+- [ADR 0037](../adr/0037-learning-decisions-unpushed-notes-and-edits.md): a learning decision reads an unpushed inbox note from the hub checkout.
