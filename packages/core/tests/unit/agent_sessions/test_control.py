@@ -226,10 +226,10 @@ async def test_starts_idle_without_init_when_created_without_prompt(make_rig: Ma
     assert [call.method for call in rig.driver.calls] == ["capabilities", "start"]
 
 
-async def test_refuses_third_when_limit_two(make_rig: MakeRig) -> None:
-    rig = make_rig(limits=SessionLimits(sessions_max=2))
-    first = await rig.create()
-    await rig.create()
+async def test_refuses_third_when_limit_two_and_both_running(make_rig: MakeRig) -> None:
+    rig = make_rig(limits=SessionLimits(sessions_max=2), replies={"Work.": (Hold(),)})
+    first = await rig.create("Work.")
+    await rig.create("Work.")
 
     with pytest.raises(LiveLimitError) as refused:
         await rig.create()
@@ -238,6 +238,37 @@ async def test_refuses_third_when_limit_two(make_rig: MakeRig) -> None:
 
     assert refused.value.limit == 2
     assert third.status == AgentSessionStatus.IDLE
+
+
+async def test_ends_longest_idle_when_limit_reached(make_rig: MakeRig) -> None:
+    rig = make_rig(limits=SessionLimits(sessions_max=2), replies={"Work.": (Hold(),)})
+    oldest = await rig.create()
+    rig.clock.advance(1)
+    newer = await rig.create()
+    rig.clock.advance(1)
+
+    third = await rig.create()
+    ended = await rig.until_status(oldest.id, "ended")
+
+    assert third.status == AgentSessionStatus.IDLE
+    assert ended.end_reason == EndReason.IDLE_TIMEOUT
+    close = next(r for r in rig.records(oldest.id) if r.kind == "close")
+    assert (close.by, close.body) == ("server", {"reason": "idle_timeout"})
+    assert (await rig.control.snapshot(newer.id)).status == AgentSessionStatus.IDLE
+
+
+async def test_reopens_session_ended_for_a_slot_when_message_sent(make_rig: MakeRig) -> None:
+    rig = make_rig(limits=SessionLimits(sessions_max=1), past_sessions=(PAST,))
+    first = await rig.create("Say hello.", resume_session_id=PAST.session_id)
+    await rig.until_status(first.id, "idle")
+    second = await rig.create()
+    await rig.until_status(first.id, "ended")
+
+    await rig.control.send(first.id, SendMessage(text="Go on."))
+    reopened = await rig.until_status(first.id, "idle")
+
+    assert (reopened.end_reason, reopened.ended_at) == (None, None)
+    assert (await rig.control.snapshot(second.id)).status == AgentSessionStatus.ENDED
 
 
 async def test_refuses_create_when_workdir_not_listed(make_rig: MakeRig) -> None:
