@@ -498,7 +498,8 @@ function Privacy() {
 /* ---------- Appearance ---------- */
 
 function Appearance() {
-  const { theme, setTheme, tz, setTz } = usePreferences();
+  const { theme, setTheme, tz, setTz, shakeToSession, setShakeToSession } = usePreferences();
+  const shakeField = useId();
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
     <Section title="Appearance" sub="Applied instantly and stored for this browser.">
@@ -529,6 +530,23 @@ function Appearance() {
               { id: "utc", label: "UTC" },
             ]}
           />
+        </Row>
+        <Row
+          label="Shake to start a session"
+          hint="Shake the mouse on a project screen to open New session with a screenshot"
+        >
+          <label htmlFor={shakeField} className="ah-row ah-small" style={{ gap: 6 }}>
+            <input
+              id={shakeField}
+              type="checkbox"
+              className="ah-check"
+              checked={shakeToSession}
+              onChange={(event) => {
+                setShakeToSession(event.target.checked);
+              }}
+            />
+            Shake to start a session
+          </label>
         </Row>
       </div>
     </Section>

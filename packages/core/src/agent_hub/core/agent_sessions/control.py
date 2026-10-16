@@ -55,6 +55,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverCapabilities,
     DriverError,
     DriverEvent,
+    DriverImage,
     Exited,
     InitEvent,
     PastSession,
@@ -90,6 +91,7 @@ from agent_hub.core.agent_sessions.permission_policy import (
     validate,
 )
 from agent_hub.core.agent_sessions.records import (
+    Attachment,
     LogRecord,
     LogRecordPage,
     LogTruncatedBody,
@@ -103,6 +105,7 @@ from agent_hub.core.agent_sessions.records import (
     StreamPosition,
     UserMessageBody,
 )
+from agent_hub.core.agent_sessions.screenshot import decode_screenshot
 from agent_hub.core.agent_sessions.session_state import (
     Answer,
     ChangeSettings,
@@ -378,11 +381,13 @@ class AgentSessionControl:
     # Commands
 
     async def create(self, request: CreateAgentSession) -> AgentSession:
-        """Start a session in a listed workdir (and send its first prompt): ``running`` with a
-        prompt, else ``idle`` (E13)."""
+        """Start a session in a listed workdir (and send its first prompt, with the screenshot
+        as an image): ``running`` with a prompt, else ``idle`` (E13). A refused screenshot
+        raises before anything starts or is stored."""
         prompt = request.prompt
         if prompt is not None:
             self._check_size(prompt)
+        images = (decode_screenshot(request.screenshot),) if request.screenshot else ()
         async with self._admission:
             await self._check_can_start()
             resolved = (await self._listing(request.project)).resolve(request.workdir_id)
@@ -420,22 +425,30 @@ class AgentSessionControl:
             )
             live = await self._start(session, spec, state)
             try:
-                await self._begin(live, prompt)
+                await self._begin(live, prompt, images)
             except Exception:
                 await self._fail_start(live)
                 raise
         return live.view()
 
-    async def _begin(self, live: LiveSession, prompt: str | None) -> None:
-        """Log the first prompt, start the pump, then send the prompt."""
+    async def _begin(
+        self, live: LiveSession, prompt: str | None, images: tuple[DriverImage, ...]
+    ) -> None:
+        """Log the first prompt (a marker per image, never its bytes), start the pump, then send
+        the prompt with its images."""
         if prompt is not None:
-            await self._emit(live, "user.message", UserMessageBody(text=prompt).as_body(), by="web")
+            attachments = tuple(
+                Attachment(kind="screenshot", media_type=image.media_type, bytes=len(image.data))
+                for image in images
+            )
+            body = UserMessageBody(text=prompt, attachments=attachments or None)
+            await self._emit(live, "user.message", body.as_body(), by="web")
         pump = asyncio.create_task(self._pump(live), name=f"agent-session-{live.id}")
         live.pump = pump
         self._pumps.add(pump)
         pump.add_done_callback(self._pumps.discard)
         if prompt is not None:
-            await self._driver.send(live.handle, prompt)
+            await self._driver.send(live.handle, prompt, images=images)
 
     async def _fail_start(self, live: LiveSession) -> None:
         """End a session whose first record or prompt failed ``failed``; the caller re-raises
