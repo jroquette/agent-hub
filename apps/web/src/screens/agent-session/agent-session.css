@@ -183,6 +183,15 @@
   background: var(--accent);
   animation: as-blink 1s steps(2) infinite;
 }
+
+.as-spin {
+  animation: as-spin 1s linear infinite;
+}
+@keyframes as-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 /* The `/` menu opens above the composer (AC-234.28). */
 .as-slash {
   position: absolute;
@@ -216,7 +225,8 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .as-caret,
-  .as-working::before {
+  .as-working::before,
+  .as-spin {
     animation: none;
   }
   .as-meta {
@@ -593,4 +603,146 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+/* What Claude did between two messages: one quiet line; its steps open in the side panel. */
+.as-activity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.as-activity-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: var(--control);
+  padding: 0 var(--space-2);
+  margin-left: calc(-1 * var(--space-2));
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.as-activity-head:hover,
+.as-activity-selected .as-activity-head {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+.as-activity-head:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}
+.as-activity-now {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-activity-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--failed);
+}
+.as-activity-chevron {
+  opacity: 0.6;
+}
+.as-activity > .as-perm {
+  align-self: stretch;
+}
+
+/* The side panel: beside the conversation when there is room, over it when there is not. */
+.as-body {
+  container-type: inline-size;
+  --as-panel-w: min(520px, 42%);
+}
+.as-activity-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  width: var(--as-panel-w);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  box-shadow: var(--shadow-popover);
+}
+.as-body-panel .as-scroll {
+  margin-right: var(--as-panel-w);
+}
+@container (max-width: 760px) {
+  .as-activity-panel {
+    width: 100%;
+    border-left: 0;
+  }
+  .as-body-panel .as-scroll {
+    margin-right: 0;
+  }
+}
+.as-activity-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.as-activity-panel-head .ah-small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-activity-panel-head h2:focus {
+  outline: none;
+}
+.as-activity-steps {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-6);
+  display: flex;
+  flex-direction: column;
+}
+.as-activity-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+}
+/* The timeline thread between the steps. */
+.as-activity-step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 22px;
+  bottom: 0;
+  border-left: 1px solid var(--border);
+}
+.as-activity-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  color: var(--text-subtle);
+}
+.as-activity-step-body {
+  min-width: 0;
+}
+.as-activity-step-body .as-thinking {
+  padding-top: 6px;
 }
