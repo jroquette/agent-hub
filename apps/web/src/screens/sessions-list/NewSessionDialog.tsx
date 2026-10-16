@@ -67,8 +67,11 @@ export interface NewSessionDialogProps {
   initialMode?: PermissionMode | undefined;
   /** A short note under the title, such as why live reload is not set up. */
   note?: string | undefined;
-  /** The ended session to resume (AC-234.15): its folder, mode and model, and a Fork choice. */
-  resume?: AgentSession | undefined;
+  /**
+   * The ended session to fork (AC-234.15): a new conversation from it in its folder, with its mode
+   * and model. A message in its chat resumes it in place (ADR 0036).
+   */
+  forkOf?: AgentSession | undefined;
 }
 
 /** The folder to preselect: the given one, else the last used for the project, else the first. */
@@ -98,14 +101,14 @@ export function NewSessionDialog({
   initialWorkdirId,
   initialMode,
   note,
-  resume,
+  forkOf,
 }: NewSessionDialogProps) {
   const [picked, setPicked] = useState<string | null>(null);
-  const [mode, setMode] = useState<PermissionMode>(resume?.mode ?? initialMode ?? "default");
+  const [mode, setMode] = useState<PermissionMode>(forkOf?.mode ?? initialMode ?? "default");
   const shot = screenshot && "dataUrl" in screenshot ? screenshot.dataUrl : null;
   const [attach, setAttach] = useState(shot !== null);
-  // A resumed session keeps its model, as "Other model id" when the capabilities do not list it.
-  const kept = resume?.model ?? null;
+  // A fork keeps its session's model, as "Other model id" when the capabilities do not list it.
+  const kept = forkOf?.model ?? null;
   const [model, setModel] = useState(
     kept === null
       ? (capabilities.models[0] ?? "default")
@@ -116,7 +119,6 @@ export function NewSessionDialog({
   const [otherModel, setOtherModel] = useState(
     kept !== null && !capabilities.models.includes(kept) ? kept : "",
   );
-  const [fork, setFork] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [firstProject] = useState(project);
@@ -131,7 +133,7 @@ export function NewSessionDialog({
   const promptField = useId();
   const promptHint = useId();
   const attachField = useId();
-  const resumeId = useId();
+  const forkId = useId();
 
   const folders = workdirs ?? [];
   const preferred = preferredWorkdir(
@@ -142,9 +144,9 @@ export function NewSessionDialog({
   const workdir =
     folders.find((w) => w.workdir_id === picked) ?? folders.find((w) => w.workdir_id === preferred);
   const workdirId = workdir?.workdir_id ?? "";
-  // Resuming starts in the target's own folder: the server finds its Claude session there.
-  const where = resume
-    ? { project: resume.project, workdir_id: resume.workdir_id }
+  // A fork starts in its session's own folder: the server finds the Claude session there.
+  const where = forkOf
+    ? { project: forkOf.project, workdir_id: forkOf.workdir_id }
     : workdir && { project, workdir_id: workdir.workdir_id };
 
   const chosenModel = model === OTHER_MODEL ? otherModel.trim() : model;
@@ -157,7 +159,7 @@ export function NewSessionDialog({
     ? null
     : !capabilities.available
       ? "Sessions cannot start on this machine."
-      : !resume && workdirs === undefined && !workdirsProblem
+      : !forkOf && workdirs === undefined && !workdirsProblem
         ? "Waiting for the working folders."
         : !where
           ? "No working folder to start in."
@@ -172,15 +174,15 @@ export function NewSessionDialog({
 
   const submit = () => {
     if (!ready || !where) return;
-    if (!resume) writeStored(workdirKey(project), where.workdir_id);
+    if (!forkOf) writeStored(workdirKey(project), where.workdir_id);
     const text = prompt.trim();
     const body: CreateAgentSession = {
       ...where,
       mode,
       model: chosenModel,
       prompt: text ? text : null,
-      resume_session_id: resume?.claude_session_id ?? null,
-      fork: resume ? fork : false,
+      resume_session_id: forkOf?.claude_session_id ?? null,
+      fork: forkOf !== undefined,
     };
     onSubmit(
       attached
@@ -201,7 +203,7 @@ export function NewSessionDialog({
 
   return (
     <Dialog
-      title={resume ? "Resume session" : "New session"}
+      title={forkOf ? "Fork session" : "New session"}
       onClose={onCancel}
       pending={pending}
       initialFocus="textarea"
@@ -249,31 +251,22 @@ export function NewSessionDialog({
           </p>
         )}
 
-        {resume ? (
-          <div role="group" aria-labelledby={resumeId} className="ah-stack" style={{ gap: 4 }}>
-            <span id={resumeId} className="ah-small">
-              Resume
+        {forkOf ? (
+          <div role="group" aria-labelledby={forkId} className="ah-stack" style={{ gap: 4 }}>
+            <span id={forkId} className="ah-small">
+              Fork
             </span>
-            <b>{resume.title ?? "Untitled session"}</b>
+            <b>{forkOf.title ?? "Untitled session"}</b>
             <span className="ah-small ah-muted">
-              {resume.project} › <span className="ah-mono">{resume.workdir_label}</span> ·{" "}
+              {forkOf.project} › <span className="ah-mono">{forkOf.workdir_label}</span> ·{" "}
               <span>
-                {resume.status === "failed" ? "Failed" : "Ended"}{" "}
-                <Time iso={resume.ended_at ?? resume.updated_at} />
+                {forkOf.status === "failed" ? "Failed" : "Ended"}{" "}
+                <Time iso={forkOf.ended_at ?? forkOf.updated_at} />
               </span>
             </span>
-            <label className="ah-row ah-small" style={{ gap: 6 }}>
-              <input
-                type="checkbox"
-                className="ah-check"
-                checked={fork}
-                disabled={pending}
-                onChange={(event) => {
-                  setFork(event.target.checked);
-                }}
-              />
-              Fork: continue in a new conversation and keep this one unchanged
-            </label>
+            <span className="ah-small ah-subtle">
+              A new conversation that starts from this one and keeps this one unchanged.
+            </span>
           </div>
         ) : (
           <div role="group" aria-labelledby={whereId} className="ah-stack" style={{ gap: 4 }}>
