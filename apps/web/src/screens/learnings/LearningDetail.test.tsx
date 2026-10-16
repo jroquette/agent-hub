@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -181,6 +181,78 @@ describe("LearningDetail", () => {
     expect(post?.headers.get("content-type")).toContain("application/json");
     expect(await post?.json()).toEqual({ target: "learnings/gotchas/web-gates.md" });
     expect(onDecide).toHaveBeenCalledWith(ID);
+  });
+
+  describe("editing the note", () => {
+    beforeEach(() => {
+      window.localStorage.clear();
+    });
+
+    it("accepts the edited body in the same pull request", async () => {
+      const { requests } = open({ [ACCEPT]: aLearningActionResult() });
+      const detail = await region();
+
+      await userEvent.click(within(detail).getByRole("button", { name: "Edit note" }));
+      const field = within(detail).getByRole("textbox", { name: "Note body" });
+      await userEvent.clear(field);
+      await userEvent.type(field, "# Gates{enter}{enter}Run the web gate first.");
+      await userEvent.click(within(detail).getByRole("button", { name: "Preview" }));
+      expect(within(detail).getByRole("heading", { name: "Gates" })).toBeInTheDocument();
+      await userEvent.click(within(detail).getByRole("button", { name: "Done editing" }));
+      expect(within(detail).getByText("Edited here.")).toBeInTheDocument();
+
+      await userEvent.click(within(detail).getByRole("button", { name: "Accept" }));
+      const dialog = screen.getByRole("dialog", { name: "Accept this learning?" });
+      expect(
+        within(dialog).getByText("Writes the note as you edited it, in the same commit"),
+      ).toBeInTheDocument();
+      await userEvent.click(within(dialog).getByRole("button", { name: "Open pull request" }));
+
+      await screen.findByText("Pull request opened");
+      const post = requests.find((r) => r.method === "POST");
+      expect(await post?.json()).toEqual({
+        target: "learnings/",
+        note_body: "# Gates\n\nRun the web gate first.",
+      });
+      expect(window.localStorage.getItem(`ah.learning.draft.${ID}`)).toBeNull();
+    });
+
+    it("keeps the edit across a reload and discards it after a confirm", async () => {
+      window.localStorage.setItem(
+        `ah.learning.draft.${ID}`,
+        JSON.stringify({ body: "# Kept\n", base: aLearningDetail().note?.markdown ?? "" }),
+      );
+      open();
+      const detail = await region();
+
+      expect(within(detail).getByRole("heading", { name: "Kept" })).toBeInTheDocument();
+      await userEvent.click(within(detail).getByRole("button", { name: "Discard edits" }));
+      expect(within(detail).getByText("Discard your edits?")).toBeInTheDocument();
+      await userEvent.click(within(detail).getByRole("button", { name: "Discard edits" }));
+
+      expect(within(detail).queryByRole("heading", { name: "Kept" })).toBeNull();
+      expect(within(detail).getByText(/unedited/)).toBeInTheDocument();
+    });
+
+    it("warns when the note changed in the hub since the edit started", async () => {
+      window.localStorage.setItem(
+        `ah.learning.draft.${ID}`,
+        JSON.stringify({ body: "# Mine\n", base: "# An older hub version\n" }),
+      );
+      open();
+      const detail = await region();
+
+      expect(
+        within(detail).getByText("The note changed in the hub since you edited it."),
+      ).toBeInTheDocument();
+    });
+
+    it("offers no edit when the learning cannot be decided", async () => {
+      open({ [DETAIL]: aLearningDetail({ actions_unavailable: "The hub is read-only" }) });
+      const detail = await region();
+
+      expect(within(detail).queryByRole("button", { name: "Edit note" })).toBeNull();
+    });
   });
 
   it("rejects with a reason through a confirmation", async () => {

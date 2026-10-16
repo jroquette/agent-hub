@@ -12,6 +12,7 @@ import {
   Icon,
   Markdown,
   ProblemError,
+  SegmentedControl,
   ProvenanceBadge,
   Skeleton,
   StatusBadge,
@@ -22,6 +23,7 @@ import {
 import { fmtAgo } from "../../lib/format";
 import { safeHref } from "../../lib/safeHref";
 import { DecideDialog, type DecideAction } from "./DecideDialog";
+import { useNoteDraft } from "./noteDraft";
 import { useDecideLearning, useHubRepo, useLearning, type LearningActionResult } from "./queries";
 
 type Learning = components["schemas"]["Learning"];
@@ -165,8 +167,100 @@ export function noteFrontmatter(fields: Record<string, unknown> | undefined): Fr
   };
 }
 
-function NoteBody({ detail, row }: { detail: LearningDetailView | undefined; row: Learning }) {
+function NoteView({ detail, markdown }: { detail: LearningDetailView; markdown: string }) {
   const navigate = useNavigate();
+  const note = detail.note;
+  return (
+    <div
+      style={{
+        background: "var(--surface-sunken)",
+        borderRadius: "var(--radius-md)",
+        padding: "10px 14px",
+        borderLeft: "2px solid var(--border-strong)",
+      }}
+    >
+      <Markdown
+        source={markdown}
+        note={note ? { project: note.project, path: note.path } : undefined}
+        onBrainLink={(link) => {
+          void navigate(link.route);
+        }}
+      />
+    </div>
+  );
+}
+
+type NoteMode = "write" | "preview";
+
+function NoteEditor({
+  detail,
+  body,
+  onChange,
+  onDone,
+}: {
+  detail: LearningDetailView;
+  body: string;
+  onChange: (body: string) => void;
+  onDone: () => void;
+}) {
+  const [mode, setMode] = useState<NoteMode>("write");
+  const fieldId = useId();
+  return (
+    <div className="ah-stack" style={{ gap: 8 }}>
+      <div className="ah-row" style={{ gap: 8 }}>
+        <SegmentedControl
+          label="Note view"
+          value={mode}
+          options={[
+            { id: "write", label: "Write" },
+            { id: "preview", label: "Preview" },
+          ]}
+          onChange={(value) => {
+            setMode(value === "preview" ? "preview" : "write");
+          }}
+        />
+        <span className="ah-grow" />
+        <Button size="sm" icon="check" onClick={onDone}>
+          Done editing
+        </Button>
+      </div>
+      {mode === "write" ? (
+        <>
+          <label htmlFor={fieldId} className="ah-sr">
+            Note body
+          </label>
+          <textarea
+            id={fieldId}
+            className="ah-input ah-mono"
+            rows={Math.min(24, Math.max(8, body.split("\n").length + 1))}
+            value={body}
+            spellCheck
+            style={{ width: "100%", fontSize: 12.5, lineHeight: "19px", resize: "vertical" }}
+            onChange={(event) => {
+              onChange(event.target.value);
+            }}
+          />
+        </>
+      ) : (
+        <NoteView detail={detail} markdown={body} />
+      )}
+    </div>
+  );
+}
+
+function NoteBody({
+  detail,
+  row,
+  canEdit,
+  draft,
+}: {
+  detail: LearningDetailView | undefined;
+  row: Learning;
+  canEdit: boolean;
+  draft: ReturnType<typeof useNoteDraft>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   if (!detail) {
     return (
       <div className="ah-stack" style={{ gap: 6 }} aria-busy="true">
@@ -179,26 +273,10 @@ function NoteBody({ detail, row }: { detail: LearningDetailView | undefined; row
       </div>
     );
   }
-  return (
-    <section aria-label="Note" style={{ minWidth: 0 }}>
-      {detail.note ? (
-        <div
-          style={{
-            background: "var(--surface-sunken)",
-            borderRadius: "var(--radius-md)",
-            padding: "10px 14px",
-            borderLeft: "2px solid var(--border-strong)",
-          }}
-        >
-          <Markdown
-            source={detail.note.markdown}
-            note={{ project: detail.note.project, path: detail.note.path }}
-            onBrainLink={(link) => {
-              void navigate(link.route);
-            }}
-          />
-        </div>
-      ) : (
+  const note = detail.note;
+  if (!note) {
+    return (
+      <section aria-label="Note" style={{ minWidth: 0 }}>
         <div className="ah-stack" style={{ gap: 4 }}>
           <span>{detail.note_unavailable ?? "The note could not be read."}</span>
           {detail.note_path && (
@@ -209,12 +287,99 @@ function NoteBody({ detail, row }: { detail: LearningDetailView | undefined; row
             </span>
           )}
         </div>
+      </section>
+    );
+  }
+  const current = draft.draft;
+  const edited = current !== null && current.body !== note.markdown;
+  const stale = current !== null && current.base !== note.markdown;
+  return (
+    <section aria-label="Note" style={{ minWidth: 0 }} className="ah-stack">
+      {stale && (
+        <Banner tone="warning" boxed>
+          <b style={{ fontWeight: 600 }}>The note changed in the hub since you edited it.</b> Your
+          edit is kept; discard it to start again from the hub&apos;s version.
+        </Banner>
       )}
-      {detail.note && detail.note_path && (
-        <div className="ah-small ah-subtle" style={{ marginTop: 6 }}>
-          As proposed in <span className="ah-mono">{detail.note_path}</span>, unedited.
-        </div>
+      {editing && canEdit ? (
+        <NoteEditor
+          detail={detail}
+          body={current?.body ?? note.markdown}
+          onChange={(body) => {
+            draft.save({ body, base: current?.base ?? note.markdown });
+          }}
+          onDone={() => {
+            setEditing(false);
+            if (current !== null && current.body === note.markdown) draft.discard();
+          }}
+        />
+      ) : (
+        <NoteView detail={detail} markdown={current?.body ?? note.markdown} />
       )}
+      <div className="ah-row ah-wrap ah-small ah-subtle" style={{ gap: 8 }}>
+        {edited ? (
+          <span>
+            <b style={{ fontWeight: 600, color: "var(--text)" }}>Edited here.</b> The accept pull
+            request writes this version of <span className="ah-mono">{detail.note_path}</span>.
+          </span>
+        ) : (
+          detail.note_path && (
+            <span>
+              As proposed in <span className="ah-mono">{detail.note_path}</span>, unedited.
+            </span>
+          )
+        )}
+        <span className="ah-grow" />
+        {canEdit && !editing && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="file-pen"
+            onClick={() => {
+              setEditing(true);
+            }}
+          >
+            {edited ? "Edit again" : "Edit note"}
+          </Button>
+        )}
+        {current !== null &&
+          (discarding ? (
+            <span className="ah-row" style={{ gap: 6 }}>
+              <span>Discard your edits?</span>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => {
+                  draft.discard();
+                  setDiscarding(false);
+                  setEditing(false);
+                }}
+              >
+                Discard edits
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setDiscarding(false);
+                }}
+              >
+                Keep
+              </Button>
+            </span>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="x"
+              onClick={() => {
+                setDiscarding(true);
+              }}
+            >
+              Discard edits
+            </Button>
+          ))}
+      </div>
     </section>
   );
 }
@@ -238,6 +403,7 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
   const l: Learning | undefined = detail ?? row;
   const hubRepo = useHubRepo(l?.project ?? null);
   const decide = useDecideLearning(id);
+  const draft = useNoteDraft(id);
   const [deciding, setDeciding] = useState<DecideAction | null>(null);
   const [edited, setEdited] = useState<string | null>(null);
   const [result, setResult] = useState<LearningActionResult | null>(null);
@@ -279,17 +445,23 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
   const blocked = l.actions_unavailable ?? (result ? PR_OPEN : BLOCKED_BY_STATE[state]) ?? null;
   const target = edited ?? detail?.suggested_target ?? "";
   const canDecide = blocked === null && detail !== undefined;
+  const original = detail?.note?.markdown;
+  const noteBody =
+    draft.draft !== null && original !== undefined && draft.draft.body !== original
+      ? draft.draft.body
+      : undefined;
 
   const confirm = (reason: string) => {
     onDecide?.(id);
     decide.mutate(
       deciding === "accept"
-        ? { action: "accept", target: target.trim() }
+        ? { action: "accept", target: target.trim(), noteBody }
         : { action: "reject", reason },
       {
         onSuccess: (answer) => {
           setResult(answer);
           setDeciding(null);
+          draft.discard();
         },
       },
     );
@@ -359,7 +531,12 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
                 onRetry={() => void query.refetch()}
               />
             ) : (
-              <NoteBody detail={detail} row={l} />
+              <NoteBody
+                detail={detail}
+                row={l}
+                canEdit={canDecide && detail.note !== null && detail.note !== undefined}
+                draft={draft}
+              />
             )}
           </Section>
           <Section label="Project">
@@ -498,6 +675,7 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
           hubRepo={hubRepo}
           notePath={l.note_path ?? null}
           target={target.trim()}
+          edited={noteBody !== undefined}
           pending={decide.isPending}
           error={decide.error}
           onConfirm={confirm}
