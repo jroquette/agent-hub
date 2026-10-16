@@ -121,8 +121,43 @@ describe("Transcript (transcript)", () => {
     expect(screen.getByText("Thought for 1 s").closest("details")).not.toHaveAttribute("open");
   });
 
-  it("expands a tool call to its diff and result when clicked and collapses it again", async () => {
+  it("keeps a tool call out of the conversation, one line that opens it in the side panel", async () => {
     show(scripted());
+
+    expect(screen.queryByRole("button", { name: /Edit src\/app\.py/ })).toBeNull();
+    const line = screen.getByRole("button", { name: "Edited 1 file" });
+    expect(line).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(line);
+
+    expect(line).toHaveAttribute("aria-expanded", "true");
+    const panel = screen.getByRole("complementary", { name: "Activity" });
+    expect(screen.getByRole("heading", { name: "Activity" })).toHaveFocus();
+    expect(within(panel).getByRole("button", { name: /Edit src\/app\.py/ })).toBeInTheDocument();
+  });
+
+  it("closes the side panel on Esc, Close or its line again, focus back on the line", async () => {
+    show(scripted());
+    const line = screen.getByRole("button", { name: "Edited 1 file" });
+
+    await userEvent.click(line);
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("complementary", { name: "Activity" })).toBeNull();
+    expect(line).toHaveFocus();
+
+    await userEvent.click(line);
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("complementary", { name: "Activity" })).toBeNull();
+    expect(line).toHaveFocus();
+
+    await userEvent.click(line);
+    await userEvent.click(line);
+    expect(screen.queryByRole("complementary", { name: "Activity" })).toBeNull();
+  });
+
+  it("expands a tool call in the side panel to its diff and result and collapses it again", async () => {
+    show(scripted());
+    await userEvent.click(screen.getByRole("button", { name: "Edited 1 file" }));
 
     const head = screen.getByRole("button", { name: /Edit src\/app\.py/ });
     expect(head).toHaveAttribute("aria-expanded", "false");
@@ -189,6 +224,9 @@ describe("Transcript (transcript)", () => {
       },
       { type: "record", record: aLogRecord("error", { seq: 3 }) },
     ]);
+    act(() => {
+      screen.getByRole("button", { name: "1 subagent" }).click();
+    });
 
     const nested = screen.getByRole("list", { name: "Calls made by Task" });
     expect(within(nested).getByRole("button", { name: /Bash ls/ })).toBeInTheDocument();
@@ -363,7 +401,9 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
     // t301 is entry 302 of 2,002; its card leaves its own place for the call's.
     expect(screen.getByRole("log").children).toHaveLength(2002 - 302 - 1);
     const card = document.querySelector("[data-request-id='t301']");
-    expect(card?.closest(".as-entry")?.querySelector(".as-tool")).toHaveTextContent("ls");
+    expect(card?.closest(".as-entry")?.querySelector(".as-activity-head")).toHaveTextContent(
+      "Ran 1 command",
+    );
   });
 
   it("keeps a run's node when its earlier calls join it a frame later (tool-cards)", () => {
@@ -381,17 +421,17 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
 
     render(<Transcript state={items.reduce(reduceTranscript, initialTranscript())} />);
     const log = screen.getByRole("log");
-    const head = within(log).getByRole("button", { name: /^Explored/ });
-    expect(head).toHaveTextContent(`Explored · ${String(FIRST_ENTRIES)} Read`);
+    const head = within(log).getByRole("button", { name: /^Read \d+ files/ });
+    expect(head).toHaveTextContent(`Read ${String(FIRST_ENTRIES)} files`);
     expect(log.children).toHaveLength(1);
     runFrame();
 
     expect(log.children).toHaveLength(2);
-    expect(within(log).getByRole("button", { name: /^Explored/ })).toBe(head);
-    expect(head).toHaveTextContent(`Explored · ${String(FIRST_ENTRIES + 100)} Read`);
+    expect(within(log).getByRole("button", { name: /^Read \d+ files/ })).toBe(head);
+    expect(head).toHaveTextContent(`Read ${String(FIRST_ENTRIES + 100)} files`);
   });
 
-  it("first renders at most FIRST_ENTRIES calls of a long run that waits for you (tool-cards)", () => {
+  it("first renders at most FIRST_ENTRIES calls of a long run that waits for you, its card kept (tool-cards)", () => {
     const runFrame = manualFrames();
     const items: StreamItem[] = [{ type: "record", record: aLogRecord("text", { seq: 1 }) }];
     for (let seq = 2; seq < 2002; seq += 1) {
@@ -411,14 +451,17 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
 
     render(<Transcript state={items.reduce(reduceTranscript, initialTranscript())} />);
     const log = screen.getByRole("log");
-    const head = within(log).getByRole("button", { name: /^Explored/ });
+    const head = within(log).getByRole("button", { name: /^Ran \d+ commands/ });
     const card = document.querySelector("[data-request-id='t2001']");
-    expect(log.querySelectorAll(".as-tool").length).toBeLessThanOrEqual(FIRST_ENTRIES);
+    expect(Number(/Ran (\d+) commands/.exec(head.textContent)?.[1])).toBeLessThanOrEqual(
+      FIRST_ENTRIES,
+    );
+    expect(log.querySelectorAll(".as-tool")).toHaveLength(0);
     expect(card).not.toBeNull();
     runFrame();
 
-    expect(log.querySelectorAll(".as-tool")).toHaveLength(2000);
-    expect(within(log).getByRole("button", { name: /^Explored/ })).toBe(head);
+    expect(head).toHaveTextContent("Ran 2000 commands");
+    expect(within(log).getByRole("button", { name: /^Ran \d+ commands/ })).toBe(head);
     expect(document.querySelector("[data-request-id='t2001']")).toBe(card);
   });
 
@@ -475,15 +518,21 @@ describe("Transcript (tool-cards) attached permission", () => {
     record: aLogRecord("text", { seq, body: { block: 0, text: "Between" } }),
   });
 
-  it("renders the permission card directly under its tool call, which reads Waiting for you", () => {
+  it("renders the permission card under its run's line; the call reads Waiting for you", async () => {
     show([call(1, "toolu_9"), text(2), ask(3, "toolu_9")]);
 
-    const head = screen.getByRole("button", { name: "Bash make check (Waiting for you)" });
-    const entry = head.closest(".as-entry");
+    const line = screen.getByRole("button", { name: "Ran 1 command" });
     const card = document.querySelector("[data-request-id='toolu_9']");
-    expect(card?.closest(".as-entry")).toBe(entry);
-    expect(head.closest(".as-tool")?.nextElementSibling).toBe(card);
+    expect(card?.closest(".as-entry")).toBe(line.closest(".as-entry"));
+    expect(line.nextElementSibling).toBe(card);
     expect(screen.getByRole("log").children).toHaveLength(2);
+
+    await userEvent.click(line);
+    const panel = screen.getByRole("complementary", { name: "Activity" });
+    expect(
+      within(panel).getByRole("button", { name: "Bash make check (Waiting for you)" }),
+    ).toBeInTheDocument();
+    expect(panel.querySelector("[data-request-id]")).toBeNull();
   });
 
   it("keeps a permission with no matching call where it arrived", () => {
@@ -492,19 +541,45 @@ describe("Transcript (tool-cards) attached permission", () => {
     const log = screen.getByRole("log");
     expect(log.children).toHaveLength(3);
     expect(log.lastElementChild?.querySelector("[data-request-id='req-other']")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Bash make check (Running)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ran 1 command" })).toBeInTheDocument();
   });
 
-  it("groups consecutive calls with no text between them; text starts a new run", () => {
-    show([call(1, "a", "Read"), call(2, "b", "Grep"), call(3, "c", "Read"), text(4), call(5, "d")]);
+  it("reads the call a live run is on, then the run's summary once it ends", () => {
+    const running: StreamItem = { type: "status", status: { status: "running" } };
+    const { rerender } = render(
+      <Transcript state={[running, call(1, "a")].reduce(reduceTranscript, initialTranscript())} />,
+    );
+    expect(screen.getByRole("button", { name: "Bash make check" })).toBeInTheDocument();
+
+    rerender(<Transcript state={[call(1, "a")].reduce(reduceTranscript, initialTranscript())} />);
+    expect(screen.getByRole("button", { name: "Ran 1 command" })).toBeInTheDocument();
+  });
+
+  it("groups calls and the thoughts between them into one run; text starts a new run", () => {
+    const thought = (seq: number): StreamItem => ({
+      type: "record",
+      record: aLogRecord("thinking", { seq }),
+    });
+    show([
+      thought(1),
+      call(2, "a", "Read"),
+      thought(3),
+      call(4, "b", "Grep"),
+      call(5, "c", "Read"),
+      text(6),
+      thought(7),
+      text(8),
+      call(9, "d"),
+    ]);
 
     const log = screen.getByRole("log");
-    expect(log.children).toHaveLength(3);
-    expect(within(log).getByRole("button", { name: "Explored · 2 Read, 1 Grep" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(log.lastElementChild).toHaveTextContent("Bash");
+    expect(log.children).toHaveLength(5);
+    expect(
+      within(log).getByRole("button", { name: /^Read 2 files, 1 search, thought/ }),
+    ).toHaveAttribute("aria-expanded", "false");
+    // A thought with no call beside it stays where it is.
+    expect(log.children[2]?.querySelector("details.as-thinking")).not.toBeNull();
+    expect(log.lastElementChild).toHaveTextContent("Ran 1 command");
   });
 
   it("opens a group whose call waits for you, its card under the call, where the chat opens", () => {
@@ -534,26 +609,23 @@ describe("Transcript (tool-cards) attached permission", () => {
 
     const log = screen.getByRole("log");
     expect(log.children).toHaveLength(3);
-    expect(within(log).getByRole("button", { name: /^Explored · 2 Read, 1 Bash/ })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    const head = screen.getByRole("button", { name: /Bash make check \(Waiting for you\)/ });
-    expect(head.closest(".as-tool")?.nextElementSibling).toHaveAttribute("data-request-id", "b");
+    const line = within(log).getByRole("button", { name: "Read 2 files, ran 1 command" });
+    expect(line.nextElementSibling).toHaveAttribute("data-request-id", "b");
     expect(top.value).toBe(384);
     vi.restoreAllMocks();
   });
 
-  it("keeps an expanded first call, the same node with the focus, when a second call joins it", async () => {
+  it("keeps the panel and an expanded call, the same node with the focus, when a call joins the run", async () => {
     const one = [call(1, "a")].reduce(reduceTranscript, initialTranscript());
     const { rerender } = render(<Transcript state={one} />);
+    await userEvent.click(screen.getByRole("button", { name: "Ran 1 command" }));
     const head = screen.getByRole("button", { name: "Bash make check (Running)" });
     await userEvent.click(head);
     expect(head).toHaveAttribute("aria-expanded", "true");
 
     rerender(<Transcript state={reduceTranscript(one, call(2, "b", "Read"))} />);
 
-    expect(screen.getByRole("button", { name: /^Explored · 1 Bash, 1 Read/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Ran 1 command, read 1 file" })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
@@ -595,6 +667,9 @@ describe("Transcript (tool-cards) attached permission", () => {
       }),
     };
     show([call(1, "t1", "Task"), nested, text(3), ask(4, "n1")]);
+    act(() => {
+      screen.getByRole("button", { name: "1 subagent" }).click();
+    });
 
     const calls = screen.getByRole("list", { name: "Calls made by Task" });
     expect(within(calls).getByRole("button", { name: "Bash ls (Waiting for you)" })).toBeVisible();
@@ -602,13 +677,15 @@ describe("Transcript (tool-cards) attached permission", () => {
     expect(log.lastElementChild?.querySelector("[data-request-id='n1']")).not.toBeNull();
   });
 
-  it("re-renders no grouped call when text streams below the group", () => {
+  it("re-renders no call in the open panel when text streams below the run", () => {
     const grouped = [call(1, "a", "Read"), call(2, "b", "Read")].reduce(
       reduceTranscript,
       initialTranscript(),
     );
     const { rerender } = render(<Transcript state={grouped} />);
-    screen.getByRole("button", { name: /^Explored/ }).click();
+    act(() => {
+      screen.getByRole("button", { name: "Read 2 files" }).click();
+    });
     const streaming = reduceTranscript(grouped, {
       type: "delta",
       delta: aDeltaFrame({ after_seq: 2, block: 0, index: 0, text: "Hi" }),
@@ -625,7 +702,8 @@ describe("Transcript (tool-cards) attached permission", () => {
       />,
     );
 
-    expect(screen.getAllByRole("button", { name: /^Read/ })).toHaveLength(2);
+    const panel = screen.getByRole("complementary", { name: "Activity" });
+    expect(within(panel).getAllByRole("button", { name: /^Read/ })).toHaveLength(2);
     expect(renders.tool).toBe(0);
   });
 });

@@ -18,7 +18,7 @@ import { JumpToLatest } from "./JumpToLatest";
 import { MessageMeta } from "./MessageMeta";
 import { RequestCard, type PermissionAnswer } from "./PermissionCard";
 import { StoredCopyLabel } from "./SessionStatus";
-import { ToolGroup, type GroupItem } from "./ToolGroup";
+import { ActivityPanel, ActivityRun, ThinkingBlock, type ActivityStep } from "./ActivityRun";
 import {
   pendingPermissions,
   type NoticeTone,
@@ -55,26 +55,33 @@ function attachedRequests(entries: readonly TranscriptEntry[]): Set<string> {
   );
 }
 
-type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
+type RunEntry = Extract<TranscriptEntry, { kind: "tool" | "thinking" }>;
 type Row =
-  { kind: "entry"; entry: TranscriptEntry } | { kind: "run"; key: string; entries: ToolEntry[] };
+  { kind: "entry"; entry: TranscriptEntry } | { kind: "run"; key: string; entries: RunEntry[] };
 
-/** What the log shows from `start` on: attached cards leave their place, and consecutive tool
- * calls with no text between them become one run. A run is keyed by its first call in the whole
- * list, so it keeps its node as it grows or as earlier calls join it a frame later (AC-234.24). */
+/** What the log shows from `start` on: attached cards leave their place, and what Claude does
+ * between two messages (its calls and the thoughts between them) becomes one run. A run is keyed
+ * by its first entry in the whole list, so it keeps its node as it grows or as earlier entries
+ * join it a frame later (AC-234.24). Thoughts with no call among them stay plain entries. */
 function rowsOf(entries: readonly TranscriptEntry[], attached: Set<string>, start: number): Row[] {
   const rows: Row[] = [];
   let key: string | null = null;
-  let run: ToolEntry[] = [];
+  let run: RunEntry[] = [];
+  let hasCall = false;
   const flush = () => {
-    if (key !== null && run.length > 0) rows.push({ kind: "run", key, entries: run });
+    if (key !== null && run.length > 0) {
+      if (hasCall) rows.push({ kind: "run", key, entries: run });
+      else rows.push(...run.map((entry): Row => ({ kind: "entry", entry })));
+    }
     key = null;
     run = [];
+    hasCall = false;
   };
   entries.forEach((entry, index) => {
     if (entry.kind === "permission" && attached.has(entry.requestId)) return;
-    if (entry.kind === "tool") {
+    if (entry.kind === "tool" || entry.kind === "thinking") {
       key ??= entry.key;
+      if (entry.kind === "tool") hasCall = true;
       if (index >= start) run.push(entry);
       return;
     }
@@ -191,18 +198,9 @@ function EntryBody({ entry, request, onAnswerPermission, screenshotUrl }: EntryP
     case "assistant":
       return <AssistantText entry={entry} />;
     case "thinking":
-      return (
-        <details className="as-thinking">
-          <summary>
-            <Icon name="lightbulb" size="sm" />{" "}
-            {entry.seconds === null ? "Thinking" : `Thought for ${String(entry.seconds)} s`}
-            {entry.redacted && <StoredCopyLabel />}
-          </summary>
-          <div className="as-thinking-text">{entry.text}</div>
-        </details>
-      );
+      return <ThinkingBlock entry={entry} />;
     case "tool":
-      // A call shows in its run (ToolGroup).
+      // A call shows in its run (ActivityRun).
       return null;
     case "permission":
       return request ? (
@@ -256,6 +254,20 @@ export function Transcript({
     attached.has(toolId) ? state.permissions[toolId] : undefined;
   const release = follow?.release;
   const headingId = useId();
+
+  // The run the side panel shows; closing gives focus back to its line.
+  const [panelRun, setPanelRun] = useState<string | null>(null);
+  const toggleRun = useCallback((runKey: string) => {
+    setPanelRun((current) => (current === runKey ? null : runKey));
+  }, []);
+  const closePanel = useCallback(() => {
+    const key = panelRun;
+    setPanelRun(null);
+    const line = Array.from(
+      scroller.current?.querySelectorAll<HTMLElement>("[data-run-key]") ?? [],
+    ).find((element) => element.dataset.runKey === key);
+    line?.focus({ preventScroll: true });
+  }, [panelRun]);
 
   // Opens once, on the loaded transcript (AC-234.17): at the oldest pending permission card,
   // else at the latest entry (the stick-to-bottom hook starts pinned).
@@ -311,8 +323,21 @@ export function Transcript({
     follow.pin("smooth");
   };
 
+  const stepsOf = (runEntries: readonly RunEntry[]): ActivityStep[] =>
+    runEntries.flatMap((entry): ActivityStep[] => {
+      if (entry.kind === "thinking") return [{ kind: "thinking", key: entry.key, entry }];
+      const tool = state.tools[entry.toolId];
+      return tool
+        ? [{ kind: "tool", key: entry.key, tool, request: attachedTo(entry.toolId) }]
+        : [];
+    });
+  const rows = rowsOf(state.entries, attached, start);
+  const shownRun =
+    panelRun === null ? undefined : rows.find((row) => row.kind === "run" && row.key === panelRun);
+  const panelSteps = shownRun?.kind === "run" ? stepsOf(shownRun.entries) : null;
+
   return (
-    <div className="as-body">
+    <div className={cx("as-body", panelSteps && "as-body-panel")}>
       {/* A scroll container takes focus so the keyboard can scroll it and press End. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-static-element-interactions */}
       <div className="as-scroll" ref={attach} tabIndex={0} onKeyDown={onKeyDown}>
@@ -331,19 +356,16 @@ export function Transcript({
           {state.entries.length === 0 && (
             <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
           )}
-          {rowsOf(state.entries, attached, start).map((row) => {
+          {rows.map((row) => {
             if (row.kind === "run") {
-              const items = row.entries.flatMap(({ toolId }): GroupItem[] => {
-                const tool = state.tools[toolId];
-                return tool ? [{ tool, request: attachedTo(toolId) }] : [];
-              });
               return (
                 <div key={row.key} className="as-entry as-settled">
-                  <ToolGroup
-                    items={items}
-                    tools={state.tools}
-                    calls={state.children}
-                    requests={state.permissions}
+                  <ActivityRun
+                    runKey={row.key}
+                    steps={stepsOf(row.entries)}
+                    selected={row.key === panelRun}
+                    live={state.status === "running"}
+                    onToggle={toggleRun}
                     onAnswerPermission={onAnswerPermission}
                   />
                 </div>
@@ -381,6 +403,15 @@ export function Transcript({
           </p>
         )}
       </div>
+      {panelSteps && (
+        <ActivityPanel
+          steps={panelSteps}
+          tools={state.tools}
+          calls={state.children}
+          requests={state.permissions}
+          onClose={closePanel}
+        />
+      )}
       {follow && !atBottom && (
         <JumpToLatest
           unseen={unseen}
