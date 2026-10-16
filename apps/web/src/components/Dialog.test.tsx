@@ -169,7 +169,7 @@ describe("Dialog", () => {
     expect(lower).toHaveBeenCalledTimes(1);
   });
 
-  it("pulls focus from a lower dialog back into the topmost on Tab", async () => {
+  it("pulls focus from a lower dialog back into the topmost on Shift+Tab", async () => {
     const lowerDialog = (
       <Dialog key="lower" title="Lower" onClose={vi.fn()} footer={<button>Lower save</button>} />
     );
@@ -177,7 +177,7 @@ describe("Dialog", () => {
     rerender(stack(lowerDialog, <Dialog key="upper" title="Upper" onClose={vi.fn()} />));
     screen.getByRole("button", { name: "Lower save" }).focus();
 
-    await userEvent.tab();
+    await userEvent.tab({ shift: true });
 
     const upper = screen.getByRole("dialog", { name: "Upper" });
     expect(within(upper).getByRole("button", { name: "Close" })).toHaveFocus();
