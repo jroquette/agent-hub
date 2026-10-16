@@ -24,7 +24,7 @@ import {
   type JsonObject,
   type PermissionDecisionView,
   type PermissionView,
-} from "./transcript";
+} from "./model";
 
 /** The request the chat's chords answer: the oldest pending one (AC-234.29). */
 export const OldestPendingContext = createContext<string | undefined>(undefined);

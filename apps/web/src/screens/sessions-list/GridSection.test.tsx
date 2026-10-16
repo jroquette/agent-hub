@@ -199,7 +199,7 @@ describe("SessionsListScreen grid", () => {
     expect(router.state.location.pathname).toBe("/sessions");
   });
 
-  it("shows a driven session without a twin as a Chat tile, and opens tiles where their rows open", async () => {
+  it("shows a driven session without a twin as a Chat tile, a twin by its prompt, and opens tiles where their rows open", async () => {
     const twin = aSession({
       id: anId(3, "aaaa0003"),
       label: named("twin"),
@@ -208,7 +208,12 @@ describe("SessionsListScreen grid", () => {
     });
     const plain = aSession({ id: anId(4, "aaaa0004"), label: named("plain"), status: "live" });
     const driven = [
-      anAgentSession({ id: anId(11, "0192a5e5"), observed_session_id: twin.id, status: "running" }),
+      anAgentSession({
+        id: anId(11, "0192a5e5"),
+        observed_session_id: twin.id,
+        title: "Run the tests",
+        status: "running",
+      }),
       anAgentSession({ id: anId(12, "0192a5e5"), title: "Fix the build", status: "running" }),
     ];
     const { router } = renderWithApi(<SessionsListScreen />, {
@@ -220,12 +225,13 @@ describe("SessionsListScreen grid", () => {
     const live = section(/^Live · 3/);
     expect(tilesIn(live)).toHaveLength(3);
     expect(within(tileOf("Fix the build")).getByText("Chat")).toBeInTheDocument();
-    expect(within(tileOf("/twin")).getByText("Chat")).toBeInTheDocument();
+    // The twin has no title of its own yet: its tile reads the driven session's prompt.
+    expect(within(tileOf("Run the tests")).getByText("Chat")).toBeInTheDocument();
     expect(within(tileOf("/plain")).queryByText("Chat")).toBeNull();
 
     fireEvent.click(tileOf("Fix the build"));
     expect(router.state.location.pathname).toBe(`/agent-sessions/${anId(12, "0192a5e5")}`);
-    fireEvent.click(tileOf("/twin"));
+    fireEvent.click(tileOf("Run the tests"));
     expect(router.state.location.pathname).toBe(`/agent-sessions/${anId(11, "0192a5e5")}`);
     fireEvent.keyDown(tileOf("/plain"), { key: "Enter" });
     await waitFor(() => {

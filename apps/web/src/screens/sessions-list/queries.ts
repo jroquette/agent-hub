@@ -2,12 +2,22 @@ import {
   keepPreviousData,
   useInfiniteQuery,
   useMutation,
+  useQueries,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { components } from "../../api/schema";
-import { apiGet, apiKey, apiPost, useApi, type ApiParams, type ApiProblem } from "../../lib/api";
+import {
+  apiGet,
+  apiKey,
+  apiPost,
+  apiQuery,
+  useApi,
+  type ApiParams,
+  type ApiProblem,
+} from "../../lib/api";
+import { derivedWorkdirId, servedCheckout } from "../../lib/devCheckout";
 import { openStream } from "../../lib/sse";
 import type { SectionId } from "./sections";
 
@@ -185,6 +195,48 @@ export function useWorkdirs(project: string | null, enabled: boolean) {
     { query: { project: project ?? "" } },
     { enabled: enabled && project !== null, retry: false },
   );
+}
+
+/** The workdir ids the served checkout has as a repo or a worktree (E6), or null outside `make dev`. */
+function useServedIds(): ReadonlySet<string> | null {
+  const root = servedCheckout();
+  const [ids, setIds] = useState<ReadonlySet<string> | null>(null);
+  useEffect(() => {
+    if (root === null) return;
+    // No ids is the honest fallback when they cannot be derived (no crypto.subtle).
+    Promise.all([derivedWorkdirId("repo", root), derivedWorkdirId("worktree", root)])
+      .then((derived) => {
+        setIds(new Set(derived));
+      })
+      .catch(() => undefined);
+  }, [root]);
+  return ids;
+}
+
+/**
+ * Under `make dev`, `make live` or `make playground`, the registered project that lists the served
+ * checkout as a folder, and that folder's id, so a session started from the dev app (a shake or New
+ * session) edits what the dev server shows; both null otherwise.
+ */
+export function useServedFolder(
+  projects: readonly string[],
+  canDrive: boolean,
+): { project: string | null; workdirId: string | null } {
+  const ids = useServedIds();
+  const listings = useQueries({
+    queries: projects.map((project) => ({
+      ...apiQuery("/api/v1/agent-sessions/workdirs", { query: { project } }),
+      enabled: canDrive && ids !== null,
+      retry: false,
+    })),
+  });
+  if (ids !== null) {
+    for (const [at, listing] of listings.entries()) {
+      const folder = listing.data?.items.find((w) => ids.has(w.workdir_id));
+      if (folder) return { project: projects[at] ?? null, workdirId: folder.workdir_id };
+    }
+  }
+  return { project: null, workdirId: null };
 }
 
 /** The cloud starts of `project`, newest first. */

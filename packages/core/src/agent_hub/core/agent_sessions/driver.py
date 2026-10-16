@@ -29,10 +29,12 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, mo
 from agent_hub.core.readmodels.view_types import ApiTimestamp, Money
 from agent_hub.core.sessions.session import TokenUsage
 
-# The modes the web offers (D5); never bypassPermissions, dontAsk or auto. The adapter maps
-# ``default`` to the installed CLI's own name for it when that differs (E15).
-type PermissionMode = Literal["default", "acceptEdits", "plan"]
-PERMISSION_MODES: Final = ("default", "acceptEdits", "plan")
+# The modes the web offers (D5); never bypassPermissions or dontAsk. ``auto`` (Claude Code's
+# classifier approves safe actions and blocks risky ones) is offered only by the dev app of
+# ``make playground``, where the developer works with the agent on their own checkout. The adapter
+# maps ``default`` to the installed CLI's own name for it when that differs (E15).
+type PermissionMode = Literal["default", "acceptEdits", "plan", "auto"]
+PERMISSION_MODES: Final = ("default", "acceptEdits", "plan", "auto")
 
 # A model is an alias or an id matching the pattern (L6); an unknown but valid id reaches the
 # CLI, whose refusal becomes an ``error`` record.

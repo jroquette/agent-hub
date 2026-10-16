@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { ToolCallCard, resultText } from "./ToolCallCard";
-import type { PermissionView, ToolResultView, ToolView } from "./transcript";
+import type { PermissionView, ToolResultView, ToolView } from "./model";
 
 function aTool(overrides: Partial<ToolView> = {}): ToolView {
   return {

@@ -20,6 +20,7 @@ describe("sessionIdentity", () => {
     expect(sessionIdentity(session)).toEqual({
       title: "DEMO-1511 · /feature",
       detail: "demo · main",
+      named: false,
     });
   });
 
@@ -38,16 +39,49 @@ describe("sessionIdentity", () => {
     expect(sessionIdentity(aSession({ id: ID, label: bare }))).toEqual({
       title: "agent-hub · dev/agh-48-live-tiles",
       detail: "5091b986",
+      named: false,
     });
     expect(
       sessionIdentity(
         aSession({ id: ID, repo: "web", label: { ...bare, repo: null, branch: null } }),
       ),
-    ).toEqual({ title: "web", detail: "5091b986" });
+    ).toEqual({ title: "web", detail: "5091b986", named: false });
     expect(sessionIdentity(aSession({ id: ID, repo: null, label: null }))).toEqual({
       title: "5091b986",
       detail: null,
+      named: false,
     });
+  });
+
+  it("reads the session's name over issue, workflow, repo and branch when it has a title", () => {
+    const session = aSession({
+      label: aSessionLabel({
+        title: "Orders export as CSV",
+        issue: "DEMO-1511",
+        workflow: "/feature",
+        repo: "demo",
+        branch: "main",
+      }),
+    });
+
+    expect(sessionIdentity(session)).toEqual({
+      title: "Orders export as CSV",
+      detail: "DEMO-1511 · /feature · demo · main",
+      named: true,
+    });
+  });
+
+  it("keeps the short id under the name when the label has nothing else", () => {
+    const label = aSessionLabel({
+      title: "Orders export",
+      issue: null,
+      workflow: null,
+      repo: null,
+      branch: null,
+    });
+
+    expect(sessionIdentity(aSession({ id: ID, repo: null, label })).detail).toBe("5091b986");
+    expect(sessionIdentity(aSession({ label: aSessionLabel({ title: "  " }) })).named).toBe(false);
   });
 
   it("uses the session's repo when the label has none", () => {
@@ -75,6 +109,17 @@ describe("SessionLabel", () => {
     expect(screen.getByText("DEMO-1511 · /feature")).toBeInTheDocument();
     expect(screen.getByText("demo · roquettejh/demo-1511-x")).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/\bmain\b/);
+  });
+
+  it("renders the name in prose, not as an identifier, when the session has a title", () => {
+    render(
+      <SessionLabel session={aSession({ label: aSessionLabel({ title: "Orders export" }) })} />,
+    );
+
+    expect(screen.getByText("Orders export")).not.toHaveClass("ah-mono");
+    expect(screen.getByText("AGH-48 · /feature · agent-hub · dev/agh-48-live-tiles")).toHaveClass(
+      "ah-mono",
+    );
   });
 
   it("is never blank when the session has no label, repo or branch (AC-201.5)", () => {
