@@ -547,7 +547,7 @@ describe("changedFiles (review)", () => {
     result: { content: "ok", isError, truncated: false, originalBytes: null },
   });
 
-  it("groups the changes by file in order, counting only the lines of applied changes", () => {
+  it("groups the changes by file in order, counting only the lines of applied changes (AC-265.7)", () => {
     const files = changedFiles({
       tools: {
         t1: tool("t1", "Write", { file_path: "/repo/src/a.ts", content: "one\ntwo" }),

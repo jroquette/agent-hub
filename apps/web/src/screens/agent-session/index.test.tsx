@@ -1281,7 +1281,7 @@ describe("AgentSessionScreen (unavailable)", () => {
 });
 
 describe("AgentSessionScreen (changed-files)", () => {
-  it("opens the files Claude changed in a drawer, which a run line swaps for its activity", async () => {
+  it("opens the files Claude changed in a drawer, which a run line swaps for its activity (AC-265.7, AC-265.13)", async () => {
     renderChat(
       routes({
         [EVENTS]: {
@@ -1310,7 +1310,7 @@ describe("AgentSessionScreen (changed-files)", () => {
 });
 
 describe("AgentSessionScreen (run-files-card)", () => {
-  it("shows the files a turn edited under its line, each opening the review on that file", async () => {
+  it("shows the files a turn edited under its line, each opening the review on that file (AC-265.11)", async () => {
     renderChat(
       routes({
         [EVENTS]: {

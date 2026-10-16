@@ -23,12 +23,12 @@ afterEach(() => {
 });
 
 describe("useDrawerWidth (drawer)", () => {
-  it("keeps the chat's minimum beside the widest drawer", () => {
+  it("keeps the chat's minimum beside the widest drawer (AC-265.12)", () => {
     expect(drawerMax(1200)).toBe(920);
     expect(drawerMax(400)).toBe(DRAWER_MIN);
   });
 
-  it("starts at the page's default, then resizes from the keyboard and keeps the width", async () => {
+  it("starts at the page's default, then resizes from the keyboard and keeps the width (AC-265.12)", async () => {
     window.localStorage.setItem(DRAWER_WIDTH_KEY, "500");
     render(<Drawer />);
     const handle = screen.getByRole("separator", { name: "Resize the panel" });
@@ -41,7 +41,7 @@ describe("useDrawerWidth (drawer)", () => {
     expect(window.localStorage.getItem(DRAWER_WIDTH_KEY)).toBeNull();
   });
 
-  it("widens to the whole page and back", async () => {
+  it("widens to the whole page and back (AC-265.12)", async () => {
     window.localStorage.setItem(DRAWER_WIDTH_KEY, "480");
     render(<Drawer />);
 
