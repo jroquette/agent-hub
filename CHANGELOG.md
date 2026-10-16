@@ -67,9 +67,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   focus; Mode and Model wait under Options with a one-line summary, Ctrl+Enter or Cmd+Enter starts, and a disabled
   Start says why. The "Start sessions in" select left the Sessions header, and the dialog no longer lists past
   sessions to resume or fork, so the app offers no resume or fork for now (docs/USING.md says so) (AGH-248).
-- Resume and fork are back, through Resume: an ended or failed driven session offers it in its chat header, its row
-  and its tile, and it opens New session prefilled with that session and a Fork checkbox, closing the gap AGH-248 left
-  (AGH-249, AC-234.15).
+- Resume and fork are back: an ended or failed driven session's row and tile in Sessions carry a Resume link to its
+  chat, where a message resumes it in place, and Fork… in the chat opens New session on its folder, mode and model to
+  start a new conversation from it, closing the gap AGH-248 left (AGH-249, AC-234.15).
 
 ## [0.15.0] - 2026-10-16
 
