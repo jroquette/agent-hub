@@ -6,6 +6,7 @@ import { Banner, EmptyState, Icon, ProblemError, Skeleton } from "../../componen
 import { useApi } from "../../lib/api";
 import { brainRoute } from "../../lib/brainLinks";
 import { useScope } from "../../lib/scope";
+import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { NoteView } from "./NoteView";
 import { useBrainTree } from "./queries";
 import { buildTree, noteName, type BrainFolder } from "./tree";
@@ -105,6 +106,13 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
 export function BrainScreen() {
   const { project = "", "*": rest = "" } = useParams();
   const path = rest === "" ? DEFAULT_NOTE : rest;
+  useDiscussTarget({
+    key: `brain:${project}:${path}`,
+    project,
+    kind: "Note",
+    title: path,
+    path: `brain/${path}`,
+  });
   return (
     <div className="ah-page" style={{ gap: 16 }}>
       <div className="ah-row ah-wrap" style={{ gap: 12 }}>
@@ -119,6 +127,8 @@ export function BrainScreen() {
           <div className="ah-row" style={{ gap: 8 }}>
             <Icon name="file-text" size="sm" />
             <span className="ah-mono ah-small">brain/{path}</span>
+            <span className="ah-grow" />
+            <DiscussButton />
           </div>
           <NoteView key={path} project={project} path={path} />
         </article>

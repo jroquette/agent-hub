@@ -1,5 +1,8 @@
 /**
- * What a session is about (S1, AC-201.4, AC-201.5): `DEMO-1511 · /feature` over `repo · branch`.
+ * What a session is about (S1, AC-201.4, AC-201.5): its name over `DEMO-1511 · /feature · repo · branch`.
+ *
+ * The name is the session's title (the user's `/rename`, else the one Claude Code wrote, ADR 0035).
+ * Without one, the title is `DEMO-1511 · /feature` over `repo · branch`, as before.
  *
  * The deprecated `agent` field is never shown: the main agent's stored value "main" read as a branch
  * and said nothing about the session. Without an issue or a workflow the title falls back to
@@ -17,10 +20,12 @@ export interface LabelledSession {
 }
 
 export interface SessionIdentity {
-  /** `DEMO-1511 · /feature`, else `repo · branch`, else the short id. */
+  /** The session's name, else `DEMO-1511 · /feature`, else `repo · branch`, else the short id. */
   title: string;
-  /** What the title leaves out: `repo · branch` under an issue or workflow, else the short id. */
+  /** What the title leaves out: issue, workflow, repo and branch under a name, else the short id. */
   detail: string | null;
+  /** Whether `title` is the session's name (prose), not an identifier. */
+  named: boolean;
 }
 
 export const shortSessionId = (id: string) => id.replace(/-/g, "").slice(0, 8);
@@ -33,9 +38,11 @@ export function sessionIdentity(session: LabelledSession): SessionIdentity {
   const what = joined(label?.issue, label?.workflow);
   const where = joined(label?.repo ?? session.repo, label?.branch);
   const short = shortSessionId(session.id);
-  if (what) return { title: what, detail: where || null };
-  if (where) return { title: where, detail: short };
-  return { title: short, detail: null };
+  const name = label?.title?.trim();
+  if (name) return { title: name, detail: joined(what, where) || short, named: true };
+  if (what) return { title: what, detail: where || null, named: false };
+  if (where) return { title: where, detail: short, named: false };
+  return { title: short, detail: null, named: false };
 }
 
 /** One line of text for aria labels and announcements: "DEMO-1511 · /feature, demo · main". */
@@ -50,14 +57,19 @@ export interface SessionLabelProps {
   titleClassName?: string | undefined;
 }
 
-/** The session cell of lists and tiles: the title, then `repo · branch` below. */
+/** The session cell of lists and tiles: the title, then what it leaves out below. */
 export function SessionLabel({ session, titleClassName }: SessionLabelProps) {
-  const { title, detail } = sessionIdentity(session);
+  const { title, detail, named } = sessionIdentity(session);
   return (
     <span className="ah-stack" style={{ gap: 0, minWidth: 0 }}>
       <span
-        className={titleClassName ?? "ah-mono"}
-        style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        className={titleClassName ?? (named ? undefined : "ah-mono")}
+        style={{
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          ...(named && { fontWeight: 500 }),
+        }}
         title={title}
       >
         {title}

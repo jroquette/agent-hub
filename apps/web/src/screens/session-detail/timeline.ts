@@ -557,7 +557,11 @@ function withSearch(row: TraceEvent): TraceEvent {
 function rowsOf(events: ApiEvent[]): TraceEvent[] {
   const kept = events
     .filter(
-      (event) => !event.conflict && event.type !== "session.summary" && !isUsageCarrier(event),
+      (event) =>
+        !event.conflict &&
+        event.type !== "session.summary" &&
+        event.type !== "session.title" &&
+        !isUsageCarrier(event),
     )
     .sort((a, b) =>
       a.timestamp === b.timestamp ? a.seq - b.seq : a.timestamp < b.timestamp ? -1 : 1,

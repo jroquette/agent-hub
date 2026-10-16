@@ -1882,7 +1882,8 @@ export interface components {
       | "step.start"
       | "step.end"
       | "run.end"
-      | "session.summary";
+      | "session.summary"
+      | "session.title";
     /**
      * ExternalBlocker
      * @description A blocker outside the feature's tickets, with its status when Linear returned it.
@@ -2908,7 +2909,7 @@ export interface components {
       suggestion?: number | null;
     };
     /** @enum {string} */
-    PermissionMode: "default" | "acceptEdits" | "plan";
+    PermissionMode: "default" | "acceptEdits" | "plan" | "auto";
     /**
      * PermissionSuggestion
      * @description A rule Claude suggests for "always allow"; ``index`` is its position in the request,
@@ -3514,7 +3515,8 @@ export interface components {
      *     ``issue`` is ``<TEAM>-<n>`` found in ``branch`` or ``worktree`` with the hub's tracker teams,
      *     else ``None``, never a guess. ``workflow`` is the session's main slash command or skill
      *     (``/feature``); ``workflows`` lists every one in order. ``worktree`` is the folder name under
-     *     ``.claude/worktrees/`` in the session's ``cwd``.
+     *     ``.claude/worktrees/`` in the session's ``cwd``. ``title`` is the session's short name: the
+     *     one the user set (``/rename``), else the one Claude Code wrote (ADR 0035), else ``None``.
      */
     SessionLabel: {
       /** Branch */
@@ -3528,6 +3530,8 @@ export interface components {
       issue: string | null;
       /** Repo */
       repo: string | null;
+      /** Title */
+      title?: string | null;
       /** Workflow */
       workflow: string | null;
       /** Workflows */

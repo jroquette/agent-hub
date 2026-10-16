@@ -411,6 +411,16 @@ def claude_adapters(environ: Mapping[str, str]) -> tuple[SessionDriver, CloudLau
     return ClaudeSdkSessionDriver(environ=environ), ClaudeCloudLauncher(environ=environ)
 
 
+def claude_session_title() -> Callable[[str, str], str | None] | None:
+    """What reads the title Claude Code gave a session (its ``ai-title`` or ``/rename``), or
+    None when the ``sessions`` extra is not installed (P2)."""
+    try:
+        from agent_hub.claude_sessions.resumable import session_title  # noqa: PLC0415
+    except ImportError:
+        return None
+    return session_title
+
+
 def web_url(settings: ApiSettings) -> str:
     """The URL the children reach ``hub web`` at (``AGENT_HUB_WEB_URL``): the bound address
     and port, an IPv6 one in brackets; a bind on every address (the container's) is reached at
@@ -442,10 +452,12 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
     launcher: CloudLauncher,
     url: str,
     observed_sessions: ObservedSessionLookup | None = None,
+    session_title: Callable[[str, str], str | None] | None = None,
 ) -> AgentSessionWiring:
     """``AgentSessionControl``, ``CloudSessions`` and ``AgentSessionLinks`` over ``driver``,
     ``launcher`` and ``store``; the children get ``AGENT_HUB_WEB_URL=url`` (never the token).
-    ``observed_sessions`` fills each agent session's ``observed_session_id``."""
+    ``observed_sessions`` fills each agent session's ``observed_session_id``; ``session_title``
+    names a driven session after the title Claude Code gave it."""
     control = AgentSessionControl(
         driver,
         store,
@@ -454,6 +466,7 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
         limits=settings.limits,
         environment_extra={"AGENT_HUB_WEB_URL": url},
         observed_sessions=observed_sessions,
+        session_title=session_title,
     )
     cloud = CloudSessions(
         launcher=launcher,
@@ -647,6 +660,8 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
     if settings.sessions_off:
         return None
     env: Mapping[str, str] = os.environ if environ is None else environ
+    # The title is read from the CLI's own files, so only with the CLI's own driver.
+    session_title = claude_session_title() if session_driver is None else None
     if session_driver is None or cloud_launcher is None:
         driver, launcher = claude_adapters(env)
         session_driver = session_driver or driver
@@ -661,4 +676,5 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
         launcher=cloud_launcher,
         url=web_url(settings),
         observed_sessions=observed_sessions,
+        session_title=session_title,
     )

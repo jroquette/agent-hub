@@ -22,11 +22,24 @@
 .ah-skills-search {
   max-width: 480px;
 }
+.ah-skills-group + .ah-skills-group {
+  margin-top: var(--space-4);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border);
+}
 .ah-skills-group > h2 {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-bottom: var(--space-3);
+  margin: 0 0 var(--space-1);
+}
+/* One line under a group's heading saying what that kind is. */
+.ah-skills-group-help {
+  margin: 0 0 var(--space-3);
+  max-width: 80ch;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 18px;
 }
 .ah-skills-grid {
   list-style: none;
@@ -182,4 +195,281 @@
 .ah-skills-pick:hover {
   background: var(--surface-hover);
   color: var(--text);
+}
+
+/* Page head: title and the Create button. */
+.ah-skills-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.ah-create-menu {
+  position: relative;
+}
+.ah-create-pop {
+  top: calc(100% + 6px);
+  right: 0;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ah-create-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-create-option:hover,
+.ah-create-option:focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+.ah-create-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ah-create-option-name {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+.ah-create-option-line {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* Kind tiles: the tabs of the catalog, with what each kind is and how much it is used. */
+.ah-kind-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-2);
+}
+.ah-kind-tile {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-kind-tile:hover {
+  border-color: var(--border-strong);
+}
+.ah-kind-tile[aria-selected="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.ah-kind-tile-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ah-kind-tile-label {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 20px;
+}
+.ah-kind-tile-count {
+  margin-left: 4px;
+  color: var(--text-muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.ah-kind-tile-line {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+.ah-kind-tile-used {
+  color: var(--text-subtle);
+  font-size: 11.5px;
+  line-height: 16px;
+}
+.ah-kind-badge {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ah-kind-badge[data-kind="agent"] {
+  background: var(--done-soft);
+  color: var(--done);
+}
+.ah-kind-badge[data-kind="hook"] {
+  background: var(--waiting-soft);
+  color: var(--waiting);
+}
+.ah-kind-badge[data-kind="all"] {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+.ah-skills-toolbar {
+  gap: var(--space-3);
+}
+
+/* Group head: heading and help on the left, New … with Claude on the right. */
+.ah-skills-group-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.ah-skills-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.ah-skills-new:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+/* Card title: name over its kind. */
+.ah-skill-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ah-skill-title .ah-skill-kind {
+  font-size: 11.5px;
+  line-height: 14px;
+}
+
+/* Hooks: compact rows grouped by lifecycle event. */
+.ah-hook-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.ah-hook-event {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ah-hook-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.ah-hook-row-item + .ah-hook-row-item {
+  border-top: 1px solid var(--border);
+}
+.ah-hook-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 160px) minmax(0, 1fr) minmax(0, 220px) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 6px var(--space-3);
+  font-size: 12.5px;
+}
+.ah-hook-row:hover {
+  background: var(--surface-hover);
+}
+.ah-hook-matcher {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-hook-command {
+  font: 400 12px/18px var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-hook-name {
+  margin: 0;
+  font: 400 12px/18px var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-hook-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-self: end;
+}
+@media (max-width: 1200px) {
+  .ah-hook-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .ah-hook-matcher,
+  .ah-hook-name {
+    display: none;
+  }
+}
+
+/* Drafts the Studio has in progress. */
+.ah-drafts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-drafts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.ah-draft-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-3) 4px 4px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.ah-draft-pill .ah-kind-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+}
+.ah-draft-pill:hover {
+  border-color: var(--accent);
+  text-decoration: none;
 }

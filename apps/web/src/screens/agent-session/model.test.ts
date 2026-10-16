@@ -18,7 +18,7 @@ import {
   unifiedDiff,
   type StreamItem,
   type TranscriptState,
-} from "./transcript";
+} from "./model";
 
 const record = (...args: Parameters<typeof aLogRecord>): StreamItem => ({
   type: "record",

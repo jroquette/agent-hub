@@ -142,7 +142,8 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   login. No platform code reads a token or opens `~/.claude/.credentials.json`.
 - A child's environment is `hub web`'s own plus `AGENT_HUB_WEB_URL` (the bound address); never the token or the
   cookie name. Its stderr is discarded; no shell is used anywhere.
-- Never a bypass mode (`bypassPermissions`, `dontAsk`, `auto`); never a path from the browser.
+- Never a bypass mode (`bypassPermissions`, `dontAsk`); `auto` only in the dev app of `make playground`
+  ([ADR 0036](../adr/0036-live-playground-and-auto-mode.md)); never a path from the browser.
 - Stored text is redacted; the live view is not; no log line, problem detail or metric holds conversation text.
 - Every request and decision is a record; an unanswered request is a deny, never an allow.
 - No `claude` survives `hub web`; session control is off in the container (`AGENT_HUB_IN_CONTAINER=1`).
