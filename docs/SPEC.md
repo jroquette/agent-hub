@@ -125,7 +125,8 @@ agent-hub image sets; there it binds `0.0.0.0` and Compose publishes the port on
 `~/.claude/projects` as the only folder the transcript tail reads. Hubs are registered from the app (Settings › Hubs)
 into `$XDG_CONFIG_HOME/agent-hub/hubs.json` (absolute only), else `~/.config/agent-hub/hubs.json` (mode 0600).
 The repo's `make run` (local), `make up`/`down`/`logs`/`ps` (Docker Compose), `make dev` (API plus the Vite dev
-server), `make demo` (synthetic data) and `make connect HUB=<path>` (register a hub, check its sensor) run it.
+server), `make live` and `make playground` (the live loop for agent-hub's own web app, below), `make demo` (synthetic
+data) and `make connect HUB=<path>` (register a hub, check its sensor) run it.
 
 `hub next` reads `list_ready` once per team, in `hub.json` order, and prints `<id>  <repo>  <title>  <url>` per issue,
 oldest first within each team. With several teams a failing team gets one `team <KEY>: <reason>` line on stderr while
@@ -440,9 +441,11 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
   `agent-hub[sessions]`; without it, or without `claude`, the screen says why and every write answers 503.
 - **Control.** Send messages (also while a turn runs), interrupt, answer permission prompts (allow once, deny with a
   message, always allow one suggested rule; `AskUserQuestion` and plan approval too; unanswered in 10 minutes is a
-  deny), change mode (`default`, `acceptEdits`, `plan`; never a bypass mode) and model, close, resume or fork a past
-  session of that workdir, delete an ended one. At most 4 live sessions; an idle one ends after 30 minutes; every limit
-  is a `hub web` option with an `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
+  deny), change mode (`default`, `acceptEdits`, `plan`, and `auto` from the dev app only,
+  [ADR 0036](adr/0036-live-playground-and-auto-mode.md); never `bypassPermissions` or `dontAsk`) and model, close,
+  resume or fork a past session of that workdir, delete an ended one. A message to an ended local session (not
+  `log_full`) whose Claude conversation is still listed reopens it in place, same id and log (AGH-262). At most 4 live
+  sessions; an idle one ends after 30 minutes; every limit is a `hub web` option with an `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
   session left open by a crash is marked ended at the next start, and Resume picks it up.
 - **Log and stream.** Each session's log (gap-free `seq`) is streamed over SSE with `Last-Event-ID` replay; text
   deltas live only in memory. A session `hub web` drives links to the hook-observed Session by Claude's session id
@@ -480,6 +483,22 @@ replaces Live sessions and the separate list of driven sessions (design in
   clause) was read as design study material at commit `6a18585` (v0.12.2) for chat and list interaction patterns.
   We write our own React code. Nothing was copied, no asset or branding is used, and `NOTICE` and `LICENSES/` do not
   change. Open WebUI is not affiliated with, and has not endorsed, this project.
+
+**Live playground, Discuss and Studio (AGH-262, [ADR 0036](adr/0036-live-playground-and-auto-mode.md)).** Ways to
+work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub web`:
+
+- **Playground.** `make playground` runs a conductor `hub web` (7420, from a copy of the checkout taken at each
+  start) that drives the sessions, and `make live`: the checkout's API on 7421, restarted on each Python change, and
+  the web app on 5173, whose proxy sends the agent-session routes to the conductor, so a change never ends a session.
+  One address (`/__playground/session?token=`) signs the browser in. The dev app's shake and New session start in
+  the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps never offer it.
+- **Discuss.** A right-hand panel holds one driven session per feature, workflow, skill, agent, hook or note on
+  screen, started in the hub folder with that artifact as context; a feature opens it on arrival, and an acceptance
+  criterion or a selected passage can be pointed at.
+- **Studio.** Create a skill, an agent or a hook with Claude: the session writes a draft under `.hub-drafts/<id>/`
+  in the hub and the preview renders it as the catalog card it will be. The Skills catalog has a tab per kind.
+- **Session names.** A session's name is the title Claude Code writes in its transcript, or the user's `/rename`,
+  stored as `session.title` ([ADR 0035](adr/0035-session-titles.md), below).
 
 **Skills tab (AGH-164, built).** Knowledge › Skills shows what a hub's agents can do, read from its files on request
 and never stored:
