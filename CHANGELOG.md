@@ -28,7 +28,7 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - New session is short: Where (the project, then the working folder last used for it) and the Prompt, which has
   focus; Mode and Model wait under Options with a one-line summary, Ctrl+Enter or Cmd+Enter starts, and a disabled
   Start says why. The "Start sessions in" select left the Sessions header, and the dialog no longer lists past
-  sessions to resume or fork (AGH-248).
+  sessions to resume or fork, so the app offers no resume or fork for now (docs/USING.md says so) (AGH-248).
 
 ## [0.15.0] - 2026-10-16
 
