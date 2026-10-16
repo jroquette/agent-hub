@@ -7,32 +7,70 @@ from typing import Any
 import pytest
 
 from scripts.playground_export import (
+    NO_SESSION,
     SCREEN_ROUTES,
     SHELL_ROUTES,
     Commit,
+    RequestsUnavailableError,
+    Session,
+    Turn,
     area_of,
-    attach_requests,
+    build_requests,
+    capture_routes,
+    commit_patches,
+    conductor_logs,
     conductor_token,
     delivering_branches,
+    equivalent_on,
     git,
-    group_commits,
     hub_changes,
-    link_session,
+    owner_sessions,
+    read_session,
     render_brief,
     route_patterns,
     routes_of,
+    screens_of,
+    slug_of,
+    uncommitted,
+    uncommitted_patch,
 )
 
 ROUTES_FILE = Path(__file__).resolve().parents[3] / "apps" / "web" / "src" / "routes.tsx"
 SCREENS_DIR = ROUTES_FILE.parent / "screens"
+CREATED = datetime(2026, 10, 16, 12, tzinfo=UTC)
 
 
 def _commit(sha: str, *files: str, subject: str = "feat(web): a step", body: str = "") -> Commit:
-    return Commit(sha, subject, body, datetime(2026, 10, 16, 12, tzinfo=UTC), files)
+    return Commit(sha, subject, body, CREATED, files)
 
 
 def _bash(command: str) -> dict[str, Any]:
     return {"kind": "tool.call", "body": {"name": "Bash", "input": {"command": command}}}
+
+
+def _said(text: str, **body: Any) -> dict[str, Any]:
+    return {
+        "kind": "user.message",
+        "at": "2026-10-16T12:08:35.454Z",
+        "body": {"text": text, **body},
+    }
+
+
+def _session(title: str, *turns: Turn, folder: str = "agent-hub", **fields: Any) -> Session:
+    return Session(f"id-{title}-{len(turns)}", title, folder, CREATED, list(turns), **fields)
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git("init", "-q", "-b", "main", cwd=repo)
+    git("config", "user.email", "owner@example.com", cwd=repo)
+    git("config", "user.name", "Owner", cwd=repo)
+    (repo / ".gitattributes").write_text("dist/** linguist-generated\n", "utf-8")
+    (repo / "app.py").write_text("one\n", "utf-8")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "chore: start", cwd=repo)
+    return repo
 
 
 @pytest.mark.parametrize(
@@ -52,20 +90,13 @@ def test_places_file_in_first_matching_area_when_grouped(path: str, area: str) -
     assert area_of(path) == area
 
 
-def test_joins_commit_to_every_group_it_touches_when_grouped() -> None:
-    commits = [
-        _commit("a" * 40, "apps/web/src/screens/skills/Catalog.tsx", "packages/core/x.py"),
-        _commit("b" * 40, "apps/web/src/screens/skills/Catalog.tsx"),
-    ]
+def test_lists_every_area_screen_once_when_screens_read() -> None:
+    files = ["apps/web/src/screens/skills/Catalog.tsx", "apps/web/src/screens/skills/a.ts"]
 
-    groups = group_commits(commits)
+    screens, removed = screens_of([*files, "packages/core/x.py"])
 
-    assert [group.name for group in groups] == ["core", "skills"]
-    skills = groups[1]
-    assert skills.commits == ["a" * 40, "b" * 40]
-    assert skills.files == ["apps/web/src/screens/skills/Catalog.tsx"]
-    assert skills.screens == ["skills/skills"]
-    assert groups[0].screens == []
+    assert screens == ["skills/skills"]
+    assert removed == []
 
 
 def test_gives_shell_its_representative_routes_when_routes_asked() -> None:
@@ -78,22 +109,37 @@ def test_maps_every_screen_folder_when_routes_listed() -> None:
     assert folders <= set(SCREEN_ROUTES)
 
 
-def test_lists_requests_then_each_group_when_brief_rendered() -> None:
-    commits = [_commit("c" * 40, "apps/web/src/screens/skills/Catalog.tsx", body="Tabs per kind.")]
-    groups = group_commits(commits)
-    requests = [{"created_at": "2026-10-16T11:00:00+00:00", "title": "Organize the skills page"}]
+def test_puts_route_in_removed_screens_when_head_routes_lack_it() -> None:
+    routes = 'children: [{ path: "sessions", element: <S /> }, { path: "*", element: <N /> }]'
+    files = ["apps/web/src/screens/approvals/index.tsx", "apps/web/src/screens/sessions-list/a.tsx"]
 
-    brief = render_brief("a" * 40, "c" * 40, groups=groups, commits=commits, requests=requests)
+    screens, removed = screens_of(files, route_patterns(routes))
 
-    assert brief.index("Organize the skills page") < brief.index("## skills")
-    assert "`cccccccc` feat(web): a step" in brief
-    assert "  Tabs per kind." in brief
-    assert "`screens/skills/skills.png`" in brief
+    assert screens == ["sessions-list/sessions"]
+    assert removed == ["/approvals"]
 
 
-def test_says_none_found_when_no_request_given() -> None:
-    brief = render_brief("a" * 40, "c" * 40, groups=[], commits=[], requests=[])
-    assert "- (none found)" in brief
+def test_matches_param_and_index_routes_when_head_routes_read() -> None:
+    patterns = route_patterns('{ path: "projects/:project/skills", element: <K /> }')
+    files = ["apps/web/src/screens/skills/a.tsx", "apps/web/src/shell/b.tsx"]
+
+    screens, _ = screens_of(files, patterns)
+
+    assert "skills/skills" in screens
+    assert "shell/portfolio" in screens
+
+
+def test_reads_every_route_of_routes_file_when_patterns_built() -> None:
+    patterns = route_patterns(ROUTES_FILE.read_text("utf-8"))
+    assert any(pattern.fullmatch("sessions") for pattern in patterns)
+    assert not any(pattern.fullmatch("no-such-screen") for pattern in patterns)
+
+
+def test_captures_shared_screen_once_when_two_requests_show_it() -> None:
+    routes = capture_routes(["agent-session/sessions", "skills/skills", "agent-session/sessions"])
+
+    assert [route["file"] for route in routes] == ["agent-session/sessions", "skills/skills"]
+    assert routes[0]["follow"] == "/agent-sessions/"
 
 
 def test_reads_last_token_when_log_holds_several(tmp_path: Path) -> None:
@@ -109,73 +155,214 @@ def test_returns_none_when_log_missing(tmp_path: Path) -> None:
     assert conductor_token(tmp_path / "missing.log") is None
 
 
-def test_puts_route_in_removed_screens_when_head_routes_lack_it() -> None:
-    routes = 'children: [{ path: "sessions", element: <S /> }, { path: "*", element: <N /> }]'
-    commits = [
-        _commit("d" * 40, "apps/web/src/screens/approvals/index.tsx"),
-        _commit("e" * 40, "apps/web/src/screens/sessions-list/index.tsx"),
-    ]
-
-    groups = {group.name: group for group in group_commits(commits, route_patterns(routes))}
-
-    assert groups["approvals"].screens == []
-    assert groups["approvals"].removed_screens == ["/approvals"]
-    assert groups["sessions-list"].screens == ["sessions-list/sessions"]
+def test_looks_in_tmpdir_first_when_no_log_given(tmp_path: Path) -> None:
+    logs = conductor_logs(None, {"TMPDIR": str(tmp_path)})
+    assert logs[0] == tmp_path / "agent-hub-conductor.log"
+    assert conductor_logs(tmp_path / "x.log", {}) == [tmp_path / "x.log"]
 
 
-def test_matches_param_and_index_routes_when_head_routes_read() -> None:
-    patterns = route_patterns('{ path: "projects/:project/skills", element: <K /> }')
-    commits = [_commit("f" * 40, "apps/web/src/screens/skills/a.tsx", "apps/web/src/shell/b.tsx")]
-
-    groups = {group.name: group for group in group_commits(commits, patterns)}
-
-    assert groups["skills"].screens == ["skills/skills"]
-    assert "shell/portfolio" in groups["shell"].screens
+def test_raises_requests_unavailable_when_no_log_has_token(tmp_path: Path) -> None:
+    with pytest.raises(RequestsUnavailableError, match="make playground"):
+        owner_sessions(CREATED, commits=[], logs=[tmp_path / "missing.log"])
 
 
-def test_reads_every_route_of_routes_file_when_patterns_built() -> None:
-    patterns = route_patterns(ROUTES_FILE.read_text("utf-8"))
-    assert any(pattern.fullmatch("sessions") for pattern in patterns)
-    assert not any(pattern.fullmatch("no-such-screen") for pattern in patterns)
-
-
-def test_keeps_other_pushed_branches_when_delivering_branches_listed() -> None:
+def test_leaves_out_main_and_own_branch_when_delivering_branches_listed() -> None:
     refs = ["origin", "origin/HEAD", "origin/main", "origin/dev", "origin/pr-branch"]
-    assert delivering_branches(refs, "dev") == ["origin/main", "origin/pr-branch"]
+    assert delivering_branches(refs, "dev") == ["origin/pr-branch"]
 
 
-def test_links_only_own_commits_when_sessions_ran_together() -> None:
+def test_opens_turn_per_message_and_links_its_own_commits_when_session_read() -> None:
     first = _commit("1" * 40, subject="feat(web): add the tabs")
     second = _commit("2" * 40, subject="feat(web): add the tabs to Brain")
+    later = _commit("3" * 40, subject="fix(web): a step")
     events = [
-        {"kind": "user.message", "body": {"text": "Put tabs on the page"}},
+        _said("Put tabs on the page", attachments=[{"kind": "screenshot", "bytes": 10}]),
         _bash("git log --oneline -5"),
         _bash('git add -A && git commit -q -m "feat(web): add the tabs\n\nWhy." && git log -1'),
+        {
+            "kind": "permission.decision",
+            "body": {"decision": "allow", "answers": {"Does it look right?": "Yes, ship it"}},
+        },
+        _said("Now fix the step"),
+        _bash("git commit -F - <<'EOF'\nfix(web): a step\n\nBody.\nEOF"),
     ]
 
-    prompt, linked = link_session(events, [first, second])
+    turns, _, _ = read_session(events, [first, second, later])
 
-    assert prompt == "Put tabs on the page"
-    assert linked == [first.sha]
-
-
-def test_links_heredoc_commit_when_message_comes_from_stdin() -> None:
-    commit = _commit("3" * 40, subject="fix(web): a step")
-    events = [_bash("git commit -F - <<'EOF'\nfix(web): a step\n\nBody.\nEOF")]
-    assert link_session(events, [commit]) == ("", [commit.sha])
+    assert [turn.message for turn in turns] == ["Put tabs on the page", "Now fix the step"]
+    assert turns[0].screenshot is True
+    assert turns[0].commits == [first.sha]
+    assert turns[0].answers == ["Does it look right? → Yes, ship it"]
+    assert turns[1].commits == [later.sha]
 
 
-def test_gives_group_its_requests_when_their_commits_are_in_it() -> None:
-    commits = [_commit("4" * 40, "apps/web/src/screens/skills/a.tsx")]
-    groups = group_commits(commits)
-    requests = [
-        {"title": "Skills layout", "commits": ["4" * 40]},
-        {"title": "Unrelated", "commits": []},
+def test_keeps_written_and_published_paths_when_session_read() -> None:
+    events = [
+        _said("Make a skill"),
+        {"kind": "tool.call", "body": {"name": "Write", "input": {"file_path": "/hub/brain/a.md"}}},
+        {"kind": "text", "body": {"text": "PUBLISHED plugin/p/skills/x/SKILL.md\nDone."}},
     ]
 
-    attach_requests(groups, requests)
+    _, written, published = read_session(events, [])
 
-    assert groups[0].requests == ["Skills layout"]
+    assert written == ["/hub/brain/a.md"]
+    assert published == ["plugin/p/skills/x/SKILL.md"]
+
+
+def test_merges_same_title_sessions_and_keeps_unclaimed_work_when_requests_built(
+    tmp_path: Path,
+) -> None:
+    commits = [
+        _commit("4" * 40, "apps/web/src/screens/skills/a.tsx"),
+        _commit("5" * 40, "Makefile"),
+    ]
+    sessions = [
+        _session("Skills layout", Turn("t1", "Make it clearer")),
+        _session("Skills layout", Turn("t2", "Go on", commits=["4" * 40])),
+        _session(
+            "Review skill",
+            Turn("t3", "Create it"),
+            folder="hub",
+            published=["plugin/p/skills/x/SKILL.md"],
+        ),
+        _session(
+            "Chat panel",
+            Turn("t4", "Add a panel"),
+            written=[str(tmp_path / "apps/web/src/screens/agent-session/Files.tsx")],
+        ),
+    ]
+
+    requests = build_requests(
+        sessions,
+        commits,
+        also_on={"4" * 40: "origin/pr"},
+        hub_files=["plugin/p/skills/x/SKILL.md", "notes.md"],
+        hub_root=tmp_path / "hub",
+        in_progress=["apps/web/src/screens/agent-session/Files.tsx", "loose.txt"],
+        checkout=tmp_path,
+    )
+
+    titles = [request.title for request in requests]
+    assert titles == ["Skills layout", "Review skill", "Chat panel", NO_SESSION]
+    skills, review, chat, leftover = requests
+    assert [turn.message for turn in skills.turns] == ["Make it clearer", "Go on"]
+    assert len(skills.sessions) == 2
+    assert skills.commits == ["4" * 40]
+    assert skills.screens == ["skills/skills"]
+    assert skills.also_on == {"4" * 40: "origin/pr"}
+    assert review.hub_files == ["plugin/p/skills/x/SKILL.md"]
+    assert chat.in_progress == ["apps/web/src/screens/agent-session/Files.tsx"]
+    assert chat.screens == ["agent-session/sessions"]
+    assert leftover.commits == ["5" * 40]
+    assert leftover.hub_files == ["notes.md"]
+    assert leftover.in_progress == ["loose.txt"]
+
+
+def test_keeps_untitled_sessions_apart_when_requests_built() -> None:
+    sessions = [_session("", Turn("t1", "First ask")), _session("", Turn("t2", "Other ask"))]
+    sessions[1].id = "other"
+
+    requests = build_requests(sessions, [])
+
+    assert [request.title for request in requests] == ["Untitled session", "Untitled session"]
+    assert [request.turns[0].message for request in requests] == ["First ask", "Other ask"]
+
+
+def test_renders_turns_answers_and_marks_when_brief_rendered() -> None:
+    commits = [_commit("6" * 40, "apps/web/src/screens/skills/a.tsx", body="Tabs per kind.")]
+    shipped = [_commit("7" * 40, "Makefile", subject="chore: already merged")]
+    turn = Turn(
+        "2026-10-16T12:08:35.454Z",
+        "Make the page clearer",
+        screenshot=True,
+        answers=["Looks right? → Yes"],
+        commits=["6" * 40, "7" * 40],
+    )
+    requests = build_requests(
+        [_session("Skills layout", turn), _session("Just talk", Turn("t", "What if?"))],
+        commits,
+        also_on={"6" * 40: "origin/pr"},
+    )
+    requests[0].patch = "requests/01-skills-layout.patch"
+
+    brief = render_brief(
+        "a" * 40,
+        "6" * 40,
+        requests=requests,
+        commits=commits,
+        shipped=shipped,
+        missing=["screens not captured: no Chromium"],
+    )
+
+    assert "## 1. Skills layout" in brief
+    assert "patch `requests/01-skills-layout.patch`" in brief
+    assert "1. 2026-10-16 12:08 UTC (with a screenshot)" in brief
+    assert "   > Make the page clearer" in brief
+    assert "   - Answered: Looks right? → Yes" in brief
+    assert "`66666666` feat(web): a step (also on origin/pr)" in brief
+    assert "`77777777` chore: already merged (also on origin/main)" in brief
+    assert "  Tabs per kind." in brief
+    assert "`screens/skills/skills.png`" in brief
+    assert "## 2. Just talk" in brief
+    assert "Nothing made yet" in brief
+    assert "- screens not captured: no Chromium" in brief
+    assert "## Already in origin/main (left out)" in brief
+
+
+def test_slugs_title_without_accents_when_patch_named() -> None:
+    assert slug_of("Revisão de UX: a tela!") == "reviso-de-ux-a-tela"
+    assert slug_of("???") == "request"
+
+
+def test_leaves_generated_files_out_when_patches_written(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / "dist").mkdir()
+    (repo / "dist" / "bundle.js").write_text("minified\n", "utf-8")
+    (repo / "app.py").write_text("two\n", "utf-8")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "feat: change the app", cwd=repo)
+    (repo / "dist" / "bundle.js").write_text("rebuilt\n", "utf-8")
+    git("commit", "-q", "-am", "build: rebuild", cwd=repo)
+    shas = git("rev-list", "--reverse", "HEAD~2..HEAD", cwd=repo).split()
+
+    patch = commit_patches(shas, cwd=repo)
+
+    assert "Subject: [PATCH] feat: change the app" in patch
+    assert "app.py" in patch
+    assert "bundle.js" not in patch
+    assert "build: rebuild" not in patch
+
+
+def test_finds_shared_and_cherry_picked_commits_when_branch_has_them(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    base = git("rev-parse", "HEAD", cwd=repo).strip()
+    for name in ("a", "b"):
+        (repo / f"{name}.py").write_text(f"{name}\n", "utf-8")
+        git("add", "-A", cwd=repo)
+        git("commit", "-q", "-m", f"feat: {name}", cwd=repo)
+    shared, picked = git("rev-list", "--reverse", f"{base}..HEAD", cwd=repo).split()
+    git("branch", "other", shared, cwd=repo)
+    git("checkout", "-q", "other", cwd=repo)
+    git("cherry-pick", "--allow-empty", "--keep-redundant-commits", picked, cwd=repo)
+    git("commit", "-q", "--amend", "-m", "feat: b, picked", cwd=repo)
+    git("checkout", "-q", "main", cwd=repo)
+
+    assert equivalent_on("other", base, "main", cwd=repo) == {shared, picked}
+
+
+def test_patches_new_and_changed_files_but_local_ones_when_uncommitted(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / "app.py").write_text("edited\n", "utf-8")
+    (repo / "new.py").write_text("brand new\n", "utf-8")
+    (repo / "CLAUDE.local.md").write_text("mine\n", "utf-8")
+
+    paths = uncommitted(cwd=repo)
+    patch = uncommitted_patch(paths, cwd=repo)
+
+    assert paths == ["app.py", "new.py"]
+    assert "+edited" in patch
+    assert "+brand new" in patch
+    assert git("diff", "--cached", "--name-only", cwd=repo) == ""
 
 
 def test_lists_only_owner_files_when_hub_changes_read(tmp_path: Path) -> None:
@@ -208,37 +395,3 @@ def test_lists_only_owner_files_when_hub_changes_read(tmp_path: Path) -> None:
 
 def test_returns_nothing_when_folder_is_no_hub(tmp_path: Path) -> None:
     assert hub_changes(tmp_path, datetime(2026, 10, 16, tzinfo=UTC)) == []
-
-
-def test_marks_delivered_and_lists_hub_and_in_progress_when_brief_rendered() -> None:
-    commits = [_commit("5" * 40, "apps/web/src/screens/skills/a.tsx")]
-    groups = group_commits(commits)
-    requests = [
-        {
-            "created_at": "2026-10-16T11:00:00+00:00",
-            "title": "Skills layout",
-            "folder": "agent-hub",
-            "prompt": "Make the page clearer",
-            "commits": ["5" * 40, "6" * 40],
-        }
-    ]
-    attach_requests(groups, requests)
-
-    brief = render_brief(
-        "a" * 40,
-        "5" * 40,
-        groups=groups,
-        commits=commits,
-        requests=requests,
-        left_out=[{"sha": "6" * 40, "subject": "feat(dev): tooling", "branch": "origin/pr"}],
-        in_progress=["packages/core/x.py"],
-        hub="agent-hub-hub",
-        hub_files=["plugin/p/skills/mine/SKILL.md"],
-    )
-
-    assert "Skills layout (in agent-hub): `55555555` `66666666` (delivered elsewhere)" in brief
-    assert "  > Make the page clearer" in brief
-    assert "Requests:\n\n- Skills layout" in brief
-    assert "## hub: agent-hub-hub" in brief
-    assert "`66666666` feat(dev): tooling (origin/pr)" in brief
-    assert "- `packages/core/x.py`" in brief
