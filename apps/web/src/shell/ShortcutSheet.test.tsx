@@ -16,6 +16,20 @@ function group(title: string): string[] {
   });
 }
 
+describe("ShortcutSheet (one-tab)", () => {
+  it("lists Sessions and no Live sessions under Go to", () => {
+    render(<ShortcutSheet onClose={vi.fn()} />);
+
+    expect(group("Go to")).toEqual([
+      "Portfolio: g p",
+      "Sessions: g s",
+      "Workflow runs: g r",
+      "Approvals: g a",
+      "Command palette: Ctrl K",
+    ]);
+  });
+});
+
 describe("ShortcutSheet (chat-shortcuts)", () => {
   it("lists the chat's keys in a Chat group", async () => {
     const { container } = render(<ShortcutSheet onClose={vi.fn()} />);
