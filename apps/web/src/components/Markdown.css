@@ -70,3 +70,56 @@
   text-decoration: underline dotted;
   cursor: help;
 }
+/* Highlighted code (AC-234.31, ADR 0034): highlight.js scopes on design tokens, both themes. */
+.ah-md-pre .hljs-keyword,
+.ah-md-pre .hljs-selector-tag,
+.ah-md-pre .hljs-name,
+.ah-md-pre .hljs-doctag {
+  color: var(--syntax-keyword);
+}
+.ah-md-pre .hljs-title,
+.ah-md-pre .hljs-type,
+.ah-md-pre .hljs-built_in,
+.ah-md-pre .hljs-section,
+.ah-md-pre .hljs-selector-id,
+.ah-md-pre .hljs-selector-class {
+  color: var(--syntax-title);
+}
+.ah-md-pre .hljs-string,
+.ah-md-pre .hljs-regexp,
+.ah-md-pre .hljs-symbol,
+.ah-md-pre .hljs-char {
+  color: var(--syntax-string);
+}
+.ah-md-pre .hljs-number,
+.ah-md-pre .hljs-literal,
+.ah-md-pre .hljs-bullet {
+  color: var(--syntax-number);
+}
+.ah-md-pre .hljs-attr,
+.ah-md-pre .hljs-attribute,
+.ah-md-pre .hljs-property,
+.ah-md-pre .hljs-variable,
+.ah-md-pre .hljs-template-variable,
+.ah-md-pre .hljs-link {
+  color: var(--syntax-key);
+}
+.ah-md-pre .hljs-comment,
+.ah-md-pre .hljs-quote,
+.ah-md-pre .hljs-meta {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+.ah-md-pre .hljs-addition {
+  color: var(--diff-add);
+}
+.ah-md-pre .hljs-deletion {
+  color: var(--diff-del);
+}
+.ah-md-pre .hljs-strong,
+.ah-md-pre .hljs-section {
+  font-weight: 600;
+}
+.ah-md-pre .hljs-emphasis {
+  font-style: italic;
+}

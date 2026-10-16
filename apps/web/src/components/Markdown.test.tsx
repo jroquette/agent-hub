@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
@@ -481,5 +481,132 @@ describe("Markdown tables (AC-234.23)", () => {
     expect(region).toHaveAttribute("tabindex", "0");
     expect(region).toHaveClass("ah-md-table");
     expect(within(region).getByRole("table")).toBeInTheDocument();
+  });
+});
+
+describe("Markdown highlight (AC-234.31)", () => {
+  const fence = (lang: string, body: string, close = true) =>
+    ["```" + lang, body, ...(close ? ["```"] : [])].join("\n");
+  const codeOf = (container: HTMLElement, index = 0) => {
+    const code = container.querySelectorAll<HTMLElement>("pre code")[index];
+    if (!code) throw new Error(`no code block ${String(index)}`);
+    return code;
+  };
+
+  it("highlight: colours a completed ts block from the lazy chunk and keeps label and Copy", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const { container } = render(<Markdown source={fence("ts", "const a: number = 1;")} />);
+
+    const code = codeOf(container);
+    expect(await within(code).findByText("const")).toHaveClass("hljs-keyword");
+    expect(code).toHaveTextContent("const a: number = 1;");
+    expect(code).toHaveClass("hljs");
+    const block = screen.getByRole("group", { name: "ts code" });
+    expect(within(block).getByText("ts", { selector: ".ah-md-lang" })).toBeInTheDocument();
+    fireEvent.click(within(block).getByRole("button", { name: "Copy code" }));
+    expect(writeText).toHaveBeenCalledWith("const a: number = 1;");
+    vi.unstubAllGlobals();
+  });
+
+  it("highlight: a block still streaming stays plain; the same block highlights once complete", async () => {
+    const open = ["```python", "def done(): pass", "```", "", "```ts", "const a = 1;"].join("\n");
+    const { container, rerender } = render(<Markdown source={open} streaming />);
+
+    // The closed python block highlights while the message streams; the open ts block does not.
+    expect(await within(codeOf(container, 0)).findByText("def")).toHaveClass("hljs-keyword");
+    expect(codeOf(container, 1).querySelector("span")).toBeNull();
+    expect(codeOf(container, 1)).toHaveTextContent("const a = 1;");
+
+    rerender(<Markdown source={open} streaming={false} />);
+    expect(await within(codeOf(container, 1)).findByText("const")).toHaveClass("hljs-keyword");
+  });
+
+  it("highlight: keeps <script> and <img onerror> in an html block inert text", async () => {
+    const alert = vi.spyOn(window, "alert").mockImplementation(() => undefined);
+    const evil = '<script>alert(1)</script>\n<img src=x onerror="alert(2)">';
+    const { container } = render(<Markdown source={fence("html", evil)} className="as-md" />);
+
+    const code = codeOf(container);
+    expect(await within(code).findAllByText("script", { selector: ".hljs-name" })).toHaveLength(2);
+    expect(container.querySelector("script, img")).toBeNull();
+    expect(attributesOf(container).filter((name) => name.startsWith("on"))).toEqual([]);
+    expect(code.textContent).toBe(evil);
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it("highlight: leaves an unknown or missing language plain", async () => {
+    const source = [
+      fence("brainfuck", "+++[>+<-]"),
+      fence("", "let x = 1;"),
+      fence("ts", "let y;"),
+    ];
+    const { container } = render(<Markdown source={source.join("\n\n")} />);
+
+    expect(await within(codeOf(container, 2)).findByText("let")).toHaveClass("hljs-keyword");
+    expect(codeOf(container, 0).querySelector("span")).toBeNull();
+    expect(codeOf(container, 1).querySelector("span")).toBeNull();
+    expect(codeOf(container, 0)).not.toHaveClass("hljs");
+  });
+
+  it("highlight-limits: highlights 2,000 lines and leaves 2,001 lines plain", async () => {
+    const lines = (n: number) => Array.from({ length: n }, () => "# c").join("\n");
+    const { container } = render(
+      <Markdown source={[fence("bash", lines(2000)), fence("bash", lines(2001))].join("\n\n")} />,
+    );
+
+    await waitFor(() => {
+      expect(codeOf(container, 0).querySelectorAll(".hljs-comment")).toHaveLength(2000);
+    });
+    expect(codeOf(container, 1).querySelector("span")).toBeNull();
+  });
+
+  it("highlight-limits: highlights 64 KiB and leaves 64 KiB and one byte plain, counted in bytes", async () => {
+    const head = Array.from({ length: 1023 }, () => "# " + "c".repeat(61)).join("\n") + "\n# ";
+    const exact = head + "c".repeat(64 * 1024 - head.length); // 65,536 bytes, 1,024 lines
+    const over = exact.slice(0, -1) + "é"; // 65,536 characters, 65,537 bytes
+    expect(new TextEncoder().encode(exact)).toHaveLength(64 * 1024);
+    const { container } = render(
+      <Markdown source={[fence("bash", exact), fence("bash", over)].join("\n\n")} />,
+    );
+
+    await waitFor(() => {
+      expect(codeOf(container, 0).querySelector(".hljs-comment")).not.toBeNull();
+    });
+    expect(codeOf(container, 1).querySelector("span")).toBeNull();
+  });
+});
+
+describe("highlight walker (AC-234.31)", () => {
+  it("highlight: emits only spans with class names and text, whatever the tree holds", async () => {
+    const { toReact } = await import("./highlight");
+    const tree = [
+      {
+        type: "element",
+        tagName: "script",
+        properties: { onerror: "alert(1)", className: ["hljs-x"] },
+        children: [{ type: "text", value: "alert(1)" }],
+      },
+      {
+        type: "element",
+        tagName: "span",
+        properties: {
+          className: ["hljs-keyword", 'x" onclick="y'],
+          style: "color:red",
+          onclick: "y",
+        },
+        children: [{ type: "text", value: "<b>kw</b>" }],
+      },
+      { type: "comment", value: "hidden" },
+    ] as Parameters<typeof toReact>[0];
+    const { container } = render(<code>{toReact(tree)}</code>);
+
+    expect(container.querySelector("script")).toBeNull();
+    expect(container.textContent).toBe("alert(1)<b>kw</b>");
+    const span = container.querySelector("span");
+    expect([...(span?.attributes ?? [])].map((a) => `${a.name}=${a.value}`)).toEqual([
+      "class=hljs-keyword",
+    ]);
+    expect(container.querySelectorAll("*")).toHaveLength(2);
   });
 });
