@@ -67,6 +67,44 @@ describe("LearningDetail", () => {
     );
   });
 
+  it("shows the note's type, repos and provenance from its frontmatter", async () => {
+    open({
+      [DETAIL]: aLearningDetail({
+        provenance: null,
+        note: aBrainNote({
+          frontmatter: {
+            type: "learning",
+            repos: ["Tipple_API", "tipple-ui"],
+            provenance: "agent-from-code",
+            sources: ["x.py:1"],
+          },
+        }),
+      }),
+    });
+
+    const detail = await region();
+    expect(within(detail).getByText("learning")).toBeInTheDocument();
+    expect(within(detail).getByText("Tipple_API, tipple-ui")).toBeInTheDocument();
+    expect(within(detail).getByText("agent-from-code")).toBeInTheDocument();
+  });
+
+  it("explains a note missing from the checkout and blocks the decision", async () => {
+    open({
+      [DETAIL]: aLearningDetail({
+        note: null,
+        note_path: "brain/_inbox/gone.md",
+        note_unavailable: "Note not in the hub checkout",
+        actions_unavailable: "Note not in the hub checkout",
+      }),
+    });
+
+    const detail = await region();
+    expect(within(detail).getByText(/never pushed/)).toBeInTheDocument();
+    expect(within(detail).queryByText(/unedited/)).toBeNull();
+    expect(within(detail).getByText("Cannot be decided here.")).toBeInTheDocument();
+    expect(within(detail).getByRole("button", { name: "Accept" })).toBeDisabled();
+  });
+
   it("opens brain links of the note inside the app", async () => {
     const { router } = open({
       [DETAIL]: aLearningDetail({
