@@ -306,10 +306,18 @@ pre {
   line-height: 16px;
   padding: 6px 8px;
   border-radius: var(--radius-md);
-  white-space: nowrap;
+  white-space: normal;
+  width: max-content;
   max-width: 320px;
   box-shadow: var(--shadow-popover);
   pointer-events: none;
+}
+/* A table scrolls, so a tooltip opening upward from its header or first rows would be cut off:
+   those open downward instead. */
+.ah-table thead .ah-tip,
+.ah-table tbody tr:nth-child(-n + 3) .ah-tip {
+  bottom: auto;
+  top: calc(100% + 6px);
 }
 .ah-tip-wrap:not(:hover):not(:focus-within) > .ah-tip:not(.ah-tip-open) {
   display: none;
