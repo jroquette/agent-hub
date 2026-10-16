@@ -39,6 +39,8 @@ import type { WorkflowRun } from "../runs-list/queries";
 import { graphFailureTitle, isGraphRun } from "./graph";
 import { failingSession, failureReason, failureTitle, lanes, loopLabel, pipeline } from "./model";
 import { useRun, useRunStream } from "./queries";
+import { OpenGates } from "./OpenGates";
+import { RunCommands } from "./RunCommands";
 import { RunGraph } from "./RunGraph";
 
 const TABS = ["sessions", "gates", "tracker", "caps", "pr"] as const;
@@ -528,6 +530,7 @@ function Header({ run, now }: { run: WorkflowRun; now: number }) {
         {run.mode === "dry_run" && <StatusBadge status="idle" label="Dry run" />}
         <StaleStamp />
         <span className="ah-grow" />
+        <RunCommands run={run} />
         {outcome === "failed" && !isGraphRun(run) && (
           <Button variant="primary" icon="rotate-ccw" phase="P4">
             Retry from {retryFrom}
@@ -656,6 +659,7 @@ function RunBody({ run }: { run: WorkflowRun }) {
           </Banner>
         )}
         <OutcomeLine run={run} />
+        {isGraphRun(run) && <OpenGates run={run} />}
         {isGraphRun(run) ? (
           <RunGraph run={run} now={now} />
         ) : (

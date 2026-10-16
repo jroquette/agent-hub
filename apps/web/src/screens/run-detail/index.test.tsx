@@ -4,8 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
+  anApproval,
   anEngineRun,
   anId,
+  aPage,
   aProblem,
   aRun,
   at,
@@ -141,6 +143,28 @@ describe("RunDetailScreen", () => {
     expect(retry).toBeDisabled();
     expect(within(retry).getByText("P4")).toHaveClass("ah-phase");
     expect(retry).toHaveAttribute("title", "Available in Phase 4. This version is read-only.");
+    expect(screen.queryByRole("group", { name: "Run commands" })).toBeNull();
+  });
+
+  it("offers resume and abandon instead of the P4 retry on a failed engine run", async () => {
+    const engine = anEngineRun();
+    renderWithApi(<RunDetailScreen />, {
+      routes: {
+        [`/api/v1/workflow-runs/${engine.id}`]: engine,
+        "/api/v1/workflows/agent-hub/feature-flow": aWorkflowDetail(),
+      },
+      path: `/runs/${engine.id}`,
+      route: "/runs/:runId",
+    });
+
+    const commands = await screen.findByRole("group", { name: "Run commands" });
+    expect(
+      within(commands)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Resume", "Abandon"]);
+    expect(screen.queryByRole("button", { name: /Retry from/ })).toBeNull();
+    expect(screen.queryByText("P4")).toBeNull();
   });
 
   it("draws one Gantt lane per step attempt with session links", async () => {
@@ -425,6 +449,133 @@ describe("RunDetailScreen", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("decides the run's open gate where the run is watched", async () => {
+      const live = anEngineRun({
+        ended_at: null,
+        status: "running",
+        stage: "PICKED",
+        failure: null,
+      });
+      const gateId = `${live.id}:approve-plan:1`;
+      const encoded = encodeURIComponent(gateId);
+      const own = anApproval({
+        id: gateId,
+        kind: "human_gate",
+        gate_id: gateId,
+        session_id: `run:${live.id}`,
+        project: live.project,
+      });
+      const other = anApproval({
+        id: "other-run:ship:1",
+        kind: "human_gate",
+        gate_id: "other-run:ship:1",
+        session_id: "run:other-run",
+        project: live.project,
+      });
+      const { requests } = renderWithApi(<RunDetailScreen />, {
+        routes: {
+          [`/api/v1/workflow-runs/${live.id}`]: live,
+          [WORKFLOW]: aWorkflowDetail(),
+          "/api/v1/approvals": aPage([own, other]),
+          [`/api/v1/approvals/${encoded}/gate`]: {
+            approval_id: gateId,
+            run_id: live.id,
+            project: live.project,
+            workflow: "feature-flow",
+            node: "approve-plan",
+            attempt: 1,
+            form: "decision",
+            choices: [
+              { id: "approve", label: "Approve" },
+              { id: "reject", label: "Reject" },
+            ],
+            text: "off",
+          },
+          [`POST /api/v1/approvals/${encoded}/decision`]: {
+            approval_id: gateId,
+            run_id: live.id,
+            project: live.project,
+            decision: "approve",
+          },
+        },
+        path: `/runs/${live.id}`,
+        route: "/runs/:runId",
+      });
+
+      const waiting = await screen.findByRole("region", { name: "Waiting for you" });
+      expect(within(waiting).getByText("approve-plan")).toBeInTheDocument();
+      expect(within(waiting).queryByText("ship")).toBeNull();
+      const decide = await within(waiting).findByRole("group", { name: "Decide this gate" });
+      await userEvent.click(within(decide).getByRole("button", { name: "Approve" }));
+
+      expect(await within(waiting).findByText(/^Decision recorded/)).toBeInTheDocument();
+      const list = requests.find((r) => new URL(r.url).pathname === "/api/v1/approvals");
+      const query = new URL(list?.url ?? "http://x").searchParams;
+      expect([query.get("kind"), query.get("status"), query.get("project")]).toEqual([
+        "human_gate",
+        "open",
+        live.project,
+      ]);
+      const post = requests.find((r) => r.method === "POST");
+      expect(await post?.json()).toEqual({ decision: "approve" });
+    });
+
+    it("shows the decision card in the waiting node's panel", async () => {
+      const live = anEngineRun({
+        ended_at: null,
+        status: "running",
+        stage: "PICKED",
+        failure: null,
+      });
+      const gateId = `${live.id}:plan:1`;
+      const gate = anApproval({
+        id: gateId,
+        kind: "human_gate",
+        gate_id: gateId,
+        session_id: `run:${live.id}`,
+        project: live.project,
+      });
+      renderWithApi(<RunDetailScreen />, {
+        routes: {
+          [`/api/v1/workflow-runs/${live.id}`]: live,
+          [WORKFLOW]: aWorkflowDetail(),
+          "/api/v1/approvals": aPage([gate]),
+          [`/api/v1/approvals/${encodeURIComponent(gateId)}/gate`]: {
+            approval_id: gateId,
+            run_id: live.id,
+            project: live.project,
+            workflow: "feature-flow",
+            node: "plan",
+            attempt: 1,
+            form: "decision",
+            choices: [{ id: "approve", label: "Approve" }],
+            text: "off",
+          },
+        },
+        path: `/runs/${live.id}?node=plan`,
+        route: "/runs/:runId",
+      });
+
+      const panel = await screen.findByRole("complementary", { name: "Node plan" });
+      expect(await within(panel).findByText(/Waiting for a decision at/)).toBeInTheDocument();
+      const graph = screen.getByRole("group", { name: "Run graph" });
+      expect(nodeButton(graph, "plan")).toHaveTextContent("Waiting for a decision");
+      expect(nodeButton(graph, "build")).not.toHaveTextContent("Waiting for a decision");
+      expect(
+        await within(panel).findByRole("group", { name: "Decide this gate" }),
+      ).toBeInTheDocument();
+      expect(screen.getAllByRole("group", { name: "Decide this gate" })).toHaveLength(1);
+      expect(screen.queryByRole("region", { name: "Waiting for you" })).toBeNull();
+    });
+
+    it("shows no open gates and asks for none when the run has ended", async () => {
+      const { requests } = renderEngine();
+
+      await screen.findByRole("group", { name: "Run graph" });
+      expect(screen.queryByRole("region", { name: "Waiting for you" })).toBeNull();
+      expect(requests.some((r) => new URL(r.url).pathname === "/api/v1/approvals")).toBe(false);
     });
 
     it("keeps issue-to-pr runs on their stage pipeline", async () => {

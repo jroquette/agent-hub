@@ -19,6 +19,18 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   3,932,160 bytes decoded, 8 MiB body on that route only) sent to `claude` as an image block with the first prompt;
   the stored conversation keeps only an `attachments` marker. Under `make dev` it preselects the served checkout and
   Accept edits, so Claude's edits show through Vite's live reload (AGH-260).
+- Workflow runs start from hub web: "Start run" (replacing the P4 placeholder) picks a workflow and fills a form built
+  from its `inputs:`, starts it live (a dry run belongs to the CLI; issue-to-pr starts from `hub run`) and opens the
+  new run. Run detail offers Cancel, Resume and Abandon on an engine run, each after a confirmation; issue-to-pr runs
+  keep their P4 retry (AGH-233).
+- Approvals and Run detail decide a workflow run's open gate: one button per declared decision or option (labels
+  from the workflow), a dialog for the reason or response where the gate takes one, and the run resumes on the
+  server; Run detail lists the running run's open gates and shows the card in the waiting node's panel. Human gates
+  outside a workflow run keep their Phase 4 placeholders (AGH-231).
+- `hub web` can decide a paused workflow run's gate: `GET /api/v1/approvals/{id}/gate` shows its decisions or options
+  (with labels) and whether it takes a text, and `POST /api/v1/approvals/{id}/decision` (a strict write that needs
+  the launch cookie) records the answer through the new hidden `hub workflow decide RUN --gate ID` (text on stdin,
+  no resume, `gate.result` where `web`), then resumes the run detached (AGH-231).
 - `hub web` can start, cancel, resume and abandon workflow runs: `POST /api/v1/workflow-runs` and
   `/workflow-runs/{run_id}/cancel|resume|abandon` run `hub workflow run --live` as a detached child (no
   `LINEAR_API_KEY`, a pid file under `.agent-runs/web/`), keep one live run per issue across starts and resumes,
@@ -153,6 +165,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   in this browser), empty sections are hidden, a section past 100 rows scrolls in its own window, a status facet
   shows only its section, and the period now filters only Ended or failed (the count line says so), so a running
   session older than the period still shows (AGH-243).
+- Sessions' status sections refresh live as sessions change (at most every 2 s), without moving your scroll position
+  or losing the focused row when it moves to another section (AGH-243).
 
 ### Fixed
 

@@ -32,7 +32,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   and `/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` ([Skills](#skills)), and the two AGH-225
   added (`WORKFLOW_PATHS`, both GET): `/workflows` and `/workflows/{project}/{name}` ([Workflows](#workflows)), and the
   four AGH-232 added (`RUN_COMMAND_PATHS`, all POST): `/workflow-runs` and `/workflow-runs/{run_id}/cancel|resume|abandon`
-  ([Workflow run commands](#workflow-run-commands)). A test fails on any other path.
+  ([Workflow run commands](#workflow-run-commands)), and the two AGH-231 added (`GATE_PATHS`):
+  `GET /approvals/{approval_id}/gate` and `POST /approvals/{approval_id}/decision`
+  ([Workflow gate decisions](#workflow-gate-decisions)). A test fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -392,6 +394,38 @@ must match `^[a-z0-9][a-z0-9-]{0,31}$` (else 400). All four are strict writes ([
 need the launch cookie, like the agent-session writes; with `AGENT_HUB_IN_CONTAINER=1` they answer 404
 `urn:agent-hub:problem:run-control-off`.
 
+## Workflow gate decisions
+
+A paused engine run's `approval` or attention `wait` is an open `human_gate` approval whose id is its `gate_id`
+(`<run>:<node>:<attempt>`, session `run:<run>`). Two routes answer it from the web (AC-213.18, AGH-231):
+
+- `GET /api/v1/approvals/{approval_id}/gate` → `WorkflowGate`: `run_id`, `project`, `workflow`, `node`, `attempt`,
+  `form` (`decision` for an approval, `choice` for a wait with `options`, `text` for one without), `choices`
+  (`{id, label}` from the node's `decisions` or `options`, the defaults Approve and Reject included) and `text`:
+  `off` (an approval without `capture_response`), `optional` (an approval with it, or a wait with options) or
+  `required` (a wait without options). They come from the workflow's current definition, as the run graph's do; the
+  run's record has the final word on the decision. An approval that is no gate a person answers in an engine run's
+  workflow is 409 `workflow-run-not-workflow-gate` (another kind, another session, a timed wait or a node the
+  workflow no longer has: `workflow-run-gate-not-in-workflow`), a decided one 409 `workflow-run-decided`.
+- `POST /api/v1/approvals/{approval_id}/decision` with `{decision?, text?}` → 202 `GateDecided` (`approval_id`,
+  `run_id`, `project`, `decision`) and `Location: /api/v1/approvals/{approval_id}`. `decision` is a declared
+  decision or option id (`^[a-z0-9]+(-[a-z0-9]+)*$`, at most 64 characters); `text` has no NUL and at most 65,536
+  bytes in UTF-8. An answer the gate cannot take is 422 `workflow-run-invalid-inputs` (no decision or an undeclared
+  one, an option for a text wait, a blank text where one is required, a text where `text` is `off`). Under the run
+  commands' lock the run is refused as a resume would be (409 `workflow-run-ended`, `-in-use`, `-live-run`). Then the
+  server runs `hub workflow decide <run> --gate <gate_id> [--choice <id>] [--text-stdin]` and waits for it (at
+  most 60 s): the CLI's `DecideGate` records the decision in the run's record under its lock and sends a
+  `control_plane` `gate.result` (where `web`), and the text goes on the child's stdin, never in argv. The CLI
+  refusing (the gate closed or was decided meanwhile, the run in use) is 409 `workflow-run-refused` and nothing
+  resumes; otherwise the run resumes in a detached child as `POST /workflow-runs/{run_id}/resume` does. A
+  `hub workflow decide` that cannot start answers 502 `workflow-run-launch-failed` (nothing recorded); one that
+  outlasts the 60 s answers 502 `workflow-run-decision-unknown`, since it may have recorded the decision before it
+  was stopped (the approval, or a resume, tells). A resume that cannot start answers 502
+  `workflow-run-resume-failed` with the decision kept: resume the run to continue.
+
+The decision is a strict write that needs the launch cookie, like the run commands; with `AGENT_HUB_IN_CONTAINER=1`
+it answers 404 `urn:agent-hub:problem:run-control-off`.
+
 ## Local security
 
 `hub web` binds `127.0.0.1` only. It refuses a `Host` header other than `127.0.0.1:<port>`, `localhost:<port>` or
@@ -402,8 +436,8 @@ The agent-session routes add a cookie and stricter Origin rules ([Agent sessions
 run commands need that cookie too ([Workflow run commands](#workflow-run-commands)); every other route is unchanged
 and needs no cookie.
 
-The two learning decisions, which reach the network, and the four workflow run commands, which start or stop
-processes, take a strict rule on top (`STRICT_WRITES` in `agent_hub/api/local_security.py`), checked before the
+The two learning decisions, which reach the network, and the four workflow run commands and a workflow gate's
+decision, which start or stop processes, take a strict rule on top (`STRICT_WRITES` in `agent_hub/api/local_security.py`), checked before the
 route runs, so a refused request pushes, stores and starts nothing:
 
 - `Origin` is required and must equal `http://<Host>`, the server's own origin (403 "Forbidden origin" when absent or

@@ -173,6 +173,15 @@ export async function apiPost<P extends PostPath>(
   return (await send(POST, path, { params, body })) as SuccessOf<Operation<P, "post">>;
 }
 
+/** POSTs an empty JSON object to a command route that takes no body (a run's cancel, resume or
+ * abandon): a strict write needs a JSON body (S7), which a cross-site form cannot send. */
+export async function apiCommand<P extends PostPath>(
+  path: P,
+  params: ParamsOf<Operation<P, "post">>,
+): Promise<SuccessOf<Operation<P, "post">>> {
+  return (await send(POST, path, { params, body: {} })) as SuccessOf<Operation<P, "post">>;
+}
+
 /** DELETEs `path` (Phase 2 writes: removing a hub). */
 export async function apiDelete<P extends DeletePath>(
   path: P,

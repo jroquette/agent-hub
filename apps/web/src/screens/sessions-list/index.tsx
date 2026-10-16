@@ -1,6 +1,6 @@
 import "./sessions-list.css";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -53,12 +53,14 @@ import {
   useCloudSessions,
   useProjects,
   useSectionPages,
+  useSectionRefresh,
   useWorkdirs,
   type Session,
 } from "./queries";
 import { SECTIONS, sectionCount, sectionQueries } from "./sections";
 import { SessionSection, useCollapsed } from "./SessionSection";
 import { StartSessionDialog } from "./StartSessionDialog";
+import { useScrollAnchor } from "./useScrollAnchor";
 
 const COLUMNS_KEY = "ah.sessions.columns";
 /** A section past VIRTUAL_THRESHOLD rows scrolls inside this height (as the learnings table). */
@@ -720,6 +722,30 @@ export function SessionsListScreen() {
   const queries = useMemo(() => sectionQueries(params, scope, anchor), [params, scope, anchor]);
   const sections = useSectionPages(queries);
   const [collapsed, toggleCollapsed] = useCollapsed();
+  // The same query as the panel's list: its poll also refreshes the sections (AC-234.9).
+  const agentsUpdatedAt = useAgentSessions(scope).dataUpdatedAt;
+  const askedIds = SECTIONS.map((section) => section.id).filter((id) => queries[id] !== null);
+  const screenRef = useRef<HTMLDivElement>(null);
+  const arm = useScrollAnchor(
+    screenRef,
+    Object.fromEntries(
+      askedIds.map((id) => [
+        id,
+        { at: sections[id].dataUpdatedAt, fetching: sections[id].isFetching },
+      ]),
+    ),
+  );
+  useSectionRefresh(
+    scope,
+    askedIds.map((id) => ({
+      id,
+      collapsed: collapsed.has(id),
+      fetching: sections[id].isFetching,
+      refetch: sections[id].refetch,
+    })),
+    agentsUpdatedAt,
+    arm,
+  );
   const projects = useProjects();
   const [selected, setSelected] = useState<string[]>([]);
   const [columns, setColumns] = useState(storedColumns);
@@ -1061,7 +1087,8 @@ export function SessionsListScreen() {
                   ? `Showing ${fmtInt(sectionRows.length)} of ~${fmtInt(count)}`
                   : `Showing all ${fmtInt(sectionRows.length)}`}
               </span>
-              {pages.hasNextPage && (
+              {/* On placeholder pages TanStack would refetch page 1, not the next one. */}
+              {pages.hasNextPage && !pages.isPlaceholderData && (
                 <Button
                   size="sm"
                   disabled={pages.isFetchingNextPage}
@@ -1105,6 +1132,7 @@ export function SessionsListScreen() {
                 : section.count
             }
             approximate={section.pages.hasNextPage}
+            updating={section.pages.isPlaceholderData}
             collapsed={collapsed.has(section.id)}
             onToggle={() => {
               toggleCollapsed(section.id);
@@ -1117,7 +1145,7 @@ export function SessionsListScreen() {
   );
 
   return (
-    <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
+    <div style={{ padding: "16px 32px 40px" }} className="ah-stack" ref={screenRef}>
       <div className="ah-row ah-wrap" style={{ gap: 8 }}>
         <h1 className="ah-h1">Sessions</h1>
         <OfflineStamp tz={tz} />

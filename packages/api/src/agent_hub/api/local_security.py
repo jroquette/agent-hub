@@ -3,14 +3,13 @@
 The server binds 127.0.0.1 only, but a page on any site can still make the browser send it a
 request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a ``POST`` or
 ``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the learning
-actions and the workflow-run writes also need that ``Origin``, a same-origin fetch and a JSON
-body (S7), so do the hub
-registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is refused too,
-A11: a registered hub is a folder sessions may start in), bodies stop at
-1 MiB (8 MiB for ``POST /agent-sessions``, which may carry a screenshot), API answers are
-never cached, a CSP keeps the app to its own origin, and no CORS header is ever sent. No route
-speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008 before it is
-accepted, so an upgrade never skips these checks (P7, AC-165.54).
+actions, the workflow-run writes and a workflow gate's decision also need that ``Origin``, a
+same-origin fetch and a JSON body (S7), so do the hub registry writes (``POST /hubs``, ``DELETE
+/hubs/{id}``; a missing ``Origin`` is refused too, A11: a registered hub is a folder sessions
+may start in), bodies stop at 1 MiB (8 MiB for ``POST /agent-sessions``, which may carry a
+screenshot), API answers are never cached, a CSP keeps the app to its own origin, and no CORS
+header is ever sent. No route speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is
+closed with 1008 before it is accepted, so an upgrade never skips these checks (P7, AC-165.54).
 
 ``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``
 names, for example the host port a container publishes; never a wildcard.
@@ -35,9 +34,11 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # cross-site form cannot send without a preflight that is never granted. Other writes keep the
 # checks above only (E9).
 # The workflow-run writes (AC-213.19) start or stop a child process: strict too, and they need
-# the launch's cookie when sessions are on (``session_access``).
+# the launch's cookie when sessions are on (``session_access``). A workflow gate's decision
+# (AC-213.18) runs the CLI and resumes the run, so it is one of them.
 RUN_WRITES = re.compile(
-    rf"^{re.escape(API_PREFIX)}/workflow-runs(/[^/]+/(cancel|resume|abandon))?$"
+    rf"^{re.escape(API_PREFIX)}/(workflow-runs(/[^/]+/(cancel|resume|abandon))?"
+    r"|approvals/[^/]+/decision)$"
 )
 STRICT_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"
@@ -136,7 +137,8 @@ def is_strict_write(method: str, path: str) -> bool:
 
 
 def is_run_write(method: str, path: str) -> bool:
-    """Whether a request starts, cancels, resumes or abandons a workflow run (``RUN_WRITES``)."""
+    """Whether a request starts, cancels, resumes or abandons a workflow run, or decides one's
+    gate (``RUN_WRITES``)."""
     return method in STATE_CHANGING_METHODS and RUN_WRITES.fullmatch(path) is not None
 
 
