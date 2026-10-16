@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- A feature's Spec, Research and Plan tabs open on a short human summary of the record (For humans), with the
+  record itself one click away (Agent markdown); a summary point opens the record at its section, and the tab says
+  when the record changed after its summary was written. The new hub-workflow `/summarize` skill writes
+  `brain/features/<slug>/summaries/<record>.md`, and `/feature`, `/research` and `/create-plan` run it whenever a
+  record is written or amended (run `hub sync` to get it). The brain note route returns the file's `sha256`
+  (AGH-269).
 - A feature's acceptance criteria read as sentences: the tab is "Acceptance criteria", every criterion is listed at
   once with its status in words, the evidence in plain words ("4 tests passed", with the commit and date), how many
   of the feature's records cite it and a labelled Discuss button; opening one shows what must be true, how it was

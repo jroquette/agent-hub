@@ -85,6 +85,23 @@ Built after the owner validated these in the playground; where this file says ot
   Facts read from the evidence text are marked derived; the recorded text is the source.
 - **AC-269.12** Every criterion is listed at once: no fold, no "Show all".
 
+**Record tabs: human summaries** (replaces "Rendered documents" below for Spec, Research and Plan)
+
+- **AC-269.13** Given `brain/features/<slug>/summaries/<record>.md`, when a Spec, Research or Plan tab opens, then
+  it shows that summary ("For humans", with when it was written and from which record); the "Agent markdown"
+  segment shows the record itself as before, kept in `?view=agent`.
+- **AC-269.14** A summary point linking to the record's section (`../plan.md#approach`) opens Agent markdown at that
+  heading, in the same tab.
+- **AC-269.15** Given the record's `sha256` (brain note route) differs from the summary's `source_sha256`, then a
+  warning says the record changed after the summary was written, with "Ask Claude to update it" and "Read the full
+  <record>.md".
+- **AC-269.16** Given no summary yet, then the tab says so with "Ask Claude to write it" (opens Discuss, whose
+  one-click starter "Write the human summary of <record>" asks for `/summarize <slug> <record>`) and "Read the full
+  <record>.md". A Discuss target can carry such starters: one click sends the starter's message as the first one.
+- **AC-269.17** `GET /projects/{project}/brain/note` returns `sha256`, the hex SHA-256 of the file's bytes.
+- **AC-269.18** hub-workflow ships `/summarize` (records: [feature-records.md](../../feature-records.md)), and
+  `/feature`, `/research` and `/create-plan` run it each time they write or amend a record.
+
 ---
 
 ## Screen 1: Features list
