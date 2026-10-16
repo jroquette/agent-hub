@@ -48,3 +48,4 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0030](../adr/0030-run-outcomes-in-the-tracker.md): `no_changes` and `blocked` runs get their own tracker report and exit (0, 3).
 - [ADR 0032](../adr/0032-workflow-engine.md): our own graph workflow engine and format (proposed; supersedes ADR 0027).
 - [ADR 0033](../adr/0033-sessions-and-chat-interaction-model.md): one Sessions screen grouped by status, and the chat's interaction model.
+- [ADR 0034](../adr/0034-syntax-highlighting-in-the-chat.md): completed chat code blocks are highlighted by lowlight, rendered without an HTML path.
