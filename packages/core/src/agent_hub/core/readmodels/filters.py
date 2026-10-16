@@ -46,6 +46,7 @@ class SessionFilter(PageRequest):
     outcome: Outcome | None = None
     workflow: str | None = None
     run_id: str | None = None
+    issue: str | None = None
     started_from: UtcTimestamp | None = None
     started_to: UtcTimestamp | None = None
     cost_min: Decimal | None = Field(default=None, ge=0)

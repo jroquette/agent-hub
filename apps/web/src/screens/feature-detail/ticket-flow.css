@@ -410,7 +410,29 @@ a.ah-flow-card-title:hover > span:last-child {
 }
 .ah-ticket-table .ah-flow-epic-tag {
   flex: none;
-  margin-top: 1px;
+}
+/* In its own column the scope chip sits on the row's first line, like the badges beside it. */
+.ah-ticket-table .ah-ticket-scope {
+  margin-right: 0;
+  line-height: 20px;
+  vertical-align: top;
+}
+.ah-ticket-title[data-child="true"] {
+  padding-left: 4px;
+}
+/* A session of the ticket: its status and when it started, one click from its dialogue. */
+.ah-ticket-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.ah-ticket-session:hover {
+  color: var(--text);
+}
+.ah-ticket-session:hover .ah-small {
+  text-decoration: underline;
 }
 
 .ah-live-dot {

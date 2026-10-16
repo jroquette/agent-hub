@@ -2,8 +2,13 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
-import { EmptyState, ProblemError, Skeleton } from "../../components";
-import type { ApiProblem } from "../../lib/api";
+import { EmptyState, ProblemError, Skeleton, StatusBadge } from "../../components";
+import { useApi, type ApiProblem } from "../../lib/api";
+import { fmtClock, fmtDateTime, fmtMoney } from "../../lib/format";
+import { usePreferences } from "../../lib/preferences";
+import { badgeOf } from "../sessions-list/badge";
+import { rowHref } from "../sessions-list/drivenRows";
+import type { Session } from "../sessions-list/queries";
 import {
   AcMeter,
   PlanningView,
@@ -11,9 +16,10 @@ import {
   StateBadge,
   TicketIdLine,
   TicketRef,
-  TicketTitle,
+  splitTitle,
   ticketAnchor,
 } from "./PlanningView";
+import { TICKETS_REFRESH_MS } from "./queries";
 import { TicketNotice } from "./TicketNotice";
 
 type FeatureTickets = components["schemas"]["FeatureTickets"];
@@ -40,19 +46,107 @@ function TicketId({ row }: { row: TicketRow }) {
   return <TicketIdLine row={row} />;
 }
 
-/** The title with the epic tag before it, and a branch mark when the row is an epic's child. */
-function TitleCell({ row, child }: { row: TicketRow; child: boolean }) {
+/** The conventional prefix of the title (`feat(brand-api)`) as a chip in its own column. */
+function ScopeCell({ row }: { row: TicketRow }) {
+  const { type, scope } = splitTitle(row.title ?? "");
+  if (!type) return <span className="ah-subtle">—</span>;
   return (
-    <span className="ah-ticket-title">
+    <span className="ah-ticket-scope" title={`${type}${scope ? `(${scope})` : ""}`}>
+      {scope ?? type}
+    </span>
+  );
+}
+
+/** The words of the title, the epic tag before them and a branch mark on an epic's child. */
+function TitleCell({ row, child }: { row: TicketRow; child: boolean }) {
+  const text = row.title ? splitTitle(row.title).text : null;
+  return (
+    <span className="ah-ticket-title" data-child={child || undefined}>
       {child && (
         <span className="ah-ticket-branch" aria-hidden="true">
           └
         </span>
       )}
       {row.children.length > 0 && <span className="ah-flow-epic-tag">Epic</span>}
-      <span>
-        {row.title ? <TicketTitle title={row.title} /> : <span className="ah-subtle">—</span>}
+      <span>{text ?? <span className="ah-subtle">—</span>}</span>
+    </span>
+  );
+}
+
+/** How many sessions one ticket row shows before the rest fold away. */
+const SESSIONS_SHOWN = 2;
+
+function SessionLink({ session }: { session: Session }) {
+  const { tz } = usePreferences();
+  const [status, label] = badgeOf(session);
+  const day = new Date(session.started_at).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    ...(tz === "utc" ? { timeZone: "UTC" } : {}),
+  });
+  const facts = [
+    session.label?.title,
+    `started ${fmtDateTime(session.started_at, tz)}`,
+    `${String(session.turns)} turn${session.turns === 1 ? "" : "s"}`,
+    session.cost_usd != null ? fmtMoney(session.cost_usd) : null,
+  ].filter(Boolean);
+  return (
+    <Link
+      className="ah-ticket-session"
+      to={rowHref(session)}
+      title={`Open the session: ${facts.join(" · ")}`}
+    >
+      <StatusBadge status={status} label={label} quiet />
+      <span className="ah-small">
+        {day}, {fmtClock(session.started_at, tz)}
       </span>
+    </Link>
+  );
+}
+
+/** The sessions whose branch or run names this ticket, newest first, each one click from its dialogue. */
+function TicketSessions({ row, project }: { row: TicketRow; project: string }) {
+  const sessions = useApi(
+    "/api/v1/sessions",
+    { query: { project, issue: row.id ?? "", limit: 20 } },
+    { enabled: row.id != null, refetchInterval: TICKETS_REFRESH_MS },
+  );
+  if (!row.id) return <span className="ah-subtle">—</span>;
+  if (sessions.isPending) return <Skeleton width={90} height={18} />;
+  if (sessions.isError) {
+    return (
+      <span className="ah-subtle" title={sessions.error.title}>
+        —<span className="ah-sr">sessions not read</span>
+      </span>
+    );
+  }
+  const items = sessions.data.items;
+  if (items.length === 0) {
+    return (
+      <span className="ah-small ah-subtle" title={`No session's branch or run names ${row.id}`}>
+        none
+      </span>
+    );
+  }
+  const links = (list: readonly Session[]) => (
+    <span className="ah-stack" style={{ gap: 4 }}>
+      {list.map((session) => (
+        <SessionLink key={session.id} session={session} />
+      ))}
+    </span>
+  );
+  if (items.length <= SESSIONS_SHOWN) return links(items);
+  const more = sessions.data.next_cursor ? "+" : "";
+  return (
+    <span className="ah-stack" style={{ gap: 4 }}>
+      {links(items.slice(0, SESSIONS_SHOWN))}
+      <details>
+        <summary className="ah-small" style={{ cursor: "pointer", whiteSpace: "nowrap" }}>
+          {items.length - SESSIONS_SHOWN}
+          {more} more
+        </summary>
+        <div style={{ paddingTop: 4 }}>{links(items.slice(SESSIONS_SHOWN))}</div>
+      </details>
     </span>
   );
 }
@@ -143,9 +237,11 @@ function epicOrder(tickets: readonly TicketRow[]): TicketRow[] {
 
 function TicketsTable({
   data,
+  project,
   acPasses,
 }: {
   data: FeatureTickets;
+  project: string;
   acPasses?: AcPasses | undefined;
 }) {
   const byRef = new Set(data.tickets.map((t) => t.ref));
@@ -157,11 +253,18 @@ function TicketsTable({
     cell: (row: TicketRow) => ReactNode;
   }[] = [
     { label: "Ticket", width: 140, nowrap: true, cell: (row) => <TicketId row={row} /> },
+    { label: "Scope", width: 120, nowrap: true, cell: (row) => <ScopeCell row={row} /> },
     { label: "Title", cell: (row) => <TitleCell row={row} child={isChild(row)} /> },
     { label: "Status", width: 120, nowrap: true, cell: (row) => <StateBadge row={row} /> },
     { label: "Assignee", width: 110, cell: (row) => <Assignee row={row} /> },
     { label: "Blocked by", width: 110, cell: (row) => <Blockers row={row} data={data} /> },
     { label: "ACs", width: 150, cell: (row) => <Acs row={row} acPasses={acPasses} /> },
+    {
+      label: "Sessions",
+      width: 170,
+      nowrap: true,
+      cell: (row) => <TicketSessions row={row} project={project} />,
+    },
     {
       label: "Readiness",
       width: 200,
@@ -227,6 +330,8 @@ function Loading() {
 }
 
 export interface TicketsTabProps {
+  /** The feature's project: its sessions are looked up there. */
+  project: string;
   /** The `GET .../tickets` answer; undefined while it loads. */
   data: FeatureTickets | undefined;
   /** The route's failure, shown with a retry. */
@@ -241,9 +346,16 @@ export interface TicketsTabProps {
 /**
  * The Tickets tab (AC-136.28): where the data comes from, the flow of the tickets (what runs in
  * parallel, in which order, and where each one is now), then one row per ticket (Linear link,
- * title, status, assignee, blockers, ACs, readiness).
+ * scope, title, status, assignee, blockers, ACs, the sessions that worked on it, readiness).
  */
-export function TicketsTab({ data, error, onRefresh, refreshing, acPasses }: TicketsTabProps) {
+export function TicketsTab({
+  project,
+  data,
+  error,
+  onRefresh,
+  refreshing,
+  acPasses,
+}: TicketsTabProps) {
   if (error) {
     return (
       <ProblemError
@@ -268,7 +380,7 @@ export function TicketsTab({ data, error, onRefresh, refreshing, acPasses }: Tic
       ) : (
         <>
           <PlanningView tickets={data.tickets} planning={data.planning} acPasses={acPasses} />
-          <TicketsTable data={data} acPasses={acPasses} />
+          <TicketsTable data={data} project={project} acPasses={acPasses} />
         </>
       )}
     </div>
