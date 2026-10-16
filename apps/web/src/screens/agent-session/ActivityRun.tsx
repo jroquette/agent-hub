@@ -4,6 +4,7 @@ import { Button, Icon, TOOL_ICON, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
 import { useDrawerWidth } from "./DrawerResize";
 import { RequestCard, type AnswerPermission } from "./PermissionCard";
+import { RunFilesCard, sameRunFiles, type RunFile } from "./RunFilesCard";
 import { StoredCopyLabel } from "./SessionStatus";
 import { ToolCallCard } from "./ToolCallCard";
 import {
@@ -104,7 +105,15 @@ export interface ActivityRunProps {
   /** Opens this run in the side panel, or closes the panel when it already shows it. */
   onToggle: (runKey: string) => void;
   onAnswerPermission: AnswerPermission;
+  /** The files this run changed, shown as a card under its line (none: no card). */
+  files?: readonly RunFile[] | undefined;
+  reviewed?: Readonly<Record<string, string>> | undefined;
+  /** Opens the Changed files drawer on a file, or on its list (null). */
+  onOpenFile?: ((path: string | null) => void) | undefined;
 }
+
+const NO_FILES: readonly RunFile[] = [];
+const NONE_REVIEWED: Readonly<Record<string, string>> = {};
 
 /**
  * What Claude did between two messages, as one quiet line: the calls counted by kind and the time
@@ -119,6 +128,9 @@ function ActivityRunView({
   live,
   onToggle,
   onAnswerPermission,
+  files = NO_FILES,
+  reviewed = NONE_REVIEWED,
+  onOpenFile,
 }: ActivityRunProps) {
   const states = steps.flatMap((step) =>
     step.kind === "tool" ? [toolState(step.tool, step.request)] : [],
@@ -181,6 +193,9 @@ function ActivityRunView({
           onAnswerPermission={onAnswerPermission}
         />
       ))}
+      {files.length > 0 && onOpenFile && (
+        <RunFilesCard files={files} reviewed={reviewed} onOpenFile={onOpenFile} />
+      )}
     </div>
   );
 }
@@ -193,6 +208,9 @@ function sameRun(a: ActivityRunProps, b: ActivityRunProps): boolean {
     a.live === b.live &&
     a.onToggle === b.onToggle &&
     a.onAnswerPermission === b.onAnswerPermission &&
+    a.onOpenFile === b.onOpenFile &&
+    a.reviewed === b.reviewed &&
+    sameRunFiles(a.files ?? NO_FILES, b.files ?? NO_FILES) &&
     sameSteps(a.steps, b.steps)
   );
 }

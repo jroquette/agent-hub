@@ -18,10 +18,12 @@ import { cx } from "../../lib/cx";
 import { JumpToLatest } from "./JumpToLatest";
 import { MessageMeta } from "./MessageMeta";
 import { RequestCard, type PermissionAnswer } from "./PermissionCard";
+import { runFilesOf } from "./RunFilesCard";
 import { StoredCopyLabel } from "./SessionStatus";
 import { ActivityPanel, ActivityRun, ThinkingBlock, type ActivityStep } from "./ActivityRun";
 import {
   pendingPermissions,
+  type ChangedFile,
   type NoticeTone,
   type PermissionView,
   type TranscriptEntry,
@@ -40,6 +42,12 @@ export interface TranscriptProps {
   follow?: StickToBottom | undefined;
   /** The screenshot this browser sent with the first prompt (memory only); else the marker's label. */
   screenshotUrl?: string | undefined;
+  /** The files the session changed: each run that changed some shows them as a card. */
+  files?: readonly ChangedFile[] | undefined;
+  /** The change each file was marked viewed at, by path. */
+  reviewed?: Readonly<Record<string, string>> | undefined;
+  /** Opens the Changed files drawer on a file (null: on its list). */
+  onOpenFile?: ((path: string | null) => void) | undefined;
   /** Another drawer the page opened (Changed files): it takes the side panel's place. */
   sidePanel?: ReactNode;
   /** A run line opened the activity drawer: the page closes its own. */
@@ -247,6 +255,9 @@ export function Transcript({
   scrollerRef,
   follow,
   screenshotUrl,
+  files,
+  reviewed,
+  onOpenFile,
   sidePanel,
   onActivityOpen,
 }: TranscriptProps) {
@@ -353,6 +364,17 @@ export function Transcript({
         : [];
     });
   const rows = rowsOf(state.entries, attached, start);
+  // A run's calls and, under a subagent's call, the calls it made, at any depth.
+  const runToolIds = (runEntries: readonly RunEntry[]): Set<string> => {
+    const ids = new Set<string>();
+    const add = (id: string) => {
+      if (ids.has(id)) return;
+      ids.add(id);
+      for (const child of state.children[id] ?? []) add(child);
+    };
+    for (const entry of runEntries) if (entry.kind === "tool") add(entry.toolId);
+    return ids;
+  };
   const shownRun =
     panelRun === null ? undefined : rows.find((row) => row.kind === "run" && row.key === panelRun);
   const panelSteps = shownRun?.kind === "run" && !sidePanel ? stepsOf(shownRun.entries) : null;
@@ -388,6 +410,9 @@ export function Transcript({
                     live={state.status === "running"}
                     onToggle={toggleRun}
                     onAnswerPermission={onAnswerPermission}
+                    files={files && runFilesOf(files, runToolIds(row.entries))}
+                    reviewed={reviewed}
+                    onOpenFile={onOpenFile}
                   />
                 </div>
               );
