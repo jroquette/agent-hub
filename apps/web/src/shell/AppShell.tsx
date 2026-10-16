@@ -13,6 +13,9 @@ import { Outlet, useNavigate } from "react-router";
 import { usePreferences } from "../lib/preferences";
 import { useScope } from "../lib/scope";
 import { CommandPalette } from "./CommandPalette";
+import { DiscussProvider, useDiscuss } from "./discuss";
+import { DiscussPanel } from "./DiscussPanel";
+import { DiscussSelection } from "./DiscussSelection";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
 import { armGoSequence, clearGoSequence, goSequencePending, typingIn } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
@@ -119,6 +122,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
   const { health, counts } = useGlobalStream();
   const [palette, setPalette] = useState<{ query: string } | null>(null);
   const [sheet, setSheet] = useState(false);
+  const discuss = useDiscuss();
 
   const actions = useMemo<ShellActions>(
     () => ({
@@ -151,7 +155,11 @@ function ShellLayout({ children }: { children?: ReactNode }) {
 
   return (
     <ShellContext.Provider value={actions}>
-      <div className="ah-shell" data-collapsed={preferences.sidebarCollapsed || undefined}>
+      <div
+        className="ah-shell"
+        data-collapsed={preferences.sidebarCollapsed || undefined}
+        data-discuss={discuss.open || undefined}
+      >
         <Sidebar
           counts={{
             approvals: counts?.approvals_open,
@@ -179,6 +187,8 @@ function ShellLayout({ children }: { children?: ReactNode }) {
         <main className="ah-shell-main" id="main">
           {children ?? <Outlet />}
         </main>
+        <DiscussPanel />
+        <DiscussSelection />
       </div>
       {palette && (
         <CommandPalette onClose={closeAll} initialQuery={palette.query} project={scope} />
@@ -194,7 +204,9 @@ export function AppShell({ children }: { children?: ReactNode }) {
   const [scope] = useScope();
   return (
     <GlobalStreamProvider project={scope}>
-      <ShellLayout>{children}</ShellLayout>
+      <DiscussProvider>
+        <ShellLayout>{children}</ShellLayout>
+      </DiscussProvider>
     </GlobalStreamProvider>
   );
 }

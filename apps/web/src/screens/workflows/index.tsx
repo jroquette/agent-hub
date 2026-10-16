@@ -12,6 +12,7 @@ import {
 } from "../../components";
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
+import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { NodePanel, useNodeParam, WorkflowGraph } from "./WorkflowGraph";
 import { useWorkflow, useWorkflows, type WorkflowDetail, type WorkflowSummary } from "./queries";
 
@@ -174,6 +175,16 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
   const nodes = workflow.layers.flat();
   const selected = nodes.find((n) => n.id === node.nodeId) ?? null;
   const written = selected ? documentNode(workflow, selected.id) : undefined;
+  useDiscussTarget({
+    key: `workflow:${workflow.project}:${workflow.name}`,
+    project: workflow.project,
+    kind: "Workflow",
+    title: workflow.name,
+    brief:
+      workflow.source === "hub"
+        ? `It is defined in a pack under the hub's \`workflows/\` folder; find the file that declares it.${selected ? ` I am looking at its node \`${selected.id}\`.` : ""}`
+        : "It is a built-in workflow shipped with agent-hub, not a file of this hub: to change it, propose a copy in the hub's `workflows/` folder.",
+  });
   return (
     <Page>
       <Breadcrumbs
@@ -189,6 +200,8 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
         <span className="ah-small ah-subtle">
           r{workflow.revision} · {workflow.node_count} nodes · {workflow.layer_count} layers
         </span>
+        <span className="ah-grow" />
+        <DiscussButton />
       </div>
       {workflow.description && (
         <p className="ah-muted" style={{ margin: 0 }}>

@@ -259,10 +259,16 @@ const MODE_LABEL: Record<PermissionMode, string> = {
   default: "Ask before edits",
   acceptEdits: "Accept edits",
   plan: "Plan",
+  auto: "Auto",
 };
 /** How a permission mode reads in the UI. */
 export function modeLabel(mode: PermissionMode): string {
   return MODE_LABEL[mode];
+}
+
+/** Claude keeps the conversation under its own id: a message resumes it, unless the log is full. */
+export function resumable(session: AgentSession, endReason: EndReason | null | undefined): boolean {
+  return session.kind !== "cloud" && session.claude_session_id != null && endReason !== "log_full";
 }
 
 const SUMMARY_KEYS = [

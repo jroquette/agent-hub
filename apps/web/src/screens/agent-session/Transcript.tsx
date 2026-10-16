@@ -25,7 +25,7 @@ import {
   type PermissionView,
   type TranscriptEntry,
   type TranscriptState,
-} from "./transcript";
+} from "./model";
 import { isEditable, type StickToBottom } from "./useStickToBottom";
 
 export interface TranscriptProps {

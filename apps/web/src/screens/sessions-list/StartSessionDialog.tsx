@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { rememberScreenshot } from "../../lib/screenshotCopy";
-import type { PermissionMode } from "../agent-session/transcript";
+import type { PermissionMode } from "../agent-session/model";
 import { agentSessionHref } from "./control";
 import {
   NewSessionDialog,

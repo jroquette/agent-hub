@@ -69,12 +69,19 @@ def test_refuses_model_when_pattern_fails(model: str) -> None:
         StartSpec(cwd="/hub", mode="default", model=model)
 
 
-@pytest.mark.parametrize("mode", ["bypassPermissions", "dontAsk", "auto", "manual"])
+@pytest.mark.parametrize("mode", ["bypassPermissions", "dontAsk", "manual"])
 def test_refuses_bypass_when_mode_parsed(mode: str) -> None:
     with pytest.raises(ValidationError):
         MODES.validate_python(mode)
     with pytest.raises(ValidationError):
         StartSpec(cwd="/hub", mode=mode)  # type: ignore[arg-type]
+
+
+def test_takes_auto_when_mode_parsed() -> None:
+    # Claude Code's auto mode: its classifier approves safe actions and blocks risky ones; the dev
+    # app of make playground offers it.
+    assert MODES.validate_python("auto") == "auto"
+    assert StartSpec(cwd="/hub", mode="auto").mode == "auto"
 
 
 def test_refuses_fork_when_no_resume_given() -> None:
