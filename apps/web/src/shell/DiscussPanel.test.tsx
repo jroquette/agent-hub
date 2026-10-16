@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -29,6 +29,7 @@ const skill: DiscussTarget = {
   project: "demo",
   kind: "Skill",
   title: "plan",
+  starters: [{ label: "Is this still true?", message: "Check it against the code." }],
 };
 const AC: DiscussReference = {
   id: "ac:AC-7",
@@ -124,5 +125,36 @@ describe("DiscussPanel", () => {
       "href",
       `/agent-sessions/${ID}`,
     );
+  });
+
+  it("starts the conversation with a starter's message in one click", async () => {
+    window.localStorage.setItem("ah.discuss.open", "1");
+    const view = renderPanel();
+    await userEvent.click(screen.getByRole("button", { name: "switch" }));
+    const group = await screen.findByRole("group", { name: "Start with" });
+    const starter = within(group).getByRole("button", { name: "Is this still true?" });
+    await waitFor(() => {
+      expect(starter).toBeEnabled();
+    });
+
+    await userEvent.click(starter);
+
+    const created = await waitFor(() => {
+      const found = view.requests.filter(
+        (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+      );
+      expect(found).toHaveLength(1);
+      return found[0];
+    });
+    const body = JSON.parse((await created?.clone().text()) ?? "{}") as { prompt: string };
+    expect(body.prompt).toBe(discussPrompt(skill, "Check it against the code."));
+  });
+
+  it("offers no starters when the target has none", async () => {
+    window.localStorage.setItem("ah.discuss.open", "1");
+    renderPanel();
+    await screen.findByRole("textbox", { name: "Message Claude" });
+
+    expect(screen.queryByRole("group", { name: "Start with" })).toBeNull();
   });
 });
