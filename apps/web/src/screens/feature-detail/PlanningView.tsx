@@ -533,18 +533,74 @@ interface FlowColumn {
   refs: readonly string[];
 }
 
-/** The flow's columns: each parallel group in order, then tickets held back, then the settled. */
+/**
+ * The flow's steps: Kahn's layers over the server's open layers plus the done tickets, so a
+ * ticket keeps its step once done and the steps after it stay where they were. The server's
+ * ``layers`` cover only what is left to do (they drive ``can_start`` and the order); here the
+ * done tickets are put back in by their blockers, and an open ticket stays at or after its server
+ * layer. Inside a step, done tickets come first, then the server's order. A ticket that cannot be
+ * placed (a cycle through a done ticket) is returned apart.
+ */
+function stableSteps(
+  work: readonly TicketRow[],
+  planning: TicketPlan,
+): { steps: string[][]; unplaced: string[] } {
+  const open = planning.layers.flat();
+  const done = work.filter((t) => t.readiness === "done").map((t) => t.ref);
+  const nodes = new Set([...open, ...done]);
+  const rank = new Map([...done, ...open].map((ref, i) => [ref, i]));
+  const byRef = new Map(work.map((t) => [t.ref, t]));
+  const pending = new Map(
+    [...nodes].map((ref) => [
+      ref,
+      new Set((byRef.get(ref)?.blocked_by ?? []).map((e) => e.ref).filter((b) => nodes.has(b))),
+    ]),
+  );
+  // An open ticket never goes before its server layer; one after a blocker goes a step past it.
+  const floor = new Map(planning.layers.flatMap((layer, i) => layer.map((ref) => [ref, i])));
+  const level = new Map<string, number>();
+  for (;;) {
+    const ready = [...pending].filter(([, left]) => left.size === 0).map(([ref]) => ref);
+    if (ready.length === 0) break;
+    for (const ref of ready) {
+      const blockers = (byRef.get(ref)?.blocked_by ?? []).map((e) => level.get(e.ref) ?? -1);
+      level.set(ref, Math.max(floor.get(ref) ?? 0, 1 + Math.max(-1, ...blockers)));
+      pending.delete(ref);
+    }
+    for (const left of pending.values()) for (const ref of ready) left.delete(ref);
+  }
+  const byLevel = new Map<number, string[]>();
+  for (const [ref, n] of level) byLevel.set(n, [...(byLevel.get(n) ?? []), ref]);
+  const steps = [...byLevel]
+    .sort(([a], [b]) => a - b)
+    .map(([, refs]) => refs.sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0)));
+  return { steps, unplaced: [...pending.keys()] };
+}
+
+/** The flow's columns: each step in order (done tickets kept in theirs), then tickets held
+ * back, then the canceled ones and any done ticket no step could hold. */
 function flowColumns(tickets: readonly TicketRow[], planning: TicketPlan): FlowColumn[] {
-  const layered = new Set(planning.layers.flat());
   const epics = new Set(planning.epics);
   const work = tickets.filter((t) => !epics.has(t.ref));
-  const columns: FlowColumn[] = planning.layers.map((layer, i) => ({
-    key: `step-${String(i + 1)}`,
-    title: `Step ${String(i + 1)}`,
-    hint: layer.length > 1 ? "in parallel" : i === 0 ? "first" : `after step ${String(i)}`,
-    kind: "step",
-    refs: layer,
-  }));
+  const byRef = new Map(work.map((t) => [t.ref, t]));
+  const { steps, unplaced } = stableSteps(work, planning);
+  const layered = new Set(steps.flat());
+  const columns: FlowColumn[] = steps.map((step, i) => {
+    const allDone = step.every((ref) => byRef.get(ref)?.readiness === "done");
+    return {
+      key: `step-${String(i + 1)}`,
+      title: `Step ${String(i + 1)}`,
+      hint: allDone
+        ? "done"
+        : step.length > 1
+          ? "in parallel"
+          : i === 0
+            ? "first"
+            : `after step ${String(i)}`,
+      kind: allDone ? "done" : "step",
+      refs: step,
+    };
+  });
   const held = work
     .filter((t) => !layered.has(t.ref) && t.readiness !== "done" && t.readiness !== "canceled")
     .map((t) => t.ref);
@@ -557,9 +613,10 @@ function flowColumns(tickets: readonly TicketRow[], planning: TicketPlan): FlowC
       refs: held,
     });
   }
-  const settled = work
-    .filter((t) => t.readiness === "done" || t.readiness === "canceled")
-    .map((t) => t.ref);
+  const settled = [
+    ...unplaced,
+    ...work.filter((t) => t.readiness === "canceled").map((t) => t.ref),
+  ];
   if (settled.length > 0) {
     columns.push({ key: "done", title: "Done", hint: "settled", kind: "done", refs: settled });
   }
