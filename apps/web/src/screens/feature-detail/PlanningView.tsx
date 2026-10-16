@@ -1,10 +1,11 @@
 import "./ticket-flow.css";
 
-import { Fragment } from "react";
+import { Fragment, useRef } from "react";
 import type { ReactNode } from "react";
 
 import type { components } from "../../api/schema";
 import { Banner, Icon, StatusBadge, type Status } from "../../components";
+import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
 import { linearHref } from "../../lib/safeHref";
 
 type TicketRow = components["schemas"]["TicketRow"];
@@ -274,6 +275,63 @@ export function ReadinessSummary({ tickets }: { tickets: readonly TicketRow[] })
   );
 }
 
+/** A conventional-commit title split for reading: `feat(brand-api): add x` → type, scope, text. */
+export function splitTitle(title: string): {
+  type: string | null;
+  scope: string | null;
+  text: string;
+} {
+  const match = /^([a-z]+)(?:\(([^)]+)\))?!?:\s+(.+)$/.exec(title);
+  if (!match) return { type: null, scope: null, text: title };
+  return { type: match[1] ?? null, scope: match[2] ?? null, text: match[3] ?? title };
+}
+
+/** A ticket's title with its conventional prefix as a quiet chip, so the words lead. */
+export function TicketTitle({ title }: { title: string }) {
+  const { type, scope, text } = splitTitle(title);
+  return (
+    <>
+      {type && (
+        <span className="ah-ticket-scope" title={`${type}${scope ? `(${scope})` : ""}`}>
+          {scope ?? type}
+        </span>
+      )}
+      <span>{text}</span>
+    </>
+  );
+}
+
+/** A thin bar of how many of the ticket's ACs pass, with the count in words beside it. */
+export function AcMeter({
+  passing,
+  total,
+  label,
+}: {
+  passing: number;
+  total: number;
+  label: string;
+}) {
+  const all = passing === total;
+  return (
+    <span className="ah-ac-meter" data-all={all || undefined}>
+      <span
+        className="ah-flow-track"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={passing}
+        aria-label={`${String(passing)} of ${String(total)} ACs passing`}
+      >
+        <span
+          data-tone="done"
+          style={{ width: `${String(total ? (passing / total) * 100 : 0)}%` }}
+        />
+      </span>
+      <span>{label}</span>
+    </span>
+  );
+}
+
 /** "17/18 ACs passing" for a ticket, or its AC count when passing is not known. */
 function AcCount({
   row,
@@ -285,10 +343,31 @@ function AcCount({
   if (row.acs.length === 0) return null;
   if (!acPasses) return <span>{row.acs.length} ACs</span>;
   const passing = row.acs.filter((ac) => acPasses[ac]).length;
-  const all = passing === row.acs.length;
   return (
-    <span style={all ? { color: "var(--done)" } : undefined}>
-      {passing}/{row.acs.length} ACs passing
+    <AcMeter
+      passing={passing}
+      total={row.acs.length}
+      label={`${String(passing)}/${String(row.acs.length)} ACs passing`}
+    />
+  );
+}
+
+/** The ticket's Linear id, or its plan key while it is not created; the plan key as a chip. */
+export function TicketIdLine({ row }: { row: TicketRow }) {
+  return (
+    <span className="ah-ticket-id">
+      {row.id ? (
+        <LinearLink id={row.id} url={row.url} />
+      ) : (
+        <span className="ah-mono" title="Not created in Linear yet">
+          {row.key ?? row.ref}
+        </span>
+      )}
+      {row.id && row.key && row.key !== row.id && (
+        <span className="ah-ticket-key" title="The ticket's key in the plan">
+          {row.key}
+        </span>
+      )}
     </span>
   );
 }
@@ -298,61 +377,69 @@ function FlowCard({
   rows,
   external,
   critical,
+  inFlow,
   acPasses,
 }: {
   row: TicketRow;
   rows: readonly TicketRow[];
   external: readonly ExternalBlocker[];
   critical: boolean;
+  /** The refs drawn in the flow: a blocker among them is shown by its edge, not in words. */
+  inFlow: ReadonlySet<string>;
   acPasses?: Readonly<Record<string, boolean>> | undefined;
 }) {
-  const after = row.blocked_by.map((edge) => edge.ref);
+  const after = row.blocked_by.map((edge) => edge.ref).filter((ref) => !inFlow.has(ref));
+  const showReviewed =
+    row.reviewed === true && row.readiness !== "done" && row.readiness !== "in_progress";
   return (
     <li
       className="ah-flow-card"
+      data-node-id={row.ref}
       data-readiness={row.readiness}
       data-critical={critical || undefined}
       aria-label={`${row.ref}${row.title ? ` · ${row.title}` : ""}`}
     >
-      <div className="ah-row" style={{ gap: 8, justifyContent: "space-between" }}>
-        {row.id ? (
-          <LinearLink id={row.id} url={row.url} />
-        ) : (
-          <span className="ah-mono ah-small" title="Not created in Linear yet">
-            {row.key ?? row.ref}
-          </span>
-        )}
+      <div className="ah-flow-card-head">
+        <TicketIdLine row={row} />
         <StateBadge row={row} />
       </div>
       <a
         className="ah-flow-card-title"
         href={`#${ticketAnchor(row.ref)}`}
         title={row.title ?? undefined}
+        aria-label={row.title ?? row.ref}
       >
-        {row.title ?? row.ref}
+        <TicketTitle title={row.title ?? row.ref} />
       </a>
-      <div className="ah-small">
-        <ReadinessText row={row} rows={rows} external={external} />
-      </div>
-      <div className="ah-flow-card-meta">
-        <AcCount row={row} acPasses={acPasses} />
-        {row.reviewed === true && row.readiness !== "done" && (
-          <span className="ah-row" style={{ gap: 3, color: "var(--done)" }}>
-            <Icon name="circle-check" size="sm" />
-            reviewed
-          </span>
-        )}
-        {row.assignee && <span>{row.assignee}</span>}
-        {after.length > 0 && row.readiness !== "waiting" && (
-          <span>
-            after <RefList refs={after} rows={rows} external={external} />
-          </span>
-        )}
-        {critical && (
-          <span style={{ color: "var(--accent)" }} title="On the longest chain of tickets not done">
-            critical path
-          </span>
-        )}
+      <div className="ah-flow-card-foot">
+        <div className="ah-small">
+          <ReadinessText row={row} rows={rows} external={external} />
+        </div>
+        <div className="ah-flow-card-meta">
+          <AcCount row={row} acPasses={acPasses} />
+          {showReviewed && (
+            <span className="ah-row" style={{ gap: 3, color: "var(--done)" }}>
+              <Icon name="circle-check" size="sm" />
+              reviewed
+            </span>
+          )}
+          {row.assignee && (
+            <span className="ah-row" style={{ gap: 4 }}>
+              <Icon name="user" size="sm" />
+              {row.assignee}
+            </span>
+          )}
+          {after.length > 0 && row.readiness !== "waiting" && (
+            <span>
+              after <RefList refs={after} rows={rows} external={external} />
+            </span>
+          )}
+          {critical && (
+            <span className="ah-flow-critical" title="On the longest chain of tickets not done">
+              critical path
+            </span>
+          )}
+        </div>
       </div>
     </li>
   );
@@ -404,11 +491,11 @@ function EpicCard({
         )}
         <StateBadge row={epic} />
         <span className="ah-flow-epic-title" title={epic.title ?? undefined}>
-          {epic.title ?? epic.ref}
+          <TicketTitle title={epic.title ?? epic.ref} />
         </span>
       </div>
       <div
-        className="ah-flow-epic-track"
+        className="ah-flow-track"
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={total}
@@ -479,6 +566,188 @@ function flowColumns(tickets: readonly TicketRow[], planning: TicketPlan): FlowC
   return columns;
 }
 
+type EdgeSource = components["schemas"]["EdgeSource"];
+
+interface FlowEdge {
+  from: string;
+  to: string;
+  source: EdgeSource;
+  /** Both ends are consecutive on the critical path. */
+  critical: boolean;
+  /** The ticket started before this blocker was done. */
+  early: boolean;
+  /** The blocker is settled, so the edge no longer holds anything back. */
+  settled: boolean;
+}
+
+/** One edge per blocker drawn in the flow, from the blocker to the ticket it holds back. */
+function flowEdges(
+  tickets: readonly TicketRow[],
+  inFlow: ReadonlySet<string>,
+  criticalPath: readonly string[],
+): FlowEdge[] {
+  const byRef = new Map(tickets.map((t) => [t.ref, t]));
+  const criticalPairs = new Set(
+    criticalPath.slice(1).map((ref, i) => `${criticalPath[i] ?? ""}→${ref}`),
+  );
+  return tickets
+    .filter((t) => inFlow.has(t.ref))
+    .flatMap((t) =>
+      t.blocked_by
+        .filter((edge) => inFlow.has(edge.ref))
+        .map((edge) => {
+          const blocker = byRef.get(edge.ref);
+          return {
+            from: edge.ref,
+            to: t.ref,
+            source: edge.source,
+            critical: criticalPairs.has(`${edge.ref}→${t.ref}`),
+            early: t.readiness !== "waiting" && t.waiting_on.includes(edge.ref),
+            settled: blocker?.readiness === "done" || blocker?.readiness === "canceled",
+          };
+        }),
+    );
+}
+
+/** The columns with an SVG layer of edges under them: who blocks whom, at a glance. */
+function FlowGraph({
+  columns,
+  byRef,
+  tickets,
+  external,
+  critical,
+  criticalPath,
+  acPasses,
+}: {
+  columns: readonly FlowColumn[];
+  byRef: ReadonlyMap<string, TicketRow>;
+  tickets: readonly TicketRow[];
+  external: readonly ExternalBlocker[];
+  critical: ReadonlySet<string>;
+  criticalPath: readonly string[];
+  acPasses?: Readonly<Record<string, boolean>> | undefined;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inFlow = new Set(columns.flatMap((c) => c.refs));
+  const edges = flowEdges(tickets, inFlow, criticalPath);
+  const shape = `${columns.map((c) => c.refs.join(",")).join("|")}#${edges
+    .map((e) => `${e.from}>${e.to}`)
+    .join(",")}`;
+  const { boxes, size } = useNodeBoxes(ref, shape);
+  return (
+    <div ref={ref} className="ah-flow" role="list" aria-label="Ticket flow">
+      <svg className="ah-flow-edges" aria-hidden="true" width={size.width} height={size.height}>
+        <defs>
+          {(["plain", "critical", "early"] as const).map((kind) => (
+            <marker
+              key={kind}
+              id={`ah-flow-arrow-${kind}`}
+              className="ah-flow-arrowhead"
+              data-kind={kind}
+              viewBox="0 0 8 8"
+              refX="7"
+              refY="4"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto-start-reverse"
+            >
+              <path d="M0 0 L8 4 L0 8 z" />
+            </marker>
+          ))}
+        </defs>
+        {edges.map((e) => (
+          <path
+            key={`${e.from}→${e.to}`}
+            data-edge={`${e.from}→${e.to}`}
+            data-source={e.source}
+            data-critical={e.critical || undefined}
+            data-early={e.early || undefined}
+            data-settled={e.settled || undefined}
+            d={curvePath(boxes[e.from], boxes[e.to])}
+            markerEnd={`url(#ah-flow-arrow-${e.early ? "early" : e.critical ? "critical" : "plain"})`}
+          />
+        ))}
+      </svg>
+      {columns.map((col) => (
+        <section
+          key={col.key}
+          className="ah-flow-col"
+          data-kind={col.kind}
+          role="listitem"
+          aria-label={`${col.title} · ${col.hint}`}
+        >
+          <div className="ah-flow-col-head">
+            <b>{col.title}</b>
+            <span>{col.hint}</span>
+            <span className="ah-flow-col-n">{col.refs.length}</span>
+          </div>
+          <ul className="ah-flow-col-list">
+            {col.refs.map((r) => {
+              const row = byRef.get(r);
+              if (!row) return null;
+              return (
+                <FlowCard
+                  key={r}
+                  row={row}
+                  rows={tickets}
+                  external={external}
+                  critical={critical.has(r)}
+                  inFlow={inFlow}
+                  acPasses={acPasses}
+                />
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** How to read the flow, folded next to its title so it stays one click away. */
+function FlowLegend({ showCritical }: { showCritical: boolean }) {
+  return (
+    <details className="ah-flow-legend">
+      <summary>
+        <Icon name="info" size="sm" />
+        How to read
+      </summary>
+      <div className="ah-flow-legend-body" aria-label="Legend">
+        {(["can_start", "in_progress", "waiting", "done"] as const).map((r) => (
+          <span key={r} title={READINESS_HELP[r]}>
+            <span className="ah-flow-dot" data-tone={r} aria-hidden="true" />
+            {r === "can_start"
+              ? "Can start: not started, blockers done"
+              : r === "in_progress"
+                ? "In progress: started in Linear"
+                : r === "waiting"
+                  ? "Waiting: a blocker is not done"
+                  : "Done in Linear"}
+          </span>
+        ))}
+        <span>
+          <span className="ah-flow-line" aria-hidden="true" />
+          Blocks: in the plan and in Linear
+        </span>
+        <span>
+          <span className="ah-flow-line" data-source="plan" aria-hidden="true" />
+          From the plan only
+        </span>
+        <span>
+          <span className="ah-flow-line" data-early="true" aria-hidden="true" />
+          Started before its blocker was done
+        </span>
+        {showCritical && (
+          <span>
+            <span className="ah-flow-line" data-critical="true" aria-hidden="true" />
+            Critical path: the longest chain not done
+          </span>
+        )}
+      </div>
+    </details>
+  );
+}
+
 export interface PlanningViewProps {
   tickets: readonly TicketRow[];
   planning: TicketPlan;
@@ -501,15 +770,22 @@ export function PlanningView({ tickets, planning, acPasses }: PlanningViewProps)
   const epics = planning.epics.flatMap((ref) => byRef.get(ref) ?? []);
   const work = tickets.filter((t) => !planning.epics.includes(t.ref));
   return (
-    <section className="ah-card ah-pad ah-stack" style={{ gap: 14 }} aria-labelledby="planning-h">
-      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-        <h2 id="planning-h" className="ah-h3" style={{ margin: 0 }}>
-          Ticket flow
-        </h2>
-        <span className="ah-small ah-subtle">
-          Left to right: tickets in one step can run in parallel; a step starts when the one before
-          it is done.{epics.length > 0 && " The epic only tracks them, so it is no step."}
-        </span>
+    <section className="ah-card ah-pad ah-stack" style={{ gap: 16 }} aria-labelledby="planning-h">
+      <div className="ah-flow-header">
+        <div className="ah-stack" style={{ gap: 4, flex: "1 1 420px", minWidth: 0 }}>
+          <h2 id="planning-h" className="ah-h3" style={{ margin: 0 }}>
+            Ticket flow
+          </h2>
+          <span className="ah-small ah-subtle">
+            Steps run left to right; tickets in one step can run in parallel. Each line goes from a
+            blocker to the ticket it holds back.
+            {epics.length > 0 && " The epic only tracks them, so it is no step."}
+          </span>
+        </div>
+        <div className="ah-row" style={{ gap: 8, alignItems: "flex-start" }}>
+          <ReadinessSummary tickets={work} />
+          <FlowLegend showCritical={critical.size > 0} />
+        </div>
       </div>
       {planning.cycles.length > 0 && (
         <Banner tone="error" icon="octagon-x">
@@ -552,69 +828,19 @@ export function PlanningView({ tickets, planning, acPasses }: PlanningViewProps)
       {epics.map((epic) => (
         <EpicCard key={epic.ref} epic={epic} rows={tickets} acPasses={acPasses} />
       ))}
-      <ReadinessSummary tickets={work} />
       {columns.length === 0 ? (
         <span className="ah-small ah-muted">No ticket to show.</span>
       ) : (
-        <div className="ah-flow" role="list" aria-label="Ticket flow">
-          {columns.map((col, i) => (
-            <Fragment key={col.key}>
-              {i > 0 && (
-                <div className="ah-flow-arrow" aria-hidden="true">
-                  <Icon name="arrow-right" />
-                </div>
-              )}
-              <section
-                className="ah-flow-col"
-                data-kind={col.kind}
-                role="listitem"
-                aria-label={`${col.title} · ${col.hint}`}
-              >
-                <div className="ah-flow-col-head">
-                  <b>{col.title}</b>
-                  <span>{col.hint}</span>
-                </div>
-                <ul
-                  className="ah-stack"
-                  style={{ gap: 8, margin: 0, padding: 0, listStyle: "none" }}
-                >
-                  {col.refs.map((ref) => {
-                    const row = byRef.get(ref);
-                    if (!row) return null;
-                    return (
-                      <FlowCard
-                        key={ref}
-                        row={row}
-                        rows={tickets}
-                        external={external}
-                        critical={critical.has(ref)}
-                        acPasses={acPasses}
-                      />
-                    );
-                  })}
-                </ul>
-              </section>
-            </Fragment>
-          ))}
-        </div>
+        <FlowGraph
+          columns={columns}
+          byRef={byRef}
+          tickets={tickets}
+          external={external}
+          critical={critical}
+          criticalPath={planning.critical_path}
+          acPasses={acPasses}
+        />
       )}
-      <div className="ah-flow-legend" aria-label="Legend">
-        {(["can_start", "in_progress", "waiting", "done"] as const).map((r) => (
-          <span key={r} title={READINESS_HELP[r]}>
-            <span className="ah-flow-dot" data-tone={r} aria-hidden="true" />
-            {r === "can_start"
-              ? "Can start: not started, blockers done"
-              : r === "in_progress"
-                ? "In progress: started in Linear"
-                : r === "waiting"
-                  ? "Waiting: a blocker is not done"
-                  : "Done in Linear"}
-          </span>
-        ))}
-        {critical.size > 0 && (
-          <span style={{ color: "var(--accent)" }}>Critical path: the longest chain not done</span>
-        )}
-      </div>
     </section>
   );
 }
