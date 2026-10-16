@@ -558,8 +558,61 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
       within(rowOf("/evaluator") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
     ).toBeNull();
 
+    expect(await seriousViolations(view.container)).toEqual([]);
+
     await userEvent.click(screen.getByRole("link", { name: "Resume Twin chat" }));
     expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(11, "0192a5e5")}`);
+  });
+
+  it("resume: no Resume on a log-full row, or on any row where sessions cannot start", async () => {
+    const broke = anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" });
+    const full = anAgentSession({
+      id: anId(17, "0192a5e5"),
+      title: "Full",
+      status: "ended",
+      end_reason: "log_full",
+    });
+    const view = renderList({ ...drivenFixture(), [AGENT]: { items: [broke, full] } });
+    await screen.findByText("Full");
+    expect(
+      within(rowOf("Broke") as HTMLElement).getByRole("link", { name: "Resume Broke" }),
+    ).toBeInTheDocument();
+    expect(
+      within(rowOf("Full") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
+    ).toBeNull();
+    view.unmount();
+
+    renderList({
+      ...drivenFixture(),
+      [AGENT]: { items: [broke] },
+      [`${AGENT}/capabilities`]: aCapabilities({ available: false }),
+    });
+    await screen.findByText("Broke");
+    expect(
+      within(rowOf("Broke") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
+    ).toBeNull();
+  });
+
+  it("resume: an ended twin whose driven session is not listed shows its row without Resume", async () => {
+    const twin = aSession({
+      id: anId(3, "aaaa0003"),
+      label: named("orphan"),
+      status: "ended",
+      agent_session_id: anId(19, "0192a5e5"),
+    });
+    const broke = anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" });
+    renderList({
+      ...drivenFixture(),
+      [SESSIONS]: aSessionsByStatus([...sessions(), twin]),
+      [AGENT]: { items: [broke] },
+    });
+
+    await screen.findByText("Broke");
+    expect(
+      within(rowOf("Broke") as HTMLElement).getByRole("link", { name: "Resume Broke" }),
+    ).toBeInTheDocument();
+    const orphan = rowOf("/orphan") as HTMLElement;
+    expect(within(orphan).queryByRole("link", { name: /^Resume/ })).toBeNull();
   });
 
   it("shows a twinless row's folder, mode, model and cost", async () => {
