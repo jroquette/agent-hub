@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router";
 
@@ -13,6 +12,7 @@ import {
   ProvenanceBadge,
   SegmentedControl,
   Skeleton,
+  StatusBadge,
   Tabs,
 } from "../../components";
 import { useNow } from "../../lib/clock";
@@ -32,21 +32,33 @@ import { useLearnings, useLiveLearnings, type LearningStatus } from "./queries";
 
 type Learning = components["schemas"]["Learning"];
 
+function parseStatus(value: string | null): LearningStatus {
+  return value === "accepted" || value === "rejected" ? value : "proposed";
+}
+
 const STATUSES: readonly { id: LearningStatus; label: string }[] = [
   { id: "proposed", label: "Proposed" },
   { id: "accepted", label: "Accepted" },
   { id: "rejected", label: "Rejected" },
 ];
 
-const clip: CSSProperties = {
+/** Clamps text to `lines` lines without widening the table (a nowrap cell would). */
+const clamp = (lines: number): CSSProperties => ({
+  display: "-webkit-box",
+  WebkitLineClamp: lines,
+  WebkitBoxOrient: "vertical",
   overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-};
+  overflowWrap: "anywhere",
+});
+
+/** A proposed learning that cannot be accepted or rejected here (its note is gone, ...). */
+const blockedReason = (l: Learning): string | null =>
+  l.status === "proposed" ? (l.actions_unavailable ?? null) : null;
 
 function QueueRow({ l }: { l: Learning }) {
   const ext = isExternal(l);
   const state = stateOf(l);
+  const blocked = blockedReason(l);
   return (
     <div
       style={{
@@ -67,8 +79,9 @@ function QueueRow({ l }: { l: Learning }) {
             />
           )}
           <span
+            title={l.text}
             style={{
-              ...clip,
+              ...clamp(2),
               fontWeight: 500,
               textDecoration: l.status === "rejected" ? "line-through" : undefined,
             }}
@@ -77,15 +90,18 @@ function QueueRow({ l }: { l: Learning }) {
           </span>
         </span>
         {l.summary ? (
-          <span className="ah-small ah-muted" style={clip} title={l.summary}>
+          <span className="ah-small ah-muted" style={clamp(1)} title={l.summary}>
             {l.summary}
           </span>
         ) : (
-          <span className="ah-small ah-subtle" style={{ ...clip, fontStyle: "italic" }}>
-            {l.note_unavailable ?? "No summary"}
-          </span>
+          !blocked && (
+            <span className="ah-small ah-subtle" style={{ ...clamp(1), fontStyle: "italic" }}>
+              {l.note_unavailable ?? "No summary"}
+            </span>
+          )
         )}
         <span className="ah-row ah-wrap" style={{ gap: 6 }}>
+          {blocked && <StatusBadge status="blocked" label={blocked} />}
           {state !== "proposed" && <LearningStateBadge state={state} />}
           {l.provenance && <ProvenanceBadge provenance={l.provenance} />}
           {ext && <ExternalLabel source="External" />}
@@ -100,16 +116,20 @@ function QueueRow({ l }: { l: Learning }) {
 export function LearningsScreen() {
   const [scope] = useScope();
   const [params, setParams] = useSearchParams();
-  const [status, setStatus] = useState<LearningStatus>("proposed");
+  const status = parseStatus(params.get("status"));
   const learnings = useLearnings(scope, status);
   useLiveLearnings();
   const now = useNow(30_000);
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
 
-  const rows = [...(learnings.data?.items ?? [])].sort((a, b) =>
-    (a.proposed_at ?? "").localeCompare(b.proposed_at ?? ""),
+  // Learnings that can be decided first, oldest first; the blocked ones after them.
+  const rows = [...(learnings.data?.items ?? [])].sort(
+    (a, b) =>
+      Number(blockedReason(a) !== null) - Number(blockedReason(b) !== null) ||
+      (a.proposed_at ?? "").localeCompare(b.proposed_at ?? ""),
   );
+  const blockedCount = rows.filter((l) => blockedReason(l) !== null).length;
   const { learningId } = useParams();
   // `/knowledge/learnings/:learningId` (a link to one proposal) and `?learning=` both pick it.
   const chosen = params.get("learning") ?? learningId ?? null;
@@ -165,7 +185,11 @@ export function LearningsScreen() {
           }}
         >
           <div className="ah-row ah-wrap" style={{ gap: 6, padding: "12px 16px 10px 32px" }}>
-            <span className="ah-small ah-subtle">Oldest first</span>
+            <span className="ah-small ah-subtle">
+              {status === "proposed" && blockedCount > 0
+                ? `${String(rows.length - blockedCount)} ready · ${String(blockedCount)} blocked · oldest first`
+                : "Oldest first"}
+            </span>
             <span className="ah-grow" />
             {stamp}
           </div>
@@ -177,13 +201,14 @@ export function LearningsScreen() {
               rows={rows}
               selected={selectedId ? [selectedId] : []}
               maxHeight={640}
+              scrollLabel="Learnings"
               onRowClick={(l) => {
                 select(l.id);
               }}
               columns={[
                 {
                   id: "t",
-                  label: `Proposal · ${learnings.isPending ? "…" : String(count)} ${status === "proposed" ? "awaiting triage" : status}`,
+                  label: `Learnings · ${learnings.isPending ? "…" : String(count)} ${status}`,
                   render: (l) => <QueueRow l={l} />,
                 },
                 {
@@ -239,15 +264,14 @@ export function LearningsScreen() {
             label="Status"
             value={status}
             onChange={(id) => {
-              setStatus(id as LearningStatus);
-              setParams(
-                (current) => {
-                  const next = new URLSearchParams(current);
-                  next.delete("learning");
-                  return next;
-                },
-                { replace: true },
-              );
+              // A status switch is a navigation (spec 01): Back undoes it, the URL keeps it.
+              setParams((current) => {
+                const next = new URLSearchParams(current);
+                next.delete("learning");
+                if (id === "proposed") next.delete("status");
+                else next.set("status", id);
+                return next;
+              });
             }}
             options={STATUSES.map((s) => ({ id: s.id, label: s.label }))}
           />
