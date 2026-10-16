@@ -6,6 +6,7 @@ import type { PermissionMode } from "../agent-session/transcript";
 import { agentSessionHref } from "./control";
 import {
   NewSessionDialog,
+  type AgentSession,
   type DriverCapabilities,
   type ShakeScreenshot,
   type Workdir,
@@ -17,12 +18,15 @@ export interface StartSessionDialogProps {
   project: string;
   /** The projects "Where" may switch to; another one's folders load here. */
   projects?: readonly string[] | undefined;
-  workdirs: readonly Workdir[];
+  /** Not needed to resume, which starts in the target's own folder. */
+  workdirs?: readonly Workdir[] | undefined;
   capabilities: DriverCapabilities;
   screenshot?: ShakeScreenshot | undefined;
   initialWorkdirId?: string | undefined;
   initialMode?: PermissionMode | undefined;
   note?: string | undefined;
+  /** An ended session to resume or fork (AC-234.15). */
+  resume?: AgentSession | undefined;
   onClose: () => void;
 }
 
@@ -40,6 +44,7 @@ export function StartSessionDialog({
   initialWorkdirId,
   initialMode,
   note,
+  resume,
   onClose,
 }: StartSessionDialogProps) {
   const navigate = useNavigate();
@@ -71,6 +76,7 @@ export function StartSessionDialog({
       initialWorkdirId={initialWorkdirId}
       initialMode={initialMode}
       note={note}
+      resume={resume}
       onSubmit={(body) => {
         create.mutate(body, {
           onSuccess: (created) => {
