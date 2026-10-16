@@ -7,8 +7,6 @@
  * open in a new tab, paths leaving the brain and anything else render as plain text. Images render
  * as links, never as `<img>`. Inputs over the bounds render as text. A code block carries its
  * language (as text) and a Copy button; a table scrolls sideways in its own region (AC-234.23).
- * A completed block in a known language is coloured by the lazy `highlight` chunk (AC-234.31): never
- * one still streaming (open fence while `streaming`), nor one over the highlight bounds.
  *
  * A skill body (AGH-164) passes `localLink`, asked first for every relative link (a bundled file of
  * the skill opens in the page; null falls back to the rules above, so text without a note), and
@@ -16,7 +14,7 @@
  */
 import "./Markdown.css";
 
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 
 import {
   isRelativeHref,
@@ -39,15 +37,12 @@ const MAX_INLINE_DEPTH = 8;
 const LINK_WINDOW = 2000;
 /** A longer line is not a heading (core's `MAX_HEADING_CHARS`, so the TOC matches the body). */
 export const MAX_HEADING_CHARS = 1024;
-/** A longer code block is shown plain, never highlighted (ADR 0034). */
-export const MAX_HIGHLIGHT_LINES = 2000;
-export const MAX_HIGHLIGHT_BYTES = 64 * 1024;
 
 type Align = "left" | "center" | "right" | null;
 type Block =
   | { t: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
   | { t: "para"; text: string }
-  | { t: "code"; lang: string; text: string; closed: boolean }
+  | { t: "code"; lang: string; text: string }
   | { t: "quote"; blocks: Block[] }
   | { t: "list"; ordered: boolean; start: number; indent: number; items: Block[][] }
   | { t: "table"; head: string[]; align: Align[]; rows: string[][] }
@@ -186,21 +181,16 @@ function parseBlocks(lines: string[], depth: Depth): Block[] {
     if (fence) {
       const marker = fence[1] ?? "```";
       const body: string[] = [];
-      let closed = false;
       i++;
       while (i < lines.length) {
         const close = lines[i] ?? "";
         const trimmed = close.trim();
-        if (trimmed.startsWith(marker) && /^([`~])\1*$/.test(trimmed)) {
-          closed = true;
-          break;
-        }
+        if (trimmed.startsWith(marker) && /^([`~])\1*$/.test(trimmed)) break;
         body.push(close);
         i++;
       }
       i++;
-      const lang = (fence[2] ?? "").slice(0, 40);
-      blocks.push({ t: "code", lang, text: body.join("\n"), closed });
+      blocks.push({ t: "code", lang: (fence[2] ?? "").slice(0, 40), text: body.join("\n") });
       continue;
     }
     const found = heading(line);
@@ -481,8 +471,6 @@ export interface MarkdownProps {
   localLink?: ((href: string) => LocalLink | null) | undefined;
   /** Gives each top-level numbered list item the id `step-<n>`, counted through the body (P5). */
   stepAnchors?: boolean | undefined;
-  /** The text is still arriving: a code block whose fence is not closed yet stays plain. */
-  streaming?: boolean | undefined;
   className?: string | undefined;
 }
 
@@ -499,7 +487,6 @@ interface Ctx {
   ids: Map<string, number>;
   /** The last step number given, or null when steps are not anchored. */
   steps: number | null;
-  streaming: boolean;
 }
 
 /** True for a plain left click, which the page handles; other clicks keep the browser's default. */
@@ -599,53 +586,6 @@ function itemId(block: Extract<Block, { t: "list" }>, top: boolean, ctx: Ctx): s
   return stepAnchor(ctx.steps);
 }
 
-type Highlighter = typeof import("./highlight");
-let highlighter: Highlighter | null = null;
-let loading: Promise<Highlighter | null> | null = null;
-
-/** The lazy chunk, loaded once; a failed load leaves every block plain until the page reloads. */
-function loadHighlighter(): Promise<Highlighter | null> {
-  loading ??= import("./highlight").then(
-    (loaded) => (highlighter = loaded),
-    () => null,
-  );
-  return loading;
-}
-
-/** Within the bounds a block is highlighted at (lines, then UTF-8 bytes). */
-function highlightable(text: string): boolean {
-  if (text.length > MAX_HIGHLIGHT_BYTES) return false;
-  let lines = 1;
-  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) {
-    if (++lines > MAX_HIGHLIGHT_LINES) return false;
-  }
-  return new TextEncoder().encode(text).length <= MAX_HIGHLIGHT_BYTES;
-}
-
-/** A code block's text: highlighted when `highlight` holds and the chunk has loaded, else plain. */
-function CodeText({ lang, text, highlight }: { lang: string; text: string; highlight: boolean }) {
-  const [module, setModule] = useState(highlighter);
-  useEffect(() => {
-    if (!highlight || module) return;
-    let live = true;
-    void loadHighlighter().then((loaded) => {
-      if (live && loaded) setModule(loaded);
-    });
-    return () => {
-      live = false;
-    };
-  }, [highlight, module]);
-  const nodes = useMemo(
-    () => (highlight && module ? module.highlight(text, lang) : null),
-    [highlight, module, text, lang],
-  );
-  return (
-    <code data-lang={lang || undefined} className={nodes ? "hljs" : undefined}>
-      {nodes ?? text}
-    </code>
-  );
-}
-
 const HEADINGS = { 1: "h1", 2: "h2", 3: "h3", 4: "h4", 5: "h5", 6: "h6" } as const;
 
 function renderBlock(block: Block, key: number, ctx: Ctx, tight = false, top = false): ReactNode {
@@ -681,13 +621,7 @@ function renderBlock(block: Block, key: number, ctx: Ctx, tight = false, top = f
           {/* A block that scrolls sideways must be reachable by the keyboard (axe). */}
           {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
           <pre className="ah-md-pre" tabIndex={0}>
-            <CodeText
-              lang={block.lang}
-              text={block.text}
-              highlight={
-                block.lang !== "" && (block.closed || !ctx.streaming) && highlightable(block.text)
-              }
-            />
+            <code data-lang={block.lang || undefined}>{block.text}</code>
           </pre>
         </div>
       );
@@ -758,7 +692,6 @@ export function Markdown({
   onBrainLink,
   localLink,
   stepAnchors,
-  streaming = false,
   className,
 }: MarkdownProps) {
   if (new TextEncoder().encode(source).length > MAX_MARKDOWN_BYTES) {
@@ -772,14 +705,7 @@ export function Markdown({
     );
   }
   const lines = source.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").split("\n");
-  const ctx: Ctx = {
-    note,
-    onBrainLink,
-    localLink,
-    ids: new Map(),
-    steps: stepAnchors ? 0 : null,
-    streaming,
-  };
+  const ctx: Ctx = { note, onBrainLink, localLink, ids: new Map(), steps: stepAnchors ? 0 : null };
   return (
     <div className={cx("ah-md", className)}>
       {parseBlocks(lines, { list: 0, quote: 0 }).map((block, key) =>

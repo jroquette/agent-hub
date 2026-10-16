@@ -273,30 +273,6 @@ describe("Transcript (streaming-batch) working row", () => {
   });
 });
 
-describe("Transcript (highlight)", () => {
-  it("highlight: keeps the streaming code block plain until its text record arrives", async () => {
-    const reply = ["```py", "x = None", "```", "", "```ts", "const a = 1;"].join("\n");
-    const items: StreamItem[] = [
-      { type: "status", status: { status: "running" } },
-      { type: "record", record: aLogRecord("user.message", { seq: 1 }) },
-      { type: "delta", delta: aDeltaFrame({ after_seq: 1, block: 0, index: 0, text: reply }) },
-    ];
-    const streamed = items.reduce(reduceTranscript, initialTranscript());
-    const { container, rerender } = render(<Transcript state={streamed} />);
-    const code = (index: number) => container.querySelectorAll("pre code")[index] as HTMLElement;
-
-    expect(await within(code(0)).findByText("None")).toHaveClass("hljs-literal");
-    expect(code(1).querySelector("span")).toBeNull();
-
-    const text: StreamItem = {
-      type: "record",
-      record: aLogRecord("text", { seq: 2, body: { block: 0, text: reply } }),
-    };
-    rerender(<Transcript state={reduceTranscript(streamed, text)} />);
-    expect(await within(code(1)).findByText("const")).toHaveClass("hljs-keyword");
-  });
-});
-
 // Building and fully rendering 2,000 entries takes seconds in jsdom; only the first render is timed.
 describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
   afterEach(() => {

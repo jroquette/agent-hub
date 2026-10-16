@@ -228,10 +228,6 @@ INERT_BUNDLE_URLS = frozenset(
         # (a link the owner opens in claude.ai); never requested.
         "https://claude.ai",
         "https://claude.ai/code",
-        # AGH-252: text of highlight.js's console warnings in the lazy highlight chunk; never
-        # requested.
-        "https://github.com/highlightjs/highlight.js/issues/2277",
-        "https://github.com/highlightjs/highlight.js/wiki/security",
     }
 )
 _ABSOLUTE_URL = re.compile(r"https?://[A-Za-z0-9.\-\[\]:]+(?:/[A-Za-z0-9._~/\-]*)?")

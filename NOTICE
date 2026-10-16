@@ -7,7 +7,3 @@ The hub-workflow plugin templates under
 packages/generator/src/agent_hub/generator/templates/plugin/hub-workflow/ include portions adapted from third-party
 projects; their notices and license texts are in that folder's NOTICE.tmpl and LICENSES/, and every generated hub
 ships them as plugin/hub-workflow/NOTICE and plugin/hub-workflow/LICENSES/.
-
-The web app's syntax-highlighting chunk in packages/api/src/agent_hub/api/web_dist/ bundles lowlight
-(Copyright (c) Titus Wormer, MIT License) and grammars of highlight.js (Copyright (c) 2006, Ivan Sagalaev,
-BSD 3-Clause License, https://github.com/highlightjs/highlight.js/blob/main/LICENSE).

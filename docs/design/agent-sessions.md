@@ -106,9 +106,7 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   posts one interrupt; a "Turn interrupted" notice follows the turn's result.
 - **Messages.** On hover or focus (always under `hover: none`) a row shows `<time datetime>` (relative text, absolute
   time in its title) and Copy, which copies the raw Markdown. Code blocks carry a language label and Copy; wide tables
-  scroll in a wrapper; raw HTML stays inert text. A completed code block in a known language is syntax highlighted
-  ([ADR 0034](../adr/0034-syntax-highlighting-in-the-chat.md)); one still streaming stays plain until its fence
-  closes or the reply ends, and one over 2,000 lines or 64 KiB stays plain.
+  scroll in a wrapper; raw HTML stays inert text.
 - **Tool calls.** Each card shows an icon and text: running, waiting for you, done, error or denied; a call with an
   open permission reads "Waiting for you" with its permission card under it. Output over 10,000 characters is cut
   with "Show all (N characters)". Consecutive calls with no text between them group as one "Explored · 3 Read,
@@ -160,8 +158,6 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   the cloud link-out; partially supersedes ADR 0017, 0019 and 0022.
 - [ADR 0033](../adr/0033-sessions-and-chat-interaction-model.md): the chat's interaction model and the one Sessions
   screen that lists driven sessions with the observed ones.
-- [ADR 0034](../adr/0034-syntax-highlighting-in-the-chat.md): syntax highlighting of completed code blocks with
-  lowlight, rendered without an HTML path.
 - [ADR 0019](../adr/0019-metadata-only-events-and-redaction.md): the redaction rule set the stored copy uses.
 - [ADR 0024](../adr/0024-learning-actions-from-the-app.md): off in the container, as hubs are read-only there.
 
