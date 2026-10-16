@@ -6538,6 +6538,7 @@ export interface operations {
         outcome?: components["schemas"]["Outcome"] | null;
         workflow?: string | null;
         run_id?: string | null;
+        issue?: string | null;
         from?: string | null;
         to?: string | null;
         cost_min?: number | string | null;
