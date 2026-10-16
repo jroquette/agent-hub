@@ -28,6 +28,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/agents/spec-reviewer.md"
     },
+    ".claude/agents/ux-designer.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/ux-designer.md"
+    },
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
@@ -76,6 +80,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/onboard"
     },
+    ".claude/skills/overengineering-review": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/overengineering-review"
+    },
     ".claude/skills/recall": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/recall"
@@ -107,6 +115,10 @@
     ".claude/skills/upgrade": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/upgrade"
+    },
+    ".claude/skills/ux-review": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/ux-review"
     },
     ".github/workflows/ci.yml": {
       "executable": false,
@@ -197,7 +209,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "902ca42e191428681c9b5f63489a8643752a64e5fcc6c8aaad6bacb242f7468b"
+      "sha256": "b78c394e303504cc99bbe4d3e246145322efdd19984688b95479b3590139edc6"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -265,6 +277,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "54ae53835b987ac549f3058736a22c4038bd41bbc4d8d59e1b20c7cb74adc451"
+    },
+    "plugin/hub-workflow/agents/ux-designer.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "1e3c59a6e24456f152c648e2239968433827592d29fadeb142176d944b7ed278"
     },
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
@@ -391,6 +408,16 @@
       "ownership": "managed",
       "sha256": "127d621bb7b7a760717ecd9e8bb76c44e82bc754767529962709cbe4e810ae91"
     },
+    "plugin/hub-workflow/skills/overengineering-review/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "09182a56f4f77c0917340792cba6bfd585cba93ef177dc1803ad575a0aee1a55"
+    },
+    "plugin/hub-workflow/skills/overengineering-review/references/patterns.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "46132ded74a70beccd4af49f8a70a9efe634a8acd41cf8761356eeec202dad17"
+    },
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,
       "ownership": "managed",
@@ -430,6 +457,16 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "5802b522bc66b279456b7af6d84ac69c58b81852c2d0960cc616fc424dac2a20"
+    },
+    "plugin/hub-workflow/skills/ux-review/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "ba62aaa12548b76981021f7002aef74bc60cb761e1c7e628ba75b3c14c0fde1d"
+    },
+    "plugin/hub-workflow/skills/ux-review/references/checklist.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "0796eb980a5e7f4b6fb0a5c02540cb064c8f2b650fa5fdc1dd26ffcda02a90ca"
     },
     "scripts/mine_transcripts.py": {
       "executable": true,

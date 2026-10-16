@@ -50,6 +50,7 @@ class AgentTiers(ConfigObject):
     requirements_analyst: Tier | None = absent_by_default(alias="requirements-analyst")
     researcher: Tier | None = absent_by_default()
     spec_reviewer: Tier | None = absent_by_default(alias="spec-reviewer")
+    ux_designer: Tier | None = absent_by_default(alias="ux-designer")
 
 
 # The plugin's agents by file stem, as ``models.agents`` names them. Derived from
