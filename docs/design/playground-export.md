@@ -39,7 +39,7 @@ tests and the repo's conventions instead of reinterpreting them.
     is missing at the top.
   - `export.json`: `{base, head, created_at, requests: [{title, folder, started_at, sessions, turns: [{at, message,
     screenshot, answers, commits}], commits, files, screens, removed_screens, hub_files, in_progress, also_on,
-    patch}], shipped, hub: {path, files}, in_progress, screens_skipped, complete}`.
+    patch}], shipped, hub: {path, files}, in_progress, screens_skipped, complete, snapshot}`.
   - `requests/<n>-<slug>.patch`: the request's commits as mail patches (`git format-patch`), oldest first.
   - `reference.patch`: every exported commit the same way.
   - `in-progress.patch`: the uncommitted changes, new files included (the index is not touched).
@@ -64,6 +64,13 @@ tests and the repo's conventions instead of reinterpreting them.
   `playground-export/<UTC stamp>` (a local tag, never pushed), so the next one starts there. An incomplete one, or
   one run with `--no-screens`, is written but not marked: the next export covers the same range again, so nothing it
   missed is skipped for good.
+- **Snapshot.** Every export, complete or not, commits the checkout as it is (`HEAD` and its uncommitted files, the
+  personal `*.local.*` ones left out) on a local branch of the developer's, `<prefix>/playground-snapshot/<UTC
+  stamp>` (`<prefix>` the current branch's, else the email's local part), with `HEAD`'s author. It is built in a
+  temporary index, so the checkout's files, index and branch are untouched. If the playground is reset, a session
+  breaks something or a delivery starts late, `git switch -c <name> <snapshot>` brings that version back; the
+  developer pushes it (`git push origin <snapshot>`) to keep it off the machine. The hub's files stay out of it
+  (project material never goes into the platform's repo, AGENTS.md rule 5); they are in the export's `hub/`.
 
 ### Delivering an export
 
@@ -87,8 +94,8 @@ workflow (`/feature` or the `sdlc` pack's `deliver`), on a branch from `main`, w
 - Nothing the owner asked, answered or validated in the range is dropped: every commit not in `origin/main` is in a
   request (the last one if no session made it), every uncommitted and hub file too, and every turn of every session
   is kept.
-- An export never changes the playground's files, index, branch or hub; its only write outside `.playground/` is the
-  local tag (the temporary worktree is removed).
+- An export never changes the playground's files, index, branch or hub; its only writes outside `.playground/` are
+  the local tag and the snapshot branch (the temporary worktree and index are removed). It pushes nothing.
 - Nothing from `~/.claude` or the owner's real data reaches a screen: screens use `seed_demo` data only.
 - `brief.md` holds the owner's own words and stays in the ignored folder; a delivery commits criteria and tests
   derived from it, never the brief or a transcript (AGENTS.md rule 4).
