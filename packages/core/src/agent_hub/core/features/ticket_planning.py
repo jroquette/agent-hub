@@ -3,7 +3,8 @@
 Each ticket of the plan (``features.json`` → ``tickets``) and each id of ``linear`` becomes one
 row, named by its ``ref`` (its tracker id once created, else its draft key). A "blocked by" edge
 comes from the plan's ``blocked_by``, from Linear's relations, or both, and says so. A ticket is
-done when its Linear state type is ``completed``; a canceled (or duplicate) ticket never blocks
+done when its Linear state type is ``completed`` and in progress when it is ``started`` (In
+Progress, In Review…: never offered as "can start"); a canceled (or duplicate) ticket never blocks
 and is left out of the planning. Over the tickets neither done nor canceled: dependency cycles
 (strongly connected components) are flagged and left out, and so is a ticket waiting on a
 blocker outside the feature that is not done, canceled or known (it is listed under ``waiting``);
@@ -47,6 +48,7 @@ STATE_CHARS: Final = 80
 LINEAR_HOST: Final = "linear.app"
 DONE_TYPES: Final = frozenset({"completed"})
 CANCELED_TYPES: Final = frozenset({"canceled", "duplicate"})
+STARTED_TYPES: Final = frozenset({"started"})
 # Linear's priority 0 means "no priority": it sorts after 4 (low).
 _NO_PRIORITY_RANK: Final = 5
 _NO_ORDER: Final = 1 << 62
@@ -83,6 +85,10 @@ class _Node:
     @property
     def canceled(self) -> bool:
         return self.state is not None and self.state.type in CANCELED_TYPES
+
+    @property
+    def started(self) -> bool:
+        return self.state is not None and self.state.type in STARTED_TYPES
 
 
 def ticket_board(
@@ -322,6 +328,9 @@ def _readiness(node: _Node, *, in_cycle: set[str], waiting: tuple[str, ...]) -> 
         return "canceled"
     if node.ref in in_cycle:
         return "in_cycle"
+    # Work already under way is not "ready to start", even when a blocker is still open.
+    if node.started:
+        return "in_progress"
     return "waiting" if waiting else "can_start"
 
 

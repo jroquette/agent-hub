@@ -68,7 +68,9 @@ describe("TicketNotice", () => {
     renderWithApi(<TicketNotice tickets={aFeatureTickets()} onRefresh={onRefresh} />);
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(screen.getByText(/From Linear · read at/)).toBeInTheDocument();
+    expect(screen.getByText(/Live from Linear · read/)).toHaveTextContent(
+      "updates every 30 s while this tab is open",
+    );
     await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
     expect(onRefresh).toHaveBeenCalledOnce();
   });

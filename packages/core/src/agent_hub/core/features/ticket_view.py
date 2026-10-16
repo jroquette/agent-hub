@@ -12,8 +12,11 @@ from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView, View
 from agent_hub.core.tracker.tracker_reader import IssueState
 
 # Whether a ticket can start now: all blockers done (``can_start``), some not (``waiting``),
+# already started in Linear (``in_progress``: In Progress, In Review…, whatever its blockers),
 # itself done or canceled, part of a dependency cycle, or its state unknown (no snapshot).
-type Readiness = Literal["can_start", "waiting", "done", "canceled", "in_cycle", "unknown"]
+type Readiness = Literal[
+    "can_start", "in_progress", "waiting", "done", "canceled", "in_cycle", "unknown"
+]
 # Where a "blocked by" edge comes from: the plan's ``blocked_by``, Linear's relations, or both.
 type EdgeSource = Literal["plan", "linear", "both"]
 
@@ -68,7 +71,7 @@ class TicketPlan(ViewModel):
     """The planning of the feature's tickets, every ticket named by its row's ``ref``.
 
     ``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);
-    ``can_start`` the first layer's tickets that wait on nothing; ``order`` the recommended
+    ``can_start`` the first layer's tickets that wait on nothing and are not started yet; ``order`` the recommended
     order; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle
     (left out of the layers); ``critical_path`` the longest chain of tickets not done.
     """
