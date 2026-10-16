@@ -4,9 +4,11 @@ import { useParams, useSearchParams } from "react-router";
 import type { components } from "../../api/schema";
 import {
   AsOfStamp,
+  Button,
   DataTable,
   EmptyState,
   ExternalLabel,
+  FilterChip,
   Icon,
   ProblemError,
   ProvenanceBadge,
@@ -28,6 +30,20 @@ import {
   stateOf,
   Title,
 } from "./LearningDetail";
+import {
+  blockedReason,
+  facetCounts,
+  filterLearnings,
+  filtersFromParams,
+  hasFilters,
+  MAX_QUERY_CHARS,
+  NO_FILTERS,
+  PROVENANCES,
+  READINESS,
+  toggle,
+  withFilters,
+  type LearningFilters,
+} from "./filters";
 import { useLearnings, useLiveLearnings, type LearningStatus } from "./queries";
 
 type Learning = components["schemas"]["Learning"];
@@ -49,11 +65,9 @@ const clamp = (lines: number): CSSProperties => ({
   WebkitBoxOrient: "vertical",
   overflow: "hidden",
   overflowWrap: "anywhere",
+  // Table cells are `nowrap`; without this the clamp never wraps and the title is cut off.
+  whiteSpace: "normal",
 });
-
-/** A proposed learning that cannot be accepted or rejected here (its note is gone, ...). */
-const blockedReason = (l: Learning): string | null =>
-  l.status === "proposed" ? (l.actions_unavailable ?? null) : null;
 
 function QueueRow({ l }: { l: Learning }) {
   const ext = isExternal(l);
@@ -112,6 +126,119 @@ function QueueRow({ l }: { l: Learning }) {
   );
 }
 
+const READINESS_LABEL = { ready: "Ready", blocked: "Blocked" } as const;
+
+function FacetRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="ah-row ah-wrap" style={{ gap: 6 }} role="group" aria-label={label}>
+      <span className="ah-small ah-subtle" style={{ width: 72, flex: "none" }}>
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+/** Search and facets above the queue: project (when every project is in scope), provenance and,
+ * for proposals, whether they can be decided here. */
+function LearningFiltersBar({
+  rows,
+  filters,
+  onChange,
+  showProject,
+  showReadiness,
+}: {
+  rows: readonly Learning[];
+  filters: LearningFilters;
+  onChange: (next: LearningFilters) => void;
+  showProject: boolean;
+  showReadiness: boolean;
+}) {
+  const counts = facetCounts(rows, filters);
+  const allProjects = counts.project.reduce((sum, [, n]) => sum + n, 0);
+  return (
+    <div className="ah-stack" style={{ gap: 8, padding: "12px 16px 0 32px" }}>
+      <div className="ah-row" style={{ gap: 8 }}>
+        <div className="ah-search ah-grow">
+          <Icon name="search" size="sm" />
+          <input
+            type="search"
+            className="ah-input"
+            aria-label="Search learnings"
+            placeholder="Search title, summary or project"
+            maxLength={MAX_QUERY_CHARS}
+            value={filters.q}
+            onChange={(event) => {
+              onChange({ ...filters, q: event.target.value });
+            }}
+          />
+        </div>
+        {hasFilters(filters) && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="x"
+            onClick={() => {
+              onChange(NO_FILTERS);
+            }}
+          >
+            Clear
+          </Button>
+        )}
+      </div>
+      {showProject && (
+        <FacetRow label="Project">
+          <FilterChip
+            value={`All · ${String(allProjects)}`}
+            active={filters.project === null}
+            onClick={() => {
+              onChange({ ...filters, project: null });
+            }}
+          />
+          {counts.project.map(([project, n]) => (
+            <FilterChip
+              key={project}
+              value={`${project} · ${String(n)}`}
+              active={filters.project === project}
+              onClick={() => {
+                onChange({ ...filters, project: filters.project === project ? null : project });
+              }}
+            />
+          ))}
+        </FacetRow>
+      )}
+      <FacetRow label="Provenance">
+        {PROVENANCES.filter((p) => counts.provenance[p] > 0 || filters.provenance.includes(p)).map(
+          (p) => (
+            <FilterChip
+              key={p}
+              value={`${p} · ${String(counts.provenance[p])}`}
+              active={filters.provenance.includes(p)}
+              onClick={() => {
+                onChange({ ...filters, provenance: toggle(filters.provenance, p) });
+              }}
+            />
+          ),
+        )}
+      </FacetRow>
+      {showReadiness && (
+        <FacetRow label="Decision">
+          {READINESS.map((r) => (
+            <FilterChip
+              key={r}
+              value={`${READINESS_LABEL[r]} · ${String(counts.readiness[r])}`}
+              active={filters.readiness.includes(r)}
+              onClick={() => {
+                onChange({ ...filters, readiness: toggle(filters.readiness, r) });
+              }}
+            />
+          ))}
+        </FacetRow>
+      )}
+    </div>
+  );
+}
+
 /** Knowledge › Learnings (spec 22, AC-201.29): the triage queue; accept and reject open hub PRs. */
 export function LearningsScreen() {
   const [scope] = useScope();
@@ -123,8 +250,14 @@ export function LearningsScreen() {
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
 
+  const filters = filtersFromParams(params);
+  const setFilters = (next: LearningFilters) => {
+    setParams((current) => withFilters(current, next), { replace: true });
+  };
+  const all = learnings.data?.items ?? [];
+  const projects = new Set(all.map((l) => l.project));
   // Learnings that can be decided first, oldest first; the blocked ones after them.
-  const rows = [...(learnings.data?.items ?? [])].sort(
+  const rows = filterLearnings(all, filters).sort(
     (a, b) =>
       Number(blockedReason(a) !== null) - Number(blockedReason(b) !== null) ||
       (a.proposed_at ?? "").localeCompare(b.proposed_at ?? ""),
@@ -160,7 +293,7 @@ export function LearningsScreen() {
         />
       </div>
     );
-  } else if (learnings.isSuccess && rows.length === 0 && chosen === null) {
+  } else if (learnings.isSuccess && all.length === 0 && chosen === null) {
     // A learning pinned in the URL (just decided, or linked) stays open on an empty list.
     body = (
       <div style={{ padding: 32 }}>
@@ -184,6 +317,15 @@ export function LearningsScreen() {
             borderRight: "1px solid var(--border)",
           }}
         >
+          {learnings.isSuccess && (
+            <LearningFiltersBar
+              rows={all}
+              filters={filters}
+              onChange={setFilters}
+              showProject={scope === null && projects.size > 1}
+              showReadiness={status === "proposed"}
+            />
+          )}
           <div className="ah-row ah-wrap" style={{ gap: 6, padding: "12px 16px 10px 32px" }}>
             <span className="ah-small ah-subtle">
               {status === "proposed" && blockedCount > 0
@@ -201,6 +343,9 @@ export function LearningsScreen() {
               rows={rows}
               selected={selectedId ? [selectedId] : []}
               maxHeight={640}
+              empty={
+                <div className="ah-pad ah-small ah-muted">No learnings match these filters.</div>
+              }
               scrollLabel="Learnings"
               onRowClick={(l) => {
                 select(l.id);
@@ -208,7 +353,13 @@ export function LearningsScreen() {
               columns={[
                 {
                   id: "t",
-                  label: `Learnings · ${learnings.isPending ? "…" : String(count)} ${status}`,
+                  label: `Learnings · ${
+                    learnings.isPending
+                      ? "…"
+                      : hasFilters(filters)
+                        ? `${String(rows.length)} of ${String(count)}`
+                        : String(count)
+                  } ${status}`,
                   render: (l) => <QueueRow l={l} />,
                 },
                 {
