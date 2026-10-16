@@ -402,7 +402,10 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(within(table("Live")).getByText("Twin chat")).toBeInTheDocument();
     expect(within(rowOf("Twin chat") ?? document.body).getByText("Chat")).toBeInTheDocument();
     expect(screen.getAllByText("Twin chat")).toHaveLength(1);
-    expect(within(table("Live")).getByText("Fix the build")).toBeInTheDocument();
+    const name = within(table("Live")).getByText("Fix the build");
+    // A long first prompt stays on one line, the whole of it on hover.
+    expect(name).toHaveAttribute("title", "Fix the build");
+    expect(name).toHaveStyle({ whiteSpace: "nowrap", textOverflow: "ellipsis" });
     expect(within(table("Waiting")).getByText("Approve me")).toBeInTheDocument();
     expect(within(table("Ended or failed")).getByText("Broke")).toBeInTheDocument();
     const idle = within(table("Idle"))

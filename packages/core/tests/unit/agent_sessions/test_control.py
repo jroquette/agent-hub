@@ -112,6 +112,37 @@ async def test_logs_message_then_init_when_created_with_prompt(make_rig: MakeRig
     assert ended_turn.last_seq == 4
 
 
+async def test_takes_claude_title_when_turn_ends_and_session_named(make_rig: MakeRig) -> None:
+    asked: list[tuple[str, str]] = []
+
+    def session_title(cwd: str, claude_session_id: str) -> str | None:
+        asked.append((cwd, claude_session_id))
+        return "Greeting the user"
+
+    rig = make_rig(session_title=session_title)
+
+    created = await rig.create("claude, could you please say hello to me?")
+    ended_turn = await rig.until_status(created.id, "idle")
+
+    assert created.title == "claude, could you please say hello to me?"
+    assert ended_turn.title == "Greeting the user"
+    assert asked == [(HUB_PATH, ended_turn.claude_session_id)]
+
+
+async def test_keeps_prompt_title_when_claude_title_missing_or_failing(make_rig: MakeRig) -> None:
+    def failing(_cwd: str, _claude_session_id: str) -> str | None:
+        raise RuntimeError("unreadable")
+
+    untitled = make_rig(session_title=lambda _cwd, _claude_session_id: None)
+    broken = make_rig(session_title=failing)
+
+    first = await untitled.create("Say hello.")
+    second = await broken.create("Say hello.")
+
+    assert (await untitled.until_status(first.id, "idle")).title == "Say hello."
+    assert (await broken.until_status(second.id, "idle")).title == "Say hello."
+
+
 async def test_starts_idle_without_init_when_created_without_prompt(make_rig: MakeRig) -> None:
     rig = make_rig()
 

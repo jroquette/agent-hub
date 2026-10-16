@@ -83,8 +83,8 @@ export function placeDriven(
   const twinless = driven
     .filter((a) => !twinned(a) && asked.has(sectionOf(a.status)) && inPeriod(a))
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
-  // A twin's row reads the driven session's title (its first prompt, redacted) until Claude Code's
-  // own title reaches the label, which happens when the session's first turn ends.
+  // A twin's row reads the driven session's title (its first prompt, redacted, then the title
+  // Claude Code gave it once a turn ends) until Claude Code's title reaches the label.
   const prompts = new Map<string, string>();
   for (const a of driven) {
     if (!a.title) continue;

@@ -17,6 +17,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `session.title` event (redacted, 80 characters) and shown as the session's name in Sessions, the live tiles and
   the session header, with issue, workflow, repo and branch below it (ADR 0034). Older sessions get theirs when
   their transcript is read again (`hub collect --transcript FILE`, or the live tail after a restart).
+- A session started from hub web takes the title Claude Code gives it at the end of each turn, in place of its first
+  prompt; its row in Sessions shows that name on one line (the whole of it on hover), like the other sessions.
 
 ### Changed
 
