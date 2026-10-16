@@ -212,7 +212,6 @@ export interface ConfirmDialogProps {
   onConfirm?: (() => void) | undefined;
   /** While true (the confirmed request runs), nothing closes it and its buttons are off. */
   pending?: boolean | undefined;
-  inline?: boolean | undefined;
   phase?: Phase | undefined;
 }
 export function ConfirmDialog({
@@ -226,7 +225,6 @@ export function ConfirmDialog({
   onCancel,
   onConfirm,
   pending,
-  inline,
   phase,
 }: ConfirmDialogProps) {
   const [typed, setTyped] = useState("");
@@ -237,7 +235,6 @@ export function ConfirmDialog({
       role="alertdialog"
       onClose={onCancel}
       pending={pending}
-      inline={inline}
       footer={
         <>
           <Button disabled={pending} onClick={onCancel}>
