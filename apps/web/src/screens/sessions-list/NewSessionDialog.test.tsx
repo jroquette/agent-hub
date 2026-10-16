@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -454,6 +454,16 @@ describe("NewSessionDialog (new-session-dialog)", () => {
     expect(props.onSubmit).toHaveBeenCalledWith(expect.objectContaining({ prompt: "one\ntwo" }));
     await userEvent.keyboard("{Meta>}{Enter}{/Meta}");
     expect(props.onSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start on Ctrl+Enter while an input method is composing", () => {
+    const { dialog, props } = open();
+
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+    fireEvent.keyDown(prompt, { key: "Enter", ctrlKey: true, isComposing: true });
+    expect(props.onSubmit).not.toHaveBeenCalled();
+    fireEvent.keyDown(prompt, { key: "Enter", ctrlKey: true });
+    expect(props.onSubmit).toHaveBeenCalledTimes(1);
   });
 
   it("does not start on Ctrl+Enter while Start is disabled", async () => {
