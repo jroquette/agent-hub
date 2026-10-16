@@ -96,9 +96,10 @@ describe("SettingsScreen", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Remove loki-trader" }));
     await userEvent.click(screen.getByRole("button", { name: "Remove hub" }));
     await userEvent.keyboard("{Escape}");
-    const scrim = screen.getByRole("alertdialog").parentElement!;
-    fireEvent.mouseDown(scrim);
-    fireEvent.click(scrim);
+    for (const scrim of screen.getAllByRole("presentation")) {
+      fireEvent.mouseDown(scrim);
+      fireEvent.click(scrim);
+    }
 
     expect(screen.getByRole("alertdialog", { name: "Stop reading loki-trader?" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Removing…" })).toBeDisabled();
