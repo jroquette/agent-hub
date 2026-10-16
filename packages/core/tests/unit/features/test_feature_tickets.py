@@ -188,6 +188,6 @@ def test_agrees_with_detail_when_snapshot_fresh() -> None:
         None,
         None,
     )
-    assert [row.readiness for row in tickets.tickets] == ["done", "can_start"]
-    assert tickets.planning.can_start == ("DEM-8",)
+    assert [row.readiness for row in tickets.tickets] == ["done", "in_progress"]
+    assert tickets.planning.can_start == ()
     assert tickets.golden_path == feature_detail(a_folder(), project="demo", read=read).golden_path
