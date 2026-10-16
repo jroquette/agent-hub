@@ -6,7 +6,7 @@ import type { components } from "../../api/schema";
 import { Button, Time } from "../../components";
 import type { ApiProblem } from "../../lib/api";
 import { MODES, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
-import { modeLabel, type PermissionMode } from "../agent-session/transcript";
+import { modeLabel, type PermissionMode } from "../agent-session/model";
 
 type Schemas = components["schemas"];
 export type Workdir = Schemas["Workdir"];

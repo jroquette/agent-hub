@@ -13,7 +13,7 @@ import {
 } from "../../testing/builders";
 import { seriousViolations } from "../../testing/axe";
 import { PermissionCard, type PermissionAnswer } from "./PermissionCard";
-import { applySnapshot, initialTranscript, type PermissionView } from "./transcript";
+import { applySnapshot, initialTranscript, type PermissionView } from "./model";
 
 /** The view of an open request as the reducer builds it from `GET /{id}` (raw, memory). */
 function aView(overrides: Parameters<typeof aPermissionRequest>[0] = {}): PermissionView {

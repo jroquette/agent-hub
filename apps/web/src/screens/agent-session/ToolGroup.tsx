@@ -4,7 +4,7 @@ import { Icon } from "../../components";
 import { cx } from "../../lib/cx";
 import { RequestCard, type AnswerPermission } from "./PermissionCard";
 import { ToolCallCard } from "./ToolCallCard";
-import { toolState, type PermissionView, type ToolView, type TranscriptState } from "./transcript";
+import { toolState, type PermissionView, type ToolView, type TranscriptState } from "./model";
 
 /** One call of a group and the permission asked for it, when one was. */
 export interface GroupItem {
