@@ -119,6 +119,15 @@ describe("Composer (composer)", () => {
     expect(props.onSettings).toHaveBeenCalledWith({ mode: "plan" });
   });
 
+  it("shows a session in Auto as Auto in the built app, without offering it", () => {
+    vi.mocked(servedCheckout).mockReturnValue(null);
+    open({ mode: "auto" });
+    const mode = screen.getByRole("combobox", { name: "Mode" });
+
+    expect(mode).toHaveValue("auto");
+    expect(within(mode).getByRole("option", { name: "Auto" })).toBeDisabled();
+  });
+
   it("posts a model change and keeps a custom current model in the list", async () => {
     const { props } = open({ model: "claude-opus-4-1" });
     const model = screen.getByRole("combobox", { name: "Model" });

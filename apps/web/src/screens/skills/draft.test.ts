@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import { aCatalogItem } from "../../testing/builders";
-import { initialTranscript, type JsonObject, type TranscriptState } from "../agent-session/model";
 import {
+  initialTranscript,
+  type JsonObject,
+  type TranscriptEntry,
+  type TranscriptState,
+} from "../agent-session/model";
+import {
+  confirmedReply,
   destination,
+  discardPrompt,
   draftKind,
   draftWrites,
   insideDraft,
@@ -70,8 +77,14 @@ describe("draft ids", () => {
 
 describe("insideDraft", () => {
   it("keeps paths under the draft folder, absolute or relative", () => {
-    expect(insideDraft(`${HUB}/.hub-drafts/${DRAFT}/SKILL.md`, DRAFT)).toBe("SKILL.md");
-    expect(insideDraft(`.hub-drafts/${DRAFT}/references/a.md`, DRAFT)).toBe("references/a.md");
+    expect(insideDraft(`${HUB}/.hub-drafts/${DRAFT}/SKILL.md`, DRAFT)).toEqual({
+      root: `${HUB}/`,
+      path: "SKILL.md",
+    });
+    expect(insideDraft(`.hub-drafts/${DRAFT}/references/a.md`, DRAFT)).toEqual({
+      root: "",
+      path: "references/a.md",
+    });
   });
 
   it("rejects other folders, other drafts and climbing out", () => {
@@ -104,6 +117,21 @@ describe("draftWrites", () => {
       { path: "SKILL.md", content: "c b d", partial: false, pending: false },
     ]);
     expect(writes.outside).toEqual([`${HUB}/AGENTS.md`]);
+  });
+
+  it("lists a write to the same draft folder under another root as outside", () => {
+    const writes = draftWrites(
+      transcriptOf([
+        {
+          name: "Write",
+          input: { file_path: `${HUB}/.hub-drafts/${DRAFT}/SKILL.md`, content: "a" },
+        },
+        { name: "Write", input: { file_path: `/tmp/.hub-drafts/${DRAFT}/SKILL.md`, content: "b" } },
+      ]),
+      DRAFT,
+    );
+    expect(writes.files.map((f) => [f.path, f.content])).toEqual([["SKILL.md", "a"]]);
+    expect(writes.outside).toEqual([`/tmp/.hub-drafts/${DRAFT}/SKILL.md`]);
   });
 
   it("ignores failed calls, marks running ones pending and blind edits partial", () => {
@@ -278,9 +306,49 @@ describe("prompts", () => {
     expect(prompt.endsWith("What I want:\nA changelog skill")).toBe(true);
   });
 
+  it("asks Claude to confirm a discard with a DISCARDED line", () => {
+    expect(discardPrompt(DRAFT)).toContain(`Delete the folder .hub-drafts/${DRAFT}/`);
+    expect(discardPrompt(DRAFT)).toContain("starting with DISCARDED");
+  });
+
   it("asks to move the draft into place and delete it, without committing", () => {
     const prompt = publishPrompt("skill", DRAFT, "plugin/demo/skills/x/");
     expect(prompt).toContain(`Move the folder .hub-drafts/${DRAFT}/ to plugin/demo/skills/x/`);
     expect(prompt).toContain("do not commit");
+  });
+});
+
+describe("confirmedReply", () => {
+  const user = (seq: number, text: string): TranscriptEntry => ({
+    kind: "user",
+    key: `u-${String(seq)}`,
+    seq,
+    at: "2026-10-11T14:00:00.000Z",
+    text,
+    redacted: false,
+    queued: false,
+    screenshot: false,
+  });
+  const reply = (seq: number, text: string): TranscriptEntry => ({
+    kind: "assistant",
+    key: `a-${String(seq)}`,
+    seq,
+    at: "2026-10-11T14:00:00.000Z",
+    block: 0,
+    text,
+    streaming: false,
+    lastDelta: -1,
+    redacted: false,
+  });
+
+  it("waits for the message sent, then reads a reply line starting with the marker", () => {
+    const earlier = [user(1, "Publish"), reply(2, "PUBLISHED old")];
+    expect(confirmedReply(earlier, "Publish", 2, "PUBLISHED")).toBeNull();
+    const entries = [...earlier, user(3, "Publish"), reply(4, "Done:\n- **PUBLISHED** a/SKILL.md")];
+    expect(confirmedReply(entries, "Publish", 2, "PUBLISHED")).toBe(true);
+    expect(confirmedReply(entries, "Publish", 2, "DISCARDED")).toBe(false);
+    expect(
+      confirmedReply([user(3, "Publish"), reply(4, "Not PUBLISHED.")], "Publish", 0, "PUBLISHED"),
+    ).toBe(false);
   });
 });
