@@ -15,7 +15,9 @@ tests and the repo's conventions instead of reinterpreting them.
 - **Range.** From `SINCE`, else the newest tag `playground-export/*` reachable from `HEAD`, else the merge base with
   `origin/main`; to `HEAD`, plus the uncommitted changes. A commit `origin/main` already has (by sha, or as the same
   change, `git cherry`) is shipped: left out and listed. A commit another pushed branch has stays in the export,
-  marked with that branch, since an open PR may not land. Nothing else is left out. An empty range with a clean tree
+  marked with that branch, since an open PR may not land. A commit repeating an earlier one's change in the range (a
+  cherry-pick merged back, `git patch-id`) is left out and listed with the one it repeats, so the patches apply
+  once. Nothing else is left out. An empty range with a clean tree
   exits 0 with "nothing to export".
 - **Requests.** The unit of the export and of a delivery. Each driven session of the `agent-hub` project active
   since an hour before the range's first commit, or that made one of its commits, read from the conductor
@@ -39,7 +41,7 @@ tests and the repo's conventions instead of reinterpreting them.
     is missing at the top.
   - `export.json`: `{base, head, created_at, requests: [{title, folder, started_at, sessions, turns: [{at, message,
     screenshot, answers, commits}], commits, files, screens, removed_screens, hub_files, in_progress, also_on,
-    patch}], shipped, hub: {path, files}, in_progress, screens_skipped, complete, snapshot}`.
+    patch}], shipped, repeated, hub: {path, files}, in_progress, screens_skipped, complete, snapshot}`.
   - `requests/<n>-<slug>.patch`: the request's commits as mail patches (`git format-patch`), oldest first.
   - `reference.patch`: every exported commit the same way.
   - `in-progress.patch`: the uncommitted changes, new files included (the index is not touched).
