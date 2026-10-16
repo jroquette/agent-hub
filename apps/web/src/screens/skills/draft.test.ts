@@ -328,6 +328,7 @@ describe("confirmedReply", () => {
     redacted: false,
     queued: false,
     screenshot: false,
+    screenshotCount: 0,
   });
   const reply = (seq: number, text: string): TranscriptEntry => ({
     kind: "assistant",
