@@ -12312,6 +12312,24 @@
           },
           {
             "in": "query",
+            "name": "issue",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Issue"
+            }
+          },
+          {
+            "in": "query",
             "name": "from",
             "required": false,
             "schema": {
