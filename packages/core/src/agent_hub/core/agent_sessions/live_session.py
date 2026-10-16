@@ -73,6 +73,9 @@ class LiveSession:
     last_seq: int = 0
     idle_since: datetime | None = None
     error_logged: bool = False
+    # Whether Claude Code's title has been read (else ``sweep`` looks for it), and when last.
+    named: bool = False
+    title_checked_at: datetime | None = None
     ended: bool = False
     pump: asyncio.Task[None] | None = None
     end_task: asyncio.Task[None] | None = None
