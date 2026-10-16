@@ -48,6 +48,8 @@ export interface ComposerProps {
   focusOnOpen?: boolean | undefined;
   /** Why nothing can be sent (log full, control off…); the session's end is detected on its own. */
   disabledReason?: string | null | undefined;
+  /** An ended session the header's Resume can continue (AC-234.15): the placeholder points to it. */
+  resumable?: boolean | undefined;
 }
 
 const bytesOf = (text: string) => new TextEncoder().encode(text).length;
@@ -74,6 +76,7 @@ export function Composer({
   onSending,
   maxBytes = DEFAULT_MESSAGE_MAX_BYTES,
   disabledReason,
+  resumable,
   commands = [],
   lastPrompt = null,
   inputRef,
@@ -97,7 +100,7 @@ export function Composer({
 
   const ended = status === "ended" || status === "failed";
   const reason = ended
-    ? "This session has ended. Resume it to continue."
+    ? `This session has ended.${resumable ? " Resume it from the header to continue." : ""}`
     : (disabledReason ?? null);
   const size = bytesOf(text);
   const tooLong = size > maxBytes;

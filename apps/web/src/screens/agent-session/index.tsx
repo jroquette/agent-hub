@@ -16,7 +16,8 @@ import {
 import { ApiProblem } from "../../lib/api";
 import { screenshotFor } from "../../lib/screenshotCopy";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
-import { sessionControlUnavailable } from "../sessions-list/control";
+import { resumable as canResume, sessionControlUnavailable } from "../sessions-list/control";
+import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
 import { CostMeter } from "./CostMeter";
@@ -116,6 +117,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const transcript = useAgentTranscript(agentSessionId);
   const commands = useAgentSessionCommands(agentSessionId);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
@@ -187,6 +189,9 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const model = state.model ?? session.model ?? null;
   const models = capabilities.data?.models ?? DEFAULT_MODELS;
   const cloud = session.kind === "cloud";
+  // A local session that ended can be resumed or forked when this machine can start one (AC-234.15).
+  const caps = capabilities.data;
+  const resumable = canResume({ ...session, status }) && caps?.available === true;
 
   const act = (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -223,6 +228,18 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 <Icon name="activity" size="sm" />
                 Observed session {short(session.claude_session_id)}
               </AppLink>
+            )}
+            {resumable && (
+              <Button
+                size="sm"
+                variant="primary"
+                icon="play"
+                onClick={() => {
+                  setResuming(true);
+                }}
+              >
+                Resume
+              </Button>
             )}
             {ended ? (
               <Button
@@ -298,9 +315,20 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             lastPrompt={lastPrompt(state)}
             inputRef={setComposer}
             disabledReason={cloud ? "A cloud session is driven from claude.ai." : null}
+            resumable={resumable}
           />
         </div>
       </footer>
+      {resuming && caps && (
+        <StartSessionDialog
+          project={session.project}
+          capabilities={caps}
+          resume={{ ...session, status, mode, model }}
+          onClose={() => {
+            setResuming(false);
+          }}
+        />
+      )}
       {confirmDelete && (
         <ConfirmDialog
           title="Delete this session?"

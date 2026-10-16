@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -170,6 +171,32 @@ describe("SessionsListScreen grid", () => {
     await screen.findByText("/a");
     expect(heads(section(/^Live/))).toEqual([]);
     expect(tilesIn(section(/^Live/))).toHaveLength(3);
+  });
+
+  it("resume: an ended driven tile offers Resume, which opens the dialog, not the tile", async () => {
+    const driven = [
+      anAgentSession({ id: anId(12, "0192a5e5"), title: "Fix the build", status: "running" }),
+      anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" }),
+    ];
+    const { router } = renderWithApi(<SessionsListScreen />, {
+      routes: routes(aSessionsByStatus([]), driven),
+      path: "/sessions",
+    });
+
+    await screen.findByText("Broke");
+    expect(within(tileOf("Fix the build")).queryByRole("button", { name: /^Resume/ })).toBeNull();
+    const resume = within(tileOf("Broke")).getByRole("button", { name: "Resume Broke" });
+    resume.focus();
+    await userEvent.keyboard("{Enter}");
+
+    const dialog = screen.getByRole("dialog", { name: "Resume session" });
+    expect(within(dialog).getByRole("group", { name: "Resume" })).toHaveTextContent("Broke");
+    expect(within(dialog).getByRole("checkbox", { name: /Fork/ })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/sessions");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(resume).toHaveFocus();
+    fireEvent.click(resume);
+    expect(router.state.location.pathname).toBe("/sessions");
   });
 
   it("shows a driven session without a twin as a Chat tile, and opens tiles where their rows open", async () => {

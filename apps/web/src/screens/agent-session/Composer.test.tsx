@@ -112,12 +112,14 @@ describe("Composer (composer)", () => {
   });
 
   it("disables sending and settings when the session has ended", () => {
-    open({ status: "failed" });
+    const { rerender, props } = open({ status: "failed" });
 
     expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("textbox")).toHaveAttribute("placeholder", "This session has ended.");
+    rerender(<Composer {...props} resumable />);
     expect(screen.getByRole("textbox")).toHaveAttribute(
       "placeholder",
-      "This session has ended. Resume it to continue.",
+      "This session has ended. Resume it from the header to continue.",
     );
     expect(screen.getByRole("combobox", { name: "Mode" })).toBeDisabled();
   });

@@ -447,6 +447,60 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(screen.getByRole("button", { name: "Ended or failed · 3" })).toBeInTheDocument();
   });
 
+  it("resume: ended or failed driven rows and twins offer Resume, which opens the dialog, not the row", async () => {
+    const twin = aSession({
+      id: anId(3, "aaaa0003"),
+      label: named("twin"),
+      status: "ended",
+      agent_session_id: anId(11, "0192a5e5"),
+    });
+    const fixture = drivenFixture();
+    const view = renderList({
+      ...fixture,
+      [SESSIONS]: aSessionsByStatus([...sessions(), twin]),
+      [AGENT]: {
+        items: [
+          anAgentSession({
+            id: anId(11, "0192a5e5"),
+            title: "Twin chat",
+            status: "ended",
+            observed_session_id: twin.id,
+          }),
+          anAgentSession({ id: anId(12, "0192a5e5"), title: "Fix the build", status: "running" }),
+          anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" }),
+          anAgentSession({
+            id: anId(18, "0192a5e5"),
+            title: "In the cloud",
+            status: "ended",
+            kind: "cloud",
+          }),
+        ],
+      },
+    });
+
+    await screen.findByText("Broke");
+    const resumes = within(table("Ended or failed")).getAllByRole("button", { name: /^Resume/ });
+    expect(resumes.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Resume Broke",
+      "Resume Twin chat",
+    ]);
+    expect(
+      within(rowOf("Fix the build") as HTMLElement).queryByRole("button", { name: /^Resume/ }),
+    ).toBeNull();
+    expect(
+      within(rowOf("In the cloud") as HTMLElement).queryByRole("button", { name: /^Resume/ }),
+    ).toBeNull();
+    expect(
+      within(rowOf("/evaluator") as HTMLElement).queryByRole("button", { name: /^Resume/ }),
+    ).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Resume Broke" }));
+    const dialog = screen.getByRole("dialog", { name: "Resume session" });
+    expect(within(dialog).getByRole("group", { name: "Resume" })).toHaveTextContent("Broke");
+    expect(within(dialog).getByRole("checkbox", { name: /Fork/ })).toBeInTheDocument();
+    expect(view.router.state.location.pathname).toBe("/sessions");
+  });
+
   it("shows a twinless row's folder, mode, model and cost", async () => {
     renderList(drivenFixture());
 
