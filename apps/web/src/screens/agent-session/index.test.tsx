@@ -258,6 +258,43 @@ describe("AgentSessionScreen (transcript)", () => {
     expect(view.requests.some((r) => r.method === "DELETE")).toBe(true);
   });
 
+  it("resumes an ended session as a new driven session on the same Claude conversation", async () => {
+    const resumedId = anId(2, "0192a5e5");
+    const ended = anAgentSession({ status: "ended", end_reason: "server_stopped" });
+    const view = renderChat(
+      routes({
+        [SESSION]: ended,
+        "POST /api/v1/agent-sessions": anAgentSession({ id: resumedId, status: "idle" }),
+      }),
+    );
+    await screen.findByText("Starting.");
+
+    await userEvent.click(screen.getByRole("button", { name: "Resume session" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${resumedId}`);
+    });
+    const create = view.requests.find(
+      (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+    );
+    expect(await bodyOf(create)).toEqual({
+      project: ended.project,
+      workdir_id: ended.workdir_id,
+      mode: ended.mode,
+      model: ended.model ?? null,
+      prompt: null,
+      resume_session_id: ended.claude_session_id,
+      fork: false,
+    });
+  });
+
+  it("offers no Resume while the session is live", async () => {
+    renderChat();
+
+    await screen.findByText("Starting.");
+    expect(screen.queryByRole("button", { name: "Resume session" })).toBeNull();
+  });
+
   it("links the agent session to its observed session", async () => {
     renderChat();
 
