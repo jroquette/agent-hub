@@ -13,6 +13,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` highlights completed code blocks in the chat, notes and plans (about a dozen languages, lazily loaded,
+  design-token colours in both themes) with `lowlight`; a block still streaming or over 2,000 lines or 64 KiB stays
+  plain, and agent output stays inert (ADR 0034, AGH-252, AC-234.31).
 - README: a Workflows section, and the banner no longer says the control plane is read-only. USING.md points to
   it. The web smoke starts a workflow run, approves its gate and cancels it against an installed `hub web`
   (AGH-233, AC-213.20).
