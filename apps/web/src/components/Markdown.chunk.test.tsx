@@ -11,6 +11,22 @@ vi.mock("./highlight", () => {
 });
 
 describe("Markdown highlight chunk (AC-234.31)", () => {
+  // First in the file: the chunk is loaded at most once per page, so later tests would hide this.
+  it("highlight: a page with no highlightable block never loads the chunk", async () => {
+    const source = [
+      ["```", "no language", "```"].join("\n"),
+      ["```bash", ...Array.from({ length: 2001 }, () => "# c"), "```"].join("\n"),
+      ["```ts", "const open = 1;"].join("\n"),
+    ].join("\n\n");
+    const { container } = render(<Markdown source={source} streaming />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(container.querySelectorAll("pre code")).toHaveLength(3);
+    expect(load.attempts).toBe(0);
+  });
+
   it("highlight-limits: a failed lazy import leaves the block plain", async () => {
     const { container } = render(<Markdown source={["```ts", "const a = 1;", "```"].join("\n")} />);
     await act(async () => {
