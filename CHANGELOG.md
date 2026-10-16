@@ -67,6 +67,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 - `make dev` on macOS no longer shows a blank page: the chat's model module `transcript.ts` is now `model.ts`, so
   `./Transcript` no longer resolves to it on a case-insensitive file system (AGH-262).
+- New session is short: Where (the project, then the working folder last used for it) and the Prompt, which has
+  focus; Mode and Model wait under Options with a one-line summary, Ctrl+Enter or Cmd+Enter starts, and a disabled
+  Start says why. The "Start sessions in" select left the Sessions header, and the dialog's "Start from" picker of
+  past sessions is gone; fork returns with AGH-249 (AGH-248).
 
 ## [0.15.0] - 2026-10-16
 
