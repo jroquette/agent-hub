@@ -30,9 +30,6 @@ export function useProjectRuns(project: string) {
   return useApi("/api/v1/workflow-runs", { query: { project, limit: 200 } });
 }
 
-export function useProjectGates(project: string) {
-  return useApi("/api/v1/approvals", { query: { project, status: "open", limit: 200 } });
-}
 
 /** Last 10 sessions, newest first (spec 12, Recent sessions). */
 export function useRecentSessions(project: string) {
