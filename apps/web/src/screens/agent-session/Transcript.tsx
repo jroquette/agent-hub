@@ -12,7 +12,7 @@ import {
   type KeyboardEvent,
 } from "react";
 
-import { Icon, Markdown, type IconName } from "../../components";
+import { Icon, Markdown, ScreenshotThumb, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
 import { JumpToLatest } from "./JumpToLatest";
 import { MessageMeta } from "./MessageMeta";
@@ -171,7 +171,11 @@ function UserMessage({
       <div className="as-bubble">{text}</div>
       {screenshot &&
         (screenshotUrl ? (
-          <img className="as-shot" src={screenshotUrl} alt="Screenshot sent with this message" />
+          <ScreenshotThumb
+            className="as-shot"
+            src={screenshotUrl}
+            alt="Screenshot sent with this message"
+          />
         ) : (
           <span className="ah-small ah-muted">Screenshot attached</span>
         ))}

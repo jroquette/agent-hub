@@ -14,7 +14,7 @@ import {
   Skeleton,
 } from "../../components";
 import { ApiProblem } from "../../lib/api";
-import { screenshotFor } from "../../lib/screenshotCopy";
+import { useScreenshot } from "../../lib/screenshotCopy";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { sessionControlUnavailable } from "../sessions-list/control";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
@@ -115,6 +115,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const snapshot = useAgentSession(agentSessionId);
   const capabilities = useCapabilities();
   const transcript = useAgentTranscript(agentSessionId);
+  const screenshotUrl = useScreenshot(agentSessionId);
   const commands = useAgentSessionCommands(agentSessionId);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -281,7 +282,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           onAnswerPermission={ended ? undefined : commands.answer}
           scrollerRef={setScroller}
           follow={follow}
-          screenshotUrl={screenshotFor(agentSessionId)}
+          screenshotUrl={screenshotUrl}
         />
       </OldestPendingContext.Provider>
       <footer className="as-footer">

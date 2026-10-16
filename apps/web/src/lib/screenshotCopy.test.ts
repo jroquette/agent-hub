@@ -1,6 +1,7 @@
+import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { rememberScreenshot, screenshotFor } from "./screenshotCopy";
+import { rememberScreenshot, screenshotFor, useScreenshot } from "./screenshotCopy";
 
 describe("screenshotCopy", () => {
   it("returns the remembered screenshot for its session", () => {
@@ -29,5 +30,19 @@ describe("screenshotCopy", () => {
     expect(window.localStorage).toHaveLength(0);
     expect(window.sessionStorage).toHaveLength(0);
     setItem.mockRestore();
+  });
+});
+
+describe("useScreenshot", () => {
+  it("returns the memory copy at once, and nothing for a session without a kept copy", async () => {
+    rememberScreenshot("as-4", "data:image/png;base64,DDDD");
+
+    expect(renderHook(() => useScreenshot("as-4")).result.current).toBe(
+      "data:image/png;base64,DDDD",
+    );
+    const other = renderHook(() => useScreenshot("as-none"));
+    await waitFor(() => {
+      expect(other.result.current).toBeUndefined();
+    });
   });
 });
