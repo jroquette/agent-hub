@@ -14,7 +14,7 @@ import { usePreferences } from "../lib/preferences";
 import { useScope } from "../lib/scope";
 import { CommandPalette } from "./CommandPalette";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
-import { armGoSequence, clearGoSequence, goSequencePending } from "./goSequence";
+import { armGoSequence, clearGoSequence, goSequencePending, typingIn } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
 import { ShakeToSession } from "./ShakeToSession";
 import { ShortcutSheet } from "./ShortcutSheet";
@@ -48,15 +48,6 @@ const GO: Record<string, string> = {
   h: "/health",
   ",": "/settings",
 };
-
-function typingIn(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return (
-    target.isContentEditable ||
-    ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
-    target.closest("[role=dialog]") !== null
-  );
-}
 
 function useGlobalKeys(actions: {
   togglePalette: () => void;
