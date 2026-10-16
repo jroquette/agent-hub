@@ -696,6 +696,7 @@ export function FeatureDetailScreen() {
     body = (
       <TicketsTab
         project={project}
+        slug={detail.slug}
         data={tickets.data}
         error={tickets.isError ? tickets.error : null}
         onRefresh={() => void tickets.refetch()}

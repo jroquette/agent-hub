@@ -379,6 +379,7 @@ function FlowCard({
   critical,
   inFlow,
   acPasses,
+  ticketAction,
 }: {
   row: TicketRow;
   rows: readonly TicketRow[];
@@ -387,7 +388,9 @@ function FlowCard({
   /** The refs drawn in the flow: a blocker among them is shown by its edge, not in words. */
   inFlow: ReadonlySet<string>;
   acPasses?: Readonly<Record<string, boolean>> | undefined;
+  ticketAction?: TicketAction | undefined;
 }) {
+  const action = ticketAction?.(row);
   const after = row.blocked_by.map((edge) => edge.ref).filter((ref) => !inFlow.has(ref));
   const showReviewed =
     row.reviewed === true && row.readiness !== "done" && row.readiness !== "in_progress";
@@ -412,8 +415,9 @@ function FlowCard({
         <TicketTitle title={row.title ?? row.ref} />
       </a>
       <div className="ah-flow-card-foot">
-        <div className="ah-small">
+        <div className="ah-row ah-small" style={{ gap: 8, justifyContent: "space-between" }}>
           <ReadinessText row={row} rows={rows} external={external} />
+          {action}
         </div>
         <div className="ah-flow-card-meta">
           <AcCount row={row} acPasses={acPasses} />
@@ -675,6 +679,7 @@ function FlowGraph({
   critical,
   criticalPath,
   acPasses,
+  ticketAction,
 }: {
   columns: readonly FlowColumn[];
   byRef: ReadonlyMap<string, TicketRow>;
@@ -683,6 +688,7 @@ function FlowGraph({
   critical: ReadonlySet<string>;
   criticalPath: readonly string[];
   acPasses?: Readonly<Record<string, boolean>> | undefined;
+  ticketAction?: TicketAction | undefined;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const inFlow = new Set(columns.flatMap((c) => c.refs));
@@ -751,6 +757,7 @@ function FlowGraph({
                   critical={critical.has(r)}
                   inFlow={inFlow}
                   acPasses={acPasses}
+                  ticketAction={ticketAction}
                 />
               );
             })}
@@ -810,7 +817,12 @@ export interface PlanningViewProps {
   planning: TicketPlan;
   /** Whether each AC passes (by id), to show each ticket's progress; omitted when unknown. */
   acPasses?: Readonly<Record<string, boolean>> | undefined;
+  /** What a ticket's card offers to do now (Start), or nothing; omitted shows no action. */
+  ticketAction?: TicketAction | undefined;
 }
+
+/** The control a ticket's card or row shows next to its readiness, or null for none. */
+export type TicketAction = (row: TicketRow) => ReactNode;
 
 /**
  * The planning of the feature's tickets (AC-136.30) as a flow: the parallel groups as columns
@@ -819,7 +831,7 @@ export interface PlanningViewProps {
  * An epic (a parent of other tickets) heads the flow with its children's progress, not as a step.
  * Banners name dependency cycles, blockers outside the feature and the server's warnings.
  */
-export function PlanningView({ tickets, planning, acPasses }: PlanningViewProps) {
+export function PlanningView({ tickets, planning, acPasses, ticketAction }: PlanningViewProps) {
   const external = planning.external_blockers;
   const byRef = new Map(tickets.map((t) => [t.ref, t]));
   const critical = new Set(planning.critical_path.length > 1 ? planning.critical_path : []);
@@ -896,6 +908,7 @@ export function PlanningView({ tickets, planning, acPasses }: PlanningViewProps)
           critical={critical}
           criticalPath={planning.critical_path}
           acPasses={acPasses}
+          ticketAction={ticketAction}
         />
       )}
     </section>
