@@ -55,7 +55,7 @@ import {
   DrivenBanner,
   NewSessionControl,
   useDriving,
-  useResume,
+  useResumeLink,
 } from "./DrivenControls";
 import { rowHref, withDriven } from "./drivenRows";
 import { GridSection } from "./GridSection";
@@ -695,7 +695,7 @@ export function SessionsListScreen() {
     scope,
     (projects.data?.items ?? []).map((project) => project.name),
   );
-  const resume = useResume(driving);
+  const resumeLink = useResumeLink(driving);
   const [selected, setSelected] = useState<string[]>([]);
   const [columns, setColumns] = useState(storedColumns);
   const [density, setDensity] = useState(() =>
@@ -763,8 +763,8 @@ export function SessionsListScreen() {
     [density, columns, scope],
   );
   const tableColumns = useMemo(
-    () => visible.map((def) => withDriven(def.column({ tz }), tz, resume.button)),
-    [visible, tz, resume.button],
+    () => visible.map((def) => withDriven(def.column({ tz }), tz, resumeLink)),
+    [visible, tz, resumeLink],
   );
   const sortColumn = visible.find((def) => def.sort === sort.replace("-", ""));
   const projectCount = new Set(rows.map((s) => s.project)).size;
@@ -1022,7 +1022,7 @@ export function SessionsListScreen() {
           count={count}
           within={within}
           pages={pages}
-          action={resume.button}
+          action={resumeLink}
           onOpen={(row) => {
             void navigate(rowHref(row));
           }}
@@ -1283,7 +1283,6 @@ export function SessionsListScreen() {
           {body}
           <CloudSessions driving={driving} />
         </div>
-        {resume.dialog}
       </div>
     </div>
   );

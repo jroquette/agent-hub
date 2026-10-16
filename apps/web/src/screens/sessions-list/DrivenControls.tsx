@@ -1,16 +1,16 @@
 /* Driving sessions from Sessions (AGH-165, AC-234.8): New session in the header, why it is unavailable, cloud guidance. */
 import { useCallback, useState, type ReactNode } from "react";
 
-import { Banner, Button, ProblemError } from "../../components";
+import { AppLink, Banner, Button, Icon, ProblemError } from "../../components";
+import { resumable } from "../agent-session/model";
 import { CloudPanel } from "./CloudPanel";
-import { resumable, sessionControlUnavailable } from "./control";
+import { agentSessionHref, sessionControlUnavailable } from "./control";
 import {
   useAgentCapabilities,
   useAgentSessions,
   useCloudSessions,
   useServedFolder,
   useWorkdirs,
-  type AgentSession,
 } from "./queries";
 import { isDriven, type SectionRow } from "./sections";
 import { StartSessionDialog } from "./StartSessionDialog";
@@ -72,47 +72,36 @@ export function NewSessionControl({ driving }: { driving: Driving }) {
 }
 
 /**
- * Resume on the rows and tiles of ended or failed driven sessions, twins included (AC-234.15):
- * `button(row)` is the control, `dialog` the prefilled New session it opens.
+ * "Resume" on the rows and tiles of ended or failed driven sessions, twins included (AC-234.15): a
+ * link to the chat, where a message resumes the session in place, as in its chat (ADR 0036).
+ * Stable while the list is, so the memoised tiles and the table columns do not render again.
  */
-export function useResume(driving: Driving) {
-  const [target, setTarget] = useState<AgentSession | null>(null);
-  const { caps, canDrive } = driving;
+export function useResumeLink(driving: Driving) {
+  const { canDrive } = driving;
   const items = driving.list.data?.items;
-  // Stable while the list is: the memoised tiles and the table columns do not render again.
-  const button = useCallback(
+  return useCallback(
     (row: SectionRow): ReactNode => {
-      const id = isDriven(row) ? row.id : row.agent_session_id;
-      const session = isDriven(row) ? row : items?.find((a) => a.id === id);
-      if (!canDrive || !session || !resumable(session)) return null;
+      const session = isDriven(row) ? row : items?.find((a) => a.id === row.agent_session_id);
+      if (!canDrive || !session || (session.status !== "ended" && session.status !== "failed"))
+        return null;
+      if (!resumable(session, session.end_reason)) return null;
       return (
-        <Button
-          size="sm"
-          icon="play"
+        <AppLink
+          href={agentSessionHref(session.id)}
+          className="ah-btn ah-btn-sm"
           aria-label={`Resume ${session.title ?? "Untitled session"}`}
-          // The row or tile around it opens the chat on click: Resume opens the dialog only.
+          // The row or tile around it opens on click too: one navigation is enough.
           onClick={(event) => {
             event.stopPropagation();
-            setTarget(session);
           }}
         >
+          <Icon name="play" size="sm" />
           Resume
-        </Button>
+        </AppLink>
       );
     },
     [canDrive, items],
   );
-  const dialog = target && caps && (
-    <StartSessionDialog
-      project={target.project}
-      capabilities={caps}
-      resume={target}
-      onClose={() => {
-        setTarget(null);
-      }}
-    />
-  );
-  return { button, dialog };
 }
 
 /** Why sessions cannot be driven here (401, container, 503, no claude), or a failed list or folder read. */
