@@ -1,9 +1,10 @@
 import "../agent-session/agent-session.css";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState, type KeyboardEvent } from "react";
 
 import type { components } from "../../api/schema";
-import { Button, Time } from "../../components";
+import { Button, Dialog } from "../../components";
+import { readStored, writeStored } from "../../lib/storage";
 import type { ApiProblem } from "../../lib/api";
 import { offeredModes, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
 import { modeLabel, type PermissionMode } from "../agent-session/model";
@@ -11,7 +12,6 @@ import { modeLabel, type PermissionMode } from "../agent-session/model";
 type Schemas = components["schemas"];
 export type Workdir = Schemas["Workdir"];
 export type DriverCapabilities = Schemas["DriverCapabilities"];
-export type PastSession = Schemas["PastSession"];
 export type CreateAgentSession = Schemas["CreateAgentSession"];
 
 /** The screen a shake captured (AGH-260), or the capture that failed. */
@@ -20,6 +20,8 @@ export type ShakeScreenshot = { dataUrl: string } | { failed: true };
 /** A model id the CLI may take besides the aliases (L6); the server checks the same pattern. */
 export const MODEL_PATTERN = /^[A-Za-z0-9._\-[\]]{1,64}$/;
 const OTHER_MODEL = "__other__";
+/** The folder last started in, per project (AC-234.14). */
+const workdirKey = (project: string) => `ah.sessions.workdir.${project}`;
 
 const MODE_HINT: Record<PermissionMode, string> = {
   default: "Claude asks before each edit or command.",
@@ -42,13 +44,15 @@ export function withSkill(prompt: string, skill: string): string {
 
 export interface NewSessionDialogProps {
   project: string;
-  /** The folders a session may start in; never a free path (D6). */
-  workdirs: readonly Workdir[];
+  /** The projects "Where" offers; with fewer than two the project is only named. */
+  projects?: readonly string[] | undefined;
+  /** Called with the project chosen in "Where"; the caller then passes its folders. */
+  onProjectChange?: ((project: string) => void) | undefined;
+  /** The folders a session may start in, never a free path (D6); undefined while they load. */
+  workdirs: readonly Workdir[] | undefined;
+  /** Why the folders could not be listed, said in place of the picker. */
+  workdirsProblem?: string | undefined;
   capabilities: DriverCapabilities;
-  /** Past Claude sessions of the chosen folder, once loaded (resume, fork). */
-  resumable?: readonly PastSession[] | undefined;
-  /** Called with the chosen folder (on open and on change), to load its resumable sessions. */
-  onWorkdirChange?: ((workdirId: string) => void) | undefined;
   pending: boolean;
   error: ApiProblem | null;
   maxPromptBytes?: number | undefined;
@@ -64,20 +68,24 @@ export interface NewSessionDialogProps {
   note?: string | undefined;
 }
 
-const FOCUSABLE =
-  "button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]";
+/** The folder to preselect: the given one, else the last used for the project, else the first. */
+function preferredWorkdir(project: string, workdirs: readonly Workdir[], initial?: string) {
+  const listed = (id: string | null | undefined) =>
+    workdirs.some((w) => w.workdir_id === id) ? id : undefined;
+  return listed(initial) ?? listed(readStored(workdirKey(project))) ?? workdirs[0]?.workdir_id;
+}
 
 /**
- * "New session" (D10, AC-165.42): one of the listed folders, a mode (never bypass), a model alias
- * or id, an optional first prompt with the folder's `/skill` shortcuts, and optionally a past
- * session to resume or fork.
+ * "New session" (D10, AC-165.42, AC-234.14): where to start (project › one of the listed folders)
+ * and the prompt; the mode (never bypass) and the model alias or id wait in "Options".
  */
 export function NewSessionDialog({
   project,
+  projects = [],
+  onProjectChange,
   workdirs,
+  workdirsProblem,
   capabilities,
-  resumable,
-  onWorkdirChange,
   pending,
   error,
   maxPromptBytes = DEFAULT_MESSAGE_MAX_BYTES,
@@ -88,95 +96,63 @@ export function NewSessionDialog({
   initialMode,
   note,
 }: NewSessionDialogProps) {
-  const [workdirId, setWorkdirId] = useState(
-    (workdirs.some((w) => w.workdir_id === initialWorkdirId) ? initialWorkdirId : undefined) ??
-      workdirs[0]?.workdir_id ??
-      "",
-  );
+  const [picked, setPicked] = useState<string | null>(null);
   const [mode, setMode] = useState<PermissionMode>(initialMode ?? "default");
   const shot = screenshot && "dataUrl" in screenshot ? screenshot.dataUrl : null;
   const [attach, setAttach] = useState(shot !== null);
   const [model, setModel] = useState(capabilities.models[0] ?? "default");
   const [otherModel, setOtherModel] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [resume, setResume] = useState("");
-  const [fork, setFork] = useState(false);
-  const dialog = useRef<HTMLDivElement>(null);
-  const titleId = useId();
-  const workdirField = useId();
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [firstProject] = useState(project);
+  const modeName = useId();
+  const whereId = useId();
+  const optionsId = useId();
+  const summaryId = useId();
+  const reasonId = useId();
   const modelField = useId();
   const otherField = useId();
   const otherHint = useId();
   const promptField = useId();
   const promptHint = useId();
-  const resumeField = useId();
-  const forkField = useId();
   const attachField = useId();
 
-  const workdir = workdirs.find((w) => w.workdir_id === workdirId);
-
-  useEffect(() => {
-    const before = document.activeElement;
-    const first = screenshot
-      ? dialog.current?.querySelector<HTMLElement>("textarea")
-      : dialog.current?.querySelector<HTMLElement>(FOCUSABLE);
-    first?.focus();
-    return () => {
-      if (before instanceof HTMLElement) before.focus();
-    };
-    // Focus moves once, when the dialog opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (workdirId) onWorkdirChange?.(workdirId);
-  }, [workdirId, onWorkdirChange]);
-
-  useEffect(() => {
-    const node = dialog.current;
-    if (!node) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        if (!pending) onCancel();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)];
-      const head = items[0];
-      const tail = items[items.length - 1];
-      if (!head || !tail) return;
-      if (event.shiftKey && document.activeElement === head) {
-        event.preventDefault();
-        tail.focus();
-      } else if (!event.shiftKey && document.activeElement === tail) {
-        event.preventDefault();
-        head.focus();
-      }
-    };
-    node.addEventListener("keydown", onKeyDown);
-    return () => {
-      node.removeEventListener("keydown", onKeyDown);
-    };
-  }, [pending, onCancel]);
+  const folders = workdirs ?? [];
+  const preferred = preferredWorkdir(
+    project,
+    folders,
+    project === firstProject ? initialWorkdirId : undefined,
+  );
+  const workdir =
+    folders.find((w) => w.workdir_id === picked) ?? folders.find((w) => w.workdir_id === preferred);
+  const workdirId = workdir?.workdir_id ?? "";
 
   const chosenModel = model === OTHER_MODEL ? otherModel.trim() : model;
   const modelValid = MODEL_PATTERN.test(chosenModel);
   const promptBytes = new TextEncoder().encode(prompt).length;
   const promptTooLong = promptBytes > maxPromptBytes;
-  const past = resumable ?? [];
   const attached = attach && shot !== null;
   const needsPrompt = attached && prompt.trim() === "";
-  const ready =
-    capabilities.available &&
-    workdir !== undefined &&
-    modelValid &&
-    !promptTooLong &&
-    !needsPrompt &&
-    !pending;
+  const reason = pending
+    ? null
+    : !capabilities.available
+      ? "Sessions cannot start on this machine."
+      : workdirs === undefined && !workdirsProblem
+        ? "Waiting for the working folders."
+        : !workdir
+          ? "No working folder to start in."
+          : !modelValid
+            ? "Options: the model id is not valid."
+            : promptTooLong
+              ? "The prompt is too long."
+              : needsPrompt
+                ? "Write a prompt to send the screenshot."
+                : null;
+  const ready = !pending && reason === null;
 
   const submit = () => {
-    if (!ready) return;
+    if (!ready || !workdir) return;
+    writeStored(workdirKey(project), workdir.workdir_id);
     const text = prompt.trim();
     const body: CreateAgentSession = {
       project,
@@ -184,8 +160,8 @@ export function NewSessionDialog({
       mode,
       model: chosenModel,
       prompt: text ? text : null,
-      resume_session_id: resume || null,
-      fork: resume ? fork : false,
+      resume_session_id: null,
+      fork: false,
     };
     onSubmit(
       attached
@@ -197,262 +173,281 @@ export function NewSessionDialog({
     );
   };
 
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.nativeEvent.isComposing)
+      return;
+    event.preventDefault();
+    submit();
+  };
+
   return (
-    <div className="ah-scrim">
-      <div
-        ref={dialog}
-        className="ah-dialog as-new-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-busy={pending}
+    <Dialog
+      title="New session"
+      onClose={onCancel}
+      pending={pending}
+      initialFocus="textarea"
+      className="as-new-dialog"
+      footer={
+        <>
+          {reason && (
+            <span id={reasonId} className="ah-small ah-muted ah-grow">
+              {reason}
+            </span>
+          )}
+          <Button disabled={pending} onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!ready}
+            aria-describedby={reason ? reasonId : undefined}
+            onClick={submit}
+          >
+            {pending ? "Starting…" : "Start session"}
+          </Button>
+        </>
+      }
+    >
+      {/* Ctrl/Cmd+Enter from any field starts the session; the controls keep their own keys. */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+      <form
+        className="ah-stack"
+        style={{ gap: 12 }}
+        onKeyDown={onKeyDown}
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
       >
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
-        >
-          <div className="ah-dialog-body ah-stack" style={{ gap: 12 }}>
-            <h2 id={titleId} className="ah-h3">
-              New session
-            </h2>
-            {note && (
-              <p role="note" className="ah-small ah-muted">
-                {note}
-              </p>
-            )}
-            {!capabilities.available && (
-              <p role="alert" className="as-error">
-                Sessions cannot start here: {capabilities.reason ?? "claude is not available"}.
-              </p>
-            )}
+        {note && (
+          <p role="note" className="ah-small ah-muted">
+            {note}
+          </p>
+        )}
+        {!capabilities.available && (
+          <p role="alert" className="as-error">
+            Sessions cannot start here: {capabilities.reason ?? "claude is not available"}.
+          </p>
+        )}
 
-            <div className="ah-stack" style={{ gap: 4 }}>
-              <label htmlFor={workdirField} className="ah-small">
-                Working folder
-              </label>
-              {workdirs.length === 0 ? (
-                <p className="ah-small ah-muted" id={workdirField}>
-                  No working folder found for {project}.
-                </p>
-              ) : (
-                <select
-                  id={workdirField}
-                  className="ah-input"
-                  value={workdirId}
-                  disabled={pending}
-                  onChange={(event) => {
-                    setWorkdirId(event.target.value);
-                    setResume("");
-                  }}
-                >
-                  {workdirs.map((w) => (
-                    <option key={w.workdir_id} value={w.workdir_id}>
-                      {workdirText(w)}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            <fieldset className="as-fieldset" disabled={pending}>
-              <legend className="ah-small">Mode</legend>
-              {offeredModes().map((m) => (
-                <label key={m} className="as-radio">
-                  <input
-                    type="radio"
-                    name={`${titleId}-mode`}
-                    value={m}
-                    checked={mode === m}
-                    onChange={() => {
-                      setMode(m);
-                    }}
-                  />
-                  {modeLabel(m)}
-                  <span className="ah-small ah-muted">{MODE_HINT[m]}</span>
-                </label>
-              ))}
-            </fieldset>
-
-            <div className="ah-stack" style={{ gap: 4 }}>
-              <label htmlFor={modelField} className="ah-small">
-                Model
-              </label>
+        <div role="group" aria-labelledby={whereId} className="ah-stack" style={{ gap: 4 }}>
+          <span id={whereId} className="ah-small">
+            Where
+          </span>
+          <div className="ah-row ah-wrap" style={{ gap: 6 }}>
+            {projects.length > 1 ? (
               <select
-                id={modelField}
-                className="ah-input"
-                value={model}
+                aria-label="Project"
+                className="ah-input as-select"
+                value={project}
                 disabled={pending}
                 onChange={(event) => {
-                  setModel(event.target.value);
+                  setPicked(null);
+                  onProjectChange?.(event.target.value);
                 }}
               >
-                {capabilities.models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
+                {projects.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
                   </option>
                 ))}
-                <option value={OTHER_MODEL}>Other model id…</option>
               </select>
-              {model === OTHER_MODEL && (
-                <>
-                  <label htmlFor={otherField} className="ah-small">
-                    Model id
-                  </label>
-                  <input
-                    id={otherField}
-                    className="ah-input"
-                    value={otherModel}
-                    maxLength={64}
-                    disabled={pending}
-                    aria-invalid={otherModel !== "" && !modelValid}
-                    aria-describedby={otherHint}
-                    onChange={(event) => {
-                      setOtherModel(event.target.value);
-                    }}
-                  />
-                  <span id={otherHint} className="ah-small ah-subtle">
-                    {otherModel !== "" && !modelValid
-                      ? "Letters, digits and . _ - [ ] only, at most 64."
-                      : "For example claude-sonnet-4-5."}
-                  </span>
-                </>
-              )}
-            </div>
-
-            {past.length > 0 && (
-              <div className="ah-stack" style={{ gap: 4 }}>
-                <label htmlFor={resumeField} className="ah-small">
-                  Start from
-                </label>
-                <select
-                  id={resumeField}
-                  className="ah-input"
-                  value={resume}
+            ) : (
+              <span className="ah-small">{project}</span>
+            )}
+            <span aria-hidden="true" className="ah-subtle">
+              ›
+            </span>
+            {workdirs === undefined && !workdirsProblem ? (
+              <span className="ah-small ah-muted">Loading the working folders…</span>
+            ) : folders.length === 0 ? (
+              <span className="ah-small ah-muted">
+                {workdirsProblem ?? `No working folder found for ${project}.`}
+              </span>
+            ) : (
+              <select
+                aria-label="Working folder"
+                className="ah-input as-select ah-grow"
+                value={workdirId}
+                disabled={pending}
+                onChange={(event) => {
+                  setPicked(event.target.value);
+                }}
+              >
+                {folders.map((w) => (
+                  <option key={w.workdir_id} value={w.workdir_id}>
+                    {workdirText(w)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+        <div className="ah-stack" style={{ gap: 4 }}>
+          <label htmlFor={promptField} className="ah-small">
+            Prompt
+          </label>
+          <textarea
+            id={promptField}
+            className="ah-input as-composer-input"
+            rows={4}
+            value={prompt}
+            disabled={pending}
+            aria-invalid={promptTooLong}
+            aria-describedby={promptHint}
+            onChange={(event) => {
+              setPrompt(event.target.value);
+            }}
+          />
+          <span id={promptHint} className="ah-small ah-subtle">
+            {promptTooLong
+              ? `Too long: at most ${String(Math.floor(maxPromptBytes / 1024))} KiB.`
+              : needsPrompt
+                ? "The screenshot goes with the first prompt: write one."
+                : "Without a prompt the session waits for your first message. Ctrl+Enter or ⌘+Enter starts it."}
+          </span>
+          {workdir && workdir.skills.length > 0 && (
+            <div className="ah-row ah-wrap" style={{ gap: 6 }} role="group" aria-label="Skills">
+              {workdir.skills.map((skill) => (
+                <Button
+                  key={skill}
+                  size="sm"
+                  variant="ghost"
                   disabled={pending}
-                  onChange={(event) => {
-                    setResume(event.target.value);
+                  onClick={() => {
+                    setPrompt((before) => withSkill(before, skill));
                   }}
                 >
-                  <option value="">A new conversation</option>
-                  {past.map((s) => (
-                    <option key={s.session_id} value={s.session_id}>
-                      Resume: {s.title ?? s.session_id}
+                  /{skill}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {screenshot && (
+          <div className="ah-stack" style={{ gap: 4 }}>
+            <label htmlFor={attachField} className="ah-row ah-small" style={{ gap: 6 }}>
+              <input
+                id={attachField}
+                type="checkbox"
+                className="ah-check"
+                checked={attached}
+                disabled={pending || shot === null}
+                onChange={(event) => {
+                  setAttach(event.target.checked);
+                }}
+              />
+              Attach a screenshot of the current screen
+            </label>
+            {shot === null ? (
+              <span className="ah-small ah-subtle">No screenshot was taken</span>
+            ) : (
+              <img className="as-shot" src={shot} alt="Screenshot of the screen you shook" />
+            )}
+          </div>
+        )}
+
+        <div className="ah-stack" style={{ gap: 8 }}>
+          <div className="ah-row" style={{ gap: 6 }}>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={optionsOpen ? "chevron-down" : "chevron-right"}
+              aria-expanded={optionsOpen}
+              aria-controls={optionsOpen ? optionsId : undefined}
+              aria-describedby={summaryId}
+              onClick={() => {
+                setOptionsOpen((open) => !open);
+              }}
+            >
+              Options
+            </Button>
+            <span id={summaryId} className="ah-small ah-muted">
+              {`${modeLabel(mode)} · ${chosenModel || "no model id"}`}
+            </span>
+          </div>
+          {optionsOpen && (
+            <div id={optionsId} className="ah-stack" style={{ gap: 12 }}>
+              <fieldset className="as-fieldset" disabled={pending}>
+                <legend className="ah-small">Mode</legend>
+                {offeredModes().map((m) => (
+                  <label key={m} className="as-radio">
+                    <input
+                      type="radio"
+                      name={modeName}
+                      value={m}
+                      checked={mode === m}
+                      onChange={() => {
+                        setMode(m);
+                      }}
+                    />
+                    {modeLabel(m)}
+                    <span className="ah-small ah-muted">{MODE_HINT[m]}</span>
+                  </label>
+                ))}
+              </fieldset>
+
+              <div className="ah-stack" style={{ gap: 4 }}>
+                <label htmlFor={modelField} className="ah-small">
+                  Model
+                </label>
+                <select
+                  id={modelField}
+                  className="ah-input"
+                  value={model}
+                  disabled={pending}
+                  onChange={(event) => {
+                    setModel(event.target.value);
+                  }}
+                >
+                  {capabilities.models.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
                     </option>
                   ))}
+                  <option value={OTHER_MODEL}>Other model id…</option>
                 </select>
-                {resume && (
+                {model === OTHER_MODEL && (
                   <>
-                    <label htmlFor={forkField} className="ah-row ah-small" style={{ gap: 6 }}>
-                      <input
-                        id={forkField}
-                        type="checkbox"
-                        className="ah-check"
-                        checked={fork}
-                        disabled={pending}
-                        onChange={(event) => {
-                          setFork(event.target.checked);
-                        }}
-                      />
-                      Fork: continue in a new session and keep the original unchanged
+                    <label htmlFor={otherField} className="ah-small">
+                      Model id
                     </label>
-                    <span className="ah-small ah-subtle">
-                      Last active{" "}
-                      <Time iso={past.find((s) => s.session_id === resume)?.last_activity ?? ""} />
+                    <input
+                      id={otherField}
+                      className="ah-input"
+                      value={otherModel}
+                      maxLength={64}
+                      disabled={pending}
+                      aria-invalid={otherModel !== "" && !modelValid}
+                      aria-describedby={otherHint}
+                      onChange={(event) => {
+                        setOtherModel(event.target.value);
+                      }}
+                    />
+                    <span id={otherHint} className="ah-small ah-subtle">
+                      {otherModel !== "" && !modelValid
+                        ? "Letters, digits and . _ - [ ] only, at most 64."
+                        : "For example claude-sonnet-4-5."}
                     </span>
                   </>
                 )}
               </div>
-            )}
-
-            <div className="ah-stack" style={{ gap: 4 }}>
-              <label htmlFor={promptField} className="ah-small">
-                First prompt (optional)
-              </label>
-              <textarea
-                id={promptField}
-                className="ah-input as-composer-input"
-                rows={4}
-                value={prompt}
-                disabled={pending}
-                aria-invalid={promptTooLong}
-                aria-describedby={promptHint}
-                onChange={(event) => {
-                  setPrompt(event.target.value);
-                }}
-              />
-              <span id={promptHint} className="ah-small ah-subtle">
-                {promptTooLong
-                  ? `Too long: at most ${String(Math.floor(maxPromptBytes / 1024))} KiB.`
-                  : needsPrompt
-                    ? "The screenshot goes with the first prompt: write one."
-                    : "Without a prompt the session waits for your first message."}
-              </span>
-              {workdir && workdir.skills.length > 0 && (
-                <div className="ah-row ah-wrap" style={{ gap: 6 }} role="group" aria-label="Skills">
-                  {workdir.skills.map((skill) => (
-                    <Button
-                      key={skill}
-                      size="sm"
-                      variant="ghost"
-                      disabled={pending}
-                      onClick={() => {
-                        setPrompt((before) => withSkill(before, skill));
-                      }}
-                    >
-                      /{skill}
-                    </Button>
-                  ))}
-                </div>
-              )}
             </div>
-
-            {screenshot && (
-              <div className="ah-stack" style={{ gap: 4 }}>
-                <label htmlFor={attachField} className="ah-row ah-small" style={{ gap: 6 }}>
-                  <input
-                    id={attachField}
-                    type="checkbox"
-                    className="ah-check"
-                    checked={attached}
-                    disabled={pending || shot === null}
-                    onChange={(event) => {
-                      setAttach(event.target.checked);
-                    }}
-                  />
-                  Attach a screenshot of the current screen
-                </label>
-                {shot === null ? (
-                  <span className="ah-small ah-subtle">No screenshot was taken</span>
-                ) : (
-                  <img className="as-shot" src={shot} alt="Screenshot of the screen you shook" />
-                )}
-              </div>
-            )}
-
-            {pending && (
-              <span role="status" className="ah-small">
-                Starting the session…
-              </span>
-            )}
-            {error && !pending && (
-              <p role="alert" className="as-error ah-small">
-                {error.title}
-                {error.detail ? `: ${error.detail}` : ""}
-              </p>
-            )}
-          </div>
-          <div className="ah-dialog-foot">
-            <Button disabled={pending} onClick={onCancel}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={!ready}>
-              {pending ? "Starting…" : "Start session"}
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
+          )}
+        </div>
+        {pending && (
+          <span role="status" className="ah-small">
+            Starting the session…
+          </span>
+        )}
+        {error && !pending && (
+          <p role="alert" className="as-error ah-small">
+            {error.title}
+            {error.detail ? `: ${error.detail}` : ""}
+          </p>
+        )}
+      </form>
+    </Dialog>
   );
 }

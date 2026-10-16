@@ -313,7 +313,7 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
   it("starts New session in the served checkout's project, folder and Auto (make playground)", async () => {
     // The same vector as devCheckout.test.ts and core's test_workdirs.py (E6).
     vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
-    renderList(
+    const view = renderList(
       routes({
         "/api/v1/projects": aPage([
           aProjectSummary({ name: "demo" }),
@@ -338,18 +338,24 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
 
     await waitFor(
       () => {
-        expect(screen.getByRole("combobox", { name: /Start sessions in/ })).toHaveValue(
-          "agent-hub",
-        );
+        const asked = view.requests
+          .filter((r) => new URL(r.url).pathname === `${AGENT}/workdirs`)
+          .map((r) => new URL(r.url).searchParams.get("project"));
+        expect(asked).toContain("agent-hub");
+        expect(screen.getByRole("button", { name: "New session" })).toBeInTheDocument();
       },
       { timeout: 3000 },
     );
     await userEvent.click(screen.getByRole("button", { name: "New session" }));
     const dialog = screen.getByRole("dialog", { name: "New session" });
+    // "Where" may leave the served project for the scope's (AGH-262, AC-234.14).
+    expect(within(dialog).getByRole("combobox", { name: "Project" })).toHaveValue("agent-hub");
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
       "5703fef9dd5a3894",
     );
-    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
+    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
+      /^Auto ·/,
+    );
   });
 
   it("starts a session from New session and opens its chat", async () => {
@@ -375,10 +381,7 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
         .getAllByRole("option")
         .map((o) => o.textContent),
     ).toEqual(["agent-hub-hub (hub)", "agent-hub (repo)"]);
-    await userEvent.type(
-      within(dialog).getByRole("textbox", { name: "First prompt (optional)" }),
-      "Run the tests",
-    );
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Prompt" }), "Run the tests");
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
 
     await waitFor(() => {
@@ -395,6 +398,50 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
     });
     const workdirs = view.requests.find((r) => new URL(r.url).pathname === `${AGENT}/workdirs`);
     expect(new URL(workdirs?.url ?? "").searchParams.get("project")).toBe("agent-hub");
+  });
+
+  it("new-session-dialog: no project select on the page; Where picks the project and its folders", async () => {
+    const created = anAgentSession({ id: anId(9, "0192a5e5"), status: "running" });
+    const view = renderList(
+      routes({
+        [`POST ${AGENT}`]: created,
+        [`${AGENT}/workdirs`]: (request: Request) => ({
+          items: [
+            aWorkdir(
+              new URL(request.url).searchParams.get("project") === "loki-trader"
+                ? { label: "loki-hub", workdir_id: "00000000000000bb" }
+                : {},
+            ),
+          ],
+          warnings: [],
+        }),
+      }),
+    );
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "New session" }, { timeout: 5000 }),
+    );
+    expect(screen.queryByText("Start sessions in")).toBeNull();
+    const dialog = screen.getByRole("dialog", { name: "New session" });
+    const project = within(dialog).getByRole("combobox", { name: "Project" });
+    expect(screen.getAllByRole("combobox", { name: "Project" })).toEqual([project]);
+    await userEvent.selectOptions(project, "loki-trader");
+    expect(
+      await within(dialog).findByRole("option", { name: "loki-hub (hub)" }),
+    ).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${created.id}`);
+    });
+    const post = view.requests.find(
+      (r) => r.method === "POST" && new URL(r.url).pathname === AGENT,
+    );
+    expect(await bodyOf(post)).toMatchObject({
+      project: "loki-trader",
+      workdir_id: "00000000000000bb",
+    });
+    expect(view.requests.some((r) => new URL(r.url).pathname === `${AGENT}/resumable`)).toBe(false);
   });
 });
 

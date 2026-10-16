@@ -239,15 +239,6 @@ export function useServedFolder(
   return { project: null, workdirId: null };
 }
 
-/** Past Claude sessions of a folder, to resume or fork. */
-export function useResumable(project: string | null, workdirId: string | null) {
-  return useApi(
-    "/api/v1/agent-sessions/resumable",
-    { query: { project: project ?? "", workdir_id: workdirId ?? "" } },
-    { enabled: project !== null && workdirId !== null, retry: false },
-  );
-}
-
 /** The cloud starts of `project`, newest first. */
 export function useCloudSessions(project: string | null, enabled: boolean) {
   return useApi(
