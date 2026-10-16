@@ -113,7 +113,7 @@ export function splitTiles(tiles: LiveTile[]): Split {
 /**
  * Where a waiting tile sends the owner: a session hub web drives to its chat, where the
  * permission card answers it (AC-165.25); any other wait, a hook-observed permission prompt
- * included, to the approvals.
+ * included, to the session itself.
  */
 export function waitingLink(tile: LiveTile): { href: string; label: string } {
   if (tile.agent_session_id)
@@ -121,5 +121,5 @@ export function waitingLink(tile: LiveTile): { href: string; label: string } {
       href: `/agent-sessions/${encodeURIComponent(tile.agent_session_id)}`,
       label: "Open chat",
     };
-  return { href: "/approvals", label: "Open approval" };
+  return { href: `/sessions/${encodeURIComponent(tile.id)}`, label: "Open session" };
 }

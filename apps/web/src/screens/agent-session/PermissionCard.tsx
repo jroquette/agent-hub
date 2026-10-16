@@ -231,7 +231,7 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget || disabled || !keyed) return;
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-    // The second key of a `g` sequence is the shell's: `g a` goes to Approvals, never allows.
+    // The second key of a `g` sequence is the shell's: `g a` never allows.
     if (goSequencePending()) return;
     if (event.key === "a") submit({ decision: "allow" });
     else if (event.key === "d") deny();

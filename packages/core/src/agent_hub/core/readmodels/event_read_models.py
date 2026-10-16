@@ -76,7 +76,7 @@ from agent_hub.core.readmodels.live_tiles import (
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.runner.run_record import Stage
-from agent_hub.core.runs.fold_run import fold_run, run_id_of
+from agent_hub.core.runs.fold_run import RUN_SESSION_PREFIX, fold_run, run_id_of
 from agent_hub.core.runs.workflow_run import WorkflowRun
 from agent_hub.core.sessions.fold_session import (
     SESSION_SOURCES,
@@ -1096,6 +1096,13 @@ def _daily_costs(sessions: Sequence[Session], now: datetime) -> tuple[Decimal, .
     return tuple(days)
 
 
+def _approval_href(approval: Approval) -> str:
+    """Where an approval is answered: its run's page for a workflow gate, else its session's."""
+    if approval.session_id.startswith(RUN_SESSION_PREFIX):
+        return f"/runs/{approval.session_id.removeprefix(RUN_SESSION_PREFIX)}"
+    return f"/sessions/{approval.session_id}"
+
+
 def _approval_need(approval: Approval) -> NeedsYouItem:
     return NeedsYouItem(
         kind="approval",
@@ -1103,7 +1110,7 @@ def _approval_need(approval: Approval) -> NeedsYouItem:
         context=approval.title,
         project=approval.project,
         since=approval.requested_at,
-        href=f"/approvals/{approval.id}",
+        href=_approval_href(approval),
     )
 
 
@@ -1163,7 +1170,7 @@ def _approval_activity(approval: Approval) -> ActivityItem:
         text=f"{approval.title}: {approval.status}",
         project=approval.project,
         at=approval.decided_at or approval.requested_at,
-        href=f"/approvals/{approval.id}",
+        href=_approval_href(approval),
         event_id=approval.decision_event_id,
     )
 
@@ -1201,7 +1208,7 @@ def _entity_hits(snapshot: _Snapshot, needle: str) -> list[SearchHit]:
             label=a.id,
             detail=a.title,
             project=a.project,
-            href=f"/approvals/{a.id}",
+            href=_approval_href(a),
         )
         for a in snapshot.approvals.values()
         if needle in a.id.casefold()
