@@ -354,7 +354,8 @@ are not connected in this version and their cells say so, and Linear is read onl
 below). Actions (approving, starting, retrying, snoozing a learning) appear only as disabled, phase-tagged buttons;
 accepting and rejecting a learning are the exception below.
 The server is local only: loopback bind, `Host` and `Origin` checks, 1 MiB request bodies (8 MiB for
-`POST /agent-sessions`, which may carry a screenshot), no CORS, and a CSP that keeps the app on its own origin.
+`POST /agent-sessions`, which may carry a screenshot, and 24 MiB for `POST /agent-sessions/{id}/messages`, which may
+carry up to four images pasted in the chat), no CORS, and a CSP that keeps the app on its own origin.
 It reaches the network in two documented cases only: the learning decisions' explicit
 pull request ([ADR 0024](adr/0024-learning-actions-from-the-app.md)), and a read-only, server-side read of Linear's
 GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hub web` runs

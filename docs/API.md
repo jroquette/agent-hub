@@ -67,7 +67,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   phrase) until a specific problem type is defined; `detail` is specific to this occurrence.
 - Each named domain exception maps to one problem in one place, `agent_hub/api/rfc9457.py`: unknown id → 404 naming
   the id; a bad parameter or cursor → 400 with `errors[]` naming the parameter; an invalid body → 422; a body over
-  1 MiB → 413 (8 MiB for `POST /api/v1/agent-sessions`, which may carry a screenshot); an unregistrable hub → 422 ("No hub.json", "Invalid hub.json" with JSON-pointer `errors[]`); a
+  1 MiB → 413 (8 MiB for `POST /api/v1/agent-sessions`, which may carry a screenshot, and 24 MiB for
+  `POST /api/v1/agent-sessions/{id}/messages`, which may carry up to four); an unregistrable hub → 422 ("No hub.json", "Invalid hub.json" with JSON-pointer `errors[]`); a
   project registered twice → 409; an event conflict → 409; a busy or unreadable database or hub registry → 503.
   Anything else is a generic 500 problem; the server logs it as structured JSON without payload strings, so neither
   the answer nor the log holds a secret or a traceback.
@@ -221,7 +222,7 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 | `GET /{id}` · `DELETE /{id}` | the session with its open permission request · delete an ended one with its log → 204 (409 when live) |
 | `GET /{id}/events?after=&limit=` | the persisted log, `seq` order, `limit` 1 to 500 (default 200), `next_after` |
 | `GET /{id}/stream` | the log over SSE (below) |
-| `POST /{id}/messages` | `{text}` (1 byte to 64 KiB UTF-8) → 202 `{seq}`; accepted while a turn runs |
+| `POST /{id}/messages` | `{text, screenshots?}` (text 1 byte to 64 KiB UTF-8; 1 to 4 screenshots) → 202 `{seq}`; accepted while a turn runs |
 | `POST /{id}/interrupt` | `{}` → 202; the turn's `result` follows on the stream |
 | `POST /{id}/permissions/{request_id}` | `{decision: allow \| deny \| always, message?, answers?, suggestion?, mode?}` → 200 |
 | `POST /{id}/settings` | `{mode?, model?}` (at least one) → 200 |
@@ -244,6 +245,11 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   up to 8 MiB (413 "Request body too large" above it). No image byte is stored, streamed, logged or echoed: the first
   `user.message` record's body carries a marker instead,
   `attachments: [{kind: "screenshot", media_type: "image/png", bytes: <decoded size>}]`.
+- **Images in a later message.** `POST /{id}/messages` may carry `screenshots: [{media_type: "image/png", data}]`
+  (1 to 4; an image pasted in the chat, converted to PNG by the browser), sent to Claude before the message's text.
+  Each is checked like the first prompt's screenshot, before anything is logged or sent (422 `invalid-screenshot`
+  points at `/screenshots/{index}/data`; 413 `screenshot-too-large`). This route's body may be up to 24 MiB. The
+  `user.message` record carries one `attachments` marker per image and never its bytes.
 - **Observed twin.** `GET ""` and `GET /{id}` carry `observed_session_id`: the `claude_session_id` once the hooks or
   transcripts observed that Claude session (it is then a row of `GET /api/v1/sessions`), else `null`, so a list shows a
   driven session once, with or without its twin. The other routes answer it `null`.
@@ -301,7 +307,7 @@ text or a value the browser sent):
 | `invalid-workdir` · `unknown-resume` · `invalid-decision` | 422 | an id not in `GET /workdirs` or `GET /resumable` (`errors[]`) · an answer that does not fit the request |
 | `message-too-large` | 413 | a prompt or message over the limit (`limit`, `size`) |
 | `screenshot-too-large` | 413 | a screenshot over 3,932,160 bytes decoded (`limit`, `size`) |
-| `invalid-screenshot` | 422 | a screenshot that is not strict base64 of a PNG (`errors[]` points at `/screenshot/data`) |
+| `invalid-screenshot` | 422 | a screenshot that is not strict base64 of a PNG (`errors[]` points at `/screenshot/data`, or `/screenshots/{index}/data` for a message's image) |
 | `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
 | `cloud-unavailable` · `cloud-failed` · `cloud-timeout` | 501 · 502 · 504 | link-out guidance (`guidance`) · the step that failed (`step`) · the 60 s deadline (`seconds`) |
 

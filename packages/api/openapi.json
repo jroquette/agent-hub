@@ -5830,7 +5830,7 @@
       },
       "Screenshot": {
         "additionalProperties": false,
-        "description": "A PNG of the screen sent with the first prompt, base64-encoded; its decoded size and\nsignature are checked by ``decode_screenshot`` (413, 422).",
+        "description": "A PNG image sent with a message (a screenshot, or an image pasted in the chat),\nbase64-encoded; its decoded size and signature are checked by ``decode_screenshot`` (413,\n422).",
         "properties": {
           "data": {
             "minLength": 1,
@@ -5923,8 +5923,24 @@
       },
       "SendMessage": {
         "additionalProperties": false,
-        "description": "``POST /{id}/messages``: one user message (byte limit checked, 413).",
+        "description": "``POST /{id}/messages``: one user message (byte limit checked, 413), with the images\npasted in it, sent to Claude before the text.",
         "properties": {
+          "screenshots": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Screenshot"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Screenshots"
+          },
           "text": {
             "minLength": 1,
             "title": "Text",

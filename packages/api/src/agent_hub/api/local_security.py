@@ -49,11 +49,15 @@ HUB_REGISTRY_WRITES = (
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs$")),
     ("DELETE", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+$")),
 )
-# The one route with a larger body cap: a session's first prompt may carry a PNG screenshot
-# (at most ``MAX_SCREENSHOT_BYTES`` decoded, about 5 MiB of base64). Every other route keeps
-# ``max_body_bytes``.
+# The routes with a larger body cap: a session's first prompt may carry a PNG screenshot (at
+# most ``MAX_SCREENSHOT_BYTES`` decoded, about 5 MiB of base64), and a later message up to
+# ``MAX_MESSAGE_SCREENSHOTS`` of them. Every other route keeps ``max_body_bytes``.
 AGENT_SESSION_CREATE_BODY_BYTES: Final = 8 * 1024 * 1024
 AGENT_SESSION_CREATE_PATH: Final = f"{API_PREFIX}/agent-sessions"
+AGENT_SESSION_MESSAGE_BODY_BYTES: Final = 24 * 1024 * 1024
+AGENT_SESSION_MESSAGE_PATH: Final = re.compile(
+    rf"^{re.escape(API_PREFIX)}/agent-sessions/[^/]+/messages$"
+)
 JSON_MEDIA_TYPE = "application/json"
 CONTENT_SECURITY_POLICY = "; ".join(
     (
@@ -230,6 +234,8 @@ class LocalSecurityMiddleware:
     def _body_cap(self, scope: Scope) -> int:
         if scope["method"] == "POST" and scope["path"] == AGENT_SESSION_CREATE_PATH:
             return AGENT_SESSION_CREATE_BODY_BYTES
+        if scope["method"] == "POST" and AGENT_SESSION_MESSAGE_PATH.match(scope["path"]):
+            return AGENT_SESSION_MESSAGE_BODY_BYTES
         return self._max_body_bytes
 
     async def _serve_capped(self, scope: Scope, receive: Receive, send: Send) -> None:

@@ -14,7 +14,7 @@ import {
   Skeleton,
 } from "../../components";
 import { ApiProblem } from "../../lib/api";
-import { useScreenshot } from "../../lib/screenshotCopy";
+import { useMessageScreenshots, useScreenshot } from "../../lib/screenshotCopy";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { sessionControlUnavailable } from "../sessions-list/control";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
@@ -116,6 +116,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const capabilities = useCapabilities();
   const transcript = useAgentTranscript(agentSessionId);
   const screenshotUrl = useScreenshot(agentSessionId);
+  const messageScreenshots = useMessageScreenshots(agentSessionId);
   const commands = useAgentSessionCommands(agentSessionId);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -282,6 +283,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           scrollerRef={setScroller}
           follow={follow}
           screenshotUrl={screenshotUrl}
+          messageScreenshots={messageScreenshots}
         />
       </OldestPendingContext.Provider>
       <footer className="as-footer">
@@ -291,7 +293,10 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             mode={mode}
             model={model}
             models={models}
-            onSend={(text) => transcript.send(text, commands.send)}
+            onSend={(text, screenshots) =>
+              transcript.send(text, (message) => commands.send(message, screenshots), screenshots)
+            }
+            acceptsImages={!cloud}
             onInterrupt={commands.interrupt}
             onSettings={commands.settings}
             onSending={follow.pin}
