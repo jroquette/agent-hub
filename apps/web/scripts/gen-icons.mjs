@@ -17,7 +17,7 @@ arrow-right eye-off lock file folder folder-open refresh-cw pause info triangle-
 command bookmark columns-3 panel-left plus minus coins timer hash braces lightbulb git-compare trending-up
 trending-down scroll-text clipboard-list gauge package tag cpu box file-minus file-x circle-pause flag milestone pin
 arrow-up-right corner-down-right list-filter circle-dashed loader git-branch server database cable shield gavel
-circle-play circle-stop square-user scan-eye`.split(/\s+/);
+circle-play circle-stop square-user scan-eye maximize-2`.split(/\s+/);
 
 const LUCIDE = new URL("../node_modules/lucide/", import.meta.url);
 const TARGET = new URL("../src/components/icons.ts", import.meta.url);

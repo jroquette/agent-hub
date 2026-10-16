@@ -136,7 +136,7 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   open, ended). The log keeps `role="log"` and `aria-busy` and has a visually hidden h2; under
   `prefers-reduced-motion` no caret, shimmer or smooth scroll animates.
 
-### Activity (AGH-265)
+### Activity and changed files (AGH-265)
 
 - **AC-265.1** Given Claude made calls (and thought between them) between two messages, when the chat renders, then
   they read as one line counting the calls by kind, first seen first, then the time spent thinking ("Ran 3
@@ -155,6 +155,27 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   one line, "Nothing needs you · the agent dealt with N problems: <count per kind, most frequent first>", with
   "Show N handled"; otherwise the problems that need the owner stay listed ("Needs attention") and the handled ones
   sit behind the same button. A row the agent recovered or continued past shows no badge.
+
+- **AC-265.7** Given the session's calls changed files (Edit, MultiEdit, Write, NotebookEdit, subagents' included),
+  when the header's Changed files chip is pressed, then a drawer lists every such file once, by folder like a
+  source-control view, with its status (added or modified), lines added and removed and a Viewed mark; a change
+  that was denied or failed stays listed but counts no lines.
+- **AC-265.8** Given the list, when a file is opened, then it shows alone with every change to it as a diff in order,
+  with previous and next file to step through; All files or Esc goes back to the list, and Esc on the list closes
+  the drawer. On a wide page the list stays beside the open file.
+- **AC-265.9** Given a file marked Viewed, when a later change touches it, then the mark goes; marks are kept per
+  session in this browser (`ah.chat.reviewed.<id>`).
+- **AC-265.10** Given the session changed files, then the header shows a chip with the file count and the lines added
+  and removed in the diff colours, and how many files still wait for review (tinted); once all are viewed it is
+  quiet with a check. Its accessible name says all of it.
+- **AC-265.11** Given a turn whose calls edited files, then a card under its activity line reads "Edited N files +a
+  −r" with a row per file (status, lines, viewed, the first few then "+N more"); a row opens that file in the
+  drawer, Review opens the list.
+- **AC-265.12** Given a drawer (Activity or Changed files), then its left edge resizes it by mouse, or by ←/→ when
+  focused (Home resets, a double click goes back to the default), between 320 px and leaving the chat 280 px, and a
+  button widens it to the page and back; the width is kept in this browser (`ah.chat.drawer.width`).
+- **AC-265.13** Given one drawer is open, when the other is asked for (a run line, the chip), then it takes its place:
+  one drawer at a time.
 
 ## Invariants
 

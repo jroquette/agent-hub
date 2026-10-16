@@ -22,7 +22,7 @@ function filesOf(tools: ToolView[]) {
 }
 
 describe("RunFilesCard (review)", () => {
-  it("keeps the files of the run's calls only, counting the lines of its applied changes", () => {
+  it("keeps the files of the run's calls only, counting the lines of its applied changes (AC-265.11)", () => {
     const files = filesOf([
       edit("t1", "/r/a.ts"),
       edit("t2", "/r/b.ts"),
@@ -35,7 +35,7 @@ describe("RunFilesCard (review)", () => {
     expect(run.map((one) => [one.file.path, one.added, one.removed])).toEqual([["/r/a.ts", 2, 1]]);
   });
 
-  it("lists the first files with their lines, opens one or the whole review", async () => {
+  it("lists the first files with their lines, opens one or the whole review (AC-265.11)", async () => {
     const paths = Array.from({ length: RUN_FILES_SHOWN + 2 }, (_, i) => `/r/f${String(i)}.ts`);
     const files = filesOf(paths.map((path, i) => edit(`t${String(i)}`, path)));
     const onOpenFile = vi.fn();
