@@ -8,8 +8,11 @@ import { useGlobalStream } from "../../shell/GlobalStream";
 export type LearningStatus = components["schemas"]["LearningStatus"];
 export type LearningActionResult = components["schemas"]["LearningActionResult"];
 
-/** An accept (to a folder or `.md` path under `brain/`) or a reject (with its reason). */
-export type Decision = { action: "accept"; target: string } | { action: "reject"; reason: string };
+/** An accept (to a folder or `.md` path under `brain/`, with the edited note body when there is
+ * one) or a reject (with its reason). */
+export type Decision =
+  | { action: "accept"; target: string; noteBody?: string | undefined }
+  | { action: "reject"; reason: string };
 
 /** The learnings of one status, for every hub or the scoped project. */
 export function useLearnings(project: string | null, status: LearningStatus) {
@@ -53,7 +56,13 @@ export function useDecideLearning(id: string) {
   return useMutation<LearningActionResult, ApiProblem, Decision>({
     mutationFn: (decision) =>
       decision.action === "accept"
-        ? apiPost("/api/v1/learnings/{learning_id}/accept", { target: decision.target }, path)
+        ? apiPost(
+            "/api/v1/learnings/{learning_id}/accept",
+            decision.noteBody === undefined
+              ? { target: decision.target }
+              : { target: decision.target, note_body: decision.noteBody },
+            path,
+          )
         : apiPost("/api/v1/learnings/{learning_id}/reject", { reason: decision.reason }, path),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: apiKey("/api/v1/learnings") });
