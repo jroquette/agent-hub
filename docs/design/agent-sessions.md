@@ -114,6 +114,24 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   with "Show all (N characters)". Consecutive calls with no text between them group as one "Explored · 3 Read,
   2 Grep" row, open when one is pending or failed. Thinking reads "Thought for N s" (from the previous record's `at`),
   else "Thinking".
+- **Permission and question cards** (AGH-264). A pending card is raised, with a warning-tone halo, an icon tile and a
+  "Waiting for you" badge; once answered it is flat and its outcome reads as a pill.
+  - AC-264.1 A tool card shows what the call is for (the tool input's `description`) under its title, and the
+    command as a terminal line (`$ ` before a Bash command) that wraps instead of scrolling sideways.
+  - AC-264.2 "Always allow" names its rule on one line, cut with an ellipsis; the deny message field sits on its own
+    row with Deny at its end; the `A` / `D` key hints show on Allow once and Deny only while the card itself has
+    focus, and are not part of the buttons' names.
+  - AC-264.3 An `AskUserQuestion` shows each option as a radio row (a checkbox row, with "Choose any", when several
+    may be chosen) with Claude's description in view; a trailing "(Recommended)" becomes a Recommended tag and the
+    answer sent keeps the label as Claude wrote it; "Other" reads "Write your own answer" and opens its field in place.
+  - AC-264.4 Several questions show one page at a time: numbered steps above them (a tick, and "(answered)" in the
+    step's name, once answered; the current one `aria-current="step"`), "N of M answered", Back and Next between
+    pages, a single choice moving on to the next page, and Send answers on the last one, enabled once all are
+    answered.
+  - AC-264.5 A question card has no deny message and no red Deny: a neutral Skip question denies it plainly.
+  - AC-264.6 An answered question keeps each question with the answer given, read from the `permission.decision`
+    record's `answers`, and its outcome reads Answered or Skipped (not Allowed once); a plan reads "Plan approved ·
+    <mode>" (the decision's `mode`) or "Kept planning".
 - **Composer.** Grows up to 40% of the viewport. The draft is saved to `ah.chat.draft.<id>` in the browser after
   500 ms (not above 64 KiB), restored on reload, cleared once a send is accepted. It has focus on open unless a
   permission is pending and keeps it after Send. Enter does not send during IME composition or within 500 ms after
