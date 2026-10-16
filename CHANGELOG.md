@@ -40,6 +40,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- At the live-sessions limit, a new session no longer gets a 429 while some are only idle: the one idle the longest
+  ends `idle_timeout` and a message reopens it in place. Only busy sessions (running, or waiting on an answer) fill
+  the limit now.
 - The shake is lighter (3 reversals of 25 px within 700 ms) and captures only the visible screen, so a long page
   such as a chat opens New session at once. Under `make dev` or `make live` it starts in the project and folder of
   the served checkout, whatever the scope.
