@@ -8,6 +8,7 @@ import {
   aBrainTree,
   aPage,
   aProblem,
+  aProjectNow,
   aProjectSummary,
   renderWithApi,
   type ApiRoutes,
@@ -191,6 +192,35 @@ describe("BrainPickerScreen", () => {
     pick("/knowledge/brain", { "/api/v1/projects": aProblem({ status: 500, title: "Boom" }) });
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Boom");
+  });
+
+  it("counts each project's notes and shows its current focus", async () => {
+    pick("/knowledge/brain", {
+      [TREE]: aBrainTree(),
+      "/api/v1/projects/agent-hub/now": aProjectNow(),
+    });
+
+    const row = (await screen.findByRole("link", { name: "agent-hub" })).closest("tr");
+    if (row === null) throw new Error("no row");
+    await within(row).findByText("Control plane MVP");
+    await within(row).findByText("1 to triage");
+    const cells = within(row)
+      .getAllByRole("cell")
+      .map((cell) => cell.textContent);
+    expect(cells.slice(1)).toEqual(["Control plane MVP", "5", "1", "1", "0", "1 to triage"]);
+    expect(within(row).getByRole("link", { name: "1 to triage" })).toHaveAttribute(
+      "href",
+      "/knowledge/learnings?scope=agent-hub",
+    );
+  });
+
+  it("says when a project records no current focus", async () => {
+    pick("/knowledge/brain", {
+      [TREE]: aBrainTree(),
+      "/api/v1/projects/agent-hub/now": aProjectNow({ focus: [] }),
+    });
+
+    expect(await screen.findByText("No current focus recorded")).toBeInTheDocument();
   });
 
   it("encodes the project in the brain route", () => {
