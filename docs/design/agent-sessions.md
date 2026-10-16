@@ -77,7 +77,7 @@ is refused (`terminal`, or `log-full` naming Resume); a command while an interru
 | idle seconds (`--session-idle-seconds`) | 1800 | 1-86400 |
 | permission answer seconds (`--permission-timeout-seconds`) | 600 | 1-86400 |
 | log records (`--session-log-records`) / bytes (`--session-log-bytes`) | 50000 / 32 MiB | 100-1000000 / 64 KiB-1 GiB |
-| message bytes (`--message-max-bytes`) | 65536 | 1024-524288 |
+| message bytes (`--message-max-bytes`) | 1048576 | 1024-4194304 |
 | cloud command seconds (`--cloud-timeout-seconds`) | 60 | 5-600 |
 | retention days after the end (`--session-retention-days`) | 30 | 1-3650 |
 

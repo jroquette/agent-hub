@@ -14,7 +14,7 @@ def test_defaults_match_lead_answers_when_built() -> None:
     assert limits.permission_timeout_seconds == 600
     assert limits.log_records == 50_000
     assert limits.log_bytes == 32 * 1024 * 1024
-    assert limits.message_max_bytes == 64 * 1024
+    assert limits.message_max_bytes == 1024 * 1024
     assert limits.cloud_timeout_seconds == 60
     assert limits.retention_days == 30
     assert (limits.delta_ring, limits.subscribers, limits.headroom) == (2000, 8, 16)
