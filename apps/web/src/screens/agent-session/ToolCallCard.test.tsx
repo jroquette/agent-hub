@@ -220,7 +220,7 @@ describe("resultText", () => {
 describe("DiffText (line-numbers)", () => {
   const REPORTED = "--- a/x.py\n+++ b/x.py\n@@ -12,3 +12,4 @@\n a\n-b\n+c\n+d\n e\n";
 
-  it("numbers each line in the old and the new file from its hunk header", () => {
+  it("numbers each line in the old and the new file from its hunk header (AC-265.15)", () => {
     expect(diffLines(REPORTED).map((line) => [line.kind, line.oldNo, line.newNo])).toEqual([
       ["head", null, null],
       ["head", null, null],
@@ -233,7 +233,7 @@ describe("DiffText (line-numbers)", () => {
     ]);
   });
 
-  it("shows git's two gutters and no file headers when numbered", () => {
+  it("shows git's two gutters and no file headers when numbered (AC-265.15)", () => {
     const { container } = render(<DiffText diff={REPORTED} label="Change" numbered />);
 
     const rows = Array.from(container.querySelectorAll(".as-diff-line"), (row) =>
@@ -250,7 +250,7 @@ describe("DiffText (line-numbers)", () => {
     expect(screen.getByLabelText("Change")).not.toHaveTextContent("+++ b/x.py");
   });
 
-  it("uses Claude's reported diff, with line numbers, once the edit ran", async () => {
+  it("uses Claude's reported diff, with line numbers, once the edit ran (AC-265.15)", async () => {
     render(
       <ToolCallCard
         tool={aTool({

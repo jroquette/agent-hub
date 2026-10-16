@@ -154,7 +154,7 @@ describe("ChangedFilesChip (review)", () => {
 });
 
 describe("FilesPanel (long-files)", () => {
-  it("numbers a change Claude reported and keeps every change whole for the body to scroll", async () => {
+  it("numbers a change Claude reported and keeps every change whole for the body to scroll (AC-265.15)", async () => {
     const reported = "--- a/a.ts\n+++ b/a.ts\n@@ -40,1 +40,2 @@\n-x\n+y\n+z\n";
     const edited: ToolView = {
       ...tool("t1", "Edit", { file_path: "/r/a.ts", old_string: "x", new_string: "y\nz" }),
