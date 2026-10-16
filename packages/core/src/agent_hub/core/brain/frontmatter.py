@@ -170,6 +170,21 @@ def with_frontmatter(text: str, updates: Mapping[str, str]) -> str:
     return "".join([lines[0], *block, *lines[end:]])
 
 
+def with_body(text: str, body: str) -> str:
+    """``text`` with everything after its frontmatter replaced by ``body`` (the frontmatter kept
+    byte for byte); a note with no frontmatter becomes ``body``. The result ends with a newline.
+    ``FrontmatterError`` when the frontmatter is not closed.
+    """
+    tail = body if body.endswith("\n") else f"{body}\n"
+    lines = text.splitlines(keepends=True)
+    if not _has_frontmatter(lines):
+        return tail
+    end = _closing_fence(lines)
+    if end is None:
+        raise FrontmatterError("The frontmatter is not closed")
+    return "".join(lines[: end + 1]) + tail
+
+
 def first_paragraph(body: str, *, limit: int = SUMMARY_CHARS) -> str:
     """The first paragraph of a note's body that is not a heading, on one line, clipped to
     ``limit`` characters (``…`` when cut); empty when there is none."""
