@@ -71,9 +71,10 @@ class TicketPlan(ViewModel):
     """The planning of the feature's tickets, every ticket named by its row's ``ref``.
 
     ``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);
-    ``can_start`` the first layer's tickets that wait on nothing and are not started yet; ``order`` the recommended
-    order; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle
-    (left out of the layers); ``critical_path`` the longest chain of tickets not done.
+    ``can_start`` the first layer's tickets that wait on nothing and are not started yet;
+    ``order`` the recommended order; ``waiting`` the tickets with a blocker not done;
+    ``cycles`` each dependency cycle (left out of the layers); ``critical_path`` the longest
+    chain of tickets not done.
     """
 
     layers: tuple[tuple[str, ...], ...]

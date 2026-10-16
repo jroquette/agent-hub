@@ -463,7 +463,7 @@ def test_never_marks_evaluate_done_when_ship_covers_part() -> None:
         "evaluate": "partial",
         "shipped": "pending",
     }
-    assert _meta(path, "implement") == "1/17 tickets · 3/36 ACs"
+    assert _meta(path, "implement") == "1/17 tickets · 16 in progress · 3/36 ACs"
     assert _meta(path, "review") == "1/17 reviewed"
     assert _meta(path, "evaluate") == "partial: covers 3 of 36 ACs"
     assert [record.delivery for record in detail.evals] == ["tip-1520"]
