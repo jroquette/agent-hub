@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 
 import { Button, Icon } from "../../components";
 import { cx } from "../../lib/cx";
 import { readStored, writeStored } from "../../lib/storage";
 import { useDrawerWidth } from "./DrawerResize";
+import { ReviewCommentsContext, ReviewDiff, type ReviewComments } from "./ReviewDiff";
 import { DiffText, TOOL_STATE } from "./ToolCallCard";
 import { commonDir, type ChangedFile, type FileChange } from "./model";
 
@@ -71,14 +80,23 @@ function ChangeBlock({
   index,
   total,
   path,
+  filePath,
 }: {
   change: FileChange;
   index: number;
   total: number;
+  /** The name shown (relative to the drawer's root). */
   path: string;
+  /** The file's full path, as Claude knows it: review comments anchor to it. */
+  filePath: string;
 }) {
   const { icon, text } = TOOL_STATE[change.state];
   const applied = change.state !== "error" && change.state !== "denied";
+  const comments = useContext(ReviewCommentsContext);
+  const threads =
+    comments?.threads.filter(
+      (thread) => thread.anchor.path === filePath && thread.anchor.change === index + 1,
+    ) ?? [];
   return (
     <div className={cx("as-files-change", !applied && "as-files-change-skipped")}>
       <div className="as-files-change-head ah-small">
@@ -93,12 +111,41 @@ function ChangeBlock({
           {applied ? text : `${text}: not applied`}
         </span>
       </div>
-      <DiffText
-        diff={change.diff}
-        label={`Change ${String(index + 1)} to ${path}`}
-        numbered={change.numbered}
-      />
+      {comments ? (
+        <ReviewDiff
+          diff={change.diff}
+          label={`Change ${String(index + 1)} to ${path}`}
+          numbered={change.numbered}
+          path={filePath}
+          change={index + 1}
+          threads={threads}
+          resolved={comments.resolved}
+          onComment={applied ? comments.onComment : undefined}
+        />
+      ) : (
+        <DiffText
+          diff={change.diff}
+          label={`Change ${String(index + 1)} to ${path}`}
+          numbered={change.numbered}
+        />
+      )}
     </div>
+  );
+}
+
+/** How many review threads on a file are still open, as a small speech-bubble count. */
+function OpenThreads({ path }: { path: string }) {
+  const comments = useContext(ReviewCommentsContext);
+  if (!comments) return null;
+  const open = comments.threads.filter(
+    (thread) => thread.anchor.path === path && !comments.resolved.resolved.has(thread.key),
+  ).length;
+  if (open === 0) return null;
+  return (
+    <span className="as-files-threads" title={`${String(open)} open review comments`}>
+      <Icon name="message-square" size="sm" />
+      {open}
+    </span>
   );
 }
 
@@ -253,6 +300,7 @@ function FileList({
                     <span className="as-files-nav-name">
                       {name.slice(name.lastIndexOf("/") + 1)}
                     </span>
+                    <OpenThreads path={file.path} />
                     <Stats added={file.added} removed={file.removed} />
                   </button>
                   <ViewedToggle
@@ -372,6 +420,7 @@ function FileDetail({
             index={index}
             total={file.changes.length}
             path={name}
+            filePath={file.path}
           />
         ))}
       </div>
@@ -388,6 +437,8 @@ export interface FilesPanelProps {
   /** Open this file (a card in the conversation was pressed); `pickNonce` re-opens it. */
   initialPath?: string | null | undefined;
   pickNonce?: number | undefined;
+  /** Review comments on the diffs, sent to the session's Claude (absent: read-only diffs). */
+  comments?: ReviewComments | undefined;
 }
 
 /**
@@ -403,6 +454,7 @@ export function FilesPanel({
   review: shared,
   initialPath = null,
   pickNonce = 0,
+  comments,
 }: FilesPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const [panel, setPanel] = useState<HTMLElement | null>(null);
@@ -503,32 +555,34 @@ export function FilesPanel({
       {files.length === 0 ? (
         <p className="ah-muted as-files-empty">Claude has not changed any file yet.</p>
       ) : (
-        <div className={cx("as-files-body", wide && "as-files-split")}>
-          {(wide || !open) && (
-            <FileList
-              files={files}
-              nameOf={nameOf}
-              base={base}
-              selected={selected}
-              review={review}
-              onSelect={setPicked}
-            />
-          )}
-          {open && (
-            <FileDetail
-              file={open}
-              name={nameOf(open.path)}
-              position={position}
-              total={files.length}
-              review={review}
-              onBack={wide ? null : backToList}
-              focusRequest={focusFile ? pickNonce : null}
-              onStep={(by) => {
-                setPicked(files[position + by]?.path ?? selected);
-              }}
-            />
-          )}
-        </div>
+        <ReviewCommentsContext.Provider value={comments ?? null}>
+          <div className={cx("as-files-body", wide && "as-files-split")}>
+            {(wide || !open) && (
+              <FileList
+                files={files}
+                nameOf={nameOf}
+                base={base}
+                selected={selected}
+                review={review}
+                onSelect={setPicked}
+              />
+            )}
+            {open && (
+              <FileDetail
+                file={open}
+                name={nameOf(open.path)}
+                position={position}
+                total={files.length}
+                review={review}
+                onBack={wide ? null : backToList}
+                focusRequest={focusFile ? pickNonce : null}
+                onStep={(by) => {
+                  setPicked(files[position + by]?.path ?? selected);
+                }}
+              />
+            )}
+          </div>
+        </ReviewCommentsContext.Provider>
       )}
     </aside>
   );

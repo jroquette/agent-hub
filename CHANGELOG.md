@@ -58,6 +58,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A file change in the chat's review and activity panel shows the file's real line numbers (git's two gutters,
   kept in view while the code scrolls sideways) once Claude reports the change: the driver stores it as the
   `tool.result` record's `diff`. A long file's changes keep their height and scroll whole (AGH-265).
+- In the chat's review, + beside a changed line (Shift+click for a range) comments on it, like on a pull request:
+  the comment is a message to the session's own Claude, anchored to the file and lines with the code, so it stays in
+  the log and comes back after a reload. Each thread shows under its line with Claude's answers and your replies,
+  waits for Claude, and can be resolved; in the chat a review comment reads as one, linking back to its file
+  (AGH-265).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to
