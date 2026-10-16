@@ -85,12 +85,74 @@ function questionsOf(input: JsonObject | null): Question[] {
   });
 }
 
-function outcomeText(decision: PermissionDecisionView): string {
-  if (decision.decision === "allow") return "Allowed once";
-  if (decision.decision === "always") return "Always allowed";
-  if (decision.by === "timeout") return "Denied: no answer before the deadline";
-  if (decision.by === "closed") return "Denied: the session closed";
-  return decision.message ? `Denied: ${decision.message}` : "Denied";
+type OutcomeTone = "allow" | "deny" | "answered" | "skipped";
+
+/** How an answered card reads: a question is answered or skipped, never "allowed". */
+function outcomeOf(
+  kind: PermissionView["requestKind"],
+  decision: PermissionDecisionView,
+): { text: string; tone: OutcomeTone } {
+  if (decision.by === "timeout")
+    return { text: "Denied: no answer before the deadline", tone: "deny" };
+  if (decision.by === "closed") return { text: "Denied: the session closed", tone: "deny" };
+  const said = decision.message ? `: ${decision.message}` : "";
+  if (kind === "ask_user_question")
+    return decision.decision === "deny"
+      ? { text: `Skipped${said}`, tone: "skipped" }
+      : { text: "Answered", tone: "answered" };
+  if (kind === "plan_approval")
+    return decision.decision === "deny"
+      ? { text: `Kept planning${said}`, tone: "skipped" }
+      : {
+          text: decision.mode ? `Plan approved · ${modeLabel(decision.mode)}` : "Plan approved",
+          tone: "answered",
+        };
+  if (decision.decision === "allow") return { text: "Allowed once", tone: "allow" };
+  if (decision.decision === "always") return { text: "Always allowed", tone: "allow" };
+  return { text: `Denied${said}`, tone: "deny" };
+}
+
+function OutcomeLine({
+  kind,
+  decision,
+}: {
+  kind: PermissionView["requestKind"];
+  decision: PermissionDecisionView;
+}) {
+  const { text, tone } = outcomeOf(kind, decision);
+  return (
+    <p className={cx("as-perm-outcome", `as-perm-outcome-${tone}`)} role="status">
+      {text}
+    </p>
+  );
+}
+
+/** An answered `AskUserQuestion`, kept readable: each question with what you chose. */
+function AnswerRecap({
+  questions,
+  answers,
+}: {
+  questions: Question[];
+  answers: Record<string, string> | null | undefined;
+}) {
+  return (
+    <dl className="as-recap" aria-label="Your answers">
+      {questions.map((question) => {
+        const answer = answers?.[question.question];
+        return (
+          <div key={question.question} className="as-recap-item">
+            <dt>
+              {question.header && <span className="as-question-header">{question.header}</span>}{" "}
+              {question.question}
+            </dt>
+            <dd className={cx(!answer && "ah-subtle")}>
+              {answer ? answer.replace(RECOMMENDED, "") : "Not answered"}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
 }
 
 const HEADING: Record<PermissionView["requestKind"], (tool: string) => string> = {
@@ -357,7 +419,15 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
     >
       <header className="as-perm-head">
         <span className={cx("as-perm-icon", `as-perm-icon-${request.requestKind}`)}>
-          <Icon name={pending ? headIcon(request) : "shield-check"} />
+          <Icon
+            name={
+              pending
+                ? headIcon(request)
+                : request.requestKind === "tool"
+                  ? "shield-check"
+                  : "check"
+            }
+          />
         </span>
         <div className="as-perm-heading">
           <h3 id={titleId} className="as-perm-title">
@@ -391,15 +461,12 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
       )}
 
       {!pending && request.decision && (
-        <p
-          className={cx(
-            "as-perm-outcome",
-            request.decision.decision === "deny" ? "as-perm-outcome-deny" : "as-perm-outcome-allow",
+        <>
+          {questions.length > 0 && (
+            <AnswerRecap questions={questions} answers={request.decision.answers} />
           )}
-          role="status"
-        >
-          {outcomeText(request.decision)}
-        </p>
+          <OutcomeLine kind={request.requestKind} decision={request.decision} />
+        </>
       )}
 
       {pending && (
