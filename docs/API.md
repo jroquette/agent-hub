@@ -254,7 +254,8 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   Other combinations are 422. The first answer stands (a second is 409); none within 10 minutes is a deny by
   `timeout`.
 - **Records.** Each record is `{seq, at, kind, by, body}`. Kinds: `init`, `text`, `thinking`, `tool.call` (Edit and
-  Write carry a unified `diff`), `tool.result` (at most 64 KiB, then `truncated` and `original_bytes`), `todos`,
+  Write carry a unified `diff`), `tool.result` (at most 64 KiB, then `truncated` and `original_bytes`; a file tool's result carries the
+  engine's `diff` with the file's real line numbers when Claude reported one), `todos`,
   `permission.request`, `result` (cost, usage, terminal reason), `error`, `exited`, and the audit kinds
   `user.message`, `permission.decision`, `interrupt`, `settings`, `close`, `log.truncated`, `cloud.start`,
   `cloud.followup`; `by` is `web`, `timeout`, `closed`, `driver` or `server`. Stored text is redacted (the event store's rule

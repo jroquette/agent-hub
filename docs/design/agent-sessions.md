@@ -177,6 +177,16 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **AC-265.13** Given one drawer is open, when the other is asked for (a run line, the chip), then it takes its place:
   one drawer at a time.
 
+- **AC-265.14** Given a file tool ran and Claude reported its change (`tool_use_result.structuredPatch`, or a new
+  file's content), when the driver maps its result, then the `tool.result` record carries that change as a unified
+  `diff` with the file's real line numbers (capped like the call's diff, redacted like every stored string); a
+  failed result, a message with several results or a report of another shape carries none, and a result without
+  one keeps its body as before.
+- **AC-265.15** Given a change with that reported diff, when the review or the activity panel shows it, then it shows
+  git's two gutters (old and new line numbers) that stay in view while the code scrolls sideways; a change without
+  one keeps the call's snippet diff, without numbers. A file's changes keep their height and its body scrolls
+  through all of them.
+
 ## Invariants
 
 - The platform implements no agent loop and calls no model; the children are the user's own `claude` with its own
