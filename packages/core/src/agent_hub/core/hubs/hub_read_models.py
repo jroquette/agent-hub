@@ -16,6 +16,7 @@ holds (Q6), so the list, the detail and the Tickets view fold the same snapshot.
 ``ticket_snapshots`` every feature is served from the plan, not connected.
 """
 
+import hashlib
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from typing import Final, Protocol
@@ -299,6 +300,7 @@ class HubFilesReadModels:
             frontmatter_problem=split.problem,
             markdown=split.body,
             size=len(read),
+            sha256=hashlib.sha256(read).hexdigest(),
         )
 
     def skill_catalog(self, project: str) -> SkillCatalog:
