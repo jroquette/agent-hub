@@ -18,6 +18,8 @@ export interface DecideDialogProps {
   notePath: string | null;
   /** Where an accept moves the note, relative to `brain/`. */
   target: string;
+  /** Whether an accept writes the note as edited here. */
+  edited?: boolean | undefined;
   pending: boolean;
   error: ApiProblem | null;
   /** Called with the trimmed reason (empty for an accept). */
@@ -83,6 +85,7 @@ export function DecideDialog({
   hubRepo,
   notePath,
   target,
+  edited = false,
   pending,
   error,
   onConfirm,
@@ -161,10 +164,13 @@ export function DecideDialog({
           </p>
           <ul className="ah-consequences">
             {action === "accept" ? (
-              <li>
-                Moves <span className="ah-mono">{notePath ?? "the inbox note"}</span> to{" "}
-                <span className="ah-mono">brain/{target}</span>
-              </li>
+              <>
+                <li>
+                  Moves <span className="ah-mono">{notePath ?? "the inbox note"}</span> to{" "}
+                  <span className="ah-mono">brain/{target}</span>
+                </li>
+                {edited && <li>Writes the note as you edited it, in the same commit</li>}
+              </>
             ) : (
               <li>
                 Archives <span className="ah-mono">{notePath ?? "the inbox note"}</span> with your
