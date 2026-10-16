@@ -5,6 +5,7 @@ The app is ``create_app`` with recording mocks for the two command ports, so a r
 proven to happen before any port is called. Every token here is synthetic.
 """
 
+import base64
 import json
 import socket
 import threading
@@ -37,6 +38,7 @@ from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.agent_sessions.records import LogRecordPage, StreamItem
+from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.read_model_builders import (
     AGENT_SESSION_ID,
     WORKDIR_ID,
@@ -280,6 +282,41 @@ def test_answers_unsupported_media_when_origin_own_and_write_not_json(
 
     assert response.status_code == 415, response.text
     assert signed_in.calls() == []
+
+
+SCREENSHOT_CREATE = {
+    "project": "demo",
+    "workdir_id": WORKDIR_ID,
+    "prompt": "What is on this screen?",
+    "screenshot": {"media_type": "image/png", "data": base64.b64encode(a_png_bytes()).decode()},
+}
+
+
+@pytest.mark.parametrize(
+    ("cookie", "headers", "status"),
+    [
+        pytest.param(False, {"Origin": OWN_ORIGIN, "Content-Type": JSON}, 401, id="no-cookie"),
+        pytest.param(
+            True, {"Origin": "http://attacker.example", "Content-Type": JSON}, 403, id="origin"
+        ),
+        pytest.param(True, {"Content-Type": JSON}, 403, id="no-origin"),
+        pytest.param(True, {"Origin": OWN_ORIGIN, "Content-Type": "text/plain"}, 415, id="type"),
+    ],
+)
+def test_refuses_screenshot_create_when_cookie_origin_or_type_wrong(
+    guarded: Guarded, *, cookie: bool, headers: dict[str, str], status: int
+) -> None:
+    if cookie:
+        guarded.client.cookies.set(COOKIE, TOKEN)
+
+    response = guarded.client.post(
+        PREFIX, content=json.dumps(SCREENSHOT_CREATE).encode(), headers=headers
+    )
+
+    assert response.status_code == status, response.text
+    assert response.headers["content-type"] == "application/problem+json"
+    assert "iVBORw0KGgo" not in response.text
+    assert guarded.calls() == []
 
 
 def test_accepts_write_when_origin_own_and_fetch_same_origin(signed_in: Guarded) -> None:

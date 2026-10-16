@@ -156,6 +156,27 @@ describe("SettingsScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: "Light" }));
   });
 
+  it("shake: toggle shows off, writes and removes ah.shakeToSession", async () => {
+    window.localStorage.removeItem("ah.shakeToSession");
+    open("appearance");
+
+    const toggle = screen.getByRole("checkbox", { name: "Shake to start a session" });
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(window.localStorage.getItem("ah.shakeToSession")).toBe("on");
+    await userEvent.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(window.localStorage.getItem("ah.shakeToSession")).toBeNull();
+  });
+
+  it("has no serious a11y violations in Appearance (a11y)", async () => {
+    const { container } = open("appearance");
+    await screen.findByRole("checkbox", { name: "Shake to start a session" });
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
   it("shows versions in About", async () => {
     open("about");
 

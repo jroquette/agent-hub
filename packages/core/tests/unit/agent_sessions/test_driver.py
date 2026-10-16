@@ -5,6 +5,7 @@ from agent_hub.core.agent_sessions.driver import (
     MODEL_ALIASES,
     DriverAnswer,
     DriverEvent,
+    DriverImage,
     PermissionMode,
     PermissionRequest,
     StartSpec,
@@ -93,3 +94,12 @@ def test_carries_cost_as_money_when_result_dumped() -> None:
     result = TurnResult(subtype="success", terminal_reason="completed", cost_usd="0.01234")
 
     assert result.model_dump(mode="json")["cost_usd"] == "0.0123"
+
+
+def test_shows_only_media_type_and_size_when_image_repr_printed() -> None:
+    image = DriverImage(media_type="image/png", data=b"\x89PNG\r\n\x1a\nSECRET-PIXELS")
+
+    shown = repr(image)
+
+    assert shown == "DriverImage(media_type='image/png', bytes=21)"
+    assert "SECRET" not in str(image)

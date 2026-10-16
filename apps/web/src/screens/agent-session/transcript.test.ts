@@ -90,6 +90,25 @@ describe("reduceTranscript (transcript)", () => {
     ).toEqual(["First.", "Sec"]);
   });
 
+  it("screenshot-thumbnail: marker read from attachments", () => {
+    const state = run([
+      record("user.message", {
+        seq: 1,
+        body: {
+          text: "What is on this screen?",
+          attachments: [{ kind: "screenshot", media_type: "image/png", bytes: 16 }],
+        },
+      }),
+      record("user.message", { seq: 2, body: { text: "No marker." } }),
+      record("user.message", { seq: 3, body: { text: "Other.", attachments: [{ kind: "file" }] } }),
+      record("user.message", { seq: 4, body: { text: "Not a list.", attachments: "screenshot" } }),
+    ]);
+
+    expect(state.entries.map((entry) => (entry.kind === "user" ? entry.screenshot : null))).toEqual(
+      [true, false, false, false],
+    );
+  });
+
   it("keeps thinking, todos and user messages when those records arrive", () => {
     const state = run([
       record("user.message", { seq: 1, body: { text: "Fix it." } }),

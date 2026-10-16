@@ -28,6 +28,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverCapabilities,
     DriverEvent,
     DriverHandle,
+    DriverImage,
     PastSession,
     PermissionMode,
     StartSpec,
@@ -54,7 +55,13 @@ class UnavailableSessionDriver:
         """Never starts: ``SessionsUnavailableError``."""
         raise self._refuse()
 
-    async def send(self, handle: DriverHandle, text: str) -> None:  # noqa: ARG002 -- same
+    async def send(
+        self,
+        handle: DriverHandle,  # noqa: ARG002 -- same
+        text: str,  # noqa: ARG002 -- same
+        *,
+        images: tuple[DriverImage, ...] = (),  # noqa: ARG002 -- same
+    ) -> None:
         """No session exists to send to."""
         raise self._refuse()
 
