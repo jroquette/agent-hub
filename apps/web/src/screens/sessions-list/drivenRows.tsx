@@ -29,24 +29,30 @@ function when(iso: string, tz: Tz): ReactNode {
   );
 }
 
+const ONE_LINE = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
+
 /** The cells a driven row fills, by column id; every other column stays blank. */
 const DRIVEN_CELLS: Record<string, (a: AgentSession, tz: Tz) => ReactNode> = {
   started: (a, tz) => when(a.created_at, tz),
-  session: (a) => (
-    <span
-      className="ah-stack"
-      style={{ gap: 0, maxWidth: 260, padding: "4px 0", whiteSpace: "normal" }}
-    >
-      <span className="ah-row" style={{ gap: 6 }}>
-        <span>{a.title ?? "Untitled session"}</span>
+  // One line, like an observed row's name: Claude Code's title once it has written one, the
+  // first prompt until then; the whole of it shows on hover.
+  session: (a) => {
+    const title = a.title ?? "Untitled session";
+    const detail = [a.workdir_label, modeLabel(a.mode), a.model].filter(Boolean).join(" · ");
+    return (
+      <span className="ah-row" style={{ gap: 6, minWidth: 0 }}>
+        <span className="ah-stack" style={{ gap: 0, minWidth: 0 }}>
+          <span style={{ ...ONE_LINE, fontWeight: 500 }} title={title}>
+            {title}
+          </span>
+          <span className="ah-mono ah-small ah-subtle" style={ONE_LINE} title={detail}>
+            {detail}
+          </span>
+        </span>
         <ChatBadge />
       </span>
-      <span className="ah-small ah-subtle">
-        {a.workdir_label} · {modeLabel(a.mode)}
-        {a.model ? ` · ${a.model}` : ""}
-      </span>
-    </span>
-  ),
+    );
+  },
   project: (a) => a.project,
   repo: (a) => <span className="ah-mono ah-small">{a.workdir_label}</span>,
   outcome: (a) => <AgentStatusBadge status={a.status} endReason={a.end_reason} />,
