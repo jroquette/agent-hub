@@ -290,7 +290,7 @@ code.sd-object {
   font-weight: 600;
 }
 .sd-problems-summary {
-  margin: 0 0 var(--space-2);
+  margin: var(--space-2) 0;
   padding-left: 18px;
   display: flex;
   flex-direction: column;
@@ -307,12 +307,31 @@ code.sd-object {
   display: flex;
   flex-direction: column;
 }
+.sd-problems-list {
+  margin-top: var(--space-2);
+}
+.sd-problems-calm {
+  padding: 8px 16px;
+}
 .sd-problem {
   padding: var(--space-2) 0;
   border-top: 1px solid var(--border);
 }
-.sd-problem-where {
+/* A long command or error reads in two lines; the full text is in the title and the moment. */
+.sd-problem-where,
+.sd-problem-message {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   overflow-wrap: anywhere;
+}
+.sd-problem-where {
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  white-space: pre-wrap;
 }
 .sd-problem-message {
   margin-top: 4px;
