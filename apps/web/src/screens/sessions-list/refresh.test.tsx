@@ -557,6 +557,72 @@ describe("SessionsListScreen no-jump", () => {
   });
 });
 
+describe("SessionsListScreen digest", () => {
+  it("announces politely a session that starts waiting after a stream change, not the first rows", async () => {
+    const data = { current: [one(1, "live"), one(2, "live")] };
+    const { stream } = render(data);
+    await screen.findByText("/s2");
+    const digest = screen.getByTestId("live-digest");
+    expect(digest).toHaveAttribute("aria-live", "polite");
+    expect(digest.textContent).toBe("");
+
+    data.current = [one(1, "live"), one(2, "waiting")];
+    await change(stream(STREAM), "tile.upsert", { id: anId(2, "cccc0000"), group: "waiting" });
+
+    expect(digest).toHaveTextContent("1 session waiting for approval: /s2.");
+  });
+});
+
+describe("SessionsListScreen digest (other queries)", () => {
+  it("says nothing when a filter round trip brings back cached sections", async () => {
+    const data = { current: [one(1, "waiting"), one(2, "live")] };
+    const { router } = render(data);
+    await screen.findByText("/s1");
+    const digest = screen.getByTestId("live-digest");
+
+    await act(() => router.navigate("/sessions?status=live"));
+    await waitFor(() => {
+      expect(screen.queryByText("/s1")).not.toBeInTheDocument();
+    });
+    await act(() => router.navigate("/sessions"));
+    await screen.findByText("/s1");
+    await nextFrame();
+
+    expect(digest.textContent).toBe("");
+  });
+
+  it("says nothing when the scope goes back to all projects with all of them cached", async () => {
+    const other = aSession({ ...one(3, "waiting"), project: "loki-trader" });
+    const data = { current: [one(1, "live"), other] };
+    const scoped: ApiRoutes = {
+      ...routes(data),
+      [SESSIONS]: (request: Request) => {
+        const url = new URL(request.url);
+        const project = url.searchParams.get("project");
+        return aPage(
+          data.current.filter(
+            (s) =>
+              s.status === url.searchParams.get("status") && (!project || s.project === project),
+          ),
+        );
+      },
+    };
+    const { router } = renderWithApi(<SessionsListScreen />, { routes: scoped, path: "/sessions" });
+    await screen.findByText("/s3");
+    const digest = screen.getByTestId("live-digest");
+
+    await act(() => router.navigate("/sessions?scope=agent-hub"));
+    await waitFor(() => {
+      expect(screen.queryByText("/s3")).not.toBeInTheDocument();
+    });
+    await act(() => router.navigate("/sessions"));
+    await screen.findByText("/s3");
+    await nextFrame();
+
+    expect(digest.textContent).toBe("");
+  });
+});
+
 describe("SessionsListScreen no-jump (grid)", () => {
   beforeEach(() => {
     window.localStorage.setItem("ah.sessions.view", "grid");
