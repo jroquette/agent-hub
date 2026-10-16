@@ -32,7 +32,7 @@ LIVE_API_PORT ?= 7421
 
 .PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
         imports migrations coverage check llms-txt hub-schema output-schemas web-install web-fast web-build web-dist-check \
-        openapi openapi-check test-docker test-live run up down logs ps dev live playground playground-stop demo connect
+        openapi openapi-check test-docker test-live run up down logs ps dev live playground playground-stop playground-export demo connect
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -158,6 +158,10 @@ live: web-install ## live loop: API on 7421 (restarts on change), web app on 517
 
 playground: ## the whole live playground (conductor, make live, hub registration), then opens http://127.0.0.1:5173
 	./scripts/playground.sh
+
+# SINCE=<ref> exports from that commit instead of the last export (docs/design/playground-export.md).
+playground-export: ## the playground's validated commits as a delivery's input, in .playground/exports/
+	$(RUN) python -m scripts.playground_export $(if $(SINCE),--since $(SINCE))
 
 playground-stop: ## stop the playground's servers
 	-@pkill -f "[h]ub web"
