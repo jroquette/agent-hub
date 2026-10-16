@@ -274,11 +274,12 @@ describe("LearningsScreen", () => {
 
     const table = await screen.findByRole("table", { name: "Proposed learnings" });
     await within(table).findByText("Retry flaky CI before calling a run failed");
-    const rows = within(table).getAllByRole("row").slice(1);
-    expect(rows[0]?.textContent).toContain("Retry flaky CI");
-    expect(rows[1]?.textContent).toContain("a note nobody pushed");
-    expect(rows[1]?.textContent).not.toContain("Proposal:");
-    expect(within(rows[1]!).getByText("Note not in the hub checkout")).toBeVisible();
+    const [first, second] = within(table).getAllByRole("row").slice(1);
+    if (!first || !second) throw new Error("expected two rows");
+    expect(first.textContent).toContain("Retry flaky CI");
+    expect(second.textContent).toContain("a note nobody pushed");
+    expect(second.textContent).not.toContain("Proposal:");
+    expect(within(second).getByText("Note not in the hub checkout")).toBeVisible();
     expect(screen.getByText(/1 ready · 1 blocked/)).toBeInTheDocument();
   });
 
