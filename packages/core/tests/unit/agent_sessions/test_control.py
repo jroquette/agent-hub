@@ -326,7 +326,7 @@ async def test_reopens_ended_session_in_place_when_message_sent(make_rig: MakeRi
     assert len(rig.store.list()) == 1
 
 
-async def test_reopened_session_counts_log_it_already_holds(make_rig: MakeRig) -> None:
+async def test_counts_the_log_it_already_holds_when_reopened(make_rig: MakeRig) -> None:
     turn = tuple(Thinking(text=f"step {number}") for number in range(60))
     limits = SessionLimits(log_records=100, log_bytes=64 * KIB, headroom=16)
     rig = make_rig(
