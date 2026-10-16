@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
+  aWorkflowCatalog,
   aPage,
   aProblem,
   aRun,
@@ -128,12 +129,19 @@ describe("RunsListScreen", () => {
     },
   );
 
-  it("disables Start run on an issue with the P4 tag", async () => {
-    renderWithApi(<RunsListScreen />, { routes, path: "/runs" });
+  it("offers Start run without the P4 tag and opens its dialog", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<RunsListScreen />, {
+      routes: { ...routes, "/api/v1/workflows": aWorkflowCatalog() },
+      path: "/runs",
+    });
 
-    const button = await screen.findByRole("button", { name: /Start run on an issue/ });
-    expect(button).toBeDisabled();
-    expect(within(button).getByText("P4")).toBeInTheDocument();
+    const button = await screen.findByRole("button", { name: "Start run" });
+    expect(button).toBeEnabled();
+    expect(within(button).queryByText("P4")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Start run on an issue/ })).toBeNull();
+    await user.click(button);
+    expect(screen.getByRole("dialog", { name: "Start a workflow run" })).toBeInTheDocument();
   });
 
   it("opens the run when its row is clicked", async () => {
