@@ -19,6 +19,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   children's progress. A started ticket reads "In progress", never "Can start now"; Implement counts the tickets in
   progress and ends once every ticket is In Review or Done. The tab rereads Linear every 30 s and the Features list
   its records every 30 s; `hub doctor` checks the plan's `parent` (AGH-268).
+- The ticket flow is a graph: an edge from each blocker to the ticket it holds back, cards that lead with id and
+  title, and done tickets kept in their step. A feature opens on the tab of its phase, each golden path step opens
+  the tab holding its evidence, and the header's ticket chips show their Linear status (AGH-268).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
