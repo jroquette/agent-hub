@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -31,33 +31,52 @@ afterEach(() => {
 });
 
 describe("FilesPanel (review)", () => {
-  it("lists each changed file with its lines, kind and diffs, and takes focus", () => {
+  it("lists the changed files by folder, like source control, and takes focus", () => {
     render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
 
     const panel = screen.getByRole("complementary", { name: "Changed files" });
     expect(screen.getByRole("heading", { name: "Changed files" })).toHaveFocus();
     expect(within(panel).getByText("0 of 2 viewed")).toBeInTheDocument();
-    const nav = within(panel).getByRole("navigation", { name: "Files" });
+    const list = within(panel).getByRole("navigation", { name: "Files" });
+    expect(within(list).getByText("ui")).toBeInTheDocument();
     expect(
-      within(nav)
+      within(list)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["new.ts+1−0", "app.ts+1−1"]);
-    const app = within(panel).getByRole("region", { name: "ui/app.ts" });
-    expect(within(app).getByTitle("Modified")).toHaveTextContent("M");
-    expect(within(app).getByLabelText("Change 1 to ui/app.ts")).toHaveTextContent("+b");
-    expect(within(panel).getByRole("region", { name: "new.ts" })).toBeInTheDocument();
+    ).toEqual(["Anew.ts+1−0", "Mapp.ts+1−1"]);
+    // Narrow, no file is open until you pick one: the list is all there is.
+    expect(within(panel).queryByRole("region")).toBeNull();
   });
 
-  it("folds a file marked viewed, keeps the mark, and unfolds it after a newer change", async () => {
+  it("opens one file with its changes, steps to the next and goes back to all files", async () => {
+    render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /new\.ts/ }));
+
+    const file = screen.getByRole("region", { name: "new.ts" });
+    expect(within(file).getByText("1 change in this session")).toBeInTheDocument();
+    expect(within(file).getByLabelText("Change 1 to new.ts")).toHaveTextContent("+export const");
+    expect(screen.queryByRole("navigation", { name: "Files" })).toBeNull();
+
+    await userEvent.click(within(file).getByRole("button", { name: "Next file" }));
+    const next = screen.getByRole("region", { name: "ui/app.ts" });
+    expect(within(next).getByText("2/2")).toBeInTheDocument();
+    expect(within(next).getByRole("button", { name: "Next file" })).toBeDisabled();
+
+    await userEvent.click(within(next).getByRole("button", { name: "All files" }));
+    expect(screen.getByRole("navigation", { name: "Files" })).toBeInTheDocument();
+  });
+
+  it("keeps a viewed mark per session until a newer change to the file", async () => {
     const { rerender } = render(
       <FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />,
     );
-    const app = screen.getByRole("region", { name: "ui/app.ts" });
+    const list = screen.getByRole("navigation", { name: "Files" });
 
-    await userEvent.click(within(app).getByRole("checkbox", { name: "Viewed" }));
+    const [, appViewed] = within(list).getAllByRole("checkbox", { name: "Viewed" });
+    if (!appViewed) throw new Error("no Viewed checkbox for app.ts");
+    await userEvent.click(appViewed);
 
-    expect(within(app).queryByLabelText("Change 1 to ui/app.ts")).toBeNull();
     expect(screen.getByText("1 of 2 viewed")).toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem(reviewedKey("s1")) ?? "{}")).toEqual({
       "/repo/src/ui/app.ts": "t2",
@@ -69,17 +88,27 @@ describe("FilesPanel (review)", () => {
     ];
     rerender(<FilesPanel files={filesOf(later)} sessionId="s1" onClose={vi.fn()} />);
 
-    const again = screen.getByRole("region", { name: "ui/app.ts" });
-    expect(within(again).getByRole("checkbox", { name: "Changed since viewed" })).not.toBeChecked();
-    expect(within(again).getByLabelText("Change 2 to ui/app.ts")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Changed since viewed" })).not.toBeChecked();
+    expect(screen.getByText("0 of 2 viewed")).toBeInTheDocument();
   });
 
-  it("closes on Esc and says when nothing changed yet", async () => {
+  it("goes back to the list on Esc, then closes, and says when nothing changed yet", async () => {
     const onClose = vi.fn();
-    render(<FilesPanel files={[]} sessionId="s1" onClose={onClose} />);
+    const { rerender } = render(
+      <FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={onClose} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /new\.ts/ }));
 
-    expect(screen.getByText("Claude has not changed any file yet.")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("navigation", { name: "Files" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /new\.ts/ })).toHaveFocus();
+    });
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledOnce();
+
+    rerender(<FilesPanel files={[]} sessionId="s1" onClose={onClose} />);
+    expect(screen.getByText("Claude has not changed any file yet.")).toBeInTheDocument();
   });
 });
