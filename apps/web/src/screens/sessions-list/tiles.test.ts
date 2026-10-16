@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  aLiveTile,
   aPermissionRequest,
   aSession,
   aSessionLabel,
@@ -9,7 +8,7 @@ import {
   anId,
   at,
 } from "../../testing/builders";
-import { groupWithin, sortTiles, tileOf, tileOfDriven, troubled, waitingLink } from "./tiles";
+import { groupWithin, tileOf, tileOfDriven, troubled, waitingLink } from "./tiles";
 
 const NOW = Date.parse(at(660));
 const NO_PROBLEMS = { by_you: 0, handled: 0, needs_you: 0, open: 0 };
@@ -139,35 +138,16 @@ describe("tileOfDriven (grid tiles from driven sessions without a twin)", () => 
   });
 });
 
-describe("troubled and sorting", () => {
+describe("troubled", () => {
   it("edges a tile in red only when a problem needs the owner", () => {
     expect(troubled(aSession({ problems: { ...NO_PROBLEMS, needs_you: 1 } }))).toBe(true);
     expect(troubled(aSession({ problems: { ...NO_PROBLEMS, handled: 3, open: 1 } }))).toBe(false);
-  });
-
-  it("puts idle last, troubled first, then the oldest start first", () => {
-    const idle = aSession({ id: anId(1), status: "idle", started_at: at(0) });
-    const old = aSession({ id: anId(2), started_at: at(10) });
-    const young = aSession({ id: anId(3), started_at: at(20) });
-    const sick = aSession({
-      id: anId(4),
-      started_at: at(30),
-      problems: { ...NO_PROBLEMS, needs_you: 1 },
-    });
-
-    expect(sortTiles([idle, young, sick, old]).map((s) => s.id)).toEqual([
-      anId(4),
-      anId(2),
-      anId(3),
-      anId(1),
-    ]);
   });
 });
 
 describe("waitingLink", () => {
   it("links a permission prompt of a session hub web drives to its chat", () => {
-    const tile = aLiveTile({
-      group: "waiting",
+    const tile = aSession({
       status: "waiting",
       waiting_reason: "Permission prompt",
       agent_session_id: anId(7, "0192aaaa"),
@@ -180,8 +160,8 @@ describe("waitingLink", () => {
   });
 
   it("links a hook-observed permission prompt and any other wait to the approvals", () => {
-    const prompt = aLiveTile({ status: "waiting", waiting_reason: "Permission prompt" });
-    const plan = aLiveTile({ status: "waiting", waiting_reason: "Plan approval" });
+    const prompt = aSession({ status: "waiting", waiting_reason: "Permission prompt" });
+    const plan = aSession({ status: "waiting", waiting_reason: "Plan approval" });
 
     expect(waitingLink(prompt)).toEqual({ href: "/approvals", label: "Open approval" });
     expect(waitingLink(plan)).toEqual({ href: "/approvals", label: "Open approval" });

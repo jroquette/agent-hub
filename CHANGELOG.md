@@ -45,6 +45,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
+  count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
+  announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to
+  start `claude` (AGH-246).
 - Confirmation dialogs (Delete this session, Remove hub) close with Escape, the X or a press on the backdrop, keep
   Tab inside, start on Cancel and give focus back to the button that opened them. Remove hub's stays open while the
   removal runs, and Ctrl K, ? and the other shortcuts open nothing over a dialog (AGH-248).
