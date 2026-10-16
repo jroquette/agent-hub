@@ -221,6 +221,39 @@ def render_brief(
     return "\n".join(lines) + "\n"
 
 
+def chromium_executable(environ: Mapping[str, str]) -> str | None:
+    """A Chromium headless shell when Playwright's own revision is missing: the newest found.
+
+    The same rule as the web smoke (tests/e2e/test_web_smoke.py), also looking in macOS's cache;
+    nothing is downloaded. None when Playwright's revision is there, or no shell is.
+    """
+    configured = environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    home = Path.home()
+    roots = (
+        [Path(configured)]
+        if configured
+        else [home / "Library" / "Caches" / "ms-playwright", home / ".cache" / "ms-playwright"]
+    )
+    modules = WEB_DIR / "node_modules"
+    nested = modules / "playwright" / "node_modules" / "playwright-core" / "browsers.json"
+    browsers = nested if nested.is_file() else modules / "playwright-core" / "browsers.json"
+    if browsers.is_file():
+        listed = json.loads(browsers.read_text("utf-8"))["browsers"]
+        revision = next(b["revision"] for b in listed if b["name"] == "chromium-headless-shell")
+        if any(_headless_shells(root, revision) for root in roots):
+            return None
+    found = sorted(shell for root in roots for shell in _headless_shells(root, "*"))
+    return str(found[-1]) if found else None
+
+
+def _headless_shells(root: Path, revision: str) -> list[Path]:
+    folder = f"chromium_headless_shell-{revision}"
+    return [
+        *root.glob(f"{folder}/chrome-*/headless_shell"),
+        *root.glob(f"{folder}/chrome-headless-shell-*/chrome-headless-shell"),
+    ]
+
+
 def free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -362,6 +395,9 @@ def capture_screens(groups: Sequence[Group], out: Path) -> str | None:
                     "AGENT_HUB_WEB_URL": web_url,
                     "AH_CAPTURE": json.dumps(routes),
                     "AH_CAPTURE_DIR": str(out),
+                    **(
+                        {"AGENT_HUB_CHROMIUM": shell} if (shell := chromium_executable(env)) else {}
+                    ),
                 },
             )
         # The capture's own output, and the servers' when it failed, next to the screens.
