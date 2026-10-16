@@ -1,19 +1,11 @@
 /* Driving sessions from Sessions (AGH-165, AC-234.8): New session in the header, why it is unavailable, cloud guidance. */
 import { useState } from "react";
-import { useNavigate } from "react-router";
 
 import { Banner, Button, ProblemError } from "../../components";
 import { CloudPanel } from "./CloudPanel";
-import { agentSessionHref, sessionControlUnavailable } from "./control";
-import { NewSessionDialog } from "./NewSessionDialog";
-import {
-  useAgentCapabilities,
-  useAgentSessions,
-  useCloudSessions,
-  useCreateAgentSession,
-  useResumable,
-  useWorkdirs,
-} from "./queries";
+import { sessionControlUnavailable } from "./control";
+import { useAgentCapabilities, useAgentSessions, useCloudSessions, useWorkdirs } from "./queries";
+import { StartSessionDialog } from "./StartSessionDialog";
 
 /** The driven sessions of `scope`, whether this machine can start one, and in which project. */
 export function useDriving(scope: string | null, projects: readonly string[]) {
@@ -34,12 +26,8 @@ type Driving = ReturnType<typeof useDriving>;
 
 /** "New session" for the page header, with the project to start in when no scope is set. */
 export function NewSessionControl({ driving }: { driving: Driving }) {
-  const navigate = useNavigate();
   const [dialog, setDialog] = useState(false);
-  const [resumeFor, setResumeFor] = useState<string | null>(null);
   const { caps, canDrive, project, pick, workdirs } = driving;
-  const resumable = useResumable(dialog ? project : null, dialog ? resumeFor : null);
-  const create = useCreateAgentSession();
   const folders = workdirs.data?.items;
   if (!canDrive || !caps || project === null || !folders) return null;
   return (
@@ -66,30 +54,17 @@ export function NewSessionControl({ driving }: { driving: Driving }) {
         variant="primary"
         icon="plus"
         onClick={() => {
-          create.reset();
           setDialog(true);
         }}
       >
         New session
       </Button>
       {dialog && (
-        <NewSessionDialog
+        <StartSessionDialog
           project={project}
           workdirs={folders}
           capabilities={caps}
-          resumable={resumable.data?.items}
-          onWorkdirChange={setResumeFor}
-          pending={create.isPending}
-          error={create.error}
-          onSubmit={(body) => {
-            create.mutate(body, {
-              onSuccess: (created) => {
-                setDialog(false);
-                void navigate(agentSessionHref(created.id));
-              },
-            });
-          }}
-          onCancel={() => {
+          onClose={() => {
             setDialog(false);
           }}
         />

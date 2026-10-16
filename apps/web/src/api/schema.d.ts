@@ -1722,6 +1722,7 @@ export interface components {
      * CreateAgentSession
      * @description ``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is
      *     checked against the message limit, 413), or a past session to resume (and fork).
+     *     ``screenshot`` goes with the first prompt as an image, so it needs one.
      */
     CreateAgentSession: {
       /**
@@ -1738,6 +1739,7 @@ export interface components {
       prompt?: string | null;
       /** Resume Session Id */
       resume_session_id?: string | null;
+      screenshot?: components["schemas"]["Screenshot"] | null;
       /** Workdir Id */
       workdir_id: string;
     };
@@ -3305,6 +3307,20 @@ export interface components {
       skip_cause?: components["schemas"]["SkipCause"] | null;
       started_at: components["schemas"]["ApiTimestamp"];
       status: components["schemas"]["StepStatus"];
+    };
+    /**
+     * Screenshot
+     * @description A PNG of the screen sent with the first prompt, base64-encoded; its decoded size and
+     *     signature are checked by ``decode_screenshot`` (413, 422).
+     */
+    Screenshot: {
+      /** Data */
+      data: string;
+      /**
+       * Media Type
+       * @constant
+       */
+      media_type: "image/png";
     };
     /**
      * SearchHit

@@ -8,6 +8,7 @@ from agent_hub.core.agent_sessions.driver import (
     Allow,
     DriverError,
     DriverEvent,
+    DriverImage,
     Exited,
     InitEvent,
     PastSession,
@@ -21,6 +22,7 @@ from agent_hub.core.agent_sessions.errors import (
     SessionTerminalError,
     UnknownPermissionError,
 )
+from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.read_model_builders import a_permission_request
 from agent_hub.core.testing.session_driver_fakes import (
     DEFAULT_RESULT,
@@ -164,3 +166,16 @@ async def test_logs_every_command_when_called() -> None:
     assert driver.calls[1].args == ("plan",)
     assert (resumable, other) == ((past,), ())
     assert capabilities.available
+
+
+async def test_records_images_when_message_sent_with_image() -> None:
+    driver = InMemorySessionDriver()
+    handle = await driver.start(SPEC)
+    image = DriverImage(media_type="image/png", data=a_png_bytes())
+
+    await driver.send(handle, "What is on this screen?", images=(image,))
+    await driver.send(handle, "And now?")
+    await driver.close(handle)
+
+    sends = [call.args for call in driver.calls if call.method == "send"]
+    assert sends == [("What is on this screen?", (image,)), ("And now?", ())]

@@ -25,11 +25,13 @@ from agent_hub.core.agent_sessions.errors import (
     CloudTimeoutError,
     CloudUnavailableError,
     InvalidDecisionError,
+    InvalidScreenshotError,
     InvalidWorkdirError,
     LiveLimitError,
     LogFullError,
     MessageTooLargeError,
     PermissionAnsweredError,
+    ScreenshotTooLargeError,
     SessionBusyError,
     SessionsOffError,
     SessionsUnavailableError,
@@ -473,6 +475,28 @@ def _message_too_large_problem(error: MessageTooLargeError) -> Problem:
     )
 
 
+def _screenshot_too_large_problem(error: ScreenshotTooLargeError) -> Problem:
+    return _agent_session_problem(
+        413,
+        "screenshot-too-large",
+        "Screenshot too large",
+        detail=(
+            f"Screenshots are limited to {error.limit} bytes (decoded); this one has {error.size}."
+        ),
+        members={"limit": error.limit, "size": error.size},
+    )
+
+
+def _invalid_screenshot_problem(_: InvalidScreenshotError) -> Problem:
+    # A fixed detail: the reason never quotes the data, but the client needs no more than this.
+    return _body_field_problem(
+        "invalid-screenshot",
+        "Invalid screenshot",
+        pointer="/screenshot/data",
+        detail="The screenshot must be a base64-encoded PNG.",
+    )
+
+
 def _sessions_unavailable_problem(error: SessionsUnavailableError) -> Problem:
     return _agent_session_problem(
         503,
@@ -535,6 +559,8 @@ AGENT_SESSION_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     InvalidWorkdirError: _invalid_workdir_problem,
     UnknownResumeError: _unknown_resume_problem,
     MessageTooLargeError: _message_too_large_problem,
+    ScreenshotTooLargeError: _screenshot_too_large_problem,
+    InvalidScreenshotError: _invalid_screenshot_problem,
     SessionsUnavailableError: _sessions_unavailable_problem,
     SessionsOffError: _sessions_off_problem,
     CloudUnavailableError: _cloud_unavailable_problem,
