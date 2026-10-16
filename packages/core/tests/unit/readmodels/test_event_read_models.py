@@ -453,6 +453,31 @@ def test_counts_project_activity_and_needs_when_project_has_events(
     assert counts.learnings_proposed == 1
 
 
+def test_links_approvals_to_where_they_are_answered_when_listed(
+    store: InMemoryEventStore,
+) -> None:
+    store.append(
+        [
+            an_event(
+                type="gate.request",
+                session="run:r1",
+                source="executor",
+                step="ship",
+                timestamp=SCENARIO_START,
+                source_id="r1:ship:1:gate.request",
+                payload={"run": "r1", "attempt": 1, "gate_id": "r1:ship:1", "kind": "human_gate"},
+            )
+        ]
+    )
+    service = _service(store, NOW)[0]
+
+    needs = {item.href for item in service.needs_you(Scope()).items if item.kind == "approval"}
+    hits = service.search_events("toolu_ask", PageRequest()).items
+
+    assert needs == {"/sessions/s-b", "/runs/r1"}
+    assert [hit.href for hit in hits] == ["/sessions/s-b"]
+
+
 def test_lists_activity_newest_first_when_requested(store: InMemoryEventStore) -> None:
     service = _service(store, NOW)[0]
 

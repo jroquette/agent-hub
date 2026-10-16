@@ -78,7 +78,6 @@ const PAGES: SmokePage[] = [
     heading: `Run ${short(RUN)}`,
     shows: /Failed at Verifying · attempt 2 of 2/,
   },
-  { name: "Approvals", path: "/approvals", heading: "Approvals", shows: "How to decide" },
   { name: "Features", path: "/features", heading: "Features", shows: "export-button" },
   { name: "Health", path: "/health", heading: "Health", shows: /Checked on request/ },
 ];
