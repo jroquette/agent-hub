@@ -45,6 +45,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The Features list reads at a glance: who needs to act ("Waiting for you"), the step position and only the step's own
+  progress in the golden path, header hints instead of a footnote, fixed column widths, the extra issues in a
+  popover, the verdict's scope under its badge, and shipped features last (AGH-268).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to

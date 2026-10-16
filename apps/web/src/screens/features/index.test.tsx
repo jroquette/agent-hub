@@ -103,6 +103,55 @@ describe("FeaturesScreen", () => {
     );
   });
 
+  it("sorts shipped features last and counts them apart (order)", async () => {
+    const done = aFeature({
+      slug: "shipped-one",
+      phase: "shipped",
+      golden_path: aGoldenPath({ phase: "shipped" }),
+    });
+    open({ "/api/v1/features": aPage([done, ...features]) });
+
+    await screen.findByRole("link", { name: "shipped-one" });
+    const slugs = screen
+      .getAllByRole("link")
+      .map((l) => l.textContent)
+      .filter((t) => t === "shipped-one" || features.some((f) => f.slug === t));
+    expect(slugs.at(-1)).toBe("shipped-one");
+    expect(screen.getByText("5 features").parentElement).toHaveTextContent("1 shipped");
+  });
+
+  it("opens the extra issues in a popover (issues)", async () => {
+    open();
+
+    const row = (await screen.findByRole("link", { name: "layered-memory" })).closest("tr");
+    if (!row) throw new Error("no row");
+    expect(within(row).getByText("AGH-48")).toBeInTheDocument();
+    await userEvent.click(within(row).getByRole("button", { name: "2 more issues" }));
+
+    const popover = within(row).getByLabelText("All issues");
+    expect(popover).toHaveTextContent("AGH-48AGH-49AGH-50");
+  });
+
+  it("puts the verdict's scope under its badge while Evaluate is not done (verdict)", async () => {
+    const held = aFeature({
+      slug: "held",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      golden_path: aGoldenPath({
+        phase: "evaluate",
+        steps: [
+          aGoldenStep({ name: "evaluate", state: "partial", meta: "partial: covers 2 of 9 ACs" }),
+        ],
+      }),
+    });
+    open({ "/api/v1/features": aPage([held]) });
+
+    const row = (await screen.findByRole("link", { name: "held" })).closest("tr");
+    if (!row) throw new Error("no row");
+    const verdict = within(row).getAllByRole("cell").at(-1);
+    expect(verdict).toHaveTextContent("SHIP-WITH-OWNER-STEPS");
+    expect(verdict).toHaveTextContent("partial: covers 2 of 9 ACs");
+  });
+
   it("reads the AC bar as N/M · K owner step with the owner segment hatched", async () => {
     open();
 
