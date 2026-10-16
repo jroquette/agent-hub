@@ -71,6 +71,9 @@ export interface ToolResultView {
   /** The server stored a clipped copy (over 64 KiB); `originalBytes` is the full size. */
   truncated: boolean;
   originalBytes: number | null;
+  /** The change a file tool made, as Claude reported it once it ran: a unified diff with the
+   * file's real line numbers. */
+  diff?: string | null;
 }
 
 export interface ToolView {
@@ -426,6 +429,8 @@ export function toolDiff(tool: ToolView): string | null {
 export interface FileChange {
   tool: ToolView;
   diff: string;
+  /** The diff carries the file's real line numbers (Claude reported it), so they can show. */
+  numbered: boolean;
   state: ToolState;
   added: number;
   removed: number;
@@ -459,6 +464,8 @@ export function diffStats(diff: string): { added: number; removed: number } {
 const FILE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 
 function fileChangeDiff(tool: ToolView, path: string): string | null {
+  const reported = tool.result?.diff;
+  if (reported) return reported;
   if (tool.name !== "NotebookEdit") return toolDiff(tool);
   if (tool.diff !== null) return tool.diff;
   return addedFileDiff(path, str(tool.input, "new_source") ?? "");
@@ -477,7 +484,8 @@ export function changedFiles(state: Pick<TranscriptState, "tools" | "permissions
     const toolStateNow = toolState(tool, state.permissions[tool.id]);
     const applied = toolStateNow !== "error" && toolStateNow !== "denied";
     const stats = diffStats(diff);
-    const change: FileChange = { tool, diff, state: toolStateNow, ...stats };
+    const numbered = Boolean(tool.result?.diff);
+    const change: FileChange = { tool, diff, numbered, state: toolStateNow, ...stats };
     const known = files.get(path);
     const file = known ?? {
       path,
@@ -610,6 +618,8 @@ function applyToolResult(state: TranscriptState, body: JsonObject): TranscriptSt
     truncated: body.truncated === true,
     originalBytes: num(body, "original_bytes"),
   };
+  const diff = str(body, "diff");
+  if (diff) result.diff = diff;
   const known = state.tools[id];
   if (known) return { ...state, tools: { ...state.tools, [id]: { ...known, result } } };
   const orphan: ToolView = { id, name: "Tool", input: {}, parentId: null, diff: null, result };

@@ -93,7 +93,11 @@ function ChangeBlock({
           {applied ? text : `${text}: not applied`}
         </span>
       </div>
-      <DiffText diff={change.diff} label={`Change ${String(index + 1)} to ${path}`} />
+      <DiffText
+        diff={change.diff}
+        label={`Change ${String(index + 1)} to ${path}`}
+        numbered={change.numbered}
+      />
     </div>
   );
 }

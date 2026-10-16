@@ -422,6 +422,46 @@
 .as-pre-error {
   color: var(--failed);
 }
+/* A diff with the file's line numbers: git's two gutters (old, new), kept in view while the code
+ * scrolls sideways; each line's tint spans the widest line. */
+.as-diff-numbered {
+  padding: 0;
+  --as-diff-no-w: 5ch;
+}
+.as-diff-line {
+  display: grid;
+  grid-template-columns: var(--as-diff-no-w) var(--as-diff-no-w) max-content;
+  min-width: 100%;
+  width: max-content;
+}
+.as-diff-no {
+  position: sticky;
+  left: 0;
+  padding-right: 1ch;
+  border-right: 1px solid var(--border);
+  background: var(--code-bg);
+  color: var(--text-subtle);
+  text-align: right;
+  user-select: none;
+}
+.as-diff-no + .as-diff-no {
+  left: var(--as-diff-no-w);
+}
+.as-diff-code {
+  padding: 0 var(--space-3) 0 var(--space-2);
+}
+.as-diff-line.as-diff-add .as-diff-no {
+  background: color-mix(in srgb, var(--diff-add-bg) 70%, var(--code-bg));
+}
+.as-diff-line.as-diff-del .as-diff-no {
+  background: color-mix(in srgb, var(--diff-del-bg) 70%, var(--code-bg));
+}
+.as-diff-line.as-diff-hunk {
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--code-bg));
+}
+.as-diff-line.as-diff-hunk .as-diff-code {
+  padding-block: 2px;
+}
 .as-diff-add {
   background: var(--diff-add-bg);
   color: var(--diff-add);
@@ -1627,6 +1667,8 @@ body.as-resizing .as-drawer {
   margin: 0;
 }
 .as-files-change {
+  /* Never shrunk to fit: a long diff makes the file's body scroll, every change whole. */
+  flex: none;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
