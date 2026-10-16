@@ -132,6 +132,19 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   modal (`aria-modal`) is open;
   Shift+Esc focuses the composer; ArrowUp in an empty composer recalls the last prompt sent. The shortcut sheet has a
   "Chat" group. A new pending card never takes focus from a composer holding text.
+- **Screenshots (AGH-266).**
+  - AC-266.1: a screenshot thumbnail, in a chat message or in New session, opens it large in a lightbox; in the chat
+    it only views (Download, close with Esc or the X).
+  - AC-266.2: the chat shows the screenshot sent with the first message again after a reload: the browser keeps the
+    latest 20 in IndexedDB (`agent-hub-screenshots`); the server still stores no image bytes. Without IndexedDB the
+    copy lasts for the page only and a reload shows the record's "Screenshot attached" marker.
+  - AC-266.3: in New session the lightbox is a markup editor: arrow, rectangle, ellipse, pen, highlighter and text
+    (keys A, R, O, P, H, T), five colours, undo (Ctrl/Cmd+Z) and Clear. Done flattens the marks into the PNG that is
+    sent and checks "Attach"; the chat then shows the image sent, marked up or not.
+  - AC-266.4: a marked-up PNG over the screenshot limit (3,932,160 bytes decoded) is scaled down until it fits.
+  - AC-266.5: Crop (key C) is one more entry of the edit history, so undo and Clear take it back; the area cut away is
+    dimmed while editing, a crop under 10 image pixels is ignored, and the saved PNG keeps only the cropped area,
+    marks included.
 - **Accessibility.** No serious or critical axe violation in any state (empty, streaming, waiting, detached, menu
   open, ended). The log keeps `role="log"` and `aria-busy` and has a visually hidden h2; under
   `prefers-reduced-motion` no caret, shimmer or smooth scroll animates.

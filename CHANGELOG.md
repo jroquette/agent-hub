@@ -42,6 +42,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   short explanation of each, kind tiles with 30-day use, a sort, and hooks grouped by lifecycle event (AGH-262).
 - A message to an ended local session (hub web stopped, idle timeout, closed, failed) reopens the same session on its
   Claude conversation and plays it (AGH-262).
+- The chat shows a session's first screenshot again after a reload (the browser keeps the latest 20 in IndexedDB; the
+  server still stores no image bytes). A screenshot thumbnail opens it large, and in New session it opens a markup
+  editor (arrow, box, ellipse, pen, highlighter, text, crop, colours, undo) whose marks go into the PNG that is sent
+  (AGH-266).
+
 
 ### Changed
 
