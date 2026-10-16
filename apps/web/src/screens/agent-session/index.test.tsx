@@ -239,7 +239,7 @@ describe("AgentSessionScreen (transcript)", () => {
     expect(screen.queryByRole("button", { name: "Close session" })).toBeNull();
   });
 
-  it("resume: an ended session offers Resume, prefilled with Fork, and opens the new chat", async () => {
+  it("resume: an ended session resumes by a message and offers Fork…, prefilled, which opens the fork", async () => {
     const NEXT = anId(2, "0192a5e5");
     const view = renderChat(
       routes({
@@ -250,17 +250,11 @@ describe("AgentSessionScreen (transcript)", () => {
       }),
     );
     await screen.findByText("Starting.");
-    expect(screen.getByRole("textbox", { name: /Message/ })).toHaveAttribute(
-      "placeholder",
-      "This session has ended. Resume it from the header to continue.",
-    );
+    expect(screen.queryByRole("button", { name: /^Resume/ })).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "Resume" }));
-    const dialog = screen.getByRole("dialog", { name: "Resume session" });
-    expect(within(dialog).getByRole("group", { name: "Resume" })).toHaveTextContent(
-      "Run the tests",
-    );
-    await userEvent.click(within(dialog).getByRole("checkbox", { name: /Fork/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Fork…" }));
+    const dialog = screen.getByRole("dialog", { name: "Fork session" });
+    expect(within(dialog).getByRole("group", { name: "Fork" })).toHaveTextContent("Run the tests");
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
 
     await waitFor(() => {
@@ -277,10 +271,11 @@ describe("AgentSessionScreen (transcript)", () => {
     });
   });
 
-  it("resume: a live session, a cloud one or a machine that cannot start one offers no Resume", async () => {
+  it("resume: a live, cloud or log-full session, or a machine that cannot start one, offers no Fork…", async () => {
     for (const [session, caps] of [
       [anAgentSession({ status: "idle" }), aCapabilities()],
       [anAgentSession({ status: "ended", kind: "cloud" }), aCapabilities()],
+      [anAgentSession({ status: "ended", end_reason: "log_full" }), aCapabilities()],
       [anAgentSession({ status: "ended" }), aCapabilities({ available: false })],
     ] as const) {
       const view = renderChat(
@@ -290,28 +285,9 @@ describe("AgentSessionScreen (transcript)", () => {
       await waitFor(() => {
         expect(view.requests.some((r) => r.url.includes("/capabilities"))).toBe(true);
       });
-      expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Fork…" })).toBeNull();
       view.unmount();
     }
-  });
-
-  it("deletes the session after confirmation and goes back to Sessions", async () => {
-    const view = renderChat(
-      routes({
-        [SESSION]: anAgentSession({ status: "ended", end_reason: "closed" }),
-        [`DELETE ${SESSION}`]: () => undefined,
-      }),
-    );
-    await screen.findByText("Starting.");
-
-    await userEvent.click(screen.getByRole("button", { name: "Delete session" }));
-    const dialog = screen.getByRole("alertdialog");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
-
-    await waitFor(() => {
-      expect(view.router.state.location.pathname).toBe("/sessions");
-    });
-    expect(view.requests.some((r) => r.method === "DELETE")).toBe(true);
   });
 
   it("resumes an ended session in place when a message is sent, then streams it", async () => {

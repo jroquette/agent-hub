@@ -34,7 +34,7 @@ function open(overrides: Partial<NewSessionDialogProps> = {}) {
     ...overrides,
   };
   const view = render(<NewSessionDialog {...props} />);
-  const name = props.resume ? "Resume session" : "New session";
+  const name = props.forkOf ? "Fork session" : "New session";
   return { props, view, dialog: screen.getByRole("dialog", { name }) };
 }
 
@@ -541,7 +541,7 @@ describe("NewSessionDialog (workdir-stale)", () => {
   });
 });
 
-describe("NewSessionDialog (resume)", () => {
+describe("NewSessionDialog (resume: fork)", () => {
   const ENDED = anAgentSession({
     status: "ended",
     end_reason: "closed",
@@ -553,46 +553,44 @@ describe("NewSessionDialog (resume)", () => {
     ended_at: "2026-10-16T09:30:00Z",
   });
 
-  function resume(overrides: Partial<NewSessionDialogProps> = {}) {
-    return open({ resume: ENDED, workdirs: undefined, ...overrides });
+  function fork(overrides: Partial<NewSessionDialogProps> = {}) {
+    return open({ forkOf: ENDED, workdirs: undefined, ...overrides });
   }
 
-  it("resume: names the target (title, folder, when it ended) and offers Fork, not the folder picker", () => {
-    const { dialog } = resume();
+  it("resume: a fork names the target (title, folder, when it ended), not the folder picker", () => {
+    const { dialog } = fork();
 
-    const target = within(dialog).getByRole("group", { name: "Resume" });
+    const target = within(dialog).getByRole("group", { name: "Fork" });
     expect(target).toHaveTextContent("Fix the flaky test");
     expect(target).toHaveTextContent("agent-hub › agh-7-collector");
+    expect(target).toHaveTextContent("keeps this one unchanged");
     expect(within(target).getByText(/Ended/).querySelector("time")).toHaveAttribute(
       "datetime",
       "2026-10-16T09:30:00Z",
     );
     expect(within(dialog).queryByRole("combobox", { name: "Working folder" })).toBeNull();
-    expect(within(dialog).getByRole("checkbox", { name: /Fork/ })).not.toBeChecked();
     expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
   });
 
-  it("resume: sends the target's folder and Claude session, its mode and model, and the Fork choice", async () => {
-    const { dialog, props } = resume();
+  it("resume: a fork sends the target's folder and Claude session, its mode and model, and fork", async () => {
+    const { dialog, props } = fork();
 
-    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
-    await userEvent.click(within(dialog).getByRole("checkbox", { name: /Fork/ }));
     await userEvent.type(within(dialog).getByRole("textbox", { name: "Prompt" }), "Go on");
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
 
-    const sent = {
+    expect(props.onSubmit).toHaveBeenCalledWith({
       project: "agent-hub",
       workdir_id: WORKTREE.workdir_id,
       mode: "plan",
       model: "opus",
+      prompt: "Go on",
       resume_session_id: ENDED.claude_session_id,
-    };
-    expect(props.onSubmit).toHaveBeenNthCalledWith(1, { ...sent, prompt: null, fork: false });
-    expect(props.onSubmit).toHaveBeenNthCalledWith(2, { ...sent, prompt: "Go on", fork: true });
+      fork: true,
+    });
   });
 
-  it("resume: keeps a model id the capabilities do not list", async () => {
-    const { dialog, props } = resume({ resume: { ...ENDED, model: "claude-sonnet-4-5" } });
+  it("resume: a fork keeps a model id the capabilities do not list", async () => {
+    const { dialog, props } = fork({ forkOf: { ...ENDED, model: "claude-sonnet-4-5" } });
 
     await options(dialog);
     expect(within(dialog).getByRole("textbox", { name: "Model id" })).toHaveValue(
@@ -604,10 +602,10 @@ describe("NewSessionDialog (resume)", () => {
     });
   });
 
-  it("resume: a plain New session shows no resume target and no Fork", () => {
+  it("resume: a plain New session shows no fork target", () => {
     const { dialog } = open();
 
-    expect(within(dialog).queryByRole("group", { name: "Resume" })).toBeNull();
+    expect(within(dialog).queryByRole("group", { name: "Fork" })).toBeNull();
     expect(within(dialog).queryByRole("checkbox", { name: /Fork/ })).toBeNull();
   });
 });

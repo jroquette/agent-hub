@@ -14,18 +14,6 @@ export function agentSessionHref(id: string): string {
   return `/agent-sessions/${encodeURIComponent(id)}`;
 }
 
-/**
- * Whether the header, a row or a tile offers Resume (AC-234.15): a local session that ended or
- * failed and has a Claude session to continue; a cloud one is continued from claude.ai.
- */
-export function resumable(session: AgentSession): boolean {
-  return (
-    (session.status === "ended" || session.status === "failed") &&
-    session.kind !== "cloud" &&
-    session.claude_session_id !== null
-  );
-}
-
 export interface Unavailable {
   title: string;
   detail: string;
