@@ -119,8 +119,9 @@ describe("Triage with Claude", () => {
     expect(await within(table).findByText("Claude: Ready for the brain")).toBeInTheDocument();
     expect(within(table).getByText("Claude reviewing…")).toBeInTheDocument();
 
-    const facet = screen.getByRole("group", { name: "Claude" });
-    await userEvent.click(within(facet).getByRole("button", { name: "Goes in · 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Claude: Any" }));
+    const menu = screen.getByRole("dialog", { name: "Claude filter" });
+    await userEvent.click(within(menu).getByRole("checkbox", { name: /Goes in/ }));
 
     expect(within(table).queryByText("Guard env files")).not.toBeInTheDocument();
     expect(within(table).getByText("Stripe has two clients")).toBeInTheDocument();
