@@ -1,7 +1,7 @@
 # Learnings
 
 **Phase:** P2 as built (AGH-201 moved accept and reject into P2; snooze stays P3) · **Route:** `/knowledge/learnings`,
-`/knowledge/learnings/:learningId`, query `?status=&learning=` · **Answers:** "Which of these can go into the brain, and
+`/knowledge/learnings/:learningId`, query `?status=&learning=&q=&project=&readiness=&claude=&provenance=` · **Answers:** "Which of these can go into the brain, and
 is each one right before I accept it?"
 
 There was no screen spec for Learnings: it was defined by `01-navigation.md`, `02-data-and-api.md` (Learning, as built
@@ -60,6 +60,22 @@ header.
   overlap?". The brief names where the note is, the `/learn` criteria and, for a missing note, that its title is
   all there is.
 
+- **Filters** (above the queue, in the URL, mirroring the Skills catalog): a search over title, summary and project
+  (200 characters); quick views **All · {n}**, **Ready to decide · {n}**, **Blocked · {n}** (Proposed only); compact
+  `FacetMenu`s "Project" (one project; shown when the queue spans several), "Claude" (its recommendation) and
+  "Source" (provenance), each listing its options with how many learnings each keeps given the other filters; "Clear
+  all"; an empty result says nothing matches. A menu closes on Escape or a click outside it. Unknown values in a
+  hand-written URL are dropped.
+- **Triage with Claude** (Proposed, one project): "Triage with Claude · {n}" starts one hub-web session in the
+  project's hub folder over up to 15 decidable proposals with a note and no verdict yet, each reviewed into its own
+  draft folder exactly as a single review (above). A queue spanning several projects asks to pick one; a machine
+  that cannot drive Claude says why. A **Triage progress** strip shows the run live ("Live", "Needs you", "Done" or
+  "Stopped"), the learning Claude is on now, how many are done and queued, and links the conversation ("Answer in the
+  conversation" when it waits on you); it can be dismissed when finished. Each row carries Claude's recommendation
+  ("Goes in", "Needs changes", "Leave out", "Reviewing now", "Queued", "Needs you", "No verdict"), and the detail
+  opens with it at the top ("Claude's recommendation · you decide", or what Claude is doing with it now). A
+  finished run gives no verdict to the learnings it never reached.
+
 ## Acceptance criteria
 
 | Id | Given / when / then | Test |
@@ -82,3 +98,8 @@ header.
 | AC-272.16 | Given the session wrote its verdict and revision, when the learning is open, then the verdict, checks, revision and target show, and Use Claude's revision / Use target fill the edit draft and Target | `ReviewPanel.test.tsx` "shows Claude's verdict and hands its revision and target to the learning", `review.test.ts` (parse, writes, waiting and malformed) |
 | AC-272.17 | Given this machine cannot drive Claude, when the Review section shows, then the button is disabled and says why | `ReviewPanel.test.tsx` "says why a review cannot start on this machine" |
 | AC-272.18 | Given a learning or a Brain note, when Discuss opens, then it offers its starters and one click starts the conversation with that message; a target without starters offers none | `discussLearning.test.ts`, `DiscussPanel.test.tsx` "starts the conversation with a starter's message in one click", "offers no starters when the target has none", `LearningDetail.test.tsx` "offers to talk with Claude about the learning" |
+| AC-272.19 | Given learnings of several projects, provenances and verdicts, when the owner searches, picks a quick view or a facet, then the queue keeps only matching rows, each option shows its count with the other filters applied, the choice is in the URL (other parameters kept, unknown values dropped) and Clear all resets it | `filters.test.ts`, `index.test.tsx` "narrows the queue to one project and keeps the choice in the URL", "says nothing matches when the search finds no learning" |
+| AC-272.20 | Given an open facet menu, when the owner presses Escape or clicks outside, then it closes | `index.test.tsx` "closes a filter menu on Escape and on a click outside it", `data.test.tsx` "says what a facet menu keeps, lists options with counts and clears them" |
+| AC-272.21 | Given one project with decidable unreviewed proposals, when the owner clicks Triage with Claude, then one session starts in the hub folder over at most 15 of them, each linked to its own draft folder | `triage.test.tsx` "starts one session over the decidable learnings and links each to its folder" |
+| AC-272.22 | Given a queue over several projects, when triage is offered, then it asks for one project | `triage.test.tsx` "asks for one project when the queue spans several" |
+| AC-272.23 | Given a running triage, when the queue shows, then each row carries Claude's verdict or where the review stands (current, queued, needs you), the Claude facet filters by it, and a finished run gives no verdict to learnings it never reviewed | `triage.test.tsx` "shows Claude's verdict on each row and filters by it", "marks the learnings behind the current one as queued and says when Claude needs you", "gives no verdict to the learnings a finished session never reviewed"; `filters.test.ts` "keeps the learnings Claude recommends when the Claude facet is picked" |

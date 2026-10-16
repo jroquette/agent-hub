@@ -13,6 +13,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Learnings has a search, quick views (All, Ready to decide, Blocked) and compact Project, Claude and Source menus with
+  counts, all in the URL. Triage with Claude reviews up to 15 proposals of one project in one session, each the way a
+  single review does; a progress strip follows it live and each row and detail shows Claude's recommendation (AGH-272).
 - Review a learning with Claude: a session in the hub folder checks the note against `/learn`'s bar and writes its
   verdict, checks, a suggested target and, when needed, a revised body into a draft folder; the learning shows
   them as Claude's recommendation, with Use Claude's revision (it becomes your edit) and Use target. Nothing is
