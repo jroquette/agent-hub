@@ -24,7 +24,7 @@ describe("AppShell", () => {
       stream("/api/v1/events/stream").emit("counts", aStreamCounts({ live_sessions: 2 }));
     });
 
-    expect(screen.getByRole("link", { name: "Live sessions, 2 live" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sessions, 2 live" })).toBeInTheDocument();
     expect(within(screen.getByRole("banner")).getByRole("status")).toHaveAttribute(
       "data-state",
       "connected",

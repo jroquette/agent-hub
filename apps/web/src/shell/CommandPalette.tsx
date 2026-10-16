@@ -42,28 +42,33 @@ const SHORTCUT: Record<string, string> = {
   "/live": "g l",
   "/sessions": "g s",
   "/runs": "g r",
+  "/knowledge/learnings": "g k",
   "/features": "g f",
   "/health": "g h",
   "/settings": "g ,",
 };
 
-const SCREENS: PaletteItem[] = NAV.flatMap((group) =>
-  group.items.flatMap((item) => [
-    {
+/** The live tile grid left the sidebar (ADR 0033) but stays one step away, as `g l` does. */
+const LIVE_GRID: PaletteItem = {
+  key: "screen:live",
+  icon: "radio",
+  label: "Live sessions",
+  hint: SHORTCUT["/live"],
+  href: "/live",
+};
+
+const SCREENS: PaletteItem[] = [
+  ...NAV.flatMap((group) =>
+    group.items.map((item) => ({
       key: `screen:${item.id}`,
-      icon: item.icon ?? "circle-dot",
+      icon: item.icon,
       label: item.label,
       hint: SHORTCUT[item.to],
       href: item.to,
-    },
-    ...(item.children ?? []).map((child) => ({
-      key: `screen:${child.id}`,
-      icon: "lightbulb" as const,
-      label: child.label,
-      href: child.to,
     })),
-  ]),
-).filter((item, i, all) => all.findIndex((other) => other.href === item.href) === i);
+  ),
+  LIVE_GRID,
+];
 
 function useDebounced(value: string, ms: number): string {
   const [debounced, setDebounced] = useState(value);

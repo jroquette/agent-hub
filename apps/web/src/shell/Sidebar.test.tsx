@@ -14,7 +14,7 @@ function renderSidebar(path = "/", props: Partial<Parameters<typeof Sidebar>[0]>
 }
 
 describe("Sidebar", () => {
-  it("lists the Phase 2 destinations in the design's groups", () => {
+  it("lists the destinations in Work, Knowledge and the Hub footer", () => {
     renderSidebar();
 
     const nav = screen.getByRole("navigation", { name: "Main" });
@@ -23,21 +23,20 @@ describe("Sidebar", () => {
       .map((link) => link.textContent);
     expect(names).toEqual([
       "Portfolio",
-      "Live sessions",
       "Sessions",
       "Workflow runs",
-      "Knowledge",
+      "Workflows",
+      "Features",
       "Learnings",
       "Brain",
       "Skills",
-      "Features",
-      "Workflows",
       "Health",
       "Settings",
     ]);
-    for (const group of ["Overview", "Observe", "Understand", "Improve", "Hub"]) {
+    for (const group of ["Work", "Knowledge"]) {
       expect(within(nav).getByText(group)).toBeInTheDocument();
     }
+    expect(within(nav).queryByText("Live sessions")).not.toBeInTheDocument();
   });
 
   it("has no P3 tag and hides Metrics, Bench and Tracker queue", () => {
@@ -118,7 +117,7 @@ describe("Sidebar", () => {
   it("shows badge counts and names them when the stream has counts", () => {
     renderSidebar("/", { counts: { live: 3, learnings: 4, health: 1 } });
 
-    expect(screen.getByRole("link", { name: "Live sessions, 3 live" })).toHaveTextContent("3");
+    expect(screen.getByRole("link", { name: "Sessions, 3 live" })).toHaveTextContent("3");
     expect(screen.getByRole("link", { name: "Learnings, 4 to triage" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Health, 1 doctor error" })).toBeInTheDocument();
   });
@@ -126,7 +125,18 @@ describe("Sidebar", () => {
   it("caps a badge at 99+ when the count is larger", () => {
     renderSidebar("/", { counts: { live: 120 } });
 
-    expect(screen.getByRole("link", { name: "Live sessions, 120 live" })).toHaveTextContent("99+");
+    expect(screen.getByRole("link", { name: "Sessions, 120 live" })).toHaveTextContent("99+");
+  });
+
+  it("pins Health and Settings to the footer, next to Shortcuts", () => {
+    const { container } = renderSidebar();
+
+    const foot = container.querySelector(".ah-sidebar-foot");
+    expect(foot).not.toBeNull();
+    const names = within(foot as HTMLElement)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(names).toEqual(["Health", "Settings"]);
   });
 
   it("opens the shortcut sheet from its footer button", () => {
