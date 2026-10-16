@@ -26,6 +26,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Confirmation dialogs (Delete this session, Remove hub) close with Escape, the X or a press on the backdrop, keep
   Tab inside, start on Cancel and give focus back to the button that opened them. Remove hub's stays open while the
   removal runs, and Ctrl K, ? and the other shortcuts open nothing over a dialog (AGH-248).
+- `hub web` highlights completed code blocks in the chat, notes and plans (about a dozen languages, lazily loaded,
+  design-token colours in both themes) with `lowlight`; a block still streaming or over 2,000 lines or 64 KiB stays
+  plain, and agent output stays inert (ADR 0034, AGH-252, AC-234.31).
 
 ## [0.15.0] - 2026-10-16
 

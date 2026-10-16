@@ -360,7 +360,7 @@ GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hu
 ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)). The browser never contacts Linear. Agent sessions (AGH-165,
 below) add no outbound call of the server: the `claude` processes it starts reach Anthropic as when the user runs
 them. The approved UI design and the departures from it are in
-[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025, 0031 and 0033.
+[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025, 0031, 0033 and 0034.
 
 **Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
 
@@ -470,6 +470,10 @@ replaces Live sessions and the separate list of driven sessions (design in
   only at the bottom, keeps header, composer and Stop on screen, and has message time and Copy, code labels, clear
   tool states, a saved draft, a `/` menu and keyboard paths for permissions
   ([agent-sessions.md](design/agent-sessions.md#chat-behaviour)). Transport, access and storage stay as ADR 0031 set.
+- **Syntax highlighting ([ADR 0034](adr/0034-syntax-highlighting-in-the-chat.md)).** A completed fenced block in one
+  of about a dozen languages is coloured by `lowlight` (MIT; highlight.js grammars, BSD-3-Clause) from a lazy chunk,
+  rendered as React nodes by our own walker (no `innerHTML`), with design-token colours in both themes. A block still
+  streaming, an unknown language and a block over 2,000 lines or 64 KiB stay plain.
 - **Credit.** Open WebUI (github.com/open-webui/open-webui, Open WebUI License, a BSD-3 variant with a branding
   clause) was read as design study material at commit `6a18585` (v0.12.2) for chat and list interaction patterns.
   We write our own React code. Nothing was copied, no asset or branding is used, and `NOTICE` and `LICENSES/` do not
