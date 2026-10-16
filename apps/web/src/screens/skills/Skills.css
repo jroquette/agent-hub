@@ -208,22 +208,44 @@
   position: relative;
 }
 .ah-create-pop {
-  position: absolute;
-  right: 0;
   top: calc(100% + 6px);
-  z-index: var(--z-popover);
-  width: 360px;
-  padding: var(--space-1);
-}
-.ah-create-item {
+  right: 0;
+  width: 300px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 2px 0;
-  white-space: normal;
-  text-align: left;
 }
-.ah-create-item span {
+.ah-create-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-create-option:hover,
+.ah-create-option:focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+.ah-create-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ah-create-option-name {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+.ah-create-option-line {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 16px;
@@ -291,6 +313,14 @@
   border-radius: var(--radius-md);
   background: var(--accent-soft);
   color: var(--accent);
+}
+.ah-kind-badge[data-kind="agent"] {
+  background: var(--done-soft);
+  color: var(--done);
+}
+.ah-kind-badge[data-kind="hook"] {
+  background: var(--waiting-soft);
+  color: var(--waiting);
 }
 .ah-kind-badge[data-kind="all"] {
   background: var(--surface-sunken);
