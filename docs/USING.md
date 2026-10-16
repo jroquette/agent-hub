@@ -233,8 +233,8 @@ and tell the user; do not try other versions.
 
 ### Run the control plane
 
-The control plane (`hub web`: an API and a web app) shows the hub's live sessions, runs, approvals and health. It
-serves on `127.0.0.1` only, port 7420 by default. Run it one of two ways, on the same machine as the sessions:
+The control plane (`hub web`) shows the hub's sessions, runs, approvals and health; old `/live` links open the Sessions
+grid. It serves on `127.0.0.1` only, port 7420 by default. Run it one of two ways, on the same machine as the sessions:
 
 - **Locally:** `./hub web` from the hub folder (the pinned release, through the shim). It prints the address to
   open, `http://127.0.0.1:7420/?token=…` (a new token each start; `--open` opens it). Ctrl C stops it.

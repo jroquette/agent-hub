@@ -40,7 +40,6 @@ interface PaletteItem {
 const SHORTCUT: Record<string, string> = {
   "/": "g p",
   "/approvals": "g a",
-  "/live": "g l",
   "/sessions": "g s",
   "/runs": "g r",
   "/features": "g f",
