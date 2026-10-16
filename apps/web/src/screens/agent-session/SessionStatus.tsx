@@ -1,5 +1,5 @@
 import { Banner, StatusBadge, type Status } from "../../components";
-import type { AgentSessionStatus, EndReason } from "./transcript";
+import type { AgentSessionStatus, EndReason } from "./model";
 
 /** How each agent-session status reads: icon and text, never colour alone. */
 export const AGENT_STATUS: Record<AgentSessionStatus, { status: Status; label: string }> = {
