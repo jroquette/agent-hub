@@ -14,6 +14,9 @@ describe("GoldenPathBar", () => {
     expect(screen.getByText("1/3 tickets")).toBeInTheDocument();
     expect(screen.getByText("1/3 tickets").parentElement).not.toHaveTextContent("40/66 ACs");
     expect(screen.getByRole("img")).toHaveAttribute("tabindex", "0");
+    expect(screen.getByText("Implement").parentElement).toHaveTextContent(
+      "Implement · step 5 of 8",
+    );
     expect(
       [...container.querySelectorAll("[data-state]")].map((el) => el.getAttribute("data-state")),
     ).toEqual(["done", "done", "done", "done", "current", "pending", "partial", "pending"]);
