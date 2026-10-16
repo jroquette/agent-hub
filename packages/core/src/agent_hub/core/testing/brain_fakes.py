@@ -17,7 +17,7 @@ from agent_hub.core.brain.brain_path import (
     accept_destination,
     archive_destination,
 )
-from agent_hub.core.brain.frontmatter import with_frontmatter
+from agent_hub.core.brain.frontmatter import with_body, with_frontmatter
 from agent_hub.core.learnings.brain_change_requests import (
     BrainChange,
     ChangeRequestConflictError,
@@ -155,6 +155,8 @@ class InMemoryBrainChangeRequests:
             raise ChangeRequestFailedError(step=self.fail_step)
         files = dict(self.origin.files[self.origin.default_branch])
         text = files.pop(_hub_path(change.note))
+        if change.note_body is not None:
+            text = with_body(text, change.note_body)
         files[_hub_path(change.destination)] = with_frontmatter(text, change.frontmatter)
         self.origin.files[change.branch] = files
         self.origin.heads[change.branch] = OriginCommit(

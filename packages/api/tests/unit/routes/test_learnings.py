@@ -74,6 +74,32 @@ def test_opens_pull_request_when_learning_accepted(wired: Any) -> None:
     assert wired.decisions.calls == [("accept", "learning-1", "learnings/")]
 
 
+def test_passes_edited_body_when_learning_accepted_with_edit(wired: Any) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+
+    response = wired.client.post(
+        "/api/v1/learnings/learning-1/accept",
+        json={"target": "learnings/", "note_body": "# X\n\nEdited.\n"},
+        headers=OWN_ORIGIN,
+    )
+
+    assert response.status_code == 201
+    assert wired.decisions.note_bodies == ["# X\n\nEdited.\n"]
+
+
+def test_rejects_empty_edited_body_when_learning_accepted(wired: Any) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+
+    response = wired.client.post(
+        "/api/v1/learnings/learning-1/accept",
+        json={"target": "learnings/", "note_body": ""},
+        headers=OWN_ORIGIN,
+    )
+
+    assert response.status_code == 422
+    assert wired.decisions.calls == []
+
+
 def test_opens_pull_request_when_learning_rejected(wired: Any) -> None:
     wired.wire(learning_decisions=wired.decisions)
 
