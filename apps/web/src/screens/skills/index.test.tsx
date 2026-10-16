@@ -69,7 +69,7 @@ describe("SkillsPickerScreen nav", () => {
   it("lists the projects to pick a catalog when All projects is in scope (AC-164.13)", async () => {
     pick();
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Skills" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Toolkit" })).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "demo" })).toHaveAttribute(
       "href",
       "/projects/demo/skills",
@@ -153,13 +153,13 @@ describe("SkillsScreen states", () => {
       "href",
       "/projects/demo",
     );
-    expect(await screen.findByText(/What demo's agents can do/)).toBeInTheDocument();
+    expect(await screen.findByText(/The skills, agents and hooks demo's agents work with/)).toBeInTheDocument();
   });
 
   it("shows the catalog of the project in the URL", async () => {
     const { requests } = openCatalog();
 
-    expect(screen.getByRole("heading", { level: 1, name: "Skills" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Toolkit" })).toBeInTheDocument();
     expect(await screen.findByRole("article", { name: "feature" })).toBeInTheDocument();
     expect(paths(requests)).toEqual([CATALOG]);
   });
@@ -214,7 +214,7 @@ describe("SkillDetailScreen nav", () => {
 
     await screen.findByRole("heading", { level: 1, name: "feature" });
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
-    expect(within(crumbs).getByRole("link", { name: "Skills" })).toHaveAttribute(
+    expect(within(crumbs).getByRole("link", { name: "Toolkit" })).toHaveAttribute(
       "href",
       "/projects/demo/skills",
     );

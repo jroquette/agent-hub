@@ -29,7 +29,7 @@ describe("Sidebar", () => {
       "Features",
       "Learnings",
       "Brain",
-      "Skills",
+      "Toolkit",
       "Health",
       "Settings",
     ]);
@@ -79,8 +79,8 @@ describe("Sidebar", () => {
     const names = within(nav)
       .getAllByRole("link")
       .map((link) => link.textContent);
-    expect(names.indexOf("Skills")).toBe(names.indexOf("Brain") + 1);
-    expect(screen.getByRole("link", { name: "Skills" })).toHaveAttribute(
+    expect(names.indexOf("Toolkit")).toBe(names.indexOf("Brain") + 1);
+    expect(screen.getByRole("link", { name: "Toolkit" })).toHaveAttribute(
       "href",
       "/projects/agent-hub/skills",
     );
@@ -89,7 +89,7 @@ describe("Sidebar", () => {
   it("points Skills to the project picker when All projects is in scope (nav)", () => {
     renderSidebar("/sessions");
 
-    expect(screen.getByRole("link", { name: "Skills" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Toolkit" })).toHaveAttribute(
       "href",
       "/knowledge/skills",
     );
@@ -98,7 +98,7 @@ describe("Sidebar", () => {
   it("marks Skills as the page when a project's skill detail is open (nav)", () => {
     renderSidebar("/projects/other%20hub/skills/skill/hub-workflow/feature?scope=agent-hub");
 
-    const skills = screen.getByRole("link", { name: "Skills" });
+    const skills = screen.getByRole("link", { name: "Toolkit" });
     expect(skills).toHaveAttribute("href", "/projects/other%20hub/skills");
     expect(skills).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Brain" })).toHaveAttribute(
