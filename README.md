@@ -255,8 +255,8 @@ overrides a built-in of the same name.
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..."  # dry: what would run
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
 ./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
-./hub workflow approve <run>                 # or reject / respond: decide a paused gate, then resume
-./hub workflow test                          # every pack's fixtures, in memory (hub make check runs it)
+./hub workflow approve <run>                 # or reject / respond: decide a paused gate; the run resumes
+./hub workflow test                          # every pack's fixtures, in memory (the hub's make check runs it)
 ```
 
 In `hub web`, the Workflows screen shows each workflow's graph; Workflow runs › Start run starts one live from a form
