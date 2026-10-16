@@ -20,7 +20,7 @@ import { CodeBlock } from "./trace";
 
 const NOT_CONNECTED = (source: string) => `${source} is not connected in this version.`;
 
-/* ---------- Session tile (Live sessions) ---------- */
+/* ---------- Session tile (the Sessions grid) ---------- */
 export interface LiveSession {
   id: string;
   status: "live" | "waiting" | "idle" | "ended";
