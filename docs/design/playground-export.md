@@ -13,73 +13,113 @@ tests and the repo's conventions instead of reinterpreting them.
 `make playground-export [SINCE=<ref>]`, run in the playground checkout (`scripts/playground_export.py`).
 
 - **Range.** From `SINCE`, else the newest tag `playground-export/*` reachable from `HEAD`, else the merge base with
-  `origin/main`; to `HEAD`. A commit another pushed branch already has (every `origin/*` but the checkout's own) is
-  that branch's delivery: it is left out of the groups and listed apart, with the branch. Uncommitted changes are
-  left out too, and listed: a session may still be working, so the export does not wait for a clean tree. An empty
-  range exits 0 with "nothing to export".
+  `origin/main`; to `HEAD`, plus the uncommitted changes. A commit `origin/main` already has (by sha, or as the same
+  change, `git cherry`) is shipped: left out and listed. A commit another pushed branch has stays in the export,
+  marked with that branch, since an open PR may not land. A commit repeating an earlier one's change in the range (a
+  cherry-pick merged back, `git patch-id`) is left out and listed with the one it repeats, so the patches apply
+  once. Nothing else is left out. An empty range with a clean tree
+  exits 0 with "nothing to export".
+- **Requests.** The unit of the export and of a delivery. Each driven session of the `agent-hub` project active
+  since an hour before the range's first commit, or that made one of its commits, read from the conductor
+  (`/api/v1/agent-sessions` and each session's `/events`); titled sessions with the same title and folder are one
+  request (a continued or twin conversation). A request keeps:
+  - its **turns**: each owner message in their own words (whether a screenshot came with it), the answers they gave
+    to Claude's questions while it worked (the validation), and the commits that turn made. A commit is the
+    session's when its subject ends a line of one of the session's `git commit` commands, so sessions running at
+    the same time are told apart;
+  - its commits, their files, the screens those files show and the routes `HEAD` no longer has;
+  - its hub files (those its Write and Edit calls wrote, or a Studio publish reply listed as `PUBLISHED <path>`)
+    and its uncommitted files (those its Write and Edit calls wrote).
+  What no session made (commits, hub files, uncommitted files) is a last request, *Not made by a playground
+  session*. A request that made nothing is kept, marked: discussed, abandoned or made in another request.
+- **Conductor.** Its token is read from `make playground`'s log in the playground's private folder,
+  `${TMPDIR:-/tmp}/agent-hub-playground-<uid>/agent-hub-conductor.log`, and on macOS also from the same folder under
+  the user's own temp folder (`getconf DARWIN_USER_TEMP_DIR`), which a sandbox may hide behind another `$TMPDIR`;
+  `--conductor-log` names it. When the conductor cannot be read, the export fails and writes nothing: the owner's
+  words are its input.
 - **Output.** `.playground/exports/<UTC stamp>/` in the checkout, ignored by git:
-  - `export.json`: `{base, head, created_at, groups: [{name, commits, files, screens, removed_screens, requests}],
-    requests, hub: {path, files}, left_out, in_progress, screens_skipped}`.
-  - `brief.md`: the owner's requests, then per group its requests, commits (subject and body), files and screens,
-    then the hub's files, the commits left out and the uncommitted files.
-  - `reference.patch`: `git diff base..HEAD`, the validated code.
-  - `screens/<group>/<route slug>.png`: each route of the group, rendered by the `HEAD` code with synthetic data.
-  - `hub/<path>`: a copy of each file the sessions left in the project's hub.
-- **Requests.** Each driven session of the `agent-hub` project active from an hour before the range's first commit
-  to its last, read from the conductor (`/api/v1/agent-sessions` and each session's `/events`): its title, folder,
-  first prompt (the owner's own words) and the range's commits it made. A commit is a session's when its subject ends
-  a line of one of the session's `git commit` commands, so sessions running at the same time are told apart. A group
-  lists the requests whose commits are in it.
-- **Groups.** A changed file belongs to the first matching area: `apps/web/src/screens/<name>/` is the screen
-  `<name>`; `apps/web/src/shell/`, `apps/web/src/components/` and `apps/web/src/lib/` are `shell`;
-  `packages/<pkg>/` is `<pkg>`; anything else is `repo`. A commit joins every group its files touch.
-- **Screens.** A web group's routes come from `SCREEN_ROUTES` in the script (screen folder to the routes of
-  `apps/web/src/routes.tsx` that show it, with the demo data's ids); `shell` takes the Portfolio, Sessions and
-  Features. A route `HEAD`'s `routes.tsx` no longer declares goes to `removed_screens` and is not captured. The
-  script checks `HEAD` out in a temporary worktree (sharing the checkout's `node_modules`, its packages ahead of the
-  editable installs), builds the web app there, starts its `hub web` on a free port with a temporary database, loads
-  `scripts/seed_demo.py` into it, and has Playwright capture each route at 1440 by 900, dark theme, the clock frozen
-  and relative times masked. Without Chromium it writes everything but the screens and says so.
+  - `brief.md`: the requests in the order the owner asked them, each with its turns, commits (subject and body),
+    files, screens, hub files, uncommitted files and patch; then the shipped commits. An incomplete export says what
+    is missing at the top.
+  - `export.json`: `{base, head, created_at, requests: [{title, folder, started_at, sessions, turns: [{at, message,
+    screenshot, answers, commits}], commits, files, screens, removed_screens, hub_files, in_progress, also_on,
+    patch}], shipped, repeated, hub: {path, files}, in_progress, screens_skipped, complete, snapshot}`.
+  - `requests/<n>-<slug>.patch`: the request's commits as mail patches (`git format-patch`), oldest first.
+  - `reference.patch`: every exported commit the same way.
+  - `in-progress.patch`: the uncommitted changes, new files included (the index is not touched).
+  - Generated files (`linguist-generated` in `.gitattributes`: `web_dist`, `openapi.json`, `schema.d.ts`…) stay out
+    of every patch: a delivery regenerates them. Personal `*.local.*` files are never listed.
+  - `screens/<area>/<route slug>.png`: each screen a request touches, captured once.
+  - `hub/<path>`: a copy of each hub file.
+- **Areas and screens.** A changed file belongs to the first matching area: `apps/web/src/screens/<name>/` is the
+  screen `<name>`; `apps/web/src/shell/`, `apps/web/src/components/` and `apps/web/src/lib/` are `shell`;
+  `packages/<pkg>/` is `<pkg>`; anything else is `repo`. A web area's routes come from `SCREEN_ROUTES` in the script
+  (screen folder to the routes of `apps/web/src/routes.tsx` that show it, with the demo data's ids); `shell` takes
+  the Portfolio, Sessions and Features. A route `HEAD`'s `routes.tsx` no longer declares goes to `removed_screens` and
+  is not captured. The script checks `HEAD` out in a temporary worktree (sharing the checkout's `node_modules`, its
+  packages ahead of the editable installs), builds the web app there, starts its `hub web` on a free port with a
+  temporary database, loads `scripts/seed_demo.py` into it, and has Playwright capture each route at 1440 by 900,
+  dark theme, the clock frozen and relative times masked.
 - **Hub.** The project's hub (`--hub`, default `agent-hub-hub` next to the main checkout, as `make playground` makes
   it) is where Studio sessions write skills, agents and hooks, outside this checkout's git. Its files are those its
   git sees as new or changed (ignored files left out) that `hub sync` did not write as they are (`hub.lock`), and
   those of its commits since an hour before the range's first commit.
-- **Mark.** On success it tags `HEAD` `playground-export/<UTC stamp>` (a local tag, never pushed) and prints the
-  folder.
+- **Mark.** Only a complete export (requests read, every screen captured) tags `HEAD`
+  `playground-export/<UTC stamp>` (a local tag, never pushed), so the next one starts there. An incomplete one, or
+  one run with `--no-screens`, is written but not marked: the next export covers the same range again, so nothing it
+  missed is skipped for good.
+- **Snapshot.** Every export, complete or not, commits the checkout as it is (`HEAD` and its uncommitted files, the
+  personal `*.local.*` ones left out) on a local branch of the developer's, `<prefix>/playground-snapshot/<UTC
+  stamp>` (`<prefix>` the current branch's, else the email's local part), with `HEAD`'s author. It is built in a
+  temporary index, so the checkout's files, index and branch are untouched. If the playground is reset, a session
+  breaks something or a delivery starts late, `git switch -c <name> <snapshot>` brings that version back; the
+  developer pushes it (`git push origin <snapshot>`) to keep it off the machine. The hub's files stay out of it
+  (project material never goes into the platform's repo, AGENTS.md rule 5); they are in the export's `hub/`.
 
 ### Delivering an export
 
-A delivery per group goes through the normal task workflow (`/feature` or the `sdlc` pack's `deliver`), on a branch
-from `main`, with the export folder as its input:
+A delivery per request (or per turn, when a long conversation asked for several things) goes through the normal task
+workflow (`/feature` or the `sdlc` pack's `deliver`), on a branch from `main`, with the export folder as its input:
 
-1. The spec's acceptance criteria are written from `brief.md` and `reference.patch`, one per behavior the owner
-   used; the owner reviews them once (they already validated the behavior on screen). A group's requests carry the
-   owner's first prompt; a hub file is delivered as the platform's own skill, agent or hook, or as the project's.
-2. `reference.patch` is the target: the delivery may restructure, name and test the code, never change what a
-   screen shows or what an action does.
-3. Each captured screen becomes a visual test (`apps/web/e2e/visual/<group>.spec.ts`, Playwright
+1. The spec's acceptance criteria are written from the request's turns, one per behavior the owner asked for or
+   validated in an answer; the owner reviews them once (they already validated the behavior on screen). A hub file
+   is delivered as the platform's own skill, agent or hook, or as the project's.
+2. The request's patch is the target: the delivery may restructure, name and test the code, never change what a
+   screen shows or what an action does. Requests touching the same file build on each other: a request's patch
+   applies after the earlier requests' commits (`reference.patch` applies in order). A commit marked with another
+   branch is delivered by that branch's PR when it lands first; the delivery then rebases on it.
+3. Each captured screen becomes a visual test (`apps/web/e2e/visual/<area>.spec.ts`, Playwright
    `toHaveScreenshot`) with the export's PNG as its baseline, on the same synthetic data, viewport, theme and clock;
    a diff fails the delivery's check. Behaviors get unit or integration tests at the repo's levels.
 4. The CHANGELOG entry and, for a scope or architecture change, the SPEC or an ADR come with it.
 
 ## Invariants
 
-- An export never changes the playground's files, branch or hub; its only write outside `.playground/` is the local
-  tag (the temporary worktree is removed).
+- Nothing the owner asked, answered or validated in the range is dropped: every commit not in `origin/main` is in a
+  request (the last one if no session made it), every uncommitted and hub file too, and every turn of every session
+  is kept.
+- An export never changes the playground's files, index, branch or hub; its only writes outside `.playground/` are
+  the local tag and the snapshot branch (the temporary worktree and index are removed). It pushes nothing.
 - Nothing from `~/.claude` or the owner's real data reaches a screen: screens use `seed_demo` data only.
 - `brief.md` holds the owner's own words and stays in the ignored folder; a delivery commits criteria and tests
   derived from it, never the brief or a transcript (AGENTS.md rule 4).
-- The same range exported twice yields the same `export.json` groups, patch and screens, as long as no other branch
-  was pushed in between.
+- The same range exported twice yields the same requests, patches and screens, as long as no session and no branch
+  moved in between.
 
 ## Decisions
 
-- One export, many deliveries: groups keep a delivery to one screen or package, so a PR stays reviewable.
+- The request, not the folder, is the unit: a request's change crosses screens and packages (an API field and the
+  screen that shows it), and only the whole of it can be delivered and tested.
+- The owner's validation is in their later turns and answers, not in the first prompt: every turn is kept.
+- Shipped means in `origin/main`. Another pushed branch is a PR that may still change or close, so its commits stay,
+  marked, rather than vanish from the export.
 - Screens from synthetic data, not from the playground's own database: only those can be a test baseline.
-- A tag marks the export, so the next one starts where this one ended without a state file.
+- A tag marks a complete export, so the next one starts where it ended without a state file.
 - A request is tied to its commits by the session's own log, not by time: sessions run in parallel.
-- A dirty tree is listed, not refused: the capture renders `HEAD` from a worktree, so edits in progress cannot leak
-  into a baseline.
+- A dirty tree is exported as `in-progress.patch`, not refused: the capture renders `HEAD` from a worktree, so edits
+  in progress cannot leak into a baseline.
+- The screenshots the owner sent are not exported: the server keeps no image bytes (the browser does); a turn only
+  says one came with it.
 
 ## Open questions
 
