@@ -27,8 +27,6 @@ export interface DialogProps {
   role?: "dialog" | "alertdialog";
   /** A selector for the control focused on open; else the first control after the header. */
   initialFocus?: string | undefined;
-  /** Renders in place (a gallery or a test), without the portal or the scroll lock. */
-  inline?: boolean | undefined;
   className?: string | undefined;
 }
 
@@ -46,7 +44,6 @@ export function Dialog({
   pending = false,
   role = "dialog",
   initialFocus,
-  inline,
   className,
 }: DialogProps) {
   const id = useId();
@@ -110,7 +107,6 @@ export function Dialog({
   }, [id]);
 
   useEffect(() => {
-    if (inline) return undefined;
     if (scrollLocks++ === 0) {
       overflowBefore = document.body.style.overflow;
       document.body.style.overflow = "hidden";
@@ -118,7 +114,7 @@ export function Dialog({
     return () => {
       if (--scrollLocks === 0) document.body.style.overflow = overflowBefore;
     };
-  }, [inline]);
+  }, []);
 
   // A control disabled while focused (the clicked verb) drops focus to the page: take it back.
   useEffect(() => {
@@ -137,7 +133,7 @@ export function Dialog({
 
   const dialog = (
     <div
-      className={cx("ah-scrim", inline && "ah-scrim-inline")}
+      className="ah-scrim"
       onMouseDown={(event) => {
         pressedScrim.current = event.target === event.currentTarget;
       }}
@@ -175,5 +171,5 @@ export function Dialog({
       </div>
     </div>
   );
-  return inline ? dialog : createPortal(dialog, document.body);
+  return createPortal(dialog, document.body);
 }

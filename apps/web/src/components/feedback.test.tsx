@@ -175,9 +175,7 @@ describe("ConfirmDialog", () => {
   });
 
   it("disables a later phase's confirmation", () => {
-    render(
-      <ConfirmDialog title="Approve?" confirmLabel="Approve" tone="primary" phase="P4" inline />,
-    );
+    render(<ConfirmDialog title="Approve?" confirmLabel="Approve" tone="primary" phase="P4" />);
 
     expect(screen.getByRole("button", { name: /Approve/ })).toBeDisabled();
   });

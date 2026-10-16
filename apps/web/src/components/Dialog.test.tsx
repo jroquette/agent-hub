@@ -58,13 +58,6 @@ describe("Dialog", () => {
     expect(screen.getByRole("dialog")).not.toHaveClass("ah-dialog-md");
   });
 
-  it("renders in place without locking scroll when inline", () => {
-    const { container } = render(<Dialog title="Preview" inline />);
-
-    expect(container.querySelector("[role=dialog]")).not.toBeNull();
-    expect(document.body.style.overflow).toBe("");
-  });
-
   it("focuses the first control after the header, or the one asked for", () => {
     const { unmount } = render(
       <Dialog title="Edit" onClose={vi.fn()} footer={<button>Save</button>}>
