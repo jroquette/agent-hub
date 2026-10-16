@@ -18,6 +18,7 @@ from agent_hub.core.testing.transcript_lines import (
     TRANSCRIPT_SESSION,
     a_text_block,
     a_thinking_block,
+    a_title_line,
     a_tool_result_line,
     a_tool_use_block,
     a_usage,
@@ -264,6 +265,60 @@ def test_keeps_error_message_when_tool_result_is_error() -> None:
     assert "error_message" not in ok.payload
 
 
+def test_maps_title_once_at_previous_line_time_when_title_line_repeats() -> None:
+    prompt = a_user_line()
+    lines = [
+        a_title_line("ignored: no earlier line"),
+        prompt,
+        a_title_line("Export  orders\nas CSV"),
+        an_assistant_line([a_text_block()]),
+        a_title_line("Export orders as CSV"),
+        a_title_line("Orders export", origin="custom"),
+    ]
+
+    titles = [event for event in _parse(lines) if event.type == "session.title"]
+
+    assert [event.payload for event in titles] == [
+        {"text": "Export orders as CSV", "origin": "ai"},
+        {"text": "Orders export", "origin": "custom"},
+    ]
+    assert titles[0].timestamp == _parse([prompt])[0].timestamp
+    assert titles[0].source_id.startswith(f"{TRANSCRIPT_SESSION}:title:ai:")
+    assert (titles[0].session, titles[0].repo, titles[0].agent) == (
+        TRANSCRIPT_SESSION,
+        "demo-api",
+        "main",
+    )
+
+
+def test_redacts_and_clips_title_when_title_has_secret_or_is_long() -> None:
+    secret = "gh" + "p_" + "A1b2C3d4" * 4
+    lines = [a_user_line(), a_title_line(f"Rotate {secret} " + "x" * 200)]
+
+    [title] = [event for event in _parse(lines) if event.type == "session.title"]
+
+    assert secret not in title.model_dump_json()
+    assert len(str(title.payload["text"])) <= 80
+
+
+def test_maps_title_once_when_file_is_read_in_pieces() -> None:
+    first = [a_user_line(), a_title_line()]
+    second = [a_title_line(), a_title_line("Renamed", origin="custom")]
+    whole = parse_transcript(transcript_text([*first, *second]), origin=ORIGIN)
+
+    head = parse_transcript(transcript_text(first), origin=ORIGIN)
+    tail = parse_transcript(
+        transcript_text(second),
+        origin=ORIGIN,
+        start_turn=head.end_turn,
+        seen_messages=head.seen_messages,
+        seen_titles=head.seen_titles,
+        last_timestamp=head.last_timestamp,
+    )
+
+    assert [*head.events, *tail.events] == list(whole.events)
+
+
 def test_ignores_line_when_type_is_not_mapped() -> None:
     lines = [
         {"type": "summary", "summary": SENTINEL},
@@ -370,11 +425,18 @@ def test_maps_only_payload_kept_keys_when_every_record_kind_parsed() -> None:
             usage=a_usage(),
         ),
         a_tool_result_line("toolu_b", content="out", is_error=True),
+        a_title_line(),
     ]
 
     events = _parse(lines)
 
-    assert {event.type for event in events} >= {"message", "reasoning", "tool.call", "tool.result"}
+    assert {event.type for event in events} >= {
+        "message",
+        "reasoning",
+        "tool.call",
+        "tool.result",
+        "session.title",
+    }
     for event in events:
         assert kept_payload(event.type, event.payload) == event.payload, event.type
 

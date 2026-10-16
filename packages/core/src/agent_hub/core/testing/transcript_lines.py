@@ -113,6 +113,12 @@ def a_tool_use_block(
     }
 
 
+def a_title_line(title: str = "Export orders as CSV", *, origin: str = "ai") -> Line:
+    """A title line: Claude Code's own (``ai``) or the user's ``/rename`` (``custom``)."""
+    key = {"ai": "aiTitle", "custom": "customTitle"}[origin]
+    return {"type": f"{origin}-title", key: title, "sessionId": TRANSCRIPT_SESSION}
+
+
 def transcript_text(lines: Iterable[Line]) -> str:
     """The lines as JSON Lines, one compact object per line, each ending in a newline."""
     return "".join(f"{json.dumps(line, separators=(',', ':'))}\n" for line in lines)
