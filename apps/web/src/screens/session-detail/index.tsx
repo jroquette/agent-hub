@@ -211,14 +211,9 @@ function SessionDetailBody({ session }: { session: Session }) {
             tone="warning"
             icon="hand"
             boxed
-            action={
-              <AppLink className="ah-btn ah-btn-sm" href="/approvals">
-                Open Approvals
-              </AppLink>
-            }
           >
             Waiting for approval{session.issue ? ` · ${session.issue}` : ""} ·{" "}
-            {fmtDuration(waitingFor * 60)} · Approve in the terminal session or open Approvals
+            {fmtDuration(waitingFor * 60)} · Approve in the terminal session
           </Banner>
         )}
         {session.status === "idle" && (

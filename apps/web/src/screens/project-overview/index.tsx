@@ -1,7 +1,7 @@
 import "./project-overview.css";
 
 import type { ReactNode } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import {
   AppLink,
@@ -29,7 +29,7 @@ import { useNow } from "../../lib/clock";
 import { fmtDuration, fmtMoney, toNumber } from "../../lib/format";
 import { useShell } from "../../shell/AppShell";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
-import { costDelta, needsEntry, orderNeeds } from "../portfolio/model";
+import { NEEDS_MAX, costDelta, needsEntry, orderNeeds } from "../portfolio/model";
 import { useNeedsYou, useRefreshOnCounts } from "../portfolio/queries";
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { budgetOf, durationSeconds, finishedCosts, median } from "../runs-list/model";
@@ -228,17 +228,23 @@ function ProjectSentence({
 function NeedsSection({ project, live }: { project: string; live: number }) {
   const needs = useNeedsYou(project);
   const now = useNow(60_000);
+  const [params] = useSearchParams();
+  const expanded = params.get("needs") === "all";
+  const next = new URLSearchParams(params);
+  next.set("needs", "all");
   return (
     <Region query={needs} title="what needs you">
       {() => {
         const ordered = orderNeeds(needs.data?.items ?? []);
-        const hidden = ordered.slice(NEEDS_VISIBLE);
+        const hidden = expanded ? [] : ordered.slice(NEEDS_VISIBLE);
         return (
           <NeedsYouList
-            items={ordered.slice(0, NEEDS_VISIBLE).map((item) => needsEntry(item, now))}
+            items={ordered
+              .slice(0, expanded ? NEEDS_MAX : NEEDS_VISIBLE)
+              .map((item) => needsEntry(item, now))}
             more={hidden.length}
             moreLabel={hidden.length ? `See ${String(hidden.length)} more` : undefined}
-            moreHref={`/approvals?scope=${encodeURIComponent(project)}`}
+            moreHref={`/projects/${encodeURIComponent(project)}?${next.toString()}`}
             liveCount={live}
           />
         );

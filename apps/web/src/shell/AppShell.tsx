@@ -42,7 +42,6 @@ export function useShell(): ShellActions {
 /** `g` then a key goes to a destination (spec 01 keyboard map). */
 const GO: Record<string, string> = {
   p: "/",
-  a: "/approvals",
   // Kept from the retired Live sessions (O-6).
   l: "/sessions?view=grid",
   s: "/sessions",
@@ -163,7 +162,6 @@ function ShellLayout({ children }: { children?: ReactNode }) {
       >
         <Sidebar
           counts={{
-            approvals: counts?.approvals_open,
             live: counts?.live_sessions,
             learnings: counts?.learnings_proposed,
             health: counts?.doctor_errors ?? undefined,

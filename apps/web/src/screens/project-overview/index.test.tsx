@@ -108,7 +108,7 @@ const routes: ApiRoutes = {
     aNeedsYouItem({
       verb: "Approve the plan",
       context: "agent-hub · AGH-131 · Doctor JSON output",
-      href: `/approvals/${anId(3)}`,
+      href: "/sessions/s-plan",
     }),
   ]),
   "/api/v1/doctor/findings": aPage([
@@ -155,7 +155,7 @@ describe("ProjectOverviewScreen", () => {
     const needs = await screen.findByRole("region", { name: /Needs you/ });
     expect(within(needs).getByRole("link", { name: /Approve the plan/ })).toHaveAttribute(
       "href",
-      `/approvals/${anId(3)}`,
+      "/sessions/s-plan",
     );
   });
 

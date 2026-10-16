@@ -234,8 +234,9 @@ describe("PermissionCard (g sequence)", () => {
     return { ...view, onAnswer, card };
   }
 
-  it("goes to Approvals on g then a over a focused card, without answering it", async () => {
+  it("leaves g then a over a focused card to the shell, without answering it", async () => {
     const { card, onAnswer, router } = inShell();
+    const before = router.state.location.pathname;
 
     fireEvent.keyDown(card, { key: "g" });
     fireEvent.keyDown(card, { key: "a" });
@@ -245,7 +246,7 @@ describe("PermissionCard (g sequence)", () => {
 
     expect(within(card).queryByText("Sending your answer…")).toBeNull();
     expect(onAnswer).not.toHaveBeenCalled();
-    expect(router.state.location.pathname).toBe("/approvals");
+    expect(router.state.location.pathname).toBe(before);
   });
 
   it("still allows on a alone, and the shell leaves the handled key alone", async () => {

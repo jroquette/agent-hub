@@ -42,10 +42,10 @@ describe("AppShell", () => {
 
     act(() => {
       stream("/api/v1/events/stream").open();
-      stream("/api/v1/events/stream").emit("counts", aStreamCounts({ approvals_open: 2 }));
+      stream("/api/v1/events/stream").emit("counts", aStreamCounts({ live_sessions: 2 }));
     });
 
-    expect(screen.getByRole("link", { name: "Approvals, 2 waiting" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sessions, 2 live" })).toBeInTheDocument();
     expect(within(screen.getByRole("banner")).getByRole("status")).toHaveAttribute(
       "data-state",
       "connected",
