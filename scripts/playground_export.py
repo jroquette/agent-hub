@@ -77,6 +77,7 @@ SCREEN_ROUTES: Mapping[str, tuple[Route, ...]] = {
     "feature-detail": (Route("feature", "/features", follow="/features/"),),
     "features": (Route("features", "/features"),),
     "health": (Route("health", "/health"),),
+    "knowledge-index": (Route("skills", "/knowledge/skills"), Route("brain", "/knowledge/brain")),
     "knowledge-phase3": (Route("knowledge", "/knowledge/decisions"),),
     "learnings": (Route("learnings", "/knowledge/learnings"),),
     "live-sessions": (Route("live", "/live"),),
