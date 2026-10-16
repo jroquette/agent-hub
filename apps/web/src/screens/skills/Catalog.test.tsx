@@ -26,12 +26,12 @@ const tab = (name: RegExp) => screen.getByRole("tab", { name });
 describe("Catalog search_facets", () => {
   it("filters on name or description, ignoring case, and restores all when cleared (AC-164.14)", () => {
     open();
-    expect(shown()).toEqual(["feature", "plan", "evaluator", "settings-pretooluse-1"]);
+    expect(shown()).toEqual(["evaluator", "feature", "plan", "settings-pretooluse-1"]);
 
     fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
       target: { value: "SPEC" },
     });
-    expect(shown()).toEqual(["feature", "evaluator"]);
+    expect(shown()).toEqual(["evaluator", "feature"]);
     expect(screen.getByRole("status")).toHaveTextContent("Showing 2 of 4");
 
     fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
@@ -113,7 +113,7 @@ describe("Catalog url_query", () => {
     open("/projects/demo/skills?kind=skill,agent");
 
     expect(tab(/^All/)).toHaveAttribute("aria-selected", "true");
-    expect(shown()).toEqual(["feature", "plan", "evaluator"]);
+    expect(shown()).toEqual(["evaluator", "feature", "plan"]);
   });
 
   it("ignores unknown values when the query is hand-written", () => {
