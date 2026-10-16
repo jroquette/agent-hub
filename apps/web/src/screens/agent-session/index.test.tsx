@@ -938,7 +938,7 @@ describe("AgentSessionScreen (chat-shortcuts)", () => {
 
   it.each([
     ["plan_approval", "ExitPlanMode", "Claude finished a plan", "Keep planning"],
-    ["ask_user_question", "AskUserQuestion", "Claude has a question", "Deny"],
+    ["ask_user_question", "AskUserQuestion", "Claude has a question", "Skip question"],
   ] as const)("answers a %s card neither by chord nor by d", async (kind, tool, name, deny) => {
     const view = renderChat(
       routes({
