@@ -2,11 +2,11 @@
 # `make playground`: the live playground, from nothing to the browser open on it. Safe to run again.
 #
 #   http://127.0.0.1:5173  the only address you use: this checkout's web app, hot reload
-#   7420  conductor: a frozen copy of this checkout; runs the Claude sessions (never restarts here)
+#   7420  conductor: a copy of this checkout taken at each start; runs the Claude sessions, so a
+#         change to the code never ends one (no UI to open: the playground signs you in)
 #   7421  this checkout's API, restarted on each Python change (make live)
 #
 # A hub for agent-hub itself makes this checkout a session folder, so a shake opens Claude in it.
-# Update the conductor on purpose (ends its sessions): PLAYGROUND_CONDUCTOR=update make playground
 set -euo pipefail
 
 AH="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,7 +42,7 @@ fi
 step "conductor on 7420"
 if [ ! -d "$CONDUCTOR" ]; then
   git -C "$AH" worktree add --detach "$CONDUCTOR" HEAD
-elif [ "${PLAYGROUND_CONDUCTOR:-}" = update ]; then
+else
   git -C "$CONDUCTOR" checkout -q --detach "$(git -C "$AH" rev-parse HEAD)"
 fi
 git -C "$CONDUCTOR" log --oneline -1
@@ -71,19 +71,16 @@ fi
 wait_for http://127.0.0.1:7421/
 wait_for http://127.0.0.1:5173/
 
-# The conductor's token becomes a cookie for 127.0.0.1, which the playground's port shares; open it
-# first, then the playground.
-token_url=$(grep -o 'http://127.0.0.1:7420/?token=[^ "]*' "$LOGS/agent-hub-conductor.log" | tail -1)
-if command -v open > /dev/null; then
-  open "$token_url"
-  sleep 2
-  open "http://127.0.0.1:5173/"
-fi
+# The playground trades the conductor's token for its session cookie (devProxy.ts), so the one
+# address to open signs you in and lands on the playground.
+token=$(grep -o 'http://127.0.0.1:7420/?token=[^ "]*' "$LOGS/agent-hub-conductor.log" | tail -1)
+url="http://127.0.0.1:5173/__playground/session?token=${token##*token=}"
+if command -v open > /dev/null; then open "$url"; fi
 cat <<EOF
 
-Playground ready: http://127.0.0.1:5173/
-  (if the browser did not open: open $token_url once, then the address above)
-Shake the mouse on any screen to talk to Claude; it edits this checkout and you see it live.
+Playground ready: $url
+  (opened in your browser; later visits: http://127.0.0.1:5173/)
+Shake the mouse on any screen to talk to Claude: it opens in this checkout and you see its edits live.
 Logs: $LOGS/agent-hub-conductor.log  $LOGS/agent-hub-live.log
 Stop: make playground-stop
 EOF

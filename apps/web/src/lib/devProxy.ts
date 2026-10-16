@@ -45,13 +45,32 @@ function proxyTo(target: string): ProxyOptions {
 }
 
 /**
+ * `make playground` opens `<dev server>/__playground/session?token=…`: the sessions server trades the
+ * token for its session cookie and redirects to `/`, so the browser gets the cookie (host-only,
+ * shared by every port of 127.0.0.1) without ever opening the sessions server's own address.
+ */
+export const SESSION_LOGIN_PATH = "/__playground/session";
+
+/**
  * The dev server's proxy: /api to `target`; with a different `sessionsTarget`, the agent-session
- * routes go there instead (listed first, so Vite matches them before /api).
+ * routes go there instead (listed first, so Vite matches them before /api), and so does the token
+ * login of `make playground`.
  */
 export function apiProxy(
   target: string = API_TARGET,
   sessionsTarget: string = target,
-): { [SESSIONS_PATH]?: ProxyOptions; "/api": ProxyOptions } {
+): {
+  [SESSION_LOGIN_PATH]?: ProxyOptions;
+  [SESSIONS_PATH]?: ProxyOptions;
+  "/api": ProxyOptions;
+} {
   if (sessionsTarget === target) return { "/api": proxyTo(target) };
-  return { [SESSIONS_PATH]: proxyTo(sessionsTarget), "/api": proxyTo(target) };
+  return {
+    [SESSION_LOGIN_PATH]: {
+      ...proxyTo(sessionsTarget),
+      rewrite: (path) => path.replace(SESSION_LOGIN_PATH, "/"),
+    },
+    [SESSIONS_PATH]: proxyTo(sessionsTarget),
+    "/api": proxyTo(target),
+  };
 }
