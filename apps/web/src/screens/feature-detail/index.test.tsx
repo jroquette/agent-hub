@@ -409,6 +409,7 @@ describe("FeatureDetailScreen", () => {
         external_blockers: [],
         critical_path: ["AGH-48", "AGH-49"],
         warnings: [],
+        epics: [],
       },
     });
     const asked = (requests: Request[], path: string) =>
