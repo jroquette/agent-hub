@@ -418,6 +418,10 @@ pre {
   align-items: center;
   gap: var(--space-1);
 }
+.ah-seg button[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .ah-seg button[aria-pressed="true"] {
   background: var(--surface);
   color: var(--text);

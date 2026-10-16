@@ -192,6 +192,30 @@ describe("EvalTab", () => {
     expect(screen.getByText("No evals yet.")).toBeInTheDocument();
   });
 
+  it("puts a run waiting for the owner up front, scope locked (golden a11y)", async () => {
+    const waiting = anAgentSession({ id: anId(9, "0192a5e5"), status: "waiting_permission" });
+    window.localStorage.setItem(
+      "agent-hub:eval-run:agent-hub:control-plane",
+      JSON.stringify({
+        id: waiting.id,
+        scope: "AGH-201",
+        started_at: new Date().toISOString(),
+        known: evals.map((e) => e.path),
+      }),
+    );
+    const { container } = renderWithApi(tab({ evals }), {
+      routes: { ...driving, [`${AGENT}/${waiting.id}`]: waiting },
+    });
+
+    expect(await screen.findByRole("link", { name: /Answer in chat/ })).toHaveAttribute(
+      "href",
+      `/agent-sessions/${waiting.id}`,
+    );
+    expect(screen.getByRole("button", { name: "AGH-201" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Whole feature" })).toBeDisabled();
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
   it("has no serious axe violation (golden a11y)", async () => {
     const { container } = renderWithApi(tab({ evals }));
 

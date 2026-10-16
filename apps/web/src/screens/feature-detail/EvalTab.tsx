@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
@@ -9,6 +9,9 @@ import {
   Button,
   EmptyState,
   Icon,
+  IconButton,
+  IdChip,
+  PathText,
   ProblemError,
   SegmentedControl,
   StatusBadge,
@@ -17,7 +20,8 @@ import {
 } from "../../components";
 import { ApiProblem, useApi } from "../../lib/api";
 import { brainRoute } from "../../lib/brainLinks";
-import { fmtClock } from "../../lib/format";
+import { useNow } from "../../lib/clock";
+import { fmtAgo, fmtDateTime } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useDiscuss, type DiscussReference } from "../../shell/discuss";
 import { NoteView } from "../brain/NoteView";
@@ -137,7 +141,11 @@ const RUN_LOOK: Record<AgentSessionStatus, { status: Status; label: string; note
     label: "Waiting for you",
     note: "Claude asks before running a command. Answer in the chat.",
   },
-  idle: { status: "done", label: "Finished", note: "The new eval shows in the list within 15 s." },
+  idle: {
+    status: "idle",
+    label: "Finished without a new eval",
+    note: "A new eval can take 15 s to show. If none comes, open the chat to see why.",
+  },
   ended: { status: "ended", label: "Ended" },
   failed: { status: "failed", label: "Failed" },
 };
@@ -161,13 +169,14 @@ function EvalRunStrip({
   const { tz } = usePreferences();
   const start = useHubSessionStart(project);
   const create = useCreateAgentSession();
-  const [run, setRun] = useState<StoredRun | null>(() => readRun(key));
+  const [stored, setRun] = useState<StoredRun | null>(() => readRun(key));
+  const now = useNow(30_000);
   const [scope, setScope] = useState(FEATURE_SCOPE);
   const session = useApi(
     "/api/v1/agent-sessions/{agent_session_id}",
-    { path: { agent_session_id: run?.id ?? "" } },
+    { path: { agent_session_id: stored?.id ?? "" } },
     {
-      enabled: run !== null,
+      enabled: stored !== null,
       retry: false,
       refetchInterval: (query) => {
         const status = query.state.data?.status;
@@ -176,14 +185,25 @@ function EvalRunStrip({
     },
   );
   const gone = session.error instanceof ApiProblem && session.error.status === 404;
-  if (gone && run) {
+  // A run whose session was deleted is forgotten: its stored id is dropped, not shown.
+  const run = gone ? null : stored;
+  useEffect(() => {
+    if (gone) writeRun(key, null);
+  }, [gone, key]);
+  const forget = () => {
     writeRun(key, null);
     setRun(null);
-  }
+  };
   const status = session.data?.status;
   const inFlight = run !== null && (status === undefined || IN_FLIGHT.includes(status));
-  const look = status ? RUN_LOOK[status] : null;
   const fresh = run ? evals.filter((e) => !run.known.includes(e.path)) : [];
+  const look =
+    status === "idle" && fresh.length > 0
+      ? { status: "done" as const, label: "Finished", note: undefined }
+      : status
+        ? RUN_LOOK[status]
+        : null;
+  const waiting = status === "waiting_permission";
   const shownScope = inFlight ? run.scope : scope;
   const blocked = inFlight
     ? "An evaluation is already running. Open its chat to follow it."
@@ -214,22 +234,16 @@ function EvalRunStrip({
       <div className="ah-row ah-wrap" style={{ gap: 12 }}>
         <b>Evaluate</b>
         <span className="ah-small ah-muted">Scope</span>
-        <span
-          style={inFlight ? { pointerEvents: "none", opacity: "var(--disabled-opacity, 0.5)" } : {}}
-          aria-disabled={inFlight || undefined}
-        >
-          <SegmentedControl
-            label="Evaluation scope"
-            value={shownScope}
-            onChange={(id) => {
-              if (!inFlight) setScope(id);
-            }}
-            options={[
-              { id: FEATURE_SCOPE, label: "Whole feature" },
-              ...tickets.map((t) => ({ id: t, label: t })),
-            ]}
-          />
-        </span>
+        <SegmentedControl
+          label="Evaluation scope"
+          value={shownScope}
+          disabled={inFlight}
+          onChange={setScope}
+          options={[
+            { id: FEATURE_SCOPE, label: "Whole feature" },
+            ...tickets.map((t) => ({ id: t, label: t })),
+          ]}
+        />
         <span className="ah-grow" />
         {blocked ? (
           <Tooltip label={blocked}>
@@ -261,22 +275,25 @@ function EvalRunStrip({
           <b>{start.unavailable.title}.</b> {start.unavailable.detail}
         </Banner>
       )}
-      {create.error instanceof ApiProblem && (
+      {create.error && (
         <ProblemError
           compact
           title="Could not start the evaluator"
           detail={create.error.detail ?? create.error.title}
-          status={create.error.status}
+          status={create.error.status || undefined}
           onRetry={() => void evaluate()}
         />
       )}
       {run && (
-        <div className="ah-row ah-wrap ah-small" role="status" style={{ gap: 10 }}>
-          <StatusBadge status={look?.status ?? "queued"} label={look?.label ?? "Starting…"} />
-          <span>
-            {scopeLabel(run.scope)} · started {fmtClock(run.started_at, tz)}
+        <div className="ah-row ah-wrap ah-small" style={{ gap: 10 }}>
+          <span className="ah-row ah-wrap" role="status" style={{ gap: 10 }}>
+            <StatusBadge status={look?.status ?? "queued"} label={look?.label ?? "Starting…"} />
+            {look?.note && <span className="ah-muted">{look.note}</span>}
           </span>
-          {look?.note && <span className="ah-muted">{look.note}</span>}
+          <span title={fmtDateTime(run.started_at, tz)}>
+            {scopeLabel(run.scope)} · started{" "}
+            {fmtAgo(Math.max(0, now - Date.parse(run.started_at)) / 1000)}
+          </span>
           {fresh.map((e) => (
             <Button
               key={e.path}
@@ -291,10 +308,14 @@ function EvalRunStrip({
             </Button>
           ))}
           <span className="ah-grow" />
-          <AppLink className="ah-btn ah-btn-sm" href={agentSessionHref(run.id)}>
-            <Icon name="message-square" size="sm" />
-            Open chat
+          <AppLink
+            className={waiting ? "ah-btn ah-btn-sm ah-btn-primary" : "ah-btn ah-btn-sm"}
+            href={agentSessionHref(run.id)}
+          >
+            <Icon name={waiting ? "hand" : "message-square"} size="sm" />
+            {waiting ? "Answer in chat" : "Open chat"}
           </AppLink>
+          {!inFlight && <IconButton size="sm" icon="x" label="Clear this run" onClick={forget} />}
         </div>
       )}
     </section>
@@ -303,8 +324,14 @@ function EvalRunStrip({
 
 /* ---------- The selected eval ---------- */
 
+/** A frontmatter time as the app writes times; a bare date (no time) stays as it is. */
+function evaluatedText(value: string, tz: ReturnType<typeof usePreferences>["tz"]): string {
+  return value.includes("T") && !Number.isNaN(Date.parse(value)) ? fmtDateTime(value, tz) : value;
+}
+
 function EvalCard({ project, record }: { project: string; record: EvalRecord }) {
   const { addReference, references } = useDiscuss();
+  const { tz } = usePreferences();
   const pointed = references.some((r) => r.id === `eval:${record.delivery}`);
   return (
     <article
@@ -323,12 +350,12 @@ function EvalCard({ project, record }: { project: string; record: EvalRecord }) 
             record.acs === "all"
               ? "all ACs"
               : `${String(record.acs.length)} AC${record.acs.length === 1 ? "" : "s"}`,
-            record.commit ? `commit ${record.commit.slice(0, 7)}` : "",
-            record.evaluated_at ?? "",
+            record.evaluated_at ? evaluatedText(record.evaluated_at, tz) : "",
           ]
             .filter(Boolean)
             .join(" · ")}
         </span>
+        {record.commit && <IdChip id={record.commit} short={record.commit.slice(0, 7)} />}
         <span className="ah-grow" />
         <Button
           size="sm"
@@ -344,7 +371,9 @@ function EvalCard({ project, record }: { project: string; record: EvalRecord }) 
           Open in Brain
         </Link>
       </div>
-      <span className="ah-mono ah-small ah-muted">brain/{record.path}</span>
+      <span className="ah-small ah-muted">
+        <PathText path={`brain/${record.path}`} max={80} dimDir />
+      </span>
       {record.problem ? (
         <ProblemError title="This eval could not be read" detail={record.problem} />
       ) : (
@@ -388,7 +417,8 @@ export function EvalTab({ project, slug, tickets, evals, selected, onSelect }: E
         <div className="ah-card">
           <EmptyState icon="flask-conical" title="No evals yet.">
             The evaluator agent writes one note per delivery in{" "}
-            <span className="ah-mono">evals/&lt;delivery&gt;.md</span>.
+            <span className="ah-mono">evals/&lt;delivery&gt;.md</span>. Press Evaluate above to
+            write the first one.
           </EmptyState>
         </div>
       </div>
