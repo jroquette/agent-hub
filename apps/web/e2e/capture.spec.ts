@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 // exported commit's build on synthetic data, into a PNG the delivery uses as its visual baseline. It
 // runs only when the export passes AH_CAPTURE; the smoke never does.
 interface CaptureRoute {
-  /** The PNG's path under AH_CAPTURE_DIR, without the extension (`<group>/<route slug>`). */
+  /** The PNG's path under AH_CAPTURE_DIR, without the extension (`<area>/<route slug>`). */
   file: string;
   path: string;
   /** Open the first link whose href starts with this, from `path` (a detail screen of the demo data). */
