@@ -55,6 +55,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - `hub web` highlights completed code blocks in the chat, notes and plans (about a dozen languages, lazily loaded,
   design-token colours in both themes) with `lowlight`; a block still streaming or over 2,000 lines or 64 KiB stays
   plain, and agent output stays inert (ADR 0034, AGH-252, AC-234.31).
+- At the live-sessions limit, a new session no longer gets a 429 while some are only idle: the one idle the longest
+  ends `idle_timeout` and a message reopens it in place. Only busy sessions (running, or waiting on an answer) fill
+  the limit now (AGH-263).
 - The shake is lighter (3 reversals of 25 px within 700 ms) and captures only the visible screen, so a long page
   such as a chat opens New session at once. Under `make dev` or `make live` it starts in the project and folder of
   the served checkout, whatever the scope (AGH-262).
