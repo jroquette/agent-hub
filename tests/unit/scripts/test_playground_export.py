@@ -27,6 +27,7 @@ from scripts.playground_export import (
     owner_sessions,
     read_session,
     render_brief,
+    repeated_changes,
     route_patterns,
     routes_of,
     screens_of,
@@ -365,6 +366,38 @@ def test_patches_new_and_changed_files_but_local_ones_when_uncommitted(tmp_path:
     assert "+edited" in patch
     assert "+brand new" in patch
     assert git("diff", "--cached", "--name-only", cwd=repo) == ""
+
+
+def test_maps_cherry_pick_merged_back_to_first_when_range_repeats_change(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    base = git("rev-parse", "HEAD", cwd=repo).strip()
+    git("checkout", "-q", "-b", "other", cwd=repo)
+    (repo / "b.py").write_text("b\n", "utf-8")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "feat: b", cwd=repo)
+    first = git("rev-parse", "HEAD", cwd=repo).strip()
+    git("checkout", "-q", "main", cwd=repo)
+    (repo / "c.py").write_text("c\n", "utf-8")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "feat: c", cwd=repo)
+    git("cherry-pick", first, cwd=repo)
+    git("commit", "-q", "--amend", "-m", "feat: b, picked", cwd=repo)
+    picked = git("rev-parse", "HEAD", cwd=repo).strip()
+    git("merge", "-q", "--no-edit", "other", cwd=repo)
+
+    # Both were made in the same second: either may be the first in the log.
+    [(repeat, kept)] = repeated_changes(base, "HEAD", cwd=repo).items()
+    assert {repeat, kept} == {first, picked}
+
+
+def test_counts_repeat_as_first_commit_when_requests_built() -> None:
+    commits = [_commit("8" * 40, "Makefile")]
+    turn = Turn("t", "Do it", commits=["9" * 40])
+
+    requests = build_requests([_session("Ask", turn)], commits, same_as={"9" * 40: "8" * 40})
+
+    assert requests[0].commits == ["8" * 40]
+    assert requests[0].turns[0].commits == ["8" * 40]
 
 
 def test_names_snapshot_after_branch_prefix_else_email_when_branch_named() -> None:
