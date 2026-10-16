@@ -114,7 +114,7 @@ describe("SkillsPickerScreen states", () => {
     const cells = within(row)
       .getAllByRole("cell")
       .map((cell) => cell.textContent);
-    expect(cells.slice(2)).toEqual(["2", "1", "1", "1", "1 with problems"]);
+    expect(cells.slice(2)).toEqual(["1", "2", "1", "1", "1 with problems"]);
     expect(within(row).getByRole("link", { name: "1 item with problems in demo" })).toHaveAttribute(
       "href",
       "/projects/demo/skills?diag=1",
@@ -154,7 +154,7 @@ describe("SkillsScreen states", () => {
       "/projects/demo",
     );
     expect(
-      await screen.findByText(/The skills, agents and hooks demo's agents work with/),
+      await screen.findByText(/The agents, skills and hooks demo's agents work with/),
     ).toBeInTheDocument();
   });
 
