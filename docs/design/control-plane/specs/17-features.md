@@ -65,6 +65,22 @@ otherwise, this list wins. Each item is an acceptance criterion.
 - **AC-268.10 Implement ends at review.** Given every ticket In Review or Done in Linear (or with an approved review
   record), when the golden path is built, then Implement is done; with tickets, a failing AC no longer holds
   Implement (Evaluate reports it) and is only counted in Implement's meta.
+- **AC-268.11 Graph.** Given the ticket flow, then its steps share the width and an edge is drawn from each blocker
+  to the ticket it holds back, the critical path, plan-only and started-early edges styled apart (the node
+  measuring is the workflow graph's, as a shared hook).
+- **AC-268.12 Cards.** Given a card of the flow, then it leads with the id and the title (a conventional-commit prefix
+  as a chip), with readiness and an AC meter below a divider; the legend folds beside the flow's title.
+- **AC-268.13 Table.** Given the Tickets table, then ids stay on one line, an epic is tagged in its title and its
+  children are marked with a branch.
+- **AC-268.14 Done stays put.** Given a ticket that is done, when the flow is drawn, then it stays in its step, so the
+  steps after it do not move.
+- **AC-268.15 Opening tab.** Given a feature without `?doc=`, when it opens, then it opens where its work is: the
+  record being written (Spec, Research, Plan), Tickets while it is built and reviewed, Criteria once it is evaluated
+  or shipped.
+- **AC-268.16 Steps open tabs.** Given the golden path, when a step is chosen, then the tab holding its evidence opens
+  (Evaluate opens Eval).
+- **AC-268.17 Header chips.** Given the feature's tickets, then each header chip shows the id with its Linear status
+  and the title on hover; the "PR —" placeholder is gone while GitHub is not connected.
 
 ---
 
