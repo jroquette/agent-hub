@@ -332,3 +332,41 @@ test("Skills catalog and a skill detail load from the hub's files", async ({ pag
     await expect(page.locator("pre.ah-skill-raw")).toContainText("name: feature");
   });
 });
+
+// AGH-233 (AC-213.20): the demo hub's `smoke` workflow (a sign-off gate, then a shell node that
+// works until cancelled) is started from Workflow runs (always live), its gate approved in Run
+// detail, and the resumed run cancelled there; the installed hub runs it as `hub web`'s child.
+// Run alone by test_starts_approves_and_cancels_when_workflow_run_driven_from_web.
+const CHILD_MS = 30_000;
+
+test("Web-driven workflow run starts, is approved at its gate and is cancelled", async ({
+  page,
+  baseURL,
+}) => {
+  // Three children (start, decide and resume, cancel) and three axe scans: more than the default.
+  test.setTimeout(4 * CHILD_MS);
+  const problems = watch(page, baseURL ?? "");
+  await page.goto("/runs");
+  await page.getByRole("button", { name: "Start run" }).click();
+  const dialog = page.getByRole("dialog", { name: "Start a workflow run" });
+  await dialog.getByLabel("Workflow").selectOption({ label: "demo / smoke" });
+  await dialog.getByLabel("note").fill("Started by the smoke.");
+  await expectAccessible(page);
+  await dialog.getByRole("button", { name: "Start run" }).click();
+
+  await expect(page).toHaveURL(/\/runs\/[a-z0-9-]+$/);
+  const waiting = page.getByRole("region", { name: "Waiting for you" });
+  await expect(waiting.getByText("sign-off")).toBeVisible({ timeout: CHILD_MS });
+  await expectAccessible(page);
+  await waiting.getByRole("button", { name: "Approve" }).click();
+  await expect(waiting).toBeHidden({ timeout: CHILD_MS });
+
+  const commands = page.getByRole("group", { name: "Run commands" });
+  await commands.getByRole("button", { name: "Cancel" }).click();
+  const confirm = page.getByRole("dialog", { name: "Cancel this run?" });
+  await expectAccessible(page);
+  await confirm.getByRole("button", { name: "Cancel run" }).click();
+  await expect(page.getByText(/^Cancel sent/)).toBeVisible();
+  await expect(commands).toBeHidden({ timeout: CHILD_MS });
+  expect(problems).toEqual([]);
+});

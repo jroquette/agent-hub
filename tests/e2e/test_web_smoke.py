@@ -39,6 +39,12 @@ starts a session from the Sessions screen, reloads while the permission card wai
 sends one message through the composer, reloads again: the transcript and state survive, the CSP
 is unchanged, no other host is requested and no console error is logged.
 
+AGH-233 (AC-213.20): the demo hub holds a ``smoke`` workflow (a sign-off gate, then a shell node
+that sleeps until cancelled). Its own test (``-k workflow_run_driven``) starts it from Workflow
+runs (always live: ``hub web`` runs the installed hub as its child), approves the gate in Run
+detail and cancels the resumed run there; the run ends cancelled and its gate approved, with no
+console error and no serious axe violation.
+
 The page smoke runs every other test of ``smoke.spec.ts``.
 """
 
@@ -141,6 +147,28 @@ AGENT_PROMPT = "Run the build."
 AGENT_FOLLOW_UP = "Now run the tests."
 # The Playwright test of smoke.spec.ts that opens the Skills catalog and a skill's detail.
 SKILLS_SPEC = "Skills"
+# The Playwright test of smoke.spec.ts that drives a workflow run from the web (AC-213.20), and
+# the demo hub's workflow it runs: a sign-off gate, then a shell node that works until cancelled.
+WORKFLOWS_SPEC = "Web-driven workflow run"
+SMOKE_WORKFLOW = "workflows/smoke/smoke.yaml"
+SMOKE_WORKFLOW_TEXT = """\
+version: 1
+name: smoke
+revision: 1
+description: Waits for a sign-off, then works until it is cancelled.
+inputs:
+  note:
+    type: string
+    description: A note for the run.
+nodes:
+  - id: sign-off
+    type: approval
+    message: Go on?
+  - id: work
+    type: shell
+    command: [sleep, "300"]
+    depends_on: [sign-off]
+"""
 # The demo hub's own skill (AGH-164), beside the managed ones ``hub init`` writes.
 DEMO_SKILL = "plugin/demo/skills/demo-check/SKILL.md"
 DEMO_SKILL_TEXT = (
@@ -427,6 +455,13 @@ def _write_skill(hub: Path) -> None:
     skill.write_text(DEMO_SKILL_TEXT, encoding="utf-8")
 
 
+def _write_workflow(hub: Path) -> None:
+    """The demo hub's own workflow, which the web starts, approves and cancels (AC-213.20)."""
+    workflow = hub / SMOKE_WORKFLOW
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(SMOKE_WORKFLOW_TEXT, encoding="utf-8")
+
+
 def _publish_hub(hub: Path, origin: HubOrigin) -> None:
     """Make ``hub`` a checkout of ``acme/demo-hub`` whose ``main`` is on the bare origin."""
     origin.git("init", "--quiet", "--initial-branch=main", cwd=hub)
@@ -601,6 +636,7 @@ def ingest_scenario(
     _write_feature(demo)
     _write_brain(demo)
     _write_skill(demo)
+    _write_workflow(demo)
     _publish_hub(demo, origin)
     now = datetime.now(UTC)
     with httpx.Client(base_url=web.url, timeout=REQUEST_SECONDS) as client:
@@ -702,7 +738,10 @@ def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingest
         tmp_path,
         origin=hub_origin,
         run=run,
-        selection=("--grep-invert", f"{TICKETS_SPEC}|{SKILLS_SPEC}|{AGENT_SESSION_SPEC}"),
+        selection=(
+            "--grep-invert",
+            f"{TICKETS_SPEC}|{SKILLS_SPEC}|{AGENT_SESSION_SPEC}|{WORKFLOWS_SPEC}",
+        ),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -824,3 +863,40 @@ def test_survives_reload_when_session_driven_agent_session(  # noqa: PLR0913 -- 
     assert page.headers["content-security-policy"] == EXPECTED_CSP
     started = [record for record in stub_claude.records() if record.event == "start"]
     assert any("stream-json" in record.args for record in started)
+
+
+def test_starts_approves_and_cancels_when_workflow_run_driven_from_web(
+    hub_web: RunningWeb,
+    *,
+    installed_hub: InstalledHub,
+    hub_origin: HubOrigin,
+    tmp_path: Path,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    result = _playwright(
+        hub_web,
+        installed_hub,
+        tmp_path,
+        origin=hub_origin,
+        run=run,
+        selection=("--grep", WORKFLOWS_SPEC),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert re.search(r"\b1 passed\b", result.stdout), result.stdout
+    assert "skipped" not in result.stdout, result.stdout
+    with httpx.Client(base_url=hub_web.url, timeout=REQUEST_SECONDS) as client:
+        listed = client.get("/api/v1/workflow-runs", params={"workflow": "smoke"})
+        gates = client.get(
+            "/api/v1/approvals",
+            params={"project": "demo", "kind": "human_gate", "status": "all", "limit": 200},
+        )
+    listed.raise_for_status()
+    gates.raise_for_status()
+    approvals = gates.json()["items"]
+    [smoke] = listed.json()["items"]
+    assert smoke["status"] == "cancelled"
+    # The resumed run reached its shell node before the cancel stopped it.
+    assert "work" in {step["key"] for step in smoke["steps"]}
+    [gate] = [item for item in approvals if item["session_id"] == f"run:{smoke['id']}"]
+    assert (gate["gate_id"], gate["status"]) == (f"{smoke['id']}:sign-off:1", "approved")
