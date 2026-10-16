@@ -55,6 +55,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   every change to it as a diff and a Viewed mark kept per session in the browser. Each turn that edited files shows
   them in a card under its activity line. Both drawers resize from their left edge, by mouse or keyboard, or widen
   to the page (AGH-265).
+- A file change in the chat's review and activity panel shows the file's real line numbers (git's two gutters,
+  kept in view while the code scrolls sideways) once Claude reports the change: the driver stores it as the
+  `tool.result` record's `diff`. A long file's changes keep their height and scroll whole (AGH-265).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to
