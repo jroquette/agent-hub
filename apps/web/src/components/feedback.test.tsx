@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
@@ -132,6 +133,20 @@ describe("ConfirmDialog", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "agent-hub" } });
     fireEvent.click(confirm);
     expect(onConfirm).toHaveBeenCalled();
+  });
+
+  it("renders through Dialog: focus on Cancel, Escape and the X cancel", async () => {
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog title="Delete this session?" confirmLabel="Delete" onCancel={onCancel} />,
+    );
+
+    const dialog = screen.getByRole("alertdialog", { name: "Delete this session?" });
+    expect(dialog).toHaveClass("ah-dialog-frame");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onCancel).toHaveBeenCalledTimes(2);
   });
 
   it("disables a later phase's confirmation", () => {
