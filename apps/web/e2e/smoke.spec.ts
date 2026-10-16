@@ -362,6 +362,11 @@ test("Web-driven workflow run starts, is approved at its gate and is cancelled",
   await expectAccessible(page);
   await waiting.getByRole("button", { name: "Approve" }).click();
   await expect(waiting).toBeHidden({ timeout: CHILD_MS });
+  // The resumed child reaches the shell node, so the cancel stops a live node, not a paused run.
+  const graph = page.getByRole("group", { name: "Run graph" });
+  await expect(graph.getByRole("button", { name: /^work/ })).toContainText("Running", {
+    timeout: CHILD_MS,
+  });
 
   const commands = page.getByRole("group", { name: "Run commands" });
   await commands.getByRole("button", { name: "Cancel" }).click();
