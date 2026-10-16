@@ -1,5 +1,8 @@
 """Unified diffs of the file tools' calls (AC-165.31): what an ``Edit`` or ``Write`` changes.
 
+``patch_diff`` renders the hunks the engine reports once a file tool ran (its
+``structuredPatch``): the same format, with the file's real line numbers.
+
 Pure, over the tool's input only (never the file on disk): ``edit_diff`` compares
 ``old_string`` with ``new_string``, ``write_diff`` shows the written content as all added.
 Headers are git's (``a/<path>``, ``b/<path>``, ``/dev/null`` for a new file), every line ends in
@@ -44,6 +47,27 @@ def write_diff(path: str, content: str, *, limit: int = DIFF_MAX_BYTES) -> str:
         return _omitted("/dev/null", f"b/{path}", size)
     lines = difflib.unified_diff([], new_lines, fromfile="/dev/null", tofile=f"b/{path}")
     return _capped(lines, limit)
+
+
+def patch_diff(path: str, hunks: object, *, limit: int = DIFF_MAX_BYTES) -> str | None:
+    """The diff of ``hunks`` (``[{oldStart, oldLines, newStart, newLines, lines}]``) in
+    ``path``, with the file's line numbers; None when they are not that shape or empty."""
+    if not isinstance(hunks, list) or not hunks:
+        return None
+    out = [f"--- a/{path}", f"+++ b/{path}"]
+    for hunk in hunks:
+        if not isinstance(hunk, dict):
+            return None
+        numbers = [hunk.get(key) for key in ("oldStart", "oldLines", "newStart", "newLines")]
+        lines = hunk.get("lines")
+        if not all(type(n) is int and n >= 0 for n in numbers) or not isinstance(lines, list):
+            return None
+        if not all(isinstance(line, str) for line in lines):
+            return None
+        old_start, old_lines, new_start, new_lines = numbers
+        out.append(f"@@ -{old_start},{old_lines} +{new_start},{new_lines} @@")
+        out.extend(lines)
+    return _capped(out, limit)
 
 
 def _over_bound(size: int, line_count: int) -> bool:

@@ -2,6 +2,7 @@ from agent_hub.core.agent_sessions.diff import (
     INPUT_MAX_BYTES,
     INPUT_MAX_LINES,
     edit_diff,
+    patch_diff,
     write_diff,
 )
 
@@ -79,3 +80,52 @@ def test_omits_diff_when_written_content_over_bound() -> None:
     diff = write_diff("big.md", "é" * (128 * 1024) + "!")
 
     assert diff == "--- /dev/null\n+++ b/big.md\n... diff omitted (262145 bytes)\n"
+
+
+def test_renders_engine_hunks_with_file_line_numbers_when_patch_given() -> None:
+    hunks = [
+        {
+            "oldStart": 12,
+            "oldLines": 3,
+            "newStart": 12,
+            "newLines": 4,
+            "lines": [" a", "-b", "+c", "+d", " e"],
+        },
+        {"oldStart": 40, "oldLines": 1, "newStart": 41, "newLines": 1, "lines": ["-x", "+y"]},
+    ]
+
+    diff = patch_diff("src/app.py", hunks)
+
+    assert diff == (
+        "--- a/src/app.py\n+++ b/src/app.py\n"
+        "@@ -12,3 +12,4 @@\n a\n-b\n+c\n+d\n e\n"
+        "@@ -40,1 +41,1 @@\n-x\n+y\n"
+    )
+
+
+def test_returns_none_when_patch_not_engine_shape() -> None:
+    good = {"oldStart": 1, "oldLines": 1, "newStart": 1, "newLines": 1, "lines": ["-a", "+b"]}
+
+    assert patch_diff("x.py", []) is None
+    assert patch_diff("x.py", None) is None
+    assert patch_diff("x.py", [good | {"oldStart": "1"}]) is None
+    assert patch_diff("x.py", [good | {"newLines": -1}]) is None
+    assert patch_diff("x.py", [good | {"lines": [1]}]) is None
+    assert patch_diff("x.py", ["@@"]) is None
+
+
+def test_caps_patch_diff_when_over_limit() -> None:
+    hunk = {
+        "oldStart": 1,
+        "oldLines": 0,
+        "newStart": 1,
+        "newLines": 500,
+        "lines": ["+" + "x" * 99] * 500,
+    }
+
+    diff = patch_diff("x.py", [hunk], limit=2_000)
+
+    assert diff is not None
+    assert len(diff.encode()) <= 2_000
+    assert diff.endswith(" bytes)\n")
+    assert "... diff truncated (" in diff

@@ -25,30 +25,81 @@ export const TOOL_STATE: Record<ToolState, { icon: IconName; text: string }> = {
   denied: { icon: "shield-x", text: "Denied" },
 };
 
-/** A unified diff as text (`<pre>`), each line tinted by its sign. */
-export function DiffText({ diff, label }: { diff: string; label: string }) {
+type DiffKind = "head" | "hunk" | "add" | "del" | "ctx";
+
+/** One line of a unified diff: its kind and, inside a hunk, its number in the old and new file. */
+export interface DiffLine {
+  kind: DiffKind;
+  text: string;
+  oldNo: number | null;
+  newNo: number | null;
+}
+
+const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+/** The lines of a unified diff, numbered from each hunk's header (`@@ -12,3 +12,4 @@`). */
+export function diffLines(diff: string): DiffLine[] {
+  let oldNo = 0;
+  let newNo = 0;
+  const text = diff.endsWith("\n") ? diff.slice(0, -1) : diff;
+  return text.split("\n").map((line): DiffLine => {
+    if (line.startsWith("+++") || line.startsWith("---"))
+      return { kind: "head", text: line, oldNo: null, newNo: null };
+    const hunk = HUNK.exec(line);
+    if (hunk) {
+      oldNo = Number(hunk[1]);
+      newNo = Number(hunk[2]);
+      return { kind: "hunk", text: line, oldNo: null, newNo: null };
+    }
+    if (line.startsWith("+")) return { kind: "add", text: line, oldNo: null, newNo: newNo++ };
+    if (line.startsWith("-")) return { kind: "del", text: line, oldNo: oldNo++, newNo: null };
+    if (line.startsWith(" ")) return { kind: "ctx", text: line, oldNo: oldNo++, newNo: newNo++ };
+    // "... diff truncated", or a line outside any hunk.
+    return { kind: "ctx", text: line, oldNo: null, newNo: null };
+  });
+}
+
+/**
+ * A unified diff as text (`<pre>`), each line tinted by its sign. `numbered`, for a diff with the
+ * file's real line numbers, adds git's two gutters (old, new) and leaves the file headers out.
+ */
+export function DiffText({
+  diff,
+  label,
+  numbered = false,
+}: {
+  diff: string;
+  label: string;
+  numbered?: boolean;
+}) {
+  const lines = diffLines(diff);
   return (
     // A diff can scroll sideways, so the keyboard must reach it.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-    <pre className="as-diff" tabIndex={0} aria-label={label}>
-      {diff.split("\n").map((line, i) => {
-        const kind =
-          line.startsWith("+++") || line.startsWith("---")
-            ? "head"
-            : line.startsWith("@@")
-              ? "hunk"
-              : line.startsWith("+")
-                ? "add"
-                : line.startsWith("-")
-                  ? "del"
-                  : "ctx";
-        return (
-          <span key={i} className={`as-diff-${kind}`}>
-            {line}
+    <pre className={cx("as-diff", numbered && "as-diff-numbered")} tabIndex={0} aria-label={label}>
+      {lines.map((line, i) =>
+        numbered ? (
+          line.kind === "head" ? null : (
+            <span key={i} className={`as-diff-line as-diff-${line.kind}`}>
+              <span className="as-diff-no" aria-hidden="true">
+                {line.oldNo ?? ""}
+              </span>
+              <span className="as-diff-no" aria-hidden="true">
+                {line.newNo ?? ""}
+              </span>
+              <span className="as-diff-code">
+                {line.text}
+                {"\n"}
+              </span>
+            </span>
+          )
+        ) : (
+          <span key={i} className={`as-diff-${line.kind}`}>
+            {line.text}
             {"\n"}
           </span>
-        );
-      })}
+        ),
+      )}
     </pre>
   );
 }
@@ -133,13 +184,19 @@ function ResultBody({ result }: { result: ToolResultView }) {
 }
 
 function InputBody({ tool }: { tool: ToolView }) {
-  const diff = toolDiff(tool);
+  // Claude's own report of the change, once it ran, carries the file's line numbers.
+  const reported = tool.result?.diff ?? null;
+  const diff = reported ?? toolDiff(tool);
   const command = typeof tool.input.command === "string" ? tool.input.command : null;
   return (
     <div className="as-tool-section">
       <div className="as-tool-label">{diff !== null ? "Diff" : "Input"}</div>
       {diff !== null ? (
-        <DiffText diff={diff} label={`Diff of ${toolSummary(tool.input) || tool.name}`} />
+        <DiffText
+          diff={diff}
+          label={`Diff of ${toolSummary(tool.input) || tool.name}`}
+          numbered={reported !== null}
+        />
       ) : command !== null ? (
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
         <pre className="as-pre" tabIndex={0}>
