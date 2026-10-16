@@ -354,7 +354,8 @@ test("Web-driven workflow run starts, is approved at its gate and is cancelled",
   await expectAccessible(page);
   await dialog.getByRole("button", { name: "Start run" }).click();
 
-  await expect(page).toHaveURL(/\/runs\/[a-z0-9-]+$/);
+  // Start run opens the run once its child's first event lists it: a child's cold start.
+  await expect(page).toHaveURL(/\/runs\/[a-z0-9-]+$/, { timeout: CHILD_MS });
   const waiting = page.getByRole("region", { name: "Waiting for you" });
   await expect(waiting.getByText("sign-off")).toBeVisible({ timeout: CHILD_MS });
   await expectAccessible(page);
