@@ -26,7 +26,9 @@ import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { DecideDialog, type DecideAction } from "./DecideDialog";
 import { learningDiscussTarget } from "./discussLearning";
 import { useNoteDraft } from "./noteDraft";
+import { ClaudeReviewNotice } from "./ClaudeReviewBadge";
 import { ReviewPanel } from "./ReviewPanel";
+import type { ClaudeReview } from "./triage";
 import { useDecideLearning, useHubRepo, useLearning, type LearningActionResult } from "./queries";
 
 type Learning = components["schemas"]["Learning"];
@@ -397,10 +399,12 @@ export interface LearningDetailProps {
    * while the decision moves it out of the list it was picked from.
    */
   onDecide?: ((id: string) => void) | undefined;
+  /** Claude's review of this learning, from the screen's triage state. */
+  claude?: ClaudeReview | undefined;
 }
 
 /** One learning: its note, source, target and the accept/reject actions (AC-201.29). */
-export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) {
+export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetailProps) {
   const query = useLearning(id);
   const detail = query.data;
   const l: Learning | undefined = detail ?? row;
@@ -412,6 +416,7 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
   const [result, setResult] = useState<LearningActionResult | null>(null);
   const targetId = useId();
   const choicesId = useId();
+  const reviewId = useId();
   // The learning is what the Discuss panel talks about: open on a proposal, so the owner can
   // review, improve or drop it with Claude straight away; on a decided one, when asked.
   const placed = l ? (result?.state ?? stateOf(l)) : null;
@@ -537,6 +542,12 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
             </div>
           )}
         </div>
+        {claude && (
+          <ClaudeReviewNotice
+            review={claude}
+            reviewAnchor={canDecide && detail.note ? reviewId : null}
+          />
+        )}
 
         <div style={{ marginTop: 16 }}>
           {(fm.type ?? fm.repos ?? fm.last_verified) && (
@@ -563,6 +574,7 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
           </Section>
           {canDecide && detail.note && (
             <Section label="Review">
+              <div id={reviewId} style={{ scrollMarginTop: 16 }} />
               <ReviewPanel
                 detail={detail}
                 currentBody={draft.draft?.body ?? detail.note.markdown}
