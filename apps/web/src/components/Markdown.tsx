@@ -11,9 +11,13 @@
  * A skill body (AGH-164) passes `localLink`, asked first for every relative link (a bundled file of
  * the skill opens in the page; null falls back to the rules above, so text without a note), and
  * `stepAnchors`, which gives each top-level numbered item the id `step-<n>` (P5).
+ *
+ * The readable view of a note passes `inlineCode`, asked for each code span: a node to show in its
+ * place (a code reference as a compact chip), or null for the usual `<code>`.
  */
 import "./Markdown.css";
 
+import { Fragment } from "react";
 import type { MouseEvent, ReactNode } from "react";
 
 import {
@@ -471,6 +475,8 @@ export interface MarkdownProps {
   localLink?: ((href: string) => LocalLink | null) | undefined;
   /** Gives each top-level numbered list item the id `step-<n>`, counted through the body (P5). */
   stepAnchors?: boolean | undefined;
+  /** Asked for each code span: a node shown in its place, or null for the usual `<code>`. */
+  inlineCode?: ((code: string) => ReactNode) | undefined;
   className?: string | undefined;
 }
 
@@ -484,6 +490,7 @@ interface Ctx {
   note: NotePlace | undefined;
   onBrainLink: MarkdownProps["onBrainLink"];
   localLink: MarkdownProps["localLink"];
+  inlineCode: MarkdownProps["inlineCode"];
   ids: Map<string, number>;
   /** The last step number given, or null when steps are not anchored. */
   steps: number | null;
@@ -556,8 +563,11 @@ function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
     switch (node.t) {
       case "text":
         return node.v;
-      case "code":
+      case "code": {
+        const custom = ctx.inlineCode?.(node.v);
+        if (custom !== null && custom !== undefined) return <Fragment key={key}>{custom}</Fragment>;
         return <code key={key}>{node.v}</code>;
+      }
       case "strong":
         return <strong key={key}>{renderInline(node.c, ctx)}</strong>;
       case "em":
@@ -685,6 +695,21 @@ function renderBlock(block: Block, key: number, ctx: Ctx, tight = false, top = f
   }
 }
 
+function sourceLines(source: string): string[] {
+  return source.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").split("\n");
+}
+
+/**
+ * The top-level headings of a note as the renderer reads them (a `#` inside a code block is not one),
+ * in order: what a table of contents lists, named with `tocAnchors` like the rendered headings.
+ */
+export function markdownHeadings(source: string): { level: number; text: string }[] {
+  if (new TextEncoder().encode(source).length > MAX_MARKDOWN_BYTES) return [];
+  return parseBlocks(sourceLines(source), { list: 0, quote: 0 }).flatMap((block) =>
+    block.t === "heading" ? [{ level: block.level, text: block.text }] : [],
+  );
+}
+
 /** Renders a Markdown note safely; see the module comment for what is and is not rendered. */
 export function Markdown({
   source,
@@ -692,6 +717,7 @@ export function Markdown({
   onBrainLink,
   localLink,
   stepAnchors,
+  inlineCode,
   className,
 }: MarkdownProps) {
   if (new TextEncoder().encode(source).length > MAX_MARKDOWN_BYTES) {
@@ -704,8 +730,15 @@ export function Markdown({
       </div>
     );
   }
-  const lines = source.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").split("\n");
-  const ctx: Ctx = { note, onBrainLink, localLink, ids: new Map(), steps: stepAnchors ? 0 : null };
+  const lines = sourceLines(source);
+  const ctx: Ctx = {
+    note,
+    onBrainLink,
+    localLink,
+    inlineCode,
+    ids: new Map(),
+    steps: stepAnchors ? 0 : null,
+  };
   return (
     <div className={cx("ah-md", className)}>
       {parseBlocks(lines, { list: 0, quote: 0 }).map((block, key) =>

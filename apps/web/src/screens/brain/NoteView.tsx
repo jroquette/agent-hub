@@ -1,10 +1,24 @@
+import "./readable.css";
+
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import type { components } from "../../api/schema";
-import { Banner, EmptyState, Markdown, ProblemError, Skeleton } from "../../components";
-import { anchorId } from "../../lib/brainLinks";
+import type { MarkdownProps } from "../../components";
+import {
+  Banner,
+  EmptyState,
+  Icon,
+  Markdown,
+  ProblemError,
+  Skeleton,
+  markdownHeadings,
+  plainHeadingText,
+} from "../../components";
+import { anchorId, tocAnchors } from "../../lib/brainLinks";
+import { AnchorLink } from "../skills/BodyView";
 import { useBrainNote } from "./queries";
+import { codeReference, readableFields, readableNote } from "./readable";
 
 type FrontmatterValue = components["schemas"]["FrontmatterValue"];
 
@@ -28,13 +42,79 @@ export interface NoteViewProps {
   path: string;
   /** What a missing note (404) says; defaults to "No note <path> in the <project> brain." */
   missing?: string;
+  /**
+   * How the note is shown: `agent` (default) is the file as the agents read it, every reference
+   * and the frontmatter as written; `readable` is the same file laid out for a person.
+   */
+  view?: NoteViewMode | undefined;
 }
+
+export type NoteViewMode = "readable" | "agent";
+
+type Note = components["schemas"]["BrainNote"];
+
+/** The note for a person: its fields in words, a contents list, and the agents' references compact. */
+function ReadableBody({ data, onBrainLink }: { data: Note; onBrainLink: OnBrainLink }) {
+  const { source, shorthand } = readableNote(data.markdown);
+  const fields = readableFields(data.frontmatter);
+  const sections = tocAnchors(markdownHeadings(source), plainHeadingText).filter(
+    (entry) => entry.anchor !== null && entry.level === 2,
+  );
+  return (
+    <div className="ah-readable">
+      {sections.length >= 3 && (
+        <nav className="ah-readable-toc" aria-label="Contents">
+          <p className="ah-overline" style={{ margin: "0 0 6px" }}>
+            Contents
+          </p>
+          <ol>
+            {sections.map((entry) => (
+              <li key={entry.anchor}>
+                <AnchorLink anchor={entry.anchor ?? ""}>{plainHeadingText(entry.text)}</AnchorLink>
+              </li>
+            ))}
+          </ol>
+        </nav>
+      )}
+      <div className="ah-readable-main">
+        {fields.length > 0 && (
+          <dl className="ah-readable-fields" aria-label="About this note">
+            {fields.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{valueText(value)}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        <Markdown
+          source={source}
+          note={{ project: data.project, path: data.path }}
+          onBrainLink={onBrainLink}
+          className="ah-md-readable"
+          inlineCode={(code) => {
+            const ref = codeReference(code, shorthand);
+            if (!ref) return null;
+            return (
+              <span className="ah-md-ref" title={ref.title}>
+                <Icon name="file-text" size="sm" />
+                {ref.label}
+              </span>
+            );
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+type OnBrainLink = NonNullable<MarkdownProps["onBrainLink"]>;
 
 /**
  * One brain note rendered with the safe `Markdown` (D3, AC-201.35/36): frontmatter as chips, links
  * to other notes open in the app, and the URL's `#anchor` scrolls to its heading once loaded.
  */
-export function NoteView({ project, path, missing }: NoteViewProps) {
+export function NoteView({ project, path, missing, view = "agent" }: NoteViewProps) {
   const note = useBrainNote(project, path);
   const navigate = useNavigate();
   const { hash } = useLocation();
@@ -84,6 +164,10 @@ export function NoteView({ project, path, missing }: NoteViewProps) {
   }
 
   const data = note.data;
+  const openNote: OnBrainLink = (link) => void navigate(link.route);
+  if (view === "readable" && !data.frontmatter_problem) {
+    return <ReadableBody data={data} onBrainLink={openNote} />;
+  }
   const fields = Object.entries(data.frontmatter);
   return (
     <div className="ah-stack" style={{ gap: 12 }}>
@@ -105,11 +189,7 @@ export function NoteView({ project, path, missing }: NoteViewProps) {
           ))}
         </ul>
       )}
-      <Markdown
-        source={data.markdown}
-        note={{ project, path }}
-        onBrainLink={(link) => void navigate(link.route)}
-      />
+      <Markdown source={data.markdown} note={{ project, path }} onBrainLink={openNote} />
     </div>
   );
 }

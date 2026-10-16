@@ -1,0 +1,112 @@
+/* The readable view of a note (NoteView, view="readable"): the agent's file laid out for a person. */
+.ah-readable {
+  display: flex;
+  gap: var(--space-6);
+  align-items: flex-start;
+}
+.ah-readable-main {
+  flex: 1;
+  min-width: 0;
+}
+.ah-readable-toc {
+  position: sticky;
+  top: var(--space-4);
+  order: 2;
+  flex: none;
+  width: 220px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.ah-readable-toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--space-3);
+  border-left: 1px solid var(--border);
+}
+.ah-readable-toc li {
+  padding: 3px 0;
+}
+.ah-readable-toc a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.ah-readable-toc a:hover {
+  color: var(--text);
+}
+@media (max-width: 1100px) {
+  .ah-readable-toc {
+    display: none;
+  }
+}
+
+.ah-readable-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  margin: 0 0 var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  max-width: 720px;
+}
+.ah-readable-fields dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-subtle);
+}
+.ah-readable-fields dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+
+/* Prose for reading: a larger size, more air, a line no longer than the eye follows. */
+.ah-md.ah-md-readable {
+  font-size: 15px;
+  line-height: 1.7;
+  max-width: 720px;
+}
+.ah-md-readable h1 {
+  font-size: 24px;
+  line-height: 32px;
+  margin-bottom: var(--space-4);
+}
+.ah-md-readable h2 {
+  font-size: 19px;
+  line-height: 28px;
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.ah-md-readable h3 {
+  font-size: 16px;
+  margin-top: var(--space-5);
+}
+.ah-md-readable p,
+.ah-md-readable ul,
+.ah-md-readable ol {
+  margin-bottom: var(--space-4);
+}
+.ah-md-readable li + li {
+  margin-top: var(--space-2);
+}
+.ah-md-readable :target {
+  scroll-margin-top: var(--space-4);
+}
+
+/* A code reference of the agents' evidence: the file's name, its full path and lines on hover. */
+.ah-md-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: baseline;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: help;
+}
