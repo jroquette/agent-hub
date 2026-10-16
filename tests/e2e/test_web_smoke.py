@@ -886,11 +886,17 @@ def test_starts_approves_and_cancels_when_workflow_run_driven_from_web(
     assert re.search(r"\b1 passed\b", result.stdout), result.stdout
     assert "skipped" not in result.stdout, result.stdout
     with httpx.Client(base_url=hub_web.url, timeout=REQUEST_SECONDS) as client:
-        runs = client.get("/api/v1/workflow-runs", params={"workflow": "smoke"}).json()["items"]
-        approvals = client.get(
-            "/api/v1/approvals", params={"kind": "human_gate", "status": "all"}
-        ).json()["items"]
-    [smoke] = runs
+        listed = client.get("/api/v1/workflow-runs", params={"workflow": "smoke"})
+        gates = client.get(
+            "/api/v1/approvals",
+            params={"project": "demo", "kind": "human_gate", "status": "all", "limit": 200},
+        )
+    listed.raise_for_status()
+    gates.raise_for_status()
+    approvals = gates.json()["items"]
+    [smoke] = listed.json()["items"]
     assert smoke["status"] == "cancelled"
+    # The resumed run reached its shell node before the cancel stopped it.
+    assert "work" in {step["key"] for step in smoke["steps"]}
     [gate] = [item for item in approvals if item["session_id"] == f"run:{smoke['id']}"]
     assert (gate["gate_id"], gate["status"]) == (f"{smoke['id']}:sign-off:1", "approved")

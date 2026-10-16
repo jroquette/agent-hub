@@ -277,7 +277,7 @@ checkout: each opens a pull request in the hub repo (branch `<branch_prefix>lear
 authored as the hub's author), and nothing changes until the user merges it. That needs, on the machine running
 `hub web`, a writable hub checkout whose `origin` is the hub's GitHub repo, `git`, and `gh` signed in to GitHub (the
 PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
-"Hub is read-only here"; run `./hub web` locally to decide learnings. Runs from the app: README › Workflows.
+"Hub is read-only here"; run `./hub web` locally to decide learnings. Workflows: [README](../README.md#-workflows).
 
 **Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
 in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and

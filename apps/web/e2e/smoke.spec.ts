@@ -343,6 +343,8 @@ test("Web-driven workflow run starts, is approved at its gate and is cancelled",
   page,
   baseURL,
 }) => {
+  // Three children (start, decide and resume, cancel) and three axe scans: more than the default.
+  test.setTimeout(4 * CHILD_MS);
   const problems = watch(page, baseURL ?? "");
   await page.goto("/runs");
   await page.getByRole("button", { name: "Start run" }).click();

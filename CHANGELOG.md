@@ -13,8 +13,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
-- README: a Workflows section, and the banner no longer says the control plane is read-only. USING.md: workflows from
-  the app. The web smoke starts a workflow run, approves its gate and cancels it against an installed `hub web`
+- README: a Workflows section, and the banner no longer says the control plane is read-only. USING.md points to
+  it. The web smoke starts a workflow run, approves its gate and cancels it against an installed `hub web`
   (AGH-233, AC-213.20).
 - Workflow runs start from hub web: "Start run" (replacing the P4 placeholder) picks a workflow and fills a form built
   from its `inputs:`, starts it live (a dry run belongs to the CLI; issue-to-pr starts from `hub run`) and opens the
