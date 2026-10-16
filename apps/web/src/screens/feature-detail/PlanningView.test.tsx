@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { aFeatureTickets, aTicketPlan, aTicketRow } from "../../testing/builders";
-import { PlanningView, ticketAnchor } from "./PlanningView";
+import { PlanningView, splitTitle, ticketAnchor } from "./PlanningView";
 
 const rows = ["T1", "T2", "T3", "T4", "T5"].map((ref) =>
   aTicketRow({ ref, key: ref, id: null, title: `Ticket ${ref}`, url: null }),
@@ -194,6 +194,48 @@ describe("PlanningView", () => {
     );
 
     expect(screen.getByText("No ticket to show.")).toBeInTheDocument();
+  });
+
+  it("draws an edge from each blocker to the ticket it holds back (flow graph)", () => {
+    const linked = rows.map((row) => {
+      if (row.ref === "T3") {
+        return {
+          ...row,
+          blocked_by: [
+            { ref: "T1", source: "both" as const },
+            { ref: "T2", source: "plan" as const },
+          ],
+        };
+      }
+      if (row.ref === "T5") {
+        return {
+          ...row,
+          readiness: "in_progress" as const,
+          blocked_by: [{ ref: "T3", source: "linear" as const }],
+          waiting_on: ["T3"],
+        };
+      }
+      return row;
+    });
+    const { container } = render(<PlanningView tickets={linked} planning={plan} />);
+
+    const edge = (id: string) => container.querySelector(`[data-edge="${id}"]`);
+    expect(edge("T1→T3")).toHaveAttribute("data-critical", "true");
+    expect(edge("T2→T3")).toHaveAttribute("data-source", "plan");
+    expect(edge("T2→T3")).not.toHaveAttribute("data-critical");
+    expect(edge("T3→T5")).toHaveAttribute("data-early", "true");
+    // A blocker drawn as an edge is not repeated in words on the card.
+    expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).not.toHaveTextContent("after");
+  });
+
+  it("splits a conventional title into its type, scope and words (title)", () => {
+    expect(splitTitle("feat(brand-api): generate the iban")).toEqual({
+      type: "feat",
+      scope: "brand-api",
+      text: "generate the iban",
+    });
+    expect(splitTitle("fix: a typo")).toEqual({ type: "fix", scope: null, text: "a typo" });
+    expect(splitTitle("Ticket T1")).toEqual({ type: null, scope: null, text: "Ticket T1" });
   });
 
   it("has no serious axe violation (a11y)", async () => {
