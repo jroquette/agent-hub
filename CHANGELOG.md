@@ -45,6 +45,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The project overview is written for product people: what needs you and this week's numbers first, plain section
+  names, the agents' tickets as one list with their step progress instead of seven mostly empty columns, recent work
+  without turns and errors, and repositories, checks, doctor findings and hub configuration folded into a collapsed
+  "Setup and health" section (AGH-273).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to

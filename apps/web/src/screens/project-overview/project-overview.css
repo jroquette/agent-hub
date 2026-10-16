@@ -1,0 +1,188 @@
+/* Project overview: a page for anyone on the team, not only engineers. Plain sections, one question each. */
+.po-page {
+  padding: var(--space-4) var(--space-8) var(--space-12);
+  max-width: 1280px;
+}
+
+.po-summary {
+  margin: 0;
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--text-muted);
+}
+.po-summary b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.po-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+.po-section-head h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.po-section-head p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+
+.po-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+}
+
+.po-focus {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-3);
+}
+.po-focus-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+.po-focus-card[data-stale] {
+  border-color: var(--waiting);
+}
+.po-focus-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+.po-focus-card ul {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 22px;
+}
+
+/* One row per agent task: what it is, where it is, what it costs. */
+.po-tasks {
+  padding: 0;
+  overflow: hidden;
+}
+.po-task {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px 140px 16px;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+.po-task:last-child {
+  border-bottom: 0;
+}
+.po-task:hover {
+  background: var(--surface-hover);
+}
+.po-task-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.po-task-title span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.po-task[data-failed] .po-task-note {
+  color: var(--failed);
+}
+
+/* A run's place in the six steps, as a row of segments with the current step named. */
+.po-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.po-steps-bar {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+}
+.po-steps-bar span {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+}
+.po-steps-bar span[data-state="done"] {
+  background: var(--done);
+}
+.po-steps-bar span[data-state="active"] {
+  background: var(--live);
+}
+.po-steps-bar span[data-state="failed"] {
+  background: var(--failed);
+}
+
+.po-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  color: var(--text-muted);
+}
+.po-empty b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Engineering detail stays on the page, folded away until someone asks for it. */
+.po-details {
+  padding: 0;
+}
+.po-details > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+}
+.po-details > summary::-webkit-details-marker {
+  display: none;
+}
+.po-details > summary .po-chevron {
+  transition: transform var(--dur-fast);
+}
+.po-details[open] > summary .po-chevron {
+  transform: rotate(90deg);
+}
+.po-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.po-details-body h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+.po-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px var(--space-4);
+  margin: 0;
+  font-size: 13px;
+}
+.po-meta dt {
+  color: var(--text-subtle);
+}
+.po-meta dd {
+  margin: 0;
+}
