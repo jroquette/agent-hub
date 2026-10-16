@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -20,11 +20,21 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
+import { servedCheckout } from "../../lib/devCheckout";
 import { SessionsListScreen } from "./index";
+
+vi.mock("../../lib/devCheckout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
+  return { ...actual, servedCheckout: vi.fn(() => null) };
+});
 
 // These tests read the tables; the grid is the default view (AC-234.3).
 beforeEach(() => {
   window.localStorage.setItem("ah.sessions.view", "table");
+});
+
+afterEach(() => {
+  vi.mocked(servedCheckout).mockReturnValue(null);
 });
 
 const SESSIONS = "/api/v1/sessions";
@@ -268,6 +278,48 @@ async function bodyOf(request: Request | undefined): Promise<unknown> {
 }
 
 describe("SessionsListScreen agent sessions (new-session)", () => {
+  it("starts New session in the served checkout's project, folder and Auto (make playground)", async () => {
+    // The same vector as devCheckout.test.ts and core's test_workdirs.py (E6).
+    vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
+    renderList(
+      routes({
+        "/api/v1/projects": aPage([
+          aProjectSummary({ name: "tipple" }),
+          aProjectSummary({ name: "agent-hub" }),
+        ]),
+        [`${AGENT}/workdirs`]: (request: Request) =>
+          new URL(request.url).searchParams.get("project") === "agent-hub"
+            ? {
+                items: [
+                  aWorkdir(),
+                  aWorkdir({ label: "agent-hub", kind: "repo", workdir_id: "5703fef9dd5a3894" }),
+                ],
+                warnings: [],
+              }
+            : {
+                items: [aWorkdir({ label: "tipple-hub", workdir_id: "0000000000000001" })],
+                warnings: [],
+              },
+      }),
+      "/sessions?scope=tipple",
+    );
+
+    await waitFor(
+      () => {
+        expect(screen.getByRole("combobox", { name: /Start sessions in/ })).toHaveValue(
+          "agent-hub",
+        );
+      },
+      { timeout: 3000 },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "New session" }));
+    const dialog = screen.getByRole("dialog", { name: "New session" });
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
+      "5703fef9dd5a3894",
+    );
+    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
+  });
+
   it("starts a session from New session and opens its chat", async () => {
     const created = anAgentSession({ id: anId(7, "0192a5e5"), status: "running" });
     const view = renderList(
@@ -372,10 +424,14 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     const view = renderList(drivenFixture());
 
     await screen.findByText("Fix the build");
-    expect(within(table("Live")).getByText("/twin")).toBeInTheDocument();
-    expect(within(rowOf("/twin") ?? document.body).getByText("Chat")).toBeInTheDocument();
-    expect(screen.queryByText("Twin chat")).toBeNull();
-    expect(within(table("Live")).getByText("Fix the build")).toBeInTheDocument();
+    // The twin reads its driven session's prompt until Claude Code's title reaches its label.
+    expect(within(table("Live")).getByText("Twin chat")).toBeInTheDocument();
+    expect(within(rowOf("Twin chat") ?? document.body).getByText("Chat")).toBeInTheDocument();
+    expect(screen.getAllByText("Twin chat")).toHaveLength(1);
+    const name = within(table("Live")).getByText("Fix the build");
+    // A long first prompt stays on one line, the whole of it on hover.
+    expect(name).toHaveAttribute("title", "Fix the build");
+    expect(name).toHaveStyle({ whiteSpace: "nowrap", textOverflow: "ellipsis" });
     expect(within(table("Waiting")).getByText("Approve me")).toBeInTheDocument();
     expect(within(table("Ended or failed")).getByText("Broke")).toBeInTheDocument();
     const idle = within(table("Idle"))
@@ -387,7 +443,7 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(screen.getByRole("button", { name: "Idle · 2" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ended or failed · 2" })).toBeInTheDocument();
 
-    fireEvent.click(rowOf("/twin") as HTMLElement);
+    fireEvent.click(rowOf("Twin chat") as HTMLElement);
     expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(11, "0192a5e5")}`);
   });
 
@@ -450,10 +506,10 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
   it("moves a twin whose driven session waits on a permission into Waiting, out of Live's count", async () => {
     renderList(drivenFixture("waiting_permission"));
 
-    await screen.findByText("/twin");
-    expect(within(table("Waiting")).getByText("/twin")).toBeInTheDocument();
-    expect(within(rowOf("/twin") ?? document.body).getByText("Waiting")).toBeInTheDocument();
-    expect(within(table("Live")).queryByText("/twin")).toBeNull();
+    await screen.findByText("Twin chat");
+    expect(within(table("Waiting")).getByText("Twin chat")).toBeInTheDocument();
+    expect(within(rowOf("Twin chat") ?? document.body).getByText("Waiting")).toBeInTheDocument();
+    expect(within(table("Live")).queryByText("Twin chat")).toBeNull();
     expect(screen.getByRole("button", { name: "Waiting · 2" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Live · 2" })).toBeInTheDocument();
   });
@@ -461,8 +517,8 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
   it("leaves twinless driven sessions out while a filter they cannot match is on", async () => {
     renderList(drivenFixture(), "/sessions?repo=agent-hub");
 
-    await screen.findByText("/twin");
-    expect(within(rowOf("/twin") ?? document.body).getByText("Chat")).toBeInTheDocument();
+    await screen.findByText("Twin chat");
+    expect(within(rowOf("Twin chat") ?? document.body).getByText("Chat")).toBeInTheDocument();
     expect(screen.queryByText("Fix the build")).toBeNull();
     expect(screen.queryByText("Approve me")).toBeNull();
   });

@@ -28,6 +28,13 @@ import { fmtClock, middleTruncate } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
+import {
+  DiscussButton,
+  useDiscuss,
+  useDiscussTarget,
+  type DiscussReference,
+  type DiscussTarget,
+} from "../../shell/discuss";
 import { AcBar, FilterMenu, PHASES, VERDICT_STATUS } from "../features/parts";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
@@ -165,6 +172,39 @@ function Verification({ ac }: { ac: AcRow }) {
         }}
       />
     </span>
+  );
+}
+
+/** One criterion as a Discuss reference: its text, how it is verified and where it stands. */
+export function acReference(ac: AcRow, slug: string): DiscussReference {
+  const lines = [
+    `${ac.id}${ac.repo ? ` (${ac.repo})` : ""}: ${ac.description}`,
+    `Passes: ${ac.passes ? "yes" : ac.manual ? "manual owner step" : "not yet"}.`,
+    ac.command ? `Verify: ${ac.command}` : "",
+    ac.evidence ? `Evidence: ${ac.evidence}` : "",
+  ];
+  return {
+    id: `ac:${ac.id}`,
+    label: ac.id,
+    source: `brain/features/${slug}/features.json`,
+    quote: lines.filter(Boolean).join("\n"),
+  };
+}
+
+/** Points the feature's Discuss conversation at one criterion. */
+function DiscussAc({ ac, slug }: { ac: AcRow; slug: string }) {
+  const { addReference, references } = useDiscuss();
+  const pointed = references.some((r) => r.id === `ac:${ac.id}`);
+  return (
+    <IconButton
+      size="sm"
+      icon="message-square"
+      label={pointed ? `${ac.id} is in the next message` : `Discuss ${ac.id} with Claude`}
+      aria-pressed={pointed}
+      onClick={() => {
+        addReference(acReference(ac, slug));
+      }}
+    />
   );
 }
 
@@ -316,6 +356,9 @@ function AcTab({ detail }: { detail: Detail }) {
               <th scope="col" style={{ width: 300 }}>
                 Verify
               </th>
+              <th scope="col" style={{ width: 40 }}>
+                <span className="ah-sr">Discuss</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -327,7 +370,7 @@ function AcTab({ detail }: { detail: Detail }) {
                   {folded && i === HEAD_ROWS && (
                     <tr style={{ cursor: "default" }}>
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         style={{ textAlign: "center", background: "var(--surface-sunken)" }}
                       >
                         <button
@@ -399,12 +442,15 @@ function AcTab({ detail }: { detail: Detail }) {
                         <span className="ah-small">manual · see eval.md</span>
                       )}
                     </td>
+                    <td>
+                      <DiscussAc ac={ac} slug={detail.slug} />
+                    </td>
                   </tr>
                   {expanded && (
                     <tr style={{ cursor: "default" }}>
                       <td />
                       <td
-                        colSpan={6}
+                        colSpan={7}
                         style={{
                           whiteSpace: "normal",
                           padding: "10px 12px 14px",
@@ -515,6 +561,62 @@ function Loading() {
   );
 }
 
+const TAB_LABEL: Readonly<Record<string, string>> = {
+  spec: "spec",
+  research: "research",
+  plan: "plan",
+  eval: "eval",
+  acs: "acceptance criteria",
+  tickets: "ticket plan",
+};
+
+/**
+ * What the Discuss panel talks about on this screen: one conversation per feature, opened with the
+ * panel on arrival. Claude reads every record of the feature before answering, and the brief adds
+ * what the screen shows on top of the files: the phase, the criteria not passing, the tickets.
+ */
+function featureDiscussTarget(detail: Detail | undefined, tab: string): DiscussTarget | null {
+  if (!detail) return null;
+  const folder = `brain/features/${detail.slug}`;
+  const record = detail.records.find((r) => r.name === RECORDS[tab]?.name && r.present);
+  const evalPath = detail.evals[0]?.path;
+  const path = record
+    ? `brain/${record.path}`
+    : tab === "acs"
+      ? `${folder}/features.json`
+      : tab === "eval" && evalPath
+        ? `brain/${evalPath}`
+        : null;
+  const files = [
+    ...detail.records.filter((r) => r.present).map((r) => `brain/${r.path}`),
+    `${folder}/features.json`,
+    ...detail.evals.map((e) => `brain/${e.path}`),
+  ];
+  const open = detail.ac_rows.filter((ac) => !ac.passes);
+  const describe = (ac: AcRow) => `${ac.id}${ac.manual ? " (owner step)" : ""}: ${ac.description}`;
+  return {
+    key: `feature:${detail.project}:${detail.slug}`,
+    project: detail.project,
+    kind: `Feature ${TAB_LABEL[tab] ?? tab}`,
+    title: detail.slug,
+    path,
+    openOnArrive: true,
+    brief: [
+      `The whole feature record lives in \`${folder}/\`. Before answering, read all of it: ${[...new Set(files)].join(", ")}.`,
+      detail.problem ? `The problem it solves: ${detail.problem}` : "",
+      `Size: ${detail.size ?? "not set"}. Repos: ${detail.repos.join(", ") || "none"}. Current phase: ${detail.phase}.`,
+      detail.acs
+        ? `Acceptance criteria: ${String(detail.acs.passing)} of ${String(detail.acs.total)} passing.${open.length ? ` Not passing yet: ${open.map(describe).join("; ")}.` : ""}`
+        : "",
+      detail.issues.length ? `Its Linear tickets: ${detail.issues.join(", ")}.` : "",
+      `I am looking at its ${TAB_LABEL[tab] ?? tab} tab.`,
+      "When a change touches several records (spec, plan, criteria), keep them consistent with each other.",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
+
 /** Feature detail (spec 17, D23): golden path, owner steps, acceptance criteria. */
 export function FeatureDetailScreen() {
   const { project = "", slug = "" } = useParams();
@@ -524,6 +626,7 @@ export function FeatureDetailScreen() {
   const { tz } = usePreferences();
   const tab = tabOf(params.get("doc"));
   const tickets = useFeatureTickets(project, slug, tab === "tickets" && feature.isSuccess);
+  useDiscussTarget(featureDiscussTarget(feature.data, tab));
 
   if (feature.isError) {
     if (feature.error.status === 404) {
@@ -602,6 +705,7 @@ export function FeatureDetailScreen() {
               : ""}
           </span>
           <span className="ah-grow" />
+          <DiscussButton />
           {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
