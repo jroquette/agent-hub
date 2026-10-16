@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
 import { seriousViolations } from "../../testing/axe";
-import { aCapabilities, aWorkdir } from "../../testing/builders";
+import { aCapabilities, anAgentSession, aWorkdir } from "../../testing/builders";
 import {
   NewSessionDialog,
   withSkill,
@@ -33,7 +33,8 @@ function open(overrides: Partial<NewSessionDialogProps> = {}) {
     ...overrides,
   };
   const view = render(<NewSessionDialog {...props} />);
-  return { props, view, dialog: screen.getByRole("dialog", { name: "New session" }) };
+  const name = props.resume ? "Resume session" : "New session";
+  return { props, view, dialog: screen.getByRole("dialog", { name }) };
 }
 
 /** Opens the collapsed "Options" disclosure (Mode, Model). */
@@ -515,6 +516,77 @@ describe("NewSessionDialog (workdir-stale)", () => {
     } finally {
       read.mockRestore();
     }
+  });
+});
+
+describe("NewSessionDialog (resume)", () => {
+  const ENDED = anAgentSession({
+    status: "ended",
+    end_reason: "closed",
+    title: "Fix the flaky test",
+    workdir_id: WORKTREE.workdir_id,
+    workdir_label: "agh-7-collector",
+    mode: "plan",
+    model: "opus",
+    ended_at: "2026-10-16T09:30:00Z",
+  });
+
+  function resume(overrides: Partial<NewSessionDialogProps> = {}) {
+    return open({ resume: ENDED, workdirs: undefined, ...overrides });
+  }
+
+  it("resume: names the target (title, folder, when it ended) and offers Fork, not the folder picker", () => {
+    const { dialog } = resume();
+
+    const target = within(dialog).getByRole("group", { name: "Resume" });
+    expect(target).toHaveTextContent("Fix the flaky test");
+    expect(target).toHaveTextContent("agent-hub › agh-7-collector");
+    expect(within(target).getByText(/Ended/).querySelector("time")).toHaveAttribute(
+      "datetime",
+      "2026-10-16T09:30:00Z",
+    );
+    expect(within(dialog).queryByRole("combobox", { name: "Working folder" })).toBeNull();
+    expect(within(dialog).getByRole("checkbox", { name: /Fork/ })).not.toBeChecked();
+    expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
+  });
+
+  it("resume: sends the target's folder and Claude session, its mode and model, and the Fork choice", async () => {
+    const { dialog, props } = resume();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    await userEvent.click(within(dialog).getByRole("checkbox", { name: /Fork/ }));
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Prompt" }), "Go on");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    const sent = {
+      project: "agent-hub",
+      workdir_id: WORKTREE.workdir_id,
+      mode: "plan",
+      model: "opus",
+      resume_session_id: ENDED.claude_session_id,
+    };
+    expect(props.onSubmit).toHaveBeenNthCalledWith(1, { ...sent, prompt: null, fork: false });
+    expect(props.onSubmit).toHaveBeenNthCalledWith(2, { ...sent, prompt: "Go on", fork: true });
+  });
+
+  it("resume: keeps a model id the capabilities do not list", async () => {
+    const { dialog, props } = resume({ resume: { ...ENDED, model: "claude-sonnet-4-5" } });
+
+    await options(dialog);
+    expect(within(dialog).getByRole("textbox", { name: "Model id" })).toHaveValue(
+      "claude-sonnet-4-5",
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({
+      model: "claude-sonnet-4-5",
+    });
+  });
+
+  it("resume: a plain New session shows no resume target and no Fork", () => {
+    const { dialog } = open();
+
+    expect(within(dialog).queryByRole("group", { name: "Resume" })).toBeNull();
+    expect(within(dialog).queryByRole("checkbox", { name: /Fork/ })).toBeNull();
   });
 });
 

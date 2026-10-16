@@ -3,7 +3,7 @@ import "../agent-session/agent-session.css";
 import { useId, useState, type KeyboardEvent } from "react";
 
 import type { components } from "../../api/schema";
-import { Button, Dialog } from "../../components";
+import { Button, Dialog, Time } from "../../components";
 import { readStored, writeStored } from "../../lib/storage";
 import type { ApiProblem } from "../../lib/api";
 import { MODES, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
@@ -13,6 +13,7 @@ type Schemas = components["schemas"];
 export type Workdir = Schemas["Workdir"];
 export type DriverCapabilities = Schemas["DriverCapabilities"];
 export type CreateAgentSession = Schemas["CreateAgentSession"];
+export type AgentSession = Schemas["AgentSession"];
 
 /** The screen a shake captured (AGH-260), or the capture that failed. */
 export type ShakeScreenshot = { dataUrl: string } | { failed: true };
@@ -65,6 +66,8 @@ export interface NewSessionDialogProps {
   initialMode?: PermissionMode | undefined;
   /** A short note under the title, such as why live reload is not set up. */
   note?: string | undefined;
+  /** The ended session to resume (AC-234.15): its folder, mode and model, and a Fork choice. */
+  resume?: AgentSession | undefined;
 }
 
 /** The folder to preselect: the given one, else the last used for the project, else the first. */
@@ -94,13 +97,25 @@ export function NewSessionDialog({
   initialWorkdirId,
   initialMode,
   note,
+  resume,
 }: NewSessionDialogProps) {
   const [picked, setPicked] = useState<string | null>(null);
-  const [mode, setMode] = useState<PermissionMode>(initialMode ?? "default");
+  const [mode, setMode] = useState<PermissionMode>(resume?.mode ?? initialMode ?? "default");
   const shot = screenshot && "dataUrl" in screenshot ? screenshot.dataUrl : null;
   const [attach, setAttach] = useState(shot !== null);
-  const [model, setModel] = useState(capabilities.models[0] ?? "default");
-  const [otherModel, setOtherModel] = useState("");
+  // A resumed session keeps its model, as "Other model id" when the capabilities do not list it.
+  const kept = resume?.model ?? null;
+  const [model, setModel] = useState(
+    kept === null
+      ? (capabilities.models[0] ?? "default")
+      : capabilities.models.includes(kept)
+        ? kept
+        : OTHER_MODEL,
+  );
+  const [otherModel, setOtherModel] = useState(
+    kept !== null && !capabilities.models.includes(kept) ? kept : "",
+  );
+  const [fork, setFork] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [firstProject] = useState(project);
@@ -115,6 +130,7 @@ export function NewSessionDialog({
   const promptField = useId();
   const promptHint = useId();
   const attachField = useId();
+  const resumeId = useId();
 
   const folders = workdirs ?? [];
   const preferred = preferredWorkdir(
@@ -125,6 +141,10 @@ export function NewSessionDialog({
   const workdir =
     folders.find((w) => w.workdir_id === picked) ?? folders.find((w) => w.workdir_id === preferred);
   const workdirId = workdir?.workdir_id ?? "";
+  // Resuming starts in the target's own folder: the server finds its Claude session there.
+  const where = resume
+    ? { project: resume.project, workdir_id: resume.workdir_id }
+    : workdir && { project, workdir_id: workdir.workdir_id };
 
   const chosenModel = model === OTHER_MODEL ? otherModel.trim() : model;
   const modelValid = MODEL_PATTERN.test(chosenModel);
@@ -136,9 +156,9 @@ export function NewSessionDialog({
     ? null
     : !capabilities.available
       ? "Sessions cannot start on this machine."
-      : workdirs === undefined && !workdirsProblem
+      : !resume && workdirs === undefined && !workdirsProblem
         ? "Waiting for the working folders."
-        : !workdir
+        : !where
           ? "No working folder to start in."
           : !modelValid
             ? "Options: the model id is not valid."
@@ -150,17 +170,16 @@ export function NewSessionDialog({
   const ready = !pending && reason === null;
 
   const submit = () => {
-    if (!ready || !workdir) return;
-    writeStored(workdirKey(project), workdir.workdir_id);
+    if (!ready || !where) return;
+    if (!resume) writeStored(workdirKey(project), where.workdir_id);
     const text = prompt.trim();
     const body: CreateAgentSession = {
-      project,
-      workdir_id: workdir.workdir_id,
+      ...where,
       mode,
       model: chosenModel,
       prompt: text ? text : null,
-      resume_session_id: null,
-      fork: false,
+      resume_session_id: resume?.claude_session_id ?? null,
+      fork: resume ? fork : false,
     };
     onSubmit(
       attached
@@ -181,7 +200,7 @@ export function NewSessionDialog({
 
   return (
     <Dialog
-      title="New session"
+      title={resume ? "Resume session" : "New session"}
       onClose={onCancel}
       pending={pending}
       initialFocus="textarea"
@@ -229,59 +248,87 @@ export function NewSessionDialog({
           </p>
         )}
 
-        <div role="group" aria-labelledby={whereId} className="ah-stack" style={{ gap: 4 }}>
-          <span id={whereId} className="ah-small">
-            Where
-          </span>
-          <div className="ah-row ah-wrap" style={{ gap: 6 }}>
-            {projects.length > 1 ? (
-              <select
-                aria-label="Project"
-                className="ah-input as-select"
-                value={project}
-                disabled={pending}
-                onChange={(event) => {
-                  setPicked(null);
-                  onProjectChange?.(event.target.value);
-                }}
-              >
-                {projects.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="ah-small">{project}</span>
-            )}
-            <span aria-hidden="true" className="ah-subtle">
-              ›
+        {resume ? (
+          <div role="group" aria-labelledby={resumeId} className="ah-stack" style={{ gap: 4 }}>
+            <span id={resumeId} className="ah-small">
+              Resume
             </span>
-            {workdirs === undefined && !workdirsProblem ? (
-              <span className="ah-small ah-muted">Loading the working folders…</span>
-            ) : folders.length === 0 ? (
-              <span className="ah-small ah-muted">
-                {workdirsProblem ?? `No working folder found for ${project}.`}
+            <b>{resume.title ?? "Untitled session"}</b>
+            <span className="ah-small ah-muted">
+              {resume.project} › <span className="ah-mono">{resume.workdir_label}</span> ·{" "}
+              <span>
+                {resume.status === "failed" ? "Failed" : "Ended"}{" "}
+                <Time iso={resume.ended_at ?? resume.updated_at} />
               </span>
-            ) : (
-              <select
-                aria-label="Working folder"
-                className="ah-input as-select ah-grow"
-                value={workdirId}
+            </span>
+            <label className="ah-row ah-small" style={{ gap: 6 }}>
+              <input
+                type="checkbox"
+                className="ah-check"
+                checked={fork}
                 disabled={pending}
                 onChange={(event) => {
-                  setPicked(event.target.value);
+                  setFork(event.target.checked);
                 }}
-              >
-                {folders.map((w) => (
-                  <option key={w.workdir_id} value={w.workdir_id}>
-                    {workdirText(w)}
-                  </option>
-                ))}
-              </select>
-            )}
+              />
+              Fork: continue in a new conversation and keep this one unchanged
+            </label>
           </div>
-        </div>
+        ) : (
+          <div role="group" aria-labelledby={whereId} className="ah-stack" style={{ gap: 4 }}>
+            <span id={whereId} className="ah-small">
+              Where
+            </span>
+            <div className="ah-row ah-wrap" style={{ gap: 6 }}>
+              {projects.length > 1 ? (
+                <select
+                  aria-label="Project"
+                  className="ah-input as-select"
+                  value={project}
+                  disabled={pending}
+                  onChange={(event) => {
+                    setPicked(null);
+                    onProjectChange?.(event.target.value);
+                  }}
+                >
+                  {projects.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="ah-small">{project}</span>
+              )}
+              <span aria-hidden="true" className="ah-subtle">
+                ›
+              </span>
+              {workdirs === undefined && !workdirsProblem ? (
+                <span className="ah-small ah-muted">Loading the working folders…</span>
+              ) : folders.length === 0 ? (
+                <span className="ah-small ah-muted">
+                  {workdirsProblem ?? `No working folder found for ${project}.`}
+                </span>
+              ) : (
+                <select
+                  aria-label="Working folder"
+                  className="ah-input as-select ah-grow"
+                  value={workdirId}
+                  disabled={pending}
+                  onChange={(event) => {
+                    setPicked(event.target.value);
+                  }}
+                >
+                  {folders.map((w) => (
+                    <option key={w.workdir_id} value={w.workdir_id}>
+                      {workdirText(w)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
+        )}
         <div className="ah-stack" style={{ gap: 4 }}>
           <label htmlFor={promptField} className="ah-small">
             Prompt
