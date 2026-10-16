@@ -1,7 +1,55 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { rememberScreenshot, screenshotFor, useScreenshot } from "./screenshotCopy";
+import {
+  KEEP,
+  loadScreenshot,
+  rememberScreenshot,
+  screenshotFor,
+  useScreenshot,
+} from "./screenshotCopy";
+
+/** An in-memory IndexedDB with the calls screenshotCopy makes; each request answers on a microtask. */
+function fakeIndexedDb() {
+  const rows = new Map<string, { id: string; savedAt: number }>();
+  const request = <T>(result: () => T) => {
+    const req: { result?: T; onsuccess?: () => void; onerror?: () => void } = {};
+    queueMicrotask(() => {
+      req.result = result();
+      req.onsuccess?.();
+    });
+    return req;
+  };
+  const store = {
+    put: (row: { id: string; savedAt: number }) => request(() => rows.set(row.id, row)),
+    get: (id: string) => request(() => rows.get(id)),
+    getAll: () => request(() => [...rows.values()]),
+    delete: (id: string) => request(() => rows.delete(id)),
+  };
+  const db = {
+    createObjectStore: () => store,
+    transaction: () => ({ objectStore: () => store }),
+    close: () => undefined,
+  };
+  const open = () => {
+    const req: {
+      result: typeof db;
+      onupgradeneeded?: () => void;
+      onsuccess?: () => void;
+    } = { result: db };
+    queueMicrotask(() => {
+      req.onupgradeneeded?.();
+      req.onsuccess?.();
+    });
+    return req;
+  };
+  return { rows, factory: { open } };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("screenshotCopy", () => {
   it("returns the remembered screenshot for its session", () => {
@@ -44,5 +92,41 @@ describe("useScreenshot", () => {
     await waitFor(() => {
       expect(other.result.current).toBeUndefined();
     });
+  });
+});
+
+describe("screenshotCopy with IndexedDB (AC-266.2)", () => {
+  it("finds a session's screenshot after a reload, from IndexedDB", async () => {
+    const idb = fakeIndexedDb();
+    vi.stubGlobal("indexedDB", idb.factory);
+    rememberScreenshot("as-10", "data:image/png;base64,KEPT");
+    await vi.waitFor(() => {
+      expect(idb.rows.has("as-10")).toBe(true);
+    });
+    rememberScreenshot("as-11", "data:image/png;base64,NEXT"); // the memory copy moves on
+
+    expect(screenshotFor("as-10")).toBeUndefined();
+    await expect(loadScreenshot("as-10")).resolves.toBe("data:image/png;base64,KEPT");
+    await expect(loadScreenshot("as-unknown")).resolves.toBeUndefined();
+  });
+
+  it("keeps only the latest KEEP screenshots", async () => {
+    const idb = fakeIndexedDb();
+    vi.stubGlobal("indexedDB", idb.factory);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    for (let n = 0; n < KEEP + 2; n++) {
+      vi.setSystemTime(1_000 + n);
+      rememberScreenshot(`as-k${String(n)}`, "data:image/png;base64,AAAA");
+      await vi.waitFor(() => {
+        expect(idb.rows.has(`as-k${String(n)}`)).toBe(true);
+      });
+    }
+    await vi.waitFor(() => {
+      expect(idb.rows.size).toBe(KEEP);
+    });
+
+    expect(idb.rows.has("as-k0")).toBe(false);
+    expect(idb.rows.has("as-k1")).toBe(false);
+    expect(idb.rows.has(`as-k${String(KEEP + 1)}`)).toBe(true);
   });
 });

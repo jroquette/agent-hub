@@ -2,7 +2,13 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
-import { activeCrop, ScreenshotLightbox, ScreenshotThumb, strokeFor } from "./ScreenshotLightbox";
+import {
+  activeCrop,
+  flattenScreenshot,
+  ScreenshotLightbox,
+  ScreenshotThumb,
+  strokeFor,
+} from "./ScreenshotLightbox";
 
 const SRC = "data:image/png;base64,iVBORw0KGgo=";
 
@@ -32,6 +38,40 @@ describe("strokeFor", () => {
   it("scales the stroke with the image and never goes under 2px", () => {
     expect(strokeFor(3440)).toBe(7);
     expect(strokeFor(200)).toBe(2);
+  });
+});
+
+describe("flattenScreenshot (AC-266.4)", () => {
+  it("scales the marked-up PNG down until it is under the server's limit", async () => {
+    // jsdom has no canvas and loads no image: a PNG's size here follows the canvas's pixels.
+    class LoadedImage {
+      naturalWidth = 2000;
+      naturalHeight = 1000;
+      onload: (() => void) | null = null;
+      set src(_value: string) {
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    vi.stubGlobal("Image", LoadedImage);
+    const widths: number[] = [];
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockImplementation(function (
+      this: HTMLCanvasElement,
+    ) {
+      widths.push(this.width);
+      return `data:image/png;base64,${"A".repeat(this.width * this.height)}`;
+    });
+    const overlay = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+
+    const url = await flattenScreenshot(SRC, overlay, { maxBytes: 600_000 });
+
+    expect(widths[0]).toBe(2000);
+    expect(widths.length).toBeGreaterThan(1);
+    expect(((url.length - "data:image/png;base64,".length) * 3) / 4).toBeLessThanOrEqual(600_000);
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 });
 
