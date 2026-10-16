@@ -53,6 +53,7 @@ export const READINESS_HELP: Record<Readiness, string> = {
   done: "Completed in Linear.",
   canceled: "Canceled or a duplicate in Linear: it blocks nothing.",
   in_cycle: "Waits on a ticket that waits on it back: break the cycle.",
+  epic: "The epic: it tracks its child tickets and is never worked on itself; it closes when they are done.",
   unknown: "Linear was not read, so its status is unknown.",
 };
 
@@ -106,6 +107,14 @@ export function ReadinessText({
           Waiting: cycle
         </b>
       );
+    case "epic": {
+      const done = rows.filter((r) => row.children.includes(r.ref) && r.readiness === "done");
+      return (
+        <span className="ah-muted" title={help}>
+          Epic · {done.length}/{row.children.length} done
+        </span>
+      );
+    }
     case "waiting":
       return (
         <span title={help} style={{ color: "var(--waiting)" }}>
@@ -349,6 +358,86 @@ function FlowCard({
   );
 }
 
+/** How an epic's children stand: done, under way, and the rest (not started or waiting). */
+function childProgress(epic: TicketRow, rows: readonly TicketRow[]) {
+  const children = rows.filter((r) => epic.children.includes(r.ref) && r.readiness !== "canceled");
+  const done = children.filter((r) => r.readiness === "done").length;
+  const working = children.filter((r) => r.readiness === "in_progress").length;
+  return { total: children.length, done, working, rest: children.length - done - working };
+}
+
+/**
+ * The feature's epic, above the flow: the parent ticket that groups the work. It is never picked
+ * up itself, so it is no step of the flow; it shows how far its children are instead.
+ */
+function EpicCard({
+  epic,
+  rows,
+  acPasses,
+}: {
+  epic: TicketRow;
+  rows: readonly TicketRow[];
+  acPasses?: Readonly<Record<string, boolean>> | undefined;
+}) {
+  const { total, done, working, rest } = childProgress(epic, rows);
+  const children = rows.filter((r) => epic.children.includes(r.ref));
+  const acs = children.flatMap((r) => r.acs);
+  const passing = acPasses ? acs.filter((ac) => acPasses[ac]).length : null;
+  const pct = (n: number) => `${String(total ? (n / total) * 100 : 0)}%`;
+  return (
+    <section
+      className="ah-flow-epic"
+      data-readiness={epic.readiness}
+      aria-label={`Epic ${epic.ref}${epic.title ? ` · ${epic.title}` : ""}`}
+    >
+      <div className="ah-row ah-wrap" style={{ gap: 8 }}>
+        <span className="ah-flow-epic-tag" title={READINESS_HELP.epic}>
+          <Icon name="layers" size="sm" />
+          Epic
+        </span>
+        {epic.id ? (
+          <LinearLink id={epic.id} url={epic.url} />
+        ) : (
+          <span className="ah-mono ah-small" title="Not created in Linear yet">
+            {epic.key ?? epic.ref}
+          </span>
+        )}
+        <StateBadge row={epic} />
+        <span className="ah-flow-epic-title" title={epic.title ?? undefined}>
+          {epic.title ?? epic.ref}
+        </span>
+      </div>
+      <div
+        className="ah-flow-epic-track"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={done}
+        aria-label={`${String(done)} of ${String(total)} child tickets done`}
+      >
+        <span data-tone="done" style={{ width: pct(done) }} />
+        <span data-tone="in_progress" style={{ width: pct(working) }} />
+      </div>
+      <div className="ah-flow-card-meta">
+        <span>
+          <b style={{ color: "var(--text)", fontWeight: 600 }}>
+            {done}/{total}
+          </b>{" "}
+          child tickets done
+        </span>
+        {working > 0 && <span style={{ color: "var(--live)" }}>{working} in progress</span>}
+        {rest > 0 && <span>{rest} not started</span>}
+        {passing !== null && acs.length > 0 && (
+          <span style={passing === acs.length ? { color: "var(--done)" } : undefined}>
+            {passing}/{acs.length} ACs passing
+          </span>
+        )}
+        <span>Tracks the tickets below; it is done when they all are.</span>
+      </div>
+    </section>
+  );
+}
+
 interface FlowColumn {
   key: string;
   title: string;
@@ -360,6 +449,8 @@ interface FlowColumn {
 /** The flow's columns: each parallel group in order, then tickets held back, then the settled. */
 function flowColumns(tickets: readonly TicketRow[], planning: TicketPlan): FlowColumn[] {
   const layered = new Set(planning.layers.flat());
+  const epics = new Set(planning.epics);
+  const work = tickets.filter((t) => !epics.has(t.ref));
   const columns: FlowColumn[] = planning.layers.map((layer, i) => ({
     key: `step-${String(i + 1)}`,
     title: `Step ${String(i + 1)}`,
@@ -367,7 +458,7 @@ function flowColumns(tickets: readonly TicketRow[], planning: TicketPlan): FlowC
     kind: "step",
     refs: layer,
   }));
-  const held = tickets
+  const held = work
     .filter((t) => !layered.has(t.ref) && t.readiness !== "done" && t.readiness !== "canceled")
     .map((t) => t.ref);
   if (held.length > 0) {
@@ -379,7 +470,7 @@ function flowColumns(tickets: readonly TicketRow[], planning: TicketPlan): FlowC
       refs: held,
     });
   }
-  const settled = tickets
+  const settled = work
     .filter((t) => t.readiness === "done" || t.readiness === "canceled")
     .map((t) => t.ref);
   if (settled.length > 0) {
@@ -399,6 +490,7 @@ export interface PlanningViewProps {
  * The planning of the feature's tickets (AC-136.30) as a flow: the parallel groups as columns
  * left to right (what can run together, and in which order), each ticket with its live status
  * in Linear and what to do with it now; tickets held back and the settled ones close the flow.
+ * An epic (a parent of other tickets) heads the flow with its children's progress, not as a step.
  * Banners name dependency cycles, blockers outside the feature and the server's warnings.
  */
 export function PlanningView({ tickets, planning, acPasses }: PlanningViewProps) {
@@ -406,6 +498,8 @@ export function PlanningView({ tickets, planning, acPasses }: PlanningViewProps)
   const byRef = new Map(tickets.map((t) => [t.ref, t]));
   const critical = new Set(planning.critical_path.length > 1 ? planning.critical_path : []);
   const columns = flowColumns(tickets, planning);
+  const epics = planning.epics.flatMap((ref) => byRef.get(ref) ?? []);
+  const work = tickets.filter((t) => !planning.epics.includes(t.ref));
   return (
     <section className="ah-card ah-pad ah-stack" style={{ gap: 14 }} aria-labelledby="planning-h">
       <div className="ah-row ah-wrap" style={{ gap: 12 }}>
@@ -414,7 +508,7 @@ export function PlanningView({ tickets, planning, acPasses }: PlanningViewProps)
         </h2>
         <span className="ah-small ah-subtle">
           Left to right: tickets in one step can run in parallel; a step starts when the one before
-          it is done.
+          it is done.{epics.length > 0 && " The epic only tracks them, so it is no step."}
         </span>
       </div>
       {planning.cycles.length > 0 && (
@@ -455,7 +549,10 @@ export function PlanningView({ tickets, planning, acPasses }: PlanningViewProps)
           </ul>
         </Banner>
       )}
-      <ReadinessSummary tickets={tickets} />
+      {epics.map((epic) => (
+        <EpicCard key={epic.ref} epic={epic} rows={tickets} acPasses={acPasses} />
+      ))}
+      <ReadinessSummary tickets={work} />
       {columns.length === 0 ? (
         <span className="ah-small ah-muted">No ticket to show.</span>
       ) : (

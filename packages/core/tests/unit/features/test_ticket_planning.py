@@ -484,3 +484,58 @@ def test_marks_in_progress_when_started_ticket_has_open_blocker() -> None:
     assert (row.readiness, row.waiting_on) == ("in_progress", ("DEM-1",))
     assert board.plan.waiting == ()
     assert board.plan.can_start == ()
+
+
+def test_leaves_epic_out_of_flow_when_linear_names_it_parent() -> None:
+    # The feature's epic is a sub-issue parent in Linear: it tracks the others, never runs.
+    planned = (_planned(1), _planned(2), _planned(3, blocked_by=(2,)))
+    summaries = (
+        _summary(1, state=IssueState(name="Backlog", type="backlog")),
+        _summary(2, state=_IN_REVIEW, parent="DEM-1"),
+        _summary(3, state=_IN_REVIEW, parent="DEM-1"),
+    )
+
+    board = _board(planned, summaries)
+
+    epic = _row(board, "DEM-1")
+    assert (epic.readiness, epic.children, epic.parent) == ("epic", ("DEM-2", "DEM-3"), None)
+    assert _row(board, "DEM-2").parent == "DEM-1"
+    assert board.plan.epics == ("DEM-1",)
+    assert board.plan.layers == (("DEM-2",), ("DEM-3",))
+    assert board.plan.can_start == ()
+    assert board.plan.critical_path == ("DEM-2", "DEM-3")
+
+
+def test_marks_epic_when_plan_names_parent_without_linear() -> None:
+    # A child the plan puts after its epic does not wait on it: an epic never blocks.
+    planned = (_planned(1), _planned(2, parent="T1"), _planned(3, parent="T1", blocked_by=(1,)))
+
+    board = _board(planned, None)
+
+    assert _row(board, "DEM-1").readiness == "epic"
+    assert _row(board, "DEM-3").readiness == "can_start"
+    assert _row(board, "DEM-3").waiting_on == ()
+    assert board.plan.layers == (("DEM-2", "DEM-3"),)
+
+
+def test_warns_when_plan_parent_unknown() -> None:
+    board = _board((_planned(1, parent="T9"),), None)
+
+    assert board.plan.epics == ()
+    assert board.plan.warnings == ("DEM-1 has the parent T9, which the plan does not list.",)
+
+
+def test_ignores_linear_parent_when_outside_feature() -> None:
+    board = _board((_planned(1),), (_summary(1, parent="DEM-99"),))
+
+    assert (_row(board, "DEM-1").parent, board.plan.epics) == (None, ())
+
+
+def test_marks_epic_done_when_linear_completes_it() -> None:
+    planned = (_planned(1), _planned(2))
+    summaries = (_summary(1, state=_DONE), _summary(2, state=_DONE, parent="DEM-1"))
+
+    board = _board(planned, summaries)
+
+    assert _row(board, "DEM-1").readiness == "done"
+    assert board.plan.epics == ("DEM-1",)
