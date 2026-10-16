@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -88,6 +88,21 @@ describe("SettingsScreen", () => {
     await waitFor(() => {
       expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     });
+  });
+
+  it("keeps the confirmation open while the removal runs", async () => {
+    open("hubs", { "DELETE /api/v1/hubs/hub-2": "pending" });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Remove loki-trader" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove hub" }));
+    await userEvent.keyboard("{Escape}");
+    const scrim = screen.getByRole("alertdialog").parentElement!;
+    fireEvent.mouseDown(scrim);
+    fireEvent.click(scrim);
+
+    expect(screen.getByRole("alertdialog", { name: "Stop reading loki-trader?" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Removing…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
   });
 
   it("keeps the hub when the removal is cancelled", async () => {
