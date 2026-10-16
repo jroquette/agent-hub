@@ -13,7 +13,7 @@ export interface ShakeSample {
   buttons: number;
 }
 
-export const SHAKE: ShakeOptions = { reversals: 4, minLeg: 40, windowMs: 600, cooldownMs: 1500 };
+export const SHAKE: ShakeOptions = { reversals: 3, minLeg: 25, windowMs: 700, cooldownMs: 1500 };
 
 /** At most this many reversal times are kept, whatever the options. */
 const MAX_KEPT = 64;

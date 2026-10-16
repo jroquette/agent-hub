@@ -17,6 +17,32 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
   switch views; `view=` in the URL wins over the last choice, kept in the browser (AGH-245).
+- Sessions have names: the title Claude Code writes in each transcript (or the one set with `/rename`) is stored as a
+  `session.title` event (redacted, 80 characters) and shown as the session's name in Sessions, the live tiles and
+  the session header, with issue, workflow, repo and branch below it (ADR 0035, AGH-262). Older sessions get theirs
+  when their transcript is read again (`hub collect --transcript FILE`, or the live tail after a restart).
+- A session started from hub web takes the title Claude Code gives it at the end of each turn, in place of its first
+  prompt; its row in Sessions shows that name on one line (the whole of it on hover), like the other sessions
+  (AGH-262).
+- `make playground` (ADR 0036, AGH-262): the whole live loop for agent-hub's own web app in one command, then the
+  browser open on `http://127.0.0.1:5173/`. A conductor `hub web` on 7420 (a copy of the checkout, uncommitted files
+  included, taken at each start) drives the Claude sessions; `make live` serves the checkout's API on 7421,
+  restarted on each Python change (`scripts/live_api.py`), and the web app with hot reload on 5173, whose proxy
+  sends the agent-session routes to 7420 and the rest to 7421, so a change never ends a session. One address signs
+  the browser in (`/__playground/session?token=`); `make playground-stop` stops it all.
+- Permission mode `auto` (Claude Code's classifier approves safe actions and blocks risky ones), offered and
+  preselected by the dev app's shake and New session, in the served checkout's project and folder. The built app
+  keeps `default`, `acceptEdits` and `plan`; `bypassPermissions` and `dontAsk` are still refused (ADR 0036, AGH-262).
+- Discuss: a panel on the right holds one Claude conversation per feature, workflow, skill, agent, hook or note on
+  screen, started in the hub folder with that artifact as context. A feature opens it on arrival with every record
+  of the feature; each acceptance criterion and any selected passage can be pointed at in the conversation
+  (AGH-262).
+- Studio: create a skill, an agent or a hook with Claude; the session writes a draft under `.hub-drafts/<id>/` and
+  the preview shows the catalog card it will be as the files stream. The Skills catalog gets tabs per kind with a
+  short explanation of each, kind tiles with 30-day use, a sort, and hooks grouped by lifecycle event (AGH-262).
+- A message to an ended local session (hub web stopped, idle timeout, closed, failed) reopens the same session on its
+  Claude conversation and plays it (AGH-262).
+
 ### Changed
 
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
@@ -29,6 +55,18 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - `hub web` highlights completed code blocks in the chat, notes and plans (about a dozen languages, lazily loaded,
   design-token colours in both themes) with `lowlight`; a block still streaming or over 2,000 lines or 64 KiB stays
   plain, and agent output stays inert (ADR 0034, AGH-252, AC-234.31).
+- The shake is lighter (3 reversals of 25 px within 700 ms) and captures only the visible screen, so a long page
+  such as a chat opens New session at once. Under `make dev` or `make live` it starts in the project and folder of
+  the served checkout, whatever the scope (AGH-262).
+- A driven session's row in Sessions reads its first prompt until Claude Code's title reaches its label (AGH-262).
+- A shake opens New session on every screen, Settings and "All projects" included: with no project in the route
+  or the scope, it starts in the first registered project, as Sessions' New session does. It still does nothing
+  when no project is registered (AGH-262).
+
+### Fixed
+
+- `make dev` on macOS no longer shows a blank page: the chat's model module `transcript.ts` is now `model.ts`, so
+  `./Transcript` no longer resolves to it on a case-insensitive file system (AGH-262).
 
 ## [0.15.0] - 2026-10-16
 

@@ -1,0 +1,315 @@
+/* The Studio: a conversation beside the live preview of the draft it writes. */
+.ah-studio-page {
+  gap: var(--space-4);
+  max-width: none;
+  height: calc(100vh - var(--topbar));
+  box-sizing: border-box;
+  padding-bottom: var(--space-4);
+}
+.ah-studio {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.ah-studio-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.ah-studio-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ah-studio-title .ah-h1 {
+  margin: 0;
+}
+.ah-studio-kind {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex: none;
+}
+.ah-studio-kind[data-kind="agent"] {
+  background: var(--done-soft);
+  color: var(--done);
+}
+.ah-studio-kind[data-kind="hook"] {
+  background: var(--waiting-soft);
+  color: var(--waiting);
+}
+.ah-studio-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  border: 1px dashed var(--border-strong);
+  color: var(--text);
+  font-weight: 500;
+}
+.ah-studio-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 5fr) minmax(0, 7fr);
+  gap: var(--space-4);
+}
+@media (max-width: 1100px) {
+  .ah-studio-page {
+    height: auto;
+  }
+  .ah-studio-split {
+    grid-template-columns: 1fr;
+  }
+  .ah-studio-chat {
+    height: 70vh;
+  }
+}
+.ah-studio-chat,
+.ah-studio-preview {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.ah-studio-chat .as-page {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.ah-studio-chat .as-column {
+  max-width: none;
+  padding-inline: var(--space-3);
+}
+.ah-studio-chat .as-footer {
+  background: var(--surface);
+}
+.ah-studio-intro {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.ah-studio-intro .ah-h3,
+.ah-studio-intro p {
+  margin: 0;
+}
+.ah-studio-starters {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-studio-starters button {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-studio-starters button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.ah-studio-starters button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.ah-studio-starters .ah-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--waiting);
+}
+
+/* The preview column. */
+.ah-studio-preview {
+  background: var(--surface-sunken);
+  overflow: auto;
+}
+.ah-studio-empty {
+  margin: auto;
+  max-width: 440px;
+  padding: var(--space-8) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+.ah-studio-empty > .ah-icon {
+  width: 32px;
+  height: 32px;
+  color: var(--text-subtle);
+}
+.ah-studio-empty .ah-h3,
+.ah-studio-empty p {
+  margin: 0;
+}
+.ah-studio-anatomy {
+  list-style: none;
+  margin: var(--space-2) 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  text-align: left;
+}
+.ah-studio-anatomy li {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 18px;
+}
+.ah-studio-anatomy span {
+  color: var(--text-muted);
+}
+.ah-studio-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+}
+.ah-studio-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.ah-studio-label {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+.ah-studio-card {
+  grid-template-columns: minmax(0, 420px);
+}
+.ah-studio-checks {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: 18px;
+}
+.ah-studio-checks li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ah-studio-checks li[data-state="ok"] .ah-icon {
+  color: var(--done);
+}
+.ah-studio-checks li[data-state="warn"] .ah-icon {
+  color: var(--waiting);
+}
+.ah-studio-checks li[data-state="todo"],
+.ah-studio-checks li[data-state="info"] {
+  color: var(--text-muted);
+}
+.ah-studio-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ah-studio-live .ah-icon {
+  animation: ah-studio-spin 1.2s linear infinite;
+}
+@keyframes ah-studio-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ah-studio-live .ah-icon {
+    animation: none;
+  }
+}
+.ah-studio-body {
+  background: var(--surface);
+}
+.ah-studio-files {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+.ah-studio-tree {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.ah-studio-tree button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-studio-tree button:hover,
+.ah-studio-tree button[aria-current="true"] {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.ah-studio-code {
+  margin: 0;
+  padding: var(--space-3);
+  max-height: 60vh;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: var(--code-bg);
+  font: 400 12.5px/18px var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ah-studio-command {
+  font: 400 12.5px/18px var(--font-mono);
+  word-break: break-all;
+}

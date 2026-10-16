@@ -39,6 +39,7 @@ class EventType(StrEnum):
     STEP_END = "step.end"
     RUN_END = "run.end"
     SESSION_SUMMARY = "session.summary"
+    SESSION_TITLE = "session.title"
 
 
 class EventSource(StrEnum):
