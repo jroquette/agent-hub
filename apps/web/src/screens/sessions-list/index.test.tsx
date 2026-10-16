@@ -239,6 +239,27 @@ describe("SessionsListScreen", () => {
 
     expect(await seriousViolations(container)).toEqual([]);
   });
+
+  it("has no serious or critical a11y violation in the grid, grouped by run", async () => {
+    const waiting = aSession({
+      id: anId(4, "aaaa0004"),
+      label: named("asks"),
+      status: "waiting",
+      outcome: null,
+      waiting_reason: "Permission prompt",
+      agent_session_id: anId(11, "0192a5e5"),
+    });
+    const { container } = renderList(
+      routes({ [SESSIONS]: aSessionsByStatus([...sessions(), waiting]) }),
+      "/sessions?view=grid&within=run",
+    );
+    const tile = await screen.findByRole("article", { name: /^\/asks in / });
+    expect(within(tile).getByRole("link", { name: "Open chat" })).toBeInTheDocument();
+    expect(within(tile).getByText("Chat")).toBeInTheDocument();
+    expect(screen.getAllByRole("group", { name: "Not in a run" }).length).toBeGreaterThan(0);
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
 });
 
 async function bodyOf(request: Request | undefined): Promise<unknown> {
