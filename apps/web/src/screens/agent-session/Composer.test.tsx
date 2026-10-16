@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
 import { servedCheckout } from "../../lib/devCheckout";
+import { MAX_MESSAGE_IMAGES } from "../../lib/pastedImage";
 import { seriousViolations } from "../../testing/axe";
 import { Composer, type ComposerProps } from "./Composer";
 
@@ -446,32 +447,34 @@ describe("Composer (images)", () => {
     });
   });
 
-  it("takes dropped images, removes one, and refuses past four", async () => {
+  it("takes dropped images, removes one, and refuses past the limit", async () => {
     const { box, props } = open({ acceptsImages: true });
     const form = screen.getByRole("form", { name: "Message composer" });
+    const names = Array.from({ length: MAX_MESSAGE_IMAGES + 1 }, (_, i) => `i${String(i)}.png`);
 
     fireEvent.drop(form, {
-      dataTransfer: {
-        files: ["a", "b", "c", "d", "e"].map((n) => image(`${n}.png`)),
-        types: ["Files"],
-      },
+      dataTransfer: { files: names.map((name) => image(name)), types: ["Files"] },
     });
 
     const strip = await screen.findByRole("list", { name: "Images in this message" });
     await waitFor(() => {
-      expect(within(strip).getAllByRole("img")).toHaveLength(4);
+      expect(within(strip).getAllByRole("img")).toHaveLength(MAX_MESSAGE_IMAGES);
     });
-    expect(screen.getByRole("alert")).toHaveTextContent("A message takes up to 4 images.");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      `A message takes up to ${String(MAX_MESSAGE_IMAGES)} images.`,
+    );
     expect(screen.getByRole("button", { name: "Add an image" })).toBeDisabled();
 
     await userEvent.click(within(strip).getByRole("button", { name: "Remove image 2" }));
     await userEvent.type(box, "Compare{Enter}");
 
-    expect(props.onSend).toHaveBeenCalledWith("Compare", [
-      "data:image/png;base64,a.png",
-      "data:image/png;base64,c.png",
-      "data:image/png;base64,d.png",
-    ]);
+    expect(props.onSend).toHaveBeenCalledWith(
+      "Compare",
+      names
+        .slice(0, MAX_MESSAGE_IMAGES)
+        .filter((_, i) => i !== 1)
+        .map((name) => `data:image/png;base64,${name}`),
+    );
   });
 
   it("pastes text as usual and takes no image where images are not accepted", () => {

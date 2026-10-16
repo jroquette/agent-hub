@@ -20,7 +20,7 @@ import { sessionControlUnavailable } from "../sessions-list/control";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
 import { CostMeter } from "./CostMeter";
-import { FILES_PANEL_ID, FilesPanel } from "./FilesPanel";
+import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
 import {
   isTerminal,
   useAgentSession,
@@ -123,8 +123,18 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  // The file a card in the conversation asked for; the nonce re-opens it in an open drawer.
+  const [filePick, setFilePick] = useState<{ path: string | null; nonce: number }>({
+    path: null,
+    nonce: 0,
+  });
+  const review = useReviewed(agentSessionId);
   const closeFiles = useCallback(() => {
     setFilesOpen(false);
+  }, []);
+  const openFile = useCallback((path: string | null) => {
+    setFilePick((before) => ({ path, nonce: before.nonce + 1 }));
+    setFilesOpen(true);
   }, []);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const follow = useStickToBottom(scroller);
@@ -227,22 +237,18 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
               {session.title ?? "Untitled session"}
             </h1>
             <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
-            <span className="ah-grow" />
             {files.length > 0 && (
-              <Button
-                size="sm"
-                variant={filesOpen ? "primary" : "default"}
-                icon="git-compare"
-                aria-expanded={filesOpen}
-                aria-controls={filesOpen ? FILES_PANEL_ID : undefined}
-                onClick={() => {
-                  setFilesOpen((open) => !open);
+              <ChangedFilesChip
+                files={files}
+                review={review}
+                open={filesOpen}
+                onToggle={() => {
+                  if (filesOpen) setFilesOpen(false);
+                  else openFile(null);
                 }}
-              >
-                Changed files
-                <span className="as-files-count">{files.length}</span>
-              </Button>
+              />
             )}
+            <span className="ah-grow" />
             {session.claude_session_id && (
               <AppLink
                 className="ah-row ah-small"
@@ -309,9 +315,19 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           screenshotUrl={screenshotUrl}
           messageScreenshots={messageScreenshots}
           onActivityOpen={closeFiles}
+          files={files}
+          reviewed={review.reviewed}
+          onOpenFile={openFile}
           sidePanel={
             filesOpen ? (
-              <FilesPanel files={files} sessionId={agentSessionId} onClose={closeFiles} />
+              <FilesPanel
+                files={files}
+                sessionId={agentSessionId}
+                onClose={closeFiles}
+                review={review}
+                initialPath={filePick.path}
+                pickNonce={filePick.nonce}
+              />
             ) : undefined
           }
         />
