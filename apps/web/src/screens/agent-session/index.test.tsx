@@ -290,6 +290,25 @@ describe("AgentSessionScreen (transcript)", () => {
     }
   });
 
+  it("deletes the session after confirmation and goes back to Sessions", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "ended", end_reason: "closed" }),
+        [`DELETE ${SESSION}`]: () => undefined,
+      }),
+    );
+    await screen.findByText("Starting.");
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete session" }));
+    const dialog = screen.getByRole("alertdialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe("/sessions");
+    });
+    expect(view.requests.some((r) => r.method === "DELETE")).toBe(true);
+  });
+
   it("resumes an ended session in place when a message is sent, then streams it", async () => {
     let reopened = false;
     const view = renderChat(
