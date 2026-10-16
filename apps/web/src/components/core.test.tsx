@@ -372,7 +372,7 @@ describe("Tabs and SegmentedControl", () => {
     expect(onChange).toHaveBeenCalledWith("b");
   });
 
-  it("turns every segment off when disabled, keeping the value shown", () => {
+  it("turns every segment off when disabled, keeping the value shown (AC-269.7)", () => {
     const onChange = vi.fn();
     render(
       <SegmentedControl

@@ -82,7 +82,7 @@ beforeEach(() => {
 });
 
 describe("pickEval", () => {
-  it("takes the asked delivery, else the newest by date, else the last by name", () => {
+  it("takes the asked delivery, else the newest by date, else the last by name (AC-269.4)", () => {
     const old = anEvalRecord({ delivery: "a", path: "a.md", evaluated_at: "2026-10-01" });
     const recent = anEvalRecord({
       delivery: "b",
@@ -102,7 +102,7 @@ describe("pickEval", () => {
 });
 
 describe("evalPrompt", () => {
-  it("asks the evaluator for one scope and never to touch an existing eval", () => {
+  it("asks the evaluator for one scope and never to touch an existing eval (AC-269.1)", () => {
     expect(evalPrompt("agent-hub", "control-plane", "feature")).toContain(
       "Scope: the whole feature.",
     );
@@ -113,7 +113,7 @@ describe("evalPrompt", () => {
 });
 
 describe("EvalTab", () => {
-  it("selects an eval from its row and reads the selected one below", async () => {
+  it("selects an eval from its row and reads the selected one below (AC-269.4)", async () => {
     const onSelect = vi.fn();
     renderWithApi(tab({ evals, selected: evals[1], onSelect }), {
       routes: { "/api/v1/projects/agent-hub/brain/note": aBrainNote() },
@@ -125,7 +125,7 @@ describe("EvalTab", () => {
     expect(onSelect).toHaveBeenCalledWith("agh-201");
   });
 
-  it("starts the evaluator in the hub folder for the chosen scope", async () => {
+  it("starts the evaluator in the hub folder for the chosen scope (AC-269.1, AC-269.2)", async () => {
     const created = anAgentSession({ id: anId(8, "0192a5e5"), status: "running" });
     const view = renderWithApi(tab({ evals }), {
       routes: {
@@ -186,13 +186,14 @@ describe("EvalTab", () => {
     expect(screen.getByText("3 ACs")).toHaveAttribute("title", "AC-200.1, AC-200.2, AC-200.3");
   });
 
-  it("says no eval was written yet when there is none (golden states)", () => {
+  it("says no eval was written yet and points to Evaluate when there is none (AC-269.8, golden states)", () => {
     renderWithApi(tab());
 
     expect(screen.getByText("No evals yet.")).toBeInTheDocument();
+    expect(screen.getByText(/Press Evaluate above to write the first one/)).toBeInTheDocument();
   });
 
-  it("puts a run waiting for the owner up front, scope locked (golden a11y)", async () => {
+  it("puts a run waiting for the owner up front, scope locked (AC-269.3, AC-269.7, golden a11y)", async () => {
     const waiting = anAgentSession({ id: anId(9, "0192a5e5"), status: "waiting_permission" });
     window.localStorage.setItem(
       "agent-hub:eval-run:agent-hub:control-plane",
@@ -214,6 +215,61 @@ describe("EvalTab", () => {
     expect(screen.getByRole("button", { name: "AGH-201" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Whole feature" })).toBeDisabled();
     expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  it("keeps Evaluate off with the reason when the project has no hub folder (AC-269.6)", async () => {
+    renderWithApi(tab({ evals }), {
+      routes: { ...driving, [`${AGENT}/workdirs`]: { items: [], warnings: [] } },
+    });
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Evaluate whole feature. Project agent-hub has no hub folder to work in.",
+      }),
+    ).toBeDisabled();
+  });
+
+  function storeRun(id: string, known: readonly string[]) {
+    window.localStorage.setItem(
+      "agent-hub:eval-run:agent-hub:control-plane",
+      JSON.stringify({ id, scope: "feature", started_at: new Date().toISOString(), known }),
+    );
+  }
+
+  it("does not read a run idle without a new eval as done (AC-269.5)", async () => {
+    const idle = anAgentSession({ id: anId(10, "0192a5e5"), status: "idle" });
+    storeRun(idle.id, evals.map((e) => e.path));
+    renderWithApi(tab({ evals }), { routes: { ...driving, [`${AGENT}/${idle.id}`]: idle } });
+
+    expect(await screen.findByText("Finished without a new eval")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Show / })).not.toBeInTheDocument();
+  });
+
+  it("shows the eval a finished run wrote and clears the run (AC-269.5)", async () => {
+    const onSelect = vi.fn();
+    const idle = anAgentSession({ id: anId(11, "0192a5e5"), status: "idle" });
+    storeRun(idle.id, evals.slice(1).map((e) => e.path));
+    renderWithApi(tab({ evals, onSelect }), {
+      routes: { ...driving, [`${AGENT}/${idle.id}`]: idle },
+    });
+
+    expect(await screen.findByText("Finished")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Finished");
+    await userEvent.click(screen.getByRole("button", { name: "Show agh-201" }));
+    expect(onSelect).toHaveBeenCalledWith("agh-201");
+    await userEvent.click(screen.getByRole("button", { name: "Clear this run" }));
+    expect(screen.queryByText("Finished")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("agent-hub:eval-run:agent-hub:control-plane")).toBeNull();
+  });
+
+  it("forgets a run whose session was deleted (AC-269.5)", async () => {
+    storeRun(anId(12, "0192a5e5"), []);
+    renderWithApi(tab({ evals }), { routes: driving });
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("agent-hub:eval-run:agent-hub:control-plane")).toBeNull();
+    });
+    expect(screen.queryByRole("link", { name: /Open chat/ })).not.toBeInTheDocument();
   });
 
   it("has no serious axe violation (golden a11y)", async () => {

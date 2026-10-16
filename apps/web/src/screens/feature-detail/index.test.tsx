@@ -313,6 +313,14 @@ describe("FeatureDetailScreen", () => {
       );
     });
 
+    it("reads the eval ?eval= names in place and keeps a new choice in the URL (AC-269.4)", async () => {
+      open({}, "/features/agent-hub/layered-memory?doc=eval&eval=agh-48");
+
+      expect(await screen.findByRole("article", { name: "Eval agh-48" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: /^agh-49,/ }));
+      expect(await screen.findByRole("article", { name: "Eval agh-49" })).toBeInTheDocument();
+    });
+
     it("expands an AC into its verification command and evidence (records)", async () => {
       const write = vi.fn(() => Promise.resolve());
       Object.defineProperty(navigator, "clipboard", {
