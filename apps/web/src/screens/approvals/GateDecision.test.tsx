@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
+import { apiKey } from "../../lib/api";
 import { seriousViolations } from "../../testing/axe";
 import { aProblem, renderWithApi, type ApiRoutes } from "../../testing/builders";
 import { GateDecision } from "./GateDecision";
@@ -70,18 +71,20 @@ describe("GateDecision", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("keeps the choices disabled and refetches the gate after a decision is recorded", async () => {
-    const { requests } = renderGate({ [GATE]: aGate(), [DECIDE]: DECIDED });
+  it("keeps the choices disabled and marks the approvals stale, not the gate, after a decision", async () => {
+    const { queryClient } = renderGate({ [GATE]: aGate(), [DECIDE]: DECIDED });
+    const approvals = apiKey("/api/v1/approvals", { query: { status: "open" } });
+    queryClient.setQueryData(approvals, { items: [], next_cursor: null, total_estimate: 0 });
 
     const decide = await card();
     await userEvent.click(within(decide).getByRole("button", { name: "Approve" }));
 
     await screen.findByRole("status");
     for (const button of within(decide).getAllByRole("button")) expect(button).toBeDisabled();
-    await waitFor(() => {
-      const gets = requests.filter((r) => r.method === "GET" && new URL(r.url).pathname === GATE);
-      expect(gets.length).toBeGreaterThan(1);
-    });
+    expect(queryClient.getQueryState(approvals)?.isInvalidated).toBe(true);
+    // A decided gate answers 409, which the browser would log: it is not asked again.
+    const gate = apiKey("/api/v1/approvals/{approval_id}/gate", { path: { approval_id: ID } });
+    expect(queryClient.getQueryState(gate)?.isInvalidated).toBe(false);
   });
 
   it("returns focus to the choice and caps the text when the dialog closes", async () => {

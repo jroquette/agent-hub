@@ -143,6 +143,28 @@ describe("RunDetailScreen", () => {
     expect(retry).toBeDisabled();
     expect(within(retry).getByText("P4")).toHaveClass("ah-phase");
     expect(retry).toHaveAttribute("title", "Available in Phase 4. This version is read-only.");
+    expect(screen.queryByRole("group", { name: "Run commands" })).toBeNull();
+  });
+
+  it("offers resume and abandon instead of the P4 retry on a failed engine run", async () => {
+    const engine = anEngineRun();
+    renderWithApi(<RunDetailScreen />, {
+      routes: {
+        [`/api/v1/workflow-runs/${engine.id}`]: engine,
+        "/api/v1/workflows/agent-hub/feature-flow": aWorkflowDetail(),
+      },
+      path: `/runs/${engine.id}`,
+      route: "/runs/:runId",
+    });
+
+    const commands = await screen.findByRole("group", { name: "Run commands" });
+    expect(
+      within(commands)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Resume", "Abandon"]);
+    expect(screen.queryByRole("button", { name: /Retry from/ })).toBeNull();
+    expect(screen.queryByText("P4")).toBeNull();
   });
 
   it("draws one Gantt lane per step attempt with session links", async () => {
