@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 
 import type { components } from "../../api/schema";
@@ -104,74 +105,137 @@ function problemText(error: unknown): string {
   return "Could not send the answer. Try again.";
 }
 
-/** One question of an `AskUserQuestion`: option buttons plus "Other" with free text. */
+/** Claude marks its preferred option with a trailing "(Recommended)" in the label. */
+const RECOMMENDED = /\s*\(recommended\)\s*$/i;
+
+/** One choice of a question: a radio or checkbox row with its label and, below it, its description. */
+function OptionRow({
+  type,
+  name,
+  label,
+  description,
+  checked,
+  onToggle,
+  children,
+}: {
+  type: "radio" | "checkbox";
+  name: string;
+  label: string;
+  description: string | null;
+  checked: boolean;
+  onToggle: () => void;
+  children?: ReactNode;
+}) {
+  const labelId = useId();
+  const descriptionId = useId();
+  const recommended = RECOMMENDED.test(label);
+  return (
+    <label className={cx("as-option", checked && "as-option-checked")}>
+      <input
+        type={type}
+        name={name}
+        className="ah-check"
+        checked={checked}
+        aria-labelledby={labelId}
+        aria-describedby={description ? descriptionId : undefined}
+        onChange={onToggle}
+      />
+      <span className="as-option-body">
+        <span className="as-option-label">
+          <span id={labelId}>{label.replace(RECOMMENDED, "")}</span>
+          {recommended && <span className="as-option-tag">Recommended</span>}
+        </span>
+        {description && (
+          <span id={descriptionId} className="ah-small ah-muted">
+            {description}
+          </span>
+        )}
+        {children}
+      </span>
+    </label>
+  );
+}
+
+/**
+ * One question of an `AskUserQuestion`: its options as radio rows (checkboxes when several may be
+ * chosen), each with its description in view, plus "Other" with free text.
+ */
 function QuestionField({
   question,
-  value,
   disabled,
   onChange,
 }: {
   question: Question;
-  value: string[];
   disabled: boolean;
   onChange: (value: string[]) => void;
 }) {
+  const [picked, setPicked] = useState<string[]>([]);
   const [other, setOther] = useState<string | null>(null);
-  const otherId = useId();
+  const otherInput = useRef<HTMLInputElement>(null);
+  const name = useId();
+  const type = question.multiSelect ? "checkbox" : "radio";
+  const emit = (nextPicked: string[], nextOther: string | null) => {
+    setPicked(nextPicked);
+    setOther(nextOther);
+    const text = nextOther?.trim();
+    onChange(text ? [...nextPicked, text] : nextPicked);
+  };
   const pick = (label: string) => {
-    setOther(null);
-    if (!question.multiSelect) onChange([label]);
-    else onChange(value.includes(label) ? value.filter((v) => v !== label) : [...value, label]);
+    if (!question.multiSelect) emit([label], null);
+    else
+      emit(picked.includes(label) ? picked.filter((v) => v !== label) : [...picked, label], other);
+  };
+  const toggleOther = () => {
+    if (other !== null && question.multiSelect) emit(picked, null);
+    else {
+      emit(question.multiSelect ? picked : [], other ?? "");
+      requestAnimationFrame(() => otherInput.current?.focus());
+    }
   };
   return (
     <fieldset className="as-question" disabled={disabled}>
       <legend>
         {question.header && <span className="as-question-header">{question.header}</span>}{" "}
-        {question.question}
+        <span className="as-question-text">{question.question}</span>
       </legend>
-      <div className="ah-row ah-wrap" style={{ gap: 6 }}>
+      {question.multiSelect && <p className="ah-small ah-muted as-question-hint">Choose any</p>}
+      <div className="as-options">
         {question.options.map((option) => (
-          <Button
+          <OptionRow
             key={option.label}
-            size="sm"
-            aria-pressed={other === null && value.includes(option.label)}
-            title={option.description ?? undefined}
-            onClick={() => {
+            type={type}
+            name={name}
+            label={option.label}
+            description={option.description}
+            checked={picked.includes(option.label)}
+            onToggle={() => {
               pick(option.label);
             }}
-          >
-            {option.label}
-          </Button>
-        ))}
-        <Button
-          size="sm"
-          aria-pressed={other !== null}
-          onClick={() => {
-            setOther("");
-            onChange([]);
-          }}
-        >
-          Other
-        </Button>
-      </div>
-      {other !== null && (
-        <div className="ah-stack" style={{ gap: 4 }}>
-          <label htmlFor={otherId} className="ah-small">
-            Your answer
-          </label>
-          <input
-            id={otherId}
-            className="ah-input"
-            value={other}
-            maxLength={1024}
-            onChange={(event) => {
-              setOther(event.target.value);
-              const text = event.target.value.trim();
-              onChange(text ? [text] : []);
-            }}
           />
-        </div>
-      )}
+        ))}
+        <OptionRow
+          type={type}
+          name={name}
+          label="Other"
+          description={other === null ? "Write your own answer" : null}
+          checked={other !== null}
+          onToggle={toggleOther}
+        >
+          {other !== null && (
+            <input
+              ref={otherInput}
+              className="ah-input"
+              aria-label="Your answer"
+              placeholder="Your answer"
+              value={other}
+              maxLength={1024}
+              onChange={(event) => {
+                emit(picked, event.target.value);
+              }}
+            />
+          )}
+        </OptionRow>
+      </div>
     </fieldset>
   );
 }
@@ -240,7 +304,10 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   };
 
   const questions = request.requestKind === "ask_user_question" ? questionsOf(request.input) : [];
-  const allAnswered = questions.every((q) => (answers[q.question] ?? []).length > 0);
+  const answeredCount = questions.filter((q) => (answers[q.question] ?? []).length > 0).length;
+  const allAnswered = answeredCount === questions.length;
+  // A question card is answered by its options and "Other": no deny message, no red refusal.
+  const asking = request.requestKind === "ask_user_question" && questions.length > 0;
   const plan =
     request.requestKind === "plan_approval" && typeof request.input?.plan === "string"
       ? request.input.plan
@@ -289,7 +356,6 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
             <QuestionField
               key={question.question}
               question={question}
-              value={answers[question.question] ?? []}
               disabled={disabled}
               onChange={(value) => {
                 setAnswers((before) => ({ ...before, [question.question]: value }));
@@ -313,27 +379,29 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
               </select>
             </label>
           )}
-          <div className="ah-stack" style={{ gap: 4 }}>
-            <label htmlFor={messageId} className="ah-small ah-muted">
-              Message to Claude if you deny (optional)
-            </label>
-            <input
-              id={messageId}
-              className="ah-input"
-              value={message}
-              maxLength={MAX_DENY_MESSAGE}
-              disabled={disabled}
-              onChange={(event) => {
-                setMessage(event.target.value);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && message.trim()) {
-                  event.preventDefault();
-                  deny();
-                }
-              }}
-            />
-          </div>
+          {!asking && (
+            <div className="ah-stack" style={{ gap: 4 }}>
+              <label htmlFor={messageId} className="ah-small ah-muted">
+                Message to Claude if you deny (optional)
+              </label>
+              <input
+                id={messageId}
+                className="ah-input"
+                value={message}
+                maxLength={MAX_DENY_MESSAGE}
+                disabled={disabled}
+                onChange={(event) => {
+                  setMessage(event.target.value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && message.trim()) {
+                    event.preventDefault();
+                    deny();
+                  }
+                }}
+              />
+            </div>
+          )}
           <div className="ah-row ah-wrap as-perm-actions">
             {request.requestKind === "tool" && (
               <>
@@ -389,14 +457,25 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
               </Button>
             )}
             <Button
-              variant="danger"
+              variant={asking ? "default" : "danger"}
               disabled={disabled}
               data-shortcut={keyed ? "deny" : undefined}
               aria-keyshortcuts={chords ? DENY_KEYS : undefined}
               onClick={deny}
             >
-              {request.requestKind === "plan_approval" ? "Keep planning" : "Deny"}
+              {request.requestKind === "plan_approval"
+                ? "Keep planning"
+                : asking
+                  ? questions.length > 1
+                    ? "Skip questions"
+                    : "Skip question"
+                  : "Deny"}
             </Button>
+            {asking && questions.length > 1 && (
+              <span className="ah-small ah-muted" aria-live="polite">
+                {answeredCount} of {questions.length} answered
+              </span>
+            )}
           </div>
           {request.deadlineAt && (
             <p className="ah-small ah-subtle">

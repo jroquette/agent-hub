@@ -459,18 +459,101 @@
   gap: 6px;
 }
 .as-question legend {
-  font-weight: 500;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
   padding: 0;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-2);
 }
 .as-question-header {
-  font: 500 11px/16px var(--font-mono);
-  color: var(--text-subtle);
-  margin-right: var(--space-2);
+  align-self: flex-start;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
 }
-.as-question [aria-pressed="true"] {
+.as-question-text {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+.as-question-hint {
+  margin: calc(var(--space-1) * -1) 0 var(--space-1);
+}
+.as-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.as-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.as-option:hover {
+  background: var(--surface-hover);
+}
+.as-option-checked,
+.as-option-checked:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+.as-option:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.as-option .ah-check {
+  flex: none;
+  margin: 2px 0 0;
+}
+.as-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.as-option-body > .ah-input {
+  margin-top: var(--space-2);
+  cursor: text;
+}
+.as-option-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-weight: 500;
+}
+.as-option-tag {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--accent);
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+fieldset:disabled .as-option {
+  cursor: default;
+  opacity: 0.6;
+}
+@media (prefers-reduced-motion: reduce) {
+  .as-option {
+    transition: none;
+  }
 }
 .as-select {
   height: 28px;
