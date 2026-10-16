@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -11,6 +11,7 @@ import {
   Icon,
   IssueLink,
   ProblemError,
+  SegmentedControl,
   Skeleton,
   StatusBadge,
   Tabs,
@@ -27,6 +28,7 @@ import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
 import { EvalTab, pickEval } from "./EvalTab";
+import { RecordSummary, summaryRequest } from "./RecordSummary";
 import { TicketsTab } from "./TicketsTab";
 import { useFeature, useFeatureTickets } from "./queries";
 
@@ -64,8 +66,24 @@ function ownerLine(text: string | undefined): string {
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
-/** A record tab (Spec, Research, Plan): the note itself, read through the brain route (D3). */
-function RecordTab({ detail, tab }: { detail: Detail; tab: string }) {
+/** How a record tab shows its record: its human summary, or the file the agents read. */
+type RecordView = "humans" | "agent";
+
+/**
+ * A record tab (Spec, Research, Plan): it opens on the record's human summary, the one-minute
+ * version people read; Agent markdown shows the record itself, read through the brain route (D3).
+ */
+function RecordTab({
+  detail,
+  tab,
+  view,
+  onView,
+}: {
+  detail: Detail;
+  tab: string;
+  view: RecordView;
+  onView: (view: RecordView, anchor?: string) => void;
+}) {
   const meta = RECORDS[tab];
   if (!meta) return null;
   const file = `${meta.name}.md`;
@@ -85,16 +103,49 @@ function RecordTab({ detail, tab }: { detail: Detail; tab: string }) {
         <Icon name="file-text" size="sm" />
         <span className="ah-mono ah-small">brain/{record.path}</span>
         <span className="ah-grow" />
+        <SegmentedControl
+          label="Show the record"
+          value={view}
+          onChange={(id) => {
+            onView(id === "agent" ? "agent" : "humans");
+          }}
+          options={[
+            {
+              id: "humans",
+              label: "For humans",
+              icon: "book-open",
+              title: "A short summary of the record, written for people",
+            },
+            {
+              id: "agent",
+              label: "Agent markdown",
+              icon: "file-text",
+              title: "The whole record, as the agents write and read it",
+            },
+          ]}
+        />
         <Link className="ah-small" to={brainRoute(detail.project, record.path)}>
           Open in Brain
         </Link>
       </div>
-      <NoteView
-        key={record.path}
-        project={detail.project}
-        path={record.path}
-        missing={`No ${file} yet.`}
-      />
+      {view === "humans" ? (
+        <RecordSummary
+          key={record.path}
+          project={detail.project}
+          record={meta.name}
+          recordPath={record.path}
+          onReadRecord={(anchor) => {
+            onView("agent", anchor);
+          }}
+        />
+      ) : (
+        <NoteView
+          key={record.path}
+          project={detail.project}
+          path={record.path}
+          missing={`No ${file} yet.`}
+        />
+      )}
     </div>
   );
 }
@@ -191,6 +242,14 @@ function featureDiscussTarget(
     title: detail.slug,
     path,
     openOnArrive: true,
+    starters: record
+      ? [
+          {
+            label: `Write the human summary of ${record.name}`,
+            message: summaryRequest(detail.slug, record.name),
+          },
+        ]
+      : undefined,
     brief: [
       `The whole feature record lives in \`${folder}/\`. Before answering, read all of it: ${[...new Set(files)].join(", ")}.`,
       detail.problem ? `The problem it solves: ${detail.problem}` : "",
@@ -212,6 +271,7 @@ export function FeatureDetailScreen() {
   const { project = "", slug = "" } = useParams();
   const feature = useFeature(project, slug);
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
   const tab = tabOf(params.get("doc"));
@@ -297,8 +357,24 @@ export function FeatureDetailScreen() {
         }}
       />
     );
-  } else if (RECORDS[tab]) body = <RecordTab detail={detail} tab={tab} />;
-  else body = <CriteriaTab detail={detail} />;
+  } else if (RECORDS[tab]) {
+    body = (
+      <RecordTab
+        detail={detail}
+        tab={tab}
+        view={params.get("view") === "agent" ? "agent" : "humans"}
+        onView={(view, anchor) => {
+          const next = new URLSearchParams(params);
+          if (view === "agent") next.set("view", "agent");
+          else next.delete("view");
+          void navigate(
+            { search: `?${next.toString()}`, hash: anchor ? `#${encodeURIComponent(anchor)}` : "" },
+            { replace: true },
+          );
+        }}
+      />
+    );
+  } else body = <CriteriaTab detail={detail} />;
 
   return (
     <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
