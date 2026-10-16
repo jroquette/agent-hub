@@ -7367,7 +7367,7 @@
       },
       "Step": {
         "additionalProperties": false,
-        "description": "One top-level ordered list item of a body (S6); ``index`` is 1-based, as ``#step-<n>``.",
+        "description": "One top-level ordered list item of a body (S6); ``index`` is 1-based, as ``#step-<n>``.\n\n``declared_type`` is the type the step states itself, when it starts with one; ``summary`` is\nthe rest of its first line as plain text (Markdown marks dropped), empty when there is none.",
         "properties": {
           "agents": {
             "default": [],
@@ -7384,6 +7384,16 @@
             },
             "title": "Commands",
             "type": "array"
+          },
+          "declared_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepType"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "index": {
             "minimum": 1.0,
@@ -7405,6 +7415,11 @@
             },
             "title": "Skills",
             "type": "array"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
           },
           "tags": {
             "default": [],
@@ -7492,6 +7507,15 @@
           "agent",
           "command",
           "script",
+          "human"
+        ],
+        "type": "string"
+      },
+      "StepType": {
+        "enum": [
+          "agent",
+          "script",
+          "gate",
           "human"
         ],
         "type": "string"
