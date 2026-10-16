@@ -134,6 +134,20 @@ export interface ReviewPromptInput {
   suggestedTarget: string | null;
 }
 
+/** The bar every review holds a learning to: the /learn skill's criteria. */
+const REVIEW_BAR = [
+  "Hold it to the bar of the /learn skill (plugin/hub-workflow/skills/learn/SKILL.md when the hub has it):",
+  "1. Non-obvious: a capable engineer new to this hub would not already know it.",
+  "2. Verified: every claim checks out now. Open each cited path and line, run read-only commands where a claim depends on output, and say what you found.",
+  "3. Not a duplicate: search brain/ (not brain/_inbox/) and the repos' AGENTS.md for the same knowledge.",
+  "4. Well-placed and well-written: one learning, a clear title, the why, and where it applies.",
+];
+
+const reviewFileSpec = (dir: string) =>
+  `\`${dir}/${REVIEW_FILE}\`: {"verdict": "ready" | "needs_changes" | "not_for_brain", "summary": "<two sentences>", "checks": [{"name": "Non-obvious" | "Verified" | "Not a duplicate" | "Well-written", "result": "pass" | "fail" | "unknown", "note": "<what you found, with paths>"}], "target": "<folder or .md path relative to brain/>"}`;
+const revisionFileSpec = (dir: string) =>
+  `\`${dir}/${REVISION_FILE}\`, only when the note should change before it is accepted: the full revised body, without the frontmatter. Fix what the checks found; keep the author's meaning.`;
+
 /** The first message of a review session. */
 export function reviewPrompt(input: ReviewPromptInput): string {
   const dir = draftDir(input.draftId);
@@ -141,18 +155,61 @@ export function reviewPrompt(input: ReviewPromptInput): string {
   return [
     `Review the proposed learning \`${input.notePath}\` of project ${input.project} before I decide whether it goes into the brain.`,
     "",
-    "Hold it to the bar of the /learn skill (plugin/hub-workflow/skills/learn/SKILL.md when the hub has it):",
-    "1. Non-obvious: a capable engineer new to this hub would not already know it.",
-    "2. Verified: every claim checks out now. Open each cited path and line, run read-only commands where a claim depends on output, and say what you found.",
-    "3. Not a duplicate: search brain/ (not brain/_inbox/) and the repos' AGENTS.md for the same knowledge.",
-    "4. Well-placed and well-written: one learning, a clear title, the why, and where it applies.",
+    ...REVIEW_BAR,
     "",
     `Pick where it belongs in brain/: one of ${choices}, or a better .md path${input.suggestedTarget ? ` (the note suggests ${input.suggestedTarget})` : ""}.`,
     "",
     `Write only inside \`${dir}/\`:`,
-    `- \`${dir}/${REVIEW_FILE}\`: {"verdict": "ready" | "needs_changes" | "not_for_brain", "summary": "<two sentences>", "checks": [{"name": "Non-obvious" | "Verified" | "Not a duplicate" | "Well-written", "result": "pass" | "fail" | "unknown", "note": "<what you found, with paths>"}], "target": "<folder or .md path relative to brain/>"}`,
-    `- \`${dir}/${REVISION_FILE}\`, only when the note should change before it is accepted: the full revised body, without the frontmatter. Fix what the checks found; keep the author's meaning.`,
+    `- ${reviewFileSpec(dir)}`,
+    `- ${revisionFileSpec(dir)}`,
     "",
     "Do not edit the note itself or anything else, do not accept, reject, commit or push: I make the decision in agent-hub. When both files are written, reply with REVIEWED and the verdict in one line.",
+  ].join("\n");
+}
+
+/** The most learnings one triage session reviews; the rest wait for the next run. */
+export const MAX_TRIAGE_BATCH = 15;
+
+export interface TriageItem {
+  learningId: string;
+  /** The inbox note, relative to the hub (`brain/_inbox/x.md`). */
+  notePath: string;
+}
+
+export function newTriageBatchId(random: () => number = Math.random): string {
+  const suffix = Math.floor(random() * 36 ** 6)
+    .toString(36)
+    .padStart(6, "0");
+  return `triage-${suffix}`;
+}
+
+/** The draft folder of one learning in a triage batch: its review reads like a single review's. */
+export const triageDraftId = (batchId: string, learningId: string) => `${batchId}/${learningId}`;
+
+/** The first message of a triage session: one review per learning, each in its own folder. */
+export function triagePrompt(input: {
+  project: string;
+  batchId: string;
+  items: readonly TriageItem[];
+}): string {
+  const lines = input.items.map((item) => {
+    const dir = draftDir(triageDraftId(input.batchId, item.learningId));
+    return `- \`${item.notePath}\` → write in \`${dir}/\``;
+  });
+  const example = draftDir(triageDraftId(input.batchId, "<id>"));
+  return [
+    `Triage the ${String(input.items.length)} proposed learnings of project ${input.project} below before I decide which go into the brain. Review each one on its own, one after the other:`,
+    "",
+    ...lines,
+    "",
+    ...REVIEW_BAR,
+    "",
+    "Pick where each belongs in brain/ (a folder such as learnings/ or learnings/gotchas/, or a better .md path; the note's `target` frontmatter is a suggestion). Two notes that say the same thing: the weaker one is not_for_brain, and its summary names the other.",
+    "",
+    `For each learning, write only inside its own folder (\`${example}/\`):`,
+    `- ${reviewFileSpec(example)}`,
+    `- ${revisionFileSpec(example)}`,
+    "",
+    "Write each review.json as soon as that learning is reviewed, before moving to the next. Do not edit the notes or anything else, do not accept, reject, commit or push: I decide in agent-hub. At the end, reply with TRIAGED and one line per learning: its verdict and title.",
   ].join("\n");
 }
