@@ -123,6 +123,44 @@ export function resultLine(result: EvidenceResult | null): string | null {
     .join(" · ");
 }
 
+const tests = (n: number) => `${String(n)} test${n === 1 ? "" : "s"}`;
+
+/**
+ * The result in plain words, for someone who does not read pytest output: "10 tests passed",
+ * "2 of 12 tests failed", "Command succeeded". Null when no result is stated.
+ */
+export function resultHeadline(result: EvidenceResult | null): string | null {
+  if (!result) return null;
+  const { passed, failed, exit } = result;
+  if (failed) return `${String(failed)} of ${String((passed ?? 0) + failed)} tests failed`;
+  if (passed !== null) return `${tests(passed)} passed`;
+  if (exit === "0") return "Command succeeded";
+  return exit !== null ? `Command failed (exit code ${exit})` : null;
+}
+
+/** What each number of the result means, one sentence per number, for a tooltip or a list. */
+export function resultExplanation(result: EvidenceResult | null): string[] {
+  if (!result) return [];
+  const lines: string[] = [];
+  if (result.exit !== null) {
+    lines.push(
+      result.exit === "0"
+        ? "The verification command finished with exit code 0, which means success."
+        : `The verification command finished with exit code ${result.exit}, which means it failed.`,
+    );
+  }
+  if (result.passed !== null) {
+    lines.push(`${tests(result.passed)} that check this criterion ran and passed.`);
+  }
+  if (result.failed) lines.push(`${tests(result.failed)} ran and failed.`);
+  if (result.deselected !== null) {
+    lines.push(
+      `${tests(result.deselected)} in the same files were not run: the command picks only the tests of this criterion (pytest calls them "deselected"). That is expected, not a problem.`,
+    );
+  }
+  return lines;
+}
+
 /** Whether the stated result is green: exit 0 and nothing failed. */
 export function resultPassed(result: EvidenceResult | null): boolean | null {
   if (!result) return null;

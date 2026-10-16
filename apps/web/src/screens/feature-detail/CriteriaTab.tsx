@@ -25,7 +25,8 @@ import { useProjectRepos } from "../project-overview/queries";
 import { useAcCitations, type AcCitations, type Citation } from "./acCitations";
 import {
   parseEvidence,
-  resultLine,
+  resultExplanation,
+  resultHeadline,
   resultPassed,
   shortSha,
   type EvidenceFacts,
@@ -43,10 +44,6 @@ const PASS: Record<Pass, { icon: IconName; tone: string; label: string; title: s
   none: { icon: "circle-dashed", tone: "idle", label: "Not passing", title: "Not passing yet" },
 };
 export const passOf = (ac: AcRow): Pass => (ac.passes ? "yes" : ac.manual ? "owner" : "none");
-
-/** Rows shown before "Show all": the first seven and the last two (spec 17). */
-const HEAD_ROWS = 7;
-const TAIL_ROWS = 2;
 
 /** One criterion as a Discuss reference: its text, how it is verified and where it stands. */
 export function acReference(ac: AcRow, slug: string): DiscussReference {
@@ -161,20 +158,26 @@ function StatusCell({ ac }: { ac: AcRow }) {
   );
 }
 
-/** The row's evidence at a glance: the result, then where and when it ran. */
-function EvidenceSummary({ ac, facts }: { ac: AcRow; facts: EvidenceFacts | null }) {
+/**
+ * The row's evidence at a glance, in plain words: the result ("10 tests passed"), then the code it
+ * ran on as a link to the commit on GitHub, and the date. The tooltip explains every number.
+ */
+function EvidenceSummary({
+  ac,
+  facts,
+  githubOf,
+}: {
+  ac: AcRow;
+  facts: EvidenceFacts | null;
+  githubOf: GithubOf;
+}) {
   if (!ac.evidence || !facts) {
     return <span className="ah-subtle ah-small">No evidence yet</span>;
   }
-  const line = resultLine(facts.result);
+  const headline = resultHeadline(facts.result);
   const green = resultPassed(facts.result);
   const commit = facts.commits[0];
-  const where = [
-    commit ? `${commit.repo ? `${commit.repo} ` : ""}@${shortSha(commit.sha)}` : null,
-    facts.date,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const gh = commit ? githubOf(commit.repo ?? ac.repo) : null;
   return (
     <span className="ah-ac-ev">
       {facts.standing ? (
@@ -186,13 +189,14 @@ function EvidenceSummary({ ac, facts }: { ac: AcRow; facts: EvidenceFacts | null
               ? "Dropped"
               : "Partly proven"}
         </span>
-      ) : line ? (
+      ) : headline ? (
         <span
           className="ah-ac-ev-main"
-          style={{ color: green === false ? "var(--failed)" : undefined }}
+          style={{ color: green === false ? "var(--failed)" : "var(--done)" }}
+          title={resultExplanation(facts.result).join("\n")}
         >
-          <Icon name={green === false ? "circle-x" : "check-check"} size="sm" />
-          {line}
+          <Icon name={green === false ? "circle-x" : "circle-check"} size="sm" />
+          {headline}
         </span>
       ) : (
         <span className="ah-ac-ev-main">
@@ -200,7 +204,20 @@ function EvidenceSummary({ ac, facts }: { ac: AcRow; facts: EvidenceFacts | null
           Recorded note
         </span>
       )}
-      {where && <span className="ah-subtle ah-mono">{where}</span>}
+      {(commit || facts.date) && (
+        <span className="ah-subtle ah-row ah-wrap" style={{ gap: 6 }}>
+          {commit && (
+            <span title="The commit the check ran on">
+              <ExternalA href={gh && `${gh}/commit/${commit.sha}`}>
+                <span className="ah-mono">
+                  {commit.repo ?? ac.repo ?? "commit"} {shortSha(commit.sha)}
+                </span>
+              </ExternalA>
+            </span>
+          )}
+          {facts.date && <span>{facts.date}</span>}
+        </span>
+      )}
     </span>
   );
 }
@@ -283,16 +300,24 @@ function HowProven({
     ...facts.evalFiles.map((f) => evalFor(detail.evals, f.replace(/^evals\//, ""))),
     ...facts.evalDeliveries.map((d) => evalFor(detail.evals, d)),
   ].filter((e, i, all): e is EvalRecord => e !== undefined && all.indexOf(e) === i);
-  const line = resultLine(facts.result);
+  const headline = resultHeadline(facts.result);
+  const explained = resultExplanation(facts.result);
   const green = resultPassed(facts.result);
   return (
     <div className="ah-stack" style={{ gap: 10 }}>
       <dl className="ah-ac-facts">
-        {line && (
+        {headline && (
           <Fact label="Result">
             <span style={{ color: green === false ? "var(--failed)" : "var(--done)" }}>
-              <Icon name={green === false ? "circle-x" : "circle-check"} size="sm" /> {line}
+              <Icon name={green === false ? "circle-x" : "circle-check"} size="sm" /> {headline}
             </span>
+            {explained.length > 0 && (
+              <ul className="ah-ac-explain ah-small ah-muted">
+                {explained.map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+            )}
           </Fact>
         )}
         {facts.commits.length > 0 && (
@@ -561,7 +586,6 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
   const asked = params.get("ac");
   const [filter, setFilter] = useState<"all" | Pass>("all");
   const [repo, setRepo] = useState<string | null>(null);
-  const [all, setAll] = useState(asked !== null);
   const [open, setOpen] = useState<string | null>(
     asked ?? detail.ac_rows.find((ac) => passOf(ac) === "owner")?.id ?? null,
   );
@@ -604,11 +628,6 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
   const filtered = rows.filter(
     (ac) => (filter === "all" || passOf(ac) === filter) && (repo === null || ac.repo === repo),
   );
-  const folded =
-    !all && filter === "all" && repo === null && filtered.length > HEAD_ROWS + TAIL_ROWS;
-  const shown = folded
-    ? [...filtered.slice(0, HEAD_ROWS), ...filtered.slice(-TAIL_ROWS)]
-    : filtered;
   const toggle = (id: string) => {
     setOpen(open === id ? null : id);
     if (asked !== null) {
@@ -689,30 +708,11 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
             </tr>
           </thead>
           <tbody>
-            {shown.map((ac, i) => {
+            {filtered.map((ac) => {
               const expanded = open === ac.id;
               const facts = ac.evidence ? parseEvidence(ac.evidence) : null;
               return (
                 <Fragment key={ac.id}>
-                  {folded && i === HEAD_ROWS && (
-                    <tr style={{ cursor: "default" }}>
-                      <td
-                        colSpan={COLS}
-                        style={{ textAlign: "center", background: "var(--surface-sunken)" }}
-                      >
-                        <button
-                          type="button"
-                          className="ah-btn ah-btn-sm ah-btn-ghost"
-                          onClick={() => {
-                            setAll(true);
-                          }}
-                        >
-                          <Icon name="chevron-down" size="sm" />
-                          Show all {rows.length} ({filtered.length - shown.length} more)
-                        </button>
-                      </td>
-                    </tr>
-                  )}
                   <tr
                     id={`ac-row-${ac.id}`}
                     className="ah-ac-row"
@@ -748,7 +748,7 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
                       </div>
                     </td>
                     <td>
-                      <EvidenceSummary ac={ac} facts={facts} />
+                      <EvidenceSummary ac={ac} facts={facts} githubOf={githubOf} />
                     </td>
                     <td>
                       <CitedCell
@@ -775,7 +775,7 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
         </table>
         <div className="ah-table-foot">
           <span>
-            Showing {shown.length} of {rows.length} · from{" "}
+            Showing {filtered.length} of {rows.length} · from{" "}
             <span className="ah-mono">brain/features/{detail.slug}/features.json</span>
           </span>
         </div>

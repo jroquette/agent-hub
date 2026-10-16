@@ -166,3 +166,9 @@
   color: var(--text-muted);
   max-width: 110ch;
 }
+
+.ah-ac-explain {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  line-height: 18px;
+}
