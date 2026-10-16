@@ -47,6 +47,8 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 │   └ /projects/:project/skills/:kind/:source/:name   Skill, agent or hook detail   P2
 ├ /knowledge/learnings              Learnings triage                                 P3 (accept/reject/snooze P3)
 │   ?status=proposed|accepted|rejected|snoozed&target=team|repo|personal&learning=:id
+│   As built (AGH-272, specs/18-learnings.md): ?status=accepted|rejected (absent = proposed; push)
+│   &learning=:id&q=&project=&readiness=ready|blocked&claude=…&provenance=… (comma lists)
 │ └ /knowledge/learnings/:id/trace  Provenance trace                                 P3
 ├ /knowledge/decisions?project=&repo=&topic=&decision=:id  Decisions log            P3
 └ /knowledge/context?project=&repo=&agent=  Context inspector                        P3

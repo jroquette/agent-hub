@@ -55,6 +55,7 @@ Below 768 px, every non-glance screen shows: "This view needs a wider screen." Â
 | Sessions list | Started, Agent, Issue/run, Outcome, Duration, Cost, Repo, Project, Errors, Turns, Tokens, Files, Decisions, Transcript | Tokens, Files, Decisions, Transcript (Project hides when scoped to one project) |
 | Runs list | Run, Issue + title, Stage, Outcome, Started, Cost vs budget, PR + CI, Duration, Repo, Workflow + revision, Attempt, Dry-run | Workflow + revision, Attempt, Dry-run |
 | Learnings queue | Text, Provenance, Target, Age, Source | Source |
+| Learnings queue, as built (AGH-272, `18-learnings.md`) | Title with summary and badges, Age | None: the title wraps to two lines instead |
 | Tracker queue | Issue, Title, Age, Action, Repo | Repo |
 | Health findings | Severity, Rule, Path:line, Message, Fix | â€” (Fix moves under Message) |
 | Collector sources | Source, Health, Last event, Latency p95, p50, Events 24 h | p50, Events 24 h |
