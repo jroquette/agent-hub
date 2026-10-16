@@ -475,7 +475,7 @@ describe("FeatureDetailScreen", () => {
       expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
     });
 
-    it("names the header chips with ticket titles once the tickets load, linking to Linear (tickets)", async () => {
+    it("shows each header chip with its Linear status and title on hover, and no PR placeholder (tickets)", async () => {
       open({ [TICKETS]: tickets }, "/features/agent-hub/layered-memory?doc=tickets");
 
       await screen.findByRole("table", { name: "Tickets" });
@@ -486,6 +486,8 @@ describe("FeatureDetailScreen", () => {
       expect(link).toHaveAttribute("title", "AGH-48 · Load the memory layers · opens in Linear");
       expect(header).not.toHaveTextContent("Load the memory layers");
       expect(within(header).queryByRole("link", { name: /AGH-49/ })).toBeNull();
+      expect(within(header).getAllByText("In Progress")).toHaveLength(2);
+      expect(screen.queryByText("PR —")).toBeNull();
     });
 
     it("opens on the Tickets tab while the feature is implemented (tabs)", async () => {
