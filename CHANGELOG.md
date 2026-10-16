@@ -50,6 +50,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   opens the steps in an Activity drawer over the right of the page; a permission card stays under the line. The
   session page's "What went wrong" folds the problems the agent or you already dealt with into one line, "Nothing
   needs you · …", behind "Show N handled" (AGH-265).
+- The chat's header shows the files Claude changed as a chip (files, lines added and removed, how many wait for
+  review); it opens a Changed files drawer listing them by folder, like source control, each opening alone with
+  every change to it as a diff and a Viewed mark kept per session in the browser. Each turn that edited files shows
+  them in a card under its activity line. Both drawers resize from their left edge, by mouse or keyboard, or widen
+  to the page (AGH-265).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to

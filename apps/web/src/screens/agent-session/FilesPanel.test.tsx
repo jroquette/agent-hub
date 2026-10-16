@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FilesPanel, reviewedKey } from "./FilesPanel";
+import { ChangedFilesChip, FilesPanel, reviewedKey } from "./FilesPanel";
 import { changedFiles, type ToolView } from "./model";
 
 const tool = (id: string, name: string, input: Record<string, unknown>): ToolView => ({
@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("FilesPanel (review)", () => {
-  it("lists the changed files by folder, like source control, and takes focus", () => {
+  it("lists the changed files by folder, like source control, and takes focus (AC-265.7)", () => {
     render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
 
     const panel = screen.getByRole("complementary", { name: "Changed files" });
@@ -48,7 +48,7 @@ describe("FilesPanel (review)", () => {
     expect(within(panel).queryByRole("region")).toBeNull();
   });
 
-  it("opens one file with its changes, steps to the next and goes back to all files", async () => {
+  it("opens one file with its changes, steps to the next and goes back to all files (AC-265.8)", async () => {
     render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
 
     await userEvent.click(screen.getByRole("button", { name: /new\.ts/ }));
@@ -67,7 +67,7 @@ describe("FilesPanel (review)", () => {
     expect(screen.getByRole("navigation", { name: "Files" })).toBeInTheDocument();
   });
 
-  it("keeps a viewed mark per session until a newer change to the file", async () => {
+  it("keeps a viewed mark per session until a newer change to the file (AC-265.9)", async () => {
     const { rerender } = render(
       <FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />,
     );
@@ -92,7 +92,7 @@ describe("FilesPanel (review)", () => {
     expect(screen.getByText("0 of 2 viewed")).toBeInTheDocument();
   });
 
-  it("goes back to the list on Esc, then closes, and says when nothing changed yet", async () => {
+  it("goes back to the list on Esc, then closes, and says when nothing changed yet (AC-265.8)", async () => {
     const onClose = vi.fn();
     const { rerender } = render(
       <FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={onClose} />,
@@ -110,5 +110,42 @@ describe("FilesPanel (review)", () => {
 
     rerender(<FilesPanel files={[]} sessionId="s1" onClose={onClose} />);
     expect(screen.getByText("Claude has not changed any file yet.")).toBeInTheDocument();
+  });
+});
+
+describe("ChangedFilesChip (review)", () => {
+  it("counts the files and lines, says how many wait for review, then shows a check (AC-265.10)", async () => {
+    const files = filesOf(TWO_FILES);
+    const onToggle = vi.fn();
+    const { rerender } = render(
+      <ChangedFilesChip
+        files={files}
+        review={{ reviewed: {}, toggle: vi.fn() }}
+        open={false}
+        onToggle={onToggle}
+      />,
+    );
+
+    const chip = screen.getByRole("button", {
+      name: "Changed files: 2 files, 2 lines added, 1 removed, 2 to review",
+    });
+    expect(chip).toHaveClass("as-files-chip-due");
+    await userEvent.click(chip);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+
+    const reviewed = Object.fromEntries(files.map((file) => [file.path, file.lastChangeId]));
+    rerender(
+      <ChangedFilesChip
+        files={files}
+        review={{ reviewed, toggle: vi.fn() }}
+        open
+        onToggle={onToggle}
+      />,
+    );
+    const done = screen.getByRole("button", {
+      name: "Changed files: 2 files, 2 lines added, 1 removed, all reviewed",
+    });
+    expect(done).not.toHaveClass("as-files-chip-due");
+    expect(done).toHaveAttribute("aria-expanded", "true");
   });
 });
