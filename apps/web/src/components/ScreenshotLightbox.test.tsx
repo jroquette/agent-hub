@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
-import { ScreenshotLightbox, ScreenshotThumb, strokeFor } from "./ScreenshotLightbox";
+import { activeCrop, ScreenshotLightbox, ScreenshotThumb, strokeFor } from "./ScreenshotLightbox";
 
 const SRC = "data:image/png;base64,iVBORw0KGgo=";
 
@@ -32,6 +32,23 @@ describe("strokeFor", () => {
   it("scales the stroke with the image and never goes under 2px", () => {
     expect(strokeFor(3440)).toBe(7);
     expect(strokeFor(200)).toBe(2);
+  });
+});
+
+describe("activeCrop", () => {
+  it("takes the crop being dragged, else the latest one, as a box", () => {
+    const first = { kind: "crop", color: "#fff", from: [0, 0], to: [10, 10] } as const;
+    const latest = { kind: "crop", color: "#fff", from: [50, 40], to: [20, 10] } as const;
+    const arrow = { kind: "arrow", color: "#fff", from: [0, 0], to: [5, 5] } as const;
+
+    expect(activeCrop([first, latest, arrow], null)).toEqual({
+      x: 20,
+      y: 10,
+      width: 30,
+      height: 30,
+    });
+    expect(activeCrop([first], latest)).toEqual({ x: 20, y: 10, width: 30, height: 30 });
+    expect(activeCrop([arrow], null)).toBeNull();
   });
 });
 
@@ -70,6 +87,32 @@ describe("ScreenshotLightbox", () => {
     expect(rect).toHaveAttribute("height", "100");
     fireEvent.click(screen.getByRole("button", { name: "Undo (⌘Z)" }));
     expect(screen.getByTestId("annotation-layer").querySelector("rect")).toBeNull();
+  });
+
+  it("crops to the dragged area, dims the rest, and undoes the crop like a mark", () => {
+    render(<ScreenshotLightbox src={SRC} alt="The screen" onClose={vi.fn()} onSave={vi.fn()} />);
+    loadImage();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "c" });
+
+    drag(layer(), [50, 25], [250, 125]);
+
+    const frame = screen.getByTestId("annotation-layer").querySelector("[data-crop] rect");
+    expect(frame).toHaveAttribute("x", "100");
+    expect(frame).toHaveAttribute("y", "50");
+    expect(frame).toHaveAttribute("width", "400");
+    expect(frame).toHaveAttribute("height", "200");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "z", metaKey: true });
+    expect(screen.getByTestId("annotation-layer").querySelector("[data-crop]")).toBeNull();
+  });
+
+  it("keeps no crop thinner than 10 image pixels", () => {
+    render(<ScreenshotLightbox src={SRC} alt="The screen" onClose={vi.fn()} onSave={vi.fn()} />);
+    loadImage();
+    fireEvent.click(screen.getByRole("radio", { name: "Crop (C)" }));
+
+    drag(layer(), [10, 10], [200, 12]);
+
+    expect(screen.getByTestId("annotation-layer").querySelector("[data-crop]")).toBeNull();
   });
 
   it("ignores a click that drags no distance", () => {
