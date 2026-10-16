@@ -22,11 +22,24 @@
 .ah-skills-search {
   max-width: 480px;
 }
+.ah-skills-group + .ah-skills-group {
+  margin-top: var(--space-4);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border);
+}
 .ah-skills-group > h2 {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-bottom: var(--space-3);
+  margin: 0 0 var(--space-1);
+}
+/* One line under a group's heading saying what that kind is. */
+.ah-skills-group-help {
+  margin: 0 0 var(--space-3);
+  max-width: 80ch;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 18px;
 }
 .ah-skills-grid {
   list-style: none;
