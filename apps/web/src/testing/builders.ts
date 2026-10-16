@@ -668,6 +668,8 @@ export function aTicketRow(overrides: Partial<TicketRow> = {}): TicketRow {
     readiness: "can_start",
     waiting_on: [],
     reviewed: false,
+    parent: null,
+    children: [],
     ...overrides,
   };
 }
@@ -683,6 +685,7 @@ export function aTicketPlan(overrides: Partial<TicketPlan> = {}): TicketPlan {
     external_blockers: [],
     critical_path: ["AGH-202", "AGH-203"],
     warnings: [],
+    epics: [],
     ...overrides,
   };
 }

@@ -5,7 +5,8 @@ later record exists is ``skipped``), Tickets (every planned ticket has a tracker
 (every ticket Done in Linear and every AC passing; its meta also counts the tickets in
 progress), Review (every ticket reviewed: Done in Linear or an approved review record),
 Evaluate (the latest eval of every AC is a SHIP, none waiting on owner steps) and Shipped
-(every ticket Done in Linear). Canceled tickets and withdrawn ACs are left out of every count.
+(every ticket Done in Linear). Canceled tickets and withdrawn ACs are left out of every count;
+an epic (a ticket with children) counts only under Tickets, as it tracks the others.
 
 The fold: steps hold in turn until the first that does not, the gate; it is ``current`` (or
 ``unknown`` when its evidence cannot be read) and the ``phase``. No step after the gate is
@@ -118,6 +119,8 @@ class _Own:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class _Facts:
     inputs: GoldenInputs
+    # Every ticket not canceled; ``active`` leaves out the epics, which only track the others.
+    planned: tuple[TicketRow, ...]
     active: tuple[TicketRow, ...]
     acs: tuple[RecordAc, ...]
     done: int
@@ -176,11 +179,13 @@ def _after_gate(own: _Own, gate: GoldenStep) -> tuple[StepState, str | None]:
 
 
 def _owns(inputs: GoldenInputs) -> dict[FeaturePhase, _Own]:
-    active = tuple(
+    planned = tuple(
         row for row in inputs.rows if row.state is None or row.state.type not in _CANCELED
     )
+    active = tuple(row for row in planned if not row.children)
     facts = _Facts(
         inputs=inputs,
+        planned=planned,
         active=active,
         acs=tuple(ac for ac in inputs.acs if not ac.withdrawn),
         done=sum(row.state is not None and row.state.type == "completed" for row in active),
@@ -214,12 +219,12 @@ def _document(facts: _Facts, *, file: str, later: tuple[tuple[FeaturePhase, str]
 
 
 def _tickets(facts: _Facts) -> _Own:
-    total = len(facts.active)
+    total = len(facts.planned)
     if total == 0:
         if ISSUES_FILE in facts.inputs.files:
             return _Own(holds=True)
         return _Own(holds=False, reason="no tickets planned in features.json")
-    created = sum(row.id is not None for row in facts.active)
+    created = sum(row.id is not None for row in facts.planned)
     return _Own(
         holds=created == total,
         meta=f"{created} of {total} created",

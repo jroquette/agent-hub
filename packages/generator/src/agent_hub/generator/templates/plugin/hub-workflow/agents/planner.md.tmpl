@@ -23,7 +23,8 @@ Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`). 
    `tickets` is the ticket plan, one entry per issue of step 3: a draft `key` (`T1`, `T2`, …, unique), `id: null` (the
    main session fills it when it creates the issue), a short `title`, the `repo`, `blocked_by` (the keys of the
    tickets that must be done first, from the plan's contract order and dependencies; never the ticket itself, no
-   cycle) and `order` (the plan order, from 0). Each AC names in `ticket` the key of the ticket that delivers it.
+   cycle), `order` (the plan order, from 0) and, when the issues have a parent (an epic that only tracks them),
+   `parent`: the parent's key on each child (the parent itself is a ticket with no `parent` and no AC). Each AC names in `ticket` the key of the ticket that delivers it.
    One entry per AC in the spec, `passes: false`, `evidence: null`. `verification` is the exact command from the plan,
    and its own exit status is the verdict: drop the plan's `; echo rc=$?` idiom and never end in `|| true` or `| tail`
    (redirecting output to a file is fine). `./hub doctor --only features.tracker` rejects a pending AC whose command

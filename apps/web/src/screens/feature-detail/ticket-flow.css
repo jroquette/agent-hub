@@ -49,6 +49,64 @@
   background: var(--failed);
 }
 
+/* The epic heads the flow: the parent that tracks the tickets, never a step itself. */
+.ah-flow-epic {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-sunken);
+}
+.ah-flow-epic[data-readiness="done"] {
+  border-style: solid;
+  border-color: var(--done);
+}
+.ah-flow-epic-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.ah-flow-epic-title {
+  flex: 1 1 240px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-flow-epic-track {
+  display: flex;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--border);
+}
+.ah-flow-epic-track span[data-tone="done"] {
+  background: var(--done);
+}
+.ah-flow-epic-track span[data-tone="in_progress"] {
+  background: var(--live);
+}
+.ah-table tr[data-child="true"] td:first-child {
+  padding-left: 22px;
+}
+.ah-table tr[data-epic="true"] td {
+  background: var(--surface-sunken);
+}
+
 .ah-flow {
   display: flex;
   align-items: stretch;

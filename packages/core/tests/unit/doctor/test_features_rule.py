@@ -650,6 +650,7 @@ def test_reads_only_feature_records_when_listing_searched(
 
 # AGH-136: the ticket plan (``tickets``, AC ``ticket``), evals per delivery and withdrawn ACs.
 TICKET_FIX = "name a key or id of `tickets` (or add that ticket)"
+PARENT_FIX = "name the key or id of the epic in `tickets`, or set parent to null"
 CYCLE_FIX = "remove one blocked_by edge of the cycle"
 AC_TICKET_FIX = "name the ticket that delivers the AC: a key or id of `tickets`, or a `linear` id"
 EVAL_FIX = "write the eval's frontmatter: type: eval, delivery, verdict, and acs or tickets"
@@ -733,6 +734,19 @@ def test_accepts_tickets_when_plan_well_formed(snapshot_of: SnapshotFactory) -> 
             [a_ticket("T1", blocked_by=[f"T{n}" for n in range(51)]), a_ticket("T2")],
             [("T1: `blocked_by` must be a list of at most 50 keys or ids", RECORD_FIX)],
             id="too-many-blockers",
+        ),
+        pytest.param(
+            [a_ticket("T1", parent="T9"), a_ticket("T2", parent="T2")],
+            [
+                ("T1: parent T9 is not a key or id of `tickets`", PARENT_FIX),
+                ("T2: its own parent", PARENT_FIX),
+            ],
+            id="parent-unknown-or-self",
+        ),
+        pytest.param(
+            [a_ticket("T1"), a_ticket("T2", parent=["T1"])],
+            [("T2: `parent` must be null or the key or id of a ticket", RECORD_FIX)],
+            id="parent-malformed",
         ),
         pytest.param(
             [a_ticket("T1"), a_ticket("T2"), "T3"],

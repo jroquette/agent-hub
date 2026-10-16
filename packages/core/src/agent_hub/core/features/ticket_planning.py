@@ -1,21 +1,23 @@
 """The planning of a feature's tickets (AGH-136 D2, S4, D5): a pure fold over plan and snapshot.
 
-Each ticket of the plan (``features.json`` → ``tickets``) and each id of ``linear`` becomes one
-row, named by its ``ref`` (its tracker id once created, else its draft key). A "blocked by" edge
-comes from the plan's ``blocked_by``, from Linear's relations, or both, and says so. A ticket is
-done when its Linear state type is ``completed`` and in progress when it is ``started`` (In
-Progress, In Review…: never offered as "can start"); a canceled (or duplicate) ticket never blocks
-and is left out of the planning. Over the tickets neither done nor canceled: dependency cycles
-(strongly connected components) are flagged and left out, and so is a ticket waiting on a
-blocker outside the feature that is not done, canceled or known (it is listed under ``waiting``);
-the rest are layered by Kahn's algorithm (each layer can run in parallel, the first is
-``can_start``), and the recommended order is the layers in turn,
-each by priority (1 urgent first, 0 none last), then plan ``order``, then ref. Blockers outside
-the feature (named by Linear's relations, or only by the plan's ``blocked_by``) are listed with
-the status Linear returned for them. Without a snapshot the readiness comes from the plan's edges
-alone and every status is unknown. Linear's text is untrusted: titles, assignees and state names
-are redacted (r1) and clipped, and a url is kept only under
-``https://linear.app/``. Same input, same output, whatever the order of the input.
+Each ticket of the plan (``features.json`` → ``tickets``) and each id of ``linear`` becomes one row,
+named by its ``ref`` (its tracker id once created, else its draft key). A "blocked by" edge comes
+from the plan's ``blocked_by``, from Linear's relations, or both, and says so. A ticket is done when
+its Linear state type is ``completed`` and in progress when it is ``started`` (In Progress, In
+Review…: never offered as "can start"); a canceled (or duplicate) ticket never blocks and is left
+out of the planning. A ticket that is the parent of another (the plan's ``parent``, or Linear's
+parent issue) is an epic: it only tracks its children, so it never blocks, is left out of the
+planning and its readiness is ``epic`` (``done`` or ``canceled`` once Linear says so). Over the
+other tickets neither done nor canceled: dependency cycles (strongly connected components) are
+flagged and left out, and so is a ticket waiting on a blocker outside the feature that is not done,
+canceled or known (it is listed under ``waiting``); the rest are layered by Kahn's algorithm (each
+layer can run in parallel, the first is ``can_start``), and the recommended order is the layers in
+turn, each by priority (1 urgent first, 0 none last), then plan ``order``, then ref. Blockers
+outside the feature (named by Linear's relations, or only by the plan's ``blocked_by``) are listed
+with the status Linear returned for them. Without a snapshot the readiness comes from the plan's
+edges alone and every status is unknown. Linear's text is untrusted: titles, assignees and state
+names are redacted (r1) and clipped, and a url is kept only under ``https://linear.app/``. Same
+input, same output, whatever the order of the input.
 """
 
 import re
@@ -73,6 +75,7 @@ class _Node:
     summary: IssueSummary | None
     rank: tuple[int, int, tuple[str | int, ...]] = (0, 0, ())
     edges: dict[str, set[EdgeSource]] = field(default_factory=dict)
+    parent: str | None = None
 
     @property
     def state(self) -> IssueState | None:
@@ -115,6 +118,8 @@ def ticket_board(
     resolve = _resolver(nodes)
     externals = _outside(nodes, summaries, () if snapshot is None else snapshot.external)
     _link(nodes, resolve=resolve, warnings=warnings)
+    _parents(nodes, resolve=resolve, warnings=warnings)
+    children = _children(nodes)
     if snapshot is not None:
         warnings.extend(
             f"Linear does not know {missing}; it is shown from the plan."
@@ -124,11 +129,13 @@ def ticket_board(
     def settled(ref: str) -> bool:
         node = by_ref.get(ref)
         if node is not None:
-            return node.done or node.canceled
+            return node.done or node.canceled or ref in children
         summary = externals.get(ref)
         return summary is not None and summary.state.type in DONE_TYPES | CANCELED_TYPES
 
-    active = {node.ref for node in nodes if not (node.done or node.canceled)}
+    active = {
+        node.ref for node in nodes if not (node.done or node.canceled or node.ref in children)
+    }
     graph = {ref: sorted(b for b in by_ref[ref].edges if b in active) for ref in sorted(active)}
     cycles = _cycles(graph, by_ref)
     in_cycle = {ref for cycle in cycles for ref in cycle}
@@ -143,7 +150,9 @@ def ticket_board(
     waiting_on: dict[str, tuple[str, ...]] = {}
     for node in nodes:
         waiting_on[node.ref] = tuple(b for b in sorted(node.edges, key=_natural) if not settled(b))
-        readiness[node.ref] = _readiness(node, in_cycle=in_cycle, waiting=waiting_on[node.ref])
+        readiness[node.ref] = _readiness(
+            node, in_cycle=in_cycle, waiting=waiting_on[node.ref], epic=node.ref in children
+        )
     blocks = _blocks(nodes)
     approved_names = {name.lower() for name in approved}
     rows = tuple(
@@ -154,6 +163,7 @@ def ticket_board(
             readiness=readiness[node.ref],
             waiting_on=waiting_on[node.ref],
             reviewed=_reviewed(node, approved_names, read=snapshot is not None),
+            children=children.get(node.ref, ()),
         )
         for node in nodes
     )
@@ -171,6 +181,7 @@ def ticket_board(
         external_blockers=_external_blockers(nodes, by_ref, externals),
         critical_path=_critical_path(order, graph, by_ref),
         warnings=tuple(warnings),
+        epics=tuple(node.ref for node in nodes if node.ref in children),
     )
     return TicketBoard(rows=rows, plan=plan)
 
@@ -317,15 +328,49 @@ def _linear_edges(
             by_ref[blocked].edges.setdefault(node.ref, set()).add("linear")
 
 
+def _parents(nodes: Sequence[_Node], *, resolve: _Resolve, warnings: list[str]) -> None:
+    """Sets each row's ``parent``: the plan's ``parent``, else Linear's parent issue, when it
+    names another row (a parent outside the feature is not one of its epics)."""
+    for node in nodes:
+        named = None if node.planned is None else node.planned.parent
+        if named is not None:
+            parent = resolve.get(named)
+            if parent is None:
+                warnings.append(f"{node.ref} has the parent {named}, which the plan does not list.")
+            elif parent == node.ref:
+                warnings.append(f"{node.ref} is its own parent; it is ignored.")
+            else:
+                node.parent = parent
+                continue
+        issue = None if node.summary is None else node.summary.parent
+        parent = None if issue is None else resolve.get(issue)
+        if parent is not None and parent != node.ref:
+            node.parent = parent
+
+
+def _children(nodes: Sequence[_Node]) -> dict[str, tuple[str, ...]]:
+    """Each epic's ref, to the refs of its child rows in row order."""
+    children: dict[str, list[str]] = {}
+    for node in nodes:
+        if node.parent is not None:
+            children.setdefault(node.parent, []).append(node.ref)
+    return {ref: tuple(items) for ref, items in children.items()}
+
+
 def _source(sources: set[EdgeSource]) -> EdgeSource:
     return "both" if len(sources) > 1 else next(iter(sources))
 
 
-def _readiness(node: _Node, *, in_cycle: set[str], waiting: tuple[str, ...]) -> Readiness:
+def _readiness(
+    node: _Node, *, in_cycle: set[str], waiting: tuple[str, ...], epic: bool
+) -> Readiness:
     if node.done:
         return "done"
     if node.canceled:
         return "canceled"
+    # An epic is done when its children are; it is never itself picked up.
+    if epic:
+        return "epic"
     if node.ref in in_cycle:
         return "in_cycle"
     # Work already under way is not "ready to start", even when a blocker is still open.
@@ -445,6 +490,7 @@ def _row(
     readiness: Readiness,
     waiting_on: tuple[str, ...],
     reviewed: bool | None,
+    children: tuple[str, ...],
 ) -> TicketRow:
     summary = node.summary
     planned = node.planned
@@ -470,6 +516,8 @@ def _row(
         readiness=readiness,
         waiting_on=waiting_on,
         reviewed=reviewed,
+        parent=node.parent,
+        children=children,
     )
 
 
