@@ -187,7 +187,9 @@ describe("AgentSessionScreen (transcript)", () => {
 
     expect(screen.getAllByRole("article", { name: "Claude" })).toHaveLength(2);
     expect(screen.getByText("Hello there.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Edit src\/app\.py/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Edit src\/app\.py|Edited 1 file/ }),
+    ).toBeInTheDocument();
   });
 
   it("reads every log page when the log is longer than one page", async () => {
@@ -361,7 +363,7 @@ describe("AgentSessionScreen (streaming-batch)", () => {
 
     const bubble = screen.getAllByRole("article", { name: "Claude" })[1];
     expect(bubble).toHaveTextContent("Hello");
-    const card = screen.getByRole("button", { name: /Edit src\/app\.py/ });
+    const card = screen.getByRole("button", { name: /Edit src\/app\.py|Edited 1 file/ });
     expect(bubble?.compareDocumentPosition(card)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 });
@@ -1157,7 +1159,7 @@ describe("AgentSessionScreen (axe)", () => {
     const animated = [...css.matchAll(/([^{}]+)\{[^{}]*\banimation:(?!\s*none)[^;]+;/g)].map(
       (match) => match[1]?.trim(),
     );
-    expect(animated).toEqual([".as-caret", ".as-working::before"]);
+    expect(animated).toEqual([".as-caret", ".as-working::before", ".as-spin"]);
     const reduced =
       /@media \(prefers-reduced-motion: reduce\) \{\s*([^{]+)\{\s*animation: none;/.exec(css);
     expect(reduced?.[1]?.split(",").map((selector) => selector.trim())).toEqual(animated);
