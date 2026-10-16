@@ -108,7 +108,7 @@ export const NAV: readonly { group: string; items: NavItem[] }[] = [
             countNoun: () => "to triage",
           },
           { id: BRAIN_ID, label: "Brain", to: BRAIN_PICKER },
-          { id: SKILLS_ID, label: "Skills", to: SKILLS_PICKER },
+          { id: SKILLS_ID, label: "Toolkit", to: SKILLS_PICKER },
         ],
       },
       { id: "features", label: "Features", to: "/features", icon: "list-checks" },

@@ -3884,6 +3884,9 @@ export interface components {
     /**
      * Step
      * @description One top-level ordered list item of a body (S6); ``index`` is 1-based, as ``#step-<n>``.
+     *
+     *     ``declared_type`` is the type the step states itself, when it starts with one; ``summary`` is
+     *     the rest of its first line as plain text (Markdown marks dropped), empty when there is none.
      */
     Step: {
       /**
@@ -3896,6 +3899,7 @@ export interface components {
        * @default []
        */
       commands: string[];
+      declared_type?: components["schemas"]["StepType"] | null;
       /** Index */
       index: number;
       /**
@@ -3908,6 +3912,11 @@ export interface components {
        * @default []
        */
       skills: string[];
+      /**
+       * Summary
+       * @default
+       */
+      summary: string;
       /**
        * Tags
        * @default []
@@ -3935,6 +3944,8 @@ export interface components {
     StepStatus: "running" | "ok" | "failed" | "skipped";
     /** @enum {string} */
     StepTag: "gate" | "agent" | "command" | "script" | "human";
+    /** @enum {string} */
+    StepType: "agent" | "script" | "gate" | "human";
     /**
      * SummaryLine
      * @description One line of a session summary and the event it comes from.

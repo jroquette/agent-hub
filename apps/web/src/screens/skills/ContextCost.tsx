@@ -15,15 +15,14 @@ function Stat({ label, value, source }: { label: string; value: number; source: 
     <div className="ah-skill-cost">
       <dt>{label}</dt>
       <dd>
-        <span className="ah-skill-cost-value">{tokens(value)}</span>{" "}
-        <span className="ah-skill-note">approximate</span>
+        <span className="ah-skill-cost-value">{tokens(value)}</span>
         <span className="ah-small ah-muted ah-skill-cost-source">{source}</span>
       </dd>
     </div>
   );
 }
 
-/** The two context figures `/plugin` shows; nothing for a hook (no cost). */
+/** The two context figures `/plugin` shows, as a section of the About rail; nothing for a hook. */
 export function ContextCost({ cost, kind }: { cost: Cost | null; kind: ItemKind }) {
   if (cost === null) return null;
   const always =
@@ -31,14 +30,14 @@ export function ContextCost({ cost, kind }: { cost: Cost | null; kind: ItemKind 
       ? "from the description; none while only you can invoke it"
       : "from the description, in every session";
   return (
-    <section className="ah-card ah-skill-section" aria-labelledby="skill-cost">
-      <div className="ah-card-head">
-        <h2 id="skill-cost" className="ah-h3">
+    <section className="ah-skill-rail-section" aria-labelledby="skill-cost">
+      <div className="ah-skill-rail-head">
+        <h3 id="skill-cost" className="ah-caption">
           Context cost
-        </h2>
+        </h3>
         <DerivedLabel how={HOW}>Approximate</DerivedLabel>
       </div>
-      <dl className="ah-card-body ah-skill-costs">
+      <dl className="ah-skill-costs">
         <Stat label="Always loaded" value={cost.always_loaded_tokens} source={always} />
         <Stat
           label="On invoke"
