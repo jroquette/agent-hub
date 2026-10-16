@@ -125,7 +125,8 @@ agent-hub image sets; there it binds `0.0.0.0` and Compose publishes the port on
 `~/.claude/projects` as the only folder the transcript tail reads. Hubs are registered from the app (Settings › Hubs)
 into `$XDG_CONFIG_HOME/agent-hub/hubs.json` (absolute only), else `~/.config/agent-hub/hubs.json` (mode 0600).
 The repo's `make run` (local), `make up`/`down`/`logs`/`ps` (Docker Compose), `make dev` (API plus the Vite dev
-server), `make demo` (synthetic data) and `make connect HUB=<path>` (register a hub, check its sensor) run it.
+server), `make live` and `make playground` (the live loop for agent-hub's own web app, below), `make demo` (synthetic
+data) and `make connect HUB=<path>` (register a hub, check its sensor) run it.
 
 `hub next` reads `list_ready` once per team, in `hub.json` order, and prints `<id>  <repo>  <title>  <url>` per issue,
 oldest first within each team. With several teams a failing team gets one `team <KEY>: <reason>` line on stderr while
@@ -360,7 +361,7 @@ GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hu
 ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)). The browser never contacts Linear. Agent sessions (AGH-165,
 below) add no outbound call of the server: the `claude` processes it starts reach Anthropic as when the user runs
 them. The approved UI design and the departures from it are in
-[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025, 0031, 0033 and 0034.
+[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025, 0031 and 0033 to 0036.
 
 **Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
 
@@ -368,7 +369,9 @@ them. The approved UI design and the departures from it are in
   else its task worktree name, matched against the hub's tracker teams and branch prefix (`TIP-1511`; no match gives
   `null`, never a guess); the workflow is its first slash command or skill that is not a routine one (`/kickoff`,
   `/handoff`, …). Its `actors` are the main agent and each subagent by type, linked to the Agent call that started it.
-  The stored `agent` value `main` is kept, never shown as a label, and deprecated in the API.
+  The stored `agent` value `main` is kept, never shown as a label, and deprecated in the API. The label's `title` is
+  the session's name: the user's `/rename`, else the short title Claude Code wrote in the transcript
+  ([ADR 0035](adr/0035-session-titles.md)); lists and tiles show it over issue, workflow, repo and branch.
 - **Problems.** A failed tool, a non-zero Bash exit, a guard denial, an open or declined guard ask, an interrupt, a
   failed gate and a failed hook are typed problems, each with its tool, `where`, message, time and actor, resolved as
   `recovered` or `agent_continued` ("Handled by the agent"), `open` ("Agent is on it", while the session is live and
@@ -438,9 +441,11 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
   `agent-hub[sessions]`; without it, or without `claude`, the screen says why and every write answers 503.
 - **Control.** Send messages (also while a turn runs), interrupt, answer permission prompts (allow once, deny with a
   message, always allow one suggested rule; `AskUserQuestion` and plan approval too; unanswered in 10 minutes is a
-  deny), change mode (`default`, `acceptEdits`, `plan`; never a bypass mode) and model, close, resume or fork a past
-  session of that workdir, delete an ended one. At most 4 live sessions; an idle one ends after 30 minutes; every limit
-  is a `hub web` option with an `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
+  deny), change mode (`default`, `acceptEdits`, `plan`, and `auto`, which only the dev app offers,
+  [ADR 0036](adr/0036-live-playground-and-auto-mode.md); never `bypassPermissions` or `dontAsk`) and model, close,
+  resume or fork a past session of that workdir, delete an ended one. A message to an ended local session (not
+  `log_full`) whose Claude conversation is still listed reopens it in place, same id and log (AGH-262). At most 4 live
+  sessions; an idle one ends after 30 minutes; every limit is a `hub web` option with an `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
   session left open by a crash is marked ended at the next start, and Resume picks it up.
 - **Log and stream.** Each session's log (gap-free `seq`) is streamed over SSE with `Last-Event-ID` replay; text
   deltas live only in memory. A session `hub web` drives links to the hook-observed Session by Claude's session id
@@ -478,6 +483,22 @@ replaces Live sessions and the separate list of driven sessions (design in
   clause) was read as design study material at commit `6a18585` (v0.12.2) for chat and list interaction patterns.
   We write our own React code. Nothing was copied, no asset or branding is used, and `NOTICE` and `LICENSES/` do not
   change. Open WebUI is not affiliated with, and has not endorsed, this project.
+
+**Live playground, Discuss and Studio (AGH-262, [ADR 0036](adr/0036-live-playground-and-auto-mode.md)).** Ways to
+work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub web`:
+
+- **Playground.** `make playground` runs a conductor `hub web` (7420, from a copy of the checkout taken at each
+  start) that drives the sessions, and `make live`: the checkout's API on 7421, restarted on each Python change, and
+  the web app on 5173, whose proxy sends the agent-session routes to the conductor, so a change never ends a session.
+  One address (`/__playground/session?token=`) signs the browser in. The dev app's shake and New session start in
+  the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps never offer it.
+- **Discuss.** A right-hand panel holds one driven session per feature, workflow, skill, agent, hook or note on
+  screen, started in the hub folder with that artifact as context; a feature opens it on arrival, and an acceptance
+  criterion or a selected passage can be pointed at.
+- **Studio.** Create a skill, an agent or a hook with Claude: the session writes a draft under `.hub-drafts/<id>/`
+  in the hub and the preview renders it as the catalog card it will be. The Skills catalog has a tab per kind.
+- **Session names.** A session's name is the title Claude Code writes in its transcript, or the user's `/rename`,
+  stored as `session.title` ([ADR 0035](adr/0035-session-titles.md), below).
 
 **Skills tab (AGH-164, built).** Knowledge › Skills shows what a hub's agents can do, read from its files on request
 and never stored:
@@ -536,8 +557,8 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
 
 - `type` is a closed list: `session.start`, `session.end`, `tool.call`, `tool.result`, `message`, `reasoning`, `decision`,
   `gate.request`, `gate.result`, `learning.proposed`, `learning.accepted`, `learning.rejected`, `step.start`,
-  `step.end`, `run.end` and `session.summary` (the last five added in Phase 2 for runs, rejected learnings and stored
-  summaries).
+  `step.end`, `run.end`, `session.summary` (the last five added in Phase 2 for runs, rejected learnings and stored
+  summaries) and `session.title` ([ADR 0035](adr/0035-session-titles.md)).
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github`, `linear` and `control_plane`
   (an action the user took in `hub web`, added by AGH-201: a learning decision). Widening either list later is a
   compatible change.
@@ -569,7 +590,8 @@ before anything is appended, and the data stays on the machine in v1:
   (`scheme://user:pass@`) and `secret` (a `NAME=value` or `"name": "value"` whose name says secret, token, password,
   passwd, api_key, apikey, private_key or credential, with a value of 8+ characters). Redaction is idempotent and runs
   before any truncation; a rule change is a new rule set version and a release note.
-- **Metadata only**: no prompt, message, reasoning, successful tool output, file content or diff text is stored. The
+- **Metadata only**: no prompt, message, reasoning, successful tool output, file content or diff text is stored. A
+  session's short title ([ADR 0035](adr/0035-session-titles.md)) is kept like the other short texts. The
   one body excerpt is a failed tool's short error message ([ADR 0023](adr/0023-short-error-message.md), partially
   superseding [ADR 0019](adr/0019-metadata-only-events-and-redaction.md)): `tool.result` with `status: error` keeps
   `error_message`, the error text redacted with `r1`, whitespace collapsed, redacted again and cut at 300 characters
@@ -602,6 +624,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `step.start`, `run.end` from the workflow engine | `revision` (the document's integer), `content_hash` (`sha256:` + 64 hex) |
 | `step.start`, `step.end`, `run.end` from the workflow engine | `issue` (the run's `issue` input, when it is a tracker key such as `DEM-7`), so hub web keeps one live run per issue (AGH-232) |
 | `session.summary` | `text`, `lines` |
+| `session.title` | `text` (the transcript's `ai-title` or `custom-title`, 80 chars), `origin` (`ai` or `custom`; ADR 0035) |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
 (its note's first paragraph) is computed on read.

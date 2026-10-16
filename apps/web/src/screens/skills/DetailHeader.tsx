@@ -45,10 +45,12 @@ export interface DetailHeaderProps {
   /** The current time in ms, for "last used … ago". */
   now: number;
   usageDays: number;
+  /** An action at the end of the card's foot, such as the Discuss button. */
+  action?: ReactNode;
 }
 
 /** The header card; it holds the page's `<h1>` (the item's name). */
-export function DetailHeader({ detail, now, usageDays }: DetailHeaderProps) {
+export function DetailHeader({ detail, now, usageDays, action }: DetailHeaderProps) {
   const others = detail.frontmatter.filter((pair) => pair.known && !SHOWN_KEYS.has(pair.key));
   const description = detail.description_full ?? detail.description;
   const sha = detail.lock?.sha256;
@@ -79,6 +81,12 @@ export function DetailHeader({ detail, now, usageDays }: DetailHeaderProps) {
             <Icon name="activity" size="sm" />
             <UsageLine usage={detail.usage} days={usageDays} now={now} />
           </span>
+        )}
+        {action && (
+          <>
+            <span className="ah-grow" />
+            {action}
+          </>
         )}
       </div>
       <dl className="ah-skill-facts">
