@@ -1,9 +1,7 @@
-import { useQueries } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMatch } from "react-router";
 
-import { apiQuery } from "../lib/api";
-import { derivedWorkdirId, matchingWorkdir, servedCheckout } from "../lib/devCheckout";
+import { matchingWorkdir, servedCheckout } from "../lib/devCheckout";
 import { captureScreen } from "../lib/screenCapture";
 import { useScope } from "../lib/scope";
 import { createShakeDetector } from "../lib/shake";
@@ -13,7 +11,12 @@ import type {
   ShakeScreenshot,
   Workdir,
 } from "../screens/sessions-list/NewSessionDialog";
-import { useAgentCapabilities, useProjects, useWorkdirs } from "../screens/sessions-list/queries";
+import {
+  useAgentCapabilities,
+  useProjects,
+  useServedFolder,
+  useWorkdirs,
+} from "../screens/sessions-list/queries";
 import { StartSessionDialog } from "../screens/sessions-list/StartSessionDialog";
 
 /** Shown when the served checkout is not a listed folder, or outside `make dev` (O8). */
@@ -32,42 +35,6 @@ interface Opened {
   workdirId: string | null;
 }
 
-/** The workdir ids the served checkout has as a repo or a worktree (E6), or null outside `make dev`. */
-function useServedIds(): ReadonlySet<string> | null {
-  const root = servedCheckout();
-  const [ids, setIds] = useState<ReadonlySet<string> | null>(null);
-  useEffect(() => {
-    if (root === null) return;
-    // No ids is the honest fallback when they cannot be derived (no crypto.subtle).
-    Promise.all([derivedWorkdirId("repo", root), derivedWorkdirId("worktree", root)])
-      .then((derived) => {
-        setIds(new Set(derived));
-      })
-      .catch(() => undefined);
-  }, [root]);
-  return ids;
-}
-
-/**
- * Under `make dev` or `make live`, the registered project that lists the served checkout as a folder,
- * so a shake edits what the dev server shows whatever screen or scope it starts from; else null.
- */
-function useServedProject(projects: readonly string[], canDrive: boolean): string | null {
-  const ids = useServedIds();
-  const listings = useQueries({
-    queries: projects.map((project) => ({
-      ...apiQuery("/api/v1/agent-sessions/workdirs", { query: { project } }),
-      enabled: canDrive && ids !== null,
-      retry: false,
-    })),
-  });
-  if (ids === null) return null;
-  const at = listings.findIndex((listing) =>
-    listing.data?.items.some((w) => ids.has(w.workdir_id)),
-  );
-  return at === -1 ? null : (projects[at] ?? null);
-}
-
 /**
  * The project of a shake: under `make dev` or `make live`, the one that lists the served checkout;
  * else the route's (`projects/:project`, `features/:project/…`, `workflows/:project/…`), else the
@@ -78,7 +45,7 @@ function useShakeProject(canDrive: boolean): string | null {
   const [scope] = useScope();
   const projects = useProjects();
   const names = (projects.data?.items ?? []).map((item) => item.name);
-  const served = useServedProject(names, canDrive);
+  const served = useServedFolder(names, canDrive).project;
   const project = useMatch("/projects/:project/*")?.params.project;
   const feature = useMatch("/features/:project/*")?.params.project;
   const workflow = useMatch("/workflows/:project/*")?.params.project;
