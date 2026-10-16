@@ -301,3 +301,29 @@ describe("LearningsScreen", () => {
     expect(await seriousViolations(container)).toEqual([]);
   });
 });
+
+describe("LearningsScreen filters", () => {
+  it("narrows the queue to one project and keeps the choice in the URL", async () => {
+    const { router } = open();
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Order book snapshot before diff replay");
+
+    const projects = screen.getByRole("group", { name: "Project" });
+    await userEvent.click(within(projects).getByRole("button", { name: "loki-trader · 1" }));
+
+    await waitFor(() => {
+      expect(within(table).queryByText(/Retry flaky CI/)).not.toBeInTheDocument();
+    });
+    expect(within(table).getByText("Order book snapshot before diff replay")).toBeInTheDocument();
+    expect(router.state.location.search).toContain("project=loki-trader");
+  });
+
+  it("says nothing matches when the search finds no learning", async () => {
+    open();
+    await screen.findByRole("table", { name: "Proposed learnings" });
+
+    await userEvent.type(await screen.findByRole("searchbox", { name: "Search learnings" }), "zzz");
+
+    expect(await screen.findByText("No learnings match these filters.")).toBeInTheDocument();
+  });
+});
