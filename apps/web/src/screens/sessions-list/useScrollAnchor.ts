@@ -3,7 +3,8 @@ import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 import type { SectionId } from "./sections";
 
-const ROW = "tr[data-key]";
+/** A table row or a grid tile, keyed by its session. */
+const ROW = "tr[data-key], article[data-key]";
 /** A section past 100 rows scrolls in its own bounded region. */
 const REGION = ".ah-table-wrap > div[tabindex]";
 /** Visible rows remembered per scroller: the first one still in place among its neighbours wins. */
@@ -104,7 +105,7 @@ function nearView(element: Element, scroller: Element): boolean {
 /**
  * Keeps the reader's place across the refetches it is armed for (`arm(ids)`, before they run):
  * on the commit that brings a section's new data (`updatedAt` changes), every scroller (page and
- * bounded regions) scrolls back so its first visible row keeps its offset. Commits the reader
+ * bounded regions) scrolls back so its first visible row or tile keeps its offset. Commits the reader
  * causes (sort, collapse, filters) are left alone. When such a commit removes the focused row
  * and focus fell to the page, focus moves to its copy, else to its section's header, when near.
  */
