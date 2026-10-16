@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +8,17 @@ import { Dialog } from "./Dialog";
 
 afterEach(() => {
   document.body.style.overflow = "";
+  for (const node of document.querySelectorAll("[data-outside]")) node.remove();
 });
+
+/** A button placed after the dialog's portal, outside React (an opener the page then removes). */
+function outside(label: string): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.textContent = label;
+  button.dataset.outside = "";
+  document.body.append(button);
+  return button;
+}
 
 function stack(lower: ReactNode, upper: ReactNode = null) {
   return (
@@ -37,6 +47,15 @@ describe("Dialog", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(await seriousViolations(document.body)).toEqual([]);
+  });
+
+  it("is md by default and sm or lg when asked", () => {
+    const { rerender } = render(<Dialog title="Edit" />);
+    expect(screen.getByRole("dialog")).toHaveClass("ah-dialog-md");
+
+    rerender(<Dialog title="Edit" size="sm" />);
+    expect(screen.getByRole("dialog")).toHaveClass("ah-dialog-sm");
+    expect(screen.getByRole("dialog")).not.toHaveClass("ah-dialog-md");
   });
 
   it("renders in place without locking scroll when inline", () => {
@@ -82,6 +101,56 @@ describe("Dialog", () => {
     expect(close).toHaveFocus();
     await userEvent.tab({ shift: true });
     expect(save).toHaveFocus();
+  });
+
+  it("keeps focus on the dialog on Tab when every control is disabled", async () => {
+    render(
+      <Dialog title="Edit" onClose={vi.fn()} pending footer={<button disabled>Save</button>} />,
+    );
+    outside("After");
+
+    await userEvent.tab();
+
+    expect(screen.getByRole("dialog")).toHaveFocus();
+  });
+
+  it("brings focus that left the dialog back to its first control on Tab", async () => {
+    render(<Dialog title="Edit" onClose={vi.fn()} footer={<button>Save</button>} />);
+    outside("After").focus();
+    outside("Further");
+
+    await userEvent.tab();
+
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+  });
+
+  it("goes to the last control on Shift+Tab from the dialog itself", async () => {
+    render(<Dialog title="Edit" onClose={vi.fn()} footer={<button>Save</button>} />);
+    outside("After");
+    screen.getByRole("dialog").focus();
+
+    await userEvent.tab({ shift: true });
+
+    expect(screen.getByRole("button", { name: "Save" })).toHaveFocus();
+  });
+
+  it("cycles Tab only in the topmost of two stacked dialogs", async () => {
+    const lowerDialog = <Dialog key="lower" title="Lower" onClose={vi.fn()} />;
+    const { rerender } = render(stack(lowerDialog));
+    rerender(
+      stack(
+        lowerDialog,
+        <Dialog key="upper" title="Upper" onClose={vi.fn()}>
+          <input aria-label="Name" />
+        </Dialog>,
+      ),
+    );
+    const upper = screen.getByRole("dialog", { name: "Upper" });
+    within(upper).getByRole("button", { name: "Close" }).focus();
+
+    await userEvent.tab();
+
+    expect(within(upper).getByRole("textbox", { name: "Name" })).toHaveFocus();
   });
 
   it("closes only the topmost of two stacked dialogs on Escape", async () => {
@@ -162,6 +231,18 @@ describe("Dialog", () => {
 
     unmount();
     expect(document.body.style.overflow).toBe("scroll");
+  });
+
+  it("does not focus an opener the page removed meanwhile", () => {
+    const opener = outside("Rename");
+    opener.focus();
+    const focus = vi.spyOn(opener, "focus");
+    const { unmount } = render(<Dialog title="Rename hub" onClose={vi.fn()} />);
+    opener.remove();
+
+    unmount();
+
+    expect(focus).not.toHaveBeenCalled();
   });
 
   it("returns focus to the opener on close", async () => {
