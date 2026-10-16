@@ -13,6 +13,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Edit a learning's note before accepting it: Edit note opens a Write / Preview editor of the body in place, the edit
+  is a draft kept in this browser (it survives a reload; Discard edits asks first; a warning shows when the hub's
+  note changed since), and Accept sends it as `note_body`, so the hub PR's one commit moves the note and writes the
+  edited body under its kept frontmatter (ADR 0037, AGH-272).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
