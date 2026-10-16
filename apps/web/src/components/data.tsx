@@ -1,5 +1,5 @@
 import { observeElementRect, useVirtualizer } from "@tanstack/react-virtual";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Button, MenuItem, Popover, Tooltip } from "./core";
@@ -335,6 +335,95 @@ export function FilterRail({ facets, onToggle, footer }: FilterRailProps) {
       ))}
       {footer}
     </aside>
+  );
+}
+
+export interface FacetMenuProps {
+  /** The facet's name: the button reads "Label: Any" until an option is checked. */
+  label: string;
+  options: FacetOption[];
+  onToggle: (optionId: string) => void;
+  /** Unchecks every option; offered in the menu once one is checked. */
+  onClear?: (() => void) | undefined;
+  /** What the button says while nothing is checked. */
+  anyLabel?: string | undefined;
+}
+/** A compact "Label: value ▾" filter button whose menu lists the options with their counts. */
+export function FacetMenu({ label, options, onToggle, onClear, anyLabel = "Any" }: FacetMenuProps) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  const checked = options.filter((option) => option.checked);
+  const [only] = checked;
+  const value =
+    only === undefined
+      ? anyLabel
+      : checked.length === 1
+        ? only.label
+        : `${String(checked.length)} selected`;
+  return (
+    <span ref={root} style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        type="button"
+        className="ah-scope ah-facet-btn"
+        data-active={checked.length > 0}
+        aria-haspopup="true"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(!open);
+        }}
+      >
+        <span className="ah-subtle">{label}:</span> <span>{value}</span>
+        <Icon name="chevron-down" size="sm" />
+      </button>
+      <Popover open={open} label={`${label} filter`} style={{ top: 32, left: 0, minWidth: 220 }}>
+        {options.map((option) => (
+          <label key={option.id} className="ah-facet-opt">
+            <input
+              type="checkbox"
+              className="ah-check"
+              checked={Boolean(option.checked)}
+              onChange={() => {
+                onToggle(option.id);
+              }}
+            />
+            {option.icon}
+            <span className={option.mono ? "ah-mono" : undefined}>{option.label}</span>
+            <span className="ah-count">{option.count}</span>
+          </label>
+        ))}
+        {onClear && checked.length > 0 && (
+          <>
+            <div className="ah-menu-sep" />
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="x"
+              onClick={() => {
+                onClear();
+                setOpen(false);
+              }}
+            >
+              Clear {label.toLowerCase()}
+            </Button>
+          </>
+        )}
+      </Popover>
+    </span>
   );
 }
 
