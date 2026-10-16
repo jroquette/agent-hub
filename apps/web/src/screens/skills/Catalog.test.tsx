@@ -46,10 +46,10 @@ describe("Catalog search_facets", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
       target: { value: "spec" },
     });
-    expect(tab(/^All/)).toHaveAccessibleName("All2");
-    expect(tab(/^Skills/)).toHaveAccessibleName("Skills1");
-    expect(tab(/^Agents/)).toHaveAccessibleName("Agents1");
-    expect(tab(/^Hooks/)).toHaveAccessibleName("Hooks0");
+    expect(tab(/^All/)).toHaveAccessibleName("All 2");
+    expect(tab(/^Skills/)).toHaveAccessibleName("Skills 1");
+    expect(tab(/^Agents/)).toHaveAccessibleName("Agents 1");
+    expect(tab(/^Hooks/)).toHaveAccessibleName("Hooks 0");
 
     fireEvent.click(tab(/^Agents/));
     expect(shown()).toEqual(["evaluator"]);

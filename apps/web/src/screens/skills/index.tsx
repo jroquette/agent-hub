@@ -28,6 +28,7 @@ import { HookDetail } from "./HookDetail";
 import { useSkillCatalog, useSkillDetail, type SkillRef } from "./queries";
 import { Relations } from "./Relations";
 import { StructurePanel } from "./StructurePanel";
+import { CreateMenu } from "./CreateMenu";
 
 type SkillDetail = components["schemas"]["SkillDetail"];
 
@@ -75,13 +76,18 @@ export function SkillsScreen() {
   }
   return (
     <div className="ah-page" style={{ gap: 16 }}>
-      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-        <h1 className="ah-h1">Skills</h1>
-        <span className="ah-small ah-muted">{project}</span>
-      </div>
-      <p className="ah-muted" style={{ margin: 0 }}>
-        The skills, agents and hooks of this hub, read from its files. Nothing here runs them.
-      </p>
+      <header className="ah-skills-head">
+        <div className="ah-stack ah-grow" style={{ gap: 4 }}>
+          <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+            <h1 className="ah-h1">Skills</h1>
+            <span className="ah-small ah-muted">{project}</span>
+          </div>
+          <p className="ah-muted" style={{ margin: 0 }}>
+            The skills, agents and hooks of this hub, read from its files. Nothing here runs them.
+          </p>
+        </div>
+        <CreateMenu project={project} />
+      </header>
       {body}
     </div>
   );
@@ -132,12 +138,7 @@ function DetailBody({
   };
   return (
     <div className="ah-stack" style={{ gap: 16 }}>
-      <DetailHeader
-        detail={detail}
-        now={now}
-        usageDays={USAGE_DAYS}
-        action={<DiscussButton />}
-      />
+      <DetailHeader detail={detail} now={now} usageDays={USAGE_DAYS} action={<DiscussButton />} />
       <Diagnostics diagnostics={detail.diagnostics} />
       {detail.hook ? (
         <HookDetail hook={detail.hook} sourcePath={detail.source_path} />
