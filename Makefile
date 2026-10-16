@@ -26,10 +26,13 @@ AGENT_HUB_PORT ?= 7420
 AGENT_HUB_HUBS_ROOT ?= $(abspath $(CURDIR)/..)
 export AGENT_HUB_PORT AGENT_HUB_HUBS_ROOT
 URL := http://127.0.0.1:$(AGENT_HUB_PORT)
+# `make live`: this checkout's hub web, restarted on every Python change (the stable hub web that
+# drives the Claude sessions stays on AGENT_HUB_PORT, started apart).
+LIVE_API_PORT ?= 7421
 
 .PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
         imports migrations coverage check llms-txt hub-schema output-schemas web-install web-fast web-build web-dist-check \
-        openapi openapi-check test-docker test-live run up down logs ps dev demo connect
+        openapi openapi-check test-docker test-live run up down logs ps dev live playground playground-stop demo connect
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -142,6 +145,22 @@ dev: web-install ## API on 7420 and the web app with hot reload on http://127.0.
 	$(RUN) hub web --port 7420 & \
 	$(WEB) run dev & \
 	wait
+
+# The live loop: this checkout's API on LIVE_API_PORT, restarted on each Python change, and the web
+# app with hot reload on 5173. The agent-session routes go to the stable hub web on AGENT_HUB_PORT,
+# which drives the sessions and must already run, so a restart here never ends a session.
+live: web-install ## live loop: API on 7421 (restarts on change), web app on 5173, sessions on 7420 (Ctrl C stops)
+	@curl -s -o /dev/null $(URL)/ || { echo "start the stable hub web on $(URL) first" >&2; exit 1; }
+	@trap 'kill 0' INT TERM; \
+	$(RUN) python -m scripts.live_api --port $(LIVE_API_PORT) & \
+	AH_API_TARGET=http://127.0.0.1:$(LIVE_API_PORT) AH_SESSIONS_TARGET=$(URL) $(WEB) run dev & \
+	wait
+
+playground: ## the whole live playground (conductor, make live, hub registration), then opens http://127.0.0.1:5173
+	./scripts/playground.sh
+
+playground-stop: ## stop the playground's servers (7420, 7421 and this checkout's web app)
+	./scripts/playground.sh stop
 
 demo: ## load synthetic demo data into the running control plane (make run or make up)
 	$(RUN) python -m scripts.seed_demo --url $(URL)

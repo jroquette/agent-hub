@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 import pytest
 from claude_agent_sdk import SDKSessionInfo
 
-from agent_hub.claude_sessions.resumable import MAX_RESUMABLE, list_resumable
+from agent_hub.claude_sessions.resumable import MAX_RESUMABLE, list_resumable, session_title
+from agent_hub.core.agent_sessions.agent_session import MAX_TITLE_CHARS
 from agent_hub.core.agent_sessions.driver import PastSession
 from agent_hub.core.agent_sessions.errors import SessionsUnavailableError
 
@@ -84,3 +85,43 @@ async def test_reports_unavailable_when_sessions_unreadable() -> None:
 
     with pytest.raises(SessionsUnavailableError, match="past sessions"):
         await list_resumable(CWD, lister=lister)
+
+
+def test_session_title_reads_claude_title_when_session_named() -> None:
+    seen: list[tuple[str, str]] = []
+
+    def reader(session_id: str, directory: str) -> SDKSessionInfo:
+        seen.append((session_id, directory))
+        return _info(session_id, 1, custom_title="Layout of the  skills\npage")
+
+    assert session_title(CWD, NEW, reader=reader) == "Layout of the skills page"
+    assert seen == [(NEW, CWD)]
+
+
+def test_session_title_is_none_when_only_prompt_known() -> None:
+    def reader(session_id: str, _directory: str) -> SDKSessionInfo:
+        return _info(session_id, 1, summary="claude, please fix", first_prompt="claude, please")
+
+    assert session_title(CWD, NEW, reader=reader) is None
+
+
+def test_session_title_is_none_when_file_missing_or_unreadable() -> None:
+    def missing(_session_id: str, _directory: str) -> None:
+        return None
+
+    def broken(_session_id: str, _directory: str) -> SDKSessionInfo:
+        raise OSError("gone")
+
+    assert session_title(CWD, NEW, reader=missing) is None
+    assert session_title(CWD, NEW, reader=broken) is None
+
+
+def test_session_title_redacts_and_clips_when_title_holds_secret() -> None:
+    def reader(session_id: str, _directory: str) -> SDKSessionInfo:
+        return _info(session_id, 1, custom_title=f"use {SECRET} " + "x" * 400)
+
+    title = session_title(CWD, NEW, reader=reader)
+
+    assert title is not None
+    assert SECRET not in title
+    assert len(title) <= MAX_TITLE_CHARS

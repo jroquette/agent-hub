@@ -49,3 +49,5 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0032](../adr/0032-workflow-engine.md): our own graph workflow engine and format (proposed; supersedes ADR 0027).
 - [ADR 0033](../adr/0033-sessions-and-chat-interaction-model.md): one Sessions screen grouped by status, and the chat's interaction model.
 - [ADR 0034](../adr/0034-syntax-highlighting-in-the-chat.md): completed chat code blocks are highlighted by lowlight, rendered without an HTML path.
+- [ADR 0035](../adr/0035-session-titles.md): a session's name is the short title Claude Code writes in its transcript, kept as `session.title`.
+- [ADR 0036](../adr/0036-live-playground-and-auto-mode.md): `make playground`, a live loop for agent-hub's own web app whose sessions run in Claude Code's `auto` mode.

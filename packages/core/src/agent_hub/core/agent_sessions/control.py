@@ -11,13 +11,18 @@ and the subscribers (S4, E8).
 
 - Commands (``create``, ``send``, ``interrupt``, ``answer``, ``change_settings``, ``close``)
   log their audit record before they reach the driver, one at a time per session; a command
-  on an ended session raises ``SessionTerminalError`` (``LogFullError`` after ``log_full``).
+  on an ended session raises ``SessionTerminalError`` (``LogFullError`` after ``log_full``),
+  except a message to a local one Claude can still resume: the session is reopened in place,
+  same id and log, on its Claude conversation (``--resume``), then the message goes on.
 - A session ends once (``closed``, ``idle_timeout``, ``log_full``, ``server_stopped``,
   ``failed``): requests still open are denied ``by: closed``, a ``close`` record names the
   reason, the store row becomes final, then the driver is closed. The process's own exit ends
   it too (``failed`` with an ``error`` record when its code is not 0).
 - No wall clock in here (P9): ``sweep(now)`` applies permission deadlines, idle timeouts and
   retention; the clock is injected.
+- At the end of each turn the session's title becomes the one Claude Code gave it (its
+  ``ai-title``, or the user's ``/rename``), read through ``session_title``; until then it stays
+  the first prompt.
 - ``shutdown`` ends every live session ``server_stopped``, interrupting a running turn before
   the driver disconnects (P12), all in parallel and bounded.
 
@@ -81,7 +86,7 @@ from agent_hub.core.agent_sessions.errors import (
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.agent_sessions.links import AgentSessionLink, ObservedSessionLookup
 from agent_hub.core.agent_sessions.live_session import LiveSession, OpenRequest
-from agent_hub.core.agent_sessions.log_caps import Full, Truncated
+from agent_hub.core.agent_sessions.log_caps import Full, LogBudget, Truncated
 from agent_hub.core.agent_sessions.permission_policy import (
     closed_answer,
     deadline,
@@ -135,6 +140,8 @@ DRAIN_SECONDS: Final = 1.0
 # Records the server writes while a session ends, and the driver's last ones: they use the
 # log's headroom (E12).
 _RESERVED_KINDS: Final = frozenset({"result", "exited"})
+# How many records a reopened session's log is read in at a time, to count its budget.
+_BUDGET_PAGE: Final = 1000
 _STOPPING: Final = "hub web is stopping"
 
 
@@ -287,7 +294,8 @@ class AgentSessionControl:
     app's; ``environment_extra`` is added to each child's environment (``AGENT_HUB_WEB_URL``,
     never the access token, L5); ``new_id`` mints agent-session ids (UUIDv7) and
     ``new_claude_session_id`` the Claude session id given to a new session (P13);
-    ``observed_sessions`` fills ``observed_session_id`` on the listed and read sessions (D2).
+    ``observed_sessions`` fills ``observed_session_id`` on the listed and read sessions (D2);
+    ``session_title(cwd, claude_session_id)`` is the title Claude Code gave a session, or None.
     """
 
     def __init__(  # noqa: PLR0913 -- the use case's ports and settings, all injected
@@ -302,6 +310,7 @@ class AgentSessionControl:
         new_id: Callable[[], str] = _uuid7,
         new_claude_session_id: Callable[[], str] = _uuid4,
         observed_sessions: ObservedSessionLookup | None = None,
+        session_title: Callable[[str, str], str | None] | None = None,
     ) -> None:
         self._driver = driver
         self._store = store
@@ -312,6 +321,7 @@ class AgentSessionControl:
         self._new_id = new_id
         self._new_claude_session_id = new_claude_session_id
         self._observed_sessions = observed_sessions
+        self._session_title = session_title
         self._live: dict[str, LiveSession] = {}
         self._pumps: set[asyncio.Task[None]] = set()
         self._admission = asyncio.Lock()
@@ -477,9 +487,10 @@ class AgentSessionControl:
         return subscription.frames(session, after, live=live, read=read)
 
     async def send(self, agent_session_id: str, message: SendMessage) -> MessageAccepted:
-        """Log a user message, then pass it on: it plays after the running turn."""
-        live = await self._commandable(agent_session_id)
+        """Log a user message, then pass it on: it plays after the running turn. A message to a
+        local session that ended (not ``log_full``) resumes it in place first (``_reopen``)."""
         self._check_size(message.text)
+        live = await self._commandable(agent_session_id, reopen=True)
         async with live.commands:
             self._refuse(live, Send())
             seq = await self._emit(
@@ -658,7 +669,9 @@ class AgentSessionControl:
                 )
             )
             raise
-        live = LiveSession(session=session, handle=handle, state=state, limits=self._limits)
+        live = LiveSession(
+            session=session, handle=handle, state=state, limits=self._limits, cwd=spec.cwd
+        )
         if state.status == AgentSessionStatus.IDLE:
             live.idle_since = session.created_at
         self._live[session.id] = live
@@ -690,15 +703,82 @@ class AgentSessionControl:
         live = self._live.get(session.id)
         return session if live is None else live.view()
 
-    async def _commandable(self, agent_session_id: str) -> LiveSession:
-        """The live session a command acts on; an ended (or unknown) one raises."""
+    async def _commandable(self, agent_session_id: str, *, reopen: bool = False) -> LiveSession:
+        """The live session a command acts on; an ended (or unknown) one raises, unless
+        ``reopen`` and it can be resumed in place."""
         live = self._live.get(agent_session_id)
         if live is not None and not live.ended:
             return live
         session = await asyncio.to_thread(self._store.get, agent_session_id)
         if session.end_reason == EndReason.LOG_FULL:
             raise LogFullError(agent_session_id)
+        if reopen:
+            reopened = await self._reopen(session)
+            if reopened is not None:
+                return reopened
         raise SessionTerminalError(agent_session_id, status=session.status.value)
+
+    async def _reopen(self, session: AgentSession) -> LiveSession | None:
+        """Drive an ended local session again, same id and log, on its Claude conversation
+        (``--resume``): ``idle``, its log budget counted from what it holds. None when Claude
+        no longer lists that conversation for the workdir (it never got a message, or was
+        removed): the session stays ended."""
+        async with self._admission:
+            live = self._live.get(session.id)
+            if live is not None and not live.ended:
+                return live  # another message reopened it meanwhile
+            claude_session_id = session.claude_session_id
+            stored = await asyncio.to_thread(self._store.get, session.id)
+            ended = stored.status in {AgentSessionStatus.ENDED, AgentSessionStatus.FAILED}
+            if not ended or stored.kind != "local" or claude_session_id is None:
+                return None
+            await self._check_can_start()
+            resolved = (await self._listing(session.project)).resolve(session.workdir_id)
+            listed = await self._driver.list_resumable(resolved.path)
+            if all(past.session_id != claude_session_id for past in listed):
+                return None
+            # Counted before the CLI starts: once ``_start`` registers the session, nothing
+            # awaits until its budget is set, so no record is admitted by a fresh one.
+            budget = await asyncio.to_thread(self._budget_of, session.id)
+            now = self._clock()
+            reopened = await asyncio.to_thread(
+                lambda: self._store.update(
+                    session.id,
+                    status=AgentSessionStatus.IDLE,
+                    end_reason=None,
+                    ended_at=None,
+                    updated_at=now,
+                )
+            )
+            spec = StartSpec(
+                cwd=resolved.path,
+                mode=reopened.mode,
+                model=reopened.model,
+                resume=claude_session_id,
+                session_id=None,
+                environment_extra=self._environment_extra,
+            )
+            state = start_state(with_prompt=False)
+            live = await self._start(reopened, spec, state)
+            live.idle_since = now
+            live.budget = budget
+            try:
+                await self._begin(live, None, ())
+            except Exception:
+                await self._fail_start(live)
+                raise
+            return live
+
+    def _budget_of(self, agent_session_id: str) -> LogBudget:
+        """The log budget of a session that already holds records (it goes on, not anew)."""
+        records = 0
+        stored_bytes = 0
+        after = 0
+        while page := self._store.records(agent_session_id, after=after, limit=_BUDGET_PAGE):
+            records += len(page)
+            stored_bytes += sum(record.text_bytes for record in page)
+            after = page[-1].seq
+        return LogBudget(self._limits, records=records, stored_bytes=stored_bytes)
 
     def _refuse(self, live: LiveSession, command: SessionCommand) -> None:
         if live.state.terminal and live.state.end_reason == EndReason.LOG_FULL:
@@ -950,6 +1030,9 @@ class AgentSessionControl:
             "cost_usd": _sum_cost(session.cost_usd, result.cost_usd),
             "usage": _sum_usage(session.usage, result.usage),
         }
+        title = await self._claude_title(live)
+        if title is not None and title != session.title:
+            fields["title"] = title
         if live.ended:
             async with live.sync_lock:
                 live.session = await asyncio.to_thread(
@@ -958,6 +1041,18 @@ class AgentSessionControl:
             return
         live.state = apply(live.state, result)
         await self._sync(live, fields)
+
+    async def _claude_title(self, live: LiveSession) -> str | None:
+        """The title Claude Code gave the session so far, or None (none yet, or no reader)."""
+        read = self._session_title
+        session_id = live.session.claude_session_id
+        if read is None or live.cwd is None or session_id is None:
+            return None
+        cwd = live.cwd
+        try:
+            return await asyncio.to_thread(read, cwd, session_id)
+        except Exception:  # noqa: BLE001 -- a name is never worth failing the turn's record
+            return None
 
     async def _on_exit(self, live: LiveSession, code: int | None) -> None:
         failed = code != 0

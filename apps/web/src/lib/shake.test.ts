@@ -41,8 +41,12 @@ describe("createShakeDetector", () => {
     expect(hits.filter(Boolean)).toHaveLength(1);
   });
 
+  it("detects a light shake: 3 reversals of 30 px within 300 ms", () => {
+    expect(feed(zigzag(4, 30, 75)).filter(Boolean)).toHaveLength(1);
+  });
+
   it("uses the proposed thresholds by default", () => {
-    expect(SHAKE).toEqual({ reversals: 4, minLeg: 40, windowMs: 600, cooldownMs: 1500 });
+    expect(SHAKE).toEqual({ reversals: 3, minLeg: 25, windowMs: 700, cooldownMs: 1500 });
   });
 
   it.each([
@@ -52,8 +56,8 @@ describe("createShakeDetector", () => {
       "a circle",
       Array.from({ length: 200 }, (_, i) => mouse(100 * Math.cos((i * Math.PI) / 50), i * 10)),
     ],
-    ["3 reversals", zigzag(4, 80, 50)],
-    ["legs under 40 px", zigzag(12, 39, 30)],
+    ["2 reversals", zigzag(3, 80, 50)],
+    ["legs under 25 px", zigzag(12, 24, 30)],
     ["a button held", zigzag(8, 80, 50).map((s) => ({ ...s, buttons: 1 }))],
     ["a touch pointer", zigzag(8, 80, 50).map((s) => ({ ...s, pointerType: "touch" }))],
     ["a pen pointer", zigzag(8, 80, 50).map((s) => ({ ...s, pointerType: "pen" }))],
@@ -64,7 +68,7 @@ describe("createShakeDetector", () => {
   it("ordinary-movement: reversals spread over more than the window do not add up", () => {
     const detector = createShakeDetector();
     const early = zigzag(3, 80, 50); // 2 reversals
-    const late = zigzag(3, 80, 50, 2000); // 2 more, long after
+    const late = zigzag(2, 80, 50, 2000); // 1 more, long after
 
     expect(feed([...early, ...late], detector).some(Boolean)).toBe(false);
   });

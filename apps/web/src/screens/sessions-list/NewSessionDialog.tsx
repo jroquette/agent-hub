@@ -5,8 +5,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { components } from "../../api/schema";
 import { Button, Time } from "../../components";
 import type { ApiProblem } from "../../lib/api";
-import { MODES, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
-import { modeLabel, type PermissionMode } from "../agent-session/transcript";
+import { offeredModes, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
+import { modeLabel, type PermissionMode } from "../agent-session/model";
 
 type Schemas = components["schemas"];
 export type Workdir = Schemas["Workdir"];
@@ -25,6 +25,7 @@ const MODE_HINT: Record<PermissionMode, string> = {
   default: "Claude asks before each edit or command.",
   acceptEdits: "File edits run without asking; commands still ask.",
   plan: "Claude plans first and asks you to approve the plan.",
+  auto: "Claude works on its own; a safety check blocks risky actions.",
 };
 
 /** How a workdir reads in the picker: its label and what it is. */
@@ -257,7 +258,7 @@ export function NewSessionDialog({
 
             <fieldset className="as-fieldset" disabled={pending}>
               <legend className="ah-small">Mode</legend>
-              {MODES.map((m) => (
+              {offeredModes().map((m) => (
                 <label key={m} className="as-radio">
                   <input
                     type="radio"

@@ -1,6 +1,6 @@
 import { Icon, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
-import type { TodoView } from "./transcript";
+import type { TodoView } from "./model";
 
 const LOOK: Record<string, { icon: IconName; text: string }> = {
   completed: { icon: "circle-check", text: "done" },

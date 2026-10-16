@@ -307,6 +307,7 @@ describe("buildTrace", () => {
       ev("tool.call", { tool: "Glob", pattern: "**/*.py", tool_use_id: "g" }),
       ev("tool.result", { tool: "Bash", status: "ok", tool_use_id: "orphan" }),
       ev("session.summary", { lines: [] }),
+      ev("session.title", { text: "Orders export", origin: "ai" }),
     ]);
 
     const rows = eventsOf(trace.turns[0]?.items ?? []);
