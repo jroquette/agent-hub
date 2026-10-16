@@ -5,11 +5,13 @@ import type { components } from "../../api/schema";
 import { EmptyState, ProblemError, Skeleton } from "../../components";
 import type { ApiProblem } from "../../lib/api";
 import {
-  LinearLink,
+  AcMeter,
   PlanningView,
   ReadinessText,
   StateBadge,
+  TicketIdLine,
   TicketRef,
+  TicketTitle,
   ticketAnchor,
 } from "./PlanningView";
 import { TicketNotice } from "./TicketNotice";
@@ -27,27 +29,30 @@ const EDGE_TITLE: Record<EdgeSource, string> = {
 };
 
 function TicketId({ row }: { row: TicketRow }) {
-  const epic = row.children.length > 0 && (
-    <span className="ah-flow-epic-tag" style={{ alignSelf: "flex-start" }}>
-      Epic
-    </span>
-  );
   if (!row.id) {
     return (
       <span className="ah-stack" style={{ gap: 2 }}>
         <span className="ah-mono">{row.key ?? row.ref}</span>
         <span className="ah-small ah-subtle">not created</span>
-        {epic}
       </span>
     );
   }
+  return <TicketIdLine row={row} />;
+}
+
+/** The title with the epic tag before it, and a branch mark when the row is an epic's child. */
+function TitleCell({ row, child }: { row: TicketRow; child: boolean }) {
   return (
-    <span className="ah-stack" style={{ gap: 2 }}>
-      <LinearLink id={row.id} url={row.url} />
-      {row.key && row.key !== row.id && (
-        <span className="ah-small ah-subtle ah-mono">{row.key}</span>
+    <span className="ah-ticket-title">
+      {child && (
+        <span className="ah-ticket-branch" aria-hidden="true">
+          └
+        </span>
       )}
-      {epic}
+      {row.children.length > 0 && <span className="ah-flow-epic-tag">Epic</span>}
+      <span>
+        {row.title ? <TicketTitle title={row.title} /> : <span className="ah-subtle">—</span>}
+      </span>
     </span>
   );
 }
@@ -104,10 +109,16 @@ function Acs({ row, acPasses }: { row: TicketRow; acPasses?: AcPasses | undefine
   if (row.acs.length <= 3) return links;
   return (
     <details>
-      <summary className="ah-small" style={{ cursor: "pointer" }}>
-        {passing === null
-          ? `${String(row.acs.length)} ACs`
-          : `${String(passing)}/${String(row.acs.length)} passing`}
+      <summary className="ah-small" style={{ cursor: "pointer", whiteSpace: "nowrap" }}>
+        {passing === null ? (
+          `${String(row.acs.length)} ACs`
+        ) : (
+          <AcMeter
+            passing={passing}
+            total={row.acs.length}
+            label={`${String(passing)}/${String(row.acs.length)} passing`}
+          />
+        )}
       </summary>
       <div style={{ paddingTop: 4 }}>{links}</div>
     </details>
@@ -137,25 +148,31 @@ function TicketsTable({
   data: FeatureTickets;
   acPasses?: AcPasses | undefined;
 }) {
-  const columns: { label: string; width?: number; cell: (row: TicketRow) => ReactNode }[] = [
-    { label: "Ticket", width: 110, cell: (row) => <TicketId row={row} /> },
-    { label: "Title", cell: (row) => row.title ?? <span className="ah-subtle">—</span> },
-    { label: "Status", width: 130, cell: (row) => <StateBadge row={row} /> },
-    { label: "Assignee", width: 130, cell: (row) => <Assignee row={row} /> },
-    { label: "Blocked by", width: 150, cell: (row) => <Blockers row={row} data={data} /> },
+  const byRef = new Set(data.tickets.map((t) => t.ref));
+  const isChild = (row: TicketRow) => row.parent != null && byRef.has(row.parent);
+  const columns: {
+    label: string;
+    width?: number;
+    nowrap?: boolean;
+    cell: (row: TicketRow) => ReactNode;
+  }[] = [
+    { label: "Ticket", width: 140, nowrap: true, cell: (row) => <TicketId row={row} /> },
+    { label: "Title", cell: (row) => <TitleCell row={row} child={isChild(row)} /> },
+    { label: "Status", width: 120, nowrap: true, cell: (row) => <StateBadge row={row} /> },
+    { label: "Assignee", width: 110, cell: (row) => <Assignee row={row} /> },
+    { label: "Blocked by", width: 110, cell: (row) => <Blockers row={row} data={data} /> },
     { label: "ACs", width: 150, cell: (row) => <Acs row={row} acPasses={acPasses} /> },
     {
       label: "Readiness",
-      width: 190,
+      width: 200,
       cell: (row) => (
         <ReadinessText row={row} rows={data.tickets} external={data.planning.external_blockers} />
       ),
     },
   ];
-  const byRef = new Set(data.tickets.map((t) => t.ref));
   return (
     <div className="ah-table-wrap">
-      <table className="ah-table" aria-label="Tickets">
+      <table className="ah-table ah-ticket-table" aria-label="Tickets">
         <thead>
           <tr>
             {columns.map((c) => (
@@ -172,10 +189,10 @@ function TicketsTable({
               id={ticketAnchor(row.ref)}
               style={{ cursor: "default" }}
               data-epic={row.children.length > 0 || undefined}
-              data-child={(row.parent != null && byRef.has(row.parent)) || undefined}
+              data-child={isChild(row) || undefined}
             >
               {columns.map((c) => (
-                <td key={c.label} style={{ whiteSpace: "normal" }}>
+                <td key={c.label} className={c.nowrap ? "ah-nowrap" : undefined}>
                   {c.cell(row)}
                 </td>
               ))}

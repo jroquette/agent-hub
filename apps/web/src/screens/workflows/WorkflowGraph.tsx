@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
 
 import { Button, DataTable, Icon, SegmentedControl } from "../../components";
 import type { IconName } from "../../components";
+import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
 
 /* The layered graph of a workflow (plan 6.3/6.4): a column per layer, SVG edges for depends_on
  * under focusable node buttons, a list view as its text alternative and a node side panel. */
@@ -45,12 +46,6 @@ export function nodeDomId(id: string): string {
   return `wf-node-${id}`;
 }
 
-interface Box {
-  left: number;
-  right: number;
-  mid: number;
-}
-
 export interface WorkflowGraphProps<N extends GraphNode> {
   layers: N[][];
   /** The graph's accessible name (default "Workflow graph"). */
@@ -74,46 +69,12 @@ function GraphCanvas<N extends GraphNode>({
   state,
 }: WorkflowGraphProps<N>) {
   const ref = useRef<HTMLDivElement>(null);
-  const [boxes, setBoxes] = useState<Record<string, Box>>({});
-  const [size, setSize] = useState({ width: 0, height: 0 });
   const edges = edgesOf(layers);
   // Re-measure when the shape changes, not on every render (a live run re-renders each second).
   const shape = layers
     .map((layer) => layer.map((node) => `${node.id}<${node.depends_on.join(",")}`).join(" "))
     .join("|");
-
-  useLayoutEffect(() => {
-    const root = ref.current;
-    if (!root) return;
-    // Content coordinates: the SVG scrolls with the nodes, so add the scroll offsets.
-    const measure = () => {
-      const origin = root.getBoundingClientRect();
-      const dx = root.scrollLeft - origin.left;
-      const dy = root.scrollTop - origin.top;
-      const next: Record<string, Box> = {};
-      root.querySelectorAll<HTMLElement>("[data-node-id]").forEach((el) => {
-        const r = el.getBoundingClientRect();
-        next[el.dataset.nodeId ?? ""] = {
-          left: r.left + dx,
-          right: r.right + dx,
-          mid: r.top + dy + r.height / 2,
-        };
-      });
-      setBoxes(next);
-      setSize({ width: root.scrollWidth, height: root.scrollHeight });
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(root);
-    // A node that reflows (a longer state line) moves its edges without resizing the root.
-    root.querySelectorAll("[data-node-id]").forEach((el) => {
-      observer.observe(el);
-    });
-    return () => {
-      observer.disconnect();
-    };
-  }, [shape]);
+  const { boxes, size } = useNodeBoxes(ref, shape);
 
   return (
     <div
@@ -129,25 +90,16 @@ function GraphCanvas<N extends GraphNode>({
         height={size.height}
         style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}
       >
-        {edges.map(([from, to]) => {
-          const a = boxes[from];
-          const b = boxes[to];
-          const x1 = a?.right ?? 0;
-          const y1 = a?.mid ?? 0;
-          const x2 = b?.left ?? 0;
-          const y2 = b?.mid ?? 0;
-          const mx = (x1 + x2) / 2;
-          return (
-            <path
-              key={`${from}→${to}`}
-              data-edge={`${from}→${to}`}
-              d={`M ${String(x1)} ${String(y1)} C ${String(mx)} ${String(y1)}, ${String(mx)} ${String(y2)}, ${String(x2)} ${String(y2)}`}
-              fill="none"
-              stroke="var(--border-strong)"
-              strokeWidth={1.5}
-            />
-          );
-        })}
+        {edges.map(([from, to]) => (
+          <path
+            key={`${from}→${to}`}
+            data-edge={`${from}→${to}`}
+            d={curvePath(boxes[from], boxes[to])}
+            fill="none"
+            stroke="var(--border-strong)"
+            strokeWidth={1.5}
+          />
+        ))}
       </svg>
       {layers.map((layer, i) => (
         <ol
