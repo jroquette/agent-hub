@@ -145,6 +145,24 @@ test("Live shows a red edge only on the session that needs you, with its reason"
   });
 });
 
+test("Sessions grid shows a red edge only on the session that needs you, in its section", async ({
+  page,
+  baseURL,
+}) => {
+  await visit(page, baseURL, "/sessions?view=grid", async () => {
+    const live = page.getByRole("region", { name: /^Live/ }).locator("article.ah-tile", {
+      hasText: "DEM-7",
+    });
+    await expect(live).toHaveCount(1);
+    await expect(live).not.toHaveAttribute("data-trouble", "true");
+    const stuck = page.getByRole("region", { name: /^Idle/ }).locator("article.ah-tile", {
+      hasText: "make test",
+    });
+    await expect(stuck).toHaveAttribute("data-trouble", "true");
+    await expect(stuck.getByText(/Needs you/)).toBeVisible();
+  });
+});
+
 test("Session detail names the actors, says what they did and what went wrong", async ({
   page,
   baseURL,

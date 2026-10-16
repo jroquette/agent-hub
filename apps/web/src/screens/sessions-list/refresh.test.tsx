@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   aPage,
@@ -13,6 +13,11 @@ import {
   type FakeEventSource,
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
+
+// These tests read the tables; the grid is the default view (AC-234.3).
+beforeEach(() => {
+  window.localStorage.setItem("ah.sessions.view", "table");
+});
 
 const SESSIONS = "/api/v1/sessions";
 const STREAM = "/api/v1/live-sessions/stream";
@@ -71,12 +76,12 @@ function render(data: Data) {
 const REGION = ".ah-table-wrap > div[tabindex]";
 
 /**
- * Each row (or bounded region, or with `headers` each section header) sits ROW px below the previous
+ * Each row or tile (or bounded region, or with `headers` each section header) sits ROW px below the previous
  * one in page order, minus the scroller's offset; a row inside a bounded region sits by its index
  * below the region's top, minus the region's own offset.
  */
 function layOutRows(headers = false) {
-  const page = `${headers ? "section h2 button, " : ""}tr[data-key], ${REGION}`;
+  const page = `${headers ? "section h2 button, " : ""}tr[data-key], article[data-key], ${REGION}`;
   const topOf = (element: Element): number => {
     const scroller = screen.getByTestId("scroller");
     if (element === scroller) return 0;
@@ -549,5 +554,62 @@ describe("SessionsListScreen no-jump", () => {
       expect(screen.queryByText("/s4")).toBeNull();
     });
     expect(document.activeElement).toBe(document.body);
+  });
+});
+
+describe("SessionsListScreen no-jump (grid)", () => {
+  beforeEach(() => {
+    window.localStorage.setItem("ah.sessions.view", "grid");
+  });
+  const tile = (title: string) =>
+    screen.getByRole("article", { name: new RegExp(`^${title} in `) });
+  const sectionOf = (name: RegExp) => screen.getByRole("button", { name }).closest("section");
+
+  it("keeps the first visible tile in place when tiles are inserted above it", async () => {
+    const data = { current: [one(1, "live"), one(2, "ended"), one(3, "ended"), one(4, "ended")] };
+    const { stream } = render(data);
+    await screen.findByText("/s4");
+    expect(screen.queryByRole("table")).toBeNull();
+    layOutRows();
+    const scroller = screen.getByTestId("scroller");
+    scroller.scrollTop = 2 * ROW + 10; // /s3 is the first tile whose bottom is below the top
+    fireEvent.scroll(scroller);
+    await nextFrame();
+    expect(tile("/s3").getBoundingClientRect().top).toBe(-10);
+
+    data.current = [
+      one(5, "live"),
+      one(6, "live"),
+      one(1, "live"),
+      one(7, "ended"),
+      ...data.current.slice(1),
+    ];
+    await change(stream(STREAM), "tile.upsert", { id: anId(5), group: "live" });
+    await screen.findByText("/s7");
+
+    expect(tile("/s3").getBoundingClientRect().top).toBe(-10);
+    expect(scroller.scrollTop).toBe(5 * ROW + 10);
+  });
+
+  it("keeps focus on the tile by key when it moves to another section, else on its section header", async () => {
+    const data = { current: [one(1, "live"), one(2, "live"), one(4, "live"), one(3, "ended")] };
+    const { stream } = render(data);
+    await screen.findByText("/s1");
+    tile("/s1").focus();
+
+    data.current = [one(2, "live"), one(4, "live"), one(3, "ended"), one(1, "ended")];
+    await change(stream(STREAM), "tile.upsert", { id: anId(1), group: "ended_recently" });
+    await waitFor(() => {
+      expect(tile("/s1").closest("section")).toBe(sectionOf(/^Ended or failed/));
+    });
+    expect(document.activeElement).toBe(tile("/s1"));
+
+    tile("/s2").focus();
+    data.current = [one(4, "live"), one(3, "ended"), one(1, "ended")]; // /s2 is gone
+    await change(stream(STREAM), "tile.remove", { id: anId(2) });
+    await waitFor(() => {
+      expect(screen.queryByText("/s2")).toBeNull();
+    });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Live/ }));
   });
 });

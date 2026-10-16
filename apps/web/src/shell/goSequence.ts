@@ -19,3 +19,13 @@ export function clearGoSequence(): void {
 export function goSequencePending(now = Date.now()): boolean {
   return armedAt !== 0 && now - armedAt < SEQUENCE_MS;
 }
+
+/** A key typed into a field or a dialog is not a shortcut, the shell's or a screen's. */
+export function typingIn(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable ||
+    ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
+    target.closest("[role=dialog]") !== null
+  );
+}

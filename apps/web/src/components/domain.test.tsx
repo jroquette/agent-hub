@@ -129,6 +129,43 @@ describe("SessionTile", () => {
     expect(screen.getByRole("article")).not.toHaveAttribute("data-trouble");
     expect(screen.getByText("2 problems, handled by the agent")).toBeInTheDocument();
   });
+
+  it("shows the failing notice and the waiting link, which opens without opening the tile", async () => {
+    const onOpen = vi.fn();
+    inRouter(
+      <SessionTile
+        s={{
+          ...tile,
+          status: "waiting",
+          notice: "make check failed 2 times",
+          link: { href: "/agent-sessions/a1", label: "Open chat" },
+          chat: true,
+        }}
+        onOpen={onOpen}
+      />,
+    );
+
+    expect(await screen.findByText("make check failed 2 times")).toBeInTheDocument();
+    expect(screen.getByText("Chat")).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: "Open chat" });
+    expect(link).toHaveAttribute("href", "/agent-sessions/a1");
+    fireEvent.click(link);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("shows blanks for the stats a driven session does not know, and no sparkline once ended", () => {
+    render(<SessionTile s={{ ...tile, status: "ended", turns: null, files: null }} />);
+
+    expect(screen.getAllByText("—")).toHaveLength(2);
+    expect(screen.queryByRole("img", { name: "Events per 5 s, last 60 s" })).toBeNull();
+    expect(screen.queryByText("Chat")).toBeNull();
+  });
+
+  it("shows the sparkline while the session runs", () => {
+    render(<SessionTile s={tile} />);
+
+    expect(screen.getByRole("img", { name: "Events per 5 s, last 60 s" })).toBeInTheDocument();
+  });
 });
 
 describe("NeedsYouList", () => {
