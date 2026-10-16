@@ -10,10 +10,13 @@ import {
   type ShakeScreenshot,
   type Workdir,
 } from "./NewSessionDialog";
-import { useCreateAgentSession, useResumable } from "./queries";
+import { useCreateAgentSession, useWorkdirs } from "./queries";
 
 export interface StartSessionDialogProps {
+  /** The project to start in, and `workdirs`, its folders. */
   project: string;
+  /** The projects "Where" may switch to; another one's folders load here. */
+  projects?: readonly string[] | undefined;
   workdirs: readonly Workdir[];
   capabilities: DriverCapabilities;
   screenshot?: ShakeScreenshot | undefined;
@@ -24,13 +27,14 @@ export interface StartSessionDialogProps {
 }
 
 /**
- * "New session" wired to the API: it loads the folder's resumable sessions, creates the session, then
- * opens its chat view. The sessions list and the shell's shake (AGH-260) both mount it; a screenshot
+ * "New session" wired to the API: it loads the folders of a project chosen in "Where", creates the
+ * session, then opens its chat view. The sessions list and the shell's shake (AGH-260) both mount it; a screenshot
  * sent with the first prompt is kept in memory for the chat view.
  */
 export function StartSessionDialog({
-  project,
-  workdirs,
+  project: firstProject,
+  projects,
+  workdirs: firstWorkdirs,
   capabilities,
   screenshot,
   initialWorkdirId,
@@ -39,8 +43,8 @@ export function StartSessionDialog({
   onClose,
 }: StartSessionDialogProps) {
   const navigate = useNavigate();
-  const [resumeFor, setResumeFor] = useState<string | null>(null);
-  const resumable = useResumable(project, resumeFor);
+  const [project, setProject] = useState(firstProject);
+  const other = useWorkdirs(project, project !== firstProject);
   // A shake's screenshot leaves the mutation cache with the dialog, not gcTime later.
   const create = useCreateAgentSession({ release: screenshot !== undefined });
   const { reset } = create;
@@ -52,10 +56,15 @@ export function StartSessionDialog({
   return (
     <NewSessionDialog
       project={project}
-      workdirs={workdirs}
+      projects={projects}
+      onProjectChange={setProject}
+      workdirs={project === firstProject ? firstWorkdirs : other.data?.items}
+      workdirsProblem={
+        project !== firstProject && other.error
+          ? `Could not list the working folders: ${other.error.detail ?? other.error.title}`
+          : undefined
+      }
       capabilities={capabilities}
-      resumable={resumable.data?.items}
-      onWorkdirChange={setResumeFor}
       pending={create.isPending}
       error={create.error}
       screenshot={screenshot}
