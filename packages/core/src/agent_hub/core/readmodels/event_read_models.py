@@ -500,6 +500,22 @@ class FoldedEventReadModels:
             decorated.append((labelled, link is not None and link.waiting))
         return decorated
 
+    def _of_issue(self, sessions: Iterable[Session], issue: str) -> list[Session]:
+        """The sessions about ``issue`` (any case): the issue their run names, else the one
+        their branch or worktree names for the hub's tracker teams."""
+        wanted = issue.casefold()
+        rules: dict[str, LabelRules | None] = {}
+        found: list[Session] = []
+        for session in sessions:
+            if session.project not in rules:
+                rules_of = self._label_rules_of
+                rules[session.project] = None if rules_of is None else rules_of(session.project)
+            label = _with_issue(session, rules[session.project]).label
+            of = (label.issue if label is not None else None) or session.issue
+            if of is not None and of.casefold() == wanted:
+                found.append(session)
+        return found
+
     # Sessions
 
     def list_sessions(self, session_filter: SessionFilter) -> Page[Session]:
@@ -510,6 +526,8 @@ class FoldedEventReadModels:
             for session in snapshot.sessions.values()
             if _session_matches(session, session_filter, snapshot)
         ]
+        if session_filter.issue is not None:
+            matching = self._of_issue(matching, session_filter.issue)
         sort = session_filter.sort
         descending = sort.startswith("-")
         page = _paginate(

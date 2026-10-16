@@ -6,25 +6,34 @@ import { ApiProblem } from "../../lib/api";
 import { seriousViolations } from "../../testing/axe";
 import {
   aFeatureTickets,
+  aPage,
+  aSession,
   aTicketPlan,
   aTicketRow,
   renderWithApi,
+  type ApiRoutes,
   type FeatureTickets,
 } from "../../testing/builders";
 import { TicketsTab } from "./TicketsTab";
 
 function show(
   data: FeatureTickets | undefined,
-  extra: { error?: ApiProblem | null; acPasses?: Record<string, boolean> } = {},
+  extra: {
+    error?: ApiProblem | null;
+    acPasses?: Record<string, boolean>;
+    routes?: ApiRoutes;
+  } = {},
 ) {
   const onRefresh = vi.fn();
   const result = renderWithApi(
     <TicketsTab
+      project="agent-hub"
       data={data}
       error={extra.error ?? null}
       onRefresh={onRefresh}
       acPasses={extra.acPasses}
     />,
+    { routes: { "/api/v1/sessions": aPage([]), ...extra.routes } },
   );
   return { ...result, onRefresh };
 }
@@ -290,6 +299,39 @@ describe("TicketsTab", () => {
     const table = within(screen.getByRole("table", { name: "Tickets" }));
     expect(table.getByText("3/4 passing")).toBeInTheDocument();
     expect(screen.getByText("3/4 ACs passing")).toBeInTheDocument();
+  });
+
+  it("shows the title's scope in its own column, apart from the words (tickets)", () => {
+    const data = aFeatureTickets();
+    show({
+      ...data,
+      tickets: data.tickets.map((t) =>
+        t.ref === "AGH-201" ? { ...t, title: "feat(brand-api): add the bank details" } : t,
+      ),
+    });
+
+    const cells = within(rowOf("AGH-201")).getAllByRole("cell");
+    expect(nth(cells, 1)).toHaveTextContent(/^brand-api$/);
+    expect(nth(cells, 2)).toHaveTextContent(/^add the bank details$/);
+  });
+
+  it("links the sessions that worked on each ticket, asked by its issue (sessions)", async () => {
+    const { requests } = show(aFeatureTickets(), {
+      routes: {
+        "/api/v1/sessions": (request: Request) =>
+          new URL(request.url).searchParams.get("issue") === "AGH-201"
+            ? aPage([aSession({ id: "sess-1", status: "ended", outcome: "done" })])
+            : aPage([]),
+      },
+    });
+
+    const link = await within(rowOf("AGH-201")).findByRole("link", { name: /Done/ });
+    expect(link).toHaveAttribute("href", "/sessions/sess-1");
+    expect(await within(rowOf("AGH-202")).findByText("none")).toBeInTheDocument();
+    const asked = requests.map((r) => new URL(r.url).searchParams);
+    expect(
+      asked.some((q) => q.get("issue") === "AGH-201" && q.get("project") === "agent-hub"),
+    ).toBe(true);
   });
 
   it("shows a skeleton while loading (states)", () => {
