@@ -64,7 +64,6 @@ const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
 
 const PAGES: SmokePage[] = [
   { name: "Portfolio", path: "/", heading: "Portfolio", shows: /Failed runs · 7 d/ },
-  { name: "Live sessions", path: "/live", heading: "Live sessions", shows: /Waiting · Guard ask/ },
   { name: "Sessions", path: "/sessions", heading: "Sessions", shows: "Waiting · 1" },
   {
     name: "Session detail",
@@ -129,20 +128,19 @@ async function visit(
   expect(problems).toEqual([]);
 }
 
-test("Live shows a red edge only on the session that needs you, with its reason", async ({
+// AC-234.2: the retired Live sessions screen's bookmarks land on the Sessions grid by a replace.
+test("Live bookmark lands on the Sessions grid, grouped by run, and Back skips it", async ({
   page,
   baseURL,
 }) => {
-  await visit(page, baseURL, "/live", async () => {
-    const tiles = page.locator("article.ah-tile");
-    const live = tiles.filter({ hasText: "DEM-7" });
-    await expect(live).toHaveCount(1);
-    await expect(live).not.toHaveAttribute("data-trouble", "true");
-    await expect(live.getByText(/handled by the agent/)).toBeVisible();
-    const stuck = tiles.filter({ hasText: "make test" });
-    await expect(stuck).toHaveAttribute("data-trouble", "true");
-    await expect(stuck.getByText(/Needs you/)).toBeVisible();
+  await visit(page, baseURL, "/live?group=run&foo=1", async () => {
+    await expect(page.getByRole("heading", { level: 1, name: "Sessions" })).toBeVisible();
+    await expect(page).toHaveURL(/\/sessions\?view=grid&within=run$/);
+    await expect(page.getByRole("group", { name: "Not in a run" }).first()).toBeVisible();
+    await expect(page.getByText(/Waiting · Guard ask/).first()).toBeVisible();
   });
+  await page.goBack();
+  await expect(page).toHaveURL((url) => url.pathname === "/");
 });
 
 test("Sessions grid shows a red edge only on the session that needs you, in its section", async ({

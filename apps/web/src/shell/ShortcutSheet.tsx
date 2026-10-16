@@ -6,7 +6,6 @@ export const SHORTCUTS: readonly { title: string; rows: readonly [string, string
     title: "Go to",
     rows: [
       ["Portfolio", "g p"],
-      ["Live sessions", "g l"],
       ["Sessions", "g s"],
       ["Workflow runs", "g r"],
       ["Approvals", "g a"],

@@ -32,7 +32,6 @@ import {
   aLearning,
   aLearningActionResult,
   aLearningDetail,
-  aLiveTile,
   anActor,
   aNeedsYouItem,
   anActivityItem,
@@ -73,7 +72,6 @@ describe("builders", () => {
       aRun({ stage: "FAILED" }),
       anApproval({ status: "approved" }),
       aLearning({ status: "accepted" }),
-      aLiveTile({ group: "waiting" }),
       aProjectSummary({ name: "loki-trader" }),
       aProjectDetail(),
       aProjectNow(),
@@ -93,22 +91,19 @@ describe("builders", () => {
       aStreamCounts(),
     ];
 
-    expect(bodies).toHaveLength(23);
+    expect(bodies).toHaveLength(22);
     expect(aSession({ status: "ended" }).status).toBe("ended");
     expect(aTimelineEvent({ seq: 3 }).event_id).toBe(anId(3, "0192aaaa"));
     expect(aPage([1, 2])).toEqual({ items: [1, 2], next_cursor: null, total_estimate: 2 });
   });
 
   it("builds the clarity bodies and fields", () => {
-    const tile = aLiveTile({ problems: { by_you: 0, handled: 2, needs_you: 1, open: 0 } });
     const problems = aSessionProblems();
 
     expect(aSession().label).toEqual(aSessionLabel());
     expect(aSession().actors).toEqual([anActor()]);
     expect(aSessionLabel({ issue: null }).issue).toBeNull();
     expect(anActor({ kind: "subagent", type: "Explore" }).type).toBe("Explore");
-    expect(tile.problems.needs_you).toBe(1);
-    expect(tile.label?.workflow).toBe("/feature");
     expect(problems.summary[0]?.event_id).toBe(problems.items[0]?.event_id);
     expect(aSessionProblem({ resolution: "recovered" }).resolution).toBe("recovered");
     expect(aLearning().state).toBe("proposed");
