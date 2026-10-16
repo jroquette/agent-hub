@@ -46,7 +46,7 @@ describe("StartSessionDialog (shake to start a session)", () => {
     const { created, onClose, view, dialog } = start();
 
     await userEvent.type(
-      within(dialog).getByRole("textbox", { name: "First prompt (optional)" }),
+      within(dialog).getByRole("textbox", { name: "Prompt" }),
       "What is on this screen?",
     );
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
@@ -87,7 +87,7 @@ describe("StartSessionDialog (shake to start a session)", () => {
     });
 
     await userEvent.type(
-      screen.getByRole("textbox", { name: "First prompt (optional)" }),
+      screen.getByRole("textbox", { name: "Prompt" }),
       "What is on this screen?",
     );
     await userEvent.click(screen.getByRole("button", { name: "Start session" }));
