@@ -43,12 +43,34 @@ step "conductor on 7420"
 if [ ! -d "$CONDUCTOR" ]; then
   git -C "$AH" worktree add --detach "$CONDUCTOR" HEAD
 else
-  git -C "$CONDUCTOR" checkout -q --detach "$(git -C "$AH" rev-parse HEAD)"
+  # The copy is disposable (nothing is ever made in it): drop what the last start copied over,
+  # then move it to the checkout's commit. Ignored files (.venv, node_modules) stay.
+  git -C "$CONDUCTOR" checkout -q -f --detach "$(git -C "$AH" rev-parse HEAD)"
+  git -C "$CONDUCTOR" clean -fdq
 fi
+# The conductor runs the checkout as it is now, committed or not: copy the uncommitted changes over
+# the commit (modified and new files git would track, never .venv or node_modules; a deleted file
+# is deleted there too).
+changed=0
+while IFS= read -r -d '' file; do
+  if [ -e "$AH/$file" ]; then
+    mkdir -p "$CONDUCTOR/$(dirname "$file")"
+    cp -p "$AH/$file" "$CONDUCTOR/$file"
+  else
+    rm -f "$CONDUCTOR/$file"
+  fi
+  changed=$((changed + 1))
+done < <(cd "$AH" && git ls-files -z --modified --others --exclude-standard)
 git -C "$CONDUCTOR" log --oneline -1
-(cd "$CONDUCTOR" && nohup uv run --locked --all-packages hub web --port 7420 \
+echo "plus $changed uncommitted file(s)"
+# The playground's sessions are the developer's own: the most the platform allows live at once (16)
+# and a day before an idle one closes, instead of 4 sessions and 30 minutes.
+(cd "$CONDUCTOR" && AGENT_HUB_SESSIONS_MAX=16 AGENT_HUB_SESSION_IDLE_SECONDS=86400 \
+  nohup uv run --locked --all-packages hub web --port 7420 \
   > "$LOGS/agent-hub-conductor.log" 2>&1 &)
 wait_for http://127.0.0.1:7420/
+wait_for http://127.0.0.1:7420/api/v1/hubs
+sleep 2
 
 step "register the hubs"
 for hub in "$AHH" "$WORKSPACE"/*-hub; do

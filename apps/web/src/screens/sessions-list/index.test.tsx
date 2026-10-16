@@ -252,7 +252,7 @@ async function bodyOf(request: Request | undefined): Promise<unknown> {
 }
 
 describe("SessionsListScreen agent sessions (new-session)", () => {
-  it("starts New session in the served checkout's project, folder and Accept edits (make playground)", async () => {
+  it("starts New session in the served checkout's project, folder and Auto (make playground)", async () => {
     // The same vector as devCheckout.test.ts and core's test_workdirs.py (E6).
     vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
     renderList(
@@ -291,7 +291,7 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
       "5703fef9dd5a3894",
     );
-    expect(within(dialog).getByRole("radio", { name: /Accept edits/ })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
   });
 
   it("starts a session from New session and opens its chat", async () => {
