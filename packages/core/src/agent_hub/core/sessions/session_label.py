@@ -1,4 +1,4 @@
-"""What a session is about (S1, L4): issue, workflow, repo and branch, derived from its events.
+"""What a session is about (S1, L4): title, issue, workflow, repo and branch, from its events.
 
 ``label_signals`` reads the events (pure, order-independent); ``session_label`` builds the label
 with ``issue`` left ``None``; ``with_issue`` finds the issue with the hub's ``LabelRules`` at read
@@ -34,6 +34,8 @@ ROUTINE_COMMANDS: Final = frozenset(
     }
 )
 SKILL_TOOL: Final = "Skill"
+# A title's origin: the user's own (``/rename``) wins over the one Claude Code wrote (ADR 0034).
+TITLE_ORIGINS: Final = ("custom", "ai")
 _WORKTREES: Final = (".claude", "worktrees")
 
 
@@ -47,12 +49,13 @@ class LabelRules:
 
 @dataclass(frozen=True, slots=True)
 class LabelSignals:
-    """What a session's events say about it: latest branch, ``cwd``, repo and workflows."""
+    """What a session's events say about it: latest branch, ``cwd``, repo, workflows and title."""
 
     branch: str | None
     cwd: str | None
     repo: str | None
     workflows: tuple[str, ...]
+    title: str | None = None
 
 
 def _text(value: object) -> str | None:
@@ -76,6 +79,21 @@ def _workflow_of(stored: StoredEvent) -> str | None:
     return None
 
 
+def _title(ordered: Sequence[StoredEvent]) -> str | None:
+    """The newest title of the first origin in ``TITLE_ORIGINS`` that has one."""
+    titles = [stored for stored in ordered if stored.event.type == EventType.SESSION_TITLE]
+    for origin in TITLE_ORIGINS:
+        texts = [
+            title
+            for stored in titles
+            if stored.event.payload.get("origin") == origin
+            and (title := _text(stored.event.payload.get("text")))
+        ]
+        if texts:
+            return texts[-1].strip()
+    return None
+
+
 def label_signals(events: Iterable[StoredEvent]) -> LabelSignals:
     """The label signals of one session's events (any order, repeats allowed)."""
     ordered = canonical_events(events)
@@ -92,6 +110,7 @@ def label_signals(events: Iterable[StoredEvent]) -> LabelSignals:
         cwd=starts[-1] if starts else None,
         repo=next((stored.event.repo for stored in ordered if stored.event.repo), None),
         workflows=tuple(dict.fromkeys(workflows)),
+        title=_title(ordered),
     )
 
 
@@ -122,6 +141,7 @@ def session_label(signals: LabelSignals) -> SessionLabel:
         repo=signals.repo,
         branch=signals.branch,
         worktree=worktree_of(signals.cwd),
+        title=signals.title,
     )
 
 

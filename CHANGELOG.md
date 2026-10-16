@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- Sessions have names: the title Claude Code writes in each transcript (or the one set with `/rename`) is stored as a
+  `session.title` event (redacted, 80 characters) and shown as the session's name in Sessions, the live tiles and
+  the session header, with issue, workflow, repo and branch below it (ADR 0034). Older sessions get theirs when
+  their transcript is read again (`hub collect --transcript FILE`, or the live tail after a restart).
+
 ### Changed
 
 - A shake opens New session on every screen, Settings and "All projects" included: with no project in the route
