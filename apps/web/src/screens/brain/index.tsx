@@ -1,8 +1,18 @@
 import "./Brain.css";
 
+import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router";
 
-import { AppLink, Banner, Icon, ProblemError, Skeleton } from "../../components";
+import {
+  AppLink,
+  Banner,
+  Button,
+  EmptyState,
+  Icon,
+  ProblemError,
+  Skeleton,
+} from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
@@ -11,7 +21,15 @@ import { CountCell, KnowledgeProjectIndex } from "../knowledge-index";
 import { useProjectNow } from "../project-overview/queries";
 import { NoteView } from "./NoteView";
 import { useBrainTree } from "./queries";
-import { buildTree, noteName, type BrainFolder } from "./tree";
+import {
+  INBOX_FOLDER,
+  START_NOTES,
+  buildTree,
+  countNotes,
+  matchNotes,
+  noteName,
+  type BrainFolder,
+} from "./tree";
 
 /** The note a project's Brain opens when the URL names none (AC-201.38). */
 export const DEFAULT_NOTE = "index.md";
@@ -19,6 +37,33 @@ export const DEFAULT_NOTE = "index.md";
 /** The in-app route of a project's Brain, on its default note. */
 export function brainHome(project: string): string {
   return `/projects/${encodeURIComponent(project)}/brain`;
+}
+
+function NoteLink({
+  project,
+  path,
+  selected,
+  label,
+  folder,
+}: {
+  project: string;
+  path: string;
+  selected: string;
+  label?: string | undefined;
+  folder?: string | undefined;
+}) {
+  return (
+    <Link
+      to={brainRoute(project, path)}
+      className="ah-brain-link"
+      aria-current={path === selected ? "page" : undefined}
+      title={path}
+    >
+      <Icon name="file-text" size="sm" />
+      <span className="ah-brain-link-name">{label ?? noteName(path)}</span>
+      {folder && <span className="ah-brain-link-folder">{folder}</span>}
+    </Link>
+  );
 }
 
 function Folder({
@@ -32,36 +77,136 @@ function Folder({
 }) {
   return (
     <ul className="ah-brain-tree" data-root={folder.path === "" || undefined}>
-      {folder.notes.map((entry) => {
-        const current = entry.path === selected;
-        return (
-          <li key={entry.path}>
-            <Link
-              to={brainRoute(project, entry.path)}
-              className="ah-brain-link"
-              aria-current={current ? "page" : undefined}
-              title={entry.path}
-            >
-              <Icon name="file-text" size="sm" />
-              <span>{noteName(entry.path)}</span>
-            </Link>
-          </li>
-        );
-      })}
-      {folder.folders.map((child) => (
-        <li key={child.path}>
-          <details open={selected.startsWith(child.path)}>
-            <summary className="ah-mono">{child.name}/</summary>
-            <Folder folder={child} project={project} selected={selected} />
-          </details>
+      {folder.notes.map((entry) => (
+        <li key={entry.path}>
+          <NoteLink project={project} path={entry.path} selected={selected} />
         </li>
+      ))}
+      {folder.folders.map((child) => (
+        <FolderItem key={child.path} folder={child} project={project} selected={selected} />
       ))}
     </ul>
   );
 }
 
+function FolderItem({
+  folder,
+  project,
+  selected,
+}: {
+  folder: BrainFolder;
+  project: string;
+  selected: string;
+}) {
+  const count = countNotes(folder);
+  return (
+    <li>
+      <details open={selected.startsWith(folder.path)}>
+        <summary
+          className="ah-brain-folder"
+          aria-label={`${folder.name}, ${String(count)} ${count === 1 ? "note" : "notes"}`}
+        >
+          <span className="ah-mono">{folder.name}/</span>
+          <span className="ah-count">{count}</span>
+        </summary>
+        <Folder folder={folder} project={project} selected={selected} />
+      </details>
+    </li>
+  );
+}
+
+function TreeGroup({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <section className="ah-brain-group" aria-labelledby={id}>
+      <h2 id={id} className="ah-brain-group-label">
+        {label}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+function GroupedTree({
+  root,
+  project,
+  selected,
+}: {
+  root: BrainFolder;
+  project: string;
+  selected: string;
+}) {
+  const start = root.notes;
+  const folders = root.folders.filter((folder) => folder.name !== INBOX_FOLDER);
+  const inbox = root.folders.find((folder) => folder.name === INBOX_FOLDER);
+  return (
+    <>
+      {start.length > 0 && (
+        <TreeGroup id="brain-start" label="Start here">
+          <ul className="ah-brain-tree" data-root>
+            {[...start]
+              .sort((a, b) => Number(b.path in START_NOTES) - Number(a.path in START_NOTES))
+              .map((entry) => (
+                <li key={entry.path}>
+                  <NoteLink
+                    project={project}
+                    path={entry.path}
+                    selected={selected}
+                    label={START_NOTES[entry.path]}
+                  />
+                </li>
+              ))}
+          </ul>
+        </TreeGroup>
+      )}
+      {folders.length > 0 && (
+        <TreeGroup id="brain-folders" label="Folders">
+          <ul className="ah-brain-tree" data-root>
+            {folders.map((folder) => (
+              <FolderItem key={folder.path} folder={folder} project={project} selected={selected} />
+            ))}
+          </ul>
+        </TreeGroup>
+      )}
+      {inbox && (
+        <TreeGroup id="brain-inbox" label="Inbox · unreviewed">
+          <ul className="ah-brain-tree" data-root>
+            <FolderItem folder={inbox} project={project} selected={selected} />
+          </ul>
+          <AppLink
+            href={`/knowledge/learnings?scope=${encodeURIComponent(project)}`}
+            className="ah-brain-link"
+          >
+            <Icon name="lightbulb" size="sm" />
+            <span>Triage in Learnings</span>
+          </AppLink>
+        </TreeGroup>
+      )}
+    </>
+  );
+}
+
+function typingIn(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+  );
+}
+
 function BrainTreePanel({ project, selected }: { project: string; selected: string }) {
   const tree = useBrainTree(project);
+  const [query, setQuery] = useState("");
+  const filterRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.defaultPrevented || typingIn(event.target)) return;
+      event.preventDefault();
+      filterRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
   if (tree.isError) {
     return (
       <ProblemError
@@ -81,8 +226,71 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
     );
   }
   const { entries, truncated, skipped } = tree.data;
+  if (entries.length === 0) {
+    return (
+      <EmptyState icon="library" title="No brain in this hub" command="./hub sync">
+        This reads brain/ in the hub. Run ./hub sync to create the skeleton.
+      </EmptyState>
+    );
+  }
+  const matches = matchNotes(entries, query);
+  let list;
+  if (query.trim() === "") {
+    list = <GroupedTree root={buildTree(entries)} project={project} selected={selected} />;
+  } else if (matches.length === 0) {
+    list = (
+      <div className="ah-stack" style={{ gap: 8, alignItems: "flex-start" }}>
+        <p className="ah-small ah-muted" style={{ margin: 0 }}>
+          No note matches &ldquo;{query.trim()}&rdquo;.
+        </p>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setQuery("");
+          }}
+        >
+          Clear filter
+        </Button>
+      </div>
+    );
+  } else {
+    list = (
+      <ul className="ah-brain-tree" data-root aria-label="Matching notes">
+        {matches.map((entry) => {
+          const folder = entry.path.slice(0, entry.path.length - noteName(entry.path).length);
+          return (
+            <li key={entry.path}>
+              <NoteLink project={project} path={entry.path} selected={selected} folder={folder} />
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
   return (
-    <div className="ah-stack" style={{ gap: 8 }}>
+    <div className="ah-stack" style={{ gap: 12 }}>
+      <div className="ah-search">
+        <Icon name="search" size="sm" />
+        <input
+          ref={filterRef}
+          type="search"
+          className="ah-input"
+          aria-label="Filter brain notes"
+          placeholder="Filter notes"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && query !== "") {
+              event.preventDefault();
+              event.stopPropagation();
+              setQuery("");
+            }
+          }}
+        />
+      </div>
       {(truncated || skipped > 0) && (
         <Banner tone="warning">
           {truncated && "The listing stopped at its limit: some notes are not shown. "}
@@ -90,13 +298,7 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
             `${String(skipped)} ${skipped === 1 ? "entry was" : "entries were"} skipped (unreadable or past a limit).`}
         </Banner>
       )}
-      {entries.length === 0 ? (
-        <p className="ah-small ah-muted" style={{ margin: 0 }}>
-          This brain has no notes yet.
-        </p>
-      ) : (
-        <Folder folder={buildTree(entries)} project={project} selected={selected} />
-      )}
+      {list}
     </div>
   );
 }
