@@ -170,6 +170,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   session older than the period still shows (AGH-243).
 - Sessions' status sections refresh live as sessions change (at most every 2 s), without moving your scroll position
   or losing the focused row when it moves to another section (AGH-243).
+- Sessions lists the sessions hub web drives in its status sections: one with an observed twin shows once, as that
+  row with a "Chat" badge, and opens its chat (in Waiting while it waits on a permission); one without a twin shows in
+  the section of its status with the fields it has. "New session" moves to the page header, the "Driven from hub web"
+  list is gone, and the cloud guidance is a collapsed "Cloud sessions" below the sections (AGH-244).
 
 ### Fixed
 
