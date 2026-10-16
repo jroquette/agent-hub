@@ -141,8 +141,8 @@ Knowledge expands into sub-items when its route is active: Brain (`book-open`), 
 
 As built (AGH-201, AGH-164), Knowledge shows Learnings, Brain and Skills, in that order. Skills sits right after
 Brain and links to the catalog of the project whose skills are open, else of the project in scope
-(`/projects/<p>/skills`), else to the picker `/knowledge/skills`, which lists the registered projects as Brain's
-picker does (the route is declared before `/knowledge/:section`, so it is not the Phase 3 placeholder). A skill
+(`/projects/<p>/skills`), else to the picker `/knowledge/skills`, which lists the registered projects with counts as
+Brain's picker does ([19-brain-and-skills.md](19-brain-and-skills.md), AGH-270) (the route is declared before `/knowledge/:section`, so it is not the Phase 3 placeholder). A skill
 detail's breadcrumb is Portfolio › project › Skills › name.
 
 Badge rules:

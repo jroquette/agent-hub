@@ -12,6 +12,7 @@ import { Outlet, useNavigate } from "react-router";
 
 import { usePreferences } from "../lib/preferences";
 import { useScope } from "../lib/scope";
+import { usePageScope } from "./pageScope";
 import { CommandPalette } from "./CommandPalette";
 import { DiscussProvider, useDiscuss } from "./discuss";
 import { DiscussPanel } from "./DiscussPanel";
@@ -119,7 +120,7 @@ function useGlobalKeys(actions: {
 
 function ShellLayout({ children }: { children?: ReactNode }) {
   const preferences = usePreferences();
-  const [scope, setScope] = useScope();
+  const [scope, setScope] = usePageScope();
   const { health, counts } = useGlobalStream();
   const [palette, setPalette] = useState<{ query: string } | null>(null);
   const [sheet, setSheet] = useState(false);
