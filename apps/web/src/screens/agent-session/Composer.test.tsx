@@ -7,6 +7,15 @@ import { servedCheckout } from "../../lib/devCheckout";
 import { seriousViolations } from "../../testing/axe";
 import { Composer, type ComposerProps } from "./Composer";
 
+vi.mock("../../lib/pastedImage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/pastedImage")>();
+  // The canvas is not in jsdom: an image "converts" to a data URL naming its file.
+  return {
+    ...actual,
+    imageToPng: vi.fn((file: File) => Promise.resolve(`data:image/png;base64,${file.name}`)),
+  };
+});
+
 vi.mock("../../lib/devCheckout", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
   return { ...actual, servedCheckout: vi.fn(() => null) };
@@ -33,7 +42,7 @@ describe("Composer (composer)", () => {
 
     await userEvent.type(box, "Run the tests{Enter}");
 
-    expect(props.onSend).toHaveBeenCalledWith("Run the tests");
+    expect(props.onSend).toHaveBeenCalledWith("Run the tests", []);
     expect(box).toHaveValue("");
   });
 
@@ -45,7 +54,7 @@ describe("Composer (composer)", () => {
     expect(box).toHaveValue("one\ntwo");
     expect(props.onSend).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(props.onSend).toHaveBeenCalledWith("one\ntwo");
+    expect(props.onSend).toHaveBeenCalledWith("one\ntwo", []);
   });
 
   it("sends on Alt+Enter, but leaves Ctrl/Cmd+Alt+Enter to the chat's allow chord", async () => {
@@ -59,7 +68,7 @@ describe("Composer (composer)", () => {
 
     expect(fireEvent.keyDown(box, { key: "Enter", altKey: true })).toBe(false);
     await waitFor(() => {
-      expect(props.onSend).toHaveBeenCalledWith("Run it");
+      expect(props.onSend).toHaveBeenCalledWith("Run it", []);
     });
   });
 
@@ -159,7 +168,7 @@ describe("Composer (composer)", () => {
     );
     await userEvent.type(box, "Go on.{Enter}");
 
-    expect(props.onSend).toHaveBeenCalledWith("Go on.");
+    expect(props.onSend).toHaveBeenCalledWith("Go on.", []);
     expect(screen.getByRole("combobox", { name: "Mode" })).toBeDisabled();
   });
 
@@ -257,7 +266,7 @@ describe("Composer (composer)", () => {
     expect(box).toHaveValue("Saved earlier");
     await userEvent.type(box, "{Enter}");
 
-    expect(props.onSend).toHaveBeenCalledWith("Saved earlier");
+    expect(props.onSend).toHaveBeenCalledWith("Saved earlier", []);
     expect(box).toHaveValue("");
     expect(window.localStorage.getItem("ah.chat.draft.s-1")).toBeNull();
   });
@@ -347,7 +356,7 @@ describe("Composer (composer)", () => {
     expect(box).toHaveValue("one\ntwo");
     expect(props.onSend).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(props.onSend).toHaveBeenCalledWith("one\ntwo");
+    expect(props.onSend).toHaveBeenCalledWith("one\ntwo", []);
     vi.unstubAllGlobals();
   });
 
@@ -417,5 +426,69 @@ describe("Composer (stop)", () => {
 
     expect(props.onInterrupt).not.toHaveBeenCalled();
     expect(box).toHaveValue(text);
+  });
+});
+
+describe("Composer (images)", () => {
+  const image = (name: string) => new File(["x"], name, { type: "image/png" });
+
+  it("adds a pasted image above the text and sends it with the message", async () => {
+    const { box, props } = open({ acceptsImages: true });
+
+    fireEvent.paste(box, { clipboardData: { files: [image("shot.png")] } });
+
+    const strip = await screen.findByRole("list", { name: "Images in this message" });
+    expect(within(strip).getByRole("img", { name: "Image 1" })).toHaveAttribute(
+      "src",
+      "data:image/png;base64,shot.png",
+    );
+    expect(screen.getByText("Add a message to send with the image")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    await userEvent.type(box, "What is wrong here?{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith("What is wrong here?", [
+      "data:image/png;base64,shot.png",
+    ]);
+    await waitFor(() => {
+      expect(screen.queryByRole("list", { name: "Images in this message" })).toBeNull();
+    });
+  });
+
+  it("takes dropped images, removes one, and refuses past four", async () => {
+    const { box, props } = open({ acceptsImages: true });
+    const form = screen.getByRole("form", { name: "Message composer" });
+
+    fireEvent.drop(form, {
+      dataTransfer: {
+        files: ["a", "b", "c", "d", "e"].map((n) => image(`${n}.png`)),
+        types: ["Files"],
+      },
+    });
+
+    const strip = await screen.findByRole("list", { name: "Images in this message" });
+    await waitFor(() => {
+      expect(within(strip).getAllByRole("img")).toHaveLength(4);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("A message takes up to 4 images.");
+    expect(screen.getByRole("button", { name: "Add an image" })).toBeDisabled();
+
+    await userEvent.click(within(strip).getByRole("button", { name: "Remove image 2" }));
+    await userEvent.type(box, "Compare{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith("Compare", [
+      "data:image/png;base64,a.png",
+      "data:image/png;base64,c.png",
+      "data:image/png;base64,d.png",
+    ]);
+  });
+
+  it("pastes text as usual and takes no image where images are not accepted", () => {
+    const { box } = open();
+
+    fireEvent.paste(box, { clipboardData: { files: [image("shot.png")] } });
+
+    expect(screen.queryByRole("list", { name: "Images in this message" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add an image" })).toBeNull();
   });
 });

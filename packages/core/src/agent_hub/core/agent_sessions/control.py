@@ -177,6 +177,15 @@ def _event_body(event: DriverEvent) -> dict[str, JsonValue]:
     return body
 
 
+def _user_message_body(text: str, images: tuple[DriverImage, ...]) -> UserMessageBody:
+    """A user message's record: its text and a marker per image, never the image's bytes."""
+    attachments = tuple(
+        Attachment(kind="screenshot", media_type=image.media_type, bytes=len(image.data))
+        for image in images
+    )
+    return UserMessageBody(text=text, attachments=attachments or None)
+
+
 def _tool_call_body(call: ToolCall) -> dict[str, JsonValue]:
     """The record of a tool call; an ``Edit`` or ``Write`` also carries its unified diff."""
     body = _event_body(call)
@@ -447,11 +456,7 @@ class AgentSessionControl:
         """Log the first prompt (a marker per image, never its bytes), start the pump, then send
         the prompt with its images."""
         if prompt is not None:
-            attachments = tuple(
-                Attachment(kind="screenshot", media_type=image.media_type, bytes=len(image.data))
-                for image in images
-            )
-            body = UserMessageBody(text=prompt, attachments=attachments or None)
+            body = _user_message_body(prompt, images)
             await self._emit(live, "user.message", body.as_body(), by="web")
         pump = asyncio.create_task(self._pump(live), name=f"agent-session-{live.id}")
         live.pump = pump
@@ -490,17 +495,20 @@ class AgentSessionControl:
         """Log a user message, then pass it on: it plays after the running turn. A message to a
         local session that ended (not ``log_full``) resumes it in place first (``_reopen``)."""
         self._check_size(message.text)
+        images = tuple(
+            decode_screenshot(screenshot, pointer=f"/screenshots/{index}/data")
+            for index, screenshot in enumerate(message.screenshots or ())
+        )
         live = await self._commandable(agent_session_id, reopen=True)
         async with live.commands:
             self._refuse(live, Send())
-            seq = await self._emit(
-                live, "user.message", UserMessageBody(text=message.text).as_body(), by="web"
-            )
+            body = _user_message_body(message.text, images)
+            seq = await self._emit(live, "user.message", body.as_body(), by="web")
             if seq is None:
                 raise await self._log_full(live)
             live.state = apply(live.state, Send())
             await self._sync(live)
-            await self._driver.send(live.handle, message.text)
+            await self._driver.send(live.handle, message.text, images=images)
         return MessageAccepted(seq=seq)
 
     async def interrupt(self, agent_session_id: str) -> AgentSession:
