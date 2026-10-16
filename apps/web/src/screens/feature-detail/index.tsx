@@ -679,6 +679,7 @@ export function FeatureDetailScreen() {
         error={tickets.isError ? tickets.error : null}
         onRefresh={() => void tickets.refetch()}
         refreshing={tickets.isFetching}
+        acPasses={Object.fromEntries(detail.ac_rows.map((ac) => [ac.id, ac.passes]))}
       />
     );
   } else if (tab === "eval") body = <EvalTab project={detail.project} evals={detail.evals} />;

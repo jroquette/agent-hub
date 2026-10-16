@@ -5288,6 +5288,7 @@
       "Readiness": {
         "enum": [
           "can_start",
+          "in_progress",
           "waiting",
           "done",
           "canceled",
@@ -7529,7 +7530,7 @@
       },
       "TicketPlan": {
         "additionalProperties": false,
-        "description": "The planning of the feature's tickets, every ticket named by its row's ``ref``.\n\n``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);\n``can_start`` the first layer's tickets that wait on nothing; ``order`` the recommended\norder; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle\n(left out of the layers); ``critical_path`` the longest chain of tickets not done.",
+        "description": "The planning of the feature's tickets, every ticket named by its row's ``ref``.\n\n``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);\n``can_start`` the first layer's tickets that wait on nothing and are not started yet; ``order`` the recommended\norder; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle\n(left out of the layers); ``critical_path`` the longest chain of tickets not done.",
         "properties": {
           "can_start": {
             "items": {

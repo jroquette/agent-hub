@@ -1,81 +1,30 @@
-import { Fragment } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
-import { EmptyState, ProblemError, Skeleton, StatusBadge, type Status } from "../../components";
+import { EmptyState, ProblemError, Skeleton } from "../../components";
 import type { ApiProblem } from "../../lib/api";
-import { LinearLink, PlanningView, TicketRef, ticketAnchor } from "./PlanningView";
+import {
+  LinearLink,
+  PlanningView,
+  ReadinessText,
+  StateBadge,
+  TicketRef,
+  ticketAnchor,
+} from "./PlanningView";
 import { TicketNotice } from "./TicketNotice";
 
 type FeatureTickets = components["schemas"]["FeatureTickets"];
 type TicketRow = components["schemas"]["TicketRow"];
-type IssueStateType = components["schemas"]["IssueStateType"];
 type EdgeSource = components["schemas"]["EdgeSource"];
-
-/** The badge tone of a Linear state type; the badge text is always the state's own name. */
-const STATE_STATUS: Record<IssueStateType, Status> = {
-  triage: "queued",
-  backlog: "queued",
-  unstarted: "queued",
-  started: "running",
-  completed: "done",
-  canceled: "stopped",
-  duplicate: "stopped",
-};
+/** Whether each AC passes, by id. */
+type AcPasses = Readonly<Record<string, boolean>>;
 
 const EDGE_TITLE: Record<EdgeSource, string> = {
   plan: "From the plan only",
   linear: "From Linear only",
   both: "In the plan and in Linear",
 };
-
-function StateBadge({ row }: { row: TicketRow }) {
-  if (!row.state) {
-    return (
-      <StatusBadge
-        status="idle"
-        quiet
-        label="Unknown"
-        title="No status: Linear was not read for this ticket"
-      />
-    );
-  }
-  return (
-    <StatusBadge
-      status={STATE_STATUS[row.state.type]}
-      label={row.state.name}
-      title={`${row.state.name} (${row.state.type})`}
-    />
-  );
-}
-
-function Readiness({ row, data }: { row: TicketRow; data: FeatureTickets }) {
-  switch (row.readiness) {
-    case "can_start":
-      return <b style={{ fontWeight: 500, color: "var(--done)" }}>Can start now</b>;
-    case "done":
-      return <b style={{ fontWeight: 500 }}>Done</b>;
-    case "canceled":
-      return <b style={{ fontWeight: 500 }}>Canceled</b>;
-    case "in_cycle":
-      return <b style={{ fontWeight: 500, color: "var(--failed)" }}>Waiting: cycle</b>;
-    case "waiting":
-      return (
-        <span>
-          Waiting on{" "}
-          {row.waiting_on.map((ref, i) => (
-            <Fragment key={ref}>
-              {i > 0 && ", "}
-              <TicketRef id={ref} rows={data.tickets} external={data.planning.external_blockers} />
-            </Fragment>
-          ))}
-        </span>
-      );
-    default:
-      return <span className="ah-muted">Unknown</span>;
-  }
-}
 
 function TicketId({ row }: { row: TicketRow }) {
   if (!row.id) {
@@ -126,33 +75,59 @@ function Blockers({ row, data }: { row: TicketRow; data: FeatureTickets }) {
   );
 }
 
-function Acs({ row }: { row: TicketRow }) {
+/** How many of the ticket's ACs pass, with the ids one click away (a long list stays folded). */
+function Acs({ row, acPasses }: { row: TicketRow; acPasses?: AcPasses | undefined }) {
   if (row.acs.length === 0) return <span className="ah-subtle">—</span>;
-  return (
+  const passing = acPasses ? row.acs.filter((ac) => acPasses[ac]).length : null;
+  const links = (
     <span className="ah-row ah-wrap" style={{ gap: 6 }}>
       {row.acs.map((ac) => (
         <Link
           key={ac}
           className="ah-mono ah-small"
           to={{ search: `?ac=${encodeURIComponent(ac)}` }}
-          title={`Open ${ac} in Criteria`}
+          title={`Open ${ac} in Criteria${acPasses ? (acPasses[ac] ? " · passing" : " · not passing yet") : ""}`}
+          style={acPasses && !acPasses[ac] ? { color: "var(--waiting)" } : undefined}
         >
           {ac}
         </Link>
       ))}
     </span>
   );
+  if (row.acs.length <= 3) return links;
+  return (
+    <details>
+      <summary className="ah-small" style={{ cursor: "pointer" }}>
+        {passing === null
+          ? `${String(row.acs.length)} ACs`
+          : `${String(passing)}/${String(row.acs.length)} passing`}
+      </summary>
+      <div style={{ paddingTop: 4 }}>{links}</div>
+    </details>
+  );
 }
 
-function TicketsTable({ data }: { data: FeatureTickets }) {
+function TicketsTable({
+  data,
+  acPasses,
+}: {
+  data: FeatureTickets;
+  acPasses?: AcPasses | undefined;
+}) {
   const columns: { label: string; width?: number; cell: (row: TicketRow) => ReactNode }[] = [
     { label: "Ticket", width: 110, cell: (row) => <TicketId row={row} /> },
     { label: "Title", cell: (row) => row.title ?? <span className="ah-subtle">—</span> },
     { label: "Status", width: 130, cell: (row) => <StateBadge row={row} /> },
     { label: "Assignee", width: 130, cell: (row) => <Assignee row={row} /> },
     { label: "Blocked by", width: 150, cell: (row) => <Blockers row={row} data={data} /> },
-    { label: "ACs", width: 150, cell: (row) => <Acs row={row} /> },
-    { label: "Readiness", width: 170, cell: (row) => <Readiness row={row} data={data} /> },
+    { label: "ACs", width: 150, cell: (row) => <Acs row={row} acPasses={acPasses} /> },
+    {
+      label: "Readiness",
+      width: 190,
+      cell: (row) => (
+        <ReadinessText row={row} rows={data.tickets} external={data.planning.external_blockers} />
+      ),
+    },
   ];
   return (
     <div className="ah-table-wrap">
@@ -209,13 +184,16 @@ export interface TicketsTabProps {
   /** Refetches the tickets route (Refresh and retry). */
   onRefresh: () => void;
   refreshing?: boolean | undefined;
+  /** Whether each AC passes (by id), from the feature record; shows each ticket's progress. */
+  acPasses?: AcPasses | undefined;
 }
 
 /**
- * The Tickets tab (AC-136.28): where the data comes from, one row per ticket (Linear link, title,
- * status, assignee, blockers, ACs, readiness) and the planning view.
+ * The Tickets tab (AC-136.28): where the data comes from, the flow of the tickets (what runs in
+ * parallel, in which order, and where each one is now), then one row per ticket (Linear link,
+ * title, status, assignee, blockers, ACs, readiness).
  */
-export function TicketsTab({ data, error, onRefresh, refreshing }: TicketsTabProps) {
+export function TicketsTab({ data, error, onRefresh, refreshing, acPasses }: TicketsTabProps) {
   if (error) {
     return (
       <ProblemError
@@ -239,8 +217,8 @@ export function TicketsTab({ data, error, onRefresh, refreshing }: TicketsTabPro
         </div>
       ) : (
         <>
-          <TicketsTable data={data} />
-          <PlanningView tickets={data.tickets} planning={data.planning} />
+          <PlanningView tickets={data.tickets} planning={data.planning} acPasses={acPasses} />
+          <TicketsTable data={data} acPasses={acPasses} />
         </>
       )}
     </div>
