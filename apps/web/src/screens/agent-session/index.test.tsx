@@ -1159,7 +1159,7 @@ describe("AgentSessionScreen (axe)", () => {
     const animated = [...css.matchAll(/([^{}]+)\{[^{}]*\banimation:(?!\s*none)[^;]+;/g)].map(
       (match) => match[1]?.trim(),
     );
-    expect(animated).toEqual([".as-caret", ".as-working::before", ".as-spin"]);
+    expect(animated).toEqual([".as-caret", ".as-working::before", ".as-spin", ".as-drawer"]);
     const reduced =
       /@media \(prefers-reduced-motion: reduce\) \{\s*([^{]+)\{\s*animation: none;/.exec(css);
     expect(reduced?.[1]?.split(",").map((selector) => selector.trim())).toEqual(animated);
@@ -1260,5 +1260,30 @@ describe("AgentSessionScreen (unavailable)", () => {
     renderChat(routes({ [SESSION]: missing, [EVENTS]: missing }));
 
     expect(await screen.findByText("Agent session not found")).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (changed-files)", () => {
+  it("opens the files Claude changed in a drawer, which a run line swaps for its activity", async () => {
+    renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+
+    const button = await screen.findByRole("button", { name: /Changed files/ });
+    expect(button).toHaveTextContent("Changed files1");
+    await userEvent.click(button);
+
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    expect(within(panel).getByRole("region", { name: "src/app.py" })).toBeInTheDocument();
+    expect(button).toHaveAttribute("aria-expanded", "true");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Edit/ }));
+    expect(screen.queryByRole("complementary", { name: "Changed files" })).toBeNull();
+    expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
   });
 });
