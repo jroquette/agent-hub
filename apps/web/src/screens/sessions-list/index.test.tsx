@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -21,6 +21,11 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
+
+// These tests read the tables; the grid is the default view (AC-234.3).
+beforeEach(() => {
+  window.localStorage.setItem("ah.sessions.view", "table");
+});
 
 const SESSIONS = "/api/v1/sessions";
 const AGENT = "/api/v1/agent-sessions";
@@ -231,6 +236,27 @@ describe("SessionsListScreen", () => {
   it("has no serious or critical a11y violation", async () => {
     const { container } = renderList(routes());
     await screen.findByText("/evaluator");
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  it("has no serious or critical a11y violation in the grid, grouped by run", async () => {
+    const waiting = aSession({
+      id: anId(4, "aaaa0004"),
+      label: named("asks"),
+      status: "waiting",
+      outcome: null,
+      waiting_reason: "Permission prompt",
+      agent_session_id: anId(11, "0192a5e5"),
+    });
+    const { container } = renderList(
+      routes({ [SESSIONS]: aSessionsByStatus([...sessions(), waiting]) }),
+      "/sessions?view=grid&within=run",
+    );
+    const tile = await screen.findByRole("article", { name: /^\/asks in / });
+    expect(within(tile).getByRole("link", { name: "Open chat" })).toBeInTheDocument();
+    expect(within(tile).getByText("Chat")).toBeInTheDocument();
+    expect(screen.getAllByRole("group", { name: "Not in a run" }).length).toBeGreaterThan(0);
 
     expect(await seriousViolations(container)).toEqual([]);
   });
@@ -550,5 +576,99 @@ describe("SessionsListScreen agent sessions (unavailable)", () => {
     renderList(routes({ [AGENT]: off, [`${AGENT}/capabilities`]: off }));
 
     expect(await screen.findByText(/off in the container/)).toBeInTheDocument();
+  });
+});
+
+describe("SessionsListScreen view-toggle", () => {
+  const VIEW = "ah.sessions.view";
+  const tiles = () => screen.queryAllByRole("article");
+  const shows = async (view: "grid" | "table") => {
+    await screen.findByText("/evaluator");
+    if (view === "grid") {
+      expect(tiles().length).toBeGreaterThan(0);
+      expect(screen.queryByRole("table")).toBeNull();
+    } else {
+      expect(screen.getAllByRole("table").length).toBeGreaterThan(0);
+      expect(tiles()).toHaveLength(0);
+    }
+  };
+
+  beforeEach(() => {
+    window.localStorage.removeItem(VIEW);
+  });
+
+  it("shows the grid when neither the URL nor the stored preference sets a view", async () => {
+    renderList(routes());
+
+    await shows("grid");
+    expect(screen.getByRole("button", { name: "Grid" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("uses the stored view, and a URL view wins over it", async () => {
+    window.localStorage.setItem(VIEW, "table");
+    const stored = renderList(routes());
+    await shows("table");
+    stored.unmount();
+
+    renderList(routes(), "/sessions?view=grid");
+    await shows("grid");
+    expect(window.localStorage.getItem(VIEW)).toBe("table");
+  });
+
+  it("falls back to the grid on an unknown view in the URL or in storage", async () => {
+    const url = renderList(routes(), "/sessions?view=cards");
+    await shows("grid");
+    url.unmount();
+
+    window.localStorage.setItem(VIEW, "cards");
+    renderList(routes());
+    await shows("grid");
+  });
+
+  it("switches from the control and the v key, writing the URL and the stored view", async () => {
+    const { router } = renderList(routes(), "/sessions?status=live");
+    await shows("grid");
+
+    fireEvent.click(screen.getByRole("button", { name: "Table" }));
+    await shows("table");
+    expect(router.state.location.search).toBe("?status=live&view=table");
+    expect(window.localStorage.getItem(VIEW)).toBe("table");
+
+    fireEvent.keyDown(document.body, { key: "v" });
+    await shows("grid");
+    expect(new URLSearchParams(router.state.location.search).get("view")).toBe("grid");
+    expect(window.localStorage.getItem(VIEW)).toBe("grid");
+  });
+
+  it("ignores v while typing, with a modifier, or when another handler took it", async () => {
+    renderList(routes());
+    await shows("grid");
+    const input = screen.getByRole("textbox", { name: "Repo" });
+
+    fireEvent.keyDown(input, { key: "v" });
+    fireEvent.keyDown(document.body, { key: "v", ctrlKey: true });
+    fireEvent.keyDown(document.body, { key: "v", metaKey: true });
+    const taken = new KeyboardEvent("keydown", { key: "v", bubbles: true, cancelable: true });
+    taken.preventDefault();
+    document.body.dispatchEvent(taken);
+
+    await shows("grid");
+    expect(window.localStorage.getItem(VIEW)).toBeNull();
+  });
+
+  it("ignores v with Alt, and from a control inside an open dialog", async () => {
+    renderList(routes());
+    await shows("grid");
+
+    fireEvent.keyDown(document.body, { key: "v", altKey: true });
+    fireEvent.click(await screen.findByRole("button", { name: "New session" }));
+    const dialog = await screen.findByRole("dialog", { name: "New session" });
+    const close = within(dialog).getAllByRole("button")[0];
+    if (!close) throw new Error("the dialog has no button");
+    close.focus();
+    fireEvent.keyDown(close, { key: "v" });
+
+    await shows("grid");
+    expect(window.localStorage.getItem(VIEW)).toBeNull();
   });
 });

@@ -13,8 +13,9 @@ import {
   type ApiRoutes,
   type LiveTile,
 } from "../../testing/builders";
+import { sortTiles } from "../sessions-list/tiles";
 import { LiveSessionsScreen } from "./index";
-import { groupTiles, sortTiles } from "./tiles";
+import { groupTiles } from "./tiles";
 
 const LIVE = "/api/v1/live-sessions";
 
