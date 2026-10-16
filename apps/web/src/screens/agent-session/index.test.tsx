@@ -1323,3 +1323,38 @@ describe("AgentSessionScreen (run-files-card)", () => {
     );
   });
 });
+
+describe("AgentSessionScreen (review-comments)", () => {
+  it("sends a comment on a changed line to the session's Claude, as a message of the chat", async () => {
+    const user = userEvent.setup();
+    const view = renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+        [`POST ${SESSION}/messages`]: { seq: 5 },
+      }),
+    );
+
+    const card = await screen.findByRole("region", { name: "Files edited in this turn" });
+    await user.click(within(card).getByRole("button", { name: /^Open src\/app\.py/ }));
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    await user.click(within(panel).getByRole("button", { name: "Comment on diff line 3" }));
+    await user.type(
+      within(panel).getByRole("textbox", { name: "Comment on Diff line 3" }),
+      "Why 2?{Control>}{Enter}{/Control}",
+    );
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({
+      text: "Review comment on `src/app.py`, change 1, diff lines 3:\n\n```diff\n+a = 2\n```\n\nWhy 2?",
+    });
+    const sending = await within(panel).findByRole("region", {
+      name: "Review thread on Diff line 3",
+    });
+    expect(within(sending).getByText("Why 2?")).toBeInTheDocument();
+  });
+});
