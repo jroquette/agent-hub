@@ -120,6 +120,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- Confirmation dialogs (Delete this session, Remove hub) close with Escape, the X or a press on the backdrop, keep
+  Tab inside, start on Cancel and give focus back to the button that opened them (AGH-248).
 - The chat of a session `hub web` drives is one fixed-height column: the header (title, status, cost, actions) and the
   composer stay on screen and only the transcript scrolls. It opens at the latest message, or at the oldest permission
   still waiting, follows the reply while you are at the bottom, stops when you scroll up, and offers "Jump to latest ·
