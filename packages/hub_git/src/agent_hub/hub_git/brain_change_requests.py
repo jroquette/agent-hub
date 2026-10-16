@@ -2,21 +2,23 @@
 
 An action works in a temporary clone of the hub's ``origin`` that borrows the hub's objects
 (``--reference-if-able``), never in the user's checkout, so its working tree, index, refs and
-worktree list stay as they were. It checks that the note is on ``origin/<default_branch>`` and
-that the destination and the branch are free; builds one commit with plumbing (no checkout, no
-hook) that moves the note and sets its frontmatter, as the change's author; pushes that one new
-branch through the push guard; and opens the pull request with ``gh pr create``. When the push
-or ``gh`` fails (a timeout may come after GitHub accepted the ref), the branch is deleted again
-so a retry starts clean. A retry that still finds the branch on ``origin`` (the action got as far
-as the pull request, or its cleanup failed) adopts the branch's open pull request and returns it;
-with none open it deletes the branch, which can only be this action's (``<prefix>learning-
-<action>-<slug>``), and goes on. The temporary folder is always removed, and no git or gh output
-is logged, kept or put in an error.
+worktree list stay as they were. It takes the note from ``origin/<default_branch>``, or, when
+``/learn`` wrote it in the checkout and it was never pushed, reads it from there (the checkout is
+only read); it checks that the destination and the branch are free; builds one commit with plumbing
+(no checkout, no hook) that moves the note and sets its frontmatter, as the change's author; pushes
+that one new branch through the push guard; and opens the pull request with ``gh pr create``. When
+the push or ``gh`` fails (a timeout may come after GitHub accepted the ref), the branch is deleted
+again so a retry starts clean. A retry that still finds the branch on ``origin`` (the action got as
+far as the pull request, or its cleanup failed) adopts the branch's open pull request and returns
+it; with none open it deletes the branch, which can only be this action's
+(``<prefix>learning-<action>-<slug>``), and goes on. The temporary folder is always removed, and no
+git or gh output is logged, kept or put in an error.
 """
 
 import contextlib
 import os
 import shutil
+import stat
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Final
@@ -63,6 +65,7 @@ CLEANUP_SECONDS: Final = 15.0
 CONTAINER_VARIABLE: Final = "AGENT_HUB_IN_CONTAINER"
 GITHUB_HOST: Final = "github.com"
 _REGULAR_MODES: Final = frozenset({"100644", "100755"})
+_NEW_FILE_MODE: Final = "100644"
 _CLONE: Final = "clone"
 
 
@@ -293,7 +296,7 @@ class _Action:
         shown = f"brain/{change.note}"
         entry = self._entry(base, change.note)
         if entry is None:
-            raise _conflict(f"Note not on origin/{change.default_branch}: {shown}")
+            return _NEW_FILE_MODE, self._checkout_note(shown)
         mode, kind, blob = entry
         if kind != "blob" or mode not in _REGULAR_MODES:
             raise _conflict(f"Note is not a regular file: {shown}")
@@ -302,6 +305,27 @@ class _Action:
         raw = self._git(["cat-file", "blob", blob], step="read")
         try:
             return mode, raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise _conflict(f"Note is not UTF-8 text: {shown}") from None
+
+    def _checkout_note(self, shown: str) -> str:
+        """The note as it sits in the hub checkout, for a note ``/learn`` wrote there and nobody
+        pushed yet: it is only read (never through a link), and the branch then adds it."""
+        change = self._change
+        missing = f"Note not on origin/{change.default_branch} nor in the hub checkout: {shown}"
+        path = Path(change.hub_path) / BRAIN_FOLDER / change.note
+        try:
+            found = path.lstat()
+        except OSError:
+            raise _conflict(missing) from None
+        if not stat.S_ISREG(found.st_mode):
+            raise _conflict(f"Note is not a regular file: {shown}")
+        if found.st_size > MAX_NOTE_BYTES:
+            raise _conflict(f"Note too large: {shown}")
+        try:
+            return path.read_bytes().decode("utf-8")
+        except OSError:
+            raise _conflict(missing) from None
         except UnicodeDecodeError:
             raise _conflict(f"Note is not UTF-8 text: {shown}") from None
 

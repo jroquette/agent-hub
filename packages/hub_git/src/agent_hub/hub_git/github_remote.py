@@ -5,8 +5,11 @@ import json
 import re
 from typing import Final
 
+# An ssh host alias ``github.com-<account>`` (a ``Host`` entry of ``~/.ssh/config``, the usual
+# way to keep two GitHub accounts on one machine) names GitHub too.
+_SSH_HOST: Final = r"github\.com(?:-[A-Za-z0-9_]+)*"
 _GITHUB_URL: Final = re.compile(
-    r"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)"
+    rf"(?:https://github\.com/|ssh://git@{_SSH_HOST}/|git@{_SSH_HOST}:)"
     r"(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?",
     re.IGNORECASE,
 )
@@ -18,8 +21,9 @@ class UnexpectedOutputError(ValueError):
 
 
 def github_repo(url: str) -> str | None:
-    """The ``owner/name`` of a GitHub url (https or ssh, ``.git`` optional), or None for any
-    other url (another host, a local path, a url carrying credentials)."""
+    """The ``owner/name`` of a GitHub url (https or ssh, ``.git`` optional, ssh through a
+    ``github.com-<account>`` host alias too), or None for any other url (another host, a local
+    path, a url carrying credentials)."""
     found = _GITHUB_URL.fullmatch(url.strip())
     return None if found is None else found.group("repo")
 
