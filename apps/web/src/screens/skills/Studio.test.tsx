@@ -7,6 +7,7 @@ import {
   aLogRecord,
   aProblem,
   aSkillCatalog,
+  aSkillDetail,
   aWorkdir,
   anAgentSession,
   anId,
@@ -14,7 +15,7 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { publishPrompt } from "./draft";
-import { StudioScreen } from "./Studio";
+import { EditDraftScreen, StudioScreen } from "./Studio";
 import { openDrafts, saveDraft, storedDraft } from "./studioDrafts";
 
 const DRAFT = "skill-abc123";
@@ -201,5 +202,59 @@ describe("StudioScreen (publish)", () => {
     expect(await screen.findByText(/Claude did not confirm the publish/)).toBeInTheDocument();
     expect(screen.queryByText("Published.")).toBeNull();
     expect(openDrafts("demo").map((d) => d.draftId)).toEqual([DRAFT]);
+  });
+});
+
+describe("StudioScreen (edit an existing item)", () => {
+  const TARGET = { kind: "skill" as const, source: "hub-workflow", name: "feature" };
+  const DETAIL = "/api/v1/projects/demo/skills/skill/hub-workflow/feature";
+
+  function openEdit() {
+    return renderWithApi(<EditDraftScreen />, {
+      path: "/projects/demo/skills/skill/hub-workflow/feature/edit",
+      route: "/projects/:project/skills/:kind/:source/:name/edit",
+    });
+  }
+
+  it("opens a new edit draft of the item, and the same one on a second Edit", async () => {
+    const first = openEdit();
+    await waitFor(() => {
+      expect(first.router.state.location.pathname).toMatch(
+        /^\/projects\/demo\/skills\/drafts\/skill-/,
+      );
+    });
+    const draftId = first.router.state.location.pathname.split("/").at(-1) ?? "";
+    expect(storedDraft(draftId)).toMatchObject({ target: TARGET, name: "feature" });
+    first.unmount();
+
+    const second = openEdit();
+    await waitFor(() => {
+      expect(second.router.state.location.pathname).toBe(`/projects/demo/skills/drafts/${draftId}`);
+    });
+  });
+
+  it("starts the session on a copy of the item, leaving the original alone", async () => {
+    saveDraft(DRAFT, { project: "demo", kind: "skill" }, { target: TARGET, name: "feature" });
+    const view = renderStudio(
+      routes({
+        [DETAIL]: aSkillDetail(),
+        "POST /api/v1/agent-sessions": anAgentSession({ id: ID, status: "running" }),
+      }),
+    );
+    expect(await screen.findByRole("link", { name: "Skills" })).toBeInTheDocument();
+    expect(screen.getByText("Edit feature")).toBeInTheDocument();
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    await waitFor(() => {
+      expect(box).toBeEnabled();
+    });
+
+    await userEvent.type(box, "Shorten it{Enter}");
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/api/v1/agent-sessions")).toHaveLength(1);
+    });
+    const body = await bodyOf(posts(view.requests, "/api/v1/agent-sessions")[0]);
+    expect(body.prompt).toContain(`writing it unchanged, whole, to .hub-drafts/${DRAFT}/SKILL.md`);
+    expect(body.prompt).toContain("Do not touch the original");
   });
 });
