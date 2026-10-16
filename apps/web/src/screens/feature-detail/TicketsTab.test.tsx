@@ -43,6 +43,33 @@ function rowOf(ref: string): HTMLElement {
 }
 
 describe("TicketsTab", () => {
+  it("lists the epic first, tagged, with its children under it", () => {
+    const epic = aTicketRow({
+      ref: "AGH-9",
+      key: "T0",
+      id: "AGH-9",
+      readiness: "epic",
+      blocked_by: [],
+      children: ["AGH-202"],
+    });
+    const data = aFeatureTickets();
+    show({
+      ...data,
+      tickets: [
+        ...data.tickets.map((t) => (t.ref === "AGH-202" ? { ...t, parent: "AGH-9" } : t)),
+        epic,
+      ],
+      planning: { ...data.planning, epics: ["AGH-9"] },
+    });
+
+    const rows = within(screen.getByRole("table", { name: "Tickets" })).getAllByRole("row");
+    expect(nth(rows, 1)).toHaveAttribute("id", "ticket-AGH-9");
+    expect(nth(rows, 1)).toHaveTextContent("Epic");
+    expect(nth(rows, 1)).toHaveTextContent("Epic · 0/1 done");
+    expect(nth(rows, 2)).toHaveAttribute("id", "ticket-AGH-202");
+    expect(rowOf("AGH-202")).toHaveAttribute("data-child", "true");
+  });
+
   it("shows each ticket's id, title, status, assignee, blockers, ACs and readiness (tickets)", () => {
     show(aFeatureTickets());
 

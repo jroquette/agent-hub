@@ -27,11 +27,17 @@ const EDGE_TITLE: Record<EdgeSource, string> = {
 };
 
 function TicketId({ row }: { row: TicketRow }) {
+  const epic = row.children.length > 0 && (
+    <span className="ah-flow-epic-tag" style={{ alignSelf: "flex-start" }}>
+      Epic
+    </span>
+  );
   if (!row.id) {
     return (
       <span className="ah-stack" style={{ gap: 2 }}>
         <span className="ah-mono">{row.key ?? row.ref}</span>
         <span className="ah-small ah-subtle">not created</span>
+        {epic}
       </span>
     );
   }
@@ -41,6 +47,7 @@ function TicketId({ row }: { row: TicketRow }) {
       {row.key && row.key !== row.id && (
         <span className="ah-small ah-subtle ah-mono">{row.key}</span>
       )}
+      {epic}
     </span>
   );
 }
@@ -107,6 +114,22 @@ function Acs({ row, acPasses }: { row: TicketRow; acPasses?: AcPasses | undefine
   );
 }
 
+/** The rows with each epic first and its children right under it, then the other tickets. */
+function epicOrder(tickets: readonly TicketRow[]): TicketRow[] {
+  const byRef = new Map(tickets.map((t) => [t.ref, t]));
+  const placed = new Set<string>();
+  const ordered: TicketRow[] = [];
+  for (const epic of tickets.filter((t) => t.children.length > 0)) {
+    for (const row of [epic, ...epic.children.flatMap((ref) => byRef.get(ref) ?? [])]) {
+      if (!placed.has(row.ref)) {
+        placed.add(row.ref);
+        ordered.push(row);
+      }
+    }
+  }
+  return [...ordered, ...tickets.filter((t) => !placed.has(t.ref))];
+}
+
 function TicketsTable({
   data,
   acPasses,
@@ -129,6 +152,7 @@ function TicketsTable({
       ),
     },
   ];
+  const byRef = new Set(data.tickets.map((t) => t.ref));
   return (
     <div className="ah-table-wrap">
       <table className="ah-table" aria-label="Tickets">
@@ -142,8 +166,14 @@ function TicketsTable({
           </tr>
         </thead>
         <tbody>
-          {data.tickets.map((row) => (
-            <tr key={row.ref} id={ticketAnchor(row.ref)} style={{ cursor: "default" }}>
+          {epicOrder(data.tickets).map((row) => (
+            <tr
+              key={row.ref}
+              id={ticketAnchor(row.ref)}
+              style={{ cursor: "default" }}
+              data-epic={row.children.length > 0 || undefined}
+              data-child={(row.parent != null && byRef.has(row.parent)) || undefined}
+            >
               {columns.map((c) => (
                 <td key={c.label} style={{ whiteSpace: "normal" }}>
                   {c.cell(row)}
@@ -155,7 +185,10 @@ function TicketsTable({
       </table>
       <div className="ah-table-foot">
         <span>
-          {data.tickets.length} ticket{data.tickets.length === 1 ? "" : "s"} ·{" "}
+          {data.tickets.length} ticket{data.tickets.length === 1 ? "" : "s"}
+          {data.planning.epics.length > 0 &&
+            ` (${String(data.planning.epics.length)} epic${data.planning.epics.length === 1 ? "" : "s"})`}{" "}
+          ·{" "}
           {data.source === "linear"
             ? "status, assignee and links from Linear; blockers from the plan and Linear"
             : "from the plan (features.json)"}

@@ -25,6 +25,58 @@ function nth<T>(items: readonly T[], index: number): T {
 }
 
 describe("PlanningView", () => {
+  it("heads the flow with the epic and its children's progress, never as a step", () => {
+    const epic = aTicketRow({
+      ref: "TIP-1",
+      key: "T0",
+      id: "TIP-1",
+      title: "The epic",
+      url: null,
+      readiness: "epic",
+      state: { name: "Backlog", type: "backlog" },
+      acs: [],
+      blocked_by: [],
+      children: ["TIP-2", "TIP-3"],
+    });
+    const child = (ref: string, readiness: "done" | "in_progress") =>
+      aTicketRow({
+        ref,
+        key: ref,
+        id: ref,
+        title: `Child ${ref}`,
+        url: null,
+        readiness,
+        blocked_by: [],
+        acs: [`AC-${ref}`],
+        parent: "TIP-1",
+      });
+    render(
+      <PlanningView
+        tickets={[epic, child("TIP-2", "done"), child("TIP-3", "in_progress")]}
+        planning={aTicketPlan({
+          layers: [["TIP-3"]],
+          can_start: [],
+          order: ["TIP-3"],
+          waiting: [],
+          critical_path: ["TIP-3"],
+          epics: ["TIP-1"],
+        })}
+        acPasses={{ "AC-TIP-2": true, "AC-TIP-3": false }}
+      />,
+    );
+
+    const card = screen.getByRole("region", { name: "Epic TIP-1 · The epic" });
+    expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
+    expect(card).toHaveTextContent("1/2 child tickets done");
+    expect(card).toHaveTextContent("1 in progress");
+    expect(card).toHaveTextContent("1/2 ACs passing");
+    const flow = screen.getByRole("list", { name: "Ticket flow" });
+    expect(within(flow).queryByRole("listitem", { name: /TIP-1 ·/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Tickets by readiness" })).not.toHaveTextContent(
+      "epic",
+    );
+  });
+
   it("draws each parallel group as a step, left to right, then the settled tickets (flow)", () => {
     const done = aTicketRow({
       ref: "T6",

@@ -368,3 +368,23 @@ def test_counts_in_progress_tickets_in_implement_meta_when_started() -> None:
     implement = _step(path, "implement")
     assert implement.meta == "0/3 tickets · 2 in progress · 17/18 ACs"
     assert implement.state == "current"
+
+
+def test_counts_epic_only_under_tickets_when_it_has_children() -> None:
+    rows = (
+        _ticket(
+            1,
+            state=IssueState(name="Backlog", type="backlog"),
+            readiness="epic",
+            children=("TIP-1521", "TIP-1522"),
+        ),
+        _ticket(2, state=_IN_REVIEW, readiness="in_progress", reviewed=True, parent="TIP-1520"),
+        _ticket(3, state=_IN_REVIEW, readiness="in_progress", reviewed=True, parent="TIP-1520"),
+    )
+
+    path = golden_path(_inputs(rows=rows, acs=_acs(18, passing=17)))
+
+    assert _step(path, "tickets").meta == "3 of 3 created"
+    assert _step(path, "implement").meta == "0/2 tickets · 2 in progress · 17/18 ACs"
+    assert _step(path, "review").meta == "2/2 reviewed"
+    assert _step(path, "shipped").meta == "0/2 Done"

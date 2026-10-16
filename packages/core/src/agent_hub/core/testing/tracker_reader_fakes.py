@@ -66,9 +66,9 @@ class FakeIssueBoard:
 
     def external(self, issue_id: str) -> IssueSummary:
         """The issue as a blocker not asked is read (``external``): no relations, assignee,
-        priority or estimate."""
+        priority, estimate or parent."""
         return self.issues[issue_id].model_copy(
-            update={"assignee": None, "priority": None, "estimate": None}
+            update={"assignee": None, "priority": None, "estimate": None, "parent": None}
         )
 
 
