@@ -449,6 +449,66 @@
 }
 .as-perm-actions {
   gap: var(--space-2);
+  align-items: center;
+}
+.as-perm-pending .as-perm-head > svg {
+  color: var(--waiting);
+}
+.as-perm-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--waiting);
+  color: var(--waiting);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.as-perm-purpose {
+  margin: calc(var(--space-1) * -1) 0 0;
+  color: var(--text-muted);
+}
+/* A long command wraps instead of hiding behind a horizontal scrollbar. */
+.as-perm-command {
+  max-height: 200px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* "Always allow" names its rule, which can be a whole command: one line, cut with an ellipsis. */
+.as-perm-always {
+  max-width: 100%;
+  min-width: 0;
+}
+.as-perm-rule {
+  min-width: 0;
+  max-width: 36ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px var(--font-mono);
+  color: var(--text-muted);
+}
+.as-perm-deny {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.as-perm-deny > .ah-input {
+  flex: 1;
+  min-width: 0;
+}
+.as-perm-deny > .ah-btn {
+  flex: none;
+}
+/* The `a` / `d` keys answer only while the card itself has focus: the hints show only then. */
+.as-perm-kbd {
+  display: none;
+}
+.as-perm:focus .as-perm-kbd {
+  display: inline-flex;
 }
 .as-question {
   border: 0;

@@ -33,6 +33,17 @@ function open(
 }
 
 describe("PermissionCard (permission)", () => {
+  it("shows what the call is for above the command and keeps key hints out of button names", () => {
+    const { card } = open(
+      aView({ input: { command: "git status", description: "Show the working tree" } }),
+    );
+
+    expect(within(card).getByText("Show the working tree")).toBeInTheDocument();
+    expect(within(card).getByText("Waiting for you")).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Allow once" })).toBeEnabled();
+    expect(within(card).getByRole("button", { name: "Deny" })).toBeEnabled();
+  });
+
   it("shows tool, summary and only localSettings suggestions and takes focus when it arrives", () => {
     const { card } = open(aView());
 

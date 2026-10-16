@@ -105,6 +105,15 @@ function problemText(error: unknown): string {
   return "Could not send the answer. Try again.";
 }
 
+/** The card's own key for a button, shown only while the card itself has focus (CSS). */
+function KeyHint({ letter }: { letter: string }) {
+  return (
+    <kbd className="ah-kbd as-perm-kbd" aria-hidden="true">
+      {letter}
+    </kbd>
+  );
+}
+
 /** Claude marks its preferred option with a trailing "(Recommended)" in the label. */
 const RECOMMENDED = /\s*\(recommended\)\s*$/i;
 
@@ -313,6 +322,11 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
       ? request.input.plan
       : null;
   const always = request.suggestions.filter((s) => s.destination === ALWAYS_DESTINATION);
+  // What Claude says the call is for (Bash's `description`), shown above the raw command.
+  const purpose =
+    request.requestKind === "tool" && typeof request.input?.description === "string"
+      ? request.input.description.trim() || null
+      : null;
 
   return (
     // The card takes focus (tabIndex -1) and then answers to `a` / `d` (AC-234.29).
@@ -331,11 +345,13 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
           {HEADING[request.requestKind](request.tool)}
         </h3>
         {request.redacted && <StoredCopyLabel />}
+        {pending && <span className="as-perm-badge">Waiting for you</span>}
       </header>
 
+      {purpose && <p className="as-perm-purpose">{purpose}</p>}
       {request.requestKind === "tool" && (
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        <pre className="as-pre" tabIndex={0} aria-label="What it will run">
+        <pre className="as-pre as-perm-command" tabIndex={0} aria-label="What it will run">
           {request.summary}
         </pre>
       )}
@@ -379,34 +395,12 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
               </select>
             </label>
           )}
-          {!asking && (
-            <div className="ah-stack" style={{ gap: 4 }}>
-              <label htmlFor={messageId} className="ah-small ah-muted">
-                Message to Claude if you deny (optional)
-              </label>
-              <input
-                id={messageId}
-                className="ah-input"
-                value={message}
-                maxLength={MAX_DENY_MESSAGE}
-                disabled={disabled}
-                onChange={(event) => {
-                  setMessage(event.target.value);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && message.trim()) {
-                    event.preventDefault();
-                    deny();
-                  }
-                }}
-              />
-            </div>
-          )}
           <div className="ah-row ah-wrap as-perm-actions">
             {request.requestKind === "tool" && (
               <>
                 <Button
                   variant="primary"
+                  icon="check"
                   disabled={disabled}
                   data-shortcut="allow"
                   aria-keyshortcuts={chords ? ALLOW_KEYS : undefined}
@@ -415,21 +409,27 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
                   }}
                 >
                   Allow once
+                  <KeyHint letter="A" />
                 </Button>
-                {always.map((suggestion) => (
-                  <Button
-                    key={suggestion.index}
-                    disabled={disabled}
-                    onClick={() => {
-                      submit({ decision: "always", suggestion: suggestion.index });
-                    }}
-                  >
-                    Always allow {ruleLabel(suggestion.rule)}
-                  </Button>
-                ))}
+                {always.map((suggestion) => {
+                  const rule = ruleLabel(suggestion.rule);
+                  return (
+                    <Button
+                      key={suggestion.index}
+                      className="as-perm-always"
+                      disabled={disabled}
+                      title={`Always allow ${rule} in this project's local settings`}
+                      onClick={() => {
+                        submit({ decision: "always", suggestion: suggestion.index });
+                      }}
+                    >
+                      Always allow <code className="as-perm-rule">{rule}</code>
+                    </Button>
+                  );
+                })}
               </>
             )}
-            {request.requestKind === "ask_user_question" && questions.length > 0 && (
+            {asking && (
               <Button
                 variant="primary"
                 disabled={disabled || !allAnswered}
@@ -448,6 +448,7 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
             {request.requestKind === "plan_approval" && (
               <Button
                 variant="primary"
+                icon="check"
                 disabled={disabled}
                 onClick={() => {
                   submit({ decision: "allow", mode: planMode });
@@ -456,27 +457,53 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
                 Approve plan
               </Button>
             )}
-            <Button
-              variant={asking ? "default" : "danger"}
-              disabled={disabled}
-              data-shortcut={keyed ? "deny" : undefined}
-              aria-keyshortcuts={chords ? DENY_KEYS : undefined}
-              onClick={deny}
-            >
-              {request.requestKind === "plan_approval"
-                ? "Keep planning"
-                : asking
-                  ? questions.length > 1
-                    ? "Skip questions"
-                    : "Skip question"
-                  : "Deny"}
-            </Button>
+            {asking && (
+              <Button disabled={disabled} onClick={deny}>
+                {questions.length > 1 ? "Skip questions" : "Skip question"}
+              </Button>
+            )}
             {asking && questions.length > 1 && (
               <span className="ah-small ah-muted" aria-live="polite">
                 {answeredCount} of {questions.length} answered
               </span>
             )}
           </div>
+          {!asking && (
+            <div className="as-perm-deny">
+              <input
+                id={messageId}
+                className="ah-input"
+                aria-label="Message to Claude if you deny (optional)"
+                placeholder={
+                  request.requestKind === "plan_approval"
+                    ? "What should change in the plan? (optional)"
+                    : "Tell Claude what to do instead (optional)"
+                }
+                value={message}
+                maxLength={MAX_DENY_MESSAGE}
+                disabled={disabled}
+                onChange={(event) => {
+                  setMessage(event.target.value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && message.trim()) {
+                    event.preventDefault();
+                    deny();
+                  }
+                }}
+              />
+              <Button
+                variant="danger"
+                disabled={disabled}
+                data-shortcut={keyed ? "deny" : undefined}
+                aria-keyshortcuts={chords ? DENY_KEYS : undefined}
+                onClick={deny}
+              >
+                {request.requestKind === "plan_approval" ? "Keep planning" : "Deny"}
+                {keyed && <KeyHint letter="D" />}
+              </Button>
+            </div>
+          )}
           {request.deadlineAt && (
             <p className="ah-small ah-subtle">
               Denied automatically at {fmtClock(request.deadlineAt, "local")} if unanswered.
