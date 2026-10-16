@@ -116,9 +116,13 @@ const NOTICE_ICON: Record<NoticeTone, IconName> = {
 
 type AssistantEntry = Extract<TranscriptEntry, { kind: "assistant" }>;
 
-/** Claude's text; the parse is memoised by text, so only a changed bubble parses again. */
+/** Claude's text; the parse is memoised by text, so only a changed bubble parses again. A code
+ * block still streaming stays plain; it is highlighted once its fence closes or the text ends. */
 function AssistantText({ entry }: { entry: AssistantEntry }) {
-  const body = useMemo(() => <Markdown source={entry.text} className="as-md" />, [entry.text]);
+  const body = useMemo(
+    () => <Markdown source={entry.text} streaming={entry.streaming} className="as-md" />,
+    [entry.text, entry.streaming],
+  );
   return (
     <article
       className={cx("as-msg as-msg-assistant", entry.streaming && "as-streaming")}
