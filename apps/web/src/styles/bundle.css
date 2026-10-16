@@ -998,6 +998,31 @@ pre {
   padding: var(--space-3) var(--space-6) var(--space-4);
   border-top: 1px solid var(--border);
 }
+/* The shared Dialog: md is the default width above */
+.ah-dialog-sm {
+  max-width: 400px;
+}
+.ah-dialog-lg {
+  max-width: 640px;
+}
+.ah-dialog-frame {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 2 * var(--space-6));
+}
+.ah-dialog-frame:focus {
+  outline: none;
+}
+.ah-dialog-frame > .ah-dialog-body {
+  overflow: auto;
+  padding-top: var(--space-3);
+}
+.ah-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-6) 0;
+}
 .ah-consequences {
   margin: 0;
   padding-left: 18px;
