@@ -15,6 +15,7 @@ import { useScope } from "../lib/scope";
 import { CommandPalette } from "./CommandPalette";
 import { DiscussProvider, useDiscuss } from "./discuss";
 import { DiscussPanel } from "./DiscussPanel";
+import { DiscussSelection } from "./DiscussSelection";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
 import { armGoSequence, clearGoSequence, goSequencePending } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
@@ -179,6 +180,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
           {children ?? <Outlet />}
         </main>
         <DiscussPanel />
+        <DiscussSelection />
       </div>
       {palette && (
         <CommandPalette onClose={closeAll} initialQuery={palette.query} project={scope} />

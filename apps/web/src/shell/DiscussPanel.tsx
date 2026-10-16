@@ -13,7 +13,13 @@ import {
   useCreateAgentSession,
   useWorkdirs,
 } from "../screens/sessions-list/queries";
-import { discussPrompt, useDiscuss, type DiscussTarget } from "./discuss";
+import {
+  discussPrompt,
+  referencedMessage,
+  useDiscuss,
+  type DiscussReference,
+  type DiscussTarget,
+} from "./discuss";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
 const storageKey = (target: DiscussTarget) => `ah.discuss.session.${target.key}`;
@@ -74,7 +80,41 @@ export function DiscussPanel() {
   );
 }
 
+/**
+ * The parts the owner pointed at, waiting for the next message: each chip shows its part on hover
+ * and can be dropped before sending.
+ */
+function ReferenceChips({
+  references,
+  onRemove,
+}: {
+  references: readonly DiscussReference[];
+  onRemove: (id: string) => void;
+}) {
+  if (references.length === 0) return null;
+  return (
+    <div className="ah-discuss-refs" role="group" aria-label="References for the next message">
+      <span className="ah-small ah-subtle">Next message is about</span>
+      {references.map((reference) => (
+        <span key={reference.id} className="ah-discuss-ref" title={reference.quote}>
+          <Icon name="bookmark" size="sm" />
+          <span className="ah-discuss-ref-label">{reference.label}</span>
+          <IconButton
+            size="sm"
+            icon="x"
+            label={`Remove the reference ${reference.label}`}
+            onClick={() => {
+              onRemove(reference.id);
+            }}
+          />
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function DiscussBody({ target }: { target: DiscussTarget }) {
+  const { references, removeReference, clearReferences } = useDiscuss();
   const [sessionId, setSessionId] = useState<string | null>(() => readStored(target));
   const forget = useCallback(() => {
     writeStored(target, null);
@@ -95,14 +135,22 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
           </>
         )}
       </div>
+      <ReferenceChips references={references} onRemove={removeReference} />
       {sessionId ? (
-        <DiscussChat agentSessionId={sessionId} onGone={forget} />
+        <DiscussChat
+          agentSessionId={sessionId}
+          onGone={forget}
+          prepareMessage={(text) => referencedMessage(references, text)}
+          onSent={clearReferences}
+        />
       ) : (
         <StartDiscussion
           target={target}
+          references={references}
           onStarted={(id) => {
             writeStored(target, id);
             setSessionId(id);
+            clearReferences();
           }}
         />
       )}
@@ -112,9 +160,11 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
 
 function StartDiscussion({
   target,
+  references,
   onStarted,
 }: {
   target: DiscussTarget;
+  references: readonly DiscussReference[];
   onStarted: (id: string) => void;
 }) {
   const capabilities = useAgentCapabilities();
@@ -146,7 +196,8 @@ function StartDiscussion({
   return (
     <div className="as-page">
       <div className="ah-discuss-note ah-small ah-muted">
-        Ask about this {target.kind.toLowerCase()}, challenge it, or ask Claude to change it.
+        Ask about this {target.kind.toLowerCase()}, challenge it, or ask Claude to change it. Point
+        at one part with its Discuss button, or select text on the page and press Discuss selection.
         Claude works in the hub folder of <b>{target.project}</b>; every file edit asks you first
         unless you switch the mode to accept edits.
       </div>
@@ -166,7 +217,7 @@ function StartDiscussion({
                 mode,
                 fork: false,
                 ...(model && model !== "default" ? { model } : {}),
-                prompt: discussPrompt(target, text),
+                prompt: discussPrompt(target, referencedMessage(references, text)),
               });
               onStarted(session.id);
             }}

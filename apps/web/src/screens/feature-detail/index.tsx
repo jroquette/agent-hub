@@ -28,7 +28,13 @@ import { fmtClock, middleTruncate } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
-import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
+import {
+  DiscussButton,
+  useDiscuss,
+  useDiscussTarget,
+  type DiscussReference,
+  type DiscussTarget,
+} from "../../shell/discuss";
 import { AcBar, FilterMenu, PHASES, VERDICT_STATUS } from "../features/parts";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
@@ -166,6 +172,39 @@ function Verification({ ac }: { ac: AcRow }) {
         }}
       />
     </span>
+  );
+}
+
+/** One criterion as a Discuss reference: its text, how it is verified and where it stands. */
+export function acReference(ac: AcRow, slug: string): DiscussReference {
+  const lines = [
+    `${ac.id}${ac.repo ? ` (${ac.repo})` : ""}: ${ac.description}`,
+    `Passes: ${ac.passes ? "yes" : ac.manual ? "manual owner step" : "not yet"}.`,
+    ac.command ? `Verify: ${ac.command}` : "",
+    ac.evidence ? `Evidence: ${ac.evidence}` : "",
+  ];
+  return {
+    id: `ac:${ac.id}`,
+    label: ac.id,
+    source: `brain/features/${slug}/features.json`,
+    quote: lines.filter(Boolean).join("\n"),
+  };
+}
+
+/** Points the feature's Discuss conversation at one criterion. */
+function DiscussAc({ ac, slug }: { ac: AcRow; slug: string }) {
+  const { addReference, references } = useDiscuss();
+  const pointed = references.some((r) => r.id === `ac:${ac.id}`);
+  return (
+    <IconButton
+      size="sm"
+      icon="message-square"
+      label={pointed ? `${ac.id} is in the next message` : `Discuss ${ac.id} with Claude`}
+      aria-pressed={pointed}
+      onClick={() => {
+        addReference(acReference(ac, slug));
+      }}
+    />
   );
 }
 
@@ -317,6 +356,9 @@ function AcTab({ detail }: { detail: Detail }) {
               <th scope="col" style={{ width: 300 }}>
                 Verify
               </th>
+              <th scope="col" style={{ width: 40 }}>
+                <span className="ah-sr">Discuss</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -328,7 +370,7 @@ function AcTab({ detail }: { detail: Detail }) {
                   {folded && i === HEAD_ROWS && (
                     <tr style={{ cursor: "default" }}>
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         style={{ textAlign: "center", background: "var(--surface-sunken)" }}
                       >
                         <button
@@ -400,12 +442,15 @@ function AcTab({ detail }: { detail: Detail }) {
                         <span className="ah-small">manual · see eval.md</span>
                       )}
                     </td>
+                    <td>
+                      <DiscussAc ac={ac} slug={detail.slug} />
+                    </td>
                   </tr>
                   {expanded && (
                     <tr style={{ cursor: "default" }}>
                       <td />
                       <td
-                        colSpan={6}
+                        colSpan={7}
                         style={{
                           whiteSpace: "normal",
                           padding: "10px 12px 14px",
