@@ -561,7 +561,8 @@ describe("SessionsListScreen no-jump (grid)", () => {
   beforeEach(() => {
     window.localStorage.setItem("ah.sessions.view", "grid");
   });
-  const tile = (text: string) => screen.getByText(text).closest("article") as HTMLElement;
+  const tile = (title: string) =>
+    screen.getByRole("article", { name: new RegExp(`^${title} in `) });
   const sectionOf = (name: RegExp) => screen.getByRole("button", { name }).closest("section");
 
   it("keeps the first visible tile in place when tiles are inserted above it", async () => {
