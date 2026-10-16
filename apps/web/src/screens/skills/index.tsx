@@ -87,7 +87,7 @@ export function SkillsScreen() {
         <div className="ah-stack ah-grow" style={{ gap: 4 }}>
           <h1 className="ah-h1">Toolkit</h1>
           <p className="ah-muted" style={{ margin: 0 }}>
-            The skills, agents and hooks {project}&apos;s agents work with, read from its hub&apos;s
+            The agents, skills and hooks {project}&apos;s agents work with, read from its hub&apos;s
             files. Nothing here runs them.
           </p>
         </div>
@@ -362,18 +362,18 @@ export function SkillsPickerScreen() {
           ),
         },
         {
-          id: "skills",
-          label: "Skills",
-          align: "right",
-          width: 90,
-          render: (project) => <KindCount project={project.name} kind="skill" />,
-        },
-        {
           id: "agents",
           label: "Agents",
           align: "right",
           width: 90,
           render: (project) => <KindCount project={project.name} kind="agent" />,
+        },
+        {
+          id: "skills",
+          label: "Skills",
+          align: "right",
+          width: 90,
+          render: (project) => <KindCount project={project.name} kind="skill" />,
         },
         {
           id: "hooks",
