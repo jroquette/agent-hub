@@ -1,5 +1,6 @@
 """The stub ``claude`` CLI in-process: scripted stdin in, scripted stream-json out (P17)."""
 
+import base64
 import io
 import json
 from pathlib import Path
@@ -19,6 +20,7 @@ from agent_hub.claude_sessions.testing.scenarios import (
     write_scenario,
 )
 from agent_hub.claude_sessions.testing.stub_claude import main
+from agent_hub.core.testing.builders import a_png_bytes
 
 STREAM = ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json"]
 PROMPTS = ["--permission-prompt-tool", "stdio"]
@@ -336,3 +338,22 @@ def test_plays_reply_of_exact_text_when_replies_scripted(tmp_path: Path) -> None
     )
 
     assert [m["result"] for m in _of(out, "result")] == ["by text", "fallback", "first one"]
+
+
+def test_records_image_size_when_user_message_has_image_block(tmp_path: Path) -> None:
+    png = a_png_bytes()
+    data = base64.b64encode(png).decode("ascii")
+    source = {"type": "base64", "media_type": "image/png", "data": data}
+    content = [{"type": "image", "source": source}, {"type": "text", "text": "What is this?"}]
+    message = {"type": "user", "message": {"role": "user", "content": content}}
+    scenario = Scenario(replies={"What is this?": simple_turn("A page.")})
+
+    _, out = _run(tmp_path, STREAM, [message | {"parent_tool_use_id": None}], scenario=scenario)
+
+    record = tmp_path / "record.jsonl"
+    users = [r for r in read_records(record) if r.event == "user"]
+    assert [(r.data, r.images) for r in users] == [
+        ({"text": "What is this?"}, [{"media_type": "image/png", "bytes": len(png)}])
+    ]
+    assert _of(out, "assistant")[0]["message"]["content"] == [{"type": "text", "text": "A page."}]
+    assert data not in record.read_text()

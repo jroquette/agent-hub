@@ -1,6 +1,8 @@
 """Builders of synthetic domain objects for tests; fixtures never come from real transcripts."""
 
 import copy
+import struct
+import zlib
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, Final
@@ -268,3 +270,20 @@ def a_brain_change(**overrides: object) -> BrainChange:
         "commit_message": "docs(brain): accept learning testing-x",
     }
     return BrainChange.model_validate(fields | overrides)
+
+
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    crc = zlib.crc32(kind + payload)
+    return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", crc)
+
+
+def a_png_bytes() -> bytes:
+    """A synthetic 1x1 opaque white PNG (an image sent with a message)."""
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    pixels = zlib.compress(b"\x00\xff\xff\xff")
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", header)
+        + _png_chunk(b"IDAT", pixels)
+        + _png_chunk(b"IEND", b"")
+    )
