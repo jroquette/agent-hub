@@ -445,7 +445,9 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
   [ADR 0036](adr/0036-live-playground-and-auto-mode.md); never `bypassPermissions` or `dontAsk`) and model, close,
   resume or fork a past session of that workdir, delete an ended one. A message to an ended local session (not
   `log_full`) whose Claude conversation is still listed reopens it in place, same id and log (AGH-262). At most 4 live
-  sessions; an idle one ends after 30 minutes; every limit is a `hub web` option with an `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
+  sessions; at the limit a new one ends the one idle the longest (a message reopens it in place), so only busy
+  sessions refuse one (AGH-263); an idle one ends after 30 minutes; every limit is a `hub web` option with an
+  `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
   session left open by a crash is marked ended at the next start, and Resume picks it up.
 - **Log and stream.** Each session's log (gap-free `seq`) is streamed over SSE with `Last-Event-ID` replay; text
   deltas live only in memory. A session `hub web` drives links to the hook-observed Session by Claude's session id
@@ -492,6 +494,10 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   the web app on 5173, whose proxy sends the agent-session routes to the conductor, so a change never ends a session.
   One address (`/__playground/session?token=`) signs the browser in. The dev app's shake and New session start in
   the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps never offer it.
+- **Export.** `make playground-export` turns the playground's validated commits into a delivery's input, in the
+  ignored `.playground/exports/<stamp>/`: the changes grouped by screen or package, the owner's requests, the
+  reference patch and each touched screen captured on synthetic data, the delivery's visual baseline (AGH-263,
+  [design/playground-export.md](design/playground-export.md)).
 - **Discuss.** A right-hand panel holds one driven session per feature, workflow, skill, agent, hook or note on
   screen, started in the hub folder with that artifact as context; a feature opens it on arrival, and an acceptance
   criterion or a selected passage can be pointed at.

@@ -81,6 +81,10 @@ is refused (`terminal`, or `log-full` naming Resume); a command while an interru
 | cloud command seconds (`--cloud-timeout-seconds`) | 60 | 5-600 |
 | retention days after the end (`--session-retention-days`) | 30 | 1-3650 |
 
+At the live-sessions limit, a start or a reopen first ends the local session idle the longest (no request open)
+`idle_timeout`, `by: server`; a message reopens it in place. Only when every live session is running, waiting on a
+request or a cloud one is the start refused (429 `limit`).
+
 ### Links
 
 `AgentSessionLinks.link_of(project, claude_session_id)` (live sessions first, then the store) gives the folded
