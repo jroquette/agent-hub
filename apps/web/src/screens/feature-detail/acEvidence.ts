@@ -1,6 +1,6 @@
 /**
  * What an acceptance criterion's evidence says, read from the free text the evaluator writes in
- * `features.json` (e.g. "Tipple_API@780917525 (= merged b811fca72, PR #2374), 2026-10-16,
+ * `features.json` (e.g. "demo-api@780917525 (= merged b811fca72, PR #74), 2026-10-16,
  * whole-feature eval: … exit 0, 10 passed, 42 deselected; red on merge base 38290da11 (ImportError …).
  * evals/feature.md"). The text has no fixed shape, so every fact is optional and the original text
  * is always kept: the facts are derived, the text is the record.
@@ -34,13 +34,13 @@ export interface EvidenceFacts {
   result: EvidenceResult | null;
   /** The clause that says the check failed before the change ("red on merge base 38290da11 (…)"). */
   redOnBase: string | null;
-  /** `DataMode=` values, the environment the check ran in. */
+  /** `NAME=VALUE` settings the check ran with (`APP_MODE=test`), the environment it ran in. */
   environments: string[];
   /** Eval files the text points to, brain-relative to the feature folder ("evals/feature.md"). */
   evalFiles: string[];
-  /** Eval deliveries named as "eval tip-1562" / "TIP-1538 eval". */
+  /** Eval deliveries named as "eval agh-12" / "AGH-12 eval", lower-cased as delivery names. */
   evalDeliveries: string[];
-  /** Tracker ids named in the text (TIP-1552), AC ids excluded. */
+  /** Tracker ids named in the text (AGH-12), AC ids excluded. */
   issues: string[];
   /** True when the text says a manual check is still an owner step. */
   ownerCheckOpen: boolean;
@@ -56,9 +56,9 @@ const EXIT = /\bexit\s+(\d+)/;
 const COUNT = (word: string) => new RegExp(`\\b(\\d+)\\s+${word}\\b`);
 const RED =
   /\b(?:(?:all \d+|new files|\d+ new tests) )?red (?:on|at) (?:merge )?base\b.*?(?=;|\.\s|\.$|$)|\bred at [0-9a-f]{7,40}\b.*?(?=;|\.\s|\.$|$)/i;
-const DATAMODE = /\bDataMode=(\w+)/g;
+const SETTING = /\b([A-Z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*)=(\w+)/g;
 const EVAL_FILE = /\bevals\/[\w.-]+\.md\b/g;
-const EVAL_NAMED = /\beval\s+(tip-\d+)\b|\b(TIP-\d+)\s+eval\b/gi;
+const EVAL_NAMED = /\beval\s+([a-z][a-z0-9]*-\d+)\b|\b([A-Z][A-Z0-9]*-\d+)\s+eval\b/g;
 const ISSUE = /\b(?!AC-)([A-Z][A-Z0-9]{1,9}-\d{2,})\b/g;
 const OWNER_OPEN = /still an owner step|owner step still|owner-reported, not observed/i;
 
@@ -102,7 +102,7 @@ export function parseEvidence(text: string): EvidenceFacts {
     date: DATE.exec(text)?.[1] ?? null,
     result: resultOf(text),
     redOnBase: RED.exec(text)?.[0].trim().replace(/[.,]$/, "") ?? null,
-    environments: unique([...text.matchAll(DATAMODE)].map((m) => m[1] ?? "")),
+    environments: unique([...text.matchAll(SETTING)].map((m) => m[0])),
     evalFiles: unique([...text.matchAll(EVAL_FILE)].map((m) => m[0])),
     evalDeliveries: unique(deliveries),
     issues: unique([...text.matchAll(ISSUE)].map((m) => m[1] ?? "")),

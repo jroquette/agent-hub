@@ -28,7 +28,7 @@ describe("citationsIn", () => {
       "# Spec",
       "intro",
       "## Acceptance criteria",
-      "**AC-11: unsupported currency**",
+      "**AC-11: unknown export format**",
       "- on a validation error (AC-10 first case, AC-11), the modal shows it",
       "```",
       "# not a heading AC-1",
@@ -40,15 +40,15 @@ describe("citationsIn", () => {
     expect(found.get("AC-11")).toEqual({
       path: "features/x/spec.md",
       section: "Acceptance criteria",
-      snippet: "AC-11: unsupported currency",
+      snippet: "AC-11: unknown export format",
       count: 2,
     });
     expect(found.get("AC-1")?.section).toBe("Acceptance criteria");
   });
 
   it("reads a table row as plain text", () => {
-    const found = citationsIn("features/x/plan.md", "| AC-11 | `test_x` (`T_GPS`) |", KNOWN);
+    const found = citationsIn("features/x/plan.md", "| AC-11 | `test_x` (`T_EXP`) |", KNOWN);
 
-    expect(found.get("AC-11")?.snippet).toBe("AC-11 · test_x (T_GPS)");
+    expect(found.get("AC-11")?.snippet).toBe("AC-11 · test_x (T_EXP)");
   });
 });
