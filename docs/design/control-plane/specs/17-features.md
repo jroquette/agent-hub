@@ -35,6 +35,37 @@ README's "Sources not connected": Linear is read for a feature's tickets; GitHub
   run. No step names an approver, a date range, sessions or a PR; "GitHub not connected" no longer appears. The
   Features list draws the same steps in its phase bar, and its `phase` equals the detail's.
 
+## Departures (AGH-268, ticket flow)
+
+Built with the changes below, validated by the owner in the playground; where this file or the AGH-136 list says
+otherwise, this list wins. Each item is an acceptance criterion.
+
+- **AC-268.1 In progress.** Given a ticket started in Linear (a `started` state such as In Progress or In Review),
+  when the tickets are planned, then its readiness is `in_progress` ("In progress"): it wins over waiting on a
+  blocker and is never listed in `can_start`.
+- **AC-268.2 Flow.** Given the Tickets tab, when it opens, then it leads with a flow: the parallel groups as steps
+  left to right, then the settled tickets; each card shows the ticket's Linear status, readiness, AC progress,
+  review and whether it is on the critical path.
+- **AC-268.3 Folded ACs.** Given a ticket with many ACs, when the table shows it, then its ACs fold into how many
+  pass.
+- **AC-268.4 Live.** Given the Tickets tab is open, then it rereads Linear every 30 s (the server still caches it for
+  60 s) and the record every 15 s, and the source line says how long ago Linear was read.
+- **AC-268.5 Implement counts work under way.** Given tickets in progress, when the golden path is built, then
+  Implement's meta counts them ("0/3 tickets delivered · 2 in progress · 17/18 ACs") and a started ticket marks the
+  step as started.
+- **AC-268.6 Features list refresh.** Given the Features list is open, then it rereads the records every 30 s.
+- **AC-268.7 Epics.** Given a ticket that is the parent of another row (the plan's optional `parent`, else Linear's
+  parent issue), when the tickets are planned, then it is an epic: readiness `epic`, listed under `planning.epics`,
+  never in a layer, on the critical path or in a blocker's place; the golden path counts it under Tickets only.
+- **AC-268.8 Epic card.** Given an epic, when the Tickets tab opens, then an epic card heads the flow (its Linear
+  status and link, a bar of its children done and in progress, their AC count), and the table lists the epic
+  first, tagged, with its children under it.
+- **AC-268.9 Plan parent.** Given a plan whose `parent` names no ticket of the plan or the ticket itself, when
+  `hub doctor` runs, then it reports it; the planner writes `parent` on each child of an epic.
+- **AC-268.10 Implement ends at review.** Given every ticket In Review or Done in Linear (or with an approved review
+  record), when the golden path is built, then Implement is done; with tickets, a failing AC no longer holds
+  Implement (Evaluate reports it) and is only counted in Implement's meta.
+
 ---
 
 ## Screen 1: Features list

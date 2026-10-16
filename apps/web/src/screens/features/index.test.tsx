@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
@@ -14,6 +14,7 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { FeaturesScreen } from "./index";
+import { FEATURES_REFRESH_MS } from "./queries";
 
 const features = [
   aFeature({
@@ -227,6 +228,25 @@ describe("FeaturesScreen", () => {
 
       expect(screen.getByText(/Stale · as of/)).toBeInTheDocument();
     });
+  });
+
+  it("rereads the records every 30 s while open (refresh)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { requests } = open();
+      await screen.findByRole("link", { name: "layered-memory" });
+      const reads = () =>
+        requests.filter((r) => new URL(r.url).pathname === "/api/v1/features").length;
+      const before = reads();
+
+      await vi.advanceTimersByTimeAsync(FEATURES_REFRESH_MS);
+
+      await waitFor(() => {
+        expect(reads()).toBeGreaterThan(before);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("has no serious a11y violations (a11y)", async () => {
