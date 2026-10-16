@@ -1291,8 +1291,11 @@ describe("AgentSessionScreen (changed-files)", () => {
       }),
     );
 
-    const button = await screen.findByRole("button", { name: /Changed files/ });
-    expect(button).toHaveTextContent("Changed files1");
+    const button = await screen.findByRole("button", { name: /^Changed files/ });
+    expect(button).toHaveAccessibleName(
+      "Changed files: 1 file, 1 lines added, 1 removed, 1 to review",
+    );
+    expect(button).toHaveTextContent("1 file+1−11 to review");
     await userEvent.click(button);
 
     const panel = screen.getByRole("complementary", { name: "Changed files" });
@@ -1303,5 +1306,37 @@ describe("AgentSessionScreen (changed-files)", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Edit/ }));
     expect(screen.queryByRole("complementary", { name: "Changed files" })).toBeNull();
     expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (run-files-card)", () => {
+  it("shows the files a turn edited under its line, each opening the review on that file", async () => {
+    renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+
+    const card = await screen.findByRole("region", { name: "Files edited in this turn" });
+    expect(within(card).getByText("Edited 1 file")).toBeInTheDocument();
+
+    await userEvent.click(
+      within(card).getByRole("button", { name: "Open src/app.py, modified, +1 −1, not viewed" }),
+    );
+
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    const file = within(panel).getByRole("region", { name: "src/app.py" });
+    expect(file).toHaveFocus();
+
+    await userEvent.click(within(file).getByRole("checkbox", { name: "Viewed" }));
+    expect(
+      within(card).getByRole("button", { name: "Open src/app.py, modified, +1 −1, viewed" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Changed files/ })).toHaveAccessibleName(
+      "Changed files: 1 file, 1 lines added, 1 removed, all reviewed",
+    );
   });
 });

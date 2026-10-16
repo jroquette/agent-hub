@@ -56,7 +56,8 @@ const CHANGE_VERB: Record<string, string> = {
   NotebookEdit: "Edited the notebook",
 };
 
-function Stats({ added, removed }: { added: number; removed: number }) {
+/** Lines added and removed, in the diff colours. */
+export function Stats({ added, removed }: { added: number; removed: number }) {
   return (
     <span className="as-files-stats">
       <span className="as-files-add">+{added}</span>
@@ -117,7 +118,8 @@ function useWiderThan(element: HTMLElement | null, min: number): boolean {
   return wider;
 }
 
-function KindBadge({ created }: { created: boolean }) {
+/** A file's status letter: A (new) or M (modified). */
+export function KindBadge({ created }: { created: boolean }) {
   return (
     <span
       className={cx("as-files-kind", created ? "as-files-kind-a" : "as-files-kind-m")}
@@ -167,10 +169,14 @@ function byFolder(files: readonly ChangedFile[], nameOf: (path: string) => strin
   return [...folders.entries()];
 }
 
-interface ReviewState {
+export interface ReviewState {
   reviewed: Record<string, string>;
   toggle: (file: ChangedFile) => void;
 }
+
+/** Whether `file` is marked viewed at its latest change. */
+export const isViewed = (review: ReviewState, file: ChangedFile) =>
+  review.reviewed[file.path] === file.lastChangeId;
 
 /** The changed files as a list, like a source-control view: by folder, each with its status,
  * lines added and removed, and whether you viewed it. */
@@ -272,6 +278,7 @@ function FileDetail({
   review,
   onBack,
   onStep,
+  focusRequest = null,
 }: {
   file: ChangedFile;
   name: string;
@@ -280,6 +287,8 @@ function FileDetail({
   review: ReviewState;
   onBack: (() => void) | null;
   onStep: (by: -1 | 1) => void;
+  /** A card in the conversation opened this file: each new value moves the keyboard here. */
+  focusRequest?: number | null;
 }) {
   const mark = review.reviewed[file.path];
   const viewed = mark === file.lastChangeId;
@@ -291,10 +300,11 @@ function FileDetail({
     if (body.current) body.current.scrollTop = 0;
   }, [file.path]);
   useEffect(() => {
-    // Narrow, the list (and the row you pressed) is gone: the keyboard moves to the file.
-    if (takesFocus) section.current?.focus({ preventScroll: true });
+    // Narrow, the list (and the row you pressed) is gone; opened from a card, the file is what
+    // you asked for: either way the keyboard moves to the file.
+    if (takesFocus || focusRequest !== null) section.current?.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [focusRequest]);
   return (
     <section ref={section} className="as-files-detail" aria-label={name} tabIndex={-1}>
       <header className="as-files-detail-head">
@@ -369,6 +379,11 @@ export interface FilesPanelProps {
   files: readonly ChangedFile[];
   sessionId: string;
   onClose: () => void;
+  /** The page's review marks, shared with its header chip; without it the drawer keeps its own. */
+  review?: ReviewState | undefined;
+  /** Open this file (a card in the conversation was pressed); `pickNonce` re-opens it. */
+  initialPath?: string | null | undefined;
+  pickNonce?: number | undefined;
 }
 
 /**
@@ -377,16 +392,35 @@ export interface FilesPanelProps {
  * opens on its own with every change to it as a diff. Wide, the list stays beside the open file;
  * narrow, the file takes the drawer and "All files" goes back. Marks are kept per session.
  */
-export function FilesPanel({ files, sessionId, onClose }: FilesPanelProps) {
+export function FilesPanel({
+  files,
+  sessionId,
+  onClose,
+  review: shared,
+  initialPath = null,
+  pickNonce = 0,
+}: FilesPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const [panel, setPanel] = useState<HTMLElement | null>(null);
   const wide = useWiderThan(panel, SPLIT_MIN);
   const drawer = useDrawerWidth();
-  const review = useReviewed(sessionId);
-  const [picked, setPicked] = useState<string | null>(null);
+  const own = useReviewed(sessionId);
+  const review = shared ?? own;
+  const [picked, setPicked] = useState<string | null>(initialPath);
+  // Opened on a file, the keyboard goes to that file; else to the drawer's heading.
+  const [focusFile, setFocusFile] = useState(initialPath !== null);
   useEffect(() => {
-    heading.current?.focus({ preventScroll: true });
+    if (initialPath === null) heading.current?.focus({ preventScroll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Another card pressed while the drawer is open: switch to its file.
+  const lastNonce = useRef(pickNonce);
+  useEffect(() => {
+    if (lastNonce.current === pickNonce) return;
+    lastNonce.current = pickNonce;
+    setPicked(initialPath);
+    setFocusFile(initialPath !== null);
+  }, [pickNonce, initialPath]);
 
   const root = useMemo(() => commonDir(files.map((file) => file.path)), [files]);
   // One file alone keeps its folder in view: the root is then its parent's parent.
@@ -484,6 +518,7 @@ export function FilesPanel({ files, sessionId, onClose }: FilesPanelProps) {
               total={files.length}
               review={review}
               onBack={wide ? null : backToList}
+              focusRequest={focusFile ? pickNonce : null}
               onStep={(by) => {
                 setPicked(files[position + by]?.path ?? selected);
               }}
@@ -492,5 +527,43 @@ export function FilesPanel({ files, sessionId, onClose }: FilesPanelProps) {
         </div>
       )}
     </aside>
+  );
+}
+
+export interface ChangedFilesChipProps {
+  files: readonly ChangedFile[];
+  review: ReviewState;
+  open: boolean;
+  onToggle: () => void;
+}
+
+/**
+ * The header's way into the review: "5 files +120 −30 · 3 to review", tinted while files wait
+ * for review and quiet once all are viewed (a check). Pressed while the drawer is open.
+ */
+export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFilesChipProps) {
+  const added = files.reduce((sum, file) => sum + file.added, 0);
+  const removed = files.reduce((sum, file) => sum + file.removed, 0);
+  const due = files.filter((file) => !isViewed(review, file)).length;
+  const count = `${String(files.length)} ${files.length === 1 ? "file" : "files"}`;
+  return (
+    <button
+      type="button"
+      className={cx("as-files-chip", due > 0 && "as-files-chip-due", open && "as-files-chip-open")}
+      aria-expanded={open}
+      aria-controls={open ? FILES_PANEL_ID : undefined}
+      aria-label={`Changed files: ${count}, ${String(added)} lines added, ${String(removed)} removed, ${due > 0 ? `${String(due)} to review` : "all reviewed"}`}
+      title={open ? "Close the changed files" : "Review the files Claude changed"}
+      onClick={onToggle}
+    >
+      <Icon name="git-compare" size="sm" />
+      <span className="as-files-chip-label">{count}</span>
+      <Stats added={added} removed={removed} />
+      {due > 0 ? (
+        <span className="as-files-chip-due-count">{due} to review</span>
+      ) : (
+        <Icon name="circle-check" size="sm" className="as-files-chip-done" />
+      )}
+    </button>
   );
 }
