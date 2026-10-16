@@ -34,6 +34,8 @@ export interface ReviewWrites {
 export interface ReviewLink {
   sessionId: string;
   draftId: string;
+  /** The learning's place in a triage batch (0 first); absent for a single review. */
+  order?: number | undefined;
 }
 
 export const REVIEW_FILE = "review.json";
@@ -62,7 +64,8 @@ export function readReviewLink(learningId: string): ReviewLink | null {
       typeof value.sessionId === "string" &&
       typeof value.draftId === "string"
     ) {
-      return { sessionId: value.sessionId, draftId: value.draftId };
+      const order = "order" in value && typeof value.order === "number" ? value.order : undefined;
+      return { sessionId: value.sessionId, draftId: value.draftId, order };
     }
   } catch {
     // A link that does not parse is dropped.
