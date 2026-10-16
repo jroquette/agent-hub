@@ -364,8 +364,12 @@ def capture_screens(groups: Sequence[Group], out: Path) -> str | None:
                     "AH_CAPTURE_DIR": str(out),
                 },
             )
+        # The capture's own output, and the servers' when it failed, next to the screens.
+        out.parent.joinpath("capture.log").write_text(captured.stdout + captured.stderr, "utf-8")
         if captured.returncode != 0:
-            return f"Playwright failed (is Chromium installed?): {captured.stdout.strip()[-400:]}"
+            for name in ("api.log", "preview.log"):
+                shutil.copy(work / name, out.parent / f"capture-{name}")
+            return "Playwright failed on some screens: see capture.log"
     return None
 
 
