@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -20,7 +20,17 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
+import { servedCheckout } from "../../lib/devCheckout";
 import { SessionsListScreen } from "./index";
+
+vi.mock("../../lib/devCheckout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
+  return { ...actual, servedCheckout: vi.fn(() => null) };
+});
+
+afterEach(() => {
+  vi.mocked(servedCheckout).mockReturnValue(null);
+});
 
 const SESSIONS = "/api/v1/sessions";
 const AGENT = "/api/v1/agent-sessions";
@@ -242,6 +252,48 @@ async function bodyOf(request: Request | undefined): Promise<unknown> {
 }
 
 describe("SessionsListScreen agent sessions (new-session)", () => {
+  it("starts New session in the served checkout's project, folder and Accept edits (make playground)", async () => {
+    // The same vector as devCheckout.test.ts and core's test_workdirs.py (E6).
+    vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
+    renderList(
+      routes({
+        "/api/v1/projects": aPage([
+          aProjectSummary({ name: "demo" }),
+          aProjectSummary({ name: "agent-hub" }),
+        ]),
+        [`${AGENT}/workdirs`]: (request: Request) =>
+          new URL(request.url).searchParams.get("project") === "agent-hub"
+            ? {
+                items: [
+                  aWorkdir(),
+                  aWorkdir({ label: "agent-hub", kind: "repo", workdir_id: "5703fef9dd5a3894" }),
+                ],
+                warnings: [],
+              }
+            : {
+                items: [aWorkdir({ label: "demo-hub", workdir_id: "0000000000000001" })],
+                warnings: [],
+              },
+      }),
+      "/sessions?scope=demo",
+    );
+
+    await waitFor(
+      () => {
+        expect(screen.getByRole("combobox", { name: /Start sessions in/ })).toHaveValue(
+          "agent-hub",
+        );
+      },
+      { timeout: 3000 },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "New session" }));
+    const dialog = screen.getByRole("dialog", { name: "New session" });
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
+      "5703fef9dd5a3894",
+    );
+    expect(within(dialog).getByRole("radio", { name: /Accept edits/ })).toBeChecked();
+  });
+
   it("starts a session from New session and opens its chat", async () => {
     const created = anAgentSession({ id: anId(7, "0192a5e5"), status: "running" });
     const view = renderList(

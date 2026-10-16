@@ -1,6 +1,13 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { API_TARGET, DEV_ORIGINS, DEV_SERVER, SESSIONS_PATH, apiProxy } from "./devProxy";
+import {
+  API_TARGET,
+  DEV_ORIGINS,
+  DEV_SERVER,
+  SESSION_LOGIN_PATH,
+  SESSIONS_PATH,
+  apiProxy,
+} from "./devProxy";
 
 type Configure = NonNullable<ReturnType<typeof apiProxy>["/api"]["configure"]>;
 
@@ -57,9 +64,16 @@ describe("apiProxy", () => {
   it("sends the agent-session routes to their own target first, the rest of /api to the API", () => {
     const proxy = apiProxy("http://127.0.0.1:7421", "http://127.0.0.1:7420");
 
-    expect(Object.keys(proxy)).toEqual([SESSIONS_PATH, "/api"]);
+    expect(Object.keys(proxy)).toEqual([SESSION_LOGIN_PATH, SESSIONS_PATH, "/api"]);
     expect(proxy[SESSIONS_PATH]?.target).toBe("http://127.0.0.1:7420");
     expect(proxy["/api"].target).toBe("http://127.0.0.1:7421");
+  });
+
+  it("sends make playground's token login to the sessions server as its own /?token=", () => {
+    const login = apiProxy("http://127.0.0.1:7421", "http://127.0.0.1:7420")[SESSION_LOGIN_PATH];
+
+    expect(login?.target).toBe("http://127.0.0.1:7420");
+    expect(login?.rewrite?.(`${SESSION_LOGIN_PATH}?token=abc`)).toBe("/?token=abc");
   });
 
   it("keeps a single /api route when the sessions target is the API's", () => {
