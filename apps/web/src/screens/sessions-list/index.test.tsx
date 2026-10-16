@@ -281,7 +281,7 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
   it("starts New session in the served checkout's project, folder and Auto (make playground)", async () => {
     // The same vector as devCheckout.test.ts and core's test_workdirs.py (E6).
     vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
-    renderList(
+    const view = renderList(
       routes({
         "/api/v1/projects": aPage([
           aProjectSummary({ name: "tipple" }),
@@ -306,18 +306,24 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
 
     await waitFor(
       () => {
-        expect(screen.getByRole("combobox", { name: /Start sessions in/ })).toHaveValue(
-          "agent-hub",
-        );
+        const asked = view.requests
+          .filter((r) => new URL(r.url).pathname === `${AGENT}/workdirs`)
+          .map((r) => new URL(r.url).searchParams.get("project"));
+        expect(asked).toContain("agent-hub");
+        expect(screen.getByRole("button", { name: "New session" })).toBeInTheDocument();
       },
       { timeout: 3000 },
     );
     await userEvent.click(screen.getByRole("button", { name: "New session" }));
     const dialog = screen.getByRole("dialog", { name: "New session" });
+    // "Where" may leave the served project for the scope's (AGH-262, AC-234.14).
+    expect(within(dialog).getByRole("combobox", { name: "Project" })).toHaveValue("agent-hub");
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
       "5703fef9dd5a3894",
     );
-    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
+    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
+      /^Auto ·/,
+    );
   });
 
   it("starts a session from New session and opens its chat", async () => {
@@ -503,7 +509,7 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(screen.getByRole("button", { name: "Ended or failed · 3" })).toBeInTheDocument();
   });
 
-  it("resume: ended or failed driven rows and twins offer Resume, which opens the dialog, not the row", async () => {
+  it("resume: ended or failed driven rows and twins offer Resume, a link to the chat that resumes them", async () => {
     const twin = aSession({
       id: anId(3, "aaaa0003"),
       label: named("twin"),
@@ -535,26 +541,25 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     });
 
     await screen.findByText("Broke");
-    const resumes = within(table("Ended or failed")).getAllByRole("button", { name: /^Resume/ });
-    expect(resumes.map((button) => button.getAttribute("aria-label"))).toEqual([
-      "Resume Broke",
-      "Resume Twin chat",
+    const resumes = within(table("Ended or failed")).getAllByRole("link", { name: /^Resume/ });
+    expect(
+      resumes.map((link) => [link.getAttribute("aria-label"), link.getAttribute("href")]),
+    ).toEqual([
+      ["Resume Broke", `/agent-sessions/${anId(16, "0192a5e5")}`],
+      ["Resume Twin chat", `/agent-sessions/${anId(11, "0192a5e5")}`],
     ]);
     expect(
-      within(rowOf("Fix the build") as HTMLElement).queryByRole("button", { name: /^Resume/ }),
+      within(rowOf("Fix the build") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
     ).toBeNull();
     expect(
-      within(rowOf("In the cloud") as HTMLElement).queryByRole("button", { name: /^Resume/ }),
+      within(rowOf("In the cloud") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
     ).toBeNull();
     expect(
-      within(rowOf("/evaluator") as HTMLElement).queryByRole("button", { name: /^Resume/ }),
+      within(rowOf("/evaluator") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
     ).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "Resume Broke" }));
-    const dialog = screen.getByRole("dialog", { name: "Resume session" });
-    expect(within(dialog).getByRole("group", { name: "Resume" })).toHaveTextContent("Broke");
-    expect(within(dialog).getByRole("checkbox", { name: /Fork/ })).toBeInTheDocument();
-    expect(view.router.state.location.pathname).toBe("/sessions");
+    await userEvent.click(screen.getByRole("link", { name: "Resume Twin chat" }));
+    expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(11, "0192a5e5")}`);
   });
 
   it("shows a twinless row's folder, mode, model and cost", async () => {
