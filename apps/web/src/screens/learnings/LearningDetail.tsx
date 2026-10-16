@@ -24,6 +24,7 @@ import { fmtAgo } from "../../lib/format";
 import { safeHref } from "../../lib/safeHref";
 import { DecideDialog, type DecideAction } from "./DecideDialog";
 import { useNoteDraft } from "./noteDraft";
+import { ReviewPanel } from "./ReviewPanel";
 import { useDecideLearning, useHubRepo, useLearning, type LearningActionResult } from "./queries";
 
 type Learning = components["schemas"]["Learning"];
@@ -539,6 +540,19 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
               />
             )}
           </Section>
+          {canDecide && detail.note && (
+            <Section label="Review">
+              <ReviewPanel
+                detail={detail}
+                currentBody={draft.draft?.body ?? detail.note.markdown}
+                onUseRevision={(body) => {
+                  const base = detail.note?.markdown ?? "";
+                  draft.save({ body, base: draft.draft?.base ?? base });
+                }}
+                onUseTarget={setEdited}
+              />
+            </Section>
+          )}
           <Section label="Project">
             <span>{l.project}</span>
           </Section>
