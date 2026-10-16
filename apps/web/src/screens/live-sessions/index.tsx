@@ -25,6 +25,7 @@ import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { useAllLiveTiles, useLiveTiles, type LiveTile } from "./queries";
+import { tileFrom } from "../sessions-list/tiles";
 import {
   GROUPINGS,
   GROUP_CAP,
@@ -32,10 +33,7 @@ import {
   groupCounts,
   groupTiles,
   isGrouping,
-  problemsLine,
   splitTiles,
-  troubled,
-  waitingLink,
   type Grouping,
   type TileGroup,
 } from "./tiles";
@@ -49,93 +47,23 @@ const GRID = {
 const PAD = { padding: "16px 32px 40px", position: "relative", minHeight: "100%" } as const;
 const ANNOUNCE_MS = 15_000;
 
-const TOOL_ICON: Record<string, IconName> = {
-  Read: "file-text",
-  Edit: "file-pen",
-  Write: "file-plus",
-  Bash: "terminal",
-  Grep: "text-search",
-  Glob: "folder-search",
-  Agent: "network",
-  WebFetch: "globe",
-};
 const OUTCOME: Record<NonNullable<LiveTile["outcome"]>, Status> = {
   done: "done",
   stopped: "stopped",
   blocked: "blocked",
   error: "error",
 };
-const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
 
 function elapsed(tile: LiveTile, now: number): number {
   const end = tile.ended_at ? Date.parse(tile.ended_at) : now;
   return Math.max(0, (end - Date.parse(tile.started_at)) / 1000);
 }
 
-/** The design's tile view model from the API tile (spec 11, "Tile anatomy"). */
+/** The design's tile view model from the API tile (spec 11, "Tile anatomy"); the run budget outside run grouping. */
 function tileModel(tile: LiveTile, now: number, grouping: Grouping): LiveSession {
-  const ago = (now - Date.parse(tile.last_activity_at)) / 1000;
-  const runLine = tile.run_id
-    ? `Run ${tile.issue ?? short(tile.run_id)}${tile.step ? ` › ${tile.step}` : ""}${tile.attempt ? ` · attempt ${String(tile.attempt)}` : ""}`
-    : "no run";
-  const waitingMinutes = Math.max(1, Math.round(ago / 60));
-  const action =
-    tile.status === "waiting"
-      ? `Waiting ${String(waitingMinutes)} min${tile.waiting_reason === "Guard ask" ? " · a guard ask has no timeout" : ""}`
-      : tile.status === "idle"
-        ? `Last: ${tile.last_action ?? "no tool call yet"} · ${fmtAgo(ago)}`
-        : (tile.last_action ?? "Starting");
-  const node: ReactNode = (
-    <>
-      <div style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{action}</div>
-      {tile.failing_notice && (
-        <div
-          className="ah-row ah-small"
-          style={{ gap: 4, color: "var(--text-muted)", marginTop: 2 }}
-        >
-          <Icon name="circle-x" size="sm" />
-          {tile.failing_notice}
-        </div>
-      )}
-      {tile.status === "waiting" && (
-        <AppLink
-          href={waitingLink(tile).href}
-          className="ah-small"
-          style={{ fontWeight: 500 }}
-          onClick={(event) => {
-            event.stopPropagation();
-          }}
-        >
-          {waitingLink(tile).label}
-        </AppLink>
-      )}
-    </>
-  );
-  const identity = sessionIdentity(tile);
   return {
-    id: tile.id,
-    status: tile.status,
-    outcome: tile.outcome ? OUTCOME[tile.outcome] : undefined,
-    reason: tile.waiting_reason ? `Waiting · ${tile.waiting_reason}` : undefined,
-    title: identity.title,
-    detail: identity.detail,
-    subagent: tile.is_subagent,
-    project: tile.project,
-    repo: `${tile.repo ?? "—"} · ${runLine}`,
-    lastAction: action,
-    lastActionNode: node,
-    lastIcon: tile.last_tool ? (TOOL_ICON[tile.last_tool] ?? "terminal") : "activity",
-    lastAgo: tile.status === "live" ? fmtAgo(ago) : "",
-    elapsed: elapsed(tile, now),
-    turns: tile.turns,
-    tokens: tile.tokens_total,
-    files: tile.files_touched,
-    cost: toNumber(tile.cost_usd),
+    ...tileFrom(tile, now, { tokens: tile.tokens_total, subagent: tile.is_subagent }),
     budget: grouping === "run" ? null : toNumber(tile.budget_usd),
-    problems: problemsLine(tile),
-    needsYou: troubled(tile),
-    denials: tile.guard_denials,
-    activity: tile.status === "idle" ? undefined : tile.sparkline_60s,
   };
 }
 
