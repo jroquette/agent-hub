@@ -77,17 +77,8 @@ describe("PlanningView", () => {
     );
   });
 
-  it("draws each parallel group as a step, left to right, then the settled tickets (flow)", () => {
-    const done = aTicketRow({
-      ref: "T6",
-      key: "T6",
-      id: null,
-      title: "Ticket T6",
-      url: null,
-      readiness: "done",
-      state: { name: "Done", type: "completed" },
-    });
-    render(<PlanningView tickets={[...rows, done]} planning={plan} />);
+  it("draws each parallel group as a step, left to right (flow)", () => {
+    render(<PlanningView tickets={rows} planning={plan} />);
 
     expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
     const steps = within(screen.getByRole("list", { name: "Ticket flow" }))
@@ -97,17 +88,12 @@ describe("PlanningView", () => {
       "Step 1 · in parallel",
       "Step 2 · after step 1",
       "Step 3 · after step 2",
-      "Done · settled",
     ]);
     expect(
       within(nth(steps, 0))
         .getAllByRole("listitem")
         .map((li) => li.getAttribute("aria-label")),
     ).toEqual(["T1 · Ticket T1", "T2 · Ticket T2", "T4 · Ticket T4"]);
-    expect(within(nth(steps, 3)).getByRole("listitem", { name: "T6 · Ticket T6" })).toHaveAttribute(
-      "data-readiness",
-      "done",
-    );
     expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).toHaveTextContent(
       "critical path",
     );
@@ -115,6 +101,69 @@ describe("PlanningView", () => {
       "href",
       `#${ticketAnchor("T1")}`,
     );
+  });
+
+  it("keeps a done ticket in its step, so the steps after it do not move (flow)", () => {
+    const first = aTicketRow({
+      ref: "T1",
+      key: "T1",
+      id: null,
+      title: "Ticket T1",
+      url: null,
+      readiness: "done",
+      state: { name: "Done", type: "completed" },
+      blocked_by: [],
+    });
+    const second = aTicketRow({
+      ref: "T2",
+      key: "T2",
+      id: null,
+      title: "Ticket T2",
+      url: null,
+      readiness: "in_progress",
+      blocked_by: [{ ref: "T1", source: "both" }],
+    });
+    const canceled = aTicketRow({
+      ref: "T3",
+      key: "T3",
+      id: null,
+      title: "Ticket T3",
+      url: null,
+      readiness: "canceled",
+      blocked_by: [],
+    });
+    render(
+      <PlanningView
+        tickets={[first, second, canceled]}
+        planning={aTicketPlan({
+          layers: [["T2"]],
+          can_start: [],
+          order: ["T2"],
+          waiting: [],
+          critical_path: ["T2"],
+        })}
+      />,
+    );
+
+    const steps = within(screen.getByRole("list", { name: "Ticket flow" }))
+      .getAllByRole("listitem")
+      .filter((li) => li.tagName === "SECTION");
+    expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual([
+      "Step 1 · done",
+      "Step 2 · after step 1",
+      "Done · settled",
+    ]);
+    expect(nth(steps, 0)).toHaveAttribute("data-kind", "done");
+    expect(within(nth(steps, 0)).getByRole("listitem", { name: "T1 · Ticket T1" })).toHaveAttribute(
+      "data-readiness",
+      "done",
+    );
+    expect(
+      within(nth(steps, 1)).getByRole("listitem", { name: "T2 · Ticket T2" }),
+    ).toBeInTheDocument();
+    expect(
+      within(nth(steps, 2)).getByRole("listitem", { name: "T3 · Ticket T3" }),
+    ).toBeInTheDocument();
   });
 
   it("shows a started ticket as in progress, never as can start (flow)", () => {
