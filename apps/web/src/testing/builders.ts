@@ -814,7 +814,7 @@ export function aNeedsYouItem(
 ): Schemas["NeedsYouItem"] {
   return {
     context: "agent-hub · AGH-48 · guarded path",
-    href: `/approvals/${anId(7, "0192bbbb")}`,
+    href: `/sessions/${anId(7, "0192bbbb")}`,
     kind: "approval",
     project: "agent-hub",
     since: at(300),
