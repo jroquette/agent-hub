@@ -4,15 +4,15 @@ An action works in a temporary clone of the hub's ``origin`` that borrows the hu
 (``--reference-if-able``), never in the user's checkout, so its working tree, index, refs and
 worktree list stay as they were. It takes the note from ``origin/<default_branch>``, or, when
 ``/learn`` wrote it in the checkout and it was never pushed, reads it from there (the checkout is
-only read); it checks that the destination and the branch are free; builds one commit with plumbing (no checkout, no
-hook) that moves the note and sets its frontmatter, as the change's author; pushes that one new
-branch through the push guard; and opens the pull request with ``gh pr create``. When the push
-or ``gh`` fails (a timeout may come after GitHub accepted the ref), the branch is deleted again
-so a retry starts clean. A retry that still finds the branch on ``origin`` (the action got as far
-as the pull request, or its cleanup failed) adopts the branch's open pull request and returns it;
-with none open it deletes the branch, which can only be this action's (``<prefix>learning-
-<action>-<slug>``), and goes on. The temporary folder is always removed, and no git or gh output
-is logged, kept or put in an error.
+only read); it checks that the destination and the branch are free; builds one commit with plumbing
+(no checkout, no hook) that moves the note and sets its frontmatter, as the change's author; pushes
+that one new branch through the push guard; and opens the pull request with ``gh pr create``. When
+the push or ``gh`` fails (a timeout may come after GitHub accepted the ref), the branch is deleted
+again so a retry starts clean. A retry that still finds the branch on ``origin`` (the action got as
+far as the pull request, or its cleanup failed) adopts the branch's open pull request and returns
+it; with none open it deletes the branch, which can only be this action's
+(``<prefix>learning-<action>-<slug>``), and goes on. The temporary folder is always removed, and no
+git or gh output is logged, kept or put in an error.
 """
 
 import contextlib
