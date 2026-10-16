@@ -20,8 +20,30 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A session started from hub web takes the title Claude Code gives it at the end of each turn, in place of its first
   prompt; its row in Sessions shows that name on one line (the whole of it on hover), like the other sessions.
 
+- `make playground` (ADR 0035): the whole live loop for agent-hub's own web app in one command, then the browser
+  open on `http://127.0.0.1:5173/`. A conductor `hub web` on 7420 (a copy of the checkout, uncommitted files
+  included, taken at each start) drives the Claude sessions; `make live` serves the checkout's API on 7421,
+  restarted on each Python change (`scripts/live_api.py`), and the web app with hot reload on 5173, whose proxy
+  sends the agent-session routes to 7420 and the rest to 7421, so a change never ends a session. One address signs
+  the browser in (`/__playground/session?token=`); `make playground-stop` stops it all.
+- Permission mode `auto` (Claude Code's classifier approves safe actions and blocks risky ones), offered and
+  preselected by the dev app's shake and New session, in the served checkout's project and folder. The built app
+  keeps `default`, `acceptEdits` and `plan`; `bypassPermissions` and `dontAsk` are still refused.
+- Discuss: a panel on the right holds one Claude conversation per feature, workflow, skill, agent, hook or note on
+  screen, started in the hub folder with that artifact as context. A feature opens it on arrival with every record
+  of the feature; each acceptance criterion and any selected passage can be pointed at in the conversation.
+- Studio: create a skill, an agent or a hook with Claude; the session writes a draft under `.hub-drafts/<id>/` and
+  the preview shows the catalog card it will be as the files stream. The Skills catalog gets tabs per kind with a
+  short explanation of each, kind tiles with 30-day use, a sort, and hooks grouped by lifecycle event.
+- A message to an ended local session (hub web stopped, idle timeout, closed, failed) reopens the same session on its
+  Claude conversation and plays it.
+
 ### Changed
 
+- The shake is lighter (3 reversals of 25 px within 700 ms) and captures only the visible screen, so a long page
+  such as a chat opens New session at once. Under `make dev` or `make live` it starts in the project and folder of
+  the served checkout, whatever the scope.
+- A driven session's row in Sessions reads its first prompt until Claude Code's title reaches its label.
 - A shake opens New session on every screen, Settings and "All projects" included: with no project in the route
   or the scope, it starts in the first registered project, as Sessions' New session does. It still does nothing
   when no project is registered.
