@@ -216,6 +216,36 @@ The Portfolio never performs actions inline; it routes to the screen where the e
 
 **Phase:** P2 · **Route:** `/projects/:project?period=7d&section=now|repos|work|sessions|health|cost` · **Answers:** "How is this project doing, what is in flight, and what does the team know right now?"
 
+### As built: for product people first (AGH-273)
+
+The screen leads with what a product person asks (what needs me, how the week went, what the agents are doing) and
+folds the engineering detail away. Where the sections below say otherwise, this list wins.
+
+- **AC-273.10** The header shows the setup status as "Setup · 1 error, 1 warning" (a link to Setup and health, with
+  the tooltip that setup problems do not stop the agents) or "Setup · all good", "Showing the last 7 days", and one
+  plain sentence: "1 agent session running now, 1 ticket being worked on, 1 ticket stopped with a problem this week.
+  Linear team AGH · 1 repository." Hub repository, platform pin, lock state and modules move into Setup and health.
+- **AC-273.11** Needs you comes first: the project's items from `GET /needs-you`, four at most with "See N more", and
+  "Nothing needs you." when empty.
+- **AC-273.12** This week's numbers: Agent sessions running (right now), Tickets in progress (right now), Tickets
+  delivered (last 7 days, with "· N stopped"), and Spent with its delta and "vs $X the week before", each with a plain
+  hint; the median cost of a ticket shows only from five finished tickets.
+- **AC-273.13** The focus cards read "Focus now", "Up next" and "Watch out for" ("What the team is focused on",
+  updated at the end of each session); a card not verified for over 60 days says "Not checked for N days".
+- **AC-273.14** "Tickets the agents are working on" replaces the seven-column board: one list, in progress first, then
+  stopped, then done this week, each row with its issue key and title, a six-segment step bar and the step in words
+  ("Building · step 3 of 6", "Stopped while testing", "Done"), a note ("Started 38 min ago", "Problem: make check exit
+  2", "Pull request opened") and the budget bar or cost; "All tickets" opens Workflow runs. With none: "No agent is
+  working on a ticket right now. Agents pick up Linear tickets labelled agent-ready."; with only finished ones the
+  same line says "Here is what finished this week.".
+- **AC-273.15** "Recent work" lists the last sessions with the columns What, Status, Started, Took and Cost (no turns,
+  errors or agent).
+- **AC-273.16** "Setup and health" (for engineers) is a collapsed section whose summary badges "N things to fix"; open,
+  it holds the doctor findings, the Repos table and the hub (repository, tracker, platform pin with Sync pending or
+  Drift, modules).
+- **AC-273.17** A section that fails keeps its problem inside it ("Could not load the agents' tickets"); the rest of
+  the screen still renders.
+
 ### Purpose and primary user
 
 The owner and developers of one project. It zooms the Portfolio card into sections, each answering one question and linking to its full screen. Sample: agent-hub.
