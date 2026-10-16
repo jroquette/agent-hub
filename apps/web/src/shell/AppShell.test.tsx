@@ -130,3 +130,53 @@ describe("AppShell", () => {
     expect(await seriousViolations(container)).toEqual([]);
   });
 });
+
+describe("AppShell scope on a project's Brain or Skills", () => {
+  const scoped = {
+    "/api/v1/projects": aPage([
+      aProjectSummary({ name: "demo" }),
+      aProjectSummary({ name: "agent-hub" }),
+    ]),
+  };
+  const switcher = () =>
+    within(screen.getByRole("banner")).getByRole("button", {
+      expanded: false,
+      name: /demo|agent-hub|All projects/,
+    });
+
+  it("shows the project in the route, not the stored scope", () => {
+    renderWithApi(<AppShell />, {
+      routes: scoped,
+      path: "/projects/demo/skills?scope=agent-hub",
+      route: "*",
+    });
+
+    expect(switcher()).toHaveTextContent("demo");
+  });
+
+  it("opens the same section of the project picked in the switcher", async () => {
+    const { router } = renderWithApi(<AppShell />, {
+      routes: scoped,
+      path: "/projects/demo/brain/now.md",
+      route: "*",
+    });
+
+    fireEvent.click(switcher());
+    fireEvent.click(await screen.findByRole("button", { name: /^agent-hub ·/ }));
+
+    expect(router.state.location.pathname).toBe("/projects/agent-hub/brain");
+  });
+
+  it("opens the section's project index when All projects is picked", async () => {
+    const { router } = renderWithApi(<AppShell />, {
+      routes: scoped,
+      path: "/projects/demo/skills",
+      route: "*",
+    });
+
+    fireEvent.click(switcher());
+    fireEvent.click(await screen.findByRole("button", { name: /^All projects/ }));
+
+    expect(router.state.location.pathname).toBe("/knowledge/skills");
+  });
+});
