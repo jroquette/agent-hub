@@ -371,6 +371,24 @@ describe("Tabs and SegmentedControl", () => {
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     expect(onChange).toHaveBeenCalledWith("b");
   });
+
+  it("turns every segment off when disabled, keeping the value shown", () => {
+    const onChange = vi.fn();
+    render(
+      <SegmentedControl
+        label="Scope"
+        value="a"
+        onChange={onChange}
+        options={["a", "b"]}
+        disabled
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "a" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "b" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "b" }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
 
 describe("a11y", () => {

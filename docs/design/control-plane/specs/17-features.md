@@ -35,6 +35,36 @@ README's "Sources not connected": Linear is read for a feature's tickets; GitHub
   run. No step names an approver, a date range, sessions or a PR; "GitHub not connected" no longer appears. The
   Features list draws the same steps in its phase bar, and its `phase` equals the detail's.
 
+## Departures (AGH-269, acceptance criteria, evals and records)
+
+Built after the owner validated these in the playground; where this file says otherwise, this list wins.
+
+**Eval tab**
+
+- **AC-269.1** Given a project whose hub folder this machine can drive, when the owner picks a scope (Whole feature,
+  or one of the feature's tickets) and presses "Evaluate <scope>", then a session starts in the hub folder in
+  `acceptEdits` mode, asking the hub-workflow evaluator for that scope only, to write the next free
+  `evals/<delivery>.md` and never to edit an existing eval, merge, push or change tickets.
+- **AC-269.2** Given a run started from the tab, when the tab shows, then a strip gives its status as icon and label
+  in a polite live region (Evaluating, Waiting for you, Finished, Finished without a new eval, Ended, Failed), its
+  scope, its start time as relative time (absolute on hover) and an "Open chat" link; while it runs, Evaluate is off
+  with "An evaluation is already running. Open its chat to follow it." and the scope control is disabled. The run is
+  kept in the browser per feature.
+- **AC-269.3** Given a run waiting for the owner's answer, then its action is the primary "Answer in chat" with the
+  hand icon and the note "Claude asks before running a command. Answer in the chat."
+- **AC-269.4** Given `?doc=eval&eval=<delivery>`, then that eval is read in place below the list (verdict, tickets,
+  ACs, date, commit as `IdChip`, path as `PathText`, "Discuss this eval", "Open in Brain"); a row press selects
+  another and keeps it in `?eval=` (replace). Without `?eval=`, the newest eval by `evaluated_at` is selected, else
+  the last by name. The Discuss panel's target follows the selected eval.
+- **AC-269.5** Given a run that went idle, then it reads "Finished" with a "Show <delivery>" button for each eval it
+  wrote, or "Finished without a new eval" (not done) with a note to open the chat when it wrote none; a run no longer
+  in flight can be cleared ("Clear this run"); a run whose session was deleted is forgotten.
+- **AC-269.6** Given the machine cannot drive Claude or the project has no hub folder, then Evaluate is off with the
+  reason in its tooltip and accessible name, and the capability problem shows as a warning banner.
+- **AC-269.7** `SegmentedControl` takes `disabled`: every segment is off for pointer, keyboard and screen readers,
+  and the value still shows.
+- **AC-269.8** Given no eval yet, then the empty state says "No evals yet." and points to Evaluate.
+
 ---
 
 ## Screen 1: Features list
