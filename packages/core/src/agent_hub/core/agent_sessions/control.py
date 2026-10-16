@@ -69,6 +69,7 @@ from agent_hub.core.agent_sessions.driver import (
     StartSpec,
     TextDelta,
     ToolCall,
+    ToolResult,
     TurnResult,
 )
 from agent_hub.core.agent_sessions.errors import (
@@ -174,6 +175,9 @@ def _sum_cost(total: Decimal | None, more: Decimal | None) -> Decimal | None:
 
 def _event_body(event: DriverEvent) -> dict[str, JsonValue]:
     body: dict[str, JsonValue] = event.model_dump(mode="json", exclude={"kind"})
+    # A tool result without the engine's diff keeps the record's body as it always was.
+    if isinstance(event, ToolResult) and event.diff is None:
+        del body["diff"]
     return body
 
 
