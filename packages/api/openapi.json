@@ -5931,7 +5931,7 @@
                 "items": {
                   "$ref": "#/components/schemas/Screenshot"
                 },
-                "maxItems": 4,
+                "maxItems": 10,
                 "minItems": 1,
                 "type": "array"
               },

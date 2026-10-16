@@ -16,8 +16,8 @@ export const MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan
 export function offeredModes(): readonly PermissionMode[] {
   return servedCheckout() === null ? MODES : [...MODES, "auto"];
 }
-/** The user message limit's default (L3: 64 KiB of UTF-8). */
-export const DEFAULT_MESSAGE_MAX_BYTES = 64 * 1024;
+/** The user message limit's default (`--message-max-bytes`: 1 MiB of UTF-8). */
+export const DEFAULT_MESSAGE_MAX_BYTES = 1024 * 1024;
 /** The composer grows with its text up to this share of the viewport, then scrolls (AC-234.26). */
 const MAX_HEIGHT_SHARE = 0.4;
 /** Safari sends the Enter that ends an IME composition after `compositionend`. */

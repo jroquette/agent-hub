@@ -50,11 +50,13 @@ HUB_REGISTRY_WRITES = (
     ("DELETE", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+$")),
 )
 # The routes with a larger body cap: a session's first prompt may carry a PNG screenshot (at
-# most ``MAX_SCREENSHOT_BYTES`` decoded, about 5 MiB of base64), and a later message up to
-# ``MAX_MESSAGE_SCREENSHOTS`` of them. Every other route keeps ``max_body_bytes``.
-AGENT_SESSION_CREATE_BODY_BYTES: Final = 8 * 1024 * 1024
+# most ``MAX_SCREENSHOT_BYTES`` decoded, 5 MiB of base64), and a later message up to
+# ``MAX_MESSAGE_SCREENSHOTS`` of them; either one also carries a text of up to the largest
+# ``--message-max-bytes`` (4 MiB), which JSON escaping may grow. Every other route keeps
+# ``max_body_bytes``.
+AGENT_SESSION_CREATE_BODY_BYTES: Final = 16 * 1024 * 1024
 AGENT_SESSION_CREATE_PATH: Final = f"{API_PREFIX}/agent-sessions"
-AGENT_SESSION_MESSAGE_BODY_BYTES: Final = 24 * 1024 * 1024
+AGENT_SESSION_MESSAGE_BODY_BYTES: Final = 64 * 1024 * 1024
 AGENT_SESSION_MESSAGE_PATH: Final = re.compile(
     rf"^{re.escape(API_PREFIX)}/agent-sessions/[^/]+/messages$"
 )
