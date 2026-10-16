@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { initialTranscript, type JsonObject, type TranscriptState } from "../agent-session/model";
-import { parseReview, reviewPrompt, reviewWrites } from "./review";
+import { parseReview, reviewPrompt, reviewWrites, triageDraftId, triagePrompt } from "./review";
 
 const DRAFT = "learning-abc123";
 const DIR = `/home/owner/hubs/demo/.hub-drafts/${DRAFT}`;
@@ -106,5 +106,24 @@ describe("reviewPrompt", () => {
     expect(prompt).toContain(`.hub-drafts/${DRAFT}/review.json`);
     expect(prompt).toContain("one of learnings/, playbooks/");
     expect(prompt).toContain("do not accept, reject, commit or push");
+  });
+});
+
+describe("triagePrompt batch", () => {
+  it("gives each learning its own draft folder and holds them to the /learn bar", () => {
+    const prompt = triagePrompt({
+      project: "tipple",
+      batchId: "triage-abc123",
+      items: [
+        { learningId: "l-1", notePath: "brain/_inbox/a.md" },
+        { learningId: "l-2", notePath: "brain/_inbox/b.md" },
+      ],
+    });
+
+    expect(prompt).toContain("Triage the 2 proposed learnings of project tipple");
+    expect(prompt).toContain("`brain/_inbox/a.md` → write in `.hub-drafts/triage-abc123/l-1/`");
+    expect(prompt).toContain("`brain/_inbox/b.md` → write in `.hub-drafts/triage-abc123/l-2/`");
+    expect(prompt).toContain("Hold it to the bar of the /learn skill");
+    expect(triageDraftId("triage-abc123", "l-1")).toBe("triage-abc123/l-1");
   });
 });

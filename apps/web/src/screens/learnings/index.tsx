@@ -1,9 +1,10 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
   AsOfStamp,
+  Banner,
   Button,
   DataTable,
   EmptyState,
@@ -32,6 +33,7 @@ import {
 } from "./LearningDetail";
 import {
   blockedReason,
+  CLAUDE_VERDICTS,
   facetCounts,
   filterLearnings,
   filtersFromParams,
@@ -42,9 +44,14 @@ import {
   READINESS,
   toggle,
   withFilters,
+  type ClaudeVerdict,
   type LearningFilters,
+  type VerdictOf,
 } from "./filters";
 import { useLearnings, useLiveLearnings, type LearningStatus } from "./queries";
+import { VERDICT } from "./ReviewPanel";
+import { MAX_TRIAGE_BATCH } from "./review";
+import { triageCandidates, useClaudeVerdicts, useTriage } from "./triage";
 
 type Learning = components["schemas"]["Learning"];
 
@@ -69,7 +76,30 @@ const clamp = (lines: number): CSSProperties => ({
   whiteSpace: "normal",
 });
 
-function QueueRow({ l }: { l: Learning }) {
+const CLAUDE_LABEL: Record<ClaudeVerdict, string> = {
+  ready: "Goes in",
+  needs_changes: "Needs changes",
+  not_for_brain: "Leave out",
+  reviewing: "Reviewing",
+  unreviewed: "Not reviewed",
+};
+
+/** Claude's recommendation as the queue shows it; nothing until a review was asked for. */
+function ClaudeVerdictBadge({ verdict }: { verdict: ClaudeVerdict }) {
+  if (verdict === "unreviewed") return null;
+  if (verdict === "reviewing") {
+    return (
+      <span className="ah-row ah-small ah-subtle" style={{ gap: 4 }}>
+        <Icon name="loader" size="sm" />
+        Claude reviewing…
+      </span>
+    );
+  }
+  const look = VERDICT[verdict];
+  return <StatusBadge status={look.status} label={`Claude: ${look.label}`} />;
+}
+
+function QueueRow({ l, verdict }: { l: Learning; verdict: ClaudeVerdict }) {
   const ext = isExternal(l);
   const state = stateOf(l);
   const blocked = blockedReason(l);
@@ -115,6 +145,7 @@ function QueueRow({ l }: { l: Learning }) {
           )
         )}
         <span className="ah-row ah-wrap" style={{ gap: 6 }}>
+          <ClaudeVerdictBadge verdict={verdict} />
           {blocked && <StatusBadge status="blocked" label={blocked} />}
           {state !== "proposed" && <LearningStateBadge state={state} />}
           {l.provenance && <ProvenanceBadge provenance={l.provenance} />}
@@ -147,14 +178,19 @@ function LearningFiltersBar({
   onChange,
   showProject,
   showReadiness,
+  verdictOf,
 }: {
   rows: readonly Learning[];
   filters: LearningFilters;
   onChange: (next: LearningFilters) => void;
   showProject: boolean;
   showReadiness: boolean;
+  verdictOf: VerdictOf;
 }) {
-  const counts = facetCounts(rows, filters);
+  const counts = facetCounts(rows, filters, verdictOf);
+  const provenances = PROVENANCES.filter(
+    (p) => counts.provenance[p] > 0 || filters.provenance.includes(p),
+  );
   const allProjects = counts.project.reduce((sum, [, n]) => sum + n, 0);
   return (
     <div className="ah-stack" style={{ gap: 8, padding: "12px 16px 0 32px" }}>
@@ -207,9 +243,9 @@ function LearningFiltersBar({
           ))}
         </FacetRow>
       )}
-      <FacetRow label="Provenance">
-        {PROVENANCES.filter((p) => counts.provenance[p] > 0 || filters.provenance.includes(p)).map(
-          (p) => (
+      {provenances.length > 0 && (
+        <FacetRow label="Provenance">
+          {provenances.map((p) => (
             <FilterChip
               key={p}
               value={`${p} · ${String(counts.provenance[p])}`}
@@ -218,9 +254,25 @@ function LearningFiltersBar({
                 onChange({ ...filters, provenance: toggle(filters.provenance, p) });
               }}
             />
-          ),
-        )}
-      </FacetRow>
+          ))}
+        </FacetRow>
+      )}
+      {showReadiness && (
+        <FacetRow label="Claude">
+          {CLAUDE_VERDICTS.filter((v) => counts.claude[v] > 0 || filters.claude.includes(v)).map(
+            (v) => (
+              <FilterChip
+                key={v}
+                value={`${CLAUDE_LABEL[v]} · ${String(counts.claude[v])}`}
+                active={filters.claude.includes(v)}
+                onClick={() => {
+                  onChange({ ...filters, claude: toggle(filters.claude, v) });
+                }}
+              />
+            ),
+          )}
+        </FacetRow>
+      )}
       {showReadiness && (
         <FacetRow label="Decision">
           {READINESS.map((r) => (
@@ -256,8 +308,9 @@ export function LearningsScreen() {
   };
   const all = learnings.data?.items ?? [];
   const projects = new Set(all.map((l) => l.project));
+  const claude = useClaudeVerdicts(all);
   // Learnings that can be decided first, oldest first; the blocked ones after them.
-  const rows = filterLearnings(all, filters).sort(
+  const rows = filterLearnings(all, filters, claude.verdictOf).sort(
     (a, b) =>
       Number(blockedReason(a) !== null) - Number(blockedReason(b) !== null) ||
       (a.proposed_at ?? "").localeCompare(b.proposed_at ?? ""),
@@ -279,6 +332,14 @@ export function LearningsScreen() {
     );
   };
   const count = learnings.data?.total_estimate ?? rows.length;
+  // A triage session runs in one hub: the picked project, the scope, or the only one listed.
+  const triageProject =
+    filters.project ?? scope ?? (projects.size === 1 ? ([...projects][0] ?? null) : null);
+  const candidates = triageCandidates(
+    rows.filter((l) => triageProject === null || l.project === triageProject),
+  );
+  const triage = useTriage(triageProject, candidates);
+  const [triageStarted, setTriageStarted] = useState<number | null>(null);
   const stamp = state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />;
 
   let body: ReactNode;
@@ -329,10 +390,55 @@ export function LearningsScreen() {
               rows={all}
               filters={filters}
               onChange={setFilters}
-              showProject={scope === null && projects.size > 1}
+              showProject={scope === null}
               showReadiness={status === "proposed"}
+              verdictOf={claude.verdictOf}
             />
           )}
+          {status === "proposed" && learnings.isSuccess && (
+            <div className="ah-stack" style={{ gap: 6, padding: "10px 16px 0 32px" }}>
+              <div className="ah-row ah-wrap" style={{ gap: 8 }}>
+                <Button
+                  size="sm"
+                  icon="message-square"
+                  disabled={triage.reason !== null || triage.pending}
+                  title={triage.reason ?? undefined}
+                  onClick={() => {
+                    void triage.start().then((n) => {
+                      setTriageStarted(n);
+                      claude.refresh();
+                    });
+                  }}
+                >
+                  {triage.pending
+                    ? "Starting the triage…"
+                    : `Triage with Claude${candidates.length > 0 ? ` · ${String(Math.min(candidates.length, MAX_TRIAGE_BATCH))}` : ""}`}
+                </Button>
+                <span className="ah-small ah-subtle">
+                  {triage.reason ??
+                    `Claude checks each against the /learn bar and recommends whether it goes in.${candidates.length > MAX_TRIAGE_BATCH ? ` ${String(MAX_TRIAGE_BATCH)} per run.` : ""}`}
+                </span>
+              </div>
+              {triageStarted !== null && (
+                <Banner
+                  tone="info"
+                  boxed
+                  onDismiss={() => {
+                    setTriageStarted(null);
+                  }}
+                >
+                  Claude is triaging {triageStarted} learnings. Each verdict shows on its row as it
+                  is written.
+                </Banner>
+              )}
+              {triage.error && (
+                <Banner tone="warning" boxed>
+                  <b style={{ fontWeight: 600 }}>The triage did not start.</b> {triage.error.title}
+                </Banner>
+              )}
+            </div>
+          )}
+          {claude.sources}
           <div className="ah-row ah-wrap" style={{ gap: 6, padding: "12px 16px 10px 32px" }}>
             <span className="ah-small ah-subtle">
               {status === "proposed" && blockedCount > 0
@@ -367,7 +473,7 @@ export function LearningsScreen() {
                         ? `${String(rows.length)} of ${String(count)}`
                         : String(count)
                   } ${status}`,
-                  render: (l) => <QueueRow l={l} />,
+                  render: (l) => <QueueRow l={l} verdict={claude.verdictOf(l)} />,
                 },
                 {
                   id: "age",

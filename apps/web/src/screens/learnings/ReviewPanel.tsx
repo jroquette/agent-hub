@@ -28,7 +28,7 @@ import {
 
 type LearningDetailView = components["schemas"]["LearningDetail"];
 
-const VERDICT: Record<ReviewVerdict, { status: Status; label: string }> = {
+export const VERDICT: Record<ReviewVerdict, { status: Status; label: string }> = {
   ready: { status: "done", label: "Ready for the brain" },
   needs_changes: { status: "waiting", label: "Needs changes" },
   not_for_brain: { status: "failed", label: "Not for the brain" },
