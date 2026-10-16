@@ -79,6 +79,7 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <article
       className="ah-tile"
+      data-key={s.id}
       data-status={s.status}
       data-trouble={s.needsYou ? "true" : undefined}
       // Tiles are a keyboard grid (spec 01): Enter opens the focused tile.
