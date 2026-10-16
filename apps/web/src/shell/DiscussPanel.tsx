@@ -193,6 +193,19 @@ function StartDiscussion({
         ? `Project ${target.project} has no hub folder to work in.`
         : null;
 
+  const start = async (text: string) => {
+    if (!hub) return;
+    const session = await create.mutateAsync({
+      project: target.project,
+      workdir_id: hub.workdir_id,
+      mode,
+      fork: false,
+      ...(model && model !== "default" ? { model } : {}),
+      prompt: discussPrompt(target, referencedMessage(references, text)),
+    });
+    onStarted(session.id);
+  };
+
   return (
     <div className="as-page">
       <div className="ah-discuss-note ah-small ah-muted">
@@ -201,6 +214,24 @@ function StartDiscussion({
         Claude works in the hub folder of <b>{target.project}</b>; every file edit asks you first
         unless you switch the mode to accept edits.
       </div>
+      {target.starters && target.starters.length > 0 && (
+        <div className="ah-discuss-starters" role="group" aria-label="Start with">
+          {target.starters.map((starter) => (
+            <Button
+              key={starter.label}
+              size="sm"
+              icon="message-square"
+              disabled={reason !== null || create.isPending}
+              onClick={() => {
+                // A failure shows below the composer (create.error); nothing else to do here.
+                start(starter.message).catch(() => undefined);
+              }}
+            >
+              {starter.label}
+            </Button>
+          ))}
+        </div>
+      )}
       <div className="ah-grow" />
       <footer className="as-footer">
         <div className="as-column">
@@ -209,18 +240,7 @@ function StartDiscussion({
             mode={mode}
             model={model}
             models={capabilities.data?.models ?? DEFAULT_MODELS}
-            onSend={async (text) => {
-              if (!hub) return;
-              const session = await create.mutateAsync({
-                project: target.project,
-                workdir_id: hub.workdir_id,
-                mode,
-                fork: false,
-                ...(model && model !== "default" ? { model } : {}),
-                prompt: discussPrompt(target, referencedMessage(references, text)),
-              });
-              onStarted(session.id);
-            }}
+            onSend={start}
             onInterrupt={() => undefined}
             onSettings={(change) => {
               if (change.mode) setMode(change.mode);

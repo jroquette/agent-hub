@@ -105,6 +105,13 @@ describe("LearningDetail", () => {
     expect(within(detail).getByRole("button", { name: "Accept" })).toBeDisabled();
   });
 
+  it("offers to talk with Claude about the learning", async () => {
+    open();
+
+    const detail = await region();
+    expect(within(detail).getByRole("button", { name: "Talk with Claude" })).toBeInTheDocument();
+  });
+
   it("opens brain links of the note inside the app", async () => {
     const { router } = open({
       [DETAIL]: aLearningDetail({
