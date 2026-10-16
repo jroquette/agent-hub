@@ -10,19 +10,28 @@ import { Button, IconButton } from "./core";
 import { Icon } from "./Icon";
 import type { IconName } from "./icons";
 
-export type AnnotationTool = "arrow" | "rect" | "ellipse" | "pen" | "highlight" | "text";
+export type AnnotationTool = "crop" | "arrow" | "rect" | "ellipse" | "pen" | "highlight" | "text";
 
 type Point = readonly [number, number];
 
-/** One mark on the image, in the image's own pixels. */
+/**
+ * One edit of the image, in the image's own pixels: a mark, or a crop (the latest crop wins). Both
+ * live in one history, so undo and clear treat a crop like any mark.
+ */
 export type Annotation =
-  | { kind: "arrow" | "rect" | "ellipse" | "highlight"; color: string; from: Point; to: Point }
+  | {
+      kind: "crop" | "arrow" | "rect" | "ellipse" | "highlight";
+      color: string;
+      from: Point;
+      to: Point;
+    }
   | { kind: "pen"; color: string; points: readonly Point[] }
   | { kind: "text"; color: string; at: Point; text: string };
 
 export const ANNOTATION_COLORS = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#ffffff"] as const;
 
 const TOOLS: readonly { tool: AnnotationTool; icon: IconName; label: string; key: string }[] = [
+  { tool: "crop", icon: "crop", label: "Crop (C)", key: "c" },
   { tool: "arrow", icon: "move-up-right", label: "Arrow (A)", key: "a" },
   { tool: "rect", icon: "square", label: "Rectangle (R)", key: "r" },
   { tool: "ellipse", icon: "circle", label: "Ellipse (O)", key: "o" },
@@ -50,13 +59,58 @@ function arrowHead(from: Point, to: Point, stroke: number): string {
   return [to, left, right].map((p) => `${String(p[0])},${String(p[1])}`).join(" ");
 }
 
-function box(from: Point, to: Point) {
+export interface CropBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The smallest crop kept, in image pixels: a narrower drag is taken as a slip. */
+const MIN_CROP = 10;
+
+function box(from: Point, to: Point): CropBox {
   return {
     x: Math.min(from[0], to[0]),
     y: Math.min(from[1], to[1]),
     width: Math.abs(to[0] - from[0]),
     height: Math.abs(to[1] - from[1]),
   };
+}
+
+/** The crop's frame: the area cut away is dimmed. It is never drawn into the PNG (`data-crop`). */
+function CropFrame({ crop, width, height }: { crop: CropBox; width: number; height: number }) {
+  const { x, y, width: w, height: h } = crop;
+  return (
+    <g data-crop="" pointerEvents="none">
+      <path
+        d={`M0 0H${String(width)}V${String(height)}H0Z M${String(x)} ${String(y)}h${String(w)}v${String(h)}h${String(-w)}Z`}
+        fillRule="evenodd"
+        fill="#000000"
+        fillOpacity={0.6}
+      />
+      <rect
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth={1.5}
+        strokeDasharray="6 4"
+        vectorEffect="non-scaling-stroke"
+      />
+    </g>
+  );
+}
+
+/** The crop in effect: the one being dragged, else the latest in the history. */
+export function activeCrop(
+  marks: readonly Annotation[],
+  drawing: Annotation | null,
+): CropBox | null {
+  const last = drawing?.kind === "crop" ? drawing : marks.findLast((m) => m.kind === "crop");
+  return last?.kind === "crop" ? box(last.from, last.to) : null;
 }
 
 /** One annotation as SVG; the same drawing is shown live and flattened into the PNG. */
@@ -69,6 +123,8 @@ function Mark({ mark, stroke }: { mark: Annotation; stroke: number }) {
     strokeLinejoin: "round" as const,
   };
   switch (mark.kind) {
+    case "crop":
+      return null;
     case "rect":
       return <rect {...box(mark.from, mark.to)} rx={stroke} {...line} />;
     case "highlight":
@@ -128,26 +184,39 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 }
 
 /**
- * The image with its annotations drawn in, as a PNG data URL the server takes: when it is over
- * `maxBytes` it is scaled down until it fits.
+ * The image with its annotations drawn in and cut to `crop` (the whole image without one), as a
+ * PNG data URL the server takes: when it is over `maxBytes` it is scaled down until it fits.
  */
 export async function flattenScreenshot(
   src: string,
   overlay: SVGSVGElement,
-  { maxBytes = MAX_CAPTURE_BYTES }: { maxBytes?: number } = {},
+  { maxBytes = MAX_CAPTURE_BYTES, crop }: { maxBytes?: number; crop?: CropBox | null } = {},
 ): Promise<string> {
   const base = await loadImage(src);
-  const svg = new XMLSerializer().serializeToString(overlay);
+  const clean = overlay.cloneNode(true) as SVGSVGElement;
+  for (const frame of clean.querySelectorAll("[data-crop]")) frame.remove();
+  const svg = new XMLSerializer().serializeToString(clean);
   const marks = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+  const area = crop ?? { x: 0, y: 0, width: base.naturalWidth, height: base.naturalHeight };
   let scale = 1;
   for (let attempt = 0; attempt < 4; attempt++) {
     const canvas = document.createElement("canvas");
-    canvas.width = Math.round(base.naturalWidth * scale);
-    canvas.height = Math.round(base.naturalHeight * scale);
+    canvas.width = Math.max(1, Math.round(area.width * scale));
+    canvas.height = Math.max(1, Math.round(area.height * scale));
     const context = canvas.getContext("2d");
     if (!context) throw new Error("no 2D canvas");
-    context.drawImage(base, 0, 0, canvas.width, canvas.height);
-    context.drawImage(marks, 0, 0, canvas.width, canvas.height);
+    for (const layer of [base, marks])
+      context.drawImage(
+        layer,
+        area.x,
+        area.y,
+        area.width,
+        area.height,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
     const dataUrl = canvas.toDataURL("image/png");
     const bytes = decodedBytes(dataUrl);
     if (bytes <= maxBytes) return dataUrl;
@@ -168,8 +237,8 @@ export interface ScreenshotLightboxProps {
 
 /**
  * A screenshot shown large over the page. With `onSave` it is also an editor, like the macOS
- * screenshot markup: arrows, boxes, ellipses, a pen, a highlighter and text, in a few colours,
- * with undo. The marks are drawn into the PNG only on save.
+ * screenshot markup: a crop, arrows, boxes, ellipses, a pen, a highlighter and text, in a few
+ * colours, with undo. The marks and the crop go into the PNG only on save.
  */
 export function ScreenshotLightbox({ src, alt, onClose, onSave }: ScreenshotLightboxProps) {
   const editing = onSave !== undefined;
@@ -188,6 +257,7 @@ export function ScreenshotLightbox({ src, alt, onClose, onSave }: ScreenshotLigh
   useModalFocus(dialog, { locked: saving, onEscape: onClose });
 
   const stroke = size ? strokeFor(size.width) : 3;
+  const crop = activeCrop(marks, drawing);
 
   const undo = useCallback(() => {
     setMarks((before) => before.slice(0, -1));
@@ -218,10 +288,10 @@ export function ScreenshotLightbox({ src, alt, onClose, onSave }: ScreenshotLigh
     if (!size) return null;
     const rect = event.currentTarget.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return null;
-    return [
-      Math.round(((event.clientX - rect.left) / rect.width) * size.width),
-      Math.round(((event.clientY - rect.top) / rect.height) * size.height),
-    ];
+    const x = Math.round(((event.clientX - rect.left) / rect.width) * size.width);
+    const y = Math.round(((event.clientY - rect.top) / rect.height) * size.height);
+    // A drag held past the edge (pointer capture) stays on the image.
+    return [Math.min(Math.max(x, 0), size.width), Math.min(Math.max(y, 0), size.height)];
   };
 
   const commitText = () => {
@@ -266,8 +336,14 @@ export function ScreenshotLightbox({ src, alt, onClose, onSave }: ScreenshotLigh
     const tiny =
       drawing.kind === "pen"
         ? drawing.points.length < 2
-        : drawing.kind !== "text" &&
-          Math.hypot(drawing.to[0] - drawing.from[0], drawing.to[1] - drawing.from[1]) < stroke * 2;
+        : drawing.kind === "crop"
+          ? Math.min(
+              Math.abs(drawing.to[0] - drawing.from[0]),
+              Math.abs(drawing.to[1] - drawing.from[1]),
+            ) < MIN_CROP
+          : drawing.kind !== "text" &&
+            Math.hypot(drawing.to[0] - drawing.from[0], drawing.to[1] - drawing.from[1]) <
+              stroke * 2;
     if (!tiny) setMarks((before) => [...before, drawing]);
     setDrawing(null);
   };
@@ -281,7 +357,7 @@ export function ScreenshotLightbox({ src, alt, onClose, onSave }: ScreenshotLigh
     setSaving(true);
     setFailure(null);
     try {
-      onSave(await flattenScreenshot(src, overlay.current));
+      onSave(await flattenScreenshot(src, overlay.current, { crop: activeCrop(marks, null) }));
     } catch (error) {
       setFailure(error instanceof Error ? error.message : "the screenshot could not be saved");
       setSaving(false);
@@ -433,6 +509,7 @@ export function ScreenshotLightbox({ src, alt, onClose, onSave }: ScreenshotLigh
                   <Mark key={index} mark={mark} stroke={stroke} />
                 ))}
                 {drawing && <Mark mark={drawing} stroke={stroke} />}
+                {crop && <CropFrame crop={crop} width={size.width} height={size.height} />}
               </svg>
             )}
             {textBox}
@@ -447,7 +524,8 @@ export function ScreenshotLightbox({ src, alt, onClose, onSave }: ScreenshotLigh
               </span>
             ) : (
               <span className="ah-small ah-subtle">
-                Drag on the image to mark it. Your marks go into the screenshot Claude receives.
+                Drag on the image to mark it or crop it. Claude receives the screenshot as you see
+                it.
               </span>
             )}
             <span className="ah-lightbox-spacer" />
