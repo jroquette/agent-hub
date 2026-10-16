@@ -168,17 +168,14 @@ describe("FeatureDetailScreen", () => {
     );
   });
 
-  it("shows nine AC rows, then all of them on Show all", async () => {
+  it("shows every AC row at once, with no Show all fold", async () => {
     open();
 
     const table = await screen.findByRole("table", { name: "Acceptance criteria" });
     expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
-      9,
-    );
-    await userEvent.click(within(table).getByRole("button", { name: /Show all 13/ }));
-    expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
       13,
     );
+    expect(within(table).queryByRole("button", { name: /Show all/ })).toBeNull();
   });
 
   it("filters the ACs to owner steps and marks them", async () => {
@@ -190,8 +187,8 @@ describe("FeatureDetailScreen", () => {
     expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
       1,
     );
-    expect(within(table).getByText("owner")).toBeInTheDocument();
-    expect(within(table).getByText("manual · see eval.md")).toBeInTheDocument();
+    expect(within(table).getAllByText("Owner step").length).toBeGreaterThan(0);
+    expect(within(table).getByText(/Manual owner step/)).toBeInTheDocument();
   });
 
   it("opens the first owner step's row by default", async () => {
@@ -236,10 +233,13 @@ describe("FeatureDetailScreen", () => {
         "Research",
         "Plan",
         "Eval",
-        "Criteria13",
+        "Acceptance criteria13",
         "Tickets2",
       ]);
-      expect(tabs.getByRole("tab", { name: /Criteria/ })).toHaveAttribute("aria-selected", "true");
+      expect(tabs.getByRole("tab", { name: /Acceptance criteria/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
     });
 
     it("reads the plan from the brain and renders it (records)", async () => {
@@ -332,21 +332,21 @@ describe("FeatureDetailScreen", () => {
       const table = await screen.findByRole("table", { name: "Acceptance criteria" });
       await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
 
-      const details = within(table).getByText("Verification").closest("dl");
-      expect(details).toHaveTextContent("uv run pytest -k case_2");
-      expect(details).toHaveTextContent("Evidencetest run 2");
-      await userEvent.click(
-        within(table).getByRole("button", { name: "Copy the verification of AC-48.2" }),
-      );
+      const check = within(table).getByRole("region", { name: "Check it yourself" });
+      expect(check).toHaveTextContent("uv run pytest -k case_2");
+      const proven = within(table).getByRole("region", { name: "How it was proven" });
+      expect(proven).toHaveTextContent("test run 2");
+      await userEvent.click(within(check).getByRole("button", { name: "Copy command" }));
       expect(write).toHaveBeenCalledWith("uv run pytest -k case_2");
     });
 
     it("marks a manual AC's verification as an owner step (records)", async () => {
       open();
 
-      const details = (await screen.findByText("Verification")).closest("dl");
-      expect(details).toHaveTextContent("Manual owner step.");
-      expect(details).toHaveTextContent("eval.md §Owner steps");
+      const check = await screen.findByRole("region", { name: "Check it yourself" });
+      expect(check).toHaveTextContent("Manual owner step:");
+      const proven = screen.getByRole("region", { name: "How it was proven" });
+      expect(proven).toHaveTextContent("eval.md §Owner steps");
     });
 
     it("says when an AC has no evidence or verification yet (records)", async () => {
