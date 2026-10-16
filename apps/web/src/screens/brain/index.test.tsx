@@ -55,8 +55,13 @@ describe("BrainScreen", () => {
     ).toBeInTheDocument();
     expect(notePaths(requests)).toEqual(["index.md"]);
     const tree = screen.getByRole("navigation", { name: "Brain notes" });
-    const links = await within(tree).findAllByRole("link", { name: "index.md" });
-    expect(links.map((link) => link.getAttribute("aria-current"))).toEqual(["page", null]);
+    expect(await within(tree).findByRole("link", { name: "Index" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(tree).getByRole("link", { name: "index.md" })).not.toHaveAttribute(
+      "aria-current",
+    );
   });
 
   it("leads back to the project through the breadcrumb", async () => {
@@ -79,7 +84,7 @@ describe("BrainScreen", () => {
     expect(plan).toHaveAttribute("aria-current", "page");
     expect(plan.closest("details")).toHaveAttribute("open");
     expect(within(tree).getByText("decisions/").closest("details")).not.toHaveAttribute("open");
-    expect(within(tree).getByRole("link", { name: "now.md" })).toHaveAttribute(
+    expect(within(tree).getByRole("link", { name: "Now" })).toHaveAttribute(
       "href",
       "/projects/agent-hub/brain/now.md",
     );
@@ -99,7 +104,7 @@ describe("BrainScreen", () => {
     const { router } = open();
 
     const tree = screen.getByRole("navigation", { name: "Brain notes" });
-    await userEvent.click(await within(tree).findByRole("link", { name: "now.md" }));
+    await userEvent.click(await within(tree).findByRole("link", { name: "Now" }));
 
     expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/now.md");
     expect(
@@ -131,7 +136,55 @@ describe("BrainScreen", () => {
   it("says the brain is empty when it has no notes", async () => {
     open("/projects/agent-hub/brain", { [TREE]: aBrainTree({ entries: [] }) });
 
-    expect(await screen.findByText("This brain has no notes yet.")).toBeInTheDocument();
+    expect(await screen.findByText("No brain in this hub")).toBeInTheDocument();
+    expect(screen.getByText(/Run .\/hub sync to create the skeleton/)).toBeInTheDocument();
+  });
+
+  it("groups the tree into start notes, folders with counts and the unreviewed inbox", async () => {
+    open();
+
+    const tree = screen.getByRole("navigation", { name: "Brain notes" });
+    const start = await within(tree).findByRole("region", { name: "Start here" });
+    expect(
+      within(start)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["Index", "Now"]);
+    const folders = within(tree).getByRole("region", { name: "Folders" });
+    expect(within(folders).getByText("features/").closest("summary")).toHaveAccessibleName(
+      "features, 1 note",
+    );
+    expect(within(folders).queryByText("_inbox/")).not.toBeInTheDocument();
+    const inbox = within(tree).getByRole("region", { name: "Inbox · unreviewed" });
+    expect(within(inbox).getByText("_inbox/")).toBeInTheDocument();
+    expect(within(inbox).getByRole("link", { name: "Triage in Learnings" })).toHaveAttribute(
+      "href",
+      "/knowledge/learnings?scope=agent-hub",
+    );
+  });
+
+  it("filters the notes by path, focused with / and cleared with Escape", async () => {
+    open();
+
+    const tree = screen.getByRole("navigation", { name: "Brain notes" });
+    await within(tree).findByRole("link", { name: "Index" });
+    await userEvent.keyboard("/");
+    const filter = within(tree).getByRole("searchbox", { name: "Filter brain notes" });
+    expect(filter).toHaveFocus();
+
+    await userEvent.type(filter, "plan");
+    const matches = within(tree).getByRole("list", { name: "Matching notes" });
+    expect(within(matches).getByRole("link")).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/brain/features/control-plane/plan.md",
+    );
+
+    await userEvent.type(filter, "zzz");
+    expect(within(tree).getByText(/No note matches/)).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    expect(filter).toHaveValue("");
+    expect(within(tree).getByRole("region", { name: "Folders" })).toBeInTheDocument();
   });
 
   it("still shows the note when the tree cannot be read", async () => {
