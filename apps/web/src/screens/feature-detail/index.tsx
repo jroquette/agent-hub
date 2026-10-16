@@ -11,6 +11,7 @@ import {
   Icon,
   IssueLink,
   ProblemError,
+  SegmentedControl,
   Skeleton,
   StatusBadge,
   Tabs,
@@ -22,7 +23,7 @@ import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
 import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
-import { NoteView } from "../brain/NoteView";
+import { NoteView, type NoteViewMode } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
 import { EvalTab, pickEval } from "./EvalTab";
@@ -87,8 +88,21 @@ function ownerLine(text: string | undefined): string {
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
-/** A record tab (Spec, Research, Plan): the note itself, read through the brain route (D3). */
-function RecordTab({ detail, tab }: { detail: Detail; tab: string }) {
+/**
+ * A record tab (Spec, Research, Plan): the note itself, read through the brain route (D3). It opens
+ * readable, laid out for a person; Agent shows the file as the agents write and read it.
+ */
+function RecordTab({
+  detail,
+  tab,
+  view,
+  onView,
+}: {
+  detail: Detail;
+  tab: string;
+  view: NoteViewMode;
+  onView: (view: NoteViewMode) => void;
+}) {
   const meta = RECORDS[tab];
   if (!meta) return null;
   const file = `${meta.name}.md`;
@@ -108,6 +122,27 @@ function RecordTab({ detail, tab }: { detail: Detail; tab: string }) {
         <Icon name="file-text" size="sm" />
         <span className="ah-mono ah-small">brain/{record.path}</span>
         <span className="ah-grow" />
+        <SegmentedControl
+          label="Show the record"
+          value={view}
+          onChange={(id) => {
+            onView(id === "agent" ? "agent" : "readable");
+          }}
+          options={[
+            {
+              id: "readable",
+              label: "Readable",
+              icon: "book-open",
+              title: "Laid out for a person: the agents' references kept short",
+            },
+            {
+              id: "agent",
+              label: "Agent markdown",
+              icon: "file-text",
+              title: "The file exactly as the agents write and read it",
+            },
+          ]}
+        />
         <Link className="ah-small" to={brainRoute(detail.project, record.path)}>
           Open in Brain
         </Link>
@@ -117,6 +152,7 @@ function RecordTab({ detail, tab }: { detail: Detail; tab: string }) {
         project={detail.project}
         path={record.path}
         missing={`No ${file} yet.`}
+        view={view}
       />
     </div>
   );
@@ -319,8 +355,26 @@ export function FeatureDetailScreen() {
         }}
       />
     );
-  } else if (RECORDS[tab]) body = <RecordTab detail={detail} tab={tab} />;
-  else body = <CriteriaTab detail={detail} />;
+  } else if (RECORDS[tab]) {
+    body = (
+      <RecordTab
+        detail={detail}
+        tab={tab}
+        view={params.get("view") === "agent" ? "agent" : "readable"}
+        onView={(view) => {
+          setParams(
+            (current) => {
+              const next = new URLSearchParams(current);
+              if (view === "agent") next.set("view", "agent");
+              else next.delete("view");
+              return next;
+            },
+            { replace: true },
+          );
+        }}
+      />
+    );
+  } else body = <CriteriaTab detail={detail} />;
 
   return (
     <div style={{ padding: "16px 32px 40px" }} className="ah-stack">

@@ -257,12 +257,33 @@ describe("FeatureDetailScreen", () => {
       expect(new URL(asked?.url ?? "").searchParams.get("path")).toBe(
         "features/layered-memory/plan.md",
       );
-      expect(screen.getByRole("list", { name: "Frontmatter" })).toHaveTextContent(
-        "status: approved",
+      expect(screen.getByRole("definition")).toHaveTextContent("approved");
+      expect(screen.getByRole("button", { name: /Readable/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
       );
       expect(screen.getByRole("link", { name: "Open in Brain" })).toHaveAttribute(
         "href",
         "/projects/agent-hub/brain/features/layered-memory/plan.md",
+      );
+    });
+
+    it("shows the record as the agents wrote it on Agent markdown (records)", async () => {
+      open();
+      await userEvent.click(await screen.findByRole("tab", { name: "Plan" }));
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Record features/layered-memory/plan.md",
+      });
+
+      await userEvent.click(screen.getByRole("button", { name: /Agent markdown/ }));
+
+      expect(screen.getByRole("list", { name: "Frontmatter" })).toHaveTextContent(
+        "status: approved",
+      );
+      expect(screen.getByRole("button", { name: /Agent markdown/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
       );
     });
 
