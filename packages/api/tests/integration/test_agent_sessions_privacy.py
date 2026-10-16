@@ -9,6 +9,7 @@ carry ``[redacted: <kind>]`` where the live frame, sent from memory while connec
 the original; no log line holds conversation text.
 """
 
+import base64
 import json
 import logging
 import os
@@ -37,6 +38,7 @@ from agent_hub.core.agent_sessions.driver import (
     ToolResult,
 )
 from agent_hub.core.testing.agent_session_rig import START
+from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.read_model_builders import WORKDIR_ID
 from agent_hub.core.testing.session_driver_fakes import Hold, InMemorySessionDriver
 
@@ -311,3 +313,63 @@ def test_logs_no_message_text_when_requests_served_redaction_logs(
     assert MESSAGE not in too_large.text
     assert any('"path":"/api/v1/agent-sessions' in line for line in log_lines.lines)
     assert MESSAGE not in log_lines.text()
+
+
+# A screenshot (AGH-260): its base64 carries a sentinel run; the image goes to the driver only.
+
+IMAGE_SENTINEL = "SCREENSHOTSENTINEL7f3aQQ"  # 24 base64 characters: 18 bytes, kept aligned
+
+
+def _png_with_sentinel() -> bytes:
+    png = a_png_bytes()
+    padded = png + b"\x00" * (-len(png) % 3)
+    return padded + base64.b64decode(IMAGE_SENTINEL)
+
+
+def test_keeps_no_image_when_screenshot_sent(
+    open_agent_session_app: Any, log_lines: _Lines
+) -> None:
+    png = _png_with_sentinel()
+    data = base64.b64encode(png).decode()
+    assert IMAGE_SENTINEL in data
+    app = open_agent_session_app(
+        replies={"What is on this screen?": (Hold(), TextBlock(block=0, text="A page."))}
+    )
+    created = app.client.post(
+        BASE,
+        json=CREATE
+        | {
+            "prompt": "What is on this screen?",
+            "screenshot": {"media_type": "image/png", "data": data},
+        },
+    )
+    session_id = created.json()["id"]
+    app.until_status(session_id, "running")
+    live: dict[str, str] = {}
+    reader = threading.Thread(
+        target=lambda: live.update(body=app.client.get(f"{BASE}/{session_id}/stream").text)
+    )
+    reader.start()
+    _until_subscribed(app, session_id)
+    app.run(app.driver.release, app.rig.handle())
+    app.until_status(session_id, "idle")
+    detail = app.client.get(f"{BASE}/{session_id}").text
+    app.client.post(f"{BASE}/{session_id}/close", json={})
+    reader.join(timeout=10)
+    events = app.client.get(f"{BASE}/{session_id}/events")
+    replay = app.client.get(f"{BASE}/{session_id}/stream", headers={"Last-Event-ID": "0"}).text
+    stored = json.dumps([record.model_dump(mode="json") for record in app.rig.records(session_id)])
+
+    assert created.status_code == 201, created.text
+    assert not reader.is_alive()
+    assert "record.text" in live["body"]
+    assert "record.user.message" in replay
+    for copy in (created.text, detail, events.text, live["body"], replay, stored, log_lines.text()):
+        assert IMAGE_SENTINEL not in copy
+        assert "data:image/png" not in copy
+        assert "iVBORw0KGgo" not in copy
+    first = events.json()["items"][0]
+    assert first["kind"] == "user.message"
+    assert first["body"]["attachments"] == [
+        {"kind": "screenshot", "media_type": "image/png", "bytes": len(png)}
+    ]

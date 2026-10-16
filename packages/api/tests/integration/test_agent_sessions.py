@@ -3,6 +3,7 @@ the RFC 9457 problem each core agent-session error becomes (types
 ``urn:agent-hub:problem:agent-session-<code>``); then the same routes over the real use case
 (``agent_session_app``, CP): AC-165.14-.35 as the API answers them."""
 
+import base64
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -50,7 +51,9 @@ from agent_hub.core.agent_sessions.errors import (
     UnknownResumeError,
 )
 from agent_hub.core.agent_sessions.limits import SessionLimits
+from agent_hub.core.agent_sessions.screenshot import MAX_SCREENSHOT_BYTES
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL
+from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
 from agent_hub.core.testing.read_model_builders import AGENT_SESSION_ID, WORKDIR_ID
 from agent_hub.core.testing.session_driver_fakes import Hold, InMemorySessionDriver
@@ -436,6 +439,107 @@ def test_refuses_message_too_large_when_send_over_limit(
 
     _problem(response, 413, "message-too-large")
     assert all(call.method != "send" for call in app.driver.calls)
+
+
+PNG = a_png_bytes()
+PNG_BASE64 = "iVBORw0KGgo"  # the base64 of the PNG signature: never in an answer
+
+
+def _screenshot(data: bytes = PNG, media_type: str = "image/png") -> dict[str, str]:
+    return {"media_type": media_type, "data": base64.b64encode(data).decode()}
+
+
+def test_starts_session_with_image_when_screenshot_sent(agent_session_app: Any) -> None:
+    created = _created(agent_session_app, "What is on this screen?", screenshot=_screenshot())
+
+    agent_session_app.until_status(created["id"], "idle")
+
+    calls = agent_session_app.driver.calls
+    assert [call.method for call in calls].count("start") == 1
+    sends = [call.args for call in calls if call.method == "send"]
+    assert len(sends) == 1
+    text, images = sends[0]
+    assert text == "What is on this screen?"
+    assert [(image.media_type, image.data) for image in images] == [("image/png", PNG)]
+    first = agent_session_app.rig.records(created["id"])[0]
+    assert (first.kind, first.body) == (
+        "user.message",
+        {
+            "text": "What is on this screen?",
+            "attachments": [{"kind": "screenshot", "media_type": "image/png", "bytes": len(PNG)}],
+        },
+    )
+
+
+def test_sends_prompt_only_when_screenshot_absent(agent_session_app: Any) -> None:
+    created = _created(agent_session_app, "What is on this screen?")
+
+    agent_session_app.until_status(created["id"], "idle")
+
+    sends = [call.args for call in agent_session_app.driver.calls if call.method == "send"]
+    assert sends == [("What is on this screen?", ())]
+    first = agent_session_app.rig.records(created["id"])[0]
+    assert first.body == {"text": "What is on this screen?"}
+
+
+TOO_LARGE_PNG = PNG + b"\x00" * (MAX_SCREENSHOT_BYTES + 1 - len(PNG))
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "code"),
+    [
+        pytest.param(
+            {"prompt": "Look.", "screenshot": _screenshot(TOO_LARGE_PNG)},
+            413,
+            "screenshot-too-large",
+            id="too-large",
+        ),
+        pytest.param(
+            {"prompt": "Look.", "screenshot": _screenshot(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00")},
+            422,
+            "invalid-screenshot",
+            id="jpeg",
+        ),
+        pytest.param(
+            {"prompt": "Look.", "screenshot": _screenshot(b"GIF89a\x01\x00\x01\x00")},
+            422,
+            "invalid-screenshot",
+            id="gif",
+        ),
+        pytest.param(
+            {"prompt": "Look.", "screenshot": _screenshot(media_type="image/jpeg")},
+            422,
+            None,
+            id="other-media-type",
+        ),
+        pytest.param(
+            {
+                "prompt": "Look.",
+                "screenshot": {"media_type": "image/png", "data": PNG_BASE64 + "!"},
+            },
+            422,
+            "invalid-screenshot",
+            id="bad-base64",
+        ),
+        pytest.param({"screenshot": _screenshot()}, 422, None, id="no-prompt"),
+    ],
+)
+def test_refuses_screenshot_when_screenshot_refused_before_driver(
+    agent_session_app: Any, *, body: dict[str, Any], status: int, code: str | None
+) -> None:
+    listed = agent_session_app.client.get(BASE).json()
+
+    response = agent_session_app.client.post(BASE, json=CREATE | body)
+
+    if code is None:
+        assert response.status_code == status, response.text
+        assert response.json()["title"] == "Invalid request body"
+    else:
+        _problem(response, status, code)
+    assert agent_session_app.driver.calls == []
+    assert agent_session_app.client.get(BASE).json() == listed
+    assert PNG_BASE64 not in response.text
+    assert body["screenshot"]["data"][:16] not in response.text
 
 
 def test_aborts_turn_when_interrupt_posted(open_agent_session_app: Any) -> None:
