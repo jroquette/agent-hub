@@ -9,7 +9,7 @@ import type { components } from "../api/schema";
 
 type Label = components["schemas"]["SessionLabel"];
 
-/** The fields a session label needs; Session and LiveTile both have them. */
+/** The fields a session label needs (a `Session` has them). */
 export interface LabelledSession {
   id: string;
   repo: string | null;

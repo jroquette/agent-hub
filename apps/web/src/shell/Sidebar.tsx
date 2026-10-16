@@ -83,7 +83,7 @@ export const NAV: readonly { group: string; items: NavItem[] }[] = [
         id: "sessions",
         label: "Sessions",
         to: "/sessions",
-        icon: "square-terminal",
+        icon: "list",
         countKey: "live",
         countNoun: () => "live",
         tone: "live",
