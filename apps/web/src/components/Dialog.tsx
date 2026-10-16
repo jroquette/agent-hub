@@ -12,6 +12,7 @@ const openDialogs: string[] = [];
 /** How many open dialogs lock the page's scroll, and the body's overflow before the first. */
 let scrollLocks = 0;
 let overflowBefore = "";
+const MODAL = '[aria-modal="true"]';
 
 export interface DialogProps {
   title: ReactNode;
@@ -77,9 +78,12 @@ export function Dialog({
     openDialogs.push(id);
     const onKey = (event: KeyboardEvent) => {
       const node = panel.current;
-      if (!node || openDialogs[openDialogs.length - 1] !== id) return;
+      if (!node || openDialogs[openDialogs.length - 1] !== id || event.defaultPrevented) return;
+      // A key inside another modal layer above it (the palette, a hand-built dialog) is that layer's.
+      const layer = event.target instanceof Element ? event.target.closest(MODAL) : null;
+      if (layer && layer !== node && !layer.hasAttribute("data-ah-dialog")) return;
       if (event.key === "Escape") {
-        if (!latest.current.pending) latest.current.onClose?.();
+        if (!event.isComposing && !latest.current.pending) latest.current.onClose?.();
         return;
       }
       if (event.key !== "Tab") return;
@@ -145,6 +149,7 @@ export function Dialog({
         className={cx("ah-dialog", "ah-dialog-frame", `ah-dialog-${size}`, className)}
         role={role}
         aria-modal="true"
+        data-ah-dialog=""
         aria-labelledby={titleId}
         aria-busy={pending || undefined}
         tabIndex={-1}
