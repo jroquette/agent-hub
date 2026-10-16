@@ -492,6 +492,10 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   the web app on 5173, whose proxy sends the agent-session routes to the conductor, so a change never ends a session.
   One address (`/__playground/session?token=`) signs the browser in. The dev app's shake and New session start in
   the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps never offer it.
+- **Export.** `make playground-export` turns the playground's validated commits into a delivery's input, in the
+  ignored `.playground/exports/<stamp>/`: the changes grouped by screen or package, the owner's requests, the
+  reference patch and each touched screen captured on synthetic data, the delivery's visual baseline (AGH-263,
+  [design/playground-export.md](design/playground-export.md)).
 - **Discuss.** A right-hand panel holds one driven session per feature, workflow, skill, agent, hook or note on
   screen, started in the hub folder with that artifact as context; a feature opens it on arrival, and an acceptance
   criterion or a selected passage can be pointed at.
