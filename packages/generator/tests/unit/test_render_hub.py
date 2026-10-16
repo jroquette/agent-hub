@@ -4784,7 +4784,7 @@ AGENT_FILES_SHA256 = {
         "efc8f4c7e5f7865f1b8c7f8a57ba0d59155492015e0f86529fd0780eb92865f5"
     ),
     f"{AGENTS_FOLDER}/planner.md": (
-        "703db29e7407541e9895e66b1868f7615335c0599db68d57a5dfb7916811c00e"
+        "9c80e0c912359f9b59b78482f444f475be8756b648c83d91b32f3a352eb45c12"
     ),
     f"{AGENTS_FOLDER}/quality-reviewer.md": (
         "06346ed2d9948f63b1a2b5ac850ef73e698326316e8cabe95de39dba9f1fb2ae"
