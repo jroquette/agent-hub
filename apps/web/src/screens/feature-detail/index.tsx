@@ -38,7 +38,7 @@ import {
 import { AcBar, FilterMenu, PHASES, VERDICT_STATUS } from "../features/parts";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
-import { EvalTab } from "./EvalTab";
+import { EvalTab, pickEval } from "./EvalTab";
 import { TicketsTab } from "./TicketsTab";
 import { useFeature, useFeatureTickets } from "./queries";
 
@@ -575,11 +575,14 @@ const TAB_LABEL: Readonly<Record<string, string>> = {
  * panel on arrival. Claude reads every record of the feature before answering, and the brief adds
  * what the screen shows on top of the files: the phase, the criteria not passing, the tickets.
  */
-function featureDiscussTarget(detail: Detail | undefined, tab: string): DiscussTarget | null {
+function featureDiscussTarget(
+  detail: Detail | undefined,
+  tab: string,
+  evalPath: string | undefined,
+): DiscussTarget | null {
   if (!detail) return null;
   const folder = `brain/features/${detail.slug}`;
   const record = detail.records.find((r) => r.name === RECORDS[tab]?.name && r.present);
-  const evalPath = detail.evals[0]?.path;
   const path = record
     ? `brain/${record.path}`
     : tab === "acs"
@@ -626,7 +629,8 @@ export function FeatureDetailScreen() {
   const { tz } = usePreferences();
   const tab = tabOf(params.get("doc"));
   const tickets = useFeatureTickets(project, slug, tab === "tickets" && feature.isSuccess);
-  useDiscussTarget(featureDiscussTarget(feature.data, tab));
+  const selectedEval = pickEval(feature.data?.evals ?? [], params.get("eval"));
+  useDiscussTarget(featureDiscussTarget(feature.data, tab, selectedEval?.path));
 
   if (feature.isError) {
     if (feature.error.status === 404) {
@@ -682,8 +686,27 @@ export function FeatureDetailScreen() {
         acPasses={Object.fromEntries(detail.ac_rows.map((ac) => [ac.id, ac.passes]))}
       />
     );
-  } else if (tab === "eval") body = <EvalTab project={detail.project} evals={detail.evals} />;
-  else if (RECORDS[tab]) body = <RecordTab detail={detail} tab={tab} />;
+  } else if (tab === "eval") {
+    body = (
+      <EvalTab
+        project={detail.project}
+        slug={detail.slug}
+        tickets={detail.issues}
+        evals={detail.evals}
+        selected={selectedEval}
+        onSelect={(delivery) => {
+          setParams(
+            (current) => {
+              const next = new URLSearchParams(current);
+              next.set("eval", delivery);
+              return next;
+            },
+            { replace: true },
+          );
+        }}
+      />
+    );
+  } else if (RECORDS[tab]) body = <RecordTab detail={detail} tab={tab} />;
   else body = <AcTab detail={detail} />;
 
   return (

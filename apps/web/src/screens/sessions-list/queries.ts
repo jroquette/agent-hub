@@ -19,6 +19,7 @@ import {
 } from "../../lib/api";
 import { derivedWorkdirId, servedCheckout } from "../../lib/devCheckout";
 import { openStream } from "../../lib/sse";
+import { sessionControlUnavailable, type Unavailable } from "./control";
 import type { SectionId } from "./sections";
 
 export type Session = components["schemas"]["Session"];
@@ -195,6 +196,38 @@ export function useWorkdirs(project: string | null, enabled: boolean) {
     { query: { project: project ?? "" } },
     { enabled: enabled && project !== null, retry: false },
   );
+}
+
+/** What a screen needs to start a Claude session in a project's hub folder. */
+export interface HubSessionStart {
+  /** The hub folder's workdir id, or null while unknown or when the project has none. */
+  hubWorkdirId: string | null;
+  /** Why this machine cannot drive sessions at all, or null. */
+  unavailable: Unavailable | null;
+  /** Why a start cannot happen right now (unavailable, still checking, no hub), or null. */
+  reason: string | null;
+}
+
+/**
+ * Whether a session can start in `project`'s hub folder, and where: the capability check, then the
+ * hub workdir, each with the sentence a disabled control shows while it is not ready.
+ */
+export function useHubSessionStart(project: string): HubSessionStart {
+  const capabilities = useAgentCapabilities();
+  const unavailable = sessionControlUnavailable(capabilities.error, capabilities.data);
+  const canDrive = capabilities.data !== undefined && unavailable === null;
+  const workdirs = useWorkdirs(project, canDrive);
+  const hub = workdirs.data?.items.find((w) => w.kind === "hub") ?? null;
+  const reason = unavailable
+    ? `${unavailable.title}.`
+    : !canDrive
+      ? "Checking whether this machine can drive Claude…"
+      : workdirs.isPending
+        ? "Looking for the hub folder…"
+        : hub === null
+          ? `Project ${project} has no hub folder to work in.`
+          : null;
+  return { hubWorkdirId: hub?.workdir_id ?? null, unavailable, reason };
 }
 
 /** The workdir ids the served checkout has as a repo or a worktree (E6), or null outside `make dev`. */
