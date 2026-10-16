@@ -41,7 +41,7 @@ interface Opened {
  * scope (Q2), else the first registered project, as Sessions' New session picks it, so a shake works
  * on every screen, "All projects" and Settings included.
  */
-function useShakeProject(canDrive: boolean): string | null {
+export function useShakeProject(canDrive: boolean): string | null {
   const [scope] = useScope();
   const projects = useProjects();
   const names = (projects.data?.items ?? []).map((item) => item.name);
