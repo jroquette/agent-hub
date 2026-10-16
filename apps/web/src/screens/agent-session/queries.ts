@@ -308,9 +308,15 @@ export function useAgentTranscript(id: string): AgentTranscript {
   );
 
   const sends = useRef(0);
+  const ended = useRef(false);
+  useEffect(() => {
+    ended.current = isTerminal(state.status);
+  });
   const send = useCallback(
     async (text: string, post: (text: string) => Promise<MessageAccepted>) => {
       const sendKey = `send-${String((sends.current += 1))}`;
+      // A message to an ended session reopens it in place: reload, so the stream opens again.
+      const reopens = ended.current;
       batcher.push({ type: "sending", key: sendKey, text });
       try {
         const { seq } = await post(text);
@@ -319,8 +325,12 @@ export function useAgentTranscript(id: string): AgentTranscript {
         batcher.push({ type: "failed", key: sendKey });
         throw cause;
       }
+      if (reopens) {
+        void queryClient.invalidateQueries({ queryKey: sessionKey(id) });
+        reload();
+      }
     },
-    [batcher],
+    [batcher, id, queryClient, reload],
   );
 
   const current = loaded?.key === key ? loaded : null;

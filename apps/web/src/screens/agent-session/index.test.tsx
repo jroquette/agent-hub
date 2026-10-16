@@ -258,41 +258,42 @@ describe("AgentSessionScreen (transcript)", () => {
     expect(view.requests.some((r) => r.method === "DELETE")).toBe(true);
   });
 
-  it("resumes an ended session as a new driven session on the same Claude conversation", async () => {
-    const resumedId = anId(2, "0192a5e5");
-    const ended = anAgentSession({ status: "ended", end_reason: "server_stopped" });
+  it("resumes an ended session in place when a message is sent, then streams it", async () => {
+    let reopened = false;
     const view = renderChat(
       routes({
-        [SESSION]: ended,
-        "POST /api/v1/agent-sessions": anAgentSession({ id: resumedId, status: "idle" }),
+        [SESSION]: () =>
+          reopened
+            ? anAgentSession({ status: "running", last_seq: 4 })
+            : anAgentSession({ status: "ended", end_reason: "server_stopped", last_seq: 3 }),
+        [`POST ${SESSION}/messages`]: () => {
+          reopened = true;
+          return { seq: 4 };
+        },
       }),
     );
     await screen.findByText("Starting.");
-
-    await userEvent.click(screen.getByRole("button", { name: "Resume session" }));
-
-    await waitFor(() => {
-      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${resumedId}`);
-    });
-    const create = view.requests.find(
-      (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+    expect(() => view.stream(STREAM)).toThrow();
+    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    expect(box).toHaveAttribute(
+      "placeholder",
+      "This session has ended. Send a message to resume it.",
     );
-    expect(await bodyOf(create)).toEqual({
-      project: ended.project,
-      workdir_id: ended.workdir_id,
-      mode: ended.mode,
-      model: ended.model ?? null,
-      prompt: null,
-      resume_session_id: ended.claude_session_id,
-      fork: false,
+
+    await userEvent.type(box, "Go on.{Enter}");
+
+    expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({ text: "Go on." });
+    await waitFor(() => {
+      expect(() => view.stream(STREAM)).not.toThrow();
     });
+    expect(view.router.state.location.pathname).toBe(`/agent-sessions/${ID}`);
   });
 
-  it("offers no Resume while the session is live", async () => {
-    renderChat();
+  it("offers no resume when the ended session's log is full", async () => {
+    renderChat(routes({ [SESSION]: anAgentSession({ status: "ended", end_reason: "log_full" }) }));
 
     await screen.findByText("Starting.");
-    expect(screen.queryByRole("button", { name: "Resume session" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Message Claude" })).toBeDisabled();
   });
 
   it("links the agent session to its observed session", async () => {

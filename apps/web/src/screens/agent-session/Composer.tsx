@@ -48,6 +48,8 @@ export interface ComposerProps {
   focusOnOpen?: boolean | undefined;
   /** Why nothing can be sent (log full, control off…); the session's end is detected on its own. */
   disabledReason?: string | null | undefined;
+  /** An ended session a message resumes in place (Claude still holds its conversation). */
+  resumable?: boolean | undefined;
 }
 
 const bytesOf = (text: string) => new TextEncoder().encode(text).length;
@@ -79,6 +81,7 @@ export function Composer({
   inputRef,
   draftId = null,
   focusOnOpen = false,
+  resumable = false,
 }: ComposerProps) {
   const { text, setText, accepted } = useDraft(draftId);
   const [sending, setSending] = useState(false);
@@ -96,9 +99,11 @@ export function Composer({
   const modelId = useId();
 
   const ended = status === "ended" || status === "failed";
-  const reason = ended
-    ? "This session has ended. Resume it to continue."
-    : (disabledReason ?? null);
+  const resumes = ended && resumable && !disabledReason;
+  const reason =
+    ended && !resumes
+      ? "This session has ended. Start a new session to continue."
+      : (disabledReason ?? null);
   const size = bytesOf(text);
   const tooLong = size > maxBytes;
   const canSend = reason === null && !sending && !tooLong && text.trim() !== "";
@@ -206,7 +211,10 @@ export function Composer({
         className="ah-input as-composer-input"
         rows={3}
         value={text}
-        placeholder={reason ?? "Message Claude"}
+        placeholder={
+          reason ??
+          (resumes ? "This session has ended. Send a message to resume it." : "Message Claude")
+        }
         disabled={reason !== null}
         aria-describedby={hintId}
         aria-invalid={tooLong}
