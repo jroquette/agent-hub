@@ -13,6 +13,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- README: a Workflows section, and the banner no longer says the control plane is read-only. USING.md points to
+  it. The web smoke starts a workflow run, approves its gate and cancels it against an installed `hub web`
+  (AGH-233, AC-213.20).
 - `hub web` can start a Claude session from any project screen by shaking the mouse, with a screenshot of the
   screen: a "Shake to start a session" setting (off by default) opens New session with the prompt focused and an
   "Attach a screenshot" checkbox; `POST /api/v1/agent-sessions` takes an optional PNG `screenshot` (at most
