@@ -9,7 +9,7 @@ import {
   DataTable,
   EmptyState,
   ExternalLabel,
-  FilterChip,
+  FacetMenu,
   Icon,
   ProblemError,
   ProvenanceBadge,
@@ -41,11 +41,12 @@ import {
   MAX_QUERY_CHARS,
   NO_FILTERS,
   PROVENANCES,
-  READINESS,
   toggle,
   withFilters,
   type ClaudeVerdict,
   type LearningFilters,
+  type Provenance,
+  type Readiness,
   type VerdictOf,
 } from "./filters";
 import { useLearnings, useLiveLearnings, type LearningStatus } from "./queries";
@@ -157,21 +158,20 @@ function QueueRow({ l, verdict }: { l: Learning; verdict: ClaudeVerdict }) {
   );
 }
 
-const READINESS_LABEL = { ready: "Ready", blocked: "Blocked" } as const;
+const PROVENANCE_LABEL: Record<Provenance, string> = {
+  human: "Human",
+  agent: "Agent",
+  "agent-from-code": "Agent, from code",
+  "agent-from-external": "Agent, from external",
+};
 
-function FacetRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="ah-row ah-wrap" style={{ gap: 6 }} role="group" aria-label={label}>
-      <span className="ah-small ah-subtle" style={{ width: 72, flex: "none" }}>
-        {label}
-      </span>
-      {children}
-    </div>
-  );
-}
+/** The queue's quick views: every proposal, the ones decidable here, the blocked ones. */
+type QuickView = "all" | Readiness;
+const quickViewOf = (filters: LearningFilters): QuickView =>
+  filters.readiness.length === 1 ? (filters.readiness[0] ?? "all") : "all";
 
-/** Search and facets above the queue: project (when every project is in scope), provenance and,
- * for proposals, whether they can be decided here. */
+/** Search, quick views and facet menus above the queue. A facet with nothing to choose between
+ * (one project, no provenance) is left out; each menu shows how many learnings an option keeps. */
 function LearningFiltersBar({
   rows,
   filters,
@@ -191,101 +191,117 @@ function LearningFiltersBar({
   const provenances = PROVENANCES.filter(
     (p) => counts.provenance[p] > 0 || filters.provenance.includes(p),
   );
-  const allProjects = counts.project.reduce((sum, [, n]) => sum + n, 0);
+  const projectChoice = showProject && (counts.project.length > 1 || filters.project !== null);
+  const verdicts = CLAUDE_VERDICTS.filter(
+    (v) => counts.claude[v] > 0 || filters.claude.includes(v),
+  );
+  const view = quickViewOf(filters);
+  const readyOrBlocked = counts.readiness.ready + counts.readiness.blocked;
   return (
-    <div className="ah-stack" style={{ gap: 8, padding: "12px 16px 0 32px" }}>
-      <div className="ah-row" style={{ gap: 8 }}>
-        <div className="ah-search ah-grow">
-          <Icon name="search" size="sm" />
-          <input
-            type="search"
-            className="ah-input"
-            aria-label="Search learnings"
-            placeholder="Search title, summary or project"
-            maxLength={MAX_QUERY_CHARS}
-            value={filters.q}
-            onChange={(event) => {
-              onChange({ ...filters, q: event.target.value });
-            }}
-          />
-        </div>
-        {hasFilters(filters) && (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="x"
-            onClick={() => {
-              onChange(NO_FILTERS);
-            }}
-          >
-            Clear
-          </Button>
-        )}
+    <div className="ah-stack" style={{ gap: 10, padding: "12px 16px 0 32px" }}>
+      <div className="ah-search">
+        <Icon name="search" size="sm" />
+        <input
+          type="search"
+          className="ah-input"
+          aria-label="Search learnings"
+          placeholder="Search title, summary or project"
+          maxLength={MAX_QUERY_CHARS}
+          value={filters.q}
+          onChange={(event) => {
+            onChange({ ...filters, q: event.target.value });
+          }}
+        />
       </div>
-      {showProject && (
-        <FacetRow label="Project">
-          <FilterChip
-            value={`All · ${String(allProjects)}`}
-            active={filters.project === null}
-            onClick={() => {
-              onChange({ ...filters, project: null });
-            }}
-          />
-          {counts.project.map(([project, n]) => (
-            <FilterChip
-              key={project}
-              value={`${project} · ${String(n)}`}
-              active={filters.project === project}
-              onClick={() => {
+      {showReadiness && (
+        <SegmentedControl
+          label="Decision"
+          value={view}
+          onChange={(id) => {
+            onChange({ ...filters, readiness: id === "all" ? [] : [id as Readiness] });
+          }}
+          options={[
+            { id: "all", label: `All · ${String(readyOrBlocked)}` },
+            {
+              id: "ready",
+              label: `Ready to decide · ${String(counts.readiness.ready)}`,
+              title: "Proposals you can accept or reject here",
+            },
+            {
+              id: "blocked",
+              label: `Blocked · ${String(counts.readiness.blocked)}`,
+              title: "Proposals that cannot be decided here (their note is missing, ...)",
+            },
+          ]}
+        />
+      )}
+      {(projectChoice || verdicts.length > 0 || provenances.length > 0 || hasFilters(filters)) && (
+        <div className="ah-row ah-wrap" style={{ gap: 6 }} role="group" aria-label="Filters">
+          {projectChoice && (
+            <FacetMenu
+              label="Project"
+              anyLabel="All"
+              options={counts.project.map(([project, n]) => ({
+                id: project,
+                label: project,
+                count: n,
+                checked: filters.project === project,
+              }))}
+              onToggle={(project) => {
                 onChange({ ...filters, project: filters.project === project ? null : project });
               }}
-            />
-          ))}
-        </FacetRow>
-      )}
-      {provenances.length > 0 && (
-        <FacetRow label="Provenance">
-          {provenances.map((p) => (
-            <FilterChip
-              key={p}
-              value={`${p} · ${String(counts.provenance[p])}`}
-              active={filters.provenance.includes(p)}
-              onClick={() => {
-                onChange({ ...filters, provenance: toggle(filters.provenance, p) });
+              onClear={() => {
+                onChange({ ...filters, project: null });
               }}
             />
-          ))}
-        </FacetRow>
-      )}
-      {showReadiness && (
-        <FacetRow label="Claude">
-          {CLAUDE_VERDICTS.filter((v) => counts.claude[v] > 0 || filters.claude.includes(v)).map(
-            (v) => (
-              <FilterChip
-                key={v}
-                value={`${CLAUDE_LABEL[v]} · ${String(counts.claude[v])}`}
-                active={filters.claude.includes(v)}
-                onClick={() => {
-                  onChange({ ...filters, claude: toggle(filters.claude, v) });
-                }}
-              />
-            ),
           )}
-        </FacetRow>
-      )}
-      {showReadiness && (
-        <FacetRow label="Decision">
-          {READINESS.map((r) => (
-            <FilterChip
-              key={r}
-              value={`${READINESS_LABEL[r]} · ${String(counts.readiness[r])}`}
-              active={filters.readiness.includes(r)}
-              onClick={() => {
-                onChange({ ...filters, readiness: toggle(filters.readiness, r) });
+          {showReadiness && verdicts.length > 0 && (
+            <FacetMenu
+              label="Claude"
+              options={verdicts.map((v) => ({
+                id: v,
+                label: CLAUDE_LABEL[v],
+                count: counts.claude[v],
+                checked: filters.claude.includes(v),
+              }))}
+              onToggle={(v) => {
+                onChange({ ...filters, claude: toggle(filters.claude, v as ClaudeVerdict) });
+              }}
+              onClear={() => {
+                onChange({ ...filters, claude: [] });
               }}
             />
-          ))}
-        </FacetRow>
+          )}
+          {provenances.length > 0 && (
+            <FacetMenu
+              label="Source"
+              options={provenances.map((p) => ({
+                id: p,
+                label: PROVENANCE_LABEL[p],
+                count: counts.provenance[p],
+                checked: filters.provenance.includes(p),
+              }))}
+              onToggle={(p) => {
+                onChange({ ...filters, provenance: toggle(filters.provenance, p as Provenance) });
+              }}
+              onClear={() => {
+                onChange({ ...filters, provenance: [] });
+              }}
+            />
+          )}
+          {hasFilters(filters) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="x"
+              onClick={() => {
+                onChange(NO_FILTERS);
+              }}
+            >
+              Clear all
+            </Button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -441,8 +457,8 @@ export function LearningsScreen() {
           {claude.sources}
           <div className="ah-row ah-wrap" style={{ gap: 6, padding: "12px 16px 10px 32px" }}>
             <span className="ah-small ah-subtle">
-              {status === "proposed" && blockedCount > 0
-                ? `${String(rows.length - blockedCount)} ready · ${String(blockedCount)} blocked · oldest first`
+              {status === "proposed" && blockedCount > 0 && blockedCount < rows.length
+                ? "Ready to decide first, then blocked · oldest first"
                 : "Oldest first"}
             </span>
             <span className="ah-grow" />
