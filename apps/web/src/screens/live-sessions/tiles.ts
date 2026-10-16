@@ -1,4 +1,5 @@
-/* Live sessions: tile order and grouping (spec 11), pure so the screen only renders. */
+/* Live sessions: tile grouping (spec 11), pure so the screen only renders; the tile order is Sessions' (T11 retires Live). */
+import { sortTiles } from "../sessions-list/tiles";
 import type { LiveTile } from "./queries";
 
 export type Grouping = "repo" | "run" | "workflow" | "flat";
@@ -14,41 +15,6 @@ export const GROUP_CAP = 6;
 
 export function isGrouping(value: string | null): value is Grouping {
   return GROUPINGS.some((grouping) => grouping.id === value);
-}
-
-/** A red edge only when a problem needs the owner (E11); a failing notice alone stays text. */
-export function troubled(tile: LiveTile): boolean {
-  return tile.problems.needs_you > 0;
-}
-
-const count = (n: number, one: string, many: string) => `${String(n)} ${n === 1 ? one : many}`;
-
-/**
- * The tile's problems line (AC-201.14): the first problem that needs the owner, else what the agent
- * handled, is still on, or the owner interrupted; null without problems.
- */
-export function problemsLine(tile: LiveTile): string | null {
-  const { needs_you, handled, open, by_you } = tile.problems;
-  if (needs_you > 0) {
-    return tile.needs_you_problem ?? `Needs you: ${count(needs_you, "problem", "problems")}`;
-  }
-  const parts = [
-    handled > 0 ? `${count(handled, "problem", "problems")}, handled by the agent` : "",
-    open > 0 ? `${count(open, "problem", "problems")}, agent is on it` : "",
-    by_you > 0 ? `${String(by_you)} handled by you` : "",
-  ].filter(Boolean);
-  return parts.length > 0 ? parts.join(" · ") : null;
-}
-
-/** Inside a group: idle last, troubled first, then the oldest start first. */
-export function sortTiles(tiles: LiveTile[]): LiveTile[] {
-  return [...tiles].sort(
-    (a, b) =>
-      Number(a.status === "idle") - Number(b.status === "idle") ||
-      Number(troubled(b)) - Number(troubled(a)) ||
-      Date.parse(a.started_at) - Date.parse(b.started_at) ||
-      a.id.localeCompare(b.id),
-  );
 }
 
 export interface TileGroup {
@@ -108,18 +74,4 @@ export function splitTiles(tiles: LiveTile[]): Split {
     running: tiles.filter((tile) => tile.group === "live" || tile.group === "idle"),
     ended: tiles.filter((tile) => tile.group === "ended_recently"),
   };
-}
-
-/**
- * Where a waiting tile sends the owner: a session hub web drives to its chat, where the
- * permission card answers it (AC-165.25); any other wait, a hook-observed permission prompt
- * included, to the approvals.
- */
-export function waitingLink(tile: LiveTile): { href: string; label: string } {
-  if (tile.agent_session_id)
-    return {
-      href: `/agent-sessions/${encodeURIComponent(tile.agent_session_id)}`,
-      label: "Open chat",
-    };
-  return { href: "/approvals", label: "Open approval" };
 }

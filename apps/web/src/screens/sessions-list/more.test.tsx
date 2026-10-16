@@ -1,5 +1,5 @@
 import { fireEvent, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   aPage,
@@ -12,6 +12,11 @@ import {
   renderWithApi,
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
+
+// These tests read the tables; the grid is the default view (AC-234.3).
+beforeEach(() => {
+  window.localStorage.setItem("ah.sessions.view", "table");
+});
 
 function named(name: string) {
   return aSessionLabel({ issue: null, workflow: `/${name}`, workflows: [`/${name}`] });
