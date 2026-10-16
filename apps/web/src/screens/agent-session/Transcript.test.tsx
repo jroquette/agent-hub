@@ -7,7 +7,7 @@ import { seriousViolations } from "../../testing/axe";
 import { CostMeter } from "./CostMeter";
 import { TodoList } from "./TodoList";
 import { FIRST_ENTRIES, Transcript } from "./Transcript";
-import { initialTranscript, reduceTranscript, type StreamItem } from "./transcript";
+import { initialTranscript, reduceTranscript, type StreamItem } from "./model";
 
 /** Renders of Markdown (each parses its source) and of tool cards. */
 const renders = vi.hoisted(() => ({ markdown: 0, tool: 0 }));

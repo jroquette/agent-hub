@@ -30,7 +30,7 @@ import {
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
-import { modeLabel, pendingPermissions, type TranscriptState } from "./transcript";
+import { modeLabel, pendingPermissions, resumable, type TranscriptState } from "./model";
 import { useStickToBottom } from "./useStickToBottom";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
@@ -101,7 +101,8 @@ function useChatKeys(pending: readonly string[], composer: { current: HTMLElemen
 /**
  * The chat view of a session `hub web` drives (D10, `/agent-sessions/:id`): the snapshot and the
  * log, then the live stream; the transcript, todos, cost meter, status, permission cards and the
- * composer; Close while live, Delete once ended.
+ * composer; Close while live, Delete once ended. A message to an ended session resumes it in
+ * place, on the same page and log.
  */
 export function AgentSessionScreen() {
   const { agentSessionId = "" } = useParams();
@@ -187,6 +188,8 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const model = state.model ?? session.model ?? null;
   const models = capabilities.data?.models ?? DEFAULT_MODELS;
   const cloud = session.kind === "cloud";
+  const endReason = state.endReason ?? session.end_reason;
+  const canResume = resumable(session, endReason);
 
   const act = (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -298,6 +301,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             lastPrompt={lastPrompt(state)}
             inputRef={setComposer}
             disabledReason={cloud ? "A cloud session is driven from claude.ai." : null}
+            resumable={canResume}
           />
         </div>
       </footer>
