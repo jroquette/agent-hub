@@ -204,7 +204,7 @@ function EvidenceSummary({
           Recorded note
         </span>
       )}
-      {(commit || facts.date) && (
+      {(commit !== undefined || facts.date !== null) && (
         <span className="ah-subtle ah-row ah-wrap" style={{ gap: 6 }}>
           {commit && (
             <span title="The commit the check ran on">
@@ -353,9 +353,7 @@ function HowProven({
         {facts.date && <Fact label="When">{facts.date}</Fact>}
         {facts.environments.length > 0 && (
           <Fact label="Ran in">
-            <span className="ah-mono">
-              {facts.environments.map((e) => `DataMode=${e}`).join(", ")}
-            </span>
+            <span className="ah-mono">{facts.environments.join(", ")}</span>
           </Fact>
         )}
         {facts.redOnBase && (
@@ -403,7 +401,7 @@ const DOC_LABELS: Readonly<Record<string, string>> = {
   "eval.md": "Eval (legacy)",
 };
 
-/** "Spec", "Plan", "Eval · demo-1552", "Review · DEMO-1552". */
+/** "Spec", "Plan", "Eval · agh-12", "Review · AGH-12". */
 export function docLabel(path: string): string {
   const name = path.split("/").pop() ?? path;
   const stem = name.replace(/\.md$/, "");
@@ -681,9 +679,12 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
         </Button>
       </div>
       <p className="ah-small ah-muted ah-ac-hint">
-        <Icon name="message-square" size="sm" /> Each criterion has a <b>Discuss</b> button: it
-        attaches that criterion to your next message for Claude in the panel on the right. Open a
-        row to see how it was proven and where it is cited.
+        <Icon name="message-square" size="sm" />
+        <span>
+          Each criterion has a <b>Discuss</b> button: it attaches that criterion to your next
+          message for Claude in the panel on the right. Open a row to see how it was proven and
+          where it is cited.
+        </span>
       </p>
       <div className="ah-table-wrap">
         <table className="ah-table ah-actable ah-actable-v2" aria-label="Acceptance criteria">
