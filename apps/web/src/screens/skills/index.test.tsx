@@ -258,6 +258,14 @@ describe("SkillDetailScreen states", () => {
     expect(screen.queryByRole("region", { name: /^Bundled files/ })).not.toBeInTheDocument();
   });
 
+  it("offers to edit the item with Claude beside Discuss", async () => {
+    openDetail();
+
+    await screen.findByRole("heading", { level: 1, name: "feature" });
+    expect(screen.getByRole("button", { name: "Edit with Claude" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Discuss with Claude" })).toBeInTheDocument();
+  });
+
   it("shows no bundled files when an agent is open", async () => {
     openDetail("/projects/demo/skills/agent/hub-workflow/evaluator");
 

@@ -4,9 +4,9 @@ import "./Skills.css";
 import "./SkillDetail.css";
 
 import { useState } from "react";
-import { Navigate, useParams } from "react-router";
+import { Navigate, useNavigate, useParams } from "react-router";
 
-import { AppLink, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
+import { AppLink, Button, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
 import type { MarkdownProps } from "../../components";
 import type { components } from "../../api/schema";
 import { useNow } from "../../lib/clock";
@@ -28,6 +28,7 @@ import { HookDetail } from "./HookDetail";
 import { useSkillCatalog, useSkillDetail, type SkillRef } from "./queries";
 import { Relations } from "./Relations";
 import { StructurePanel } from "./StructurePanel";
+import { editDraftRoute } from "./Studio";
 import { CreateMenu } from "./CreateMenu";
 
 type SkillDetail = components["schemas"]["SkillDetail"];
@@ -108,6 +109,7 @@ function DetailBody({
   detail: SkillDetail;
 }) {
   const now = useNow(60_000);
+  const navigate = useNavigate();
   const [view, setView] = useState<BodyMode>("rendered");
   const [openId, setOpenId] = useState<string | null>(null);
   const isSkill = detail.kind === "skill";
@@ -143,7 +145,24 @@ function DetailBody({
   };
   return (
     <div className="ah-stack" style={{ gap: 16 }}>
-      <DetailHeader detail={detail} now={now} usageDays={USAGE_DAYS} action={<DiscussButton />} />
+      <DetailHeader
+        detail={detail}
+        now={now}
+        usageDays={USAGE_DAYS}
+        action={
+          <div className="ah-row" style={{ gap: 8 }}>
+            <DiscussButton />
+            <Button
+              size="sm"
+              variant="primary"
+              icon="file-pen"
+              onClick={() => void navigate(editDraftRoute(project, item))}
+            >
+              Edit with Claude
+            </Button>
+          </div>
+        }
+      />
       <Diagnostics diagnostics={detail.diagnostics} />
       {detail.hook ? (
         <HookDetail hook={detail.hook} sourcePath={detail.source_path} />

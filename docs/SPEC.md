@@ -497,6 +497,8 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   criterion or a selected passage can be pointed at.
 - **Studio.** Create a skill, an agent or a hook with Claude: the session writes a draft under `.hub-drafts/<id>/`
   in the hub and the preview renders it as the catalog card it will be. The Skills catalog has a tab per kind.
+  An existing item opens the same way from its detail (Edit with Claude, AGH-271): Claude edits a copy in the draft
+  folder, the preview shows the change as a diff against the current version, and Publish writes it over the item.
 - **Session names.** A session's name is the title Claude Code writes in its transcript, or the user's `/rename`,
   stored as `session.title` ([ADR 0035](adr/0035-session-titles.md), below).
 

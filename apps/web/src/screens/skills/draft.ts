@@ -328,6 +328,16 @@ export interface DraftCheck {
   label: string;
 }
 
+/** What an edit draft is compared with: the item as it is in the hub now. */
+export interface EditBaseline {
+  /** The item's name today; the draft keeping it is no clash, changing it is a rename. */
+  name: string;
+  /** The main file's text today, or null when the hub did not send it. */
+  original: string | null;
+  /** The item comes from hub.lock: the next hub sync overwrites a local edit. */
+  managed: boolean;
+}
+
 export interface DraftSummary {
   kind: ItemKind;
   /** The main file: `SKILL.md`, the agent's `<name>.md`, or `hooks.json`; null before it exists. */
@@ -352,12 +362,14 @@ function mainFile(kind: ItemKind, files: readonly DraftFile[]): DraftFile | null
 
 /**
  * What the draft files read as: name, description, the catalog card, the checks before
- * publishing. `taken` holds the names already in the catalog for this kind.
+ * publishing. `taken` holds the names already in the catalog for this kind; `edit` is the item
+ * the draft changes, when it is an edit and not a new item.
  */
 export function summarize(
   kind: ItemKind,
   files: readonly DraftFile[],
   taken: ReadonlySet<string> = new Set(),
+  edit: EditBaseline | null = null,
 ): DraftSummary {
   const main = mainFile(kind, files);
   const checks: DraftCheck[] = [];
@@ -440,9 +452,17 @@ export function summarize(
               }
             : !KEBAB.test(name)
               ? { id: "name", state: "warn", label: `Name "${name}" is not kebab-case` }
-              : taken.has(name)
-                ? { id: "name", state: "warn", label: `A ${kind} named "${name}" already exists` }
-                : { id: "name", state: "ok", label: `Name "${name}" is free` },
+              : name === edit?.name
+                ? { id: "name", state: "ok", label: `Name "${name}" unchanged` }
+                : taken.has(name)
+                  ? { id: "name", state: "warn", label: `A ${kind} named "${name}" already exists` }
+                  : edit
+                    ? {
+                        id: "name",
+                        state: "warn",
+                        label: `Renamed from "${edit.name}": whatever calls it by the old name breaks`,
+                      }
+                    : { id: "name", state: "ok", label: `Name "${name}" is free` },
       );
       checks.push(
         description === null
@@ -471,6 +491,21 @@ export function summarize(
         checks.push({ id: "body", state: "warn", label: "The body is empty" });
       }
     }
+  }
+  if (edit && main) {
+    const same = edit.original !== null && sameText(main.content, edit.original);
+    checks.push(
+      same && files.length === 1
+        ? { id: "changed", state: "todo", label: "No change yet: the draft is the current version" }
+        : { id: "changed", state: "ok", label: changeLabel(main.content, edit.original, files) },
+    );
+  }
+  if (edit?.managed) {
+    checks.push({
+      id: "managed",
+      state: "warn",
+      label: "Managed by hub.lock: the next hub sync overwrites this edit",
+    });
   }
   if (files.some((f) => f.partial)) {
     checks.push({
@@ -516,6 +551,29 @@ export function summarize(
   };
 }
 
+function sameText(a: string, b: string): boolean {
+  const normal = (t: string) => t.replace(/\r\n?/g, "\n").trimEnd();
+  return normal(a) === normal(b);
+}
+
+function changeLabel(
+  content: string,
+  original: string | null,
+  files: readonly DraftFile[],
+): string {
+  const others = files.length - 1;
+  const more = others > 0 ? ` and ${String(others)} more ${others === 1 ? "file" : "files"}` : "";
+  if (original === null) return `Changes ${files[0]?.path ?? "the file"}${more}`;
+  const before = new Set(original.split("\n"));
+  const after = new Set(content.split("\n"));
+  const added = [...after].filter((line) => !before.has(line)).length;
+  const removed = [...before].filter((line) => !after.has(line)).length;
+  const main = sameText(content, original)
+    ? "Main file unchanged"
+    : `+${String(added)} −${String(removed)} lines`;
+  return `${main}${more}`;
+}
+
 /* ---------- Where it is published ---------- */
 
 /**
@@ -542,6 +600,37 @@ export function destination(kind: ItemKind, name: string | null, pluginDir: stri
   if (kind === "skill") return `${root}/skills/${item}/`;
   if (kind === "agent") return `${root}/agents/${item}.md`;
   return `${root}/hooks/hooks.json`;
+}
+
+/** Where an edit lands: the item's own folder (a skill) or file (an agent, a hook's file). */
+export function editDestination(kind: ItemKind, sourcePath: string): string {
+  if (kind !== "skill") return sourcePath;
+  const at = sourcePath.lastIndexOf("/");
+  return at < 0 ? "./" : `${sourcePath.slice(0, at)}/`;
+}
+
+/** The draft file an edit starts from: the main file's name in the draft folder. */
+export function editMainFile(kind: ItemKind, sourcePath: string): string {
+  if (kind === "skill") return "SKILL.md";
+  if (kind === "hook") return "hooks.json";
+  return sourcePath.split("/").pop() ?? "agent.md";
+}
+
+/** One hook as a hooks.json of its own, the text an edit of it starts from. */
+export function hookFileText(hook: {
+  event: string;
+  matcher: string | null;
+  type: string;
+  command: string | null;
+  timeout: number | null;
+}): string {
+  const entry: JsonObject = { type: hook.type };
+  if (hook.command !== null) entry.command = hook.command;
+  if (hook.timeout !== null) entry.timeout = hook.timeout;
+  const group: JsonObject = hook.matcher
+    ? { matcher: hook.matcher, hooks: [entry] }
+    : { hooks: [entry] };
+  return `${JSON.stringify({ hooks: { [hook.event]: [group] } }, null, 2)}\n`;
 }
 
 /* ---------- What Claude is told ---------- */
@@ -579,6 +668,62 @@ export function studioPrompt(brief: StudioBrief, message: string): string {
     "If my ask is unclear, ask me at most three short questions first. Otherwise write a first complete draft right away, then tell me in a few lines what you built and what I should decide. Use Write for whole files and Edit for changes, so the preview stays exact.",
   ];
   return [...head.filter((line) => line !== ""), "", "What I want:", message].join("\n");
+}
+
+export interface EditBrief {
+  project: string;
+  kind: ItemKind;
+  draftId: string;
+  /** The item's name and hub-relative main file. */
+  name: string;
+  sourcePath: string;
+  managed: boolean;
+  /** For a hook: its hooks.json text today, to write first as is. */
+  hookText: string | null;
+}
+
+/** The first message of an edit in the Studio: copy the item into the draft, then the ask. */
+export function editPrompt(brief: EditBrief, message: string): string {
+  const dir = draftDir(brief.draftId);
+  const main = editMainFile(brief.kind, brief.sourcePath);
+  const start =
+    brief.kind === "hook"
+      ? `This hook is configured in ${brief.sourcePath}, beside others. Start by writing ${dir}/hooks.json with exactly this text (this one hook alone), then change it:\n\n${brief.hookText ?? ""}`
+      : `It is the file ${brief.sourcePath}. Start by reading it and writing it unchanged, whole, to ${dir}/${main} with Write: the web app compares the draft with the current version. Then change the draft with Edit.${brief.kind === "skill" ? ` A bundled file (beside SKILL.md) goes into the draft only when you change or add it, at the same relative path, written whole first.` : ""}`;
+  const lines = [
+    `I am the owner of the agent-hub project "${brief.project}", writing from the agent-hub web app's Studio.`,
+    `I want to change the existing ${brief.kind} "${brief.name}" of this hub with you. ${KIND_BRIEF[brief.kind]}`,
+    start,
+    `Write ONLY inside the folder ${dir}/ (create it). The web app previews every file you write there, live. Do not touch the original: nothing changes until I click Publish.`,
+    brief.managed
+      ? "This item is managed by hub.lock: the next hub sync overwrites a local edit. Say so if the change belongs upstream instead, but edit the draft if I ask."
+      : "",
+    "Keep the name unless I ask to rename it. Change only what my ask needs and keep the rest of the text as it is, in its shape and tone.",
+    "If my ask is unclear, ask me at most three short questions first. Otherwise make the change right away, then tell me in a few lines what you changed and what I should decide. Use Write for whole files and Edit for changes, so the preview stays exact.",
+  ];
+  return [...lines.filter((line) => line !== ""), "", "What I want to change:", message].join("\n");
+}
+
+/** The message the Publish button sends for an edit: the draft's files over the item's. */
+export function publishEditPrompt(
+  kind: ItemKind,
+  draftId: string,
+  sourcePath: string,
+  hookText: string | null,
+): string {
+  const dir = draftDir(draftId);
+  const to = editDestination(kind, sourcePath);
+  const how: Record<ItemKind, string> = {
+    skill: `Copy every file of ${dir}/ over its counterpart in ${to} (same relative path; a new file is added). Leave the files the draft does not hold as they are. If the name in SKILL.md changed, rename the folder to match.`,
+    agent: `Replace ${sourcePath} with the agent file in ${dir}/. If its name changed, rename the file to match.`,
+    hook: `In ${sourcePath}, replace this hook as it is today:\n${hookText ?? ""}\nwith the hooks of ${dir}/hooks.json. Keep every other hook and setting of the file as it is.`,
+  };
+  return [
+    "I reviewed the changed draft in the preview and I approve it. Publish it now:",
+    how[kind],
+    `Then delete ${dir}/. Do not change anything else and do not commit.`,
+    "Reply with one line per file you wrote, starting with PUBLISHED.",
+  ].join("\n");
 }
 
 /** The message the Publish button sends: move the draft into place, nothing else. */
