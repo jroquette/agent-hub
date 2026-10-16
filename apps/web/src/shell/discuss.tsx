@@ -23,6 +23,17 @@ export interface DiscussTarget {
    * Closing it there is remembered for this target until the page reloads.
    */
   openOnArrive?: boolean | undefined;
+  /**
+   * Ready-made first messages for this kind of artifact ("Is this worth keeping?"): one click
+   * starts the conversation with that message.
+   */
+  starters?: readonly DiscussStarter[] | undefined;
+}
+
+/** A one-click first message: `label` is what the button reads, `message` what Claude gets. */
+export interface DiscussStarter {
+  label: string;
+  message: string;
 }
 
 /**

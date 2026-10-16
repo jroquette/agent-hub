@@ -22,7 +22,9 @@ import {
 } from "../../components";
 import { fmtAgo } from "../../lib/format";
 import { safeHref } from "../../lib/safeHref";
+import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { DecideDialog, type DecideAction } from "./DecideDialog";
+import { learningDiscussTarget } from "./discussLearning";
 import { useNoteDraft } from "./noteDraft";
 import { ReviewPanel } from "./ReviewPanel";
 import { useDecideLearning, useHubRepo, useLearning, type LearningActionResult } from "./queries";
@@ -410,6 +412,22 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
   const [result, setResult] = useState<LearningActionResult | null>(null);
   const targetId = useId();
   const choicesId = useId();
+  // The learning is what the Discuss panel talks about: open on a proposal, so the owner can
+  // review, improve or drop it with Claude straight away; on a decided one, when asked.
+  const placed = l ? (result?.state ?? stateOf(l)) : null;
+  useDiscussTarget(
+    l
+      ? learningDiscussTarget({
+          id: l.id,
+          project: l.project,
+          text: displayTitle(l.text),
+          path: detail?.note ? `brain/${detail.note.path}` : null,
+          recordedPath: l.note_path ?? null,
+          inBrain: placed === "in_brain",
+          proposed: placed === "proposed",
+        })
+      : null,
+  );
 
   if (query.isError && !l) {
     return (
@@ -493,9 +511,12 @@ export function LearningDetail({ id, row, now, onDecide }: LearningDetailProps) 
               {ext && (
                 <Icon name="triangle-alert" style={{ color: "var(--waiting)", marginTop: 4 }} />
               )}
-              <h2 className="ah-h2" style={{ fontSize: 18, lineHeight: "26px" }}>
+              <h2 className="ah-h2 ah-grow" style={{ fontSize: 18, lineHeight: "26px" }}>
                 <Title t={l.text} />
               </h2>
+              <span style={{ flex: "none" }}>
+                <DiscussButton label="Talk with Claude" />
+              </span>
             </div>
             <div className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 8, marginTop: 6 }}>
               <LearningStateBadge state={state} />

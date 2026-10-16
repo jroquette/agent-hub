@@ -7,6 +7,7 @@ import { useApi } from "../../lib/api";
 import { brainRoute } from "../../lib/brainLinks";
 import { useScope } from "../../lib/scope";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
+import { BRAIN_NOTE_STARTERS } from "../learnings/discussLearning";
 import { NoteView } from "./NoteView";
 import { useBrainTree } from "./queries";
 import { buildTree, noteName, type BrainFolder } from "./tree";
@@ -112,6 +113,7 @@ export function BrainScreen() {
     kind: "Note",
     title: path,
     path: `brain/${path}`,
+    starters: BRAIN_NOTE_STARTERS,
   });
   return (
     <div className="ah-page" style={{ gap: 16 }}>
