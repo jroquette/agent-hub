@@ -281,7 +281,7 @@ PR is opened as that `gh` account). Under Docker the hubs are mounted read-only,
 
 **Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
 in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
-agents; the chat sends messages, answers permission prompts, interrupts, changes mode and model, resumes and forks.
+agents; the chat sends messages, answers prompts, interrupts and changes mode and model (no resume or fork yet).
 It needs the `sessions` extra (the Claude Agent SDK, about 240 MiB): from the hub folder, run `uvx --from
 'agent-hub[sessions] @ git+https://github.com/jroquette/agent-hub@v<version>#subdirectory=packages/agent-hub' hub web`
 instead of `./hub web`; without it the screen says what is missing. Open the printed address once per browser: the
