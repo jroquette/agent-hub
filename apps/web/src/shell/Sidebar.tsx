@@ -78,16 +78,16 @@ export const NAV: readonly { group: string; items: NavItem[] }[] = [
   {
     group: "Observe",
     items: [
+      // One Sessions entry; it carries the live badge of the retired Live sessions (ADR 0033 D8).
       {
-        id: "live",
-        label: "Live sessions",
-        to: "/live",
-        icon: "radio",
+        id: "sessions",
+        label: "Sessions",
+        to: "/sessions",
+        icon: "square-terminal",
         countKey: "live",
         countNoun: () => "live",
         tone: "live",
       },
-      { id: "sessions", label: "Sessions", to: "/sessions", icon: "square-terminal" },
       { id: "runs", label: "Workflow runs", to: "/runs", icon: "route" },
     ],
   },

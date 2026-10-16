@@ -40,7 +40,8 @@ export function useShell(): ShellActions {
 const GO: Record<string, string> = {
   p: "/",
   a: "/approvals",
-  l: "/live",
+  // Kept from the retired Live sessions (O-6).
+  l: "/sessions?view=grid",
   s: "/sessions",
   r: "/runs",
   k: "/knowledge/learnings",

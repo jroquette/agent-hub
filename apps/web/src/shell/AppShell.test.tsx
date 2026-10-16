@@ -70,9 +70,34 @@ describe("AppShell", () => {
     const { router } = renderWithApi(<AppShell />, { routes });
 
     fireEvent.keyDown(document.body, { key: "g" });
-    fireEvent.keyDown(document.body, { key: "l" });
+    fireEvent.keyDown(document.body, { key: "r" });
 
-    expect(router.state.location.pathname).toBe("/live");
+    expect(router.state.location.pathname).toBe("/runs");
+  });
+
+  it("one-tab: g s opens Sessions and g l, kept from Live, opens its grid", () => {
+    const { router } = renderWithApi(<AppShell />, { routes });
+
+    fireEvent.keyDown(document.body, { key: "g" });
+    fireEvent.keyDown(document.body, { key: "s" });
+    expect(router.state.location.pathname).toBe("/sessions");
+    expect(router.state.location.search).toBe("");
+
+    fireEvent.keyDown(document.body, { key: "g" });
+    fireEvent.keyDown(document.body, { key: "l" });
+    expect(router.state.location.pathname).toBe("/sessions");
+    expect(router.state.location.search).toBe("?view=grid");
+  });
+
+  it("one-tab: badges the live count on Sessions when the stream's counts arrive", () => {
+    const { stream } = renderWithApi(<AppShell />, { routes });
+
+    act(() => {
+      stream("/api/v1/events/stream").open();
+      stream("/api/v1/events/stream").emit("counts", aStreamCounts({ live_sessions: 3 }));
+    });
+
+    expect(screen.getByRole("link", { name: "Sessions, 3 live" })).toHaveTextContent("3");
   });
 
   it("ignores single-key shortcuts while typing in a field", () => {
