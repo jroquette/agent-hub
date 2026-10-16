@@ -561,6 +561,36 @@
   background: var(--failed-soft);
   color: var(--failed);
 }
+.as-perm-outcome-answered {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.as-perm-outcome-skipped {
+  background: var(--idle-soft);
+  color: var(--idle);
+}
+/* What you answered, kept on the card after it closes. */
+.as-recap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+.as-recap-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--border-strong);
+}
+.as-recap-item dt {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.as-recap-item dd {
+  margin: 0;
+  font-weight: 500;
+}
 .as-perm-actions {
   gap: var(--space-2);
   align-items: center;

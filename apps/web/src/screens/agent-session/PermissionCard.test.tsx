@@ -242,6 +242,67 @@ describe("PermissionCard (permission)", () => {
     expect(onAnswer).toHaveBeenCalledWith({ decision: "deny" });
   });
 
+  it("keeps an answered question readable: each question with your answer, read as Answered", () => {
+    const request = aView({
+      request_kind: "ask_user_question",
+      tool: "AskUserQuestion",
+      summary: "Two questions",
+      suggestions: [],
+      input: {
+        questions: [
+          { question: "Which database?", header: "DB", options: [{ label: "SQLite" }] },
+          { question: "Which checks?", options: [{ label: "lint" }] },
+        ],
+      },
+    });
+    render(
+      <PermissionCard
+        request={{
+          ...request,
+          decision: {
+            decision: "allow",
+            by: "web",
+            message: null,
+            at: "2026-10-11T14:10:00Z",
+            answers: { "Which database?": "SQLite (Recommended)" },
+          },
+        }}
+      />,
+    );
+
+    const [database, checks] = screen.getAllByRole("definition");
+    expect(database).toHaveTextContent(/^SQLite$/);
+    expect(checks).toHaveTextContent("Not answered");
+    expect(screen.getByText("Which checks?")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/^Answered$/);
+    expect(screen.queryByText(/Allowed/)).toBeNull();
+  });
+
+  it.each([
+    ["ask_user_question", { decision: "deny", by: "web", message: null }, "Skipped"],
+    [
+      "plan_approval",
+      { decision: "allow", by: "web", message: null, mode: "acceptEdits" },
+      "Plan approved · Accept edits",
+    ],
+    [
+      "plan_approval",
+      { decision: "deny", by: "web", message: "Smaller steps" },
+      "Kept planning: Smaller steps",
+    ],
+  ] as const)("reads a %s decided %j as %s", (kind, decision, text) => {
+    render(
+      <PermissionCard
+        request={{
+          ...aView({ request_kind: kind, input: null }),
+          decision: { ...decision, at: "2026-10-11T14:10:00Z" },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(new RegExp(`^${text}$`));
+  });
+
   it("approves a plan with the mode to continue in, or keeps planning", async () => {
     const request = aView({
       request_kind: "plan_approval",

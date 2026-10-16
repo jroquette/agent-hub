@@ -86,6 +86,10 @@ export interface PermissionDecisionView {
   by: RecordBy | null;
   message: string | null;
   at: string;
+  /** An `AskUserQuestion`'s answers, by question text. */
+  answers?: Record<string, string> | null;
+  /** The mode a plan approval continued in. */
+  mode?: "default" | "acceptEdits" | null;
 }
 
 export interface PermissionView {
@@ -557,6 +561,20 @@ function applyPermissionRequest(state: TranscriptState, record: LogRecord): Tran
   });
 }
 
+function approvedMode(mode: string | null): "default" | "acceptEdits" | null {
+  return mode === "default" || mode === "acceptEdits" ? mode : null;
+}
+
+/** The answers of a decision record: question text to answer, strings only. */
+function answersOf(value: unknown): Record<string, string> | null {
+  const answers = obj(value);
+  if (!answers) return null;
+  const pairs = Object.entries(answers).filter(
+    (pair): pair is [string, string] => typeof pair[1] === "string",
+  );
+  return pairs.length > 0 ? Object.fromEntries(pairs) : null;
+}
+
 function applyDecision(state: TranscriptState, record: LogRecord): TranscriptState {
   const requestId = str(record.body, "request_id") ?? "";
   const known = state.permissions[requestId];
@@ -567,6 +585,8 @@ function applyDecision(state: TranscriptState, record: LogRecord): TranscriptSta
     by: record.by ?? null,
     message: str(record.body, "message"),
     at: record.at,
+    answers: answersOf(record.body.answers),
+    mode: approvedMode(str(record.body, "mode")),
   };
   return {
     ...state,
