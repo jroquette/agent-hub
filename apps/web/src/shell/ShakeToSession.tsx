@@ -5,7 +5,7 @@ import { matchingWorkdir, servedCheckout } from "../lib/devCheckout";
 import { captureScreen } from "../lib/screenCapture";
 import { useScope } from "../lib/scope";
 import { createShakeDetector } from "../lib/shake";
-import { sessionControlUnavailable } from "../screens/sessions-list/AgentSessionList";
+import { sessionControlUnavailable } from "../screens/sessions-list/control";
 import type {
   DriverCapabilities,
   ShakeScreenshot,

@@ -148,7 +148,8 @@ AGENT_FOLLOW_UP = "Now run the tests."
 # The Playwright test of smoke.spec.ts that opens the Skills catalog and a skill's detail.
 SKILLS_SPEC = "Skills"
 # The Playwright test of smoke.spec.ts that drives a workflow run from the web (AC-213.20), and
-# the demo hub's workflow it runs: a sign-off gate, then a shell node that works until cancelled.
+# the demo hub's workflow it runs: a sign-off gate, then a shell node that works until cancelled
+# (no longer than the test's budget, so a failed run never outlives the test by much).
 WORKFLOWS_SPEC = "Web-driven workflow run"
 SMOKE_WORKFLOW = "workflows/smoke/smoke.yaml"
 SMOKE_WORKFLOW_TEXT = """\
@@ -166,7 +167,7 @@ nodes:
     message: Go on?
   - id: work
     type: shell
-    command: [sleep, "300"]
+    command: [sleep, "120"]
     depends_on: [sign-off]
 """
 # The demo hub's own skill (AGH-164), beside the managed ones ``hub init`` writes.
