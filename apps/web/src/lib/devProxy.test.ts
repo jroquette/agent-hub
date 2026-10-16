@@ -1,6 +1,13 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { API_TARGET, DEV_ORIGINS, DEV_SERVER, apiProxy } from "./devProxy";
+import {
+  API_TARGET,
+  DEV_ORIGINS,
+  DEV_SERVER,
+  SESSION_LOGIN_PATH,
+  SESSIONS_PATH,
+  apiProxy,
+} from "./devProxy";
 
 type Configure = NonNullable<ReturnType<typeof apiProxy>["/api"]["configure"]>;
 
@@ -52,6 +59,43 @@ describe("apiProxy", () => {
 
   it("lists the dev server's loopback origins only", () => {
     expect(DEV_ORIGINS).toEqual(["http://127.0.0.1:5173", "http://localhost:5173"]);
+  });
+
+  it("sends the agent-session routes to their own target first, the rest of /api to the API", () => {
+    const proxy = apiProxy("http://127.0.0.1:7421", "http://127.0.0.1:7420");
+
+    expect(Object.keys(proxy)).toEqual([SESSION_LOGIN_PATH, SESSIONS_PATH, "/api"]);
+    expect(proxy[SESSIONS_PATH]?.target).toBe("http://127.0.0.1:7420");
+    expect(proxy["/api"].target).toBe("http://127.0.0.1:7421");
+  });
+
+  it("sends make playground's token login to the sessions server as its own /?token=", () => {
+    const login = apiProxy("http://127.0.0.1:7421", "http://127.0.0.1:7420")[SESSION_LOGIN_PATH];
+
+    expect(login?.target).toBe("http://127.0.0.1:7420");
+    expect(login?.rewrite?.(`${SESSION_LOGIN_PATH}?token=abc`)).toBe("/?token=abc");
+  });
+
+  it("keeps a single /api route when the sessions target is the API's", () => {
+    expect(Object.keys(apiProxy("http://127.0.0.1:7421"))).toEqual(["/api"]);
+    expect(Object.keys(apiProxy(API_TARGET, API_TARGET))).toEqual(["/api"]);
+  });
+
+  it("rewrites the dev server's origin to the sessions target on the agent-session routes", () => {
+    const emitter = new EventEmitter();
+    const headers = new Map<string, string>([["origin", "http://127.0.0.1:5173"]]);
+    const request = {
+      getHeader: vi.fn((name: string) => headers.get(name)),
+      setHeader: vi.fn((name: string, value: string) => headers.set(name, value)),
+      removeHeader: vi.fn((name: string) => headers.delete(name)),
+    };
+    const configure = apiProxy("http://127.0.0.1:7421", "http://127.0.0.1:7420")[SESSIONS_PATH]
+      ?.configure;
+    if (configure === undefined) throw new Error("the sessions route has no configure hook");
+    configure(emitter as unknown as Parameters<Configure>[0], {});
+    emitter.emit("proxyReq", request);
+
+    expect(headers.get("origin")).toBe("http://127.0.0.1:7420");
   });
 
   it("serves the dev app on loopback only, on a fixed port", () => {

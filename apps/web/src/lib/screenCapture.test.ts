@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { toPng } from "html-to-image";
 
-import { MAX_CAPTURE_BYTES, captureScreen, decodedBytes } from "./screenCapture";
+import { MAX_CAPTURE_BYTES, captureScreen, decodedBytes, onScreen } from "./screenCapture";
 
 vi.mock("html-to-image", () => ({ toPng: vi.fn() }));
 
@@ -77,5 +77,49 @@ describe("captureScreen", () => {
       dataUrl: small,
       bytes: 100,
     });
+  });
+});
+
+describe("onScreen", () => {
+  function at(box: Partial<DOMRect>): HTMLElement {
+    const element = document.createElement("div");
+    vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      bottom: 0,
+      right: 0,
+      width: 0,
+      height: 0,
+      toJSON: () => ({}),
+      ...box,
+    });
+    return element;
+  }
+
+  it("keeps an element in the viewport and drops one entirely above or below it", () => {
+    const height = window.innerHeight;
+    expect(onScreen(at({ top: 10, bottom: 60, left: 0, right: 100, width: 100, height: 50 }))).toBe(
+      true,
+    );
+    expect(onScreen(at({ top: -500, bottom: -10, right: 100, width: 100, height: 490 }))).toBe(
+      false,
+    );
+    expect(
+      onScreen(at({ top: height + 10, bottom: height + 60, right: 100, width: 100, height: 50 })),
+    ).toBe(false);
+  });
+
+  it("keeps text, zero-size wrappers and elements only partly on screen", () => {
+    expect(onScreen(document.createTextNode("hello"))).toBe(true);
+    expect(onScreen(at({}))).toBe(true);
+    expect(onScreen(at({ top: -40, bottom: 20, right: 100, width: 100, height: 60 }))).toBe(true);
+  });
+
+  it("is the capture's filter", async () => {
+    png.mockResolvedValue(dataUrlOf(100));
+    await captureScreen();
+    expect(png).toHaveBeenCalledWith(document.body, expect.objectContaining({ filter: onScreen }));
   });
 });
