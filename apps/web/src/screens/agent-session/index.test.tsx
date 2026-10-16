@@ -1296,6 +1296,7 @@ describe("AgentSessionScreen (changed-files)", () => {
     await userEvent.click(button);
 
     const panel = screen.getByRole("complementary", { name: "Changed files" });
+    await userEvent.click(within(panel).getByRole("button", { name: /app\.py/ }));
     expect(within(panel).getByRole("region", { name: "src/app.py" })).toBeInTheDocument();
     expect(button).toHaveAttribute("aria-expanded", "true");
 
