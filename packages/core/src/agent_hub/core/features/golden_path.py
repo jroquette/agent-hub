@@ -2,10 +2,10 @@
 
 Steps, in order: Spec, Research and Plan (their record file is written; one left out while a
 later record exists is ``skipped``), Tickets (every planned ticket has a tracker id), Implement
-(every ticket Done in Linear and every AC passing), Review (every ticket reviewed: Done in Linear
-or an approved review record), Evaluate (the latest eval of every AC is a SHIP, none waiting on
-owner steps) and Shipped (every ticket Done in Linear). Canceled tickets and withdrawn ACs are
-left out of every count.
+(every ticket Done in Linear and every AC passing; its meta also counts the tickets in
+progress), Review (every ticket reviewed: Done in Linear or an approved review record),
+Evaluate (the latest eval of every AC is a SHIP, none waiting on owner steps) and Shipped
+(every ticket Done in Linear). Canceled tickets and withdrawn ACs are left out of every count.
 
 The fold: steps hold in turn until the first that does not, the gate; it is ``current`` (or
 ``unknown`` when its evidence cannot be read) and the ``phase``. No step after the gate is
@@ -240,8 +240,13 @@ def _implement(facts: _Facts) -> _Own:
     if acs:
         counts.append((passing, acs, "ACs"))
     progress = StepProgress(done=counts[0][0], total=counts[0][1]) if counts else None
-    meta = " · ".join(f"{done}/{of} {noun}" for done, of, noun in counts) or None
-    started = passing > 0 or facts.done > 0
+    parts = [f"{done}/{of} {noun}" for done, of, noun in counts]
+    # Tickets under way (In Progress, In Review) are not Done yet but are not idle either.
+    working = sum(row.readiness == "in_progress" for row in facts.active) if facts.linear else 0
+    if working:
+        parts.insert(1 if total else 0, f"{working} in progress")
+    meta = " · ".join(parts) or None
+    started = passing > 0 or facts.done > 0 or working > 0
     missing = [f"{of - done} of {of} {_NOT_YET[noun]}" for done, of, noun in counts if done < of]
     if missing:
         reason = "; ".join(missing)

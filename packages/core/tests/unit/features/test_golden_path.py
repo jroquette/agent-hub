@@ -354,3 +354,17 @@ def test_keeps_steps_monotonic_when_states_generated_property(inputs: GoldenInpu
     assert all("GitHub" not in (step.meta or "") + (step.reason or "") for step in path.steps)
     if inputs.source == "plan" and any(row.state is None for row in inputs.rows):
         assert path.steps[-1].state != "done"
+
+
+def test_counts_in_progress_tickets_in_implement_meta_when_started() -> None:
+    rows = (
+        _ticket(1, state=_IN_REVIEW, readiness="in_progress"),
+        _ticket(2, state=_STARTED, readiness="in_progress"),
+        _ticket(3, state=IssueState(name="Backlog", type="backlog"), readiness="can_start"),
+    )
+
+    path = golden_path(_inputs(rows=rows, acs=_acs(18, passing=17)))
+
+    implement = _step(path, "implement")
+    assert implement.meta == "0/3 tickets · 2 in progress · 17/18 ACs"
+    assert implement.state == "current"
