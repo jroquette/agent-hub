@@ -13,12 +13,27 @@ import {
 } from "../../testing/builders";
 import { TicketsTab } from "./TicketsTab";
 
-function show(data: FeatureTickets | undefined, extra: { error?: ApiProblem | null } = {}) {
+function show(
+  data: FeatureTickets | undefined,
+  extra: { error?: ApiProblem | null; acPasses?: Record<string, boolean> } = {},
+) {
   const onRefresh = vi.fn();
   const result = renderWithApi(
-    <TicketsTab data={data} error={extra.error ?? null} onRefresh={onRefresh} />,
+    <TicketsTab
+      data={data}
+      error={extra.error ?? null}
+      onRefresh={onRefresh}
+      acPasses={extra.acPasses}
+    />,
   );
   return { ...result, onRefresh };
+}
+
+/** The `index`th item, failing the test when there is none. */
+function nth<T>(items: readonly T[], index: number): T {
+  const item = items[index];
+  if (item === undefined) throw new Error(`no item ${String(index)}`);
+  return item;
 }
 
 function rowOf(ref: string): HTMLElement {
@@ -198,10 +213,56 @@ describe("TicketsTab", () => {
     expect(onRefresh).toHaveBeenCalledOnce();
   });
 
-  it("shows the planning view under the table (planning)", () => {
+  it("shows the ticket flow above the table (planning)", () => {
     show(aFeatureTickets());
 
-    expect(screen.getByRole("heading", { name: "Planning" })).toBeInTheDocument();
+    const flow = screen.getByRole("heading", { name: "Ticket flow" });
+    const table = screen.getByRole("table", { name: "Tickets" });
+    expect(flow.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("says a started ticket is in progress, and when it was reviewed (readiness)", () => {
+    const data = aFeatureTickets();
+    const first = nth(data.tickets, 0);
+    const second = nth(data.tickets, 1);
+    show(
+      aFeatureTickets({
+        tickets: [
+          {
+            ...first,
+            state: { name: "In Review", type: "started" },
+            readiness: "in_progress",
+            reviewed: true,
+          },
+          {
+            ...second,
+            state: { name: "In Progress", type: "started" },
+            readiness: "in_progress",
+            reviewed: false,
+            waiting_on: [first.ref],
+          },
+        ],
+      }),
+    );
+
+    const rows = within(screen.getByRole("table", { name: "Tickets" })).getAllByRole("row");
+    expect(nth(rows, 1)).toHaveTextContent("Reviewed · waiting for Done");
+    expect(nth(rows, 2)).toHaveTextContent(`In progressstarted before ${first.ref} was done`);
+    expect(screen.getByRole("listitem", { name: /in progress/ })).toHaveTextContent(
+      "2 in progress",
+    );
+  });
+
+  it("folds a long AC list into how many pass (tickets)", () => {
+    const data = aFeatureTickets();
+    const row = { ...nth(data.tickets, 0), acs: ["AC-1", "AC-2", "AC-3", "AC-4"] };
+    show(aFeatureTickets({ tickets: [row] }), {
+      acPasses: { "AC-1": true, "AC-2": true, "AC-3": true, "AC-4": false },
+    });
+
+    const table = within(screen.getByRole("table", { name: "Tickets" }));
+    expect(table.getByText("3/4 passing")).toBeInTheDocument();
+    expect(screen.getByText("3/4 ACs passing")).toBeInTheDocument();
   });
 
   it("shows a skeleton while loading (states)", () => {

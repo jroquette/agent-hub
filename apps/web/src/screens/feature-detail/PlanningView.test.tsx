@@ -17,43 +17,73 @@ const plan = aTicketPlan({
   critical_path: ["T1", "T3", "T5"],
 });
 
-function section(name: string) {
-  return within(screen.getByRole("region", { name }));
+/** The `index`th item, failing the test when there is none. */
+function nth<T>(items: readonly T[], index: number): T {
+  const item = items[index];
+  if (item === undefined) throw new Error(`no item ${String(index)}`);
+  return item;
 }
 
 describe("PlanningView", () => {
-  it("shows what can start, the numbered layers, the order and the critical path (planning)", () => {
-    render(<PlanningView tickets={rows} planning={plan} />);
+  it("draws each parallel group as a step, left to right, then the settled tickets (flow)", () => {
+    const done = aTicketRow({
+      ref: "T6",
+      key: "T6",
+      id: null,
+      title: "Ticket T6",
+      url: null,
+      readiness: "done",
+      state: { name: "Done", type: "completed" },
+    });
+    render(<PlanningView tickets={[...rows, done]} planning={plan} />);
 
-    expect(screen.getByRole("heading", { name: "Planning" })).toBeInTheDocument();
-    expect(
-      section("Can start now")
-        .getAllByRole("link")
-        .map((a) => a.textContent),
-    ).toEqual(["T1", "T2", "T4"]);
-    const layers = section("Parallel groups").getAllByRole("listitem");
-    expect(layers.map((li) => li.textContent)).toEqual([
-      "Layer 1T1, T2, T4",
-      "Layer 2T3",
-      "Layer 3T5",
+    expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
+    const steps = within(screen.getByRole("list", { name: "Ticket flow" }))
+      .getAllByRole("listitem")
+      .filter((li) => li.tagName === "SECTION");
+    expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual([
+      "Step 1 · in parallel",
+      "Step 2 · after step 1",
+      "Step 3 · after step 2",
+      "Done · settled",
     ]);
     expect(
-      section("Recommended order")
+      within(nth(steps, 0))
         .getAllByRole("listitem")
-        .map((li) => li.textContent),
-    ).toEqual([
-      "T1 · Ticket T1",
-      "T2 · Ticket T2",
-      "T4 · Ticket T4",
-      "T3 · Ticket T3",
-      "T5 · Ticket T5",
-    ]);
-    expect(section("Critical path").getByText(/longest chain/).parentElement).toHaveTextContent(
-      "T1 → T3 → T5 (3 tickets, the longest chain not done)",
+        .map((li) => li.getAttribute("aria-label")),
+    ).toEqual(["T1 · Ticket T1", "T2 · Ticket T2", "T4 · Ticket T4"]);
+    expect(within(nth(steps, 3)).getByRole("listitem", { name: "T6 · Ticket T6" })).toHaveAttribute(
+      "data-readiness",
+      "done",
     );
-    expect(section("Can start now").getByRole("link", { name: "T1" })).toHaveAttribute(
+    expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).toHaveTextContent(
+      "critical path",
+    );
+    expect(screen.getByRole("link", { name: "Ticket T1" })).toHaveAttribute(
       "href",
       `#${ticketAnchor("T1")}`,
+    );
+  });
+
+  it("shows a started ticket as in progress, never as can start (flow)", () => {
+    const started = rows.map((row) =>
+      row.ref === "T1"
+        ? {
+            ...row,
+            readiness: "in_progress" as const,
+            state: { name: "In Review", type: "started" as const },
+          }
+        : row,
+    );
+    render(<PlanningView tickets={started} planning={{ ...plan, can_start: ["T2", "T4"] }} />);
+
+    const card = screen.getByRole("listitem", { name: "T1 · Ticket T1" });
+    expect(card).toHaveAttribute("data-readiness", "in_progress");
+    expect(card).toHaveTextContent("In Review");
+    expect(card).toHaveTextContent("In progress");
+    expect(card).not.toHaveTextContent("Can start now");
+    expect(screen.getByRole("list", { name: "Tickets by readiness" })).toHaveTextContent(
+      "1 in progress",
     );
   });
 
@@ -97,10 +127,10 @@ describe("PlanningView", () => {
     expect(screen.getByText(/more than 50 relations/)).toBeInTheDocument();
   });
 
-  it("says when nothing can start and nothing is left (planning states)", () => {
+  it("says when there is no ticket to show (flow states)", () => {
     render(
       <PlanningView
-        tickets={rows}
+        tickets={[]}
         planning={aTicketPlan({
           layers: [],
           can_start: [],
@@ -111,9 +141,7 @@ describe("PlanningView", () => {
       />,
     );
 
-    expect(screen.getByText("Nothing can start now.")).toBeInTheDocument();
-    expect(screen.getByText("No ticket left to plan.")).toBeInTheDocument();
-    expect(screen.getByText("No chain left: every ticket is done.")).toBeInTheDocument();
+    expect(screen.getByText("No ticket to show.")).toBeInTheDocument();
   });
 
   it("has no serious axe violation (a11y)", async () => {
