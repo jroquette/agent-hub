@@ -3,6 +3,7 @@ export * from "./charts";
 export * from "./CollectorPill";
 export * from "./core";
 export * from "./data";
+export * from "./Dialog";
 export * from "./domain";
 export * from "./feedback";
 export * from "./Icon";
