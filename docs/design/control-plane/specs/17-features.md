@@ -65,6 +65,26 @@ Built after the owner validated these in the playground; where this file says ot
   and the value still shows.
 - **AC-269.8** Given no eval yet, then the empty state says "No evals yet." and points to Evaluate.
 
+**Acceptance criteria tab** (replaces "AC table" below where they differ)
+
+- **AC-269.9** The tab reads "Acceptance criteria" with the `list-checks` icon and the count (`?doc=acs` unchanged).
+- **AC-269.10** Each row shows: the status as icon and word ("Passes", "Owner step", "Not passing"); the criterion
+  (id, repo chip, the whole description wrapped, Given/When/Then kept as text); the evidence in plain words, read
+  from the evidence text ("4 tests passed" in `done`, "2 of 12 tests failed" in `failed`, "Command succeeded",
+  "Superseded", "Recorded note", "No evidence yet"), with the commit (a GitHub link when the repo's `github` is
+  known) and the date below it and a tooltip that explains each number; the documents citing it ("2 docs · 3×");
+  and a labelled "Discuss" button (accessible name "Discuss AC-n with Claude", "In next message" while attached).
+  A hint line under the filters says what Discuss does. The verification command leaves the row.
+- **AC-269.11** An expanded row is a card in four labelled regions: *What must be true* (Given / When / Then on
+  three lines); *How it was proven* (result in plain words and as recorded, commit, pull request, date, the
+  `NAME=VALUE` settings it ran with, "Failed before" for a red-on-base clause, the eval records it names or the
+  latest eval naming the AC as links to `?doc=eval&eval=`, an open owner check, and the recorded text, kept whole);
+  *Check it yourself* (the command in a `CodeBlock` with "Copy command", or "Manual owner step:" with the steps);
+  *Where it is cited* (each record of `brain/features/<slug>/` naming the id, in document order, with its first
+  section, mention count and snippet, linking to the record tab, the eval, or the Brain note at the section).
+  Facts read from the evidence text are marked derived; the recorded text is the source.
+- **AC-269.12** Every criterion is listed at once: no fold, no "Show all".
+
 ---
 
 ## Screen 1: Features list
