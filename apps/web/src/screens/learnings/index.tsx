@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -50,9 +50,10 @@ import {
   type VerdictOf,
 } from "./filters";
 import { useLearnings, useLiveLearnings, type LearningStatus } from "./queries";
-import { VERDICT } from "./ReviewPanel";
 import { MAX_TRIAGE_BATCH } from "./review";
-import { triageCandidates, useClaudeVerdicts, useTriage } from "./triage";
+import { triageCandidates, useClaudeVerdicts, useTriage, type ClaudeReview } from "./triage";
+import { CLAUDE_LABEL, ClaudeReviewBadge } from "./ClaudeReviewBadge";
+import { TriageProgress } from "./TriageProgress";
 
 type Learning = components["schemas"]["Learning"];
 
@@ -77,41 +78,29 @@ const clamp = (lines: number): CSSProperties => ({
   whiteSpace: "normal",
 });
 
-const CLAUDE_LABEL: Record<ClaudeVerdict, string> = {
-  ready: "Goes in",
-  needs_changes: "Needs changes",
-  not_for_brain: "Leave out",
-  reviewing: "Reviewing",
-  unreviewed: "Not reviewed",
-};
-
-/** Claude's recommendation as the queue shows it; nothing until a review was asked for. */
-function ClaudeVerdictBadge({ verdict }: { verdict: ClaudeVerdict }) {
-  if (verdict === "unreviewed") return null;
-  if (verdict === "reviewing") {
-    return (
-      <span className="ah-row ah-small ah-subtle" style={{ gap: 4 }}>
-        <Icon name="loader" size="sm" />
-        Claude reviewing…
-      </span>
-    );
-  }
-  const look = VERDICT[verdict];
-  return <StatusBadge status={look.status} label={`Claude: ${look.label}`} />;
-}
-
-function QueueRow({ l, verdict }: { l: Learning; verdict: ClaudeVerdict }) {
+function QueueRow({ l, review }: { l: Learning; review: ClaudeReview }) {
   const ext = isExternal(l);
   const state = stateOf(l);
   const blocked = blockedReason(l);
+  // The learning Claude is on (or stopped on) stands out from the rest of the queue.
+  const active = review.verdict === "reviewing" || review.verdict === "waiting";
+  const edge = active
+    ? review.verdict === "waiting"
+      ? "var(--waiting)"
+      : "var(--live)"
+    : ext
+      ? "var(--waiting)"
+      : "transparent";
   return (
     <div
+      aria-current={review.verdict === "reviewing" ? "step" : undefined}
       style={{
         display: "flex",
         gap: 8,
-        borderLeft: ext ? "3px solid var(--waiting)" : "3px solid transparent",
+        borderLeft: `3px solid ${edge}`,
         paddingLeft: 8,
         marginLeft: -8,
+        opacity: review.verdict === "queued" ? 0.85 : undefined,
       }}
     >
       <div className="ah-stack" style={{ gap: 4, minWidth: 0, flex: 1 }}>
@@ -146,7 +135,7 @@ function QueueRow({ l, verdict }: { l: Learning; verdict: ClaudeVerdict }) {
           )
         )}
         <span className="ah-row ah-wrap" style={{ gap: 6 }}>
-          <ClaudeVerdictBadge verdict={verdict} />
+          <ClaudeReviewBadge review={review} />
           {blocked && <StatusBadge status="blocked" label={blocked} />}
           {state !== "proposed" && <LearningStateBadge state={state} />}
           {l.provenance && <ProvenanceBadge provenance={l.provenance} />}
@@ -353,9 +342,9 @@ export function LearningsScreen() {
     filters.project ?? scope ?? (projects.size === 1 ? ([...projects][0] ?? null) : null);
   const candidates = triageCandidates(
     rows.filter((l) => triageProject === null || l.project === triageProject),
+    claude.verdictOf,
   );
   const triage = useTriage(triageProject, candidates);
-  const [triageStarted, setTriageStarted] = useState<number | null>(null);
   const stamp = state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />;
 
   let body: ReactNode;
@@ -413,8 +402,7 @@ export function LearningsScreen() {
                   disabled={triage.reason !== null || triage.pending}
                   title={triage.reason ?? undefined}
                   onClick={() => {
-                    void triage.start().then((n) => {
-                      setTriageStarted(n);
+                    void triage.start().then(() => {
                       claude.refresh();
                     });
                   }}
@@ -428,18 +416,20 @@ export function LearningsScreen() {
                     `Claude checks each against the /learn bar and recommends whether it goes in.${candidates.length > MAX_TRIAGE_BATCH ? ` ${String(MAX_TRIAGE_BATCH)} per run.` : ""}`}
                 </span>
               </div>
-              {triageStarted !== null && (
-                <Banner
-                  tone="info"
-                  boxed
-                  onDismiss={() => {
-                    setTriageStarted(null);
+              {claude.runs.map((run) => (
+                <TriageProgress
+                  key={run.sessionId}
+                  run={run}
+                  learnings={all}
+                  onSelect={select}
+                  onShowVerdict={(v) => {
+                    setFilters({ ...filters, claude: [v], readiness: [] });
                   }}
-                >
-                  Claude is triaging {triageStarted} learnings. Each verdict shows on its row as it
-                  is written.
-                </Banner>
-              )}
+                  onDismiss={() => {
+                    claude.dismiss(run.sessionId);
+                  }}
+                />
+              ))}
               {triage.error && (
                 <Banner tone="warning" boxed>
                   <b style={{ fontWeight: 600 }}>The triage did not start.</b> {triage.error.title}
@@ -482,7 +472,7 @@ export function LearningsScreen() {
                         ? `${String(rows.length)} of ${String(count)}`
                         : String(count)
                   } ${status}`,
-                  render: (l) => <QueueRow l={l} verdict={claude.verdictOf(l)} />,
+                  render: (l) => <QueueRow l={l} review={claude.reviewOf(l)} />,
                 },
                 {
                   id: "age",
@@ -511,6 +501,7 @@ export function LearningsScreen() {
               key={selectedId}
               id={selectedId}
               row={rows.find((l) => l.id === selectedId)}
+              claude={claude.reviewOf({ id: selectedId })}
               now={now}
               onDecide={select}
             />
