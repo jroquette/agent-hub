@@ -5,6 +5,12 @@
  * lowlight (highlight.js grammars) returns a HAST tree; `toReact` turns it into React nodes itself:
  * a `span` with its class names and text, nothing else. No HTML string, no `innerHTML`, no other
  * element or attribute, so agent output stays inert whatever the tree holds.
+ *
+ * `highlight.js` and `hast` are not in package.json on purpose: lowlight depends on both (it pins
+ * highlight.js ~11.11 and re-exports these grammars in its `common` set) and is our only declared
+ * dependency (ADR 0034). We import the 14 grammars one by one so the chunk holds no other; declaring
+ * highlight.js ourselves could install a second copy that drifts from lowlight's. A lowlight bump is
+ * checked against these imports (typecheck, the highlight tests and the build).
  */
 import type { ElementContent, RootContent } from "hast";
 import bash from "highlight.js/lib/languages/bash";
