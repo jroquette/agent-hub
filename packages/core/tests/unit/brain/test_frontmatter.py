@@ -112,7 +112,7 @@ def test_returns_empty_when_body_has_only_headings() -> None:
 
 
 class TestWithBody:
-    def test_replaces_body_and_keeps_frontmatter_bytes(self) -> None:
+    def test_keeps_frontmatter_bytes_when_body_replaced(self) -> None:
         text = "---\ntype: learning\ntags:\n  - a\n---\n# Old\n\nOld body.\n"
 
         assert with_body(text, "# New\n\nNew body.") == (
