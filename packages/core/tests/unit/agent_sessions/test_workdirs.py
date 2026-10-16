@@ -209,3 +209,9 @@ def test_warns_when_stat_fails() -> None:
 
     assert [item.kind for item in view.items] == ["hub"]
     assert view.warnings == ("cannot read agent-hub",)
+
+
+def test_matches_known_vector_when_id_derived() -> None:
+    # The web dev client derives the same ids (apps/web/src/lib/devCheckout.test.ts, E6).
+    assert workdir_id("repo", "/srv/demo/agent-hub") == "5703fef9dd5a3894"
+    assert workdir_id("worktree", "/srv/demo/agent-hub") == "51735bb2177a46eb"

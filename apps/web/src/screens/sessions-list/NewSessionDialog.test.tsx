@@ -208,6 +208,148 @@ describe("NewSessionDialog (new-session)", () => {
   });
 });
 
+const SHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+
+describe("NewSessionDialog (shake to start a session)", () => {
+  it("shake-opens: prompt focused, checkbox checked, thumbnail with alt", async () => {
+    const { dialog, props } = open({ screenshot: { dataUrl: SHOT } });
+
+    const prompt = within(dialog).getByRole("textbox", { name: "First prompt (optional)" });
+    expect(prompt).toHaveFocus();
+    const attach = within(dialog).getByRole("checkbox", {
+      name: "Attach a screenshot of the current screen",
+    });
+    expect(attach).toBeChecked();
+    expect(attach).toBeEnabled();
+    expect(
+      within(dialog).getByRole("img", { name: "Screenshot of the screen you shook" }),
+    ).toHaveAttribute("src", SHOT);
+
+    await userEvent.type(prompt, "What is on this screen?");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith({
+      project: "agent-hub",
+      workdir_id: aWorkdir().workdir_id,
+      mode: "default",
+      model: "default",
+      prompt: "What is on this screen?",
+      resume_session_id: null,
+      fork: false,
+      screenshot: { media_type: "image/png", data: "iVBORw0KGgoAAAANSUhEUg==" },
+    });
+    expect(await seriousViolations(dialog)).toEqual([]);
+  });
+
+  it("screenshot-unchecked: body has no screenshot key", async () => {
+    const { dialog, props } = open({ screenshot: { dataUrl: SHOT } });
+
+    await userEvent.click(
+      within(dialog).getByRole("checkbox", { name: "Attach a screenshot of the current screen" }),
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledTimes(1);
+    const body = vi.mocked(props.onSubmit).mock.calls[0]?.[0];
+    expect(body).not.toHaveProperty("screenshot");
+    expect(body).toMatchObject({ prompt: null });
+  });
+
+  it("capture-failed: checkbox unchecked and disabled, note, no thumbnail, no screenshot", async () => {
+    const { dialog, props } = open({ screenshot: { failed: true } });
+
+    const attach = within(dialog).getByRole("checkbox", {
+      name: "Attach a screenshot of the current screen",
+    });
+    expect(attach).not.toBeChecked();
+    expect(attach).toBeDisabled();
+    expect(within(dialog).getByText("No screenshot was taken")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("img")).toBeNull();
+    expect(within(dialog).getByRole("textbox", { name: "First prompt (optional)" })).toHaveFocus();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).not.toHaveProperty("screenshot");
+  });
+
+  it("new-session-button: no checkbox, body identical to today", async () => {
+    const { dialog, props } = open();
+
+    expect(within(dialog).queryByRole("checkbox")).toBeNull();
+    expect(within(dialog).queryByRole("img")).toBeNull();
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveFocus();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith({
+      project: "agent-hub",
+      workdir_id: aWorkdir().workdir_id,
+      mode: "default",
+      model: "default",
+      prompt: null,
+      resume_session_id: null,
+      fork: false,
+    });
+    expect(Object.keys(vi.mocked(props.onSubmit).mock.calls[0]?.[0] ?? {})).toEqual([
+      "project",
+      "workdir_id",
+      "mode",
+      "model",
+      "prompt",
+      "resume_session_id",
+      "fork",
+    ]);
+  });
+
+  it("needs a prompt while the screenshot is attached", async () => {
+    const { dialog } = open({ screenshot: { dataUrl: SHOT } });
+    const start = within(dialog).getByRole("button", { name: "Start session" });
+    const prompt = within(dialog).getByRole("textbox", { name: "First prompt (optional)" });
+
+    expect(start).toBeDisabled();
+    expect(
+      within(dialog).getByText("The screenshot goes with the first prompt: write one."),
+    ).toBeInTheDocument();
+    await userEvent.type(prompt, "   ");
+    expect(start).toBeDisabled();
+    await userEvent.type(prompt, "Why?");
+    expect(start).toBeEnabled();
+    await userEvent.clear(prompt);
+    await userEvent.click(
+      within(dialog).getByRole("checkbox", { name: "Attach a screenshot of the current screen" }),
+    );
+    expect(start).toBeEnabled();
+  });
+
+  it("live-edit: initial workdir and acceptEdits", () => {
+    const { dialog } = open({
+      screenshot: { dataUrl: SHOT },
+      initialWorkdirId: WORKTREE.workdir_id,
+      initialMode: "acceptEdits",
+    });
+
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
+      WORKTREE.workdir_id,
+    );
+    expect(within(dialog).getByRole("radio", { name: /Accept edits/ })).toBeChecked();
+    expect(within(dialog).queryByRole("note")).toBeNull();
+  });
+
+  it("live-edit-fallback: the note shows and the defaults are kept", () => {
+    const { dialog } = open({
+      screenshot: { dataUrl: SHOT },
+      initialWorkdirId: "ffffffffffffffff",
+      note: "Live reload needs make dev in a listed folder",
+    });
+
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
+      aWorkdir().workdir_id,
+    );
+    expect(within(dialog).getByRole("radio", { name: /Ask/ })).toBeChecked();
+    expect(within(dialog).getByRole("note")).toHaveTextContent(
+      "Live reload needs make dev in a listed folder",
+    );
+  });
+});
+
 describe("new-session helpers", () => {
   it("names folders and replaces a leading /skill (new-session)", () => {
     expect(workdirText(aWorkdir({ kind: "repo", label: "agent-hub" }))).toBe("agent-hub (repo)");

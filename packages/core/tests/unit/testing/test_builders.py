@@ -10,6 +10,7 @@ from agent_hub.core.testing.builders import (
     a_brain_change,
     a_brief,
     a_hub_document,
+    a_png_bytes,
     a_seeded_tracker_backend,
     an_event,
     an_issue,
@@ -200,3 +201,13 @@ def test_raises_when_brief_override_names_unknown_section(arguments: dict[str, A
 def test_passes_brief_check_when_run_description_read() -> None:
     assert check_brief(RUN_DESCRIPTION) == ()
     assert "## Problem\nAdd a synthetic change.\n" in RUN_DESCRIPTION
+
+
+def test_builds_one_pixel_png_when_png_bytes_asked() -> None:
+    png = a_png_bytes()
+
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+    assert png[12:16] == b"IHDR"
+    assert int.from_bytes(png[16:20]) == 1
+    assert int.from_bytes(png[20:24]) == 1
+    assert png.endswith(b"IEND\xaeB`\x82")

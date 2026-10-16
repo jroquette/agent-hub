@@ -14,6 +14,9 @@ export type DriverCapabilities = Schemas["DriverCapabilities"];
 export type PastSession = Schemas["PastSession"];
 export type CreateAgentSession = Schemas["CreateAgentSession"];
 
+/** The screen a shake captured (AGH-260), or the capture that failed. */
+export type ShakeScreenshot = { dataUrl: string } | { failed: true };
+
 /** A model id the CLI may take besides the aliases (L6); the server checks the same pattern. */
 export const MODEL_PATTERN = /^[A-Za-z0-9._\-[\]]{1,64}$/;
 const OTHER_MODEL = "__other__";
@@ -51,6 +54,13 @@ export interface NewSessionDialogProps {
   /** The body of `POST /agent-sessions`; the caller navigates to the chat view on success. */
   onSubmit: (body: CreateAgentSession) => void;
   onCancel: () => void;
+  /** Set when a shake opened the dialog: offers to attach the captured screen (AGH-260). */
+  screenshot?: ShakeScreenshot | undefined;
+  /** The folder to preselect when it is listed (the checkout `make dev` serves, O8). */
+  initialWorkdirId?: string | undefined;
+  initialMode?: PermissionMode | undefined;
+  /** A short note under the title, such as why live reload is not set up. */
+  note?: string | undefined;
 }
 
 const FOCUSABLE =
@@ -72,9 +82,19 @@ export function NewSessionDialog({
   maxPromptBytes = DEFAULT_MESSAGE_MAX_BYTES,
   onSubmit,
   onCancel,
+  screenshot,
+  initialWorkdirId,
+  initialMode,
+  note,
 }: NewSessionDialogProps) {
-  const [workdirId, setWorkdirId] = useState(workdirs[0]?.workdir_id ?? "");
-  const [mode, setMode] = useState<PermissionMode>("default");
+  const [workdirId, setWorkdirId] = useState(
+    (workdirs.some((w) => w.workdir_id === initialWorkdirId) ? initialWorkdirId : undefined) ??
+      workdirs[0]?.workdir_id ??
+      "",
+  );
+  const [mode, setMode] = useState<PermissionMode>(initialMode ?? "default");
+  const shot = screenshot && "dataUrl" in screenshot ? screenshot.dataUrl : null;
+  const [attach, setAttach] = useState(shot !== null);
   const [model, setModel] = useState(capabilities.models[0] ?? "default");
   const [otherModel, setOtherModel] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -90,15 +110,21 @@ export function NewSessionDialog({
   const promptHint = useId();
   const resumeField = useId();
   const forkField = useId();
+  const attachField = useId();
 
   const workdir = workdirs.find((w) => w.workdir_id === workdirId);
 
   useEffect(() => {
     const before = document.activeElement;
-    dialog.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    const first = screenshot
+      ? dialog.current?.querySelector<HTMLElement>("textarea")
+      : dialog.current?.querySelector<HTMLElement>(FOCUSABLE);
+    first?.focus();
     return () => {
       if (before instanceof HTMLElement) before.focus();
     };
+    // Focus moves once, when the dialog opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -138,13 +164,20 @@ export function NewSessionDialog({
   const promptBytes = new TextEncoder().encode(prompt).length;
   const promptTooLong = promptBytes > maxPromptBytes;
   const past = resumable ?? [];
+  const attached = attach && shot !== null;
+  const needsPrompt = attached && prompt.trim() === "";
   const ready =
-    capabilities.available && workdir !== undefined && modelValid && !promptTooLong && !pending;
+    capabilities.available &&
+    workdir !== undefined &&
+    modelValid &&
+    !promptTooLong &&
+    !needsPrompt &&
+    !pending;
 
   const submit = () => {
     if (!ready) return;
     const text = prompt.trim();
-    onSubmit({
+    const body: CreateAgentSession = {
       project,
       workdir_id: workdir.workdir_id,
       mode,
@@ -152,7 +185,15 @@ export function NewSessionDialog({
       prompt: text ? text : null,
       resume_session_id: resume || null,
       fork: resume ? fork : false,
-    });
+    };
+    onSubmit(
+      attached
+        ? {
+            ...body,
+            screenshot: { media_type: "image/png", data: shot.slice(shot.indexOf(",") + 1) },
+          }
+        : body,
+    );
   };
 
   return (
@@ -175,6 +216,11 @@ export function NewSessionDialog({
             <h2 id={titleId} className="ah-h3">
               New session
             </h2>
+            {note && (
+              <p role="note" className="ah-small ah-muted">
+                {note}
+              </p>
+            )}
             {!capabilities.available && (
               <p role="alert" className="as-error">
                 Sessions cannot start here: {capabilities.reason ?? "claude is not available"}.
@@ -338,7 +384,9 @@ export function NewSessionDialog({
               <span id={promptHint} className="ah-small ah-subtle">
                 {promptTooLong
                   ? `Too long: at most ${String(Math.floor(maxPromptBytes / 1024))} KiB.`
-                  : "Without a prompt the session waits for your first message."}
+                  : needsPrompt
+                    ? "The screenshot goes with the first prompt: write one."
+                    : "Without a prompt the session waits for your first message."}
               </span>
               {workdir && workdir.skills.length > 0 && (
                 <div className="ah-row ah-wrap" style={{ gap: 6 }} role="group" aria-label="Skills">
@@ -358,6 +406,29 @@ export function NewSessionDialog({
                 </div>
               )}
             </div>
+
+            {screenshot && (
+              <div className="ah-stack" style={{ gap: 4 }}>
+                <label htmlFor={attachField} className="ah-row ah-small" style={{ gap: 6 }}>
+                  <input
+                    id={attachField}
+                    type="checkbox"
+                    className="ah-check"
+                    checked={attached}
+                    disabled={pending || shot === null}
+                    onChange={(event) => {
+                      setAttach(event.target.checked);
+                    }}
+                  />
+                  Attach a screenshot of the current screen
+                </label>
+                {shot === null ? (
+                  <span className="ah-small ah-subtle">No screenshot was taken</span>
+                ) : (
+                  <img className="as-shot" src={shot} alt="Screenshot of the screen you shook" />
+                )}
+              </div>
+            )}
 
             {pending && (
               <span role="status" className="ah-small">
