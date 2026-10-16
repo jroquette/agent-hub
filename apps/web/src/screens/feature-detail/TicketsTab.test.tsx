@@ -28,6 +28,7 @@ function show(
   const result = renderWithApi(
     <TicketsTab
       project="agent-hub"
+      slug="control-plane"
       data={data}
       error={extra.error ?? null}
       onRefresh={onRefresh}
