@@ -7,7 +7,6 @@ import { useScope } from "../lib/scope";
 
 /** Badge counts from the global stream's `counts` message. */
 export interface SidebarCounts {
-  approvals?: number | undefined;
   live?: number | undefined;
   learnings?: number | undefined;
   health?: number | undefined;
@@ -64,15 +63,6 @@ export const NAV: readonly { group: string; items: NavItem[] }[] = [
     group: "Overview",
     items: [
       { id: "portfolio", label: "Portfolio", to: "/", icon: "layout-dashboard" },
-      {
-        id: "approvals",
-        label: "Approvals",
-        to: "/approvals",
-        icon: "stamp",
-        countKey: "approvals",
-        countNoun: () => "waiting",
-        tone: "waiting",
-      },
     ],
   },
   {

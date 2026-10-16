@@ -31,7 +31,7 @@ describe("live tiles (waiting)", () => {
     });
   });
 
-  it("links a hook-observed permission prompt to the approvals", () => {
+  it("links a hook-observed permission prompt to its session", () => {
     const tile = aLiveTile({
       id: anId(1, "5091b986"),
       group: "waiting",
@@ -39,16 +39,22 @@ describe("live tiles (waiting)", () => {
       waiting_reason: "Permission prompt",
     });
 
-    expect(waitingLink(tile)).toEqual({ href: "/approvals", label: "Open approval" });
+    expect(waitingLink(tile)).toEqual({
+      href: `/sessions/${anId(1, "5091b986")}`,
+      label: "Open session",
+    });
   });
 
-  it("links any other wait to the approvals", () => {
+  it("links any other wait to its session", () => {
     const tile = aLiveTile({
       group: "waiting",
       status: "waiting",
       waiting_reason: "Plan approval",
     });
 
-    expect(waitingLink(tile)).toEqual({ href: "/approvals", label: "Open approval" });
+    expect(waitingLink(tile)).toEqual({
+      href: `/sessions/${encodeURIComponent(tile.id)}`,
+      label: "Open session",
+    });
   });
 });

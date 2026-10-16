@@ -23,7 +23,6 @@ describe("Sidebar", () => {
       .map((link) => link.textContent);
     expect(names).toEqual([
       "Portfolio",
-      "Approvals",
       "Live sessions",
       "Sessions",
       "Workflow runs",
@@ -117,18 +116,17 @@ describe("Sidebar", () => {
   });
 
   it("shows badge counts and names them when the stream has counts", () => {
-    renderSidebar("/", { counts: { approvals: 2, live: 3, learnings: 4, health: 1 } });
+    renderSidebar("/", { counts: { live: 3, learnings: 4, health: 1 } });
 
-    expect(screen.getByRole("link", { name: "Approvals, 2 waiting" })).toHaveTextContent("2");
-    expect(screen.getByRole("link", { name: "Live sessions, 3 live" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Live sessions, 3 live" })).toHaveTextContent("3");
     expect(screen.getByRole("link", { name: "Learnings, 4 to triage" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Health, 1 doctor error" })).toBeInTheDocument();
   });
 
   it("caps a badge at 99+ when the count is larger", () => {
-    renderSidebar("/", { counts: { approvals: 120 } });
+    renderSidebar("/", { counts: { live: 120 } });
 
-    expect(screen.getByRole("link", { name: "Approvals, 120 waiting" })).toHaveTextContent("99+");
+    expect(screen.getByRole("link", { name: "Live sessions, 120 live" })).toHaveTextContent("99+");
   });
 
   it("opens the shortcut sheet from its footer button", () => {
@@ -141,7 +139,7 @@ describe("Sidebar", () => {
   });
 
   it("has no serious or critical a11y violation", async () => {
-    const { container } = renderSidebar("/", { counts: { approvals: 2, live: 1 } });
+    const { container } = renderSidebar("/", { counts: { live: 1 } });
 
     expect(await seriousViolations(container)).toEqual([]);
   });

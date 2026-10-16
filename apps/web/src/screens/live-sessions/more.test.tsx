@@ -39,7 +39,7 @@ describe("LiveSessionsScreen details", () => {
     expect(screen.getByText("/agent-25")).toBeInTheDocument();
   });
 
-  it("shows run lines, the approval link and ended rows that open on Enter", async () => {
+  it("shows run lines, the session link and ended rows that open on Enter", async () => {
     const tiles = [
       aLiveTile({
         id: anId(1, "cccc0001"),
@@ -82,8 +82,8 @@ describe("LiveSessionsScreen details", () => {
     expect(await screen.findByText(/Run AGH-48 › implement · attempt 1/)).toBeInTheDocument();
     expect(screen.getByText(/Last: no tool call yet/)).toBeInTheDocument();
     expect(screen.getByText("Ended · no end event")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("link", { name: "Open approval" }));
-    expect(router.state.location.pathname).toBe("/approvals");
+    fireEvent.click(screen.getByRole("link", { name: "Open session" }));
+    expect(router.state.location.pathname).toBe(`/sessions/${anId(1, "cccc0001")}`);
   });
 
   it("opens an ended session on Enter and cycles grouping with v", async () => {

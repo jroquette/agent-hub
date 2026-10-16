@@ -9,7 +9,6 @@ export const SHORTCUTS: readonly { title: string; rows: readonly [string, string
       ["Live sessions", "g l"],
       ["Sessions", "g s"],
       ["Workflow runs", "g r"],
-      ["Approvals", "g a"],
       ["Command palette", "Ctrl K"],
     ],
   },
