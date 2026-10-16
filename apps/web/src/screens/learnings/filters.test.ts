@@ -9,6 +9,7 @@ import {
   MAX_QUERY_CHARS,
   NO_FILTERS,
   withFilters,
+  type ClaudeVerdict,
 } from "./filters";
 
 const ROWS = [
@@ -35,6 +36,7 @@ describe("filtersFromParams url_query", () => {
       project: "demo",
       provenance: ["human", "agent"],
       readiness: ["blocked"],
+      claude: [],
     });
   });
 
@@ -91,5 +93,19 @@ describe("filterLearnings facets", () => {
       "agent-from-external": 0,
     });
     expect(counts.readiness).toEqual({ ready: 1, blocked: 1 });
+  });
+
+  it("keeps the learnings Claude recommends when the Claude facet is picked", () => {
+    const verdictOf = (l: { id: string }): ClaudeVerdict => (l.id === "a" ? "ready" : "unreviewed");
+    const filters = { ...NO_FILTERS, claude: ["ready" as const] };
+
+    expect(ids(filterLearnings(ROWS, filters, verdictOf))).toEqual(["a"]);
+    expect(facetCounts(ROWS, NO_FILTERS, verdictOf).claude).toMatchObject({
+      ready: 1,
+      unreviewed: 2,
+    });
+    expect(filtersFromParams(withFilters(new URLSearchParams(), filters)).claude).toEqual([
+      "ready",
+    ]);
   });
 });
