@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-16
+
 ### Added
 
 - README: a Workflows section, and the banner no longer says the control plane is read-only. USING.md points to
@@ -412,7 +414,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/jroquette/agent-hub/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/jroquette/agent-hub/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/jroquette/agent-hub/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/jroquette/agent-hub/compare/v0.11.0...v0.12.0
