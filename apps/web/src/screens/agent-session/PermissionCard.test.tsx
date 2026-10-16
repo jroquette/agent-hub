@@ -164,26 +164,34 @@ describe("PermissionCard (permission)", () => {
       },
     });
     const { card, onAnswer } = open(request);
-    const send = within(card).getByRole("button", { name: "Send answers" });
     expect(card).toHaveAccessibleName("Claude has a question");
-    expect(send).toBeDisabled();
+    expect(within(card).queryByRole("button", { name: "Send answers" })).toBeNull();
+    expect(within(card).getByText("0 of 2 answered")).toBeInTheDocument();
+    // One page at a time: the second question waits behind its step.
+    expect(within(card).queryByRole("group", { name: "Which checks?" })).toBeNull();
 
     const db = within(card).getByRole("group", { name: "DB Which database?" });
     const sqlite = within(db).getByRole("radio", { name: "SQLite" });
     expect(sqlite).toHaveAccessibleDescription("Local file");
     expect(within(card).getByText("Server")).toBeVisible();
-    expect(within(card).getByText("0 of 2 answered")).toBeInTheDocument();
+    // A single choice completes the page and moves on to the next question.
     await userEvent.click(sqlite);
-    expect(sqlite).toBeChecked();
     expect(within(card).getByText("1 of 2 answered")).toBeInTheDocument();
     const checks = within(card).getByRole("group", { name: "Which checks?" });
+    expect(within(card).getByRole("button", { name: /^DB/ })).not.toHaveAttribute("aria-current");
+    const send = within(card).getByRole("button", { name: "Send answers" });
+    expect(send).toBeDisabled();
     await userEvent.click(within(checks).getByRole("checkbox", { name: "lint" }));
     await userEvent.click(within(checks).getByRole("checkbox", { name: "types" }));
     await userEvent.click(within(checks).getByRole("checkbox", { name: "lint" }));
+
+    await userEvent.click(within(card).getByRole("button", { name: "Back" }));
+    expect(sqlite).toBeChecked();
     await userEvent.click(within(db).getByRole("radio", { name: "Other" }));
     expect(sqlite).not.toBeChecked();
     await userEvent.type(within(db).getByRole("textbox", { name: "Your answer" }), "DuckDB");
-    await userEvent.click(send);
+    await userEvent.click(within(card).getByRole("button", { name: "Next" }));
+    await userEvent.click(within(card).getByRole("button", { name: "Send answers" }));
 
     expect(onAnswer).toHaveBeenCalledWith({
       decision: "allow",

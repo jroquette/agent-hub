@@ -654,6 +654,78 @@
     transition: none;
   }
 }
+/* Several questions: one page each, with numbered steps above (a tick once answered). */
+.as-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+.as-step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 var(--space-3) 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.as-step:hover:not(:disabled) {
+  color: var(--text);
+}
+.as-step:disabled {
+  cursor: default;
+}
+.as-step-current {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+.as-step-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--border);
+  font-size: 11px;
+  font-weight: 600;
+}
+.as-step-current .as-step-num {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.as-step-done .as-step-num {
+  background: var(--done-soft);
+  color: var(--done);
+}
+.as-step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-perm-skip {
+  margin-left: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .as-step {
+    transition: none;
+  }
+}
 .as-question {
   border: 0;
   margin: 0;
