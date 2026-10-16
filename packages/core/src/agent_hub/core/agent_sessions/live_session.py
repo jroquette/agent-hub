@@ -57,6 +57,8 @@ class LiveSession:
     handle: DriverHandle
     state: SessionState
     limits: SessionLimits
+    # The folder the session runs in: where Claude Code keeps the title it gives the session.
+    cwd: str | None = None
     ring: DeltaRing = field(init=False)
     budget: LogBudget = field(init=False)
     # ``emit_lock`` keeps seq order equal to emit order (``last_seq`` moves only under it);

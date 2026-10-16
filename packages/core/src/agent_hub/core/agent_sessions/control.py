@@ -18,6 +18,9 @@ and the subscribers (S4, E8).
   it too (``failed`` with an ``error`` record when its code is not 0).
 - No wall clock in here (P9): ``sweep(now)`` applies permission deadlines, idle timeouts and
   retention; the clock is injected.
+- At the end of each turn the session's title becomes the one Claude Code gave it (its
+  ``ai-title``, or the user's ``/rename``), read through ``session_title``; until then it stays
+  the first prompt.
 - ``shutdown`` ends every live session ``server_stopped``, interrupting a running turn before
   the driver disconnects (P12), all in parallel and bounded.
 
@@ -287,7 +290,8 @@ class AgentSessionControl:
     app's; ``environment_extra`` is added to each child's environment (``AGENT_HUB_WEB_URL``,
     never the access token, L5); ``new_id`` mints agent-session ids (UUIDv7) and
     ``new_claude_session_id`` the Claude session id given to a new session (P13);
-    ``observed_sessions`` fills ``observed_session_id`` on the listed and read sessions (D2).
+    ``observed_sessions`` fills ``observed_session_id`` on the listed and read sessions (D2);
+    ``session_title(cwd, claude_session_id)`` is the title Claude Code gave a session, or None.
     """
 
     def __init__(  # noqa: PLR0913 -- the use case's ports and settings, all injected
@@ -302,6 +306,7 @@ class AgentSessionControl:
         new_id: Callable[[], str] = _uuid7,
         new_claude_session_id: Callable[[], str] = _uuid4,
         observed_sessions: ObservedSessionLookup | None = None,
+        session_title: Callable[[str, str], str | None] | None = None,
     ) -> None:
         self._driver = driver
         self._store = store
@@ -312,6 +317,7 @@ class AgentSessionControl:
         self._new_id = new_id
         self._new_claude_session_id = new_claude_session_id
         self._observed_sessions = observed_sessions
+        self._session_title = session_title
         self._live: dict[str, LiveSession] = {}
         self._pumps: set[asyncio.Task[None]] = set()
         self._admission = asyncio.Lock()
@@ -658,7 +664,9 @@ class AgentSessionControl:
                 )
             )
             raise
-        live = LiveSession(session=session, handle=handle, state=state, limits=self._limits)
+        live = LiveSession(
+            session=session, handle=handle, state=state, limits=self._limits, cwd=spec.cwd
+        )
         if state.status == AgentSessionStatus.IDLE:
             live.idle_since = session.created_at
         self._live[session.id] = live
@@ -950,6 +958,9 @@ class AgentSessionControl:
             "cost_usd": _sum_cost(session.cost_usd, result.cost_usd),
             "usage": _sum_usage(session.usage, result.usage),
         }
+        title = await self._claude_title(live)
+        if title is not None and title != session.title:
+            fields["title"] = title
         if live.ended:
             async with live.sync_lock:
                 live.session = await asyncio.to_thread(
@@ -958,6 +969,18 @@ class AgentSessionControl:
             return
         live.state = apply(live.state, result)
         await self._sync(live, fields)
+
+    async def _claude_title(self, live: LiveSession) -> str | None:
+        """The title Claude Code gave the session so far, or None (none yet, or no reader)."""
+        read = self._session_title
+        session_id = live.session.claude_session_id
+        if read is None or live.cwd is None or session_id is None:
+            return None
+        cwd = live.cwd
+        try:
+            return await asyncio.to_thread(read, cwd, session_id)
+        except Exception:  # noqa: BLE001 -- a name is never worth failing the turn's record
+            return None
 
     async def _on_exit(self, live: LiveSession, code: int | None) -> None:
         failed = code != 0

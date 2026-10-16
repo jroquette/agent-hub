@@ -18,6 +18,11 @@ export interface DiscussTarget {
   path?: string | null | undefined;
   /** Extra context for Claude: sibling files, what the screen shows, what it may change. */
   brief?: string | undefined;
+  /**
+   * Open the panel when the screen shows this target, whatever the owner's last choice elsewhere.
+   * Closing it there is remembered for this target until the page reloads.
+   */
+  openOnArrive?: boolean | undefined;
 }
 
 interface DiscussState {
@@ -36,23 +41,38 @@ const DiscussContext = createContext<DiscussState>({
 
 const OPEN_KEY = "ah.discuss.open";
 
-/** Holds the screen's discuss target and whether the panel is open (kept across reloads). */
+/**
+ * Holds the screen's discuss target and whether the panel is open: the owner's choice (kept across
+ * reloads), unless the target asks to open on arrival and was not closed there.
+ */
 export function DiscussProvider({ children }: { children: ReactNode }) {
   const [target, setTarget] = useState<DiscussTarget | null>(null);
-  const [open, setOpenState] = useState(() => {
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  const [chosenOpen, setChosenOpen] = useState(() => {
     try {
       return window.localStorage.getItem(OPEN_KEY) === "1";
     } catch {
       return false;
     }
   });
+  const arriving = target?.openOnArrive === true && !dismissed.has(target.key);
+  const open = arriving || chosenOpen;
   const value = useMemo<DiscussState>(
     () => ({
       target,
       setTarget,
       open,
       setOpen: (next) => {
-        setOpenState(next);
+        setChosenOpen(next);
+        if (target?.openOnArrive) {
+          const key = target.key;
+          setDismissed((current) => {
+            const updated = new Set(current);
+            if (next) updated.delete(key);
+            else updated.add(key);
+            return updated;
+          });
+        }
         try {
           window.localStorage.setItem(OPEN_KEY, next ? "1" : "0");
         } catch {

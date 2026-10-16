@@ -526,8 +526,9 @@ const TAB_LABEL: Readonly<Record<string, string>> = {
 };
 
 /**
- * What the Discuss panel talks about on this screen: one conversation per feature, opened on the
- * file of the tab in view; the brief names the feature's other files so Claude can follow along.
+ * What the Discuss panel talks about on this screen: one conversation per feature, opened with the
+ * panel on arrival. Claude reads every record of the feature before answering, and the brief adds
+ * what the screen shows on top of the files: the phase, the criteria not passing, the tickets.
  */
 function featureDiscussTarget(detail: Detail | undefined, tab: string): DiscussTarget | null {
   if (!detail) return null;
@@ -541,15 +542,27 @@ function featureDiscussTarget(detail: Detail | undefined, tab: string): DiscussT
       : tab === "eval" && evalPath
         ? `brain/${evalPath}`
         : null;
-  const present = detail.records.filter((r) => r.present).map((r) => `brain/${r.path}`);
+  const files = [
+    ...detail.records.filter((r) => r.present).map((r) => `brain/${r.path}`),
+    `${folder}/features.json`,
+    ...detail.evals.map((e) => `brain/${e.path}`),
+  ];
+  const open = detail.ac_rows.filter((ac) => !ac.passes);
+  const describe = (ac: AcRow) => `${ac.id}${ac.manual ? " (owner step)" : ""}: ${ac.description}`;
   return {
     key: `feature:${detail.project}:${detail.slug}`,
     project: detail.project,
     kind: `Feature ${TAB_LABEL[tab] ?? tab}`,
     title: detail.slug,
     path,
+    openOnArrive: true,
     brief: [
-      `The feature's record lives in \`${folder}/\` (${present.join(", ") || "no record yet"}; acceptance criteria in features.json).`,
+      `The whole feature record lives in \`${folder}/\`. Before answering, read all of it: ${[...new Set(files)].join(", ")}.`,
+      detail.problem ? `The problem it solves: ${detail.problem}` : "",
+      `Size: ${detail.size ?? "not set"}. Repos: ${detail.repos.join(", ") || "none"}. Current phase: ${detail.phase}.`,
+      detail.acs
+        ? `Acceptance criteria: ${String(detail.acs.passing)} of ${String(detail.acs.total)} passing.${open.length ? ` Not passing yet: ${open.map(describe).join("; ")}.` : ""}`
+        : "",
       detail.issues.length ? `Its Linear tickets: ${detail.issues.join(", ")}.` : "",
       `I am looking at its ${TAB_LABEL[tab] ?? tab} tab.`,
       "When a change touches several records (spec, plan, criteria), keep them consistent with each other.",
