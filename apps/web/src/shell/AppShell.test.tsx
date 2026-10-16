@@ -125,6 +125,7 @@ describe("AppShell", () => {
 
     for (const target of [cancel, document.body]) {
       fireEvent.keyDown(target, { key: "k", ctrlKey: true });
+      expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
       fireEvent.keyDown(target, { key: "?" });
       fireEvent.keyDown(target, { key: "g" });
       fireEvent.keyDown(target, { key: "l" });
