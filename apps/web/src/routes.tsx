@@ -1,4 +1,4 @@
-import { Navigate, Outlet } from "react-router";
+import { Navigate, Outlet, useLocation } from "react-router";
 import type { RouteObject } from "react-router";
 
 import { useApi } from "./lib/api";
@@ -10,7 +10,6 @@ import { FeaturesScreen } from "./screens/features";
 import { HealthScreen } from "./screens/health";
 import { KnowledgePhase3Screen } from "./screens/knowledge-phase3";
 import { LearningsScreen } from "./screens/learnings";
-import { LiveSessionsScreen } from "./screens/live-sessions";
 import { NotFoundScreen } from "./screens/not-found";
 import { PortfolioScreen } from "./screens/portfolio";
 import { ProjectOverviewScreen } from "./screens/project-overview";
@@ -18,6 +17,7 @@ import { RunDetailScreen } from "./screens/run-detail";
 import { RunsListScreen } from "./screens/runs-list";
 import { SessionDetailScreen } from "./screens/session-detail";
 import { SessionsListScreen } from "./screens/sessions-list";
+import { liveRedirectTarget } from "./screens/sessions-list/liveRedirect";
 import { SettingsScreen } from "./screens/settings";
 import { SkillDetailScreen, SkillsPickerScreen, SkillsScreen } from "./screens/skills";
 import { NewDraftScreen, StudioScreen } from "./screens/skills/Studio";
@@ -33,6 +33,12 @@ export function HubGate() {
   const hubs = useApi("/api/v1/hubs");
   if (hubs.data?.items.length === 0) return <Navigate to="/welcome" replace />;
   return <Outlet />;
+}
+
+/** A `/live` bookmark opens the Sessions grid; a replace, so Back skips it (AC-234.2). */
+function LiveRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={liveRedirectTarget(search)} replace />;
 }
 
 /**
@@ -57,7 +63,7 @@ export const appRoutes: RouteObject[] = [
           { path: "projects/:project/skills/:kind/:source/:name", element: <SkillDetailScreen /> },
           { path: "approvals", element: <ApprovalsScreen /> },
           { path: "approvals/:approvalId", element: <ApprovalsScreen /> },
-          { path: "live", element: <LiveSessionsScreen /> },
+          { path: "live", element: <LiveRedirect /> },
           { path: "sessions", element: <SessionsListScreen /> },
           { path: "sessions/:sessionId", element: <SessionDetailScreen /> },
           { path: "agent-sessions/:agentSessionId", element: <AgentSessionScreen /> },

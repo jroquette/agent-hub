@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 
@@ -57,7 +57,6 @@ describe("routes", () => {
     ["/projects/agent-hub", "Project not found"],
     ["/approvals", "Approvals"],
     ["/approvals/abc", "Approvals"],
-    ["/live", "Live sessions"],
     ["/sessions", "Sessions"],
     ["/sessions/abc", "Session detail"],
     ["/agent-sessions/abc", "Agent session"],
@@ -146,6 +145,38 @@ describe("routes", () => {
     await screen.findByRole("heading", { level: 1, name: "Portfolio" });
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+// AC-234.2: a Live bookmark lands on the Sessions grid by a replace, so Back skips `/live`.
+describe("routes (live-redirect)", () => {
+  it.each([
+    ["/live", "?view=grid"],
+    ["/live?group=repo", "?view=grid&within=repo"],
+    ["/live?group=run", "?view=grid&within=run"],
+    ["/live?group=workflow", "?view=grid&within=workflow"],
+    ["/live?group=flat", "?view=grid"],
+    ["/live?scope=p", "?view=grid&scope=p"],
+    ["/live?foo=1", "?view=grid"],
+    ["/live?group=bogus", "?view=grid"],
+    ["/live?group=run&scope=p&foo=1", "?view=grid&within=run&scope=p"],
+  ])("replaces %s with /sessions%s", async (from, search) => {
+    stubApi(withHub);
+    stubEventSource();
+    const router = createMemoryRouter(appRoutes, { initialEntries: ["/", from], initialIndex: 1 });
+    render(
+      <TestProviders client={testQueryClient()}>
+        <RouterProvider router={router} />
+      </TestProviders>,
+    );
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Sessions" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/sessions");
+    expect(router.state.location.search).toBe(search);
+    expect(router.state.historyAction).toBe("REPLACE");
+
+    await act(() => router.navigate(-1));
+    expect(router.state.location.pathname).toBe("/");
   });
 });
 
