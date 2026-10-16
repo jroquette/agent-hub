@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { Money, type DataTableColumn } from "../../components";
 import { fmtClock } from "../../lib/format";
 import { AgentStatusBadge } from "../agent-session/SessionStatus";
-import { modeLabel } from "../agent-session/transcript";
+import { modeLabel } from "../agent-session/model";
 import { agentSessionHref } from "./control";
 import type { AgentSession, Session } from "./queries";
 import { isDriven, type SectionRow } from "./sections";

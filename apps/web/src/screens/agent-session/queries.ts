@@ -25,7 +25,7 @@ import {
   type StatusFrame,
   type StreamItem,
   type TranscriptState,
-} from "./transcript";
+} from "./model";
 
 /* The data of the chat view (WS): the snapshot, the log pages, the stream and the commands. */
 

@@ -4,7 +4,7 @@ import { Button } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { useSlashMenu } from "./SlashMenu";
 import { useDraft } from "./useDraft";
-import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./transcript";
+import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./model";
 
 /** The modes the web offers (D5): never bypassPermissions, dontAsk or auto. */
 export const MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan"];

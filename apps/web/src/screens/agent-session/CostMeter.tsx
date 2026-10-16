@@ -1,6 +1,6 @@
 import { Icon } from "../../components";
 import { fmtMoney, fmtTokens } from "../../lib/format";
-import type { MeterView } from "./transcript";
+import type { MeterView } from "./model";
 
 export interface CostMeterProps {
   meter: MeterView;

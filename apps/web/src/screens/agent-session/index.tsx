@@ -30,7 +30,7 @@ import {
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
-import { modeLabel, pendingPermissions, type TranscriptState } from "./transcript";
+import { modeLabel, pendingPermissions, type TranscriptState } from "./model";
 import { useStickToBottom } from "./useStickToBottom";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];

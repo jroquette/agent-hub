@@ -11,6 +11,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Fixed
+
+- `make dev` on macOS no longer shows a blank page: the chat's model module `transcript.ts` is now `model.ts`, so
+  `./Transcript` no longer resolves to it on a case-insensitive file system.
+
 ## [0.15.0] - 2026-10-16
 
 ### Added
