@@ -54,7 +54,13 @@ export const SHORTCUTS: readonly { title: string; rows: readonly [string, string
 export function ShortcutSheet({ onClose }: { onClose: () => void }) {
   return (
     <div className="ah-scrim" style={{ zIndex: "var(--z-palette)" }}>
-      <div className="ah-sheet" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+      <div
+        className="ah-sheet"
+        role="dialog"
+        aria-modal="true"
+        data-shell-layer=""
+        aria-label="Keyboard shortcuts"
+      >
         <div className="ah-row">
           <h2 className="ah-h3 ah-grow">Keyboard shortcuts</h2>
           <IconButton icon="x" label="Close (Esc)" onClick={onClose} />
