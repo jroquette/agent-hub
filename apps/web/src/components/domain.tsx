@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 
 import type { components } from "../api/schema";
 
+import { useNow } from "../lib/clock";
 import { fmtDuration, fmtMoney, fmtTokens } from "../lib/format";
 import { AppLink, IconButton, IdChip, IssueLink, Tooltip, Button, type Phase } from "./core";
 import { Sparkline } from "./data";
@@ -66,12 +67,48 @@ export interface LiveSession {
   activity?: number[] | undefined;
 }
 
+/** The tile fields that change with the clock. */
+export type TileTimes = Pick<LiveSession, "elapsed" | "lastAction" | "lastAgo">;
+
 export interface SessionTileProps {
   s: LiveSession;
+  /**
+   * A running tile's times at `now`: only the parts that show them read the second clock, so a tick
+   * re-renders those, not the tile. Without it the tile shows `s` as given.
+   */
+  times?: ((now: number) => TileTimes) | undefined;
   onOpen?: (() => void) | undefined;
   hoverEvents?: { time: string; icon: IconName; text: string }[] | undefined;
 }
-export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
+
+/** Renders `children` with the times at each second. */
+function Ticking({
+  times,
+  children,
+}: {
+  times: (now: number) => TileTimes;
+  children: (t: TileTimes) => ReactNode;
+}) {
+  return children(times(useNow(1000)));
+}
+
+function TileAction({ s, t }: { s: LiveSession; t: TileTimes }) {
+  return (
+    <div className="ah-tile-action" title={t.lastAction}>
+      <Icon
+        name={s.lastIcon ?? "terminal"}
+        size="sm"
+        style={{ color: "var(--ev-tool)", flex: "none", alignSelf: "center" }}
+      />
+      <span>{t.lastAction}</span>
+      <span className="ah-subtle ah-small" style={{ flex: "none", marginLeft: "auto" }}>
+        {t.lastAgo}
+      </span>
+    </div>
+  );
+}
+
+export function SessionTile({ s, times, onOpen, hoverEvents }: SessionTileProps) {
   const [hover, setHover] = useState(false);
   const badgeStatus: Status = s.status === "ended" ? (s.outcome ?? "ended") : s.status;
   return (
@@ -138,17 +175,11 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
           {s.reason}
         </div>
       )}
-      <div className="ah-tile-action" title={s.lastAction}>
-        <Icon
-          name={s.lastIcon ?? "terminal"}
-          size="sm"
-          style={{ color: "var(--ev-tool)", flex: "none", alignSelf: "center" }}
-        />
-        <span>{s.lastAction}</span>
-        <span className="ah-subtle ah-small" style={{ flex: "none", marginLeft: "auto" }}>
-          {s.lastAgo}
-        </span>
-      </div>
+      {times ? (
+        <Ticking times={times}>{(t) => <TileAction s={s} t={t} />}</Ticking>
+      ) : (
+        <TileAction s={s} t={s} />
+      )}
       {s.notice && (
         <div className="ah-row ah-small" style={{ gap: 4, color: "var(--text-muted)" }}>
           <Icon name="circle-x" size="sm" />
@@ -185,7 +216,14 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
       )}
       <div className="ah-tile-stats">
         <span>
-          Elapsed<b>{fmtDuration(s.elapsed)}</b>
+          Elapsed
+          <b>
+            {times ? (
+              <Ticking times={times}>{(t) => fmtDuration(t.elapsed)}</Ticking>
+            ) : (
+              fmtDuration(s.elapsed)
+            )}
+          </b>
         </span>
         <span>
           Turns<b>{s.turns ?? "—"}</b>
