@@ -442,8 +442,9 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
 - **Control.** Send messages (also while a turn runs), interrupt, answer permission prompts (allow once, deny with a
   message, always allow one suggested rule; `AskUserQuestion` and plan approval too; unanswered in 10 minutes is a
   deny), change mode (`default`, `acceptEdits`, `plan`; never a bypass mode) and model, close, resume or fork a past
-  session of that workdir, delete an ended one. At most 4 live sessions; an idle one ends after 30 minutes; every limit
-  is a `hub web` option with an `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
+  session of that workdir, delete an ended one. At most 4 live sessions; at the limit a new one ends the one idle the
+  longest (a message reopens it in place), so only busy sessions refuse one; an idle one ends after 30 minutes; every
+  limit is a `hub web` option with an `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
   session left open by a crash is marked ended at the next start, and Resume picks it up.
 - **Log and stream.** Each session's log (gap-free `seq`) is streamed over SSE with `Last-Event-ID` replay; text
   deltas live only in memory. A session `hub web` drives links to the hook-observed Session by Claude's session id

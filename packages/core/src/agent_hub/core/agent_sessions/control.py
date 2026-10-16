@@ -649,7 +649,25 @@ class AgentSessionControl:
         if not capabilities.available:
             raise SessionsUnavailableError(capabilities.reason or "sessions cannot start here")
         if len(self._live) >= self._limits.sessions_max:
+            await self._free_slot()
+
+    async def _free_slot(self) -> None:
+        """At the live limit, end the local session idle the longest ``idle_timeout``, as the
+        sweep later would: a message reopens it in place. The limit refuses only when every live
+        session is busy (running, a request open) or a cloud one, which cannot be reopened."""
+        waiting = [
+            (live.idle_since, live)
+            for live in self._live.values()
+            if not live.ended
+            and live.session.kind == "local"
+            and live.state.status == AgentSessionStatus.IDLE
+            and not live.requests
+            and live.idle_since is not None
+        ]
+        if not waiting:
             raise LiveLimitError(limit=self._limits.sessions_max)
+        _, oldest = min(waiting, key=lambda pair: pair[0])
+        await asyncio.shield(self._ending(oldest, EndReason.IDLE_TIMEOUT, by="server"))
 
     async def _resumed(self, request: CreateAgentSession, cwd: str) -> PastSession | None:
         wanted = request.resume_session_id
