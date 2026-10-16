@@ -1,13 +1,125 @@
+import "./ticket-flow.css";
+
 import { Fragment } from "react";
 import type { ReactNode } from "react";
 
 import type { components } from "../../api/schema";
-import { Banner, Icon } from "../../components";
+import { Banner, Icon, StatusBadge, type Status } from "../../components";
 import { linearHref } from "../../lib/safeHref";
 
 type TicketRow = components["schemas"]["TicketRow"];
 type TicketPlan = components["schemas"]["TicketPlan"];
 type ExternalBlocker = components["schemas"]["ExternalBlocker"];
+type IssueStateType = components["schemas"]["IssueStateType"];
+type Readiness = components["schemas"]["Readiness"];
+
+/** The badge tone of a Linear state type; the badge text is always the state's own name. */
+const STATE_STATUS: Record<IssueStateType, Status> = {
+  triage: "queued",
+  backlog: "queued",
+  unstarted: "queued",
+  started: "running",
+  completed: "done",
+  canceled: "stopped",
+  duplicate: "stopped",
+};
+
+/** A ticket's status in Linear, named as Linear names it ("In Review"); Unknown when not read. */
+export function StateBadge({ row }: { row: TicketRow }) {
+  if (!row.state) {
+    return (
+      <StatusBadge
+        status="idle"
+        quiet
+        label="Unknown"
+        title="No status: Linear was not read for this ticket"
+      />
+    );
+  }
+  return (
+    <StatusBadge
+      status={STATE_STATUS[row.state.type]}
+      label={row.state.name}
+      title={`${row.state.name} (${row.state.type})`}
+    />
+  );
+}
+
+/** What each readiness means, for the legend and the tooltips. */
+export const READINESS_HELP: Record<Readiness, string> = {
+  can_start: "Not started in Linear and every blocker is done: pick it up now.",
+  in_progress: "Started in Linear (In Progress, In Review…): someone is on it.",
+  waiting: "Not started yet; a blocker is not done.",
+  done: "Completed in Linear.",
+  canceled: "Canceled or a duplicate in Linear: it blocks nothing.",
+  in_cycle: "Waits on a ticket that waits on it back: break the cycle.",
+  unknown: "Linear was not read, so its status is unknown.",
+};
+
+/** A ticket's readiness in words: what to do with it now. */
+export function ReadinessText({
+  row,
+  rows,
+  external,
+}: {
+  row: TicketRow;
+  rows: readonly TicketRow[];
+  external: readonly ExternalBlocker[];
+}) {
+  const refs = (list: readonly string[]) => <RefList refs={list} rows={rows} external={external} />;
+  const help = READINESS_HELP[row.readiness];
+  switch (row.readiness) {
+    case "can_start":
+      return (
+        <b style={{ fontWeight: 500, color: "var(--done)" }} title={help}>
+          Can start now
+        </b>
+      );
+    case "in_progress":
+      return (
+        <span className="ah-stack" style={{ gap: 2 }} title={help}>
+          <b style={{ fontWeight: 500, color: "var(--live)" }}>
+            {row.reviewed ? "Reviewed · waiting for Done" : "In progress"}
+          </b>
+          {row.waiting_on.length > 0 && (
+            <span className="ah-small ah-subtle">
+              started before {refs(row.waiting_on)} was done
+            </span>
+          )}
+        </span>
+      );
+    case "done":
+      return (
+        <b style={{ fontWeight: 500 }} title={help}>
+          Done
+        </b>
+      );
+    case "canceled":
+      return (
+        <b style={{ fontWeight: 500 }} title={help}>
+          Canceled
+        </b>
+      );
+    case "in_cycle":
+      return (
+        <b style={{ fontWeight: 500, color: "var(--failed)" }} title={help}>
+          Waiting: cycle
+        </b>
+      );
+    case "waiting":
+      return (
+        <span title={help} style={{ color: "var(--waiting)" }}>
+          Waiting on {refs(row.waiting_on)}
+        </span>
+      );
+    default:
+      return (
+        <span className="ah-muted" title={help}>
+          Unknown
+        </span>
+      );
+  }
+}
 
 /** The element id of a ticket's row, the target of every in-page ticket link. */
 export function ticketAnchor(ref: string): string {
@@ -117,38 +229,194 @@ function RefList({
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+/** The readiness counts shown above the flow, in the order a reader acts on them. */
+const COUNTED: readonly { readiness: Readiness; label: string }[] = [
+  { readiness: "can_start", label: "can start" },
+  { readiness: "in_progress", label: "in progress" },
+  { readiness: "waiting", label: "waiting" },
+  { readiness: "in_cycle", label: "in a cycle" },
+  { readiness: "done", label: "done" },
+  { readiness: "canceled", label: "canceled" },
+];
+
+/** How many tickets are in each readiness: the feature's work at a glance. */
+export function ReadinessSummary({ tickets }: { tickets: readonly TicketRow[] }) {
+  const counts = COUNTED.map((c) => ({
+    ...c,
+    n: tickets.filter((t) => t.readiness === c.readiness).length,
+  })).filter((c) => c.n > 0);
+  if (counts.length === 0) return null;
   return (
-    <section className="ah-stack" style={{ gap: 6 }} aria-label={title}>
-      <h3 className="ah-small" style={{ margin: 0, fontWeight: 600 }}>
-        {title}
-      </h3>
-      {children}
-    </section>
+    <div className="ah-flow-summary" role="list" aria-label="Tickets by readiness">
+      {counts.map((c) => (
+        <span
+          key={c.readiness}
+          role="listitem"
+          className="ah-flow-count"
+          data-tone={c.readiness}
+          aria-label={`${String(c.n)} ${c.label}`}
+          title={READINESS_HELP[c.readiness]}
+        >
+          <span className="ah-flow-dot" data-tone={c.readiness} aria-hidden="true" />
+          <b>{c.n}</b> {c.label}
+        </span>
+      ))}
+    </div>
   );
+}
+
+/** "17/18 ACs passing" for a ticket, or its AC count when passing is not known. */
+function AcCount({
+  row,
+  acPasses,
+}: {
+  row: TicketRow;
+  acPasses?: Readonly<Record<string, boolean>> | undefined;
+}) {
+  if (row.acs.length === 0) return null;
+  if (!acPasses) return <span>{row.acs.length} ACs</span>;
+  const passing = row.acs.filter((ac) => acPasses[ac]).length;
+  const all = passing === row.acs.length;
+  return (
+    <span style={all ? { color: "var(--done)" } : undefined}>
+      {passing}/{row.acs.length} ACs passing
+    </span>
+  );
+}
+
+function FlowCard({
+  row,
+  rows,
+  external,
+  critical,
+  acPasses,
+}: {
+  row: TicketRow;
+  rows: readonly TicketRow[];
+  external: readonly ExternalBlocker[];
+  critical: boolean;
+  acPasses?: Readonly<Record<string, boolean>> | undefined;
+}) {
+  const after = row.blocked_by.map((edge) => edge.ref);
+  return (
+    <li
+      className="ah-flow-card"
+      data-readiness={row.readiness}
+      data-critical={critical || undefined}
+      aria-label={`${row.ref}${row.title ? ` · ${row.title}` : ""}`}
+    >
+      <div className="ah-row" style={{ gap: 8, justifyContent: "space-between" }}>
+        {row.id ? (
+          <LinearLink id={row.id} url={row.url} />
+        ) : (
+          <span className="ah-mono ah-small" title="Not created in Linear yet">
+            {row.key ?? row.ref}
+          </span>
+        )}
+        <StateBadge row={row} />
+      </div>
+      <a
+        className="ah-flow-card-title"
+        href={`#${ticketAnchor(row.ref)}`}
+        title={row.title ?? undefined}
+      >
+        {row.title ?? row.ref}
+      </a>
+      <div className="ah-small">
+        <ReadinessText row={row} rows={rows} external={external} />
+      </div>
+      <div className="ah-flow-card-meta">
+        <AcCount row={row} acPasses={acPasses} />
+        {row.reviewed === true && row.readiness !== "done" && (
+          <span className="ah-row" style={{ gap: 3, color: "var(--done)" }}>
+            <Icon name="circle-check" size="sm" />
+            reviewed
+          </span>
+        )}
+        {row.assignee && <span>{row.assignee}</span>}
+        {after.length > 0 && row.readiness !== "waiting" && (
+          <span>
+            after <RefList refs={after} rows={rows} external={external} />
+          </span>
+        )}
+        {critical && (
+          <span style={{ color: "var(--accent)" }} title="On the longest chain of tickets not done">
+            critical path
+          </span>
+        )}
+      </div>
+    </li>
+  );
+}
+
+interface FlowColumn {
+  key: string;
+  title: string;
+  hint: string;
+  kind: "step" | "held" | "done";
+  refs: readonly string[];
+}
+
+/** The flow's columns: each parallel group in order, then tickets held back, then the settled. */
+function flowColumns(tickets: readonly TicketRow[], planning: TicketPlan): FlowColumn[] {
+  const layered = new Set(planning.layers.flat());
+  const columns: FlowColumn[] = planning.layers.map((layer, i) => ({
+    key: `step-${String(i + 1)}`,
+    title: `Step ${String(i + 1)}`,
+    hint: layer.length > 1 ? "in parallel" : i === 0 ? "first" : `after step ${String(i)}`,
+    kind: "step",
+    refs: layer,
+  }));
+  const held = tickets
+    .filter((t) => !layered.has(t.ref) && t.readiness !== "done" && t.readiness !== "canceled")
+    .map((t) => t.ref);
+  if (held.length > 0) {
+    columns.push({
+      key: "held",
+      title: "Held back",
+      hint: "a cycle or a blocker outside",
+      kind: "held",
+      refs: held,
+    });
+  }
+  const settled = tickets
+    .filter((t) => t.readiness === "done" || t.readiness === "canceled")
+    .map((t) => t.ref);
+  if (settled.length > 0) {
+    columns.push({ key: "done", title: "Done", hint: "settled", kind: "done", refs: settled });
+  }
+  return columns;
 }
 
 export interface PlanningViewProps {
   tickets: readonly TicketRow[];
   planning: TicketPlan;
+  /** Whether each AC passes (by id), to show each ticket's progress; omitted when unknown. */
+  acPasses?: Readonly<Record<string, boolean>> | undefined;
 }
 
 /**
- * The planning of the feature's tickets (AC-136.30): what can start now, the parallel groups as
- * numbered layers, the recommended order, the critical path, and banners for dependency cycles,
- * blockers outside the feature and the server's warnings.
+ * The planning of the feature's tickets (AC-136.30) as a flow: the parallel groups as columns
+ * left to right (what can run together, and in which order), each ticket with its live status
+ * in Linear and what to do with it now; tickets held back and the settled ones close the flow.
+ * Banners name dependency cycles, blockers outside the feature and the server's warnings.
  */
-export function PlanningView({ tickets, planning }: PlanningViewProps) {
+export function PlanningView({ tickets, planning, acPasses }: PlanningViewProps) {
   const external = planning.external_blockers;
-  const refs = (list: readonly string[]) => (
-    <RefList refs={list} rows={tickets} external={external} />
-  );
-  const titleOf = (ref: string) => tickets.find((r) => r.ref === ref)?.title;
+  const byRef = new Map(tickets.map((t) => [t.ref, t]));
+  const critical = new Set(planning.critical_path.length > 1 ? planning.critical_path : []);
+  const columns = flowColumns(tickets, planning);
   return (
     <section className="ah-card ah-pad ah-stack" style={{ gap: 14 }} aria-labelledby="planning-h">
-      <h2 id="planning-h" className="ah-h3" style={{ margin: 0 }}>
-        Planning
-      </h2>
+      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+        <h2 id="planning-h" className="ah-h3" style={{ margin: 0 }}>
+          Ticket flow
+        </h2>
+        <span className="ah-small ah-subtle">
+          Left to right: tickets in one step can run in parallel; a step starts when the one before
+          it is done.
+        </span>
+      </div>
       {planning.cycles.length > 0 && (
         <Banner tone="error" icon="octagon-x">
           <b style={{ fontWeight: 500 }}>
@@ -160,7 +428,7 @@ export function PlanningView({ tickets, planning }: PlanningViewProps) {
               <RefList refs={cycle} rows={tickets} external={external} separator=" → " />
             </Fragment>
           ))}
-          . These tickets wait on each other and are left out of the layers; break the cycle in the
+          . These tickets wait on each other and are left out of the steps; break the cycle in the
           plan or in Linear.
         </Banner>
       )}
@@ -187,63 +455,69 @@ export function PlanningView({ tickets, planning }: PlanningViewProps) {
           </ul>
         </Banner>
       )}
-      <Section title="Can start now">
-        {planning.can_start.length > 0 ? (
-          <div className="ah-row ah-wrap" style={{ gap: 8 }}>
-            {refs(planning.can_start)}
-          </div>
-        ) : (
-          <span className="ah-small ah-muted">Nothing can start now.</span>
+      <ReadinessSummary tickets={tickets} />
+      {columns.length === 0 ? (
+        <span className="ah-small ah-muted">No ticket to show.</span>
+      ) : (
+        <div className="ah-flow" role="list" aria-label="Ticket flow">
+          {columns.map((col, i) => (
+            <Fragment key={col.key}>
+              {i > 0 && (
+                <div className="ah-flow-arrow" aria-hidden="true">
+                  <Icon name="arrow-right" />
+                </div>
+              )}
+              <section
+                className="ah-flow-col"
+                data-kind={col.kind}
+                role="listitem"
+                aria-label={`${col.title} · ${col.hint}`}
+              >
+                <div className="ah-flow-col-head">
+                  <b>{col.title}</b>
+                  <span>{col.hint}</span>
+                </div>
+                <ul
+                  className="ah-stack"
+                  style={{ gap: 8, margin: 0, padding: 0, listStyle: "none" }}
+                >
+                  {col.refs.map((ref) => {
+                    const row = byRef.get(ref);
+                    if (!row) return null;
+                    return (
+                      <FlowCard
+                        key={ref}
+                        row={row}
+                        rows={tickets}
+                        external={external}
+                        critical={critical.has(ref)}
+                        acPasses={acPasses}
+                      />
+                    );
+                  })}
+                </ul>
+              </section>
+            </Fragment>
+          ))}
+        </div>
+      )}
+      <div className="ah-flow-legend" aria-label="Legend">
+        {(["can_start", "in_progress", "waiting", "done"] as const).map((r) => (
+          <span key={r} title={READINESS_HELP[r]}>
+            <span className="ah-flow-dot" data-tone={r} aria-hidden="true" />
+            {r === "can_start"
+              ? "Can start: not started, blockers done"
+              : r === "in_progress"
+                ? "In progress: started in Linear"
+                : r === "waiting"
+                  ? "Waiting: a blocker is not done"
+                  : "Done in Linear"}
+          </span>
+        ))}
+        {critical.size > 0 && (
+          <span style={{ color: "var(--accent)" }}>Critical path: the longest chain not done</span>
         )}
-      </Section>
-      <Section title="Parallel groups">
-        {planning.layers.length > 0 ? (
-          <ol className="ah-stack" style={{ gap: 4, margin: 0, paddingLeft: 0, listStyle: "none" }}>
-            {planning.layers.map((layer, i) => (
-              <li key={layer.join(",")} className="ah-row ah-wrap" style={{ gap: 8 }}>
-                <span className="ah-small" style={{ fontWeight: 500, minWidth: 64 }}>
-                  Layer {i + 1}
-                </span>
-                {refs(layer)}
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <span className="ah-small ah-muted">No ticket left to plan.</span>
-        )}
-      </Section>
-      <Section title="Recommended order">
-        {planning.order.length > 0 ? (
-          <ol className="ah-small" style={{ margin: 0, paddingLeft: 22 }}>
-            {planning.order.map((ref) => (
-              <li key={ref}>
-                <TicketRef id={ref} rows={tickets} external={external} />
-                {titleOf(ref) && <span className="ah-muted"> · {titleOf(ref)}</span>}
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <span className="ah-small ah-muted">No ticket left to order.</span>
-        )}
-      </Section>
-      <Section title="Critical path">
-        {planning.critical_path.length > 0 ? (
-          <div className="ah-small">
-            <RefList
-              refs={planning.critical_path}
-              rows={tickets}
-              external={external}
-              separator=" → "
-            />{" "}
-            <span className="ah-muted">
-              ({planning.critical_path.length} ticket
-              {planning.critical_path.length === 1 ? "" : "s"}, the longest chain not done)
-            </span>
-          </div>
-        ) : (
-          <span className="ah-small ah-muted">No chain left: every ticket is done.</span>
-        )}
-      </Section>
+      </div>
     </section>
   );
 }

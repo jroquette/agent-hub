@@ -3125,7 +3125,8 @@ export interface components {
       url: string;
     };
     /** @enum {string} */
-    Readiness: "can_start" | "waiting" | "done" | "canceled" | "in_cycle" | "unknown";
+    Readiness:
+      "can_start" | "in_progress" | "waiting" | "done" | "canceled" | "in_cycle" | "unknown";
     /** @enum {string} */
     RecordBy: "web" | "timeout" | "closed" | "driver" | "server";
     /** @enum {string} */
@@ -3960,7 +3961,7 @@ export interface components {
      * @description The planning of the feature's tickets, every ticket named by its row's ``ref``.
      *
      *     ``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);
-     *     ``can_start`` the first layer's tickets that wait on nothing; ``order`` the recommended
+     *     ``can_start`` the first layer's tickets that wait on nothing and are not started yet; ``order`` the recommended
      *     order; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle
      *     (left out of the layers); ``critical_path`` the longest chain of tickets not done.
      */
