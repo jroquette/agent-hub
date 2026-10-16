@@ -18,7 +18,7 @@ command bookmark columns-3 panel-left plus minus coins timer hash braces lightbu
 trending-down scroll-text clipboard-list gauge package tag cpu box file-minus file-x circle-pause flag milestone pin
 arrow-up-right corner-down-right list-filter circle-dashed loader git-branch server database cable shield gavel
 circle-play circle-stop square-user scan-eye pencil type circle maximize-2 undo-2 download
-move-up-right highlighter`.split(/\s+/);
+move-up-right highlighter crop`.split(/\s+/);
 
 const LUCIDE = new URL("../node_modules/lucide/", import.meta.url);
 const TARGET = new URL("../src/components/icons.ts", import.meta.url);
