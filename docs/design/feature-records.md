@@ -19,11 +19,13 @@ in [API.md](../API.md) "Feature tickets"; the screens are in
 
 - `linear` (optional): tracker ids of the feature, joined with the spec's `linear:` frontmatter.
 - `tickets` (optional, at most 200): the planner's ticket plan, each
-  `{"key", "id", "title", "repo", "blocked_by", "order"}`.
+  `{"key", "id", "title", "repo", "blocked_by", "order", "parent"}`.
   - `key`: a draft key (`T1`…), `^[A-Za-z][A-Za-z0-9_-]{0,31}$`, unique in the record.
   - `id`: `null` until `/feature` creates the issue, then the tracker id (`TIP-1520`).
   - `title` (≤ 200 characters), `repo`, `order` (a whole number ≥ 0, the plan's order): optional.
   - `blocked_by`: at most 50 keys or ids of other tickets of the plan, never the ticket itself.
+  - `parent` (optional): the key or id of the plan's epic the ticket belongs to (the tracking ticket that groups
+    the work and is never worked on itself), never the ticket itself.
 - `acs`: `{"id", "description", "repo", "verification", "passes", "evidence", "ticket", "withdrawn"}`.
   `ticket` (optional) is a key or id of `tickets`, or a `linear` id: the ticket that delivers the AC. `withdrawn`
   (default `false`) marks an AC an amendment withdrew; it stays in the file and the spec and leaves every count.
@@ -107,7 +109,10 @@ parallel; the order is the layers in turn, each by priority (1 urgent first, 0 n
 Blockers outside the feature (from Linear relations or named only in the plan's `blocked_by`) are read with the
 feature's ids, up to 200 in total, and listed with their Linear status. A ticket behind an outside blocker that is open
 or unread gets no layer: it is listed under `waiting` and left out of the order, so the first layer is `can_start`.
-The critical path is the longest chain of not-done tickets. Linear titles, assignees and state names are redacted.
+The critical path is the longest chain of not-done tickets. A ticket that is the parent of another row (the plan's
+`parent`, else Linear's parent issue) is an epic: readiness `epic` (until Linear has it done or canceled), listed under
+`epics`, never in a layer and never a blocker; the golden path counts it under Tickets only. The Tickets tab shows it
+above the flow with its children's progress. Linear titles, assignees and state names are redacted.
 
 ## Invariants
 
