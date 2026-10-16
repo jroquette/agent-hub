@@ -9,7 +9,9 @@ request's commits, generated files left out), ``reference.patch`` (every exporte
 ``in-progress.patch`` (what is not committed yet), ``screens/`` (each touched screen rendered by
 the ``HEAD`` code on synthetic data, the delivery's visual baseline) and ``hub/`` (what the
 sessions left in the project's hub). A commit ``origin/main`` already has is left out; one another
-pushed branch has stays, marked. Then it tags ``HEAD``, only when nothing was missed. The contract
+pushed branch has stays, marked. It commits the checkout as it is, uncommitted files included, on
+the developer's local branch ``<prefix>/playground-snapshot/<stamp>``, to go back to; then it tags
+``HEAD``, only when nothing was missed. The contract
 is docs/design/playground-export.md. Exits 0 when exported (or nothing to export), 1 on a failure:
 the owner's requests unreadable is one.
 """
@@ -43,6 +45,8 @@ MAIN = "origin/main"
 CONDUCTOR = "http://127.0.0.1:7420"
 CONDUCTOR_LOG = "agent-hub-conductor.log"
 PROJECT = "agent-hub"
+# Each export's snapshot: the checkout as it was, on a branch of the developer's (prefix/...).
+SNAPSHOT_PREFIX = "playground-snapshot/"
 # The owner's requests sit just before the commits that answer them.
 REQUEST_LEAD = timedelta(hours=1)
 # Listing the sessions reads every one's state: slow on a busy conductor.
@@ -221,10 +225,47 @@ def screens_of(
     return screens, removed
 
 
-def git(*args: str, cwd: Path = ROOT) -> str:
+def git(*args: str, cwd: Path = ROOT, env: Mapping[str, str] | None = None) -> str:
     return subprocess.run(  # noqa: S603 -- a fixed argv, no shell
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=dict(env) if env is not None else None,
     ).stdout
+
+
+def snapshot_branch(current: str, email: str, stamp: str) -> str:
+    """The developer's own branch for a snapshot: the current branch's prefix (``roquettejh/``),
+    else their email's local part."""
+    prefix = current.split("/", 1)[0] if "/" in current else email.split("@", 1)[0]
+    return f"{prefix + '/' if prefix else ''}{SNAPSHOT_PREFIX}{stamp}"
+
+
+def snapshot(
+    branch: str, *, message: str, in_progress: Sequence[str] = (), cwd: Path = ROOT
+) -> str:
+    """Commits the checkout as it is (HEAD and its uncommitted files) on ``branch``, with HEAD's
+    author, without touching the checkout's files, index or branch. Returns the commit. The
+    hub's files stay out: project material never goes into the platform's repo."""
+    name, email = git("log", "-1", "--format=%an%x1f%ae", cwd=cwd).strip().split("\x1f")
+    with tempfile.TemporaryDirectory(prefix="playground-snapshot-") as scratch:
+        env = {
+            **os.environ,
+            "GIT_INDEX_FILE": str(Path(scratch) / "index"),
+            "GIT_AUTHOR_NAME": name,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": name,
+            "GIT_COMMITTER_EMAIL": email,
+        }
+        git("read-tree", "HEAD", cwd=cwd, env=env)
+        if in_progress:
+            git("add", "-A", "--", *in_progress, cwd=cwd, env=env)
+        tree = git("write-tree", cwd=cwd, env=env).strip()
+        commit = git("commit-tree", tree, "-p", "HEAD", "-m", message, cwd=cwd, env=env).strip()
+    git("branch", branch, commit, cwd=cwd)
+    return commit
 
 
 def resolve_base(since: str | None) -> str:
@@ -566,6 +607,7 @@ def render_brief(
     shipped: Sequence[Commit] = (),
     hub: str | None = None,
     missing: Sequence[str] = (),
+    snapshot: str | None = None,
 ) -> str:
     """The owner's requests in the order they asked them, each a delivery: its turns in their
     own words, then what it made."""
@@ -577,6 +619,13 @@ def render_brief(
         "the owner's turns (what they asked, answered and validated), what each turn made, then "
         "its commits, files, screens and patch."
     )
+    if snapshot:
+        lines += [
+            "",
+            f"Snapshot: branch `{snapshot}`, the checkout as it was, uncommitted files included "
+            f"(the hub's files are only in `hub/` here). Back to it: "
+            f"`git switch -c <name> {snapshot}`.",
+        ]
     if missing:
         lines += ["", "**Incomplete:**", "", *[f"- {reason}" for reason in missing]]
     for number, request in enumerate(requests, 1):
@@ -981,6 +1030,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     _write_changes(
         out, requests, commits, hub=args.hub, hub_files=hub_files, in_progress=in_progress
     )
+    branch = snapshot_branch(
+        git("branch", "--show-current").strip(), git("config", "user.email").strip(), stamp
+    )
+    snapshot(
+        branch,
+        message=f"chore(dev): playground snapshot {stamp}\n\nThe checkout as exported, "
+        "uncommitted files included; not for merging.",
+        in_progress=in_progress,
+    )
     screens = [shot for request in requests for shot in request.screens]
     skipped = "--no-screens" if args.no_screens else capture_screens(screens, out / "screens")
     missing = [f"screens not captured: {skipped}"] if skipped else []
@@ -992,6 +1050,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         shipped=shipped,
         hub=args.hub.name,
         missing=missing,
+        snapshot=branch,
     )
     (out / "brief.md").write_text(brief, "utf-8")
     document = {
@@ -1004,6 +1063,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "in_progress": in_progress,
         "screens_skipped": skipped,
         "complete": not missing,
+        "snapshot": branch,
     }
     (out / "export.json").write_text(json.dumps(document, indent=2) + "\n", "utf-8")
     if not missing:
@@ -1017,6 +1077,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 *([f"kept {len(also_on)} commit(s) another branch also has"] if also_on else []),
                 *([f"copied {len(hub_files)} hub file(s)"] if hub_files else []),
                 *([f"{len(in_progress)} uncommitted file(s)"] if in_progress else []),
+                f"snapshot on branch {branch}",
                 *(
                     [f"not marked, the next export starts here again: {'; '.join(missing)}"]
                     if missing
