@@ -634,4 +634,20 @@ describe("SessionsListScreen view-toggle", () => {
     await shows("grid");
     expect(window.localStorage.getItem(VIEW)).toBeNull();
   });
+
+  it("ignores v with Alt, and from a control inside an open dialog", async () => {
+    renderList(routes());
+    await shows("grid");
+
+    fireEvent.keyDown(document.body, { key: "v", altKey: true });
+    fireEvent.click(await screen.findByRole("button", { name: "New session" }));
+    const dialog = await screen.findByRole("dialog", { name: "New session" });
+    const close = within(dialog).getAllByRole("button")[0];
+    if (!close) throw new Error("the dialog has no button");
+    close.focus();
+    fireEvent.keyDown(close, { key: "v" });
+
+    await shows("grid");
+    expect(window.localStorage.getItem(VIEW)).toBeNull();
+  });
 });
