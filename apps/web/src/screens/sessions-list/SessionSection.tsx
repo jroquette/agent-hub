@@ -38,6 +38,7 @@ export function SessionSection({
   title,
   count,
   approximate,
+  updating = false,
   collapsed,
   onToggle,
   children,
@@ -47,6 +48,8 @@ export function SessionSection({
   /** Null while the section loads. */
   count: number | null;
   approximate: boolean;
+  /** Showing the previous filters' pages while the new ones load. */
+  updating?: boolean;
   collapsed: boolean;
   onToggle: () => void;
   children: ReactNode;
@@ -54,7 +57,12 @@ export function SessionSection({
   const bodyId = `sl-section-${id}`;
   const shown = count === null ? "…" : `${approximate ? "~" : ""}${fmtInt(count)}`;
   return (
-    <section className="sl-section" aria-labelledby={`${bodyId}-head`}>
+    <section
+      className="sl-section"
+      aria-labelledby={`${bodyId}-head`}
+      aria-busy={updating || undefined}
+      data-updating={updating || undefined}
+    >
       <h2 className="sl-section-head">
         <button
           type="button"
@@ -67,6 +75,7 @@ export function SessionSection({
           <Icon name={collapsed ? "chevron-right" : "chevron-down"} size="sm" />
           {`${title} · ${shown}`}
         </button>
+        {updating && <span className="sl-section-updating ah-muted">Updating…</span>}
       </h2>
       <div id={bodyId} hidden={collapsed}>
         {!collapsed && children}
