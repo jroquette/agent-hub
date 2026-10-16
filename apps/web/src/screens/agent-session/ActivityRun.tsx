@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, type KeyboardEvent } from "react";
 
 import { Button, Icon, TOOL_ICON, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
+import { useDrawerWidth } from "./DrawerResize";
 import { RequestCard, type AnswerPermission } from "./PermissionCard";
 import { StoredCopyLabel } from "./SessionStatus";
 import { ToolCallCard } from "./ToolCallCard";
@@ -224,6 +225,7 @@ export interface ActivityPanelProps {
  * its input and result. Esc or Close shuts it. */
 function ActivityPanelView({ steps, tools, calls, requests, onClose }: ActivityPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const drawer = useDrawerWidth();
   useEffect(() => {
     heading.current?.focus({ preventScroll: true });
   }, []);
@@ -239,10 +241,12 @@ function ActivityPanelView({ steps, tools, calls, requests, onClose }: ActivityP
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <aside
       id={ACTIVITY_PANEL_ID}
-      className="as-activity-panel"
+      className="as-drawer as-activity-panel"
+      style={drawer.style}
       aria-labelledby={`${ACTIVITY_PANEL_ID}-title`}
       onKeyDown={onKeyDown}
     >
+      <div {...drawer.handle} />
       <div className="as-activity-panel-head">
         <h2
           ref={heading}

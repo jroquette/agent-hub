@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 
 import { Icon, Markdown, type IconName } from "../../components";
@@ -39,6 +40,10 @@ export interface TranscriptProps {
   follow?: StickToBottom | undefined;
   /** The screenshot this browser sent with the first prompt (memory only); else the marker's label. */
   screenshotUrl?: string | undefined;
+  /** Another drawer the page opened (Changed files): it takes the side panel's place. */
+  sidePanel?: ReactNode;
+  /** A run line opened the activity drawer: the page closes its own. */
+  onActivityOpen?: (() => void) | undefined;
 }
 
 /** The first render shows the latest entries only, from the oldest pending card at the latest;
@@ -242,6 +247,8 @@ export function Transcript({
   scrollerRef,
   follow,
   screenshotUrl,
+  sidePanel,
+  onActivityOpen,
 }: TranscriptProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const opened = useRef(false);
@@ -261,9 +268,19 @@ export function Transcript({
 
   // The run the side panel shows; closing gives focus back to its line.
   const [panelRun, setPanelRun] = useState<string | null>(null);
-  const toggleRun = useCallback((runKey: string) => {
-    setPanelRun((current) => (current === runKey ? null : runKey));
-  }, []);
+  // Kept stable for the memoised run lines: the latest callback is read when a line is pressed.
+  const sideOpen = Boolean(sidePanel);
+  const activityOpened = useRef(onActivityOpen);
+  useEffect(() => {
+    activityOpened.current = onActivityOpen;
+  });
+  const toggleRun = useCallback(
+    (runKey: string) => {
+      activityOpened.current?.();
+      setPanelRun((current) => (current === runKey && !sideOpen ? null : runKey));
+    },
+    [sideOpen],
+  );
   const closePanel = useCallback(() => {
     const key = panelRun;
     setPanelRun(null);
@@ -338,10 +355,10 @@ export function Transcript({
   const rows = rowsOf(state.entries, attached, start);
   const shownRun =
     panelRun === null ? undefined : rows.find((row) => row.kind === "run" && row.key === panelRun);
-  const panelSteps = shownRun?.kind === "run" ? stepsOf(shownRun.entries) : null;
+  const panelSteps = shownRun?.kind === "run" && !sidePanel ? stepsOf(shownRun.entries) : null;
 
   return (
-    <div className={cx("as-body", panelSteps && "as-body-panel")}>
+    <div className={cx("as-body", (panelSteps !== null || sideOpen) && "as-body-panel")}>
       {/* A scroll container takes focus so the keyboard can scroll it and press End. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-static-element-interactions */}
       <div className="as-scroll" ref={attach} tabIndex={0} onKeyDown={onKeyDown}>
@@ -367,7 +384,7 @@ export function Transcript({
                   <ActivityRun
                     runKey={row.key}
                     steps={stepsOf(row.entries)}
-                    selected={row.key === panelRun}
+                    selected={row.key === panelRun && !sidePanel}
                     live={state.status === "running"}
                     onToggle={toggleRun}
                     onAnswerPermission={onAnswerPermission}
@@ -407,6 +424,7 @@ export function Transcript({
           </p>
         )}
       </div>
+      {sidePanel}
       {panelSteps && (
         <ActivityPanel
           steps={panelSteps}
