@@ -159,11 +159,8 @@ live: web-install ## live loop: API on 7421 (restarts on change), web app on 517
 playground: ## the whole live playground (conductor, make live, hub registration), then opens http://127.0.0.1:5173
 	./scripts/playground.sh
 
-playground-stop: ## stop the playground's servers
-	-@pkill -f "[h]ub web"
-	-@pkill -f "[n]ode_modules/.bin/vite"
-	-@pkill -f "[s]cripts.live_api"
-	-@pkill -f "[a]gent_hub.cli web"
+playground-stop: ## stop the playground's servers (7420, 7421 and this checkout's web app)
+	./scripts/playground.sh stop
 
 demo: ## load synthetic demo data into the running control plane (make run or make up)
 	$(RUN) python -m scripts.seed_demo --url $(URL)

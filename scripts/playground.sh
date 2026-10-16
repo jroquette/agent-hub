@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # `make playground`: the live playground, from nothing to the browser open on it. Safe to run again.
+# `scripts/playground.sh stop` (`make playground-stop`) stops its servers.
 #
 #   http://127.0.0.1:5173  the only address you use: this checkout's web app, hot reload
 #   7420  conductor: a copy of this checkout taken at each start; runs the Claude sessions, so a
@@ -22,11 +23,22 @@ wait_for() {
   return 1
 }
 
+# Only the playground's own servers: the conductor on 7420, the live API on 7421 and this checkout's
+# Vite. Any other `hub web` (another hub's, `make run`) keeps running.
+stop_servers() {
+  pkill -f "[h]ub web --port 7420" || true
+  pkill -f "[s]cripts.live_api" || true
+  pkill -f "[a]gent_hub.cli web --port 7421" || true
+  pkill -f "$AH/apps/web/node_modules/[.]bin/vite" || true
+}
+
+if [ "${1:-}" = "stop" ]; then
+  stop_servers
+  exit 0
+fi
+
 step "stop the old servers"
-pkill -f "[h]ub web" || true
-pkill -f "[n]ode_modules/.bin/vite" || true
-pkill -f "[s]cripts.live_api" || true
-pkill -f "[a]gent_hub.cli web" || true
+stop_servers
 sleep 2
 
 step "a hub for agent-hub (once)"
@@ -35,7 +47,7 @@ if [ ! -f "$AHH/hub.json" ]; then
   git -C "$AHH" init -q -b main
   (cd "$AHH" && uv run --project "$AH" --locked --all-packages hub init agent-hub \
     --repos jroquette/agent-hub --tracker linear:AGH --branch-prefix roquettejh/ \
-    --author-name "José Henrique Roquette" --author-email roquettejh@gmail.com \
+    --author-name "$(git -C "$AH" config user.name)" --author-email "$(git -C "$AH" config user.email)" \
     --hub-repo jroquette/agent-hub-hub)
 fi
 
