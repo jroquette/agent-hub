@@ -18,7 +18,9 @@ import {
   TicketRef,
   splitTitle,
   ticketAnchor,
+  type TicketAction,
 } from "./PlanningView";
+import { StartTicketButton, canStartTicket } from "./StartTicket";
 import { TICKETS_REFRESH_MS } from "./queries";
 import { TicketNotice } from "./TicketNotice";
 
@@ -239,10 +241,12 @@ function TicketsTable({
   data,
   project,
   acPasses,
+  ticketAction,
 }: {
   data: FeatureTickets;
   project: string;
   acPasses?: AcPasses | undefined;
+  ticketAction?: TicketAction | undefined;
 }) {
   const byRef = new Set(data.tickets.map((t) => t.ref));
   const isChild = (row: TicketRow) => row.parent != null && byRef.has(row.parent);
@@ -269,7 +273,10 @@ function TicketsTable({
       label: "Readiness",
       width: 200,
       cell: (row) => (
-        <ReadinessText row={row} rows={data.tickets} external={data.planning.external_blockers} />
+        <span className="ah-row ah-wrap" style={{ gap: 8 }}>
+          <ReadinessText row={row} rows={data.tickets} external={data.planning.external_blockers} />
+          {ticketAction?.(row)}
+        </span>
       ),
     },
   ];
@@ -332,6 +339,8 @@ function Loading() {
 export interface TicketsTabProps {
   /** The feature's project: its sessions are looked up there. */
   project: string;
+  /** The feature's slug: a ticket's session reads the record under `brain/features/<slug>/`. */
+  slug: string;
   /** The `GET .../tickets` answer; undefined while it loads. */
   data: FeatureTickets | undefined;
   /** The route's failure, shown with a retry. */
@@ -350,6 +359,7 @@ export interface TicketsTabProps {
  */
 export function TicketsTab({
   project,
+  slug,
   data,
   error,
   onRefresh,
@@ -367,6 +377,10 @@ export function TicketsTab({
     );
   }
   if (!data) return <Loading />;
+  const ticketAction: TicketAction = (row) =>
+    canStartTicket(row) ? (
+      <StartTicketButton project={project} slug={slug} row={row} rows={data.tickets} />
+    ) : null;
   return (
     <div className="ah-stack" style={{ gap: 12 }}>
       <TicketNotice tickets={data} onRefresh={onRefresh} refreshing={refreshing} />
@@ -379,8 +393,18 @@ export function TicketsTab({
         </div>
       ) : (
         <>
-          <PlanningView tickets={data.tickets} planning={data.planning} acPasses={acPasses} />
-          <TicketsTable data={data} project={project} acPasses={acPasses} />
+          <PlanningView
+            tickets={data.tickets}
+            planning={data.planning}
+            acPasses={acPasses}
+            ticketAction={ticketAction}
+          />
+          <TicketsTable
+            data={data}
+            project={project}
+            acPasses={acPasses}
+            ticketAction={ticketAction}
+          />
         </>
       )}
     </div>
