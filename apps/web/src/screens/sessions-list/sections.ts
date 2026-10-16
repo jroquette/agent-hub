@@ -83,9 +83,22 @@ export function placeDriven(
   const twinless = driven
     .filter((a) => !twinned(a) && asked.has(sectionOf(a.status)) && inPeriod(a))
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  // A twin's row reads the driven session's title (its first prompt, redacted) until Claude Code's
+  // own title reaches the label, which happens when the session's first turn ends.
+  const prompts = new Map<string, string>();
+  for (const a of driven) {
+    if (!a.title) continue;
+    prompts.set(a.id, a.title);
+    if (a.observed_session_id) prompts.set(a.observed_session_id, a.title);
+  }
+  const withPrompt = (s: Session): Session => {
+    const prompt = prompts.get(s.agent_session_id ?? "") ?? prompts.get(s.id);
+    if (!prompt || !s.label || s.label.title) return s;
+    return { ...s, label: { ...s.label, title: prompt } };
+  };
   const moved: Session[] = [];
   const kept = (id: SectionId) =>
-    observed[id].filter((s) => {
+    observed[id].map(withPrompt).filter((s) => {
       const move =
         id !== "waiting" &&
         asked.has("waiting") &&

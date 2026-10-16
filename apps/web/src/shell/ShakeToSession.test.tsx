@@ -340,6 +340,36 @@ describe("ShakeToSession (shake to start a session)", () => {
     expect(within(dialog).queryByRole("note")).toBeNull();
   });
 
+  it("live-edit: the project that lists the served checkout wins over the scope", async () => {
+    vi.mocked(servedCheckout).mockReturnValue(ROOT);
+    const view = mount("/sessions?scope=tipple", {
+      "/api/v1/projects": aPage([
+        aProjectSummary({ name: "tipple" }),
+        aProjectSummary({ name: "agent-hub" }),
+      ]),
+      [`${AGENT}/workdirs`]: (request: Request) =>
+        new URL(request.url).searchParams.get("project") === "agent-hub"
+          ? {
+              items: [aWorkdir({ kind: "repo", label: "agent-hub", workdir_id: REPO_ID })],
+              warnings: [],
+            }
+          : { items: [aWorkdir()], warnings: [] },
+    });
+    await waitFor(() => {
+      const asked = view.requests
+        .filter((r) => new URL(r.url).pathname === `${AGENT}/workdirs`)
+        .map((r) => new URL(r.url).searchParams.get("project"));
+      expect(asked).toContain("agent-hub");
+    });
+    await settle();
+
+    shake();
+
+    const dialog = await screen.findByRole("dialog", { name: "New session" });
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(REPO_ID);
+    expect(within(dialog).getByRole("radio", { name: /Accept edits/ })).toBeChecked();
+  });
+
   it("live-edit-fallback: no served checkout keeps the defaults and shows the note", async () => {
     const view = mount();
     await ready(view);
