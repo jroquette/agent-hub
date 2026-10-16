@@ -227,8 +227,11 @@
   .as-caret,
   .as-working::before,
   .as-spin,
-  .as-activity-panel {
+  .as-drawer {
     animation: none;
+  }
+  .as-drawer-handle::after {
+    transition: none;
   }
   .as-meta {
     transition: none;
@@ -653,15 +656,18 @@
 .as-page:has(> .as-body-panel) > .as-footer {
   grid-area: 3 / 1;
 }
-.as-activity-panel {
+.as-drawer {
+  /* A drawer (Activity, Changed files): resizable from its left edge, never narrower than 320px
+   * nor wide enough to leave the chat under 280px. */
   grid-area: 1 / 1 / -1 / -1;
   justify-self: end;
   position: relative;
   z-index: calc(var(--z-sticky) + 1);
   width: var(--as-panel-w);
+  min-width: 320px;
+  max-width: calc(100% - 280px);
   display: flex;
   flex-direction: column;
-  min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--border);
   background: var(--bg);
@@ -674,10 +680,51 @@
     transform: translateX(24px);
   }
 }
+/* The grip on the left edge: a wide hit area, a thin line that lights up on hover and focus. */
+.as-drawer-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 1;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.as-drawer-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.as-drawer-handle:hover::after,
+.as-drawer-handle:focus-visible::after {
+  background: var(--accent);
+}
+.as-drawer-handle:focus-visible {
+  outline: none;
+}
+body.as-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.as-resizing .as-drawer {
+  animation: none;
+}
 @container (max-width: 760px) {
-  .as-activity-panel {
+  .as-drawer {
     width: 100%;
+    min-width: 0;
+    max-width: none;
     border-left: 0;
+  }
+  .as-drawer-handle {
+    display: none;
   }
 }
 .as-activity-panel-head {
@@ -738,4 +785,270 @@
 }
 .as-activity-step-body .as-thinking {
   padding-top: 6px;
+}
+
+/* Changed files: a review drawer. Wide, the file list sits beside the diffs; narrow, above them. */
+.as-files-panel {
+  container-type: inline-size;
+}
+.as-files-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+.as-files-empty {
+  padding: var(--space-4);
+}
+.as-files-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+@container (min-width: 720px) {
+  .as-files-body {
+    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .as-files-nav {
+    border-bottom: 0;
+    border-right: 1px solid var(--border);
+    max-height: none;
+  }
+}
+.as-files-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.as-files-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.as-files-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-muted);
+}
+.as-files-meter {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--border);
+  overflow: hidden;
+}
+.as-files-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--done);
+  transition: width var(--dur-base) var(--ease-out);
+}
+.as-files-root {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--font-mono);
+}
+.as-files-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 5px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.as-files-nav-item:hover {
+  background: var(--surface-hover);
+}
+.as-files-nav-item > svg {
+  flex: none;
+  color: var(--text-subtle);
+}
+.as-files-nav-viewed {
+  color: var(--text-subtle);
+}
+.as-files-nav-viewed > svg {
+  color: var(--done);
+}
+.as-files-nav-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-files-stats {
+  display: inline-flex;
+  gap: 6px;
+  flex: none;
+  font: 500 12px var(--font-mono);
+}
+.as-files-add {
+  color: var(--diff-add);
+}
+.as-files-del {
+  color: var(--diff-del);
+}
+.as-files-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.as-files-file {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  scroll-margin-top: var(--space-3);
+}
+.as-files-file-head {
+  position: sticky;
+  top: calc(var(--space-3) * -1);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--surface);
+}
+.as-files-file:has(.as-files-file-body) .as-files-file-head {
+  border-bottom: 1px solid var(--border);
+}
+.as-files-file-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.as-files-kind {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  font: 700 10px var(--font-mono);
+}
+.as-files-kind-a {
+  background: var(--done-soft);
+  color: var(--done);
+}
+.as-files-kind-m {
+  background: var(--waiting-soft);
+  color: var(--waiting);
+}
+.as-files-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 13px var(--font-mono);
+}
+.as-files-viewed {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.as-files-viewed:hover {
+  background: var(--surface-hover);
+}
+.as-files-viewed input {
+  margin: 0;
+  accent-color: var(--done);
+}
+.as-files-viewed-on {
+  border-color: color-mix(in srgb, var(--done) 45%, var(--border));
+  background: var(--done-soft);
+  color: var(--done);
+}
+.as-files-file-viewed .as-files-name {
+  opacity: 0.7;
+}
+.as-files-file-body {
+  display: flex;
+  flex-direction: column;
+}
+.as-files-change + .as-files-change {
+  border-top: 1px dashed var(--border);
+}
+.as-files-change-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+}
+.as-files-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.as-files-state-error,
+.as-files-state-denied {
+  color: var(--failed);
+}
+.as-files-state-done {
+  color: var(--done);
+}
+.as-files-change .as-diff {
+  max-height: none;
+  border-radius: 0;
+}
+.as-files-change:last-child .as-diff {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+.as-files-change-skipped .as-diff {
+  opacity: 0.55;
+}
+@media (prefers-reduced-motion: reduce) {
+  .as-files-meter > span {
+    transition: none;
+  }
 }
