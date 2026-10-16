@@ -121,7 +121,7 @@ describe("Transcript (transcript)", () => {
     expect(screen.getByText("Thought for 1 s").closest("details")).not.toHaveAttribute("open");
   });
 
-  it("keeps a tool call out of the conversation, one line that opens it in the side panel", async () => {
+  it("keeps a tool call out of the conversation, one line that opens it in the side panel (AC-265.3)", async () => {
     show(scripted());
 
     expect(screen.queryByRole("button", { name: /Edit src\/app\.py/ })).toBeNull();
@@ -136,7 +136,7 @@ describe("Transcript (transcript)", () => {
     expect(within(panel).getByRole("button", { name: /Edit src\/app\.py/ })).toBeInTheDocument();
   });
 
-  it("closes the side panel on Esc, Close or its line again, focus back on the line", async () => {
+  it("closes the side panel on Esc, Close or its line again, focus back on the line (AC-265.3)", async () => {
     show(scripted());
     const line = screen.getByRole("button", { name: "Edited 1 file" });
 
@@ -542,7 +542,7 @@ describe("Transcript (tool-cards) attached permission", () => {
     record: aLogRecord("text", { seq, body: { block: 0, text: "Between" } }),
   });
 
-  it("renders the permission card under its run's line; the call reads Waiting for you", async () => {
+  it("renders the permission card under its run's line; the call reads Waiting for you (AC-265.4)", async () => {
     show([call(1, "toolu_9"), text(2), ask(3, "toolu_9")]);
 
     const line = screen.getByRole("button", { name: "Ran 1 command" });
@@ -568,7 +568,7 @@ describe("Transcript (tool-cards) attached permission", () => {
     expect(screen.getByRole("button", { name: "Ran 1 command" })).toBeInTheDocument();
   });
 
-  it("reads the call a live run is on, then the run's summary once it ends", () => {
+  it("reads the call a live run is on, then the run's summary once it ends (AC-265.2)", () => {
     const running: StreamItem = { type: "status", status: { status: "running" } };
     const { rerender } = render(
       <Transcript state={[running, call(1, "a")].reduce(reduceTranscript, initialTranscript())} />,
@@ -579,7 +579,7 @@ describe("Transcript (tool-cards) attached permission", () => {
     expect(screen.getByRole("button", { name: "Ran 1 command" })).toBeInTheDocument();
   });
 
-  it("groups calls and the thoughts between them into one run; text starts a new run", () => {
+  it("groups calls and the thoughts between them into one run; text starts a new run (AC-265.1)", () => {
     const thought = (seq: number): StreamItem => ({
       type: "record",
       record: aLogRecord("thinking", { seq }),

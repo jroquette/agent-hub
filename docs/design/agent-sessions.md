@@ -110,10 +110,10 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   ([ADR 0034](../adr/0034-syntax-highlighting-in-the-chat.md)); one still streaming stays plain until its fence
   closes or the reply ends, and one over 2,000 lines or 64 KiB stays plain.
 - **Tool calls.** Each card shows an icon and text: running, waiting for you, done, error or denied; a call with an
-  open permission reads "Waiting for you" with its permission card under it. Output over 10,000 characters is cut
-  with "Show all (N characters)". Consecutive calls with no text between them group as one "Explored · 3 Read,
-  2 Grep" row, open when one is pending or failed. Thinking reads "Thought for N s" (from the previous record's `at`),
-  else "Thinking".
+  open permission reads "Waiting for you". Output over 10,000 characters is cut with "Show all (N characters)". What
+  Claude does between two messages (its calls and the thoughts between them) folds into one activity line that
+  opens the Activity side panel (below). Thinking reads "Thought for N s" (from the previous record's `at`), else
+  "Thinking"; thoughts with no call among them stay in the conversation.
 - **Composer.** Grows up to 40% of the viewport. The draft is saved to `ah.chat.draft.<id>` in the browser after
   500 ms (not above 64 KiB), restored on reload, cleared once a send is accepted. It has focus on open unless a
   permission is pending and keeps it after Send. Enter does not send during IME composition or within 500 ms after
@@ -135,6 +135,26 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **Accessibility.** No serious or critical axe violation in any state (empty, streaming, waiting, detached, menu
   open, ended). The log keeps `role="log"` and `aria-busy` and has a visually hidden h2; under
   `prefers-reduced-motion` no caret, shimmer or smooth scroll animates.
+
+### Activity (AGH-265)
+
+- **AC-265.1** Given Claude made calls (and thought between them) between two messages, when the chat renders, then
+  they read as one line counting the calls by kind, first seen first, then the time spent thinking ("Ran 3
+  commands, read 2 files, thought 12 s"); Grep and Glob count together as searches, an unknown tool by its name.
+- **AC-265.2** Given the session runs and the run has a call without a result, when the line renders, then it reads
+  that call (name and summary) with a spinner instead of the summary; failed or denied calls add "N failed".
+- **AC-265.3** Given an activity line, when it is pressed, then the Activity side panel opens with the run's steps in
+  order (each thought and each call, expandable to its input and result); the line again, Close or Esc closes it
+  and gives the focus back to the line. A step joining the run keeps the panel and an expanded call in place.
+- **AC-265.4** Given a call of the run asks for a permission, when the run renders, then its card stays in the
+  conversation under the line, answerable without opening the panel, and the call reads "Waiting for you".
+- **AC-265.5** Given the panel opens, then it is a full-height drawer over the right of the page that never moves
+  the chat: the free margin beside the centred column (400 to 520 px), the whole width when the chat is narrow;
+  it slides in, not under `prefers-reduced-motion`.
+- **AC-265.6** Given a session page's "What went wrong" panel, when every problem was dealt with, then it folds into
+  one line, "Nothing needs you · the agent dealt with N problems: <count per kind, most frequent first>", with
+  "Show N handled"; otherwise the problems that need the owner stay listed ("Needs attention") and the handled ones
+  sit behind the same button. A row the agent recovered or continued past shows no badge.
 
 ## Invariants
 

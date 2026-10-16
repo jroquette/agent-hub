@@ -84,7 +84,7 @@ describe("ProblemsPanel what-went-wrong", () => {
     expect(within(denied).queryByText("Handled by the agent")).not.toBeInTheDocument();
   });
 
-  it("folds into one line saying nothing needs the owner when the agent dealt with every problem", () => {
+  it("folds into one line saying nothing needs the owner when the agent dealt with every problem (AC-265.6)", () => {
     render(
       <ProblemsPanel
         problems={aSessionProblems({
@@ -165,7 +165,7 @@ describe("ProblemsPanel what-went-wrong", () => {
     ).toBe("1 needs you · 1 agent is on it · 1 handled by the agent · 1 by you");
   });
 
-  it("counts the kinds of problems, most frequent first", () => {
+  it("counts the kinds of problems, most frequent first (AC-265.6)", () => {
     expect(
       kindCounts([
         aSessionProblem({ kind: "guard_denied" }),

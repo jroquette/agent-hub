@@ -1151,6 +1151,23 @@ describe("AgentSessionScreen (axe)", () => {
     await accessible(view.container, false);
   });
 
+  it("opens the activity panel as a drawer over the chat that never moves it (AC-265.5)", () => {
+    const css = readFileSync(
+      join(process.cwd(), "src/screens/agent-session/agent-session.css"),
+      "utf8",
+    );
+    const rule = (selector: string) =>
+      new RegExp(`(?:^|\\n)${selector.replace(/[.()>:]/g, "\\$&")} \\{([^}]*)\\}`).exec(css)?.[1] ??
+      "";
+    expect(rule(".as-page:has(> .as-body-panel)")).toContain(
+      "grid-template-columns: minmax(0, 1fr);",
+    );
+    const panel = rule(".as-activity-panel");
+    expect(panel).toContain("grid-area: 1 / 1 / -1 / -1;");
+    expect(panel).toContain("justify-self: end;");
+    expect(panel).toContain("width: var(--as-panel-w);");
+  });
+
   it("animates no caret or working dot under reduced motion", () => {
     const css = readFileSync(
       join(process.cwd(), "src/screens/agent-session/agent-session.css"),
@@ -1159,7 +1176,12 @@ describe("AgentSessionScreen (axe)", () => {
     const animated = [...css.matchAll(/([^{}]+)\{[^{}]*\banimation:(?!\s*none)[^;]+;/g)].map(
       (match) => match[1]?.trim(),
     );
-    expect(animated).toEqual([".as-caret", ".as-working::before", ".as-spin"]);
+    expect(animated).toEqual([
+      ".as-caret",
+      ".as-working::before",
+      ".as-spin",
+      ".as-activity-panel",
+    ]);
     const reduced =
       /@media \(prefers-reduced-motion: reduce\) \{\s*([^{]+)\{\s*animation: none;/.exec(css);
     expect(reduced?.[1]?.split(",").map((selector) => selector.trim())).toEqual(animated);

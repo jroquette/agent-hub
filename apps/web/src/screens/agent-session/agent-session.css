@@ -226,7 +226,8 @@
 @media (prefers-reduced-motion: reduce) {
   .as-caret,
   .as-working::before,
-  .as-spin {
+  .as-spin,
+  .as-activity-panel {
     animation: none;
   }
   .as-meta {
@@ -341,37 +342,6 @@
   letter-spacing: 0.04em;
   color: var(--text-subtle);
   margin-bottom: 4px;
-}
-.as-tool-group-head {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: var(--control);
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.as-tool-group-head:hover {
-  color: var(--text);
-}
-.as-tool-group-head:focus-visible {
-  outline: 2px solid var(--focus-ring);
-}
-.as-tool-run-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.as-tool-group-list {
-  margin-top: var(--space-1);
 }
 .as-tool + .as-perm {
   margin-top: var(--space-2);
@@ -696,7 +666,7 @@
   border-left: 1px solid var(--border);
   background: var(--bg);
   box-shadow: var(--shadow-popover);
-  animation: as-drawer-in 160ms ease-out;
+  animation: as-drawer-in var(--dur-base) var(--ease-out);
 }
 @keyframes as-drawer-in {
   from {
@@ -708,11 +678,6 @@
   .as-activity-panel {
     width: 100%;
     border-left: 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .as-activity-panel {
-    animation: none;
   }
 }
 .as-activity-panel-head {
