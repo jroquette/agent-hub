@@ -30,7 +30,8 @@ class BrainChange(BaseModel):
 
     ``note`` and ``destination`` are relative to the hub's ``brain/``; ``hub_repo`` is the
     GitHub ``owner/name`` of the hub's ``origin``. ``title``, ``body`` and ``commit_message``
-    are already redacted.
+    are already redacted. ``note_body``, when set, replaces the note's text after its
+    frontmatter in the same commit: the edit the human made before accepting.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -42,6 +43,7 @@ class BrainChange(BaseModel):
     note: str = Field(min_length=1)
     destination: str = Field(min_length=1)
     frontmatter: dict[str, str]
+    note_body: str | None = None
     author: CommitAuthor
     branch: str = Field(min_length=1)
     title: str = Field(min_length=1)

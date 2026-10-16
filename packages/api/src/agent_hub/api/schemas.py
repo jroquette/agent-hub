@@ -8,6 +8,7 @@ from typing import Annotated, Any
 from fastapi import Header, Query
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from agent_hub.core.brain.brain_path import MAX_NOTE_BYTES
 from agent_hub.core.readmodels.filters import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
 from agent_hub.core.readmodels.page import MAX_CURSOR_CHARS
 
@@ -50,11 +51,13 @@ MAX_REASON_CHARS = 300
 
 class AcceptLearningBody(BaseModel):
     """``POST /learnings/{learning_id}/accept``: the brain folder (or ``.md`` path) to move the
-    note to, relative to ``brain/``."""
+    note to, relative to ``brain/``, and optionally the note's edited text after its frontmatter
+    (the frontmatter itself is kept; ``status`` and ``last_verified`` are set as for any accept)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     target: str = Field(min_length=1, max_length=MAX_TARGET_CHARS)
+    note_body: str | None = Field(default=None, min_length=1, max_length=MAX_NOTE_BYTES)
 
 
 class RejectLearningBody(BaseModel):
