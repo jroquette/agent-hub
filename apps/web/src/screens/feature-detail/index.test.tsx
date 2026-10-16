@@ -6,6 +6,7 @@ import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
 import {
   aBrainNote,
+  aBrainTree,
   aFeatureDetail,
   aFeatureRecord,
   aFeatureTickets,
@@ -168,7 +169,7 @@ describe("FeatureDetailScreen", () => {
     );
   });
 
-  it("shows every AC row at once, with no Show all fold", async () => {
+  it("shows every AC row at once, with no Show all fold (AC-269.12)", async () => {
     open();
 
     const table = await screen.findByRole("table", { name: "Acceptance criteria" });
@@ -176,6 +177,60 @@ describe("FeatureDetailScreen", () => {
       13,
     );
     expect(within(table).queryByRole("button", { name: /Show all/ })).toBeNull();
+  });
+
+  it("reads each criterion as status, evidence in plain words, citations and Discuss (AC-269.10, AC-269.11)", async () => {
+    const proven = {
+      ...rows[0],
+      id: "AC-48.1",
+      evidence:
+        "agent-hub@0a1b2c3d4 (PR #80), 2026-10-11, whole-feature eval: exit 0, 4 passed, 9 deselected; red on merge base 9f8e7d6c5 (ImportError on brief). evals/agh-48.md",
+    };
+    const cited = (request: Request) => {
+      const path = new URL(request.url).searchParams.get("path") ?? "";
+      return aBrainNote({
+        path,
+        markdown: path.endsWith("spec.md")
+          ? "# Spec\n\n## Acceptance criteria\n\n**AC-48.1: workspace ignored**\n"
+          : `# Record ${path}\n`,
+      });
+    };
+    open({
+      [API]: { ...detail, ac_rows: [proven, ...rows.slice(1)] },
+      [NOTE]: cited,
+      "/api/v1/projects/agent-hub/brain": aBrainTree({
+        entries: [
+          { path: "features/layered-memory/spec.md", size: 90 },
+          { path: "features/layered-memory/plan.md", size: 90 },
+        ],
+      }),
+    });
+
+    const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+    expect(within(table).getAllByText("Passes").length).toBeGreaterThan(0);
+    expect(within(table).getByText("4 tests passed")).toHaveAttribute(
+      "title",
+      expect.stringContaining("4 tests that check this criterion ran and passed."),
+    );
+    expect(
+      within(table).getByRole("button", { name: "Discuss AC-48.1 with Claude" }),
+    ).toHaveTextContent("Discuss");
+
+    await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.1" }));
+    const how = within(table).getByRole("region", { name: "How it was proven" });
+    expect(how).toHaveTextContent("PR");
+    expect(how).toHaveTextContent("#80");
+    expect(how).toHaveTextContent("red on merge base 9f8e7d6c5 (ImportError on brief)");
+    expect(within(how).getByRole("link", { name: /agh-48/ })).toHaveAttribute(
+      "href",
+      expect.stringContaining("doc=eval&eval=agh-48"),
+    );
+    const where = within(table).getByRole("region", { name: "Where it is cited" });
+    expect(await within(where).findByRole("link", { name: "Spec" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("doc=spec"),
+    );
+    expect(where).toHaveTextContent("Acceptance criteria");
   });
 
   it("filters the ACs to owner steps and marks them", async () => {
@@ -224,7 +279,7 @@ describe("FeatureDetailScreen", () => {
   });
 
   describe("records", () => {
-    it("has the Spec, Research, Plan, Eval and Criteria tabs (records)", async () => {
+    it("has the Spec, Research, Plan, Eval and Acceptance criteria tabs (AC-269.9, records)", async () => {
       open();
 
       const tabs = within(await screen.findByRole("tablist", { name: "Feature record" }));
@@ -321,7 +376,7 @@ describe("FeatureDetailScreen", () => {
       expect(await screen.findByRole("article", { name: "Eval agh-49" })).toBeInTheDocument();
     });
 
-    it("expands an AC into its verification command and evidence (records)", async () => {
+    it("expands an AC into its verification command and evidence (AC-269.11, records)", async () => {
       const write = vi.fn(() => Promise.resolve());
       Object.defineProperty(navigator, "clipboard", {
         value: { writeText: write },
