@@ -369,7 +369,9 @@ describe("ShakeToSession (shake to start a session)", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "New session" });
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(REPO_ID);
-    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
+    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
+      /^Auto ·/,
+    );
   });
 
   it("live-edit-fallback: no served checkout keeps the defaults and shows the note", async () => {
