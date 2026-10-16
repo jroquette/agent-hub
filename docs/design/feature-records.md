@@ -54,6 +54,18 @@ line, its scope its frontmatter when it has one.
 Written by `/feature` step 7 once both reviewers pass: `type: review`, `ticket`, `outcome` (`approved` or
 `changes-requested`), `pr`, `reviewed_at`. At most 500 are read (first by name), heads of 8 KiB.
 
+### `summaries/<record>.md`
+
+The human summary of `spec.md`, `research.md` or `plan.md`, written by the hub's `/summarize` skill each time the
+record is written or amended; the record stays the agents' reference and is never changed by it. Frontmatter:
+`type: summary`, `of` (the record's file name), `source_sha256` (the hex SHA-256 of the record's bytes when the summary
+was written), `written_at`, `provenance: agent`. Body: a bottom line first, then only the non-empty sections of
+Decisions, Risks, Open questions and Next step; 150 to 300 words (at most 350), plain language, every point linking
+to the record's section it comes from. People skim long agent text rather than read it (NN/g: about 20% of a page's
+words are read), so `hub web` opens a record tab on its summary ("For humans") with the record one click away
+("Agent markdown"), and says the summary is out of date when `source_sha256` differs from the `sha256` the brain
+note route gives for the record.
+
 ### Agent outputs: `reviews/<ticket>/<reviewer>-r<N>.json` and `evals/<delivery>.json`
 
 JSON the agents hand to `/feature` ([ADR 0028](../adr/0028-agent-outputs-as-validated-json.md)), checked by

@@ -23,14 +23,37 @@ const API = "/api/v1/features/agent-hub/layered-memory";
 const TICKETS = `${API}/tickets`;
 const NOTE = "/api/v1/projects/agent-hub/brain/note";
 
-/** Answers each record with a note naming its path and linking the brain index. */
-function records(request: Request) {
-  const path = new URL(request.url).searchParams.get("path") ?? "";
+const RECORD_HASH = "a".repeat(64);
+
+/** A record's human summary, written from the record version `source`. */
+function summaryNote(path: string, source = RECORD_HASH) {
   return aBrainNote({
     path,
+    frontmatter: { type: "summary", source_sha256: source, written_at: "2026-10-16" },
+    markdown:
+      "# Layered memory, in short\n\n**Bottom line:** it ships in phase 1.\n\n## Open questions\n\n" +
+      "- Who owns the cache? ([Open questions](../plan.md#open-questions))\n",
+  });
+}
+
+/** Answers each record with a note naming its path and linking the brain index, and its summary. */
+function records(request: Request) {
+  const path = new URL(request.url).searchParams.get("path") ?? "";
+  if (path.includes("/summaries/")) return summaryNote(path);
+  return aBrainNote({
+    path,
+    sha256: RECORD_HASH,
     frontmatter: { status: "approved" },
     markdown: `# Record ${path}\n\n## Open questions\n\nSee [the index](../../index.md).\n`,
   });
+}
+
+/** `records`, with the summaries answered by `summary` instead. */
+function recordsWithSummary(summary: (path: string) => unknown) {
+  return (request: Request) => {
+    const path = new URL(request.url).searchParams.get("path") ?? "";
+    return path.includes("/summaries/") ? summary(path) : records(request);
+  };
 }
 const route = "features/:project/:slug";
 
@@ -242,23 +265,20 @@ describe("FeatureDetailScreen", () => {
       );
     });
 
-    it("reads the plan from the brain and renders it (records)", async () => {
+    it("opens the plan on its human summary, read from the brain (records)", async () => {
       const { requests } = open();
 
       await userEvent.click(await screen.findByRole("tab", { name: "Plan" }));
 
       expect(
-        await screen.findByRole("heading", {
-          level: 1,
-          name: "Record features/layered-memory/plan.md",
-        }),
+        await screen.findByRole("heading", { level: 1, name: "Layered memory, in short" }),
       ).toBeInTheDocument();
-      const asked = requests.find((r) => new URL(r.url).pathname === NOTE);
-      expect(new URL(asked?.url ?? "").searchParams.get("path")).toBe(
-        "features/layered-memory/plan.md",
-      );
-      expect(screen.getByRole("definition")).toHaveTextContent("approved");
-      expect(screen.getByRole("button", { name: /Readable/ })).toHaveAttribute(
+      const asked = requests
+        .filter((r) => new URL(r.url).pathname === NOTE)
+        .map((r) => new URL(r.url).searchParams.get("path"));
+      expect(asked).toContain("features/layered-memory/summaries/plan.md");
+      expect(await screen.findByText(/\(the current version\)/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /For humans/ })).toHaveAttribute(
         "aria-pressed",
         "true",
       );
@@ -269,22 +289,70 @@ describe("FeatureDetailScreen", () => {
     });
 
     it("shows the record as the agents wrote it on Agent markdown (records)", async () => {
-      open();
+      const { router } = open();
       await userEvent.click(await screen.findByRole("tab", { name: "Plan" }));
-      await screen.findByRole("heading", {
-        level: 1,
-        name: "Record features/layered-memory/plan.md",
-      });
 
       await userEvent.click(screen.getByRole("button", { name: /Agent markdown/ }));
 
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "Record features/layered-memory/plan.md",
+        }),
+      ).toBeInTheDocument();
       expect(screen.getByRole("list", { name: "Frontmatter" })).toHaveTextContent(
         "status: approved",
       );
-      expect(screen.getByRole("button", { name: /Agent markdown/ })).toHaveAttribute(
-        "aria-pressed",
-        "true",
+      expect(router.state.location.search).toContain("view=agent");
+    });
+
+    it("opens the record at the section a summary point comes from (records)", async () => {
+      const scroll = vi.fn();
+      Element.prototype.scrollIntoView = scroll;
+      const { router } = open({}, "/features/agent-hub/layered-memory?doc=plan");
+
+      await userEvent.click(await screen.findByRole("link", { name: "Open questions" }));
+
+      expect(router.state.location.search).toContain("view=agent");
+      expect(router.state.location.hash).toBe("#open-questions");
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "Record features/layered-memory/plan.md",
+        }),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(scroll).toHaveBeenCalled();
+      });
+    });
+
+    it("warns when the record changed after its summary was written (records)", async () => {
+      open(
+        { [NOTE]: recordsWithSummary((path) => summaryNote(path, "b".repeat(64))) },
+        "/features/agent-hub/layered-memory?doc=plan",
       );
+
+      expect(
+        await screen.findByText("plan.md changed after this summary was written."),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Ask Claude to update it" })).toBeInTheDocument();
+    });
+
+    it("offers Claude and the full record when a record has no summary (records)", async () => {
+      open(
+        { [NOTE]: recordsWithSummary(() => aProblem({ status: 404, title: "Not found" })) },
+        "/features/agent-hub/layered-memory?doc=plan",
+      );
+
+      expect(await screen.findByText("No human summary of plan.md yet.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Ask Claude to write it" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Read the full plan.md" }));
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "Record features/layered-memory/plan.md",
+        }),
+      ).toBeInTheDocument();
     });
 
     it("says No plan.md yet when the plan record is absent (records)", async () => {
@@ -310,7 +378,7 @@ describe("FeatureDetailScreen", () => {
     });
 
     it("opens a brain link of a record inside the app (records)", async () => {
-      const { router } = open({}, "/features/agent-hub/layered-memory?doc=spec");
+      const { router } = open({}, "/features/agent-hub/layered-memory?doc=spec&view=agent");
 
       await userEvent.click(await screen.findByRole("link", { name: "the index" }));
 

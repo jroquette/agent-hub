@@ -1514,6 +1514,8 @@ export interface components {
       path: string;
       /** Project */
       project: string;
+      /** Sha256 */
+      sha256?: string | null;
       /** Size */
       size: number;
     };
