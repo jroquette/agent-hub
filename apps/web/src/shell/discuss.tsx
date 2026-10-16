@@ -23,6 +23,11 @@ export interface DiscussTarget {
    * Closing it there is remembered for this target until the page reloads.
    */
   openOnArrive?: boolean | undefined;
+  /**
+   * A whole screen rather than one artifact (the shell's fallback when a screen registers nothing):
+   * the first message carries what the screen shows, its text and a screenshot.
+   */
+  screen?: boolean | undefined;
 }
 
 /**
@@ -41,8 +46,11 @@ export interface DiscussReference {
 }
 
 interface DiscussState {
+  /** What the panel talks about: the screen's own target, else the screen itself. */
   target: DiscussTarget | null;
   setTarget: (target: DiscussTarget | null) => void;
+  /** The shell names the screen itself, used while the screen registers no target. */
+  setFallback: (target: DiscussTarget | null) => void;
   open: boolean;
   setOpen: (open: boolean) => void;
   /** The references waiting for the next message on the current target. */
@@ -56,6 +64,7 @@ interface DiscussState {
 const DiscussContext = createContext<DiscussState>({
   target: null,
   setTarget: () => undefined,
+  setFallback: () => undefined,
   open: false,
   setOpen: () => undefined,
   references: [],
@@ -72,7 +81,9 @@ const NO_REFERENCES: readonly DiscussReference[] = [];
  * reloads), unless the target asks to open on arrival and was not closed there.
  */
 export function DiscussProvider({ children }: { children: ReactNode }) {
-  const [target, setTarget] = useState<DiscussTarget | null>(null);
+  const [registered, setTarget] = useState<DiscussTarget | null>(null);
+  const [fallback, setFallback] = useState<DiscussTarget | null>(null);
+  const target = registered ?? fallback;
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
   const [chosenOpen, setChosenOpen] = useState(() => {
     try {
@@ -110,6 +121,7 @@ export function DiscussProvider({ children }: { children: ReactNode }) {
     () => ({
       target,
       setTarget,
+      setFallback,
       open,
       setOpen: choose,
       references,

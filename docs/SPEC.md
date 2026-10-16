@@ -494,7 +494,8 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps never offer it.
 - **Discuss.** A right-hand panel holds one driven session per feature, workflow, skill, agent, hook or note on
   screen, started in the hub folder with that artifact as context; a feature opens it on arrival, and an acceptance
-  criterion or a selected passage can be pointed at.
+  criterion or a selected passage can be pointed at. A screen with no artifact is itself the subject: the first
+  message carries its text and a screenshot (AGH-273).
 - **Studio.** Create a skill, an agent or a hook with Claude: the session writes a draft under `.hub-drafts/<id>/`
   in the hub and the preview renders it as the catalog card it will be. The Skills catalog has a tab per kind.
 - **Session names.** A session's name is the title Claude Code writes in its transcript, or the user's `/rename`,

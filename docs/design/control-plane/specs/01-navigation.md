@@ -213,6 +213,29 @@ The "last event" age updates every second while < 60 s, then every 15 s ("2 min 
 - Time zone `SegmentedControl` "Local | UTC". Stored in `ah.tz` and `?tz=utc` when not default so shared links keep the reader's intent ("the times I saw were UTC"). Every `Time` component reads it; tooltips always show both ("14:02:11 local · 12:02:11 UTC").
 - Identity chip: initials avatar (`radius-full`) "JR" with the git `user.name` from the hub config. Menu: "José Henrique Roquette · roquettejh@gmail.com" (read-only, from hub config), "Keyboard shortcuts ?", "Settings", "About agent-hub". No sign-out (local single-user app, brief §12).
 
+## Discuss with Claude on any screen (AGH-273)
+
+The top bar's Discuss button opens a right-hand panel holding one driven session per artifact on screen (a
+feature, a workflow, a skill, an agent, a hook or a note, AGH-262). A screen that registers no artifact is itself
+the target, so the panel talks about any screen:
+
+- **AC-273.1** Given a screen that registers no Discuss target and a project to work in (the shake's: the served
+  checkout's, the route's, the scope, else the first registered one), when the panel is open, then its target is
+  the screen, kind "Screen", named by the page heading, else the breadcrumb's current page, else the path; one
+  conversation per project and path, whatever the query string.
+- **AC-273.2** Given the screen as target, when the owner sends the first message, then the new session's prompt
+  carries the route and the main column's text (blank runs squeezed, cut at 12,000 characters with "[… the rest of
+  the screen is cut]"), and the session starts with a screenshot of the main column, which the chat shows as the
+  first message's image.
+- **AC-273.3** Given the screenshot fails or times out, when the first message is sent, then the text still goes,
+  without an image.
+- **AC-273.4** Given a screen registers its own target, then it wins over the screen fallback.
+- **AC-273.5** Given no project is registered, when the panel opens, then it says "Register a project to talk with
+  Claude about any screen."
+- **AC-273.6** Given the screen as target, then the panel's note says the first message takes the screen's text and
+  a screenshot along, and that Discuss selection still points at one part.
+- **AC-273.7** Given the panel is closed, then the screen fallback is not mounted and asks the API nothing.
+
 ## Breadcrumbs
 
 `Breadcrumbs` appear only on detail screens, under the top bar, `small` style, separator `chevron-right` 12px in `text-subtle`.
