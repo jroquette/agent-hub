@@ -9,6 +9,7 @@ import {
   apiDelete,
   apiGet,
   apiKey,
+  apiCommand,
   apiPost,
   apiQuery,
   createQueryClient,
@@ -102,6 +103,23 @@ describe("apiPost and apiDelete", () => {
     expect(requests[0]?.method).toBe("POST");
     expect(await requests[0]?.clone().json()).toEqual({ path: "/home/dev/hub" });
     expect(requests[1]?.method).toBe("DELETE");
+  });
+});
+
+describe("apiCommand", () => {
+  it("sends an empty JSON object when a command route takes no body", async () => {
+    const requests = stubApi({
+      "POST /api/v1/workflow-runs/r1/cancel": { run_id: "r1", project: "demo", action: "cancel" },
+    });
+
+    const accepted = await apiCommand("/api/v1/workflow-runs/{run_id}/cancel", {
+      path: { run_id: "r1" },
+    });
+
+    expect(accepted.action).toBe("cancel");
+    expect(requests[0]?.method).toBe("POST");
+    expect(requests[0]?.headers.get("content-type")).toContain("application/json");
+    expect(await requests[0]?.clone().text()).toBe("{}");
   });
 });
 
