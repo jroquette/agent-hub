@@ -28,6 +28,7 @@ import { fmtClock, middleTruncate } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
+import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
 import { AcBar, FilterMenu, PHASES, VERDICT_STATUS } from "../features/parts";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
@@ -515,6 +516,49 @@ function Loading() {
   );
 }
 
+const TAB_LABEL: Readonly<Record<string, string>> = {
+  spec: "spec",
+  research: "research",
+  plan: "plan",
+  eval: "eval",
+  acs: "acceptance criteria",
+  tickets: "ticket plan",
+};
+
+/**
+ * What the Discuss panel talks about on this screen: one conversation per feature, opened on the
+ * file of the tab in view; the brief names the feature's other files so Claude can follow along.
+ */
+function featureDiscussTarget(detail: Detail | undefined, tab: string): DiscussTarget | null {
+  if (!detail) return null;
+  const folder = `brain/features/${detail.slug}`;
+  const record = detail.records.find((r) => r.name === RECORDS[tab]?.name && r.present);
+  const evalPath = detail.evals[0]?.path;
+  const path = record
+    ? `brain/${record.path}`
+    : tab === "acs"
+      ? `${folder}/features.json`
+      : tab === "eval" && evalPath
+        ? `brain/${evalPath}`
+        : null;
+  const present = detail.records.filter((r) => r.present).map((r) => `brain/${r.path}`);
+  return {
+    key: `feature:${detail.project}:${detail.slug}`,
+    project: detail.project,
+    kind: `Feature ${TAB_LABEL[tab] ?? tab}`,
+    title: detail.slug,
+    path,
+    brief: [
+      `The feature's record lives in \`${folder}/\` (${present.join(", ") || "no record yet"}; acceptance criteria in features.json).`,
+      detail.issues.length ? `Its Linear tickets: ${detail.issues.join(", ")}.` : "",
+      `I am looking at its ${TAB_LABEL[tab] ?? tab} tab.`,
+      "When a change touches several records (spec, plan, criteria), keep them consistent with each other.",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
+
 /** Feature detail (spec 17, D23): golden path, owner steps, acceptance criteria. */
 export function FeatureDetailScreen() {
   const { project = "", slug = "" } = useParams();
@@ -524,6 +568,7 @@ export function FeatureDetailScreen() {
   const { tz } = usePreferences();
   const tab = tabOf(params.get("doc"));
   const tickets = useFeatureTickets(project, slug, tab === "tickets" && feature.isSuccess);
+  useDiscussTarget(featureDiscussTarget(feature.data, tab));
 
   if (feature.isError) {
     if (feature.error.status === 404) {
@@ -602,6 +647,7 @@ export function FeatureDetailScreen() {
               : ""}
           </span>
           <span className="ah-grow" />
+          <DiscussButton />
           {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
