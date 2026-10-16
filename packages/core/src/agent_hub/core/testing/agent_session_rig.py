@@ -90,9 +90,11 @@ def build_rig(
     driver: InMemorySessionDriver | None = None,
     store: InMemoryAgentSessionStore | None = None,
     observed_sessions: ObservedSessionLookup | None = None,
+    session_title: Callable[[str, str], str | None] | None = None,
 ) -> Rig:
     """A rig; ``replies`` script the fake driver per user message; ``observed_sessions`` says
-    which Claude sessions have an observed twin."""
+    which Claude sessions have an observed twin; ``session_title`` the title Claude Code gave
+    a session."""
     fake = driver or InMemorySessionDriver(replies=replies, past_sessions=past_sessions)
     store = store or InMemoryAgentSessionStore()
     clock = Clock()
@@ -104,5 +106,6 @@ def build_rig(
         clock=clock,
         environment_extra={"AGENT_HUB_WEB_URL": WEB_URL},
         observed_sessions=observed_sessions,
+        session_title=session_title,
     )
     return Rig(control=control, driver=fake, store=store, clock=clock)

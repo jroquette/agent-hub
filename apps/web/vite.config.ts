@@ -18,8 +18,12 @@ export default defineConfig(({ command }) => ({
       command === "serve" ? realpathSync(resolve(import.meta.dirname, "../..")) : null,
     ),
   },
-  // `make dev` (vite) only; the production app is served by `hub web` itself.
-  server: { ...DEV_SERVER, proxy: apiProxy() },
+  // `make dev` and `make live` (vite) only; the production app is served by `hub web` itself.
+  // `make live` sets both targets (devProxy.ts); unset, everything goes to 7420 as before.
+  server: {
+    ...DEV_SERVER,
+    proxy: apiProxy(process.env.AH_API_TARGET, process.env.AH_SESSIONS_TARGET),
+  },
   build: {
     outDir: OUT_DIR,
     emptyOutDir: true,

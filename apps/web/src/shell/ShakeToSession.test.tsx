@@ -274,12 +274,31 @@ describe("ShakeToSession (shake to start a session)", () => {
     expect(captureScreen).toHaveBeenCalledTimes(2);
   });
 
-  it("shake-inert: no project", async () => {
-    const view = mount("/sessions");
+  it.each([["/sessions"], ["/settings/appearance"]])(
+    "shake-opens: with no project in %s, the first registered project",
+    async (path) => {
+      const view = mount(path, {
+        "/api/v1/projects": aPage([
+          aProjectSummary({ name: "tipple" }),
+          aProjectSummary({ name: "agent-hub" }),
+        ]),
+      });
+      await ready(view);
+
+      shake();
+
+      await screen.findByRole("dialog", { name: "New session" });
+      const workdirs = view.requests.find((r) => new URL(r.url).pathname === `${AGENT}/workdirs`);
+      expect(new URL(workdirs?.url ?? "").searchParams.get("project")).toBe("tipple");
+    },
+  );
+
+  it("shake-inert: no project registered", async () => {
+    const view = mount("/sessions", { "/api/v1/projects": aPage([]) });
     await waitFor(() => {
-      expect(view.requests.some((r) => new URL(r.url).pathname === `${AGENT}/capabilities`)).toBe(
-        true,
-      );
+      const paths = view.requests.map((r) => new URL(r.url).pathname);
+      expect(paths).toContain(`${AGENT}/capabilities`);
+      expect(paths).toContain("/api/v1/projects");
     });
     await act(async () => {
       await Promise.resolve();
@@ -308,7 +327,7 @@ describe("ShakeToSession (shake to start a session)", () => {
     expect(within(dialog).queryByRole("img")).toBeNull();
   });
 
-  it("live-edit: the served checkout's workdir and acceptEdits, no note", async () => {
+  it("live-edit: the served checkout's workdir and Auto, no note", async () => {
     vi.mocked(servedCheckout).mockReturnValue(ROOT);
     const view = mount();
     await ready(view);
@@ -318,9 +337,39 @@ describe("ShakeToSession (shake to start a session)", () => {
     const dialog = await screen.findByRole("dialog", { name: "New session" });
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(REPO_ID);
     expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
-      /^Accept edits ·/,
+      /^Auto ·/,
     );
     expect(within(dialog).queryByRole("note")).toBeNull();
+  });
+
+  it("live-edit: the project that lists the served checkout wins over the scope", async () => {
+    vi.mocked(servedCheckout).mockReturnValue(ROOT);
+    const view = mount("/sessions?scope=tipple", {
+      "/api/v1/projects": aPage([
+        aProjectSummary({ name: "tipple" }),
+        aProjectSummary({ name: "agent-hub" }),
+      ]),
+      [`${AGENT}/workdirs`]: (request: Request) =>
+        new URL(request.url).searchParams.get("project") === "agent-hub"
+          ? {
+              items: [aWorkdir({ kind: "repo", label: "agent-hub", workdir_id: REPO_ID })],
+              warnings: [],
+            }
+          : { items: [aWorkdir()], warnings: [] },
+    });
+    await waitFor(() => {
+      const asked = view.requests
+        .filter((r) => new URL(r.url).pathname === `${AGENT}/workdirs`)
+        .map((r) => new URL(r.url).searchParams.get("project"));
+      expect(asked).toContain("agent-hub");
+    });
+    await settle();
+
+    shake();
+
+    const dialog = await screen.findByRole("dialog", { name: "New session" });
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(REPO_ID);
+    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
   });
 
   it("live-edit-fallback: no served checkout keeps the defaults and shows the note", async () => {

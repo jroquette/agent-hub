@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
+import { servedCheckout } from "../../lib/devCheckout";
 import { seriousViolations } from "../../testing/axe";
 import { aCapabilities, anAgentSession, aWorkdir } from "../../testing/builders";
 import {
@@ -42,11 +43,32 @@ async function options(dialog: HTMLElement) {
   await userEvent.click(within(dialog).getByRole("button", { name: "Options" }));
 }
 
+vi.mock("../../lib/devCheckout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
+  return { ...actual, servedCheckout: vi.fn(() => null) };
+});
+
 beforeEach(() => {
   window.localStorage.clear();
 });
 
 describe("NewSessionDialog (new-session)", () => {
+  it("offers Auto too, with its hint, in the dev app of make playground", async () => {
+    vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
+    const { dialog } = open();
+    await options(dialog);
+    const modes = within(dialog).getByRole("group", { name: "Mode" });
+
+    expect(
+      within(modes)
+        .getAllByRole("radio")
+        .map((r) => r.getAttribute("value")),
+    ).toEqual(["default", "acceptEdits", "plan", "auto"]);
+    await userEvent.click(within(modes).getByRole("radio", { name: /Auto/ }));
+    expect(dialog).toHaveTextContent("a safety check blocks risky actions");
+    vi.mocked(servedCheckout).mockReturnValue(null);
+  });
+
   it("offers only the listed workdirs, the three modes and the capabilities' models", async () => {
     const { dialog } = open();
     await options(dialog);

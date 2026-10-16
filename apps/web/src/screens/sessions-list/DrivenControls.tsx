@@ -8,6 +8,7 @@ import {
   useAgentCapabilities,
   useAgentSessions,
   useCloudSessions,
+  useServedFolder,
   useWorkdirs,
   type AgentSession,
 } from "./queries";
@@ -19,15 +20,18 @@ import { StartSessionDialog } from "./StartSessionDialog";
  * opens on; its "Where" switches to another of `projects` when no scope is set (AC-234.14).
  */
 export function useDriving(scope: string | null, projects: readonly string[]) {
-  const project = scope ?? projects[0] ?? null;
   const list = useAgentSessions(scope);
   const capabilities = useAgentCapabilities();
   const problem = list.error ?? capabilities.error;
   const caps = capabilities.data;
   const canDrive = caps !== undefined && sessionControlUnavailable(problem, caps) === null;
+  // Under make dev/live/playground, sessions start in the served checkout's project, so what they
+  // edit is what the dev server shows; "Where" may still pick another (AGH-262).
+  const served = useServedFolder(projects, canDrive);
+  const project = served.project ?? scope ?? projects[0] ?? null;
   const workdirs = useWorkdirs(project, canDrive);
-  const choices = scope ? [] : projects;
-  return { list, capabilities, problem, caps, canDrive, project, choices, workdirs };
+  const choices = projects.length > 1 && (!scope || served.project !== null) ? projects : [];
+  return { list, capabilities, problem, caps, canDrive, project, choices, workdirs, served };
 }
 
 type Driving = ReturnType<typeof useDriving>;
@@ -35,7 +39,8 @@ type Driving = ReturnType<typeof useDriving>;
 /** "New session" for the page header; the dialog's "Where" picks the project. */
 export function NewSessionControl({ driving }: { driving: Driving }) {
   const [dialog, setDialog] = useState(false);
-  const { caps, canDrive, project, choices, workdirs } = driving;
+  const { caps, canDrive, project, choices, workdirs, served } = driving;
+  const live = served.project !== null && project === served.project;
   const folders = workdirs.data?.items;
   if (!canDrive || !caps || project === null || !folders) return null;
   return (
@@ -55,6 +60,8 @@ export function NewSessionControl({ driving }: { driving: Driving }) {
           projects={choices}
           workdirs={folders}
           capabilities={caps}
+          initialWorkdirId={live ? (served.workdirId ?? undefined) : undefined}
+          initialMode={live ? "auto" : undefined}
           onClose={() => {
             setDialog(false);
           }}

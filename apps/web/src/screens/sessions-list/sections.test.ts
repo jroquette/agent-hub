@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { anAgentSession, anId, aSession } from "../../testing/builders";
+import { anAgentSession, anId, aSession, aSessionLabel } from "../../testing/builders";
 import {
   SECTIONS,
   placeDriven,
@@ -127,9 +127,27 @@ describe("placeDriven (driven-in-list)", () => {
   });
 
   it("never places as twinless a driven session a loaded row already names (stale agent list)", () => {
-    const agent = anAgentSession({ status: "running", observed_session_id: null });
+    const agent = anAgentSession({ status: "running", observed_session_id: null, title: null });
     const placed = placeDriven({ ...empty(), live: [twinOf("live", agent.id)] }, [agent], all);
     expect(placed.live).toEqual({ rows: [twinOf("live", agent.id)], added: 0, removed: 0 });
+  });
+
+  it("names a twin's row by the driven session's prompt until it has a title of its own", () => {
+    const agent = anAgentSession({ status: "running", observed_session_id: anId(3) });
+    const placed = placeDriven({ ...empty(), live: [twinOf("live", agent.id)] }, [agent], all);
+    expect(placed.live.rows[0]).toMatchObject({ label: { title: "Run the tests" } });
+  });
+
+  it("keeps the twin's own title (Claude Code's or the user's) over the driven prompt", () => {
+    const agent = anAgentSession({ status: "running", observed_session_id: anId(3) });
+    const twin = aSession({
+      id: anId(3),
+      status: "live",
+      agent_session_id: agent.id,
+      label: aSessionLabel({ title: "Readable session names" }),
+    });
+    const placed = placeDriven({ ...empty(), live: [twin] }, [agent], all);
+    expect(placed.live.rows[0]).toMatchObject({ label: { title: "Readable session names" } });
   });
 
   it("bounds twinless rows by the period in Ended only", () => {
@@ -162,7 +180,11 @@ describe("placeDriven (driven-in-list)", () => {
       all,
     );
     expect(placed.waiting).toEqual({
-      rows: [askAgent, { ...twin, status: "waiting" }, waitingRow],
+      rows: [
+        askAgent,
+        { ...twin, status: "waiting", label: { ...twin.label, title: waitingAgent.title } },
+        waitingRow,
+      ],
       added: 2,
       removed: 0,
     });
