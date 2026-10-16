@@ -12,8 +12,10 @@ Every event of a line naming a ``gitBranch`` keeps it as ``git_branch`` (redacte
 A title line (``ai-title``, or ``custom-title`` from ``/rename``) becomes a ``session.title``
 (ADR 0035): the title redacted and cut at ``NAME_LIMIT`` characters, at the timestamp of the last
 user or assistant line before it (a title before any such line is skipped). Claude Code repeats
-the line, so each distinct title of an origin is kept once:
-``source_id`` ``<sessionId>:title:<origin>:<hash of the kept text>``.
+the line, so a title is kept only when it differs from the last one kept of its origin (a rename
+back to an earlier title is kept again): ``source_id``
+``<sessionId>:title:<origin>:<n, 6 digits>:<hash of the kept text>``, ``n`` counting the titles
+of that origin kept so far, so titles that share a timestamp still sort in file order.
 
 A line that is not a JSON object, is too long, has no valid timestamp or names a session id
 longer than ``MAX_ID_CHARS`` is a problem reported with its line number; a line of another type,
@@ -222,9 +224,11 @@ def _title_events(
         return
     title = short_text(" ".join(raw.split()), NAME_LIMIT)
     digest = hashlib.sha256(title.encode()).hexdigest()[:16]
-    source_id = f"{session}:title:{title_origin}:{digest}"
-    if not title or source_id in state.seen_titles:
+    prefix = f"{session}:title:{title_origin}:"
+    kept = sorted(seen for seen in state.seen_titles if seen.startswith(prefix))
+    if not title or (kept and kept[-1].endswith(f":{digest}")):
         return
+    source_id = f"{prefix}{len(kept):06d}:{digest}"
     state.seen_titles.add(source_id)
     yield Event(
         project=origin.project,
