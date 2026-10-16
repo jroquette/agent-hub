@@ -11,6 +11,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- A shake opens New session on every screen, Settings and "All projects" included: with no project in the route
+  or the scope, it starts in the first registered project, as Sessions' New session does. It still does nothing
+  when no project is registered.
+
 ### Fixed
 
 - `make dev` on macOS no longer shows a blank page: the chat's model module `transcript.ts` is now `model.ts`, so

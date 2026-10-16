@@ -11,7 +11,7 @@ import type {
   ShakeScreenshot,
   Workdir,
 } from "../screens/sessions-list/NewSessionDialog";
-import { useAgentCapabilities, useWorkdirs } from "../screens/sessions-list/queries";
+import { useAgentCapabilities, useProjects, useWorkdirs } from "../screens/sessions-list/queries";
 import { StartSessionDialog } from "../screens/sessions-list/StartSessionDialog";
 
 /** Shown when the served checkout is not a listed folder, or outside `make dev` (O8). */
@@ -30,19 +30,25 @@ interface Opened {
   workdirId: string | null;
 }
 
-/** The project of the route (`projects/:project`, `features/:project/…`, `workflows/:project/…`), else the scope (Q2). */
+/**
+ * The project of the route (`projects/:project`, `features/:project/…`, `workflows/:project/…`), else
+ * the scope (Q2), else the first registered project, as Sessions' New session picks it, so a shake
+ * works on every screen, "All projects" and Settings included.
+ */
 function useShakeProject(): string | null {
   const [scope] = useScope();
+  const projects = useProjects();
   const project = useMatch("/projects/:project/*")?.params.project;
   const feature = useMatch("/features/:project/*")?.params.project;
   const workflow = useMatch("/workflows/:project/*")?.params.project;
-  return project ?? feature ?? workflow ?? scope;
+  return project ?? feature ?? workflow ?? scope ?? projects.data?.items[0]?.name ?? null;
 }
 
 /**
  * Shake the mouse to start a session (AGH-260): the shell mounts this only while the setting is on.
  * A shake captures the screen first, then opens "New session" with the screenshot. It does nothing
- * without a project, while session control is unavailable, without folders, or while a dialog is open.
+ * when no project is registered, while session control is unavailable, without folders, or while a
+ * dialog is open.
  */
 export function ShakeToSession() {
   const project = useShakeProject();

@@ -274,12 +274,31 @@ describe("ShakeToSession (shake to start a session)", () => {
     expect(captureScreen).toHaveBeenCalledTimes(2);
   });
 
-  it("shake-inert: no project", async () => {
-    const view = mount("/sessions");
+  it.each([["/sessions"], ["/settings/appearance"]])(
+    "shake-opens: with no project in %s, the first registered project",
+    async (path) => {
+      const view = mount(path, {
+        "/api/v1/projects": aPage([
+          aProjectSummary({ name: "tipple" }),
+          aProjectSummary({ name: "agent-hub" }),
+        ]),
+      });
+      await ready(view);
+
+      shake();
+
+      await screen.findByRole("dialog", { name: "New session" });
+      const workdirs = view.requests.find((r) => new URL(r.url).pathname === `${AGENT}/workdirs`);
+      expect(new URL(workdirs?.url ?? "").searchParams.get("project")).toBe("tipple");
+    },
+  );
+
+  it("shake-inert: no project registered", async () => {
+    const view = mount("/sessions", { "/api/v1/projects": aPage([]) });
     await waitFor(() => {
-      expect(view.requests.some((r) => new URL(r.url).pathname === `${AGENT}/capabilities`)).toBe(
-        true,
-      );
+      const paths = view.requests.map((r) => new URL(r.url).pathname);
+      expect(paths).toContain(`${AGENT}/capabilities`);
+      expect(paths).toContain("/api/v1/projects");
     });
     await act(async () => {
       await Promise.resolve();
