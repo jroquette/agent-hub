@@ -22,3 +22,5 @@ coverage.json
 apps/web/coverage/
 apps/web/test-results/
 apps/web/playwright-report/
+# make playground-export's packages: the owner's requests stay on this machine.
+.playground/
