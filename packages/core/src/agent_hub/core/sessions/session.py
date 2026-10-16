@@ -68,7 +68,8 @@ class SessionLabel(ViewModel):
     ``issue`` is ``<TEAM>-<n>`` found in ``branch`` or ``worktree`` with the hub's tracker teams,
     else ``None``, never a guess. ``workflow`` is the session's main slash command or skill
     (``/feature``); ``workflows`` lists every one in order. ``worktree`` is the folder name under
-    ``.claude/worktrees/`` in the session's ``cwd``.
+    ``.claude/worktrees/`` in the session's ``cwd``. ``title`` is the session's short name: the
+    one the user set (``/rename``), else the one Claude Code wrote (ADR 0035), else ``None``.
     """
 
     issue: str | None
@@ -77,6 +78,7 @@ class SessionLabel(ViewModel):
     repo: str | None
     branch: str | None
     worktree: str | None
+    title: str | None = None
     derived: bool = True
 
 

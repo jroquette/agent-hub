@@ -144,23 +144,27 @@ export interface SkillCardProps {
   now: number;
   /** The usage window the catalog counted over. */
   usageDays: number;
+  /** False for a card with no page yet (a Studio draft): the name is not a link. */
+  linked?: boolean | undefined;
 }
 
 /** A catalog card: rendered as a list item, so place it in a `<ul>`. */
-export function SkillCard({ item, project, now, usageDays }: SkillCardProps) {
+export function SkillCard({ item, project, now, usageDays, linked = true }: SkillCardProps) {
   const headingId = `skill-card-${item.id}`;
   const diagnostics = item.diagnostics_count;
   return (
     <li className="ah-skill-card-item">
       <article className="ah-skill-card" aria-labelledby={headingId}>
         <header className="ah-skill-card-head">
-          <span className="ah-skill-kind">
+          <span className="ah-kind-badge" data-kind={item.kind} aria-hidden="true">
             <Icon name={KIND_ICON[item.kind]} size="sm" />
-            {KIND_NAME[item.kind]}
           </span>
-          <h3 id={headingId} className="ah-skill-name">
-            <AppLink href={skillRoute(project, item)}>{item.name}</AppLink>
-          </h3>
+          <div className="ah-skill-title">
+            <h3 id={headingId} className="ah-skill-name">
+              {linked ? <AppLink href={skillRoute(project, item)}>{item.name}</AppLink> : item.name}
+            </h3>
+            <span className="ah-skill-kind">{KIND_NAME[item.kind]}</span>
+          </div>
           <span className="ah-grow" />
           <OriginBadge origin={item.origin} />
         </header>

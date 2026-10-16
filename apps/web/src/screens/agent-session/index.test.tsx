@@ -314,6 +314,44 @@ describe("AgentSessionScreen (transcript)", () => {
     expect(view.requests.some((r) => r.method === "DELETE")).toBe(true);
   });
 
+  it("resumes an ended session in place when a message is sent, then streams it", async () => {
+    let reopened = false;
+    const view = renderChat(
+      routes({
+        [SESSION]: () =>
+          reopened
+            ? anAgentSession({ status: "running", last_seq: 4 })
+            : anAgentSession({ status: "ended", end_reason: "server_stopped", last_seq: 3 }),
+        [`POST ${SESSION}/messages`]: () => {
+          reopened = true;
+          return { seq: 4 };
+        },
+      }),
+    );
+    await screen.findByText("Starting.");
+    expect(() => view.stream(STREAM)).toThrow();
+    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    expect(box).toHaveAttribute(
+      "placeholder",
+      "This session has ended. Send a message to resume it.",
+    );
+
+    await userEvent.type(box, "Go on.{Enter}");
+
+    expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({ text: "Go on." });
+    await waitFor(() => {
+      expect(() => view.stream(STREAM)).not.toThrow();
+    });
+    expect(view.router.state.location.pathname).toBe(`/agent-sessions/${ID}`);
+  });
+
+  it("offers no resume when the ended session's log is full", async () => {
+    renderChat(routes({ [SESSION]: anAgentSession({ status: "ended", end_reason: "log_full" }) }));
+
+    await screen.findByText("Starting.");
+    expect(screen.getByRole("textbox", { name: "Message Claude" })).toBeDisabled();
+  });
+
   it("links the agent session to its observed session", async () => {
     renderChat();
 

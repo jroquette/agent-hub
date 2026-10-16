@@ -19,6 +19,20 @@ export const KIND_LABEL: Record<ItemKind, string> = {
   agent: "Agents",
   hook: "Hooks",
 };
+/** What each kind is, in a few words: the kind tiles and the Create menu. */
+export const KIND_SUMMARY: Record<ItemKind, string> = {
+  skill: "Packaged instructions, run as /commands",
+  agent: "Specialists the session delegates to",
+  hook: "Commands run at lifecycle events",
+};
+/** What each kind is, in one or two sentences, for someone new to Claude Code. */
+export const KIND_HELP: Record<ItemKind, string> = {
+  skill:
+    "Instructions packaged for one kind of task. You run one as a /command, or the model loads it when a task matches its description.",
+  agent:
+    "Subagents: specialists with their own prompt, tools and context window. The main session delegates a task to one and gets back only its result.",
+  hook: "Shell commands Claude Code runs by itself at lifecycle events (a session starts, a tool is about to run, a turn ends) to check, block or record what happens.",
+};
 export const ORIGIN_LABEL: Record<Origin, string> = {
   managed: "Managed",
   "project-owned": "Project-owned",
