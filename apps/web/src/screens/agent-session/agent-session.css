@@ -1954,3 +1954,251 @@ body.as-resizing .as-drawer {
     transition: none;
   }
 }
+
+/* A change's diff you can comment on: rows of a div (threads sit between them), a + on hover at
+ * each line's start, the selected lines tinted, threads kept in view while the code scrolls. */
+.as-review-diff {
+  padding: 0;
+  white-space: normal;
+  --as-diff-no-w: 5ch;
+}
+.as-review-diff .as-diff-line {
+  display: grid;
+  grid-template-columns: var(--as-diff-no-w) var(--as-diff-no-w) max-content;
+  min-width: 100%;
+  width: max-content;
+  white-space: pre;
+}
+.as-review-diff:not(.as-diff-numbered) .as-diff-line {
+  grid-template-columns: var(--as-diff-no-w) max-content;
+}
+.as-review-diff .as-diff-code {
+  position: relative;
+  padding-left: 26px;
+}
+.as-diff-add-comment {
+  position: absolute;
+  top: 50%;
+  left: 4px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.as-diff-line:hover .as-diff-add-comment,
+.as-diff-add-comment:focus-visible {
+  opacity: 1;
+}
+.as-diff-add-comment:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.as-diff-line.as-diff-selected,
+.as-diff-line.as-diff-selected .as-diff-no {
+  background: color-mix(in srgb, var(--accent) 18%, var(--code-bg));
+}
+.as-diff-line.as-diff-selected .as-diff-no {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.as-review-compose,
+.as-thread,
+.as-review-outdated {
+  position: sticky;
+  left: 0;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 760px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  white-space: normal;
+}
+.as-review-compose {
+  border-block: 1px solid var(--border);
+  background: var(--surface);
+}
+.as-review-compose-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--space-2);
+}
+.as-review-outdated {
+  border-top: 1px dashed var(--border);
+}
+.as-review-outdated > p {
+  margin: 0 0 var(--space-2);
+}
+.as-comment-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.as-comment-box textarea {
+  width: 100%;
+  min-height: 64px;
+  height: auto;
+  padding: var(--space-2);
+  resize: vertical;
+  font: inherit;
+}
+.as-comment-box-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.as-thread {
+  margin: var(--space-2) 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.as-thread-resolved {
+  border-left-color: var(--done);
+  background: var(--surface-sunken);
+}
+.as-thread-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+.as-thread-head > svg {
+  color: var(--accent);
+}
+.as-thread-resolved .as-thread-head > svg {
+  color: var(--done);
+}
+.as-thread-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--waiting);
+  font-size: 12px;
+  font-weight: 500;
+}
+.as-thread-messages {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.as-thread-message {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+}
+.as-thread-you {
+  background: var(--accent-soft);
+}
+.as-thread-claude {
+  background: var(--surface-sunken);
+}
+.as-thread-pending {
+  opacity: 0.7;
+}
+.as-thread-author {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.as-thread-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.as-thread-reply {
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-subtle);
+  font: inherit;
+  text-align: left;
+  cursor: text;
+}
+.as-thread-reply:hover {
+  border-color: var(--border-control);
+}
+.as-files-threads {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+@media (prefers-reduced-motion: reduce) {
+  .as-diff-add-comment {
+    transition: none;
+  }
+}
+
+/* A review comment in the conversation: the file and lines, the quoted code folded, the text. */
+.as-review-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-left: 3px solid var(--accent);
+}
+.as-review-bubble-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.as-review-bubble-head > svg {
+  color: var(--accent);
+}
+.as-review-bubble-open {
+  margin-left: auto;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.as-review-bubble-open:hover {
+  background: var(--accent-soft);
+}
+.as-review-bubble-code summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.as-review-bubble-code pre {
+  margin: var(--space-1) 0 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  font: 12px/18px var(--font-mono);
+  white-space: pre;
+}
+.as-review-bubble-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
