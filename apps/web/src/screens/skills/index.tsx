@@ -77,14 +77,19 @@ export function SkillsScreen() {
   }
   return (
     <div className="ah-page" style={{ gap: 16 }}>
+      <Breadcrumbs
+        items={[
+          { label: "Portfolio", href: "/" },
+          { label: project, href: `/projects/${encodeURIComponent(project)}` },
+          { label: "Skills" },
+        ]}
+      />
       <header className="ah-skills-head">
         <div className="ah-stack ah-grow" style={{ gap: 4 }}>
-          <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-            <h1 className="ah-h1">Skills</h1>
-            <span className="ah-small ah-muted">{project}</span>
-          </div>
+          <h1 className="ah-h1">Skills</h1>
           <p className="ah-muted" style={{ margin: 0 }}>
-            The skills, agents and hooks of this hub, read from its files. Nothing here runs them.
+            What {project}&apos;s agents can do, read from its hub&apos;s files. Nothing here runs
+            them.
           </p>
         </div>
         <CreateMenu project={project} />

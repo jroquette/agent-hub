@@ -145,6 +145,17 @@ describe("SkillsScreen nav", () => {
 });
 
 describe("SkillsScreen states", () => {
+  it("names the project in the breadcrumb and the purpose line", async () => {
+    openCatalog();
+
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "demo" })).toHaveAttribute(
+      "href",
+      "/projects/demo",
+    );
+    expect(await screen.findByText(/What demo's agents can do/)).toBeInTheDocument();
+  });
+
   it("shows the catalog of the project in the URL", async () => {
     const { requests } = openCatalog();
 

@@ -46,3 +46,7 @@
   color: var(--text);
   font-weight: 500;
 }
+/* Prose reads best at a bounded line length, as elsewhere in the app. */
+.ah-brain-note > :last-child {
+  max-width: 80ch;
+}
