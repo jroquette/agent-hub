@@ -293,6 +293,33 @@ describe("LearningsScreen", () => {
     );
   });
 
+  it("writes the status to the URL and goes back to the previous one", async () => {
+    const user = userEvent.setup();
+    const { router } = open();
+    await screen.findByRole("table", { name: "Proposed learnings" });
+
+    await user.click(screen.getByRole("button", { name: "Accepted" }));
+    expect(router.state.location.search).toBe("?status=accepted");
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    expect(router.state.location.search).toBe("");
+    expect(screen.getByRole("button", { name: "Proposed" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("wraps a long title and keeps it whole on hover", async () => {
+    const long = "A".repeat(30) + " long learning title that needs two lines in the queue";
+    open({ "/api/v1/learnings": aPage([aLearning({ id: "l-long", text: long })]) });
+
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    const title = await within(table).findByTitle(long);
+    expect(title.style.webkitLineClamp).toBe("2");
+  });
+
   it("has no serious a11y violations (a11y)", async () => {
     const { container } = open();
     const detail = await screen.findByRole("region", { name: "Proposal" });
