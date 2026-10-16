@@ -49,7 +49,14 @@ const GO: Record<string, string> = {
   ",": "/settings",
 };
 
+/** A modal the shell did not open (a Dialog, a confirmation): the shell's keys stay off under it. */
+function otherModalOpen(): boolean {
+  return document.querySelector('[aria-modal="true"]:not([data-shell-layer])') !== null;
+}
+
 function useGlobalKeys(actions: {
+  paletteOpen: boolean;
+  layerOpen: boolean;
   togglePalette: () => void;
   openShortcuts: () => void;
   closeAll: () => void;
@@ -64,17 +71,16 @@ function useGlobalKeys(actions: {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const act = latest.current;
+      const covered = otherModalOpen();
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        if (covered && !act.paletteOpen) return;
         event.preventDefault();
         act.togglePalette();
         return;
       }
-      if (event.key === "Escape") {
-        act.closeAll();
-        return;
-      }
+      if (event.key === "Escape") return;
       // A key a screen already handled (a card's `a`) is not the shell's.
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || covered) return;
       if (event.ctrlKey || event.metaKey || event.altKey || typingIn(event.target)) return;
       if (goSequencePending()) {
         clearGoSequence();
@@ -90,9 +96,18 @@ function useGlobalKeys(actions: {
       else if (event.key === "t") act.toggleTz();
       else if (event.key === "D" && event.shiftKey) act.cycleTheme();
     };
+    // The palette or the sheet is the top layer: its Escape is spent before a Dialog under it
+    // (whose listener may be older) or a screen sees it.
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !latest.current.layerOpen) return;
+      event.preventDefault();
+      latest.current.closeAll();
+    };
     document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onEscape, true);
     return () => {
       document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onEscape, true);
       clearGoSequence();
     };
   }, [navigate]);
@@ -121,6 +136,8 @@ function ShellLayout({ children }: { children?: ReactNode }) {
     setSheet(false);
   }, []);
   useGlobalKeys({
+    paletteOpen: palette !== null,
+    layerOpen: palette !== null || sheet,
     togglePalette: () => {
       setPalette((open) => (open ? null : { query: "" }));
     },

@@ -154,7 +154,13 @@ export function CommandPalette({ onClose, initialQuery = "", project }: CommandP
       }}
       role="presentation"
     >
-      <div className="ah-palette" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div
+        className="ah-palette"
+        role="dialog"
+        aria-modal="true"
+        data-shell-layer=""
+        aria-label="Command palette"
+      >
         <div className="ah-palette-input">
           <Icon name="search" />
           <input

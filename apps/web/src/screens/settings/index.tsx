@@ -260,6 +260,7 @@ function Hubs() {
             "Register it again at any time.",
           ]}
           confirmLabel={remove.isPending ? "Removing…" : "Remove hub"}
+          pending={remove.isPending}
           onCancel={() => {
             setRemoving(null);
           }}
