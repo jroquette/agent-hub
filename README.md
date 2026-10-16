@@ -44,7 +44,7 @@ Next steps:
 This output is for a folder where `git init` already ran; in a folder without `.git`, a `git init` step follows `cd`.
 
 > [!IMPORTANT]
-> agent-hub is **experimental** (0.x, Phase 4 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
+> agent-hub is **experimental** (0.x, Phase 2 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
 > work and are tested. The web control plane watches your sessions and runs, and acts where you ask it to: it starts,
 > cancels, resumes and abandons workflow runs, decides their gates, drives Claude sessions and turns learnings into
 > hub pull requests. The repository is public: installing needs no credential.
@@ -247,7 +247,7 @@ A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folde
 `script`, `loop`, `loop_group`, `include`, `approval`, `wait`, `halt`) depend on each other and run in layers
 ([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
 seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
-review in a loop until green, then the PR; `review`: parallel lenses, a synthesis, a publish). A hub's own file
+review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict). A hub's own file
 overrides a built-in of the same name.
 
 ```bash
@@ -261,8 +261,8 @@ overrides a built-in of the same name.
 
 In `hub web`, the Workflows screen shows each workflow's graph; Workflow runs › Start run starts one live from a form
 built from its `inputs:`; Run detail shows the run's graph with each node's state, decides a waiting gate, and
-cancels, resumes or abandons the run. Approvals lists every gate waiting for a person. Details:
-[docs/USING.md](docs/USING.md#run-the-control-plane).
+cancels, resumes or abandons the run. Approvals lists every gate waiting for a person. The format and the engine's
+rules: [workflow-schema.md](docs/design/workflow-schema.md), [workflow-engine-rules.md](docs/design/workflow-engine-rules.md).
 
 ## 🔄 Daily workflow
 
