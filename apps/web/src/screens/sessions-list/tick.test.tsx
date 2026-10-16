@@ -51,7 +51,13 @@ function renderScreen() {
       label: named(`ended-${String(i)}`),
     }),
   );
-  const running = aSession({ id: anId(1, "aaaa0001"), status: "live", label: named("runner") });
+  const running = aSession({
+    id: anId(1, "aaaa0001"),
+    status: "live",
+    label: named("runner"),
+    // Seconds old, so each tick changes its elapsed text.
+    started_at: new Date(Date.now() - 5_000).toISOString(),
+  });
   return renderWithApi(<SessionsListScreen />, {
     routes: {
       "/api/v1/sessions": aSessionsByStatus([running, ...ended]),
@@ -90,9 +96,8 @@ describe("SessionsListScreen clock-ticks (grid)", () => {
     expect(screen.queryByRole("table")).toBeNull();
     // The first stat is the elapsed time.
     const elapsed = () =>
-      (screen.getByText("/runner").closest("article") as HTMLElement).querySelector(
-        ".ah-tile-stats b",
-      )?.textContent;
+      screen.getByRole("article", { name: /^\/runner in / }).querySelector(".ah-tile-stats b")
+        ?.textContent;
     const before = elapsed();
 
     durations.calls = 0;

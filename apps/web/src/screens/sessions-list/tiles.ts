@@ -1,6 +1,12 @@
 /* Sessions grid: the SessionTile view model of a session, and the tile order (ADR 0033 D3, D8; spec 14). */
 import type { components } from "../../api/schema";
-import { sessionIdentity, type IconName, type LiveSession, type Status } from "../../components";
+import {
+  sessionIdentity,
+  type IconName,
+  type LiveSession,
+  type Status,
+  type TileTimes,
+} from "../../components";
 import { fmtAgo, toNumber } from "../../lib/format";
 import type { Within } from "./filters";
 import { isDriven, type SectionRow } from "./sections";
@@ -225,6 +231,15 @@ export function tileOfDriven(session: AgentSession, now: number): LiveSession {
 /** A section row as a tile: a driven one without a twin, or an observed one. */
 export function tileOfRow(row: SectionRow, now: number): LiveSession {
   return isDriven(row) ? tileOfDriven(row, now) : tileOf(row, now);
+}
+
+/** A running row's clock-dependent tile fields; none for an ended row, whose tile cannot change. */
+export function tileTimesOf(row: SectionRow): ((now: number) => TileTimes) | undefined {
+  if (tileOfRow(row, 0).status === "ended") return undefined;
+  return (now) => {
+    const { elapsed, lastAction, lastAgo } = tileOfRow(row, now);
+    return { elapsed, lastAction, lastAgo };
+  };
 }
 
 export interface RowGroup {
