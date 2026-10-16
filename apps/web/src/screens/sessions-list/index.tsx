@@ -51,6 +51,7 @@ import {
   type View,
 } from "./filters";
 import { CloudSessions, DrivenBanner, NewSessionControl, useDriving } from "./DrivenControls";
+import { LiveDigest } from "./LiveDigest";
 import { rowHref, withDriven } from "./drivenRows";
 import { GridSection } from "./GridSection";
 import {
@@ -745,6 +746,12 @@ export function SessionsListScreen() {
   const shown = asked.reduce((sum, section) => sum + section.rows.length, 0);
   const total = asked.reduce((sum, section) => sum + section.count, 0);
   const pending = asked.some((section) => section.pages.isPending);
+  // The digest takes rows that only loaded (first page, a filter, Load more) as its baseline.
+  const settled =
+    !driving.list.isPending &&
+    !asked.some(
+      ({ pages }) => pages.isPending || pages.isPlaceholderData || pages.isFetchingNextPage,
+    );
   const hasNextPage = asked.some((section) => section.pages.hasNextPage);
   const period: Period = periodOf(params);
   const sort = sortOf(params);
@@ -944,6 +951,7 @@ export function SessionsListScreen() {
     <EmptyState
       icon="square-terminal"
       title="No sessions yet."
+      command="cd ~/agent-hub-hub && claude"
       action={
         period === "All" ? undefined : (
           <Button
@@ -957,7 +965,8 @@ export function SessionsListScreen() {
         )
       }
     >
-      Each Claude Code session in a registered hub is listed here after its first event.
+      Sessions appear when Claude Code runs in a registered hub with the collector on. Start one in
+      the hub directory:
     </EmptyState>
   ) : (
     <EmptyState
@@ -1276,6 +1285,7 @@ export function SessionsListScreen() {
           <CloudSessions driving={driving} />
         </div>
       </div>
+      <LiveDigest sections={asked} settled={settled} />
     </div>
   );
 }

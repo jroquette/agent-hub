@@ -557,6 +557,22 @@ describe("SessionsListScreen no-jump", () => {
   });
 });
 
+describe("SessionsListScreen digest", () => {
+  it("announces politely a session that starts waiting after a stream change, not the first rows", async () => {
+    const data = { current: [one(1, "live"), one(2, "live")] };
+    const { stream } = render(data);
+    await screen.findByText("/s2");
+    const digest = screen.getByTestId("live-digest");
+    expect(digest).toHaveAttribute("aria-live", "polite");
+    expect(digest).toHaveTextContent("");
+
+    data.current = [one(1, "live"), one(2, "waiting")];
+    await change(stream(STREAM), "tile.upsert", { id: anId(2, "cccc0000"), group: "waiting" });
+
+    expect(digest).toHaveTextContent("1 session waiting for approval: /s2.");
+  });
+});
+
 describe("SessionsListScreen no-jump (grid)", () => {
   beforeEach(() => {
     window.localStorage.setItem("ah.sessions.view", "grid");
