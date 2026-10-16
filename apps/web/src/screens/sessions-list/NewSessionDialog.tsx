@@ -3,7 +3,7 @@ import "../agent-session/agent-session.css";
 import { useEffect, useId, useRef, useState } from "react";
 
 import type { components } from "../../api/schema";
-import { Button, Time } from "../../components";
+import { Button, ScreenshotThumb, Time } from "../../components";
 import type { ApiProblem } from "../../lib/api";
 import { offeredModes, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
 import { modeLabel, type PermissionMode } from "../agent-session/model";
@@ -94,7 +94,10 @@ export function NewSessionDialog({
       "",
   );
   const [mode, setMode] = useState<PermissionMode>(initialMode ?? "default");
-  const shot = screenshot && "dataUrl" in screenshot ? screenshot.dataUrl : null;
+  // The captured screen, or its marked-up copy once edited in the lightbox.
+  const [shot, setShot] = useState(
+    screenshot && "dataUrl" in screenshot ? screenshot.dataUrl : null,
+  );
   const [attach, setAttach] = useState(shot !== null);
   const [model, setModel] = useState(capabilities.models[0] ?? "default");
   const [otherModel, setOtherModel] = useState("");
@@ -426,7 +429,21 @@ export function NewSessionDialog({
                 {shot === null ? (
                   <span className="ah-small ah-subtle">No screenshot was taken</span>
                 ) : (
-                  <img className="as-shot" src={shot} alt="Screenshot of the screen you shook" />
+                  <>
+                    <ScreenshotThumb
+                      className="as-shot"
+                      src={shot}
+                      alt="Screenshot of the screen you shook"
+                      disabled={pending}
+                      onSave={(edited) => {
+                        setShot(edited);
+                        setAttach(true);
+                      }}
+                    />
+                    <span className="ah-small ah-subtle">
+                      Click it to view it larger and mark it up (arrows, boxes, pen, text).
+                    </span>
+                  </>
                 )}
               </div>
             )}
