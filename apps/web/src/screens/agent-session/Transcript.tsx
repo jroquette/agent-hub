@@ -37,6 +37,8 @@ export interface TranscriptProps {
   scrollerRef?: ((element: HTMLDivElement | null) => void) | undefined;
   /** The chat's stick-to-bottom state; without it the transcript only renders. */
   follow?: StickToBottom | undefined;
+  /** The screenshot this browser sent with the first prompt (memory only); else the marker's label. */
+  screenshotUrl?: string | undefined;
 }
 
 /** The first render shows the latest entries only, from the oldest pending card at the latest;
@@ -135,6 +137,8 @@ interface EntryProps {
   /** Only what this entry shows, so a delta elsewhere leaves its props equal (memo). */
   request?: PermissionView | undefined;
   onAnswerPermission: TranscriptProps["onAnswerPermission"];
+  /** Set only on a user message with the screenshot marker (memo). */
+  screenshotUrl?: string | undefined;
 }
 
 /** One of your messages; `note` says where it stands (sending, queued). A recorded one (`at`)
@@ -144,16 +148,26 @@ function UserMessage({
   note,
   at,
   redacted = false,
+  screenshot = false,
+  screenshotUrl,
 }: {
   text: string;
   note?: string | null;
   at?: string;
   redacted?: boolean;
+  screenshot?: boolean;
+  screenshotUrl?: string | undefined;
 }) {
   return (
     <div className={cx("as-msg as-msg-user", note && "as-msg-pending")}>
       <span className="ah-sr">You: </span>
       <div className="as-bubble">{text}</div>
+      {screenshot &&
+        (screenshotUrl ? (
+          <img className="as-shot" src={screenshotUrl} alt="Screenshot sent with this message" />
+        ) : (
+          <span className="ah-small ah-muted">Screenshot attached</span>
+        ))}
       {note && <span className="ah-small ah-muted">{note}</span>}
       {redacted && <StoredCopyLabel />}
       {at !== undefined && <MessageMeta at={at} text={text} />}
@@ -161,7 +175,7 @@ function UserMessage({
   );
 }
 
-function EntryBody({ entry, request, onAnswerPermission }: EntryProps) {
+function EntryBody({ entry, request, onAnswerPermission, screenshotUrl }: EntryProps) {
   switch (entry.kind) {
     case "user":
       return (
@@ -170,6 +184,8 @@ function EntryBody({ entry, request, onAnswerPermission }: EntryProps) {
           note={entry.queued ? "Queued: Claude reads it after this turn" : null}
           at={entry.at}
           redacted={entry.redacted}
+          screenshot={entry.screenshot}
+          screenshotUrl={screenshotUrl}
         />
       );
     case "assistant":
@@ -218,7 +234,13 @@ const Entry = memo(function Entry(props: EntryProps) {
  * and notices. The region is `aria-live="polite"` and `aria-busy` while a block streams, so screen
  * readers announce a block once it completes instead of every delta.
  */
-export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: TranscriptProps) {
+export function Transcript({
+  state,
+  onAnswerPermission,
+  scrollerRef,
+  follow,
+  screenshotUrl,
+}: TranscriptProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const opened = useRef(false);
   const attach = useCallback(
@@ -335,6 +357,7 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
                 {...(entry.kind === "permission" && {
                   request: state.permissions[entry.requestId],
                 })}
+                {...(entry.kind === "user" && entry.screenshot && { screenshotUrl })}
                 onAnswerPermission={onAnswerPermission}
               />
             );

@@ -7,7 +7,12 @@ import pytest
 
 from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, EndReason
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, StoreSequenceError
-from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
+from agent_hub.core.agent_sessions.records import (
+    Attachment,
+    LogRecord,
+    RecordKind,
+    UserMessageBody,
+)
 from agent_hub.core.sessions.session import TokenUsage
 from agent_hub.core.testing.read_model_builders import a_log_record, an_agent_session
 from agent_hub.storage.agent_session_store import open_agent_session_store
@@ -71,6 +76,27 @@ def test_returns_full_log_in_seq_order_when_store_reopened(tmp_path: Path) -> No
     )
     assert reopened.list(status=AgentSessionStatus.ENDED) == (stored,)
     assert _stored_bytes(path, FIRST) == sum(record.text_bytes for record in records)
+
+
+def test_stores_screenshot_marker_when_body_has_attachments(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    store = open_agent_session_store(path)
+    store.create(an_agent_session(id=FIRST, last_seq=0))
+    body = UserMessageBody(
+        text="What is on this screen?",
+        attachments=(Attachment(kind="screenshot", media_type="image/png", bytes=1234),),
+    ).as_body()
+    record = a_log_record("user.message", 1, body=body, text_bytes=len(str(body).encode()))
+    store.append(FIRST, [record])
+
+    stored = open_agent_session_store(path).records(FIRST)
+
+    assert [r.body for r in stored] == [
+        {
+            "text": "What is on this screen?",
+            "attachments": [{"kind": "screenshot", "media_type": "image/png", "bytes": 1234}],
+        }
+    ]
 
 
 def test_writes_nothing_when_batch_has_gap(tmp_path: Path) -> None:

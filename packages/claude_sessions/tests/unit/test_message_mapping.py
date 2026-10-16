@@ -3,6 +3,7 @@
 from decimal import Decimal
 from typing import Any
 
+import pytest
 from claude_agent_sdk import (
     AssistantMessage,
     ResultMessage,
@@ -242,3 +243,23 @@ def test_ignores_message_when_kind_not_mapped() -> None:
 
     assert EventMapper().to_events(status) == []
     assert EventMapper().to_events(UserMessage(content="echoed prompt")) == []
+
+
+IMAGE_BLOCK: Any = {
+    "type": "image",
+    "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="},
+}
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # What claude-agent-sdk 0.2.165 parses an echoed image prompt to: the text block only.
+        [TextBlock(text="What is on this screen?")],
+        # Were a later SDK to keep the image block, it still maps to nothing.
+        [IMAGE_BLOCK, TextBlock(text="What is on this screen?")],
+    ],
+    ids=["parsed", "raw-image-block"],
+)
+def test_maps_nothing_when_user_echo_has_image_block(content: list[Any]) -> None:
+    assert EventMapper().to_events(UserMessage(content=content)) == []

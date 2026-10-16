@@ -105,6 +105,14 @@
   align-self: flex-end;
   align-items: flex-end;
 }
+/* The screenshot sent with a message, or offered in "New session" after a shake (AGH-260). */
+.as-shot {
+  display: block;
+  max-width: 240px;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
 .as-msg-pending .as-bubble {
   border: 1px dashed var(--border);
 }
