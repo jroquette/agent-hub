@@ -180,10 +180,13 @@ function QuestionField({
   question,
   disabled,
   onChange,
+  onPicked,
 }: {
   question: Question;
   disabled: boolean;
   onChange: (value: string[]) => void;
+  /** A single-choice option was picked: the answer is complete, the card may move on. */
+  onPicked?: (() => void) | undefined;
 }) {
   const [picked, setPicked] = useState<string[]>([]);
   const [other, setOther] = useState<string | null>(null);
@@ -197,8 +200,10 @@ function QuestionField({
     onChange(text ? [...nextPicked, text] : nextPicked);
   };
   const pick = (label: string) => {
-    if (!question.multiSelect) emit([label], null);
-    else
+    if (!question.multiSelect) {
+      emit([label], null);
+      onPicked?.();
+    } else
       emit(picked.includes(label) ? picked.filter((v) => v !== label) : [...picked, label], other);
   };
   const toggleOther = () => {
@@ -271,6 +276,8 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   const [message, setMessage] = useState("");
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [planMode, setPlanMode] = useState<"default" | "acceptEdits">("default");
+  // Several questions are answered one page at a time, like Claude's own apps.
+  const [step, setStep] = useState(0);
   const titleId = useId();
   const messageId = useId();
   const modeId = useId();
@@ -324,6 +331,8 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   const allAnswered = answeredCount === questions.length;
   // A question card is answered by its options and "Other": no deny message, no red refusal.
   const asking = request.requestKind === "ask_user_question" && questions.length > 0;
+  const paged = questions.length > 1;
+  const lastStep = !paged || step === questions.length - 1;
   const plan =
     request.requestKind === "plan_approval" && typeof request.input?.plan === "string"
       ? request.input.plan
@@ -395,15 +404,50 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
 
       {pending && (
         <div className="ah-stack" style={{ gap: 8 }}>
-          {questions.map((question) => (
-            <QuestionField
-              key={question.question}
-              question={question}
-              disabled={disabled}
-              onChange={(value) => {
-                setAnswers((before) => ({ ...before, [question.question]: value }));
-              }}
-            />
+          {paged && (
+            <nav className="as-steps" aria-label="Questions">
+              {questions.map((question, index) => {
+                const done = (answers[question.question] ?? []).length > 0;
+                return (
+                  <button
+                    key={question.question}
+                    type="button"
+                    className={cx(
+                      "as-step",
+                      index === step && "as-step-current",
+                      done && "as-step-done",
+                    )}
+                    aria-current={index === step ? "step" : undefined}
+                    disabled={disabled}
+                    onClick={() => {
+                      setStep(index);
+                    }}
+                  >
+                    <span className="as-step-num" aria-hidden="true">
+                      {done ? <Icon name="check" size="sm" /> : index + 1}
+                    </span>
+                    <span className="as-step-label">
+                      {question.header ?? `Question ${String(index + 1)}`}
+                    </span>
+                    {done && <span className="ah-sr">(answered)</span>}
+                  </button>
+                );
+              })}
+            </nav>
+          )}
+          {questions.map((question, index) => (
+            <div key={question.question} hidden={paged && index !== step}>
+              <QuestionField
+                question={question}
+                disabled={disabled}
+                onChange={(value) => {
+                  setAnswers((before) => ({ ...before, [question.question]: value }));
+                }}
+                onPicked={() => {
+                  if (index === step && !lastStep) setStep(index + 1);
+                }}
+              />
+            </div>
           ))}
           {plan !== null && (
             <label htmlFor={modeId} className="ah-row ah-small" style={{ gap: 6 }}>
@@ -456,7 +500,30 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
                 })}
               </>
             )}
-            {asking && (
+            {paged && step > 0 && (
+              <Button
+                icon="chevron-left"
+                disabled={disabled}
+                onClick={() => {
+                  setStep(step - 1);
+                }}
+              >
+                Back
+              </Button>
+            )}
+            {paged && !lastStep && (
+              <Button
+                variant="primary"
+                iconRight="chevron-right"
+                disabled={disabled}
+                onClick={() => {
+                  setStep(step + 1);
+                }}
+              >
+                Next
+              </Button>
+            )}
+            {asking && lastStep && (
               <Button
                 variant="primary"
                 disabled={disabled || !allAnswered}
@@ -485,7 +552,7 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
               </Button>
             )}
             {asking && (
-              <Button disabled={disabled} onClick={deny}>
+              <Button variant="ghost" className="as-perm-skip" disabled={disabled} onClick={deny}>
                 {questions.length > 1 ? "Skip questions" : "Skip question"}
               </Button>
             )}
