@@ -52,7 +52,7 @@ export function useSectionPages(queries: Record<SectionId, SessionQuery | null>)
   };
 }
 
-/** The live-tile stream of `project` (null: all); Live patches its tiles from it, Sessions refetches. */
+/** The live-tile stream of `project` (null: all); Sessions refetches its sections when it reports a change. */
 export function tileStreamUrl(project: string | null): string {
   return `/api/v1/live-sessions/stream${project ? `?project=${encodeURIComponent(project)}` : ""}`;
 }
