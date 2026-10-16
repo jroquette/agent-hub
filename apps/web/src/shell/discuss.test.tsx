@@ -1,7 +1,14 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { DiscussButton, DiscussProvider, useDiscussTarget, type DiscussTarget } from "./discuss";
+import {
+  DiscussButton,
+  DiscussProvider,
+  referencedMessage,
+  useDiscuss,
+  useDiscussTarget,
+  type DiscussTarget,
+} from "./discuss";
 
 const feature: DiscussTarget = {
   key: "feature:demo:virtual-iban",
@@ -68,5 +75,63 @@ describe("Discuss panel state", () => {
       </DiscussProvider>,
     );
     expect(pressed()).toBe("false");
+  });
+});
+
+describe("Discuss references", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  function Pointer({ target }: { target: DiscussTarget }) {
+    useDiscussTarget(target);
+    const { references, addReference } = useDiscuss();
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            addReference({ id: "ac:AC-7", label: "AC-7", quote: "AC-7: routes multi-parcel" });
+          }}
+        >
+          point
+        </button>
+        <output>{references.map((r) => r.label).join(",")}</output>
+        <DiscussButton />
+      </>
+    );
+  }
+
+  it("opens the panel on the reference, keeps one chip per part and drops them on another target", () => {
+    const { rerender } = render(
+      <DiscussProvider>
+        <Pointer target={skill} />
+      </DiscussProvider>,
+    );
+    expect(pressed()).toBe("false");
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "point" }));
+      fireEvent.click(screen.getByRole("button", { name: "point" }));
+    });
+    expect(pressed()).toBe("true");
+    expect(screen.getByRole("status").textContent).toBe("AC-7");
+
+    rerender(
+      <DiscussProvider>
+        <Pointer target={feature} />
+      </DiscussProvider>,
+    );
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("quotes each part, with its file, ahead of the owner's message", () => {
+    const text = referencedMessage(
+      [{ id: "ac:AC-7", label: "AC-7", source: "brain/features/x/features.json", quote: "a\nb" }],
+      "Is this still right?",
+    );
+    expect(text).toBe(
+      "About this part:\n\nAC-7 (from `brain/features/x/features.json`):\n> a\n> b\n\nIs this still right?",
+    );
+    expect(referencedMessage([], "plain")).toBe("plain");
   });
 });

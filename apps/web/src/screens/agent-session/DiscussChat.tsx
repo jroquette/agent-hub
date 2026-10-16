@@ -13,6 +13,7 @@ import {
   useAgentSessionCommands,
   useAgentTranscript,
   useCapabilities,
+  type AgentTranscript,
 } from "./queries";
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
@@ -26,16 +27,36 @@ export interface DiscussChatProps {
   agentSessionId: string;
   /** The session is gone (deleted, or `hub web` forgot it): the caller starts a new one. */
   onGone: () => void;
+  /** Turns the typed text into the message sent (the Discuss panel quotes its references). */
+  prepareMessage?: ((text: string) => string) | undefined;
+  /** The message was accepted: the Discuss panel drops the references it carried. */
+  onSent?: (() => void) | undefined;
+}
+
+export interface DiscussChatViewProps extends DiscussChatProps {
+  /** The session's transcript, opened by the caller when it reads it too (the Studio preview). */
+  transcript: AgentTranscript;
 }
 
 /**
  * The chat of a driven session, compact enough for a side panel: the same transcript, permission
  * cards and composer as the full chat page, without its header actions and page-wide keys.
  */
-export function DiscussChat({ agentSessionId, onGone }: DiscussChatProps) {
+export function DiscussChat(props: DiscussChatProps) {
+  const transcript = useAgentTranscript(props.agentSessionId);
+  return <DiscussChatView {...props} transcript={transcript} />;
+}
+
+/** The compact chat over a transcript the caller already holds (one stream per session). */
+export function DiscussChatView({
+  agentSessionId,
+  onGone,
+  transcript,
+  prepareMessage,
+  onSent,
+}: DiscussChatViewProps) {
   const snapshot = useAgentSession(agentSessionId);
   const capabilities = useCapabilities();
-  const transcript = useAgentTranscript(agentSessionId);
   const commands = useAgentSessionCommands(agentSessionId);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const follow = useStickToBottom(scroller);
@@ -93,7 +114,10 @@ export function DiscussChat({ agentSessionId, onGone }: DiscussChatProps) {
             mode={state.mode ?? session.mode}
             model={state.model ?? session.model ?? null}
             models={capabilities.data?.models ?? DEFAULT_MODELS}
-            onSend={(text) => transcript.send(text, commands.send)}
+            onSend={async (text) => {
+              await transcript.send(prepareMessage ? prepareMessage(text) : text, commands.send);
+              onSent?.();
+            }}
             onInterrupt={commands.interrupt}
             onSettings={commands.settings}
             onSending={follow.pin}

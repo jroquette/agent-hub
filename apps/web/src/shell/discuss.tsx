@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Button } from "../components/core";
@@ -25,11 +25,32 @@ export interface DiscussTarget {
   openOnArrive?: boolean | undefined;
 }
 
+/**
+ * A precise part of the target the owner points Claude at: one acceptance criterion, a passage of
+ * the spec, a row of the plan. It rides on the next message of the target's conversation.
+ */
+export interface DiscussReference {
+  /** Stable per part (`ac:AC-7`, `quote:<text>`): pointing at it twice keeps one chip. */
+  id: string;
+  /** What the chip reads: "AC-7", "Spec excerpt". */
+  label: string;
+  /** The file the part comes from, relative to the hub folder, when known. */
+  source?: string | null | undefined;
+  /** The part itself, as the screen shows it. */
+  quote: string;
+}
+
 interface DiscussState {
   target: DiscussTarget | null;
   setTarget: (target: DiscussTarget | null) => void;
   open: boolean;
   setOpen: (open: boolean) => void;
+  /** The references waiting for the next message on the current target. */
+  references: readonly DiscussReference[];
+  /** Points Claude at a part of the current target: adds the chip and opens the panel. */
+  addReference: (reference: DiscussReference) => void;
+  removeReference: (id: string) => void;
+  clearReferences: () => void;
 }
 
 const DiscussContext = createContext<DiscussState>({
@@ -37,9 +58,14 @@ const DiscussContext = createContext<DiscussState>({
   setTarget: () => undefined,
   open: false,
   setOpen: () => undefined,
+  references: [],
+  addReference: () => undefined,
+  removeReference: () => undefined,
+  clearReferences: () => undefined,
 });
 
 const OPEN_KEY = "ah.discuss.open";
+const NO_REFERENCES: readonly DiscussReference[] = [];
 
 /**
  * Holds the screen's discuss target and whether the panel is open: the owner's choice (kept across
@@ -55,32 +81,53 @@ export function DiscussProvider({ children }: { children: ReactNode }) {
       return false;
     }
   });
+  // References belong to the target they were taken from: another screen does not inherit them.
+  const [pointed, setPointed] = useState<{ key: string; items: DiscussReference[] } | null>(null);
   const arriving = target?.openOnArrive === true && !dismissed.has(target.key);
   const open = arriving || chosenOpen;
+  const choose = useCallback(
+    (next: boolean) => {
+      setChosenOpen(next);
+      if (target?.openOnArrive) {
+        const key = target.key;
+        setDismissed((current) => {
+          const updated = new Set(current);
+          if (next) updated.delete(key);
+          else updated.add(key);
+          return updated;
+        });
+      }
+      try {
+        window.localStorage.setItem(OPEN_KEY, next ? "1" : "0");
+      } catch {
+        // A browser without storage only forgets the panel on reload.
+      }
+    },
+    [target],
+  );
+  const references = target && pointed?.key === target.key ? pointed.items : NO_REFERENCES;
   const value = useMemo<DiscussState>(
     () => ({
       target,
       setTarget,
       open,
-      setOpen: (next) => {
-        setChosenOpen(next);
-        if (target?.openOnArrive) {
-          const key = target.key;
-          setDismissed((current) => {
-            const updated = new Set(current);
-            if (next) updated.delete(key);
-            else updated.add(key);
-            return updated;
-          });
-        }
-        try {
-          window.localStorage.setItem(OPEN_KEY, next ? "1" : "0");
-        } catch {
-          // A browser without storage only forgets the panel on reload.
-        }
+      setOpen: choose,
+      references,
+      addReference: (reference) => {
+        if (!target) return;
+        const kept = references.filter((r) => r.id !== reference.id);
+        setPointed({ key: target.key, items: [...kept, reference] });
+        if (!open) choose(true);
+      },
+      removeReference: (id) => {
+        if (!target) return;
+        setPointed({ key: target.key, items: references.filter((r) => r.id !== id) });
+      },
+      clearReferences: () => {
+        setPointed(null);
       },
     }),
-    [target, open],
+    [target, open, choose, references],
   );
   return <DiscussContext.Provider value={value}>{children}</DiscussContext.Provider>;
 }
@@ -137,4 +184,33 @@ export function discussPrompt(target: DiscussTarget, message: string): string {
     message,
   );
   return lines.join("\n");
+}
+
+/**
+ * The owner's message with the parts they pointed at, quoted ahead of it so Claude answers about
+ * exactly those: each reference names its file and quotes the part.
+ */
+export function referencedMessage(
+  references: readonly DiscussReference[],
+  message: string,
+): string {
+  if (references.length === 0) return message;
+  const quoted = references.map((reference) => {
+    const head = reference.source
+      ? `${reference.label} (from \`${reference.source}\`):`
+      : `${reference.label}:`;
+    const body = reference.quote
+      .trim()
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    return `${head}\n${body}`;
+  });
+  return [
+    references.length === 1 ? "About this part:" : "About these parts:",
+    "",
+    quoted.join("\n\n"),
+    "",
+    message,
+  ].join("\n");
 }
