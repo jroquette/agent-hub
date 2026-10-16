@@ -737,6 +737,9 @@ class AgentSessionControl:
             listed = await self._driver.list_resumable(resolved.path)
             if all(past.session_id != claude_session_id for past in listed):
                 return None
+            # Counted before the CLI starts: once ``_start`` registers the session, nothing
+            # awaits until its budget is set, so no record is admitted by a fresh one.
+            budget = await asyncio.to_thread(self._budget_of, session.id)
             now = self._clock()
             reopened = await asyncio.to_thread(
                 lambda: self._store.update(
@@ -758,7 +761,7 @@ class AgentSessionControl:
             state = start_state(with_prompt=False)
             live = await self._start(reopened, spec, state)
             live.idle_since = now
-            live.budget = await asyncio.to_thread(self._budget_of, session.id)
+            live.budget = budget
             try:
                 await self._begin(live, None, ())
             except Exception:
