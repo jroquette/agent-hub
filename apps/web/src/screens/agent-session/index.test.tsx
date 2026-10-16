@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Profiler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { rememberScreenshot } from "../../lib/screenshotCopy";
 import { AppShell } from "../../shell/AppShell";
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -107,6 +108,47 @@ async function bodyOf(request: Request | undefined): Promise<unknown> {
 
 const posts = (requests: Request[], suffix: string) =>
   requests.filter((r) => r.method === "POST" && new URL(r.url).pathname === `${SESSION}${suffix}`);
+
+describe("AgentSessionScreen (screenshot-thumbnail)", () => {
+  const SHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+  const shotLog = () => [
+    aLogRecord("init", { seq: 1 }),
+    aLogRecord("user.message", {
+      seq: 2,
+      body: {
+        text: "What is on this screen?",
+        attachments: [{ kind: "screenshot", media_type: "image/png", bytes: 16 }],
+      },
+    }),
+  ];
+
+  it("screenshot-thumbnail: shows the copy kept in memory, with no image request", async () => {
+    rememberScreenshot(ID, SHOT);
+    const view = renderChat(routes({ [EVENTS]: { items: shotLog(), next_after: null } }));
+
+    const img = await screen.findByRole("img", { name: "Screenshot sent with this message" });
+    expect(img).toHaveAttribute("src", SHOT);
+    expect(view.requests.every((r) => !r.url.startsWith("data:"))).toBe(true);
+    expect(view.requests.some((r) => /\.(png|jpe?g)$|screenshot/.test(r.url))).toBe(false);
+  });
+
+  it("screenshot-thumbnail: after a reload (no copy) the label shows, no image", async () => {
+    rememberScreenshot("another-session", SHOT);
+    renderChat(routes({ [EVENTS]: { items: shotLog(), next_after: null } }));
+
+    expect(await screen.findByText("Screenshot attached")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Screenshot sent with this message" })).toBeNull();
+  });
+
+  it("screenshot-thumbnail: without the marker, neither", async () => {
+    rememberScreenshot(ID, SHOT);
+    renderChat();
+
+    expect(await screen.findByText("Run the tests.")).toBeInTheDocument();
+    expect(screen.queryByText("Screenshot attached")).toBeNull();
+    expect(screen.queryByRole("img", { name: "Screenshot sent with this message" })).toBeNull();
+  });
+});
 
 describe("AgentSessionScreen (transcript)", () => {
   it("loads the log then streams after its last record, appending deltas to one bubble", async () => {

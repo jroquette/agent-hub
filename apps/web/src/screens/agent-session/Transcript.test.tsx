@@ -62,6 +62,47 @@ function show(items: StreamItem[]) {
   return { state, ...view };
 }
 
+const SHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+const withShot = (seq: number): StreamItem => ({
+  type: "record",
+  record: aLogRecord("user.message", {
+    seq,
+    body: {
+      text: "What is on this screen?",
+      attachments: [{ kind: "screenshot", media_type: "image/png", bytes: 16 }],
+    },
+  }),
+});
+
+describe("Transcript (screenshot-thumbnail)", () => {
+  it("screenshot-thumbnail: the copy shows as an image under the message", () => {
+    const state = [withShot(1)].reduce(reduceTranscript, initialTranscript());
+    render(<Transcript state={state} screenshotUrl={SHOT} />);
+
+    expect(screen.getByRole("img", { name: "Screenshot sent with this message" })).toHaveAttribute(
+      "src",
+      SHOT,
+    );
+    expect(screen.queryByText("Screenshot attached")).toBeNull();
+  });
+
+  it("screenshot-thumbnail: without the copy (after a reload) the label shows", () => {
+    const state = [withShot(1)].reduce(reduceTranscript, initialTranscript());
+    const { container } = render(<Transcript state={state} />);
+
+    expect(screen.getByText("Screenshot attached")).toBeInTheDocument();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("screenshot-thumbnail: a message without the marker shows neither", () => {
+    const state = scripted().reduce(reduceTranscript, initialTranscript());
+    const { container } = render(<Transcript state={state} screenshotUrl={SHOT} />);
+
+    expect(screen.queryByText("Screenshot attached")).toBeNull();
+    expect(container.querySelector("img.as-shot")).toBeNull();
+  });
+});
+
 describe("Transcript (transcript)", () => {
   it("appends deltas to one assistant bubble and renders markdown without raw HTML", () => {
     const { container } = show(scripted());

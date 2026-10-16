@@ -9,7 +9,8 @@ Driver semantics every implementation keeps (``SessionDriverContract`` checks th
 
 - ``start`` returns a handle at once; no event is emitted before the first ``send``. The first
   turn opens with ``InitEvent`` (the CLI emits it on its first turn).
-- ``send`` starts a turn, or queues the text behind the running one, in order.
+- ``send`` starts a turn, or queues the text behind the running one, in order. Its optional
+  ``images`` go with the text as one user message, images first; they are never kept.
 - Each turn ends with exactly one ``TurnResult``; an interrupted turn ends with one whose
   ``terminal_reason`` is ``ABORTED_TERMINAL_REASON``.
 - A ``PermissionRequest`` parks the turn until ``answer_permission`` (or ``interrupt`` or
@@ -20,7 +21,7 @@ Driver semantics every implementation keeps (``SessionDriverContract`` checks th
 """
 
 import re
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
 from typing import Annotated, Final, Literal, NewType, Protocol
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -87,6 +88,18 @@ class StartSpec(DriverModel):
             msg = "fork needs a session to resume"
             raise ValueError(msg)
         return self
+
+
+class DriverImage(DriverModel):
+    """An image sent with a user message (a decoded PNG); its repr shows only the media type
+    and the size, so a log line or a traceback never prints the bytes."""
+
+    media_type: Literal["image/png"]
+    data: bytes
+
+    def __repr_args__(self) -> Iterator[tuple[str, object]]:
+        yield "media_type", self.media_type
+        yield "bytes", len(self.data)
 
 
 class InitEvent(DriverModel):
@@ -278,8 +291,11 @@ class SessionDriver(Protocol):
         """Start a session; no event comes before the first ``send``."""
         ...
 
-    async def send(self, handle: DriverHandle, text: str) -> None:
-        """Send a user message: it starts a turn, or waits behind the running one."""
+    async def send(
+        self, handle: DriverHandle, text: str, *, images: tuple[DriverImage, ...] = ()
+    ) -> None:
+        """Send a user message (``images`` first, then ``text``): it starts a turn, or waits
+        behind the running one."""
         ...
 
     async def interrupt(self, handle: DriverHandle) -> None:
