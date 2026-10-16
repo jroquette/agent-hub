@@ -602,6 +602,39 @@ describe("NewSessionDialog (resume: fork)", () => {
     });
   });
 
+  it("resume: forking an auto session in a built app starts in Ask before edits, the checked default", async () => {
+    // ADR 0036: a built app never offers auto, so the fork does not inherit it unseen.
+    vi.mocked(servedCheckout).mockReturnValue(null);
+    const { dialog, props } = fork({ forkOf: { ...ENDED, mode: "auto" } });
+
+    await options(dialog);
+    const modes = within(dialog).getByRole("group", { name: "Mode" });
+    expect(within(modes).queryByRole("radio", { name: /Auto/ })).toBeNull();
+    expect(within(modes).getByRole("radio", { name: /^Ask before edits/ })).toBeChecked();
+    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
+      /^Ask before edits ·/,
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({ mode: "default" });
+  });
+
+  it("resume: forking an auto session in the playground keeps Auto, checked", async () => {
+    vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
+    const { dialog, props } = fork({ forkOf: { ...ENDED, mode: "auto" } });
+
+    await options(dialog);
+    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({ mode: "auto" });
+    vi.mocked(servedCheckout).mockReturnValue(null);
+  });
+
+  it("resume: the Fork dialog, Options open, has no serious axe violations", async () => {
+    const { dialog } = fork();
+    await options(dialog);
+    expect(await seriousViolations(dialog)).toEqual([]);
+  });
+
   it("resume: a plain New session shows no fork target", () => {
     const { dialog } = open();
 

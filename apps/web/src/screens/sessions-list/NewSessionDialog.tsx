@@ -104,7 +104,12 @@ export function NewSessionDialog({
   forkOf,
 }: NewSessionDialogProps) {
   const [picked, setPicked] = useState<string | null>(null);
-  const [mode, setMode] = useState<PermissionMode>(forkOf?.mode ?? initialMode ?? "default");
+  // Only an offered mode starts checked: a built app never offers auto (ADR 0036), so a fork of an
+  // auto session started in the playground falls back to the default, shown checked under Options.
+  const [mode, setMode] = useState<PermissionMode>(() => {
+    const wanted = forkOf?.mode ?? initialMode ?? "default";
+    return offeredModes().includes(wanted) ? wanted : "default";
+  });
   const shot = screenshot && "dataUrl" in screenshot ? screenshot.dataUrl : null;
   const [attach, setAttach] = useState(shot !== null);
   // A fork keeps its session's model, as "Other model id" when the capabilities do not list it.
