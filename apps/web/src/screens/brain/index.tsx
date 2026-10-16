@@ -2,11 +2,12 @@ import "./Brain.css";
 
 import { Link, Navigate, useParams } from "react-router";
 
-import { Banner, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
-import { useApi } from "../../lib/api";
+import { AppLink, Banner, Icon, ProblemError, Skeleton } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
 import { useScope } from "../../lib/scope";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
+import { CountCell, KnowledgeProjectIndex } from "../knowledge-index";
+import { useProjectNow } from "../project-overview/queries";
 import { NoteView } from "./NoteView";
 import { useBrainTree } from "./queries";
 import { buildTree, noteName, type BrainFolder } from "./tree";
@@ -137,59 +138,151 @@ export function BrainScreen() {
   );
 }
 
-/**
- * Knowledge › Brain: with a project in scope it opens that project's Brain; with All projects it
- * lists the projects to choose one.
- */
-export function BrainPickerScreen() {
-  const [scope] = useScope();
-  const projects = useApi("/api/v1/projects", undefined, { enabled: scope === null });
-  if (scope !== null) return <Navigate to={brainHome(scope)} replace />;
-  let body;
-  if (projects.isError) {
-    body = (
-      <ProblemError
-        title={projects.error.title}
-        detail={projects.error.detail}
-        status={projects.error.status}
-        onRetry={() => void projects.refetch()}
-      />
-    );
-  } else if (projects.isPending) {
-    body = <Skeleton lines={3} />;
-  } else if (projects.data.items.length === 0) {
-    body = (
-      <div className="ah-card">
-        <EmptyState icon="book-open" title="No projects yet.">
-          Register a hub in Settings to read its brain.
-        </EmptyState>
-      </div>
-    );
-  } else {
-    body = (
-      <ul
-        aria-label="Projects"
-        className="ah-card ah-pad ah-stack"
-        style={{ listStyle: "none", margin: 0, gap: 4 }}
-      >
-        {projects.data.items.map((project) => (
-          <li key={project.name}>
-            <Link to={brainHome(project.name)} className="ah-brain-link">
-              <Icon name="book-open" size="sm" />
-              <span>{project.name}</span>
-            </Link>
-          </li>
-        ))}
-      </ul>
+/** One project's brain, counted by top folder for the All-projects index. */
+function useBrainCounts(project: string) {
+  const tree = useBrainTree(project);
+  const paths = (tree.data?.entries ?? []).map((entry) => entry.path);
+  const under = (folder: string) => paths.filter((path) => path.startsWith(`${folder}/`));
+  const features = new Set(
+    under("features").flatMap((path) => {
+      const slug = path.split("/")[1];
+      return slug !== undefined && path.split("/").length > 2 ? [slug] : [];
+    }),
+  );
+  const incomplete =
+    tree.data && (tree.data.truncated || tree.data.skipped > 0)
+      ? "The listing stopped at its limit or skipped entries: some notes are not counted."
+      : null;
+  return {
+    pending: tree.isPending,
+    error: tree.isError ? `Could not read this brain: ${tree.error.title}` : null,
+    incomplete,
+    notes: paths.length,
+    features: features.size,
+    decisions: under("decisions").length,
+    learnings: under("learnings").length,
+    inbox: under("_inbox").length,
+  };
+}
+
+type BrainCount = "notes" | "features" | "decisions" | "learnings";
+
+function BrainCountCell({ project, count }: { project: string; count: BrainCount }) {
+  const counts = useBrainCounts(project);
+  return (
+    <CountCell
+      {...counts}
+      incomplete={count === "notes" ? counts.incomplete : null}
+      value={counts[count]}
+    />
+  );
+}
+
+function InboxCell({ project }: { project: string }) {
+  const counts = useBrainCounts(project);
+  if (counts.pending || counts.error !== null || counts.inbox === 0) {
+    return (
+      <CountCell {...counts} incomplete={null} value={<span className="ah-muted">None</span>} />
     );
   }
   return (
-    <div className="ah-page" style={{ gap: 16 }}>
-      <h1 className="ah-h1">Brain</h1>
-      <p className="ah-muted" style={{ margin: 0 }}>
-        Pick a project to read its brain, or choose one in the project scope.
-      </p>
-      {body}
-    </div>
+    <AppLink
+      href={`/knowledge/learnings?scope=${encodeURIComponent(project)}`}
+      className="ah-row"
+      style={{ gap: 4 }}
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
+    >
+      <Icon name="lightbulb" size="sm" />
+      <span>{counts.inbox} to triage</span>
+    </AppLink>
+  );
+}
+
+function FocusCell({ project }: { project: string }) {
+  const now = useProjectNow(project);
+  if (now.isPending) return <Skeleton lines={1} />;
+  const focus = now.isError || now.data.problem ? [] : now.data.focus;
+  const first = focus[0];
+  if (first === undefined) {
+    return <span className="ah-small ah-muted">No current focus recorded</span>;
+  }
+  return (
+    <span className="ah-row ah-small" style={{ gap: 6, minWidth: 0 }}>
+      <span
+        title={first.text}
+        style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+      >
+        {first.text}
+      </span>
+      {focus.length > 1 && (
+        <span className="ah-muted" style={{ whiteSpace: "nowrap" }}>
+          +{focus.length - 1} more
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Knowledge › Brain: with a project in scope it opens that project's Brain; with All projects it
+ * lists the projects with what each brain holds, to choose one.
+ */
+export function BrainPickerScreen() {
+  const [scope] = useScope();
+  if (scope !== null) return <Navigate to={brainHome(scope)} replace />;
+  return (
+    <KnowledgeProjectIndex
+      title="Brain"
+      intro="What each project's hub knows: current focus, decisions, playbooks and feature records. Open a project to read its brain."
+      caption="Projects and their brains"
+      emptyLine="Register a hub to read its brain."
+      tip="Tip: pick a project in the scope switcher to open its brain directly."
+      href={brainHome}
+      columns={[
+        {
+          id: "focus",
+          label: "Current focus",
+          render: (project) => <FocusCell project={project.name} />,
+        },
+        {
+          id: "notes",
+          label: "Notes",
+          align: "right",
+          width: 90,
+          render: (project) => <BrainCountCell project={project.name} count="notes" />,
+        },
+        {
+          id: "features",
+          label: "Features",
+          hint: "Feature records under brain/features/.",
+          align: "right",
+          width: 100,
+          render: (project) => <BrainCountCell project={project.name} count="features" />,
+        },
+        {
+          id: "decisions",
+          label: "Decisions",
+          align: "right",
+          width: 100,
+          render: (project) => <BrainCountCell project={project.name} count="decisions" />,
+        },
+        {
+          id: "learnings",
+          label: "Learnings",
+          align: "right",
+          width: 100,
+          render: (project) => <BrainCountCell project={project.name} count="learnings" />,
+        },
+        {
+          id: "inbox",
+          label: "Inbox",
+          hint: "Unreviewed proposals in brain/_inbox/; nothing there is authoritative.",
+          width: 140,
+          render: (project) => <InboxCell project={project.name} />,
+        },
+      ]}
+    />
   );
 }

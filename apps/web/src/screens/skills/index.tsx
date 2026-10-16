@@ -4,17 +4,17 @@ import "./Skills.css";
 import "./SkillDetail.css";
 
 import { useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router";
+import { Navigate, useNavigate, useParams } from "react-router";
 
-import { Button, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
+import { AppLink, Button, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
 import type { MarkdownProps } from "../../components";
 import type { components } from "../../api/schema";
-import { useApi } from "../../lib/api";
 import { useNow } from "../../lib/clock";
 import { useScope } from "../../lib/scope";
 import { bundledFileAnchor, resolveSkillLink } from "../../lib/skillLinks";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
+import { CountCell, KnowledgeProjectIndex } from "../knowledge-index";
 import { NotFoundBody } from "../not-found";
 import { BodyView, scrollToAnchor, type BodyMode } from "./BodyView";
 import { BundledFiles } from "./BundledFiles";
@@ -242,59 +242,119 @@ export function SkillDetailScreen() {
   );
 }
 
+/** One project's catalog, counted for the All-projects index; React Query shares the request. */
+function useCatalogCounts(project: string) {
+  const catalog = useSkillCatalog(project);
+  const items = catalog.data?.items ?? [];
+  const count = (kind: ItemKind) => items.filter((item) => item.kind === kind).length;
+  return {
+    pending: catalog.isPending,
+    error: catalog.isError ? `Could not read this catalog: ${catalog.error.title}` : null,
+    incomplete: catalog.data?.truncated
+      ? "The catalog is incomplete: the hub is over its bounds."
+      : null,
+    skills: count("skill"),
+    agents: count("agent"),
+    hooks: count("hook"),
+    used: items.filter((item) => item.kind !== "hook" && (item.usage?.count ?? 0) > 0).length,
+    withProblems: items.filter((item) => item.diagnostics_count > 0).length,
+  };
+}
+
+function KindCount({ project, kind }: { project: string; kind: ItemKind }) {
+  const counts = useCatalogCounts(project);
+  const value = kind === "skill" ? counts.skills : kind === "agent" ? counts.agents : counts.hooks;
+  return <CountCell {...counts} value={value} />;
+}
+
+function UsedCount({ project }: { project: string }) {
+  const counts = useCatalogCounts(project);
+  return <CountCell {...counts} value={counts.used} />;
+}
+
+function ProblemsCell({ project }: { project: string }) {
+  const counts = useCatalogCounts(project);
+  if (counts.pending || counts.error !== null || counts.withProblems === 0) {
+    return (
+      <CountCell {...counts} incomplete={null} value={<span className="ah-muted">None</span>} />
+    );
+  }
+  const n = counts.withProblems;
+  return (
+    <AppLink
+      href={`${skillsHome(project)}?diag=1`}
+      className="ah-row"
+      style={{ gap: 4 }}
+      aria-label={`${String(n)} ${n === 1 ? "item" : "items"} with problems in ${project}`}
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
+    >
+      <Icon name="circle-alert" size="sm" />
+      <span>{n} with problems</span>
+    </AppLink>
+  );
+}
+
 /**
  * Knowledge › Skills: with a project in scope it opens that project's catalog; with All projects
- * it lists the projects to choose one, as Brain's picker does.
+ * it lists the projects with what each one holds, to choose one (as Brain's index does).
  */
 export function SkillsPickerScreen() {
   const [scope] = useScope();
-  const projects = useApi("/api/v1/projects", undefined, { enabled: scope === null });
   if (scope !== null) return <Navigate to={skillsHome(scope)} replace />;
-  let body;
-  if (projects.isError) {
-    body = (
-      <ProblemError
-        title={projects.error.title}
-        detail={projects.error.detail}
-        status={projects.error.status}
-        onRetry={() => void projects.refetch()}
-      />
-    );
-  } else if (projects.isPending) {
-    body = <Skeleton lines={3} />;
-  } else if (projects.data.items.length === 0) {
-    body = (
-      <div className="ah-card">
-        <EmptyState icon="book-open" title="No projects yet.">
-          Register a hub in Settings to see its skills.
-        </EmptyState>
-      </div>
-    );
-  } else {
-    body = (
-      <ul
-        aria-label="Projects"
-        className="ah-card ah-pad ah-stack"
-        style={{ listStyle: "none", margin: 0, gap: 4 }}
-      >
-        {projects.data.items.map((project) => (
-          <li key={project.name}>
-            <Link to={skillsHome(project.name)} className="ah-skills-pick">
-              <Icon name="book-open" size="sm" />
-              <span>{project.name}</span>
-            </Link>
-          </li>
-        ))}
-      </ul>
-    );
-  }
   return (
-    <div className="ah-page" style={{ gap: 16 }}>
-      <h1 className="ah-h1">Skills</h1>
-      <p className="ah-muted" style={{ margin: 0 }}>
-        Pick a project to see its skills, agents and hooks, or choose one in the project scope.
-      </p>
-      {body}
-    </div>
+    <KnowledgeProjectIndex
+      title="Skills"
+      intro="What each project's agents can do: the skills, agents and hooks its hub installs. Open a project to browse them."
+      caption="Projects and their skills, agents and hooks"
+      emptyLine="Register a hub to see its skills."
+      tip="Tip: pick a project in the scope switcher to open its skills directly."
+      href={skillsHome}
+      columns={[
+        {
+          id: "hub_repo",
+          label: "Hub repo",
+          render: (project) => (
+            <span className="ah-mono ah-small ah-muted">{project.hub_repo}</span>
+          ),
+        },
+        {
+          id: "skills",
+          label: "Skills",
+          align: "right",
+          width: 90,
+          render: (project) => <KindCount project={project.name} kind="skill" />,
+        },
+        {
+          id: "agents",
+          label: "Agents",
+          align: "right",
+          width: 90,
+          render: (project) => <KindCount project={project.name} kind="agent" />,
+        },
+        {
+          id: "hooks",
+          label: "Hooks",
+          align: "right",
+          width: 90,
+          render: (project) => <KindCount project={project.name} kind="hook" />,
+        },
+        {
+          id: "used",
+          label: `Used in ${String(USAGE_DAYS)} days`,
+          hint: "Skills and agents used at least once in this window. Hooks are not counted.",
+          align: "right",
+          width: 150,
+          render: (project) => <UsedCount project={project.name} />,
+        },
+        {
+          id: "diagnostics",
+          label: "Diagnostics",
+          width: 180,
+          render: (project) => <ProblemsCell project={project.name} />,
+        },
+      ]}
+    />
   );
 }

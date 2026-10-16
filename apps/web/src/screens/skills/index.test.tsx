@@ -104,6 +104,32 @@ describe("SkillsPickerScreen states", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Boom");
   });
+
+  it("counts each project's skills, agents, hooks, usage and problems", async () => {
+    pick("/knowledge/skills", { [CATALOG]: aSkillCatalog() });
+
+    const row = (await screen.findByRole("link", { name: "demo" })).closest("tr");
+    if (row === null) throw new Error("no row");
+    await within(row).findByText("1 with problems");
+    const cells = within(row)
+      .getAllByRole("cell")
+      .map((cell) => cell.textContent);
+    expect(cells.slice(2)).toEqual(["2", "1", "1", "1", "1 with problems"]);
+    expect(within(row).getByRole("link", { name: "1 item with problems in demo" })).toHaveAttribute(
+      "href",
+      "/projects/demo/skills?diag=1",
+    );
+  });
+
+  it("shows a dash with the reason when one project's catalog cannot be read", async () => {
+    pick("/knowledge/skills", { [CATALOG]: aProblem({ status: 500, title: "Boom" }) });
+
+    const row = (await screen.findByRole("link", { name: "demo" })).closest("tr");
+    if (row === null) throw new Error("no row");
+    expect(
+      (await within(row).findAllByText("Could not read this catalog: Boom")).length,
+    ).toBeGreaterThan(0);
+  });
 });
 
 describe("SkillsScreen nav", () => {
