@@ -43,6 +43,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A message to an ended local session (hub web stopped, idle timeout, closed, failed) reopens the same session on its
   Claude conversation and plays it (AGH-262).
 
+- Knowledge › Brain and Knowledge › Skills, with All projects in scope, list the projects in a table that says what
+  each holds before you open it: Brain shows the current focus and counts notes, features, decisions, learnings and
+  the inbox to triage; Skills counts skills, agents and hooks, those used in 30 days and those with problems. A
+  project's Brain and Skills pages get a breadcrumb and a purpose line, the scope switcher shows the page's project,
+  and the Brain tree groups Start here, Folders (with note counts) and the unreviewed inbox, with a note filter (`/`)
+  (AGH-270).
+
 ### Changed
 
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
