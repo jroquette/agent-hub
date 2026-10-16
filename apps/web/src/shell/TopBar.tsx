@@ -1,7 +1,15 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
-import { Button, IconButton, Kbd, MenuItem, Popover, SegmentedControl, Tooltip } from "../components/core";
+import {
+  Button,
+  IconButton,
+  Kbd,
+  MenuItem,
+  Popover,
+  SegmentedControl,
+  Tooltip,
+} from "../components/core";
 import { CollectorPill } from "../components/CollectorPill";
 import { Icon, type IconName } from "../components/Icon";
 import { useApi } from "../lib/api";
