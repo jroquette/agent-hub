@@ -80,15 +80,15 @@ export function SkillsScreen() {
         items={[
           { label: "Portfolio", href: "/" },
           { label: project, href: `/projects/${encodeURIComponent(project)}` },
-          { label: "Skills" },
+          { label: "Toolkit" },
         ]}
       />
       <header className="ah-skills-head">
         <div className="ah-stack ah-grow" style={{ gap: 4 }}>
-          <h1 className="ah-h1">Skills</h1>
+          <h1 className="ah-h1">Toolkit</h1>
           <p className="ah-muted" style={{ margin: 0 }}>
-            What {project}&apos;s agents can do, read from its hub&apos;s files. Nothing here runs
-            them.
+            The skills, agents and hooks {project}&apos;s agents work with, read from its hub&apos;s
+            files. Nothing here runs them.
           </p>
         </div>
         <CreateMenu project={project} />
@@ -275,7 +275,7 @@ export function SkillDetailScreen() {
         items={[
           { label: "Portfolio", href: "/" },
           { label: project, href: `/projects/${encodeURIComponent(project)}` },
-          { label: "Skills", href: skillsHome(project) },
+          { label: "Toolkit", href: skillsHome(project) },
           { label: name, mono: true },
         ]}
       />
@@ -347,7 +347,7 @@ export function SkillsPickerScreen() {
   if (scope !== null) return <Navigate to={skillsHome(scope)} replace />;
   return (
     <KnowledgeProjectIndex
-      title="Skills"
+      title="Toolkit"
       intro="What each project's agents can do: the skills, agents and hooks its hub installs. Open a project to browse them."
       caption="Projects and their skills, agents and hooks"
       emptyLine="Register a hub to see its skills."

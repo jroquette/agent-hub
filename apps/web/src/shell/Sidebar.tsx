@@ -100,7 +100,7 @@ export const NAV: readonly NavGroup[] = [
         tone: "waiting",
       },
       { id: BRAIN_ID, label: "Brain", to: BRAIN_PICKER, icon: "book-open" },
-      { id: SKILLS_ID, label: "Skills", to: SKILLS_PICKER, icon: "package" },
+      { id: SKILLS_ID, label: "Toolkit", to: SKILLS_PICKER, icon: "package" },
     ],
   },
   {
