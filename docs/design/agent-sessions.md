@@ -187,6 +187,19 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   one keeps the call's snippet diff, without numbers. A file's changes keep their height and its body scrolls
   through all of them.
 
+- **AC-265.16** Given a change open in the review, when + beside a line is pressed (Shift+click another line takes
+  the lines between) and a comment is written, then it is sent as a message to the session's own Claude: its first
+  line anchors it ("Review comment on `<path>`, change N, lines a-b:"), then the code as a fenced diff, then the
+  comment. It is kept in the session's log, reaches Claude and comes back after a reload. Without a way to send
+  (an ended session that cannot resume) the review is read-only.
+- **AC-265.17** Given a comment, then its thread shows under its last line with the comment, Claude's answers (its text
+  after each message, up to your next one) and your replies ("Reply to review comment on …"); it reads as waiting
+  for Claude while there is no answer, and Resolve folds it (kept per session in this browser,
+  `ah.chat.resolved.<id>`). A thread whose lines left the diff is kept. The file list shows each file's open
+  threads.
+- **AC-265.18** Given a review comment in the chat, then it reads as one (file, lines, the comment) with a link that
+  opens its file in the review.
+
 ## Invariants
 
 - The platform implements no agent loop and calls no model; the children are the user's own `claude` with its own

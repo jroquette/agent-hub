@@ -21,6 +21,8 @@ import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
 import { CostMeter } from "./CostMeter";
 import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
+import { useResolvedThreads } from "./ReviewDiff";
+import { reviewThreads } from "./review";
 import {
   isTerminal,
   useAgentSession,
@@ -133,6 +135,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
     nonce: 0,
   });
   const review = useReviewed(agentSessionId);
+  const resolvedThreads = useResolvedThreads(agentSessionId);
   const closeFiles = useCallback(() => {
     setFilesOpen(false);
   }, []);
@@ -158,6 +161,10 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const { tools, permissions } = state;
   // Only the calls and their permissions change the list, not every streamed text delta.
   const files = useMemo(() => changedFiles({ tools, permissions }), [tools, permissions]);
+  const threads = useMemo(
+    () => reviewThreads(state.entries, state.sending),
+    [state.entries, state.sending],
+  );
   const crumbs = [
     { label: "Sessions", href: "/sessions" },
     { label: session?.title ?? `Agent session ${short(agentSessionId)}` },
@@ -329,6 +336,15 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 review={review}
                 initialPath={filePick.path}
                 pickNonce={filePick.nonce}
+                comments={{
+                  threads,
+                  resolved: resolvedThreads,
+                  // A comment is a message to this session's Claude: it answers in the chat too.
+                  onComment:
+                    cloud || (ended && !resumable)
+                      ? undefined
+                      : (text) => transcript.send(text, (message) => commands.send(message)),
+                }}
               />
             ) : undefined
           }

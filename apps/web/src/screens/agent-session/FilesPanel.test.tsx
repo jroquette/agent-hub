@@ -188,3 +188,32 @@ describe("FilesPanel (long-files)", () => {
     expect(/\.as-files-change \{[^}]*\bflex: none;/.exec(css)).not.toBeNull();
   });
 });
+
+describe("FilesPanel (comments)", () => {
+  it("counts a file's open review threads in the list, leaving out the resolved ones (AC-265.17)", () => {
+    const thread = (key: string, path: string) => ({
+      key,
+      anchor: { path, change: 1, side: "new" as const, start: 1, end: 1 },
+      messages: [],
+      waiting: false,
+    });
+    render(
+      <FilesPanel
+        files={filesOf(TWO_FILES)}
+        sessionId="s1"
+        onClose={vi.fn()}
+        comments={{
+          threads: [
+            thread("c1", "/repo/src/ui/app.ts"),
+            thread("c2", "/repo/src/ui/app.ts"),
+            thread("c3", "/repo/src/new.ts"),
+          ],
+          resolved: { resolved: new Set(["c3"]), toggle: vi.fn() },
+        }}
+      />,
+    );
+
+    expect(screen.getByTitle("2 open review comments")).toHaveTextContent("2");
+    expect(screen.queryByTitle(/1 open review comment/)).toBeNull();
+  });
+});
