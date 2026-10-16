@@ -149,6 +149,31 @@ describe("ConfirmDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(2);
   });
 
+  it("closes on nothing while pending and turns its buttons off", async () => {
+    const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+    render(
+      <ConfirmDialog
+        title="Stop reading agent-hub?"
+        confirmLabel="Removing…"
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+        pending
+      />,
+    );
+
+    await userEvent.keyboard("{Escape}");
+    const scrim = screen.getByRole("presentation");
+    fireEvent.mouseDown(scrim);
+    fireEvent.click(scrim);
+
+    expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "true");
+    for (const name of ["Close", "Cancel", "Removing…"])
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   it("disables a later phase's confirmation", () => {
     render(
       <ConfirmDialog title="Approve?" confirmLabel="Approve" tone="primary" phase="P4" inline />,
