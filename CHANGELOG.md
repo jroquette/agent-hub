@@ -45,6 +45,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- Learnings lists the proposals that can be decided first and the blocked ones after them, each naming why
+  ("{r} ready · {b} blocked"); a missing note explains itself and the detail says "Cannot be decided here" in a
+  banner. Titles drop an agent's "Proposal:" prefix and wrap to two lines, the detail shows the note's frontmatter
+  (type, repos, last verified, provenance), and the status is in the URL (`?status=`), so Back undoes it (AGH-272).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to
