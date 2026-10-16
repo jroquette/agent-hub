@@ -1,6 +1,6 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
@@ -104,6 +104,39 @@ describe("SettingsScreen", () => {
     expect(screen.getByRole("alertdialog", { name: "Stop reading loki-trader?" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Removing…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+  });
+
+  it("shows the removal's error in the confirmation after an Escape while it ran", async () => {
+    open("hubs");
+    let answer: (response: Response) => void = () => undefined;
+    const stubbed = vi.mocked(globalThis.fetch);
+    const routed = stubbed.getMockImplementation();
+    stubbed.mockImplementation((input, init) => {
+      const method = input instanceof Request ? input.method : (init?.method ?? "GET");
+      if (method !== "DELETE") return routed ? routed(input, init) : Promise.reject(new Error());
+      return new Promise<Response>((resolve) => {
+        answer = resolve;
+      });
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Remove loki-trader" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove hub" }));
+    await userEvent.keyboard("{Escape}");
+    await act(async () => {
+      answer(
+        new Response(
+          JSON.stringify({ status: 409, title: "Conflict", detail: "The hub is in use." }),
+          {
+            status: 409,
+            headers: { "content-type": "application/problem+json" },
+          },
+        ),
+      );
+      await Promise.resolve();
+    });
+
+    const dialog = screen.getByRole("alertdialog", { name: "Stop reading loki-trader?" });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The hub is in use.");
   });
 
   it("keeps the hub when the removal is cancelled", async () => {
