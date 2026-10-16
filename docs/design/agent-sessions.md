@@ -120,6 +120,10 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   `compositionend` or with Ctrl/Cmd+Alt (the allow chord; plain Alt+Enter sends); under `pointer: coarse` Enter is a
   newline. A send shows a "Sending…" bubble until the echoed
   record replaces it; during a running turn it reads "Queued: Claude reads it after this turn".
+- **Ended.** A message to an ended local session resumes it in place
+  ([ADR 0036](../adr/0036-live-playground-and-auto-mode.md)); its row and tile in Sessions carry a "Resume" link to
+  this chat. Fork… in the header opens New session on its folder, mode and model, and starts a new conversation from
+  it (`resume_session_id` with `fork`), keeping this one unchanged. Neither shows for a cloud or `log_full` session.
 - **`/` menu.** `/` at the start of the composer lists the `init` record's slash commands and skills (at most 200,
   strings of at most 100 characters, de-duplicated; else "No commands"); typing filters, arrows move, Enter or Tab
   inserts, Esc closes, and Enter never sends while it is open. A polite live region announces its match count
