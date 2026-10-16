@@ -305,6 +305,56 @@ async def test_closes_once_when_closed_twice(make_rig: MakeRig) -> None:
         await rig.control.send(created.id, SendMessage(text="More?"))
 
 
+async def test_reopens_ended_session_in_place_when_message_sent(make_rig: MakeRig) -> None:
+    rig = make_rig(past_sessions=(PAST,))
+    created = await rig.create("Say hello.", resume_session_id=PAST.session_id)
+    await rig.until_status(created.id, "idle")
+    await rig.control.close(created.id)
+    before = rig.records(created.id)
+
+    accepted = await rig.control.send(created.id, SendMessage(text="Go on."))
+    reopened = await rig.until_status(created.id, "idle")
+
+    assert accepted.seq == before[-1].seq + 1
+    assert rig.kinds(created.id)[len(before)] == "user.message"
+    assert rig.kinds(created.id).count("result") == 2
+    assert (reopened.end_reason, reopened.ended_at) == (None, None)
+    assert reopened.claude_session_id == PAST.session_id
+    spec = _start_spec(rig.driver, 1)
+    assert (spec.resume, spec.fork, spec.session_id) == (PAST.session_id, False, None)
+    assert (spec.mode, spec.cwd) == (created.mode, HUB_PATH)
+    assert len(rig.store.list()) == 1
+
+
+async def test_reopened_session_counts_log_it_already_holds(make_rig: MakeRig) -> None:
+    turn = tuple(Thinking(text=f"step {number}") for number in range(60))
+    limits = SessionLimits(log_records=100, log_bytes=64 * KIB, headroom=16)
+    rig = make_rig(
+        replies={"Think.": turn, "Think more.": turn}, limits=limits, past_sessions=(PAST,)
+    )
+    created = await rig.create("Think.", resume_session_id=PAST.session_id)
+    await rig.until_status(created.id, "idle")
+    await rig.control.close(created.id)
+
+    await rig.control.send(created.id, SendMessage(text="Think more."))
+    ended = await rig.until_status(created.id, "ended")
+
+    assert ended.end_reason == EndReason.LOG_FULL
+    assert len(rig.kinds(created.id)) <= 100
+
+
+async def test_keeps_session_ended_when_claude_lists_no_conversation(make_rig: MakeRig) -> None:
+    rig = make_rig()
+    created = await rig.create()
+    await rig.control.close(created.id)
+
+    with pytest.raises(SessionTerminalError):
+        await rig.control.send(created.id, SendMessage(text="Still there?"))
+
+    assert rig.store.get(created.id).status == AgentSessionStatus.ENDED
+    assert [call.method for call in rig.driver.calls].count("start") == 1
+
+
 async def test_fails_session_when_driver_exits_non_zero(make_rig: MakeRig) -> None:
     rig = make_rig()
     created = await rig.create()

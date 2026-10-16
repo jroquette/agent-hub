@@ -16,8 +16,7 @@ import {
 import { ApiProblem } from "../../lib/api";
 import { screenshotFor } from "../../lib/screenshotCopy";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
-import { agentSessionHref, sessionControlUnavailable } from "../sessions-list/control";
-import { useCreateAgentSession } from "../sessions-list/queries";
+import { sessionControlUnavailable } from "../sessions-list/control";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
 import { CostMeter } from "./CostMeter";
@@ -102,8 +101,8 @@ function useChatKeys(pending: readonly string[], composer: { current: HTMLElemen
 /**
  * The chat view of a session `hub web` drives (D10, `/agent-sessions/:id`): the snapshot and the
  * log, then the live stream; the transcript, todos, cost meter, status, permission cards and the
- * composer; Close while live; Resume (a new driven session on the same Claude conversation) and
- * Delete once ended.
+ * composer; Close while live, Delete once ended. A message to an ended session resumes it in
+ * place, on the same page and log.
  */
 export function AgentSessionScreen() {
   const { agentSessionId = "" } = useParams();
@@ -117,7 +116,6 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const capabilities = useCapabilities();
   const transcript = useAgentTranscript(agentSessionId);
   const commands = useAgentSessionCommands(agentSessionId);
-  const create = useCreateAgentSession();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -190,8 +188,9 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const model = state.model ?? session.model ?? null;
   const models = capabilities.data?.models ?? DEFAULT_MODELS;
   const cloud = session.kind === "cloud";
-  // Claude keeps the conversation under its own id: resuming it starts a driven session that goes on.
-  const resumeId = cloud ? null : (session.claude_session_id ?? null);
+  const endReason = state.endReason ?? session.end_reason;
+  // Claude keeps the conversation under its own id: a message resumes it, unless the log is full.
+  const resumable = !cloud && session.claude_session_id != null && endReason !== "log_full";
 
   const act = (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -228,30 +227,6 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 <Icon name="activity" size="sm" />
                 Observed session {short(session.claude_session_id)}
               </AppLink>
-            )}
-            {ended && resumeId && (
-              <Button
-                size="sm"
-                variant="primary"
-                icon="play"
-                disabled={busy}
-                onClick={() => {
-                  act(async () => {
-                    const resumed = await create.mutateAsync({
-                      project: session.project,
-                      workdir_id: session.workdir_id,
-                      mode,
-                      model,
-                      prompt: null,
-                      resume_session_id: resumeId,
-                      fork: false,
-                    });
-                    await navigate(agentSessionHref(resumed.id));
-                  });
-                }}
-              >
-                Resume session
-              </Button>
             )}
             {ended ? (
               <Button
@@ -327,6 +302,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             lastPrompt={lastPrompt(state)}
             inputRef={setComposer}
             disabledReason={cloud ? "A cloud session is driven from claude.ai." : null}
+            resumable={resumable}
           />
         </div>
       </footer>

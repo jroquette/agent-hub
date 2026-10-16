@@ -11,7 +11,9 @@ and the subscribers (S4, E8).
 
 - Commands (``create``, ``send``, ``interrupt``, ``answer``, ``change_settings``, ``close``)
   log their audit record before they reach the driver, one at a time per session; a command
-  on an ended session raises ``SessionTerminalError`` (``LogFullError`` after ``log_full``).
+  on an ended session raises ``SessionTerminalError`` (``LogFullError`` after ``log_full``),
+  except a message to a local one Claude can still resume: the session is reopened in place,
+  same id and log, on its Claude conversation (``--resume``), then the message goes on.
 - A session ends once (``closed``, ``idle_timeout``, ``log_full``, ``server_stopped``,
   ``failed``): requests still open are denied ``by: closed``, a ``close`` record names the
   reason, the store row becomes final, then the driver is closed. The process's own exit ends
@@ -84,7 +86,7 @@ from agent_hub.core.agent_sessions.errors import (
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.agent_sessions.links import AgentSessionLink, ObservedSessionLookup
 from agent_hub.core.agent_sessions.live_session import LiveSession, OpenRequest
-from agent_hub.core.agent_sessions.log_caps import Full, Truncated
+from agent_hub.core.agent_sessions.log_caps import Full, LogBudget, Truncated
 from agent_hub.core.agent_sessions.permission_policy import (
     closed_answer,
     deadline,
@@ -138,6 +140,8 @@ DRAIN_SECONDS: Final = 1.0
 # Records the server writes while a session ends, and the driver's last ones: they use the
 # log's headroom (E12).
 _RESERVED_KINDS: Final = frozenset({"result", "exited"})
+# How many records a reopened session's log is read in at a time, to count its budget.
+_BUDGET_PAGE: Final = 1000
 _STOPPING: Final = "hub web is stopping"
 
 
@@ -483,9 +487,10 @@ class AgentSessionControl:
         return subscription.frames(session, after, live=live, read=read)
 
     async def send(self, agent_session_id: str, message: SendMessage) -> MessageAccepted:
-        """Log a user message, then pass it on: it plays after the running turn."""
-        live = await self._commandable(agent_session_id)
+        """Log a user message, then pass it on: it plays after the running turn. A message to a
+        local session that ended (not ``log_full``) resumes it in place first (``_reopen``)."""
         self._check_size(message.text)
+        live = await self._commandable(agent_session_id, reopen=True)
         async with live.commands:
             self._refuse(live, Send())
             seq = await self._emit(
@@ -698,15 +703,79 @@ class AgentSessionControl:
         live = self._live.get(session.id)
         return session if live is None else live.view()
 
-    async def _commandable(self, agent_session_id: str) -> LiveSession:
-        """The live session a command acts on; an ended (or unknown) one raises."""
+    async def _commandable(self, agent_session_id: str, *, reopen: bool = False) -> LiveSession:
+        """The live session a command acts on; an ended (or unknown) one raises, unless
+        ``reopen`` and it can be resumed in place."""
         live = self._live.get(agent_session_id)
         if live is not None and not live.ended:
             return live
         session = await asyncio.to_thread(self._store.get, agent_session_id)
         if session.end_reason == EndReason.LOG_FULL:
             raise LogFullError(agent_session_id)
+        if reopen:
+            reopened = await self._reopen(session)
+            if reopened is not None:
+                return reopened
         raise SessionTerminalError(agent_session_id, status=session.status.value)
+
+    async def _reopen(self, session: AgentSession) -> LiveSession | None:
+        """Drive an ended local session again, same id and log, on its Claude conversation
+        (``--resume``): ``idle``, its log budget counted from what it holds. None when Claude
+        no longer lists that conversation for the workdir (it never got a message, or was
+        removed): the session stays ended."""
+        async with self._admission:
+            live = self._live.get(session.id)
+            if live is not None and not live.ended:
+                return live  # another message reopened it meanwhile
+            claude_session_id = session.claude_session_id
+            stored = await asyncio.to_thread(self._store.get, session.id)
+            ended = stored.status in {AgentSessionStatus.ENDED, AgentSessionStatus.FAILED}
+            if not ended or stored.kind != "local" or claude_session_id is None:
+                return None
+            await self._check_can_start()
+            resolved = (await self._listing(session.project)).resolve(session.workdir_id)
+            listed = await self._driver.list_resumable(resolved.path)
+            if all(past.session_id != claude_session_id for past in listed):
+                return None
+            now = self._clock()
+            reopened = await asyncio.to_thread(
+                lambda: self._store.update(
+                    session.id,
+                    status=AgentSessionStatus.IDLE,
+                    end_reason=None,
+                    ended_at=None,
+                    updated_at=now,
+                )
+            )
+            spec = StartSpec(
+                cwd=resolved.path,
+                mode=reopened.mode,
+                model=reopened.model,
+                resume=claude_session_id,
+                session_id=None,
+                environment_extra=self._environment_extra,
+            )
+            state = start_state(with_prompt=False)
+            live = await self._start(reopened, spec, state)
+            live.idle_since = now
+            live.budget = await asyncio.to_thread(self._budget_of, session.id)
+            try:
+                await self._begin(live, None, ())
+            except Exception:
+                await self._fail_start(live)
+                raise
+            return live
+
+    def _budget_of(self, agent_session_id: str) -> LogBudget:
+        """The log budget of a session that already holds records (it goes on, not anew)."""
+        records = 0
+        stored_bytes = 0
+        after = 0
+        while page := self._store.records(agent_session_id, after=after, limit=_BUDGET_PAGE):
+            records += len(page)
+            stored_bytes += sum(record.text_bytes for record in page)
+            after = page[-1].seq
+        return LogBudget(self._limits, records=records, stored_bytes=stored_bytes)
 
     def _refuse(self, live: LiveSession, command: SessionCommand) -> None:
         if live.state.terminal and live.state.end_reason == EndReason.LOG_FULL:
