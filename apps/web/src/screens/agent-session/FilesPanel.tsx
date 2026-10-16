@@ -97,69 +97,270 @@ function ChangeBlock({
   );
 }
 
-function FileSection({
-  file,
-  name,
+/** The drawer is wide enough for the list beside the file (px). */
+export const SPLIT_MIN = 720;
+
+/** Whether `element` is at least `min` px wide, followed as it resizes (false without a
+ * ResizeObserver: the narrow, one-pane layout). */
+function useWiderThan(element: HTMLElement | null, min: number): boolean {
+  const [wider, setWider] = useState(false);
+  useEffect(() => {
+    if (!element || typeof ResizeObserver !== "function") return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setWider(entry.contentRect.width >= min);
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, [element, min]);
+  return wider;
+}
+
+function KindBadge({ created }: { created: boolean }) {
+  return (
+    <span
+      className={cx("as-files-kind", created ? "as-files-kind-a" : "as-files-kind-m")}
+      title={created ? "New file" : "Modified"}
+    >
+      {created ? "A" : "M"}
+    </span>
+  );
+}
+
+function ViewedToggle({
   viewed,
   stale,
-  open,
-  onToggleOpen,
-  onToggleViewed,
+  onToggle,
+  compact = false,
+}: {
+  viewed: boolean;
+  stale: boolean;
+  onToggle: () => void;
+  compact?: boolean;
+}) {
+  const text = stale ? "Changed since viewed" : "Viewed";
+  return (
+    <label
+      className={cx(
+        "as-files-viewed",
+        viewed && "as-files-viewed-on",
+        stale && "as-files-viewed-stale",
+        compact && "as-files-viewed-compact",
+      )}
+      title={text}
+    >
+      <input type="checkbox" checked={viewed} onChange={onToggle} aria-label={text} />
+      {!compact && text}
+    </label>
+  );
+}
+
+/** Files by folder, folders in the order their first file changed. */
+function byFolder(files: readonly ChangedFile[], nameOf: (path: string) => string) {
+  const folders = new Map<string, ChangedFile[]>();
+  for (const file of files) {
+    const name = nameOf(file.path);
+    const folder = name.slice(0, name.lastIndexOf("/") + 1);
+    folders.set(folder, [...(folders.get(folder) ?? []), file]);
+  }
+  return [...folders.entries()];
+}
+
+interface ReviewState {
+  reviewed: Record<string, string>;
+  toggle: (file: ChangedFile) => void;
+}
+
+/** The changed files as a list, like a source-control view: by folder, each with its status,
+ * lines added and removed, and whether you viewed it. */
+function FileList({
+  files,
+  nameOf,
+  base,
+  selected,
+  review,
+  onSelect,
+}: {
+  files: readonly ChangedFile[];
+  nameOf: (path: string) => string;
+  base: string;
+  selected: string | null;
+  review: ReviewState;
+  onSelect: (path: string) => void;
+}) {
+  const viewedCount = files.filter(
+    (file) => review.reviewed[file.path] === file.lastChangeId,
+  ).length;
+  return (
+    <nav className="as-files-nav" aria-label="Files">
+      <div className="as-files-progress ah-small">
+        <span>
+          {viewedCount} of {files.length} viewed
+        </span>
+        <span className="as-files-meter" aria-hidden="true">
+          <span style={{ width: `${String((viewedCount / files.length) * 100)}%` }} />
+        </span>
+      </div>
+      {base && (
+        <p className="as-files-root ah-small ah-subtle" title={base}>
+          {base}
+        </p>
+      )}
+      {byFolder(files, nameOf).map(([folder, inFolder]) => (
+        <div key={folder} className="as-files-group">
+          {folder && (
+            <div className="as-files-folder ah-small" title={base + folder}>
+              <Icon name="folder" size="sm" />
+              <span>{folder.slice(0, -1)}</span>
+            </div>
+          )}
+          <ul>
+            {inFolder.map((file) => {
+              const mark = review.reviewed[file.path];
+              const viewed = mark === file.lastChangeId;
+              const name = nameOf(file.path);
+              return (
+                <li
+                  key={file.path}
+                  className={cx(
+                    "as-files-row",
+                    selected === file.path && "as-files-row-selected",
+                    viewed && "as-files-row-viewed",
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="as-files-row-open"
+                    title={file.path}
+                    data-file-path={file.path}
+                    aria-current={selected === file.path ? "true" : undefined}
+                    onClick={() => {
+                      onSelect(file.path);
+                    }}
+                  >
+                    <KindBadge created={file.created} />
+                    <span className="as-files-nav-name">
+                      {name.slice(name.lastIndexOf("/") + 1)}
+                    </span>
+                    <Stats added={file.added} removed={file.removed} />
+                  </button>
+                  <ViewedToggle
+                    compact
+                    viewed={viewed}
+                    stale={mark !== undefined && !viewed}
+                    onToggle={() => {
+                      review.toggle(file);
+                    }}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+/** One file under review: its path and status, then every change to it as a diff, in order. */
+function FileDetail({
+  file,
+  name,
+  position,
+  total,
+  review,
+  onBack,
+  onStep,
 }: {
   file: ChangedFile;
   name: string;
-  viewed: boolean;
-  stale: boolean;
-  open: boolean;
-  onToggleOpen: () => void;
-  onToggleViewed: () => void;
+  position: number;
+  total: number;
+  review: ReviewState;
+  onBack: (() => void) | null;
+  onStep: (by: -1 | 1) => void;
 }) {
+  const mark = review.reviewed[file.path];
+  const viewed = mark === file.lastChangeId;
   const slash = name.lastIndexOf("/");
+  const body = useRef<HTMLDivElement>(null);
+  const section = useRef<HTMLElement>(null);
+  const takesFocus = onBack !== null;
+  useEffect(() => {
+    if (body.current) body.current.scrollTop = 0;
+  }, [file.path]);
+  useEffect(() => {
+    // Narrow, the list (and the row you pressed) is gone: the keyboard moves to the file.
+    if (takesFocus) section.current?.focus({ preventScroll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
-    <section
-      className={cx("as-files-file", viewed && "as-files-file-viewed")}
-      data-file-path={file.path}
-      aria-label={name}
-    >
-      <header className="as-files-file-head">
-        <button
-          type="button"
-          className="as-files-file-toggle"
-          aria-expanded={open}
-          title={file.path}
-          onClick={onToggleOpen}
-        >
-          <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
-          <span
-            className={cx("as-files-kind", file.created ? "as-files-kind-a" : "as-files-kind-m")}
-            title={file.created ? "New file" : "Modified"}
-          >
-            {file.created ? "A" : "M"}
-          </span>
-          <span className="as-files-name">
+    <section ref={section} className="as-files-detail" aria-label={name} tabIndex={-1}>
+      <header className="as-files-detail-head">
+        {onBack && (
+          <Button size="sm" variant="ghost" icon="chevron-left" onClick={onBack}>
+            All files
+          </Button>
+        )}
+        <div className="as-files-detail-title">
+          <KindBadge created={file.created} />
+          <span className="as-files-name" title={file.path}>
             {slash >= 0 && <span className="ah-muted">{name.slice(0, slash + 1)}</span>}
             <b>{name.slice(slash + 1)}</b>
           </span>
-        </button>
-        <Stats added={file.added} removed={file.removed} />
-        <label className={cx("as-files-viewed", viewed && "as-files-viewed-on")}>
-          <input type="checkbox" checked={viewed} onChange={onToggleViewed} />
-          {stale ? "Changed since viewed" : "Viewed"}
-        </label>
-      </header>
-      {open && (
-        <div className="as-files-file-body">
-          {file.changes.map((change, index) => (
-            <ChangeBlock
-              key={change.tool.id}
-              change={change}
-              index={index}
-              total={file.changes.length}
-              path={name}
-            />
-          ))}
+          <Stats added={file.added} removed={file.removed} />
         </div>
-      )}
+        <span className="ah-grow" />
+        <ViewedToggle
+          viewed={viewed}
+          stale={mark !== undefined && !viewed}
+          onToggle={() => {
+            review.toggle(file);
+          }}
+        />
+        <div className="as-files-stepper">
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="chevron-up"
+            aria-label="Previous file"
+            disabled={position === 0}
+            onClick={() => {
+              onStep(-1);
+            }}
+          />
+          <span className="ah-small ah-muted">
+            {position + 1}/{total}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="chevron-down"
+            aria-label="Next file"
+            disabled={position === total - 1}
+            onClick={() => {
+              onStep(1);
+            }}
+          />
+        </div>
+      </header>
+      <div className="as-files-detail-body" ref={body}>
+        <p className="as-files-summary ah-small ah-muted">
+          {file.changes.length === 1
+            ? "1 change in this session"
+            : `${String(file.changes.length)} changes in this session, oldest first`}
+        </p>
+        {file.changes.map((change, index) => (
+          <ChangeBlock
+            key={change.tool.id}
+            change={change}
+            index={index}
+            total={file.changes.length}
+            path={name}
+          />
+        ))}
+      </div>
     </section>
   );
 }
@@ -171,16 +372,18 @@ export interface FilesPanelProps {
 }
 
 /**
- * The files Claude changed in this session, for review beside the chat: a list of files with
- * the lines each added and removed, then every change to each as a diff, in order. Mark a file
- * Viewed to fold it away; a later change unfolds it again. The drawer can be resized or widened.
+ * The files Claude changed in this session, for review beside the chat, apart from the rest of
+ * its activity. The list reads like source control (by folder, status, lines, viewed); a file
+ * opens on its own with every change to it as a diff. Wide, the list stays beside the open file;
+ * narrow, the file takes the drawer and "All files" goes back. Marks are kept per session.
  */
 export function FilesPanel({ files, sessionId, onClose }: FilesPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
-  const list = useRef<HTMLDivElement>(null);
+  const [panel, setPanel] = useState<HTMLElement | null>(null);
+  const wide = useWiderThan(panel, SPLIT_MIN);
   const drawer = useDrawerWidth();
-  const { reviewed, toggle } = useReviewed(sessionId);
-  const [closed, setClosed] = useState<Record<string, boolean>>({});
+  const review = useReviewed(sessionId);
+  const [picked, setPicked] = useState<string | null>(null);
   useEffect(() => {
     heading.current?.focus({ preventScroll: true });
   }, []);
@@ -190,20 +393,23 @@ export function FilesPanel({ files, sessionId, onClose }: FilesPanelProps) {
   const base =
     files.length === 1 ? root.slice(0, root.lastIndexOf("/", root.length - 2) + 1) : root;
   const nameOf = (path: string) => path.slice(base.length);
-  const viewedCount = files.filter((file) => reviewed[file.path] === file.lastChangeId).length;
   const added = files.reduce((sum, file) => sum + file.added, 0);
   const removed = files.reduce((sum, file) => sum + file.removed, 0);
 
-  const isOpen = (file: ChangedFile) =>
-    closed[file.path] ?? reviewed[file.path] !== file.lastChangeId;
-  const jump = (path: string) => {
-    setClosed((before) => ({ ...before, [path]: false }));
+  // Wide, a file is always open (the first by default); narrow, only the one you picked.
+  const known = files.some((file) => file.path === picked) ? picked : null;
+  const selected = known ?? (wide ? (files[0]?.path ?? null) : null);
+  const position = files.findIndex((file) => file.path === selected);
+  const open = position >= 0 ? files[position] : undefined;
+
+  // Back to the list, with the keyboard on the row of the file you left.
+  const backToList = () => {
+    const left = known;
+    setPicked(null);
     requestAnimationFrame(() => {
-      const section = Array.from(
-        list.current?.querySelectorAll<HTMLElement>("[data-file-path]") ?? [],
-      ).find((element) => element.dataset.filePath === path);
-      section?.scrollIntoView({ block: "start" });
-      section?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+      Array.from(panel?.querySelectorAll<HTMLElement>("[data-file-path]") ?? [])
+        .find((row) => row.dataset.filePath === left)
+        ?.focus({ preventScroll: true });
     });
   };
 
@@ -211,13 +417,15 @@ export function FilesPanel({ files, sessionId, onClose }: FilesPanelProps) {
     if (event.key !== "Escape" || event.shiftKey) return;
     event.preventDefault();
     event.stopPropagation();
-    onClose();
+    if (!wide && known !== null) backToList();
+    else onClose();
   };
 
   return (
-    // Esc closes it from anywhere inside.
+    // Esc goes back to the list, then closes, from anywhere inside.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <aside
+      ref={setPanel}
       id={FILES_PANEL_ID}
       className="as-drawer as-files-panel"
       style={drawer.style}
@@ -226,6 +434,7 @@ export function FilesPanel({ files, sessionId, onClose }: FilesPanelProps) {
     >
       <div {...drawer.handle} />
       <div className="as-activity-panel-head">
+        <Icon name="git-compare" size="sm" />
         <h2
           ref={heading}
           id={`${FILES_PANEL_ID}-title`}
@@ -256,77 +465,30 @@ export function FilesPanel({ files, sessionId, onClose }: FilesPanelProps) {
       {files.length === 0 ? (
         <p className="ah-muted as-files-empty">Claude has not changed any file yet.</p>
       ) : (
-        <div className="as-files-body">
-          <nav className="as-files-nav" aria-label="Files">
-            <div className="as-files-progress ah-small">
-              <span>
-                {viewedCount} of {files.length} viewed
-              </span>
-              <span className="as-files-meter" aria-hidden="true">
-                <span style={{ width: `${String((viewedCount / files.length) * 100)}%` }} />
-              </span>
-            </div>
-            {root && (
-              <p className="as-files-root ah-small ah-subtle" title={root}>
-                {base || "/"}
-              </p>
-            )}
-            <ul>
-              {files.map((file) => {
-                const viewed = reviewed[file.path] === file.lastChangeId;
-                const name = nameOf(file.path);
-                return (
-                  <li key={file.path}>
-                    <button
-                      type="button"
-                      className={cx("as-files-nav-item", viewed && "as-files-nav-viewed")}
-                      title={file.path}
-                      onClick={() => {
-                        jump(file.path);
-                      }}
-                    >
-                      <Icon
-                        name={viewed ? "check" : file.created ? "file-plus" : "file-pen"}
-                        size="sm"
-                      />
-                      <span className="as-files-nav-name">
-                        {name.slice(name.lastIndexOf("/") + 1)}
-                      </span>
-                      <Stats added={file.added} removed={file.removed} />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </nav>
-          <div className="as-files-list" ref={list}>
-            {files.map((file) => {
-              const mark = reviewed[file.path];
-              const viewed = mark === file.lastChangeId;
-              return (
-                <FileSection
-                  key={file.path}
-                  file={file}
-                  name={nameOf(file.path)}
-                  viewed={viewed}
-                  stale={mark !== undefined && !viewed}
-                  open={isOpen(file)}
-                  onToggleOpen={() => {
-                    setClosed((before) => ({ ...before, [file.path]: isOpen(file) }));
-                  }}
-                  onToggleViewed={() => {
-                    toggle(file);
-                    // Marking viewed folds the file; unmarking opens it again.
-                    setClosed((before) =>
-                      Object.fromEntries(
-                        Object.entries(before).filter(([path]) => path !== file.path),
-                      ),
-                    );
-                  }}
-                />
-              );
-            })}
-          </div>
+        <div className={cx("as-files-body", wide && "as-files-split")}>
+          {(wide || !open) && (
+            <FileList
+              files={files}
+              nameOf={nameOf}
+              base={base}
+              selected={selected}
+              review={review}
+              onSelect={setPicked}
+            />
+          )}
+          {open && (
+            <FileDetail
+              file={open}
+              name={nameOf(open.path)}
+              position={position}
+              total={files.length}
+              review={review}
+              onBack={wide ? null : backToList}
+              onStep={(by) => {
+                setPicked(files[position + by]?.path ?? selected);
+              }}
+            />
+          )}
         </div>
       )}
     </aside>
