@@ -2,12 +2,18 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 
 import { Button } from "../../components";
 import { ApiProblem } from "../../lib/api";
+import { servedCheckout } from "../../lib/devCheckout";
 import { useSlashMenu } from "./SlashMenu";
 import { useDraft } from "./useDraft";
-import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./transcript";
+import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./model";
 
-/** The modes the web offers (D5): never bypassPermissions, dontAsk or auto. */
+/** The modes the web offers (D5): never bypassPermissions or dontAsk. */
 export const MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan"];
+
+/** The modes to offer: `auto` too in the dev app of `make playground`, where the agent works alone. */
+export function offeredModes(): readonly PermissionMode[] {
+  return servedCheckout() === null ? MODES : [...MODES, "auto"];
+}
 /** The user message limit's default (L3: 64 KiB of UTF-8). */
 export const DEFAULT_MESSAGE_MAX_BYTES = 64 * 1024;
 /** The composer grows with its text up to this share of the viewport, then scrolls (AC-234.26). */
@@ -48,6 +54,8 @@ export interface ComposerProps {
   focusOnOpen?: boolean | undefined;
   /** Why nothing can be sent (log full, control off…); the session's end is detected on its own. */
   disabledReason?: string | null | undefined;
+  /** An ended session a message resumes in place (Claude still holds its conversation). */
+  resumable?: boolean | undefined;
 }
 
 const bytesOf = (text: string) => new TextEncoder().encode(text).length;
@@ -79,6 +87,7 @@ export function Composer({
   inputRef,
   draftId = null,
   focusOnOpen = false,
+  resumable = false,
 }: ComposerProps) {
   const { text, setText, accepted } = useDraft(draftId);
   const [sending, setSending] = useState(false);
@@ -96,15 +105,20 @@ export function Composer({
   const modelId = useId();
 
   const ended = status === "ended" || status === "failed";
-  const reason = ended
-    ? "This session has ended. Resume it to continue."
-    : (disabledReason ?? null);
+  const resumes = ended && resumable && !disabledReason;
+  const reason =
+    ended && !resumes
+      ? "This session has ended. Start a new session to continue."
+      : (disabledReason ?? null);
   const size = bytesOf(text);
   const tooLong = size > maxBytes;
   const canSend = reason === null && !sending && !tooLong && text.trim() !== "";
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
+  // A mode set elsewhere (`auto` outside the playground) is shown, but cannot be picked here.
+  const modes = offeredModes();
+  const unofferedMode = modes.includes(mode) ? null : mode;
 
   const attachBox = useCallback(
     (element: HTMLTextAreaElement | null) => {
@@ -206,7 +220,10 @@ export function Composer({
         className="ah-input as-composer-input"
         rows={3}
         value={text}
-        placeholder={reason ?? "Message Claude"}
+        placeholder={
+          reason ??
+          (resumes ? "This session has ended. Send a message to resume it." : "Message Claude")
+        }
         disabled={reason !== null}
         aria-describedby={hintId}
         aria-invalid={tooLong}
@@ -251,15 +268,20 @@ export function Composer({
             value={mode}
             disabled={ended}
             onChange={(event) => {
-              const next = MODES.find((m) => m === event.target.value);
+              const next = modes.find((m) => m === event.target.value);
               if (next) run(() => onSettings({ mode: next }), "change the mode");
             }}
           >
-            {MODES.map((m) => (
+            {modes.map((m) => (
               <option key={m} value={m}>
                 {modeLabel(m)}
               </option>
             ))}
+            {unofferedMode && (
+              <option value={unofferedMode} disabled>
+                {modeLabel(unofferedMode)}
+              </option>
+            )}
           </select>
         </label>
         <label htmlFor={modelId} className="ah-row ah-small" style={{ gap: 4 }}>

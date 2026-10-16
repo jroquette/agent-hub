@@ -11,7 +11,12 @@ import type {
   ShakeScreenshot,
   Workdir,
 } from "../screens/sessions-list/NewSessionDialog";
-import { useAgentCapabilities, useWorkdirs } from "../screens/sessions-list/queries";
+import {
+  useAgentCapabilities,
+  useProjects,
+  useServedFolder,
+  useWorkdirs,
+} from "../screens/sessions-list/queries";
 import { StartSessionDialog } from "../screens/sessions-list/StartSessionDialog";
 
 /** Shown when the served checkout is not a listed folder, or outside `make dev` (O8). */
@@ -30,26 +35,35 @@ interface Opened {
   workdirId: string | null;
 }
 
-/** The project of the route (`projects/:project`, `features/:project/…`, `workflows/:project/…`), else the scope (Q2). */
-function useShakeProject(): string | null {
+/**
+ * The project of a shake: under `make dev` or `make live`, the one that lists the served checkout;
+ * else the route's (`projects/:project`, `features/:project/…`, `workflows/:project/…`), else the
+ * scope (Q2), else the first registered project, as Sessions' New session picks it, so a shake works
+ * on every screen, "All projects" and Settings included.
+ */
+function useShakeProject(canDrive: boolean): string | null {
   const [scope] = useScope();
+  const projects = useProjects();
+  const names = (projects.data?.items ?? []).map((item) => item.name);
+  const served = useServedFolder(names, canDrive).project;
   const project = useMatch("/projects/:project/*")?.params.project;
   const feature = useMatch("/features/:project/*")?.params.project;
   const workflow = useMatch("/workflows/:project/*")?.params.project;
-  return project ?? feature ?? workflow ?? scope;
+  return served ?? project ?? feature ?? workflow ?? scope ?? names[0] ?? null;
 }
 
 /**
  * Shake the mouse to start a session (AGH-260): the shell mounts this only while the setting is on.
  * A shake captures the screen first, then opens "New session" with the screenshot. It does nothing
- * without a project, while session control is unavailable, without folders, or while a dialog is open.
+ * when no project is registered, while session control is unavailable, without folders, or while a
+ * dialog is open.
  */
 export function ShakeToSession() {
-  const project = useShakeProject();
   const capabilities = useAgentCapabilities();
   const caps = capabilities.data;
   const canDrive =
     caps !== undefined && sessionControlUnavailable(capabilities.error, caps) === null;
+  const project = useShakeProject(canDrive);
   const workdirs = useWorkdirs(project, canDrive);
   const folders = workdirs.data?.items;
   const [opened, setOpened] = useState<Opened | null>(null);
@@ -122,7 +136,7 @@ export function ShakeToSession() {
       capabilities={opened.capabilities}
       screenshot={opened.screenshot}
       initialWorkdirId={opened.workdirId ?? undefined}
-      initialMode={live ? "acceptEdits" : undefined}
+      initialMode={live ? "auto" : undefined}
       note={live ? undefined : LIVE_RELOAD_NOTE}
       onClose={() => {
         busy.current = false;
