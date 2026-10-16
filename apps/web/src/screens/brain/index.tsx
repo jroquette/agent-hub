@@ -18,6 +18,7 @@ import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { CountCell, KnowledgeProjectIndex } from "../knowledge-index";
+import { BRAIN_NOTE_STARTERS } from "../learnings/discussLearning";
 import { useProjectNow } from "../project-overview/queries";
 import { NoteView } from "./NoteView";
 import { useBrainTree } from "./queries";
@@ -316,6 +317,7 @@ export function BrainScreen() {
     kind: "Note",
     title: path,
     path: `brain/${path}`,
+    starters: BRAIN_NOTE_STARTERS,
   });
   return (
     <div className="ah-page" style={{ gap: 16 }}>
