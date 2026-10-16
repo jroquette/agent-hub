@@ -117,8 +117,22 @@ describe("Composer (composer)", () => {
     expect(screen.getByRole("textbox")).toBeDisabled();
     expect(screen.getByRole("textbox")).toHaveAttribute(
       "placeholder",
-      "This session has ended. Resume it to continue.",
+      "This session has ended. Start a new session to continue.",
     );
+    expect(screen.getByRole("combobox", { name: "Mode" })).toBeDisabled();
+  });
+
+  it("sends to an ended session a message resumes", async () => {
+    const { props } = open({ status: "ended", resumable: true });
+    const box = screen.getByRole("textbox");
+
+    expect(box).toHaveAttribute(
+      "placeholder",
+      "This session has ended. Send a message to resume it.",
+    );
+    await userEvent.type(box, "Go on.{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith("Go on.");
     expect(screen.getByRole("combobox", { name: "Mode" })).toBeDisabled();
   });
 
