@@ -184,19 +184,23 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 }
 
 /**
- * The image with its annotations drawn in and cut to `crop` (the whole image without one), as a
- * PNG data URL the server takes: when it is over `maxBytes` it is scaled down until it fits.
+ * The image with its annotations drawn in (none without an overlay) and cut to `crop` (the whole
+ * image without one), as a PNG data URL the server takes: when it is over `maxBytes` it is scaled
+ * down until it fits. Any image the browser decodes (a pasted JPEG too) comes out a PNG.
  */
 export async function flattenScreenshot(
   src: string,
-  overlay: SVGSVGElement,
+  overlay: SVGSVGElement | null,
   { maxBytes = MAX_CAPTURE_BYTES, crop }: { maxBytes?: number; crop?: CropBox | null } = {},
 ): Promise<string> {
   const base = await loadImage(src);
-  const clean = overlay.cloneNode(true) as SVGSVGElement;
-  for (const frame of clean.querySelectorAll("[data-crop]")) frame.remove();
-  const svg = new XMLSerializer().serializeToString(clean);
-  const marks = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+  let marks: HTMLImageElement | null = null;
+  if (overlay) {
+    const clean = overlay.cloneNode(true) as SVGSVGElement;
+    for (const frame of clean.querySelectorAll("[data-crop]")) frame.remove();
+    const svg = new XMLSerializer().serializeToString(clean);
+    marks = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+  }
   const area = crop ?? { x: 0, y: 0, width: base.naturalWidth, height: base.naturalHeight };
   let scale = 1;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -205,7 +209,7 @@ export async function flattenScreenshot(
     canvas.height = Math.max(1, Math.round(area.height * scale));
     const context = canvas.getContext("2d");
     if (!context) throw new Error("no 2D canvas");
-    for (const layer of [base, marks])
+    for (const layer of marks ? [base, marks] : [base])
       context.drawImage(
         layer,
         area.x,

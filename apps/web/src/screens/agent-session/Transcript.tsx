@@ -40,6 +40,8 @@ export interface TranscriptProps {
   follow?: StickToBottom | undefined;
   /** The screenshot this browser sent with the first prompt (memory only); else the marker's label. */
   screenshotUrl?: string | undefined;
+  /** The images this browser sent with later messages, by the message's seq. */
+  messageScreenshots?: Readonly<Record<number, readonly string[]>> | undefined;
   /** Another drawer the page opened (Changed files): it takes the side panel's place. */
   sidePanel?: ReactNode;
   /** A run line opened the activity drawer: the page closes its own. */
@@ -149,8 +151,9 @@ interface EntryProps {
   /** Only what this entry shows, so a delta elsewhere leaves its props equal (memo). */
   request?: PermissionView | undefined;
   onAnswerPermission: TranscriptProps["onAnswerPermission"];
-  /** Set only on a user message with the screenshot marker (memo). */
-  screenshotUrl?: string | undefined;
+  /** Set only on a user message with the screenshot marker: the images this browser kept for
+   * it (memo: the same array while nothing changes). */
+  screenshotUrls?: readonly string[] | undefined;
 }
 
 /** One of your messages; `note` says where it stands (sending, queued). A recorded one (`at`)
@@ -160,30 +163,44 @@ function UserMessage({
   note,
   at,
   redacted = false,
-  screenshot = false,
-  screenshotUrl,
+  screenshotCount = 0,
+  screenshotUrls = [],
 }: {
   text: string;
   note?: string | null;
   at?: string;
   redacted?: boolean;
-  screenshot?: boolean;
-  screenshotUrl?: string | undefined;
+  /** How many images went with it (the record's markers). */
+  screenshotCount?: number;
+  screenshotUrls?: readonly string[] | undefined;
 }) {
+  const many = Math.max(screenshotCount, screenshotUrls.length) > 1;
   return (
     <div className={cx("as-msg as-msg-user", note && "as-msg-pending")}>
       <span className="ah-sr">You: </span>
+      {screenshotUrls.length > 0 ? (
+        <div className="as-shots">
+          {screenshotUrls.map((url, index) => (
+            <ScreenshotThumb
+              key={index}
+              className="as-shot"
+              src={url}
+              alt={
+                many
+                  ? `Image ${String(index + 1)} sent with this message`
+                  : "Screenshot sent with this message"
+              }
+            />
+          ))}
+        </div>
+      ) : (
+        screenshotCount > 0 && (
+          <span className="ah-small ah-muted">
+            {many ? `${String(screenshotCount)} images attached` : "Screenshot attached"}
+          </span>
+        )
+      )}
       <div className="as-bubble">{text}</div>
-      {screenshot &&
-        (screenshotUrl ? (
-          <ScreenshotThumb
-            className="as-shot"
-            src={screenshotUrl}
-            alt="Screenshot sent with this message"
-          />
-        ) : (
-          <span className="ah-small ah-muted">Screenshot attached</span>
-        ))}
       {note && <span className="ah-small ah-muted">{note}</span>}
       {redacted && <StoredCopyLabel />}
       {at !== undefined && <MessageMeta at={at} text={text} />}
@@ -191,7 +208,7 @@ function UserMessage({
   );
 }
 
-function EntryBody({ entry, request, onAnswerPermission, screenshotUrl }: EntryProps) {
+function EntryBody({ entry, request, onAnswerPermission, screenshotUrls }: EntryProps) {
   switch (entry.kind) {
     case "user":
       return (
@@ -200,8 +217,8 @@ function EntryBody({ entry, request, onAnswerPermission, screenshotUrl }: EntryP
           note={entry.queued ? "Queued: Claude reads it after this turn" : null}
           at={entry.at}
           redacted={entry.redacted}
-          screenshot={entry.screenshot}
-          screenshotUrl={screenshotUrl}
+          screenshotCount={entry.screenshotCount}
+          screenshotUrls={screenshotUrls}
         />
       );
     case "assistant":
@@ -247,6 +264,7 @@ export function Transcript({
   scrollerRef,
   follow,
   screenshotUrl,
+  messageScreenshots,
   sidePanel,
   onActivityOpen,
 }: TranscriptProps) {
@@ -353,6 +371,14 @@ export function Transcript({
         : [];
     });
   const rows = rowsOf(state.entries, attached, start);
+  // The first prompt's screenshot is the session's; a later message's images are by its seq.
+  const firstUserSeq = state.entries.find((entry) => entry.kind === "user")?.seq;
+  const sessionShots = useMemo(
+    () => (screenshotUrl ? [screenshotUrl] : undefined),
+    [screenshotUrl],
+  );
+  const shotsOf = (seq: number) =>
+    messageScreenshots?.[seq] ?? (seq === firstUserSeq ? sessionShots : undefined);
   const shownRun =
     panelRun === null ? undefined : rows.find((row) => row.kind === "run" && row.key === panelRun);
   const panelSteps = shownRun?.kind === "run" && !sidePanel ? stepsOf(shownRun.entries) : null;
@@ -400,7 +426,8 @@ export function Transcript({
                 {...(entry.kind === "permission" && {
                   request: state.permissions[entry.requestId],
                 })}
-                {...(entry.kind === "user" && entry.screenshot && { screenshotUrl })}
+                {...(entry.kind === "user" &&
+                  entry.screenshot && { screenshotUrls: shotsOf(entry.seq) })}
                 onAnswerPermission={onAnswerPermission}
               />
             );
@@ -410,7 +437,12 @@ export function Transcript({
         <div className="as-pending as-column">
           {state.sending.map((send) => (
             <div key={send.key} className="as-entry">
-              <UserMessage text={send.text} note="Sending…" />
+              <UserMessage
+                text={send.text}
+                note="Sending…"
+                screenshotCount={send.screenshots?.length ?? 0}
+                screenshotUrls={send.screenshots}
+              />
             </div>
           ))}
         </div>

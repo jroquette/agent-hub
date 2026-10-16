@@ -307,3 +307,15 @@ def test_maps_screenshot_errors_when_raised() -> None:
             }
         ],
     }
+
+
+def test_points_at_the_refused_image_when_message_screenshot_invalid() -> None:
+    found = _mapped(InvalidScreenshotError("not a PNG", pointer="/screenshots/2/data"))
+
+    assert (found.status, found.title) == (422, "Invalid screenshot")
+    assert dict(found.members)["errors"] == [
+        {
+            "pointer": "/screenshots/2/data",
+            "message": "The screenshot must be a base64-encoded PNG.",
+        }
+    ]

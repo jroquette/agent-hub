@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
-import { Button, Icon } from "../../components";
+import { Button, Icon, ScreenshotThumb } from "../../components";
 import { ApiProblem } from "../../lib/api";
+import { cx } from "../../lib/cx";
+import { imageFiles, imageToPng, MAX_MESSAGE_IMAGES } from "../../lib/pastedImage";
 import { servedCheckout } from "../../lib/devCheckout";
 import { useSlashMenu } from "./SlashMenu";
 import { useDraft } from "./useDraft";
@@ -36,7 +38,8 @@ export interface ComposerProps {
   model: string | null;
   /** The model aliases capabilities offer; the current model is added when it is another id. */
   models: readonly string[];
-  onSend: (text: string) => Promise<unknown> | undefined;
+  /** Sends the text, with the PNG data URLs of the images pasted in it (`acceptsImages`). */
+  onSend: (text: string, screenshots: readonly string[]) => Promise<unknown> | undefined;
   onInterrupt: () => Promise<unknown> | undefined;
   onSettings: (change: SettingsChange) => Promise<unknown> | undefined;
   /** Called as a message goes out: the chat pins the transcript to its bottom (AC-234.18). */
@@ -56,6 +59,13 @@ export interface ComposerProps {
   disabledReason?: string | null | undefined;
   /** An ended session a message resumes in place (Claude still holds its conversation). */
   resumable?: boolean | undefined;
+  /** Images may be pasted, dropped or picked into the message (up to `MAX_MESSAGE_IMAGES`). */
+  acceptsImages?: boolean | undefined;
+}
+
+interface PastedImage {
+  key: number;
+  url: string;
 }
 
 const bytesOf = (text: string) => new TextEncoder().encode(text).length;
@@ -88,8 +98,14 @@ export function Composer({
   draftId = null,
   focusOnOpen = false,
   resumable = false,
+  acceptsImages = false,
 }: ComposerProps) {
   const { text, setText, accepted } = useDraft(draftId);
+  const [images, setImages] = useState<PastedImage[]>([]);
+  const [reading, setReading] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const imageKeys = useRef(0);
+  const filePicker = useRef<HTMLInputElement | null>(null);
   const [sending, setSending] = useState(false);
   // Shown, not only guarded: a POST that never settles leaves a visibly pending Stop.
   const [stoppingShown, setStoppingShown] = useState(false);
@@ -112,7 +128,8 @@ export function Composer({
       : (disabledReason ?? null);
   const size = bytesOf(text);
   const tooLong = size > maxBytes;
-  const canSend = reason === null && !sending && !tooLong && text.trim() !== "";
+  const canSend = reason === null && !sending && !tooLong && reading === 0 && text.trim() !== "";
+  const needsText = images.length > 0 && text.trim() === "";
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
@@ -170,6 +187,33 @@ export function Composer({
     });
   };
 
+  // Each image is read and turned into a PNG under the size limit; past the limit, it is refused.
+  const addImages = (files: readonly File[]) => {
+    if (!acceptsImages || reason !== null || files.length === 0) return;
+    const room = MAX_MESSAGE_IMAGES - images.length - reading;
+    const taken = files.slice(0, Math.max(0, room));
+    setError(
+      taken.length < files.length
+        ? `A message takes up to ${String(MAX_MESSAGE_IMAGES)} images.`
+        : null,
+    );
+    for (const file of taken) {
+      setReading((count) => count + 1);
+      imageToPng(file)
+        .then((url) => {
+          imageKeys.current += 1;
+          const key = imageKeys.current;
+          setImages((before) => [...before, { key, url }]);
+        })
+        .catch(() => {
+          setError("Could not read that image. Try another one.");
+        })
+        .finally(() => {
+          setReading((count) => count - 1);
+        });
+    }
+  };
+
   const send = () => {
     if (!canSend || busy.current) return;
     onSending?.();
@@ -178,11 +222,19 @@ export function Composer({
     setSending(true);
     setError(null);
     const message = text;
+    const sent = images;
     void Promise.resolve()
-      .then(() => onSend(message))
+      .then(() =>
+        onSend(
+          message,
+          sent.map((image) => image.url),
+        ),
+      )
       .then(
         () => {
           accepted(message);
+          // Images pasted while it was sending stay for the next message.
+          setImages((now) => now.filter((image) => !sent.includes(image)));
         },
         (cause: unknown) => {
           setError(problemText(cause, "send the message"));
@@ -195,14 +247,69 @@ export function Composer({
   };
 
   return (
+    // An image dropped anywhere on the composer joins the message; the keyboard has the picker.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <form
-      className="as-composer"
+      className={cx("as-composer", dragging && "as-composer-drop")}
       aria-label="Message composer"
       onSubmit={(event) => {
         event.preventDefault();
         send();
       }}
+      onDragOver={(event) => {
+        if (!acceptsImages || reason !== null || !event.dataTransfer.types.includes("Files"))
+          return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setDragging(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(event) => {
+        if (!acceptsImages) return;
+        event.preventDefault();
+        setDragging(false);
+        addImages(imageFiles(event.dataTransfer));
+        focusBox();
+      }}
     >
+      {(images.length > 0 || reading > 0) && (
+        <ul className="as-composer-images" aria-label="Images in this message">
+          {images.map((image, index) => (
+            <li key={image.key} className="as-composer-image">
+              <ScreenshotThumb
+                className="as-composer-thumb"
+                src={image.url}
+                alt={`Image ${String(index + 1)}`}
+                onSave={(url) => {
+                  setImages((before) =>
+                    before.map((one) => (one.key === image.key ? { ...one, url } : one)),
+                  );
+                }}
+              />
+              <button
+                type="button"
+                className="as-composer-image-remove"
+                aria-label={`Remove image ${String(index + 1)}`}
+                title="Remove"
+                onClick={() => {
+                  setImages((before) => before.filter((one) => one.key !== image.key));
+                  focusBox();
+                }}
+              >
+                <Icon name="x" size="sm" />
+              </button>
+            </li>
+          ))}
+          {reading > 0 && (
+            <li className="as-composer-image as-composer-image-reading" aria-live="polite">
+              <Icon name="loader" size="sm" className="as-spin" />
+              <span className="ah-sr">Reading the image…</span>
+            </li>
+          )}
+        </ul>
+      )}
       {slash.menu}
       {/* A textbox's activedescendant is not announced everywhere: the menu says what it holds. */}
       <span className="ah-sr" aria-live="polite" aria-atomic="true">
@@ -219,7 +326,11 @@ export function Composer({
         value={text}
         placeholder={
           reason ??
-          (resumes ? "This session has ended. Send a message to resume it." : "Message Claude")
+          (resumes
+            ? "This session has ended. Send a message to resume it."
+            : images.length > 0
+              ? "Say what Claude should look at in the image"
+              : "Message Claude")
         }
         disabled={reason !== null}
         aria-describedby={hintId}
@@ -227,6 +338,13 @@ export function Composer({
         {...slash.inputProps}
         onChange={(event) => {
           setText(event.target.value);
+        }}
+        onPaste={(event) => {
+          const files = acceptsImages ? imageFiles(event.clipboardData) : [];
+          if (files.length === 0) return;
+          // A copied image may also carry its file name as text: only the image is pasted.
+          event.preventDefault();
+          addImages(files);
         }}
         onCompositionStart={() => {
           composing.current = true;
@@ -302,6 +420,35 @@ export function Composer({
           </label>
         </div>
         <div className="as-composer-actions">
+          {acceptsImages && (
+            <>
+              <input
+                ref={filePicker}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                tabIndex={-1}
+                onChange={(event) => {
+                  addImages(imageFiles(event.target));
+                  event.target.value = "";
+                  focusBox();
+                }}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="plus"
+                className="as-composer-attach"
+                disabled={reason !== null || images.length + reading >= MAX_MESSAGE_IMAGES}
+                aria-label="Add an image"
+                title="Add an image (or paste or drop one in the box)"
+                onClick={() => filePicker.current?.click()}
+              >
+                Image
+              </Button>
+            </>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -321,9 +468,11 @@ export function Composer({
       <span id={hintId} className="as-composer-hint" data-warn={tooLong || undefined}>
         {tooLong
           ? `Too long: ${String(Math.ceil(size / 1024))} KiB of ${String(Math.floor(maxBytes / 1024))} KiB`
-          : coarsePointer()
-            ? "Send to send, Enter for a new line"
-            : "Enter to send, Shift+Enter for a new line"}
+          : needsText
+            ? "Add a message to send with the image"
+            : coarsePointer()
+              ? "Send to send, Enter for a new line"
+              : "Enter to send, Shift+Enter for a new line"}
       </span>
       {error && (
         <p className="ah-small as-error" role="alert">

@@ -44,7 +44,7 @@ export interface ResetFrame {
 
 /** A message this page posts: shown at once, accepted with its record's seq, or failed. */
 export type SendItem =
-  | { type: "sending"; key: string; text: string }
+  | { type: "sending"; key: string; text: string; screenshots?: readonly string[] }
   | { type: "accepted"; key: string; seq: number }
   | { type: "failed"; key: string };
 
@@ -61,6 +61,8 @@ export interface SendingView {
   key: string;
   text: string;
   seq: number | null;
+  /** The images pasted in it (PNG data URLs), shown while it sends. */
+  screenshots?: readonly string[];
 }
 
 export interface ToolResultView {
@@ -133,6 +135,8 @@ export type TranscriptEntry =
       queued: boolean;
       /** A screenshot went with it (the record's `attachments` marker; the image is never stored). */
       screenshot: boolean;
+      /** How many images went with it (one marker each). */
+      screenshotCount: number;
     }
   | {
       kind: "assistant";
@@ -757,7 +761,18 @@ function applySend(state: TranscriptState, item: SendItem): TranscriptState {
   const others = state.sending.filter((send) => send.key !== item.key);
   switch (item.type) {
     case "sending":
-      return { ...state, sending: [...others, { key: item.key, text: item.text, seq: null }] };
+      return {
+        ...state,
+        sending: [
+          ...others,
+          {
+            key: item.key,
+            text: item.text,
+            seq: null,
+            ...(item.screenshots?.length ? { screenshots: item.screenshots } : {}),
+          },
+        ],
+      };
     case "accepted":
       // Its record may have come first: then it is already in the transcript.
       return item.seq <= state.lastSeq
@@ -806,6 +821,11 @@ function commandsOf(body: JsonObject): string[] {
   return [...names];
 }
 
+/** How many screenshot markers a user message's record carries. */
+function screenshotsOf(body: JsonObject): number {
+  return asArray(body.attachments).filter((item) => asObject(item)?.kind === "screenshot").length;
+}
+
 function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState {
   if (record.seq <= state.lastSeq) return state;
   const s = { ...state, lastSeq: record.seq, lastAt: record.at };
@@ -826,9 +846,8 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
           text,
           redacted: isRedacted(text),
           queued: s.turnOpen,
-          screenshot: asArray(body.attachments).some(
-            (item) => asObject(item)?.kind === "screenshot",
-          ),
+          screenshot: screenshotsOf(body) > 0,
+          screenshotCount: screenshotsOf(body),
         },
       );
     }

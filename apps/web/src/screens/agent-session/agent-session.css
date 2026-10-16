@@ -113,6 +113,21 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
+/* Several images in one message: a row that wraps, right-aligned like the bubble. */
+.as-shots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.as-shots .as-shot {
+  max-width: 200px;
+  max-height: 160px;
+  object-fit: cover;
+}
+.as-msg-pending .as-shot {
+  opacity: 0.7;
+}
 .as-msg-pending .as-bubble {
   border: 1px dashed var(--border);
 }
@@ -1658,4 +1673,68 @@ body.as-resizing .as-drawer {
   .as-files-meter > span {
     transition: none;
   }
+}
+
+/* Images pasted, dropped or picked into the composer, above the text: a thumbnail each (open it
+ * to mark it up) with a remove button in its corner. */
+.as-composer-drop {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.as-composer-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.as-composer-image {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+.as-composer-image .ah-shot-button {
+  width: 100%;
+  height: 100%;
+}
+.as-composer-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: calc(var(--radius-md) - 1px);
+}
+.as-composer-image .ah-shot-hint {
+  right: 4px;
+  bottom: 4px;
+  width: 20px;
+  height: 20px;
+}
+.as-composer-image-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.as-composer-image-remove:hover {
+  color: var(--failed);
+  border-color: var(--failed);
+}
+.as-composer-image-reading {
+  color: var(--text-subtle);
 }

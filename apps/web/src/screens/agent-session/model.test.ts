@@ -110,6 +110,9 @@ describe("reduceTranscript (transcript)", () => {
     expect(state.entries.map((entry) => (entry.kind === "user" ? entry.screenshot : null))).toEqual(
       [true, false, false, false],
     );
+    expect(
+      state.entries.map((entry) => (entry.kind === "user" ? entry.screenshotCount : null)),
+    ).toEqual([1, 0, 0, 0]);
   });
 
   it("keeps thinking, todos and user messages when those records arrive", () => {
