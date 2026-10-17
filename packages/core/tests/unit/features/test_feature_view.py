@@ -89,10 +89,10 @@ def test_serializes_golden_path_when_feature_built() -> None:
 
 def test_serializes_evals_when_detail_has_eval_records() -> None:
     record = EvalRecord(
-        delivery="tip-1520",
-        path="features/demo-feature/evals/tip-1520.md",
+        delivery="acme-1520",
+        path="features/demo-feature/evals/acme-1520.md",
         verdict="SHIP",
-        tickets=("TIP-1520",),
+        tickets=("ACME-1520",),
         acs=("AC-7.1", "AC-7.2"),
         prs=("demo-api#12",),
         commit="abc1234",

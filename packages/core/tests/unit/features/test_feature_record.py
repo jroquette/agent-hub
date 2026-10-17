@@ -16,7 +16,7 @@ _AC = {"id": "AC-7.1", "description": "Given x, when y, then z", "passes": False
 def _ticket(**overrides: object) -> dict[str, object]:
     return {
         "key": "T1",
-        "id": "TIP-1520",
+        "id": "ACME-1520",
         "title": "Read summaries",
         "repo": "demo-api",
     } | overrides
@@ -37,7 +37,7 @@ def test_parses_tickets_when_record_lists_them() -> None:
         {
             "tickets": [
                 _ticket(order=0),
-                _ticket(key="T2", id=None, blocked_by=["T1", "TIP-9"], order=1),
+                _ticket(key="T2", id=None, blocked_by=["T1", "ACME-9"], order=1),
             ],
             "acs": [_AC | {"ticket": "T2"}, _AC | {"id": "AC-7.2", "withdrawn": True}],
         }
@@ -48,7 +48,7 @@ def test_parses_tickets_when_record_lists_them() -> None:
         id=None,
         title="Read summaries",
         repo="demo-api",
-        blocked_by=("T1", "TIP-9"),
+        blocked_by=("T1", "ACME-9"),
         order=1,
     )
     assert record.tickets[0].blocked_by == ()
@@ -60,7 +60,7 @@ def test_parses_tickets_when_record_lists_them() -> None:
     [
         _ticket(key="1st"),
         _ticket(key="T" * 33),
-        _ticket(id="tip-1520"),
+        _ticket(id="acme-1520"),
         _ticket(title="x" * 201),
         _ticket(order=-1),
         _ticket(blocked_by=["T 1"]),

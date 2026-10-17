@@ -95,7 +95,7 @@ const routes: ApiRoutes = {
       started_at: at(-9000),
       ended_at: at(-6000),
       agent: "main",
-      label: aSessionLabel({ issue: "TIP-1511", repo: "tipple", branch: "main" }),
+      label: aSessionLabel({ issue: "ACME-1511", repo: "storefront", branch: "main" }),
     }),
     aSession({
       id: anId(2),
@@ -246,11 +246,11 @@ describe("ProjectOverviewScreen", () => {
     const { router } = renderProject();
 
     const table = await screen.findByRole("table", { name: "Recent sessions" });
-    await within(table).findByText("TIP-1511 · /feature");
+    await within(table).findByText("ACME-1511 · /feature");
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows[0]).toHaveTextContent("/create-plan");
     expect(rows[1]).toHaveTextContent("Error");
-    await user.click(within(table).getByText("TIP-1511 · /feature"));
+    await user.click(within(table).getByText("ACME-1511 · /feature"));
     expect(router.state.location.pathname).toBe(`/sessions/${anId(1)}`);
   });
 
@@ -258,16 +258,16 @@ describe("ProjectOverviewScreen", () => {
     renderProject();
 
     const table = await screen.findByRole("table", { name: "Recent sessions" });
-    await within(table).findByText("TIP-1511 · /feature");
+    await within(table).findByText("ACME-1511 · /feature");
     const headers = within(table)
       .getAllByRole("columnheader")
       .map((th) => th.textContent);
     expect(headers).not.toContain("Agent");
     expect(headers).toEqual(["What", "Status", "Started", "Took", "Cost"]);
-    expect(within(table).getByText("tipple · main")).toBeInTheDocument();
+    expect(within(table).getByText("storefront · main")).toBeInTheDocument();
     expect(within(table).getByText("agent-hub · dev/agh-9-x")).toBeInTheDocument();
     const mains = within(table).queryAllByText(/\bmain\b/);
-    expect(mains.map((node) => node.textContent)).toEqual(["tipple · main"]);
+    expect(mains.map((node) => node.textContent)).toEqual(["storefront · main"]);
   });
 
   it("folds setup and health away for engineers, with findings, repos and the hub", async () => {

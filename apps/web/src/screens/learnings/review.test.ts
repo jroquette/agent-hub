@@ -112,7 +112,7 @@ describe("reviewPrompt", () => {
 describe("triagePrompt batch", () => {
   it("gives each learning its own draft folder and holds them to the /learn bar", () => {
     const prompt = triagePrompt({
-      project: "tipple",
+      project: "storefront",
       batchId: "triage-abc123",
       items: [
         { learningId: "l-1", notePath: "brain/_inbox/a.md" },
@@ -120,7 +120,7 @@ describe("triagePrompt batch", () => {
       ],
     });
 
-    expect(prompt).toContain("Triage the 2 proposed learnings of project tipple");
+    expect(prompt).toContain("Triage the 2 proposed learnings of project storefront");
     expect(prompt).toContain("`brain/_inbox/a.md` → write in `.hub-drafts/triage-abc123/l-1/`");
     expect(prompt).toContain("`brain/_inbox/b.md` → write in `.hub-drafts/triage-abc123/l-2/`");
     expect(prompt).toContain("Hold it to the bar of the /learn skill");
