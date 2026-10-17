@@ -17,6 +17,7 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.ingestion.hook_envelope import HookEnvelope
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_hub_document
 
 HOOKS = "plugin/hub-workflow/hooks"
@@ -586,3 +587,45 @@ def test_sends_output_size_when_tool_responds(
     assert "tool_response" not in hook
     assert hook["tool_response_bytes"] == len(json.dumps(response, separators=(",", ":")).encode())
     assert hook["tool_input"] == {"file_path": "/w/a.py", "content_lines": 1}
+
+
+# AGH-277 D-reason (AC-277.19): a blocked-word deny is recorded with ``rule: blocked_word``; the
+# decision holds no command, and no part of the envelope holds a scanned variable's value.
+def test_records_blocked_word_rule_when_guard_denies(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    event_server: Any,
+    sensor_env: dict[str, str],
+) -> None:
+    (hub / "hub.json").write_text(json.dumps(builders.an_environments_document()), encoding="utf-8")
+    by_command = hook_input("PreToolUse", hub) | {
+        "tool_input": {"command": "curl https://prod.example.com/x"}
+    }
+    by_variable = hook_input("PreToolUse", hub) | {"tool_input": {"command": "git status"}}
+    value = "demo-prod-value-7"
+
+    runs = [
+        run_hook_file(
+            hook_python,
+            hub / HOOKS / "guard.py",
+            stdin=json.dumps(event).encode(),
+            cwd=hub,
+            env=sensor_env | extra,
+        )
+        for event, extra in ((by_command, {}), (by_variable, {"AWS_PROFILE": value}))
+    ]
+
+    assert [(run.returncode, run.stderr) for run in runs] == [(0, b""), (0, b"")]
+    assert [json.loads(run.stdout)["hookSpecificOutput"]["permissionDecision"] for run in runs] == [
+        "deny",
+        "deny",
+    ]
+    bodies = event_server.bodies()
+    assert [body["decision"] for body in bodies] == [
+        {"by": "guard", "kind": "deny", "rule": "blocked_word"}
+    ] * 2
+    assert value not in json.dumps(bodies)
+    for body in bodies:
+        HookEnvelope.model_validate(body)
