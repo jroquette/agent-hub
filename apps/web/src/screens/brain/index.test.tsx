@@ -311,7 +311,9 @@ describe("BrainPickerScreen", () => {
 
     const row = (await screen.findByRole("link", { name: "agent-hub" })).closest("tr");
     if (row === null) throw new Error("no row");
-    await userEvent.click(within(row).getAllByRole("cell")[2] as HTMLElement);
+    const [, focus] = within(row).getAllByRole("cell");
+    if (focus === undefined) throw new Error("no focus cell");
+    await userEvent.click(focus);
     expect(router.state.location.pathname).toBe("/projects/agent-hub/brain");
   });
 
