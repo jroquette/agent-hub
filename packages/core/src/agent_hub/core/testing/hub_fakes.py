@@ -307,31 +307,34 @@ class FakeHubFileReader:
 
 
 def _fake_folder_unit(hub: FakeHub, unit_path: str) -> UnitContent | UnreadUnit:
-    """A skill folder as the adapter reads it: hidden names left out, a link or special file in
-    it (or on the way) ``unreadable``, past the files, depth or size bounds ``too_large``."""
+    """A skill folder as the adapter reads it: ``missing`` without ``SKILL.md``, then each
+    non-hidden entry in path order up to the first problem (deeper than the skill depth or past
+    the files or size bounds ``too_large``, a link or special file ``unreadable``)."""
     below = f"{unit_path}/"
     if _under_link(unit_path, hub.skill_links) or unit_path in hub.skill_specials:
         return UnreadUnit(kind="unreadable")
-    odd = [*hub.skill_links, *hub.skill_specials]
-    if any(path.startswith(below) and not _hidden_below(path, below) for path in odd):
-        return UnreadUnit(kind="unreadable")
-    files = sorted(
-        (path.removeprefix(below), content)
-        for path, content in hub.skill_files.items()
-        if path.startswith(below) and not _hidden_below(path, below)
-    )
-    if not any(path == SKILL_FILE for path, _ in files):
+    odd = {*hub.skill_links, *hub.skill_specials}
+    if below + SKILL_FILE not in odd and below + SKILL_FILE not in hub.skill_files:
         return UnreadUnit(kind="missing")
-    too_deep = any(path.count("/") >= DEFAULT_LIMITS.skill_depth for path, _ in files)
-    too_big = any(len(content) > MAX_SKILL_FILE_BYTES for _, content in files)
-    if too_deep or too_big or len(files) > MAX_UNIT_FILES:
-        return UnreadUnit(kind="too_large")
-    return UnitContent(
-        files=tuple(
-            UnitFile(path=path, content=content, executable=below + path in hub.executable)
-            for path, content in files
-        )
+    paths = sorted(
+        path.removeprefix(below)
+        for path in (*hub.skill_files, *odd)
+        if path.startswith(below)
+        and not _hidden_below(path, below)
+        and not _inside_link(path, hub.skill_links)
     )
+    files: list[UnitFile] = []
+    for path in paths:
+        content = hub.skill_files.get(below + path)
+        if path.count("/") >= DEFAULT_LIMITS.skill_depth:
+            return UnreadUnit(kind="too_large")
+        if content is None:
+            return UnreadUnit(kind="unreadable")
+        if len(files) >= MAX_UNIT_FILES or len(content) > MAX_SKILL_FILE_BYTES:
+            return UnreadUnit(kind="too_large")
+        executable = below + path in hub.executable
+        files.append(UnitFile(path=path, content=content, executable=executable))
+    return UnitContent(files=tuple(files))
 
 
 def _hidden_below(path: str, below: str) -> bool:

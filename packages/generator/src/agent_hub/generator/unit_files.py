@@ -50,9 +50,8 @@ class _RefusedError(Exception):
 
 @dataclass(kw_only=True, slots=True)
 class _Budget:
-    """What a folder walk may still take: files (``SKILL.md`` and the bundled ones) and names."""
+    """The names a folder walk may still look at."""
 
-    files: int = MAX_UNIT_FILES
     names: int = DEFAULT_LIMITS.names_examined
 
 
@@ -82,57 +81,106 @@ def read_unit(hub_root: Path, unit_path: str, *, kind: UnitKind) -> UnitContent 
 
 
 def _folder_unit(parent: int, name: str) -> UnitContent | UnreadUnit:
-    folder = _open_folder(name, parent)
-    found: list[UnitFile] = []
+    root = _open_folder(name, parent)
     try:
-        _walk(folder, "", depth=1, found=found, budget=_Budget())
+        # ``SKILL.md`` first: a folder without one is no skill, whatever else it holds.
+        os.stat(SKILL_FILE, dir_fd=root, follow_symlinks=False)
+        entries: list[_Entry] = []
+        _walk(root, "", depth=1, entries=entries, budget=_Budget())
+        found = _read_in_order(root, sorted(entries, key=lambda entry: entry.path))
     finally:
-        os.close(folder)
-    found.sort(key=lambda file: file.path)
+        os.close(root)
     if not any(file.path == SKILL_FILE for file in found):
         return _MISSING
     return UnitContent(files=tuple(found))
 
 
-def _walk(folder: int, above: str, *, depth: int, found: list[UnitFile], budget: _Budget) -> None:
-    """The files of ``folder`` into ``found``, each path after ``above`` (the folder's own path
-    in the unit and a ``/``); its entries are ``depth`` segments below the skill's folder."""
+@dataclass(frozen=True, slots=True)
+class _Entry:
+    """A name the walk found: its path in the unit, and why it cannot be read (None: a file)."""
+
+    path: str
+    problem: UnreadUnit | None
+
+
+def _walk(folder: int, above: str, *, depth: int, entries: list[_Entry], budget: _Budget) -> None:
+    """Every name below ``folder`` into ``entries``, stat-only; each path follows ``above`` (the
+    folder's own path in the unit and a ``/``), ``depth`` segments below the skill's folder. A
+    name that vanishes meanwhile is skipped, as the listing skips it."""
     for name in _names(folder, budget):
-        if depth > DEFAULT_LIMITS.skill_depth:
-            raise _RefusedError(_TOO_LARGE)
-        status = os.stat(name, dir_fd=folder, follow_symlinks=False)
         path = f"{above}{name}"
-        if stat.S_ISDIR(status.st_mode):
-            child = _open_folder(name, folder)
+        if depth > DEFAULT_LIMITS.skill_depth:
+            entries.append(_Entry(path, _TOO_LARGE))
+            return
+        try:
+            status = os.stat(name, dir_fd=folder, follow_symlinks=False)
+        except FileNotFoundError, NotADirectoryError:
+            continue
+        if stat.S_ISDIR(status.st_mode) and _utf8(name):
             try:
-                _walk(child, f"{path}/", depth=depth + 1, found=found, budget=budget)
+                child = _open_folder(name, folder)
+            except FileNotFoundError, NotADirectoryError:
+                continue
+            try:
+                _walk(child, f"{path}/", depth=depth + 1, entries=entries, budget=budget)
             finally:
                 os.close(child)
-        elif stat.S_ISREG(status.st_mode):
-            if budget.files <= 0:
-                raise _RefusedError(_TOO_LARGE)
-            budget.files -= 1
-            found.append(_read_file(folder, name, path))
+        elif stat.S_ISREG(status.st_mode) and _utf8(name):
+            entries.append(_Entry(path, None))
         else:
-            raise _RefusedError(_UNREADABLE)
+            entries.append(_Entry(path, _UNREADABLE))
+
+
+def _read_in_order(root: int, entries: list[_Entry]) -> list[UnitFile]:
+    """Each entry's file under the unit's folder ``root``, in path order, stopping at the first
+    problem; each folder on the way is opened again without following a link, and a file or
+    folder that vanished since the walk is skipped."""
+    found: list[UnitFile] = []
+    for entry in entries:
+        if entry.problem is not None:
+            raise _RefusedError(entry.problem)
+        if len(found) >= MAX_UNIT_FILES:
+            raise _RefusedError(_TOO_LARGE)
+        try:
+            found.append(_read_below(root, entry.path))
+        except FileNotFoundError, NotADirectoryError:
+            continue
+    return found
+
+
+def _read_below(root: int, path: str) -> UnitFile:
+    *folders, name = path.split("/")
+    opened: list[int] = []
+    try:
+        parent = root
+        for folder in folders:
+            parent = _open_folder(folder, parent)
+            opened.append(parent)
+        return _read_file(parent, name, path)
+    finally:
+        for descriptor in opened:
+            os.close(descriptor)
 
 
 def _names(folder: int, budget: _Budget) -> list[str]:
     """The names in ``folder``, hidden ones left out, in name order; each one counted."""
     names: list[str] = []
-    with os.scandir(folder) as entries:
-        for entry in entries:
+    with os.scandir(folder) as found:
+        for entry in found:
             budget.names -= 1
             if budget.names < 0:
                 raise _RefusedError(_TOO_LARGE)
-            if entry.name.startswith("."):
-                continue
-            try:
-                entry.name.encode()
-            except UnicodeEncodeError:
-                raise _RefusedError(_UNREADABLE) from None
-            names.append(entry.name)
+            if not entry.name.startswith("."):
+                names.append(entry.name)
     return sorted(names)
+
+
+def _utf8(name: str) -> bool:
+    try:
+        name.encode()
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _read_file(folder: int, name: str, path: str) -> UnitFile:
