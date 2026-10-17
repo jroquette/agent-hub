@@ -104,14 +104,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A chat message can carry up to ten images: paste, drop or pick them into the composer, mark them up, and they go
   to Claude before the text; the record keeps a marker per image, never its bytes. A message's text may be up to
   1 MiB by default (`--message-max-bytes` up to 4 MiB). The composer's mode and model are compact pills (AGH-266).
-
 - Knowledge › Brain and Knowledge › Skills, with All projects in scope, list the projects in a table that says what
   each holds before you open it: Brain shows the current focus and counts notes, features, decisions, learnings and
   the inbox to triage; Skills counts skills, agents and hooks, those used in 30 days and those with problems. A
   project's Brain and Skills pages get a breadcrumb and a purpose line, the scope switcher shows the page's project,
   and the Brain tree groups Start here, Folders (with note counts) and the unreviewed inbox, with a note filter (`/`)
   (AGH-270).
-
 - Edit an existing skill, agent or hook with Claude: its detail page has Edit with Claude beside Discuss, which opens
   the Studio on an edit draft (the open one when there is one). Claude changes a copy in `.hub-drafts/<id>/`, the
   preview shows the diff against the current version, and Publish writes it over the item; nothing is committed
