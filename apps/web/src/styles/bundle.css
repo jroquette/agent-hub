@@ -2216,6 +2216,11 @@ pre {
   background: var(--surface-sunken);
   border: 1px solid var(--border);
   font-size: 12px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .ah-fm-chip i {
   font-style: normal;
@@ -2225,6 +2230,26 @@ pre {
   background: var(--waiting-soft);
   border-color: var(--waiting);
   color: var(--waiting);
+}
+.ah-fm-long {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 18px;
+}
+.ah-fm-long > div {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+}
+.ah-fm-long dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 .ah-actable td.ah-ac-desc {
   white-space: normal;

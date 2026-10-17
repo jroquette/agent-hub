@@ -22,6 +22,9 @@ function valueText(value: FrontmatterValue): string {
   return Array.isArray(value) ? value.join(", ") : value;
 }
 
+/** Past this length a value no longer fits a chip; it gets a full-width row that wraps. */
+const CHIP_MAX = 48;
+
 export interface NoteViewProps {
   project: string;
   /** The note's path under `brain/`, e.g. `features/x/plan.md`. */
@@ -84,7 +87,11 @@ export function NoteView({ project, path, missing }: NoteViewProps) {
   }
 
   const data = note.data;
-  const fields = Object.entries(data.frontmatter);
+  const fields = Object.entries(data.frontmatter).map(
+    ([key, value]) => [key, valueText(value)] as const,
+  );
+  const chips = fields.filter(([, text]) => text.length <= CHIP_MAX);
+  const long = fields.filter(([, text]) => text.length > CHIP_MAX);
   return (
     <div className="ah-stack" style={{ gap: 12 }}>
       {data.frontmatter_problem && (
@@ -92,18 +99,28 @@ export function NoteView({ project, path, missing }: NoteViewProps) {
           The frontmatter could not be read: {data.frontmatter_problem}. The whole file is shown.
         </Banner>
       )}
-      {fields.length > 0 && (
+      {chips.length > 0 && (
         <ul
           aria-label="Frontmatter"
           className="ah-row ah-wrap"
           style={{ gap: 6, listStyle: "none", margin: 0, padding: 0 }}
         >
-          {fields.map(([key, value]) => (
-            <li key={key} className="ah-fm-chip">
-              <span className="ah-subtle">{key}:</span> {valueText(value)}
+          {chips.map(([key, text]) => (
+            <li key={key} className="ah-fm-chip" title={text}>
+              <span className="ah-subtle">{key}:</span> {text}
             </li>
           ))}
         </ul>
+      )}
+      {long.length > 0 && (
+        <dl aria-label="Frontmatter, long fields" className="ah-fm-long">
+          {long.map(([key, text]) => (
+            <div key={key}>
+              <dt className="ah-subtle">{key}</dt>
+              <dd>{text}</dd>
+            </div>
+          ))}
+        </dl>
       )}
       <Markdown
         source={data.markdown}
