@@ -97,6 +97,60 @@ describe("SettingsScreen", () => {
     expect(row).toHaveTextContent("pinned 0.3.1, running 0.4.0");
   });
 
+  it("warns when a hub is pinned to another release and syncs it after confirming", async () => {
+    const behind = aHub({ id: "hub-3", project: "old-hub", platform_pin: "0.3.0" });
+    const { requests } = open("hubs", {
+      "/api/v1/hubs": aPage([aHub(), behind]),
+      "POST /api/v1/hubs/hub-3/platform-sync": {
+        hub_id: "hub-3",
+        previous_version: "0.3.0",
+        version: "0.4.0",
+        ok: true,
+        exit_code: 0,
+        output: ["updated hub.lock"],
+        changed_files: ["hub.json", "hub.lock"],
+      },
+    });
+
+    const card = await screen.findByLabelText("old-hub platform version");
+    expect(card).toHaveTextContent("old-hub is pinned to 0.3.0, this hub web runs 0.4.0");
+    expect(screen.queryByLabelText("agent-hub platform version")).not.toBeInTheDocument();
+    await userEvent.click(within(card).getByRole("button", { name: "Sync to 0.4.0" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Sync old-hub to 0.4.0?" });
+    expect(dialog).toHaveTextContent("platform.version 0.3.0 → 0.4.0");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Sync" }));
+
+    expect(await within(card).findByText("Pinned to 0.4.0 and synced (was 0.3.0).")).toBeVisible();
+    expect(card).toHaveTextContent("hub.json, hub.lock");
+    const post = requests.find((r) => r.method === "POST");
+    expect(new URL(post?.url ?? "").pathname).toBe("/api/v1/hubs/hub-3/platform-sync");
+  });
+
+  it("shows why a sync failed", async () => {
+    open("hubs", {
+      "/api/v1/hubs": aPage([aHub({ id: "hub-3", project: "old-hub", platform_pin: "0.3.0" })]),
+      "POST /api/v1/hubs/hub-3/platform-sync": {
+        hub_id: "hub-3",
+        previous_version: "0.3.0",
+        version: "0.3.0",
+        ok: false,
+        exit_code: 3,
+        output: ["conflict: AGENTS.md"],
+        changed_files: [],
+      },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Sync to 0.4.0" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sync" }));
+
+    expect(
+      await screen.findByText("hub sync failed (exit 3); hub.json was put back to 0.3.0."),
+    ).toBeVisible();
+    expect(screen.getByLabelText("old-hub platform version")).toHaveTextContent(
+      "conflict: AGENTS.md",
+    );
+  });
+
   it("removes a hub after confirming", async () => {
     const { requests } = open("hubs", { "DELETE /api/v1/hubs/hub-2": {} });
 

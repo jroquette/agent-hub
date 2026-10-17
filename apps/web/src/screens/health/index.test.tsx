@@ -120,6 +120,26 @@ describe("HealthScreen", () => {
     );
   });
 
+  it("links a platform.version error to the sync in Settings", async () => {
+    open({
+      "/api/v1/doctor/findings": aPage([
+        aFinding({
+          rule: "platform.version",
+          severity: "error",
+          path: "hub.json",
+          message: "this hub is pinned to 0.3.0 but this hub command is 0.4.0",
+          fix: "run the pinned release",
+        }),
+      ]),
+    });
+
+    await screen.findByText(/pinned to 0\.3\.0/);
+    expect(
+      within(group("platform.version")).getByRole("link", { name: "Sync in Settings" }),
+    ).toHaveAttribute("href", "/settings/hubs");
+    expect(screen.queryByRole("link", { name: "Sync in Settings" })).toBeInTheDocument();
+  });
+
   it("hides info findings until their severity is turned on", async () => {
     open();
 

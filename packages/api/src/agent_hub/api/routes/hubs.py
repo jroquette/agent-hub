@@ -5,7 +5,12 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Response
 
 from agent_hub.api.dependencies import HubReadModelsDep
-from agent_hub.api.platform_sync import PlatformSyncError, PlatformSyncResult, sync_platform
+from agent_hub.api.platform_sync import (
+    PlatformSyncError,
+    PlatformSyncRequest,
+    PlatformSyncResult,
+    sync_platform,
+)
 from agent_hub.api.schemas import PROBLEM_RESPONSES, HubCreate
 from agent_hub.core.hubs.registered_hub import HubView
 from agent_hub.core.readmodels.page import Page
@@ -36,7 +41,9 @@ def remove_hub(
 
 @router.post("/hubs/{hub_id}/platform-sync")
 def sync_hub_platform(
-    hub_id: Annotated[str, Path(min_length=1, max_length=64)], models: HubReadModelsDep
+    hub_id: Annotated[str, Path(min_length=1, max_length=64)],
+    _body: PlatformSyncRequest,
+    models: HubReadModelsDep,
 ) -> PlatformSyncResult:
     """Pin the hub to the running release and run ``hub sync`` in it; nothing is committed."""
     hub = next((view for view in models.list_hubs().items if view.id == hub_id), None)

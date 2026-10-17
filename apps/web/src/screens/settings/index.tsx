@@ -37,12 +37,14 @@ import {
   useLinearConnection,
   useRemoveHub,
   useSettings,
+  useSyncPlatform,
 } from "./queries";
 
 type HubView = components["schemas"]["HubView"];
 type EventSource = components["schemas"]["EventSource"];
 type LockState = components["schemas"]["LockState"];
 type LinearConnectionView = components["schemas"]["LinearConnectionView"];
+type PlatformSyncResult = components["schemas"]["PlatformSyncResult"];
 
 const SECTIONS: readonly { id: string; label: string; icon: IconName }[] = [
   { id: "hubs", label: "Hubs", icon: "warehouse" },
@@ -124,14 +126,131 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
   );
 }
 
+/* ---------- Platform sync: bring a hub to the running release ---------- */
+
+function SyncOutcome({ result }: { result: PlatformSyncResult }) {
+  return (
+    <div className="ah-stack" style={{ gap: 6 }} role={result.ok ? "status" : "alert"}>
+      <span className="ah-small" style={{ color: result.ok ? "var(--done)" : "var(--failed)" }}>
+        <Icon
+          name={result.ok ? "circle-check" : "circle-x"}
+          size="sm"
+          style={{ verticalAlign: "-3px", marginRight: 4 }}
+        />
+        {result.ok
+          ? `Pinned to ${result.version} and synced${
+              result.previous_version ? ` (was ${result.previous_version})` : ""
+            }.`
+          : `hub sync failed (exit ${String(result.exit_code)}); hub.json was put back to ${result.version}.`}
+      </span>
+      {result.output.length > 0 && <CodeBlock code={result.output.join("\n")} />}
+      {result.ok && result.changed_files.length > 0 && (
+        <span className="ah-small ah-muted">
+          Changed in the hub checkout, not committed:{" "}
+          <span className="ah-mono">{result.changed_files.join(", ")}</span>. Review them and open a
+          hub PR.
+        </span>
+      )}
+    </div>
+  );
+}
+
+function PlatformSyncCard({
+  hub,
+  sync,
+}: {
+  hub: HubView;
+  sync: ReturnType<typeof useSyncPlatform>;
+}) {
+  const [asking, setAsking] = useState(false);
+  const name = hub.project ?? hub.path;
+  const result = sync.data?.hub_id === hub.id ? sync.data : undefined;
+  const behind = outdated(hub);
+  const tone = behind ? "var(--failed)" : "var(--done)";
+  return (
+    <div
+      className="ah-card ah-pad ah-stack"
+      style={{ gap: 10, borderColor: tone }}
+      aria-label={`${name} platform version`}
+    >
+      <div className="ah-row" style={{ gap: 12, alignItems: "flex-start" }}>
+        <Icon name={behind ? "circle-x" : "circle-check"} style={{ color: tone, marginTop: 2 }} />
+        <div className="ah-grow ah-stack" style={{ gap: 2 }}>
+          <b>
+            {behind
+              ? `${name} is pinned to ${hub.platform_pin ?? "none"}, this hub web runs ${hub.running_version}`
+              : `${name} is pinned to ${hub.running_version}, the release this hub web runs`}
+          </b>
+          <span className="ah-small ah-muted">
+            {behind
+              ? `hub doctor fails platform.version until they match. Sync pins hub.json to ${hub.running_version} and runs hub sync to bring the templates and hub.lock along.`
+              : "Run doctor again in Health to confirm."}
+          </span>
+        </div>
+        {behind && (
+          <Button
+            variant="primary"
+            icon="refresh-cw"
+            disabled={sync.isPending}
+            onClick={() => {
+              sync.reset();
+              setAsking(true);
+            }}
+          >
+            {sync.isPending ? "Syncing…" : `Sync to ${hub.running_version}`}
+          </Button>
+        )}
+      </div>
+      {result && <SyncOutcome result={result} />}
+      {sync.error && (
+        <span className="ah-small" role="alert" style={{ color: "var(--failed)" }}>
+          {sync.error.detail ?? sync.error.title}
+        </span>
+      )}
+      {asking && (
+        <ConfirmDialog
+          title={`Sync ${name} to ${hub.running_version}?`}
+          tone="primary"
+          consequences={[
+            `hub.json: platform.version ${hub.platform_pin ?? "none"} → ${hub.running_version}.`,
+            "hub sync rewrites the managed files and hub.lock; your own edits are kept.",
+            "On a conflict nothing is written and hub.json is put back.",
+            "Nothing is committed: review the changes and open a hub PR.",
+          ]}
+          confirmLabel={sync.isPending ? "Syncing…" : "Sync"}
+          pending={sync.isPending}
+          onCancel={() => {
+            setAsking(false);
+          }}
+          onConfirm={() => {
+            sync.mutate(hub.id, {
+              onSettled: () => {
+                setAsking(false);
+              },
+            });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 /* ---------- Hubs: register and remove are the only writes of Phase 2 ---------- */
+
+/** The hub's pin is a release other than this hub web's: `hub doctor` fails `platform.version`. */
+export function outdated(hub: HubView): boolean {
+  return hub.platform_pin !== null && hub.platform_pin !== hub.running_version;
+}
 
 function HubPlatform({ hub }: { hub: HubView }) {
   const lock = hub.lock_state ? LOCK[hub.lock_state] : null;
   return (
     <span className="ah-stack" style={{ gap: 2 }}>
       <span className="ah-small">
-        {hub.platform_pin ?? "not pinned"} pinned · lock {hub.lock_version ?? "none"}
+        <span style={outdated(hub) ? { color: "var(--failed)", fontWeight: 500 } : undefined}>
+          {hub.platform_pin ?? "not pinned"} pinned
+        </span>{" "}
+        · lock {hub.lock_version ?? "none"}
         {lock && (
           <>
             {" · "}
@@ -169,6 +288,7 @@ function HubValidity({ hub }: { hub: HubView }) {
 function Hubs() {
   const hubs = useHubs();
   const remove = useRemoveHub();
+  const sync = useSyncPlatform();
   const [removing, setRemoving] = useState<HubView | null>(null);
   const now = useNow(30_000);
   const formId = useId();
@@ -176,7 +296,7 @@ function Hubs() {
   return (
     <Section
       title="Hubs"
-      sub="Hub folders this app reads. Each hub is one project; nothing is written to them."
+      sub="Hub folders this app reads. Each hub is one project; only a platform sync writes to them."
       action={
         <Button
           variant="primary"
@@ -189,6 +309,11 @@ function Hubs() {
         </Button>
       }
     >
+      {(hubs.data?.items ?? [])
+        .filter((hub) => outdated(hub) || sync.data?.hub_id === hub.id)
+        .map((hub) => (
+          <PlatformSyncCard key={hub.id} hub={hub} sync={sync} />
+        ))}
       {hubs.isError ? (
         <ProblemError
           title={hubs.error.title}

@@ -1,5 +1,6 @@
 import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
+import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -158,6 +159,12 @@ function FindingBlock({ f, showProject }: { f: Finding; showProject: boolean }) 
       <div className="ah-row ah-small" style={{ padding: "4px 16px 10px 44px", gap: 8 }}>
         <CopyButton label="Copy fix" text={f.fix} />
         <CopyButton label="Copy finding as Markdown" text={findingMarkdown(f)} />
+        {f.rule === "platform.version" && (
+          <Link to="/settings/hubs" className="ah-btn ah-btn-primary ah-btn-sm">
+            <Icon name="refresh-cw" size="sm" />
+            Sync in Settings
+          </Link>
+        )}
         <span className="ah-grow" />
         {showProject && <span className="ah-subtle">{f.project}</span>}
       </div>

@@ -3068,6 +3068,11 @@ export interface components {
       rule: components["schemas"]["pydantic__types__JsonValue"];
     };
     /**
+     * PlatformSyncRequest
+     * @description The empty JSON body of the sync: a cross-site form cannot send one (S7).
+     */
+    PlatformSyncRequest: Record<string, never>;
+    /**
      * PlatformSyncResult
      * @description What one platform sync did: the pin before and after, and ``hub sync``'s report.
      */
@@ -6047,7 +6052,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlatformSyncRequest"];
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {

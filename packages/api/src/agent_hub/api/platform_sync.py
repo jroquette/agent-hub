@@ -44,6 +44,12 @@ class PlatformSyncResult(BaseModel):
     changed_files: tuple[str, ...]
 
 
+class PlatformSyncRequest(BaseModel):
+    """The empty JSON body of the sync: a cross-site form cannot send one (S7)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
 class PlatformSyncError(Exception):
     """``hub.json`` cannot be pinned (unreadable, not JSON, no ``platform`` object)."""
 

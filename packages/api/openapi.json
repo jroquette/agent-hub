@@ -4972,6 +4972,13 @@
         "title": "PermissionSuggestion",
         "type": "object"
       },
+      "PlatformSyncRequest": {
+        "additionalProperties": false,
+        "description": "The empty JSON body of the sync: a cross-site form cannot send one (S7).",
+        "properties": {},
+        "title": "PlatformSyncRequest",
+        "type": "object"
+      },
       "PlatformSyncResult": {
         "additionalProperties": false,
         "description": "What one platform sync did: the pin before and after, and ``hub sync``'s report.",
@@ -11443,6 +11450,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlatformSyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {

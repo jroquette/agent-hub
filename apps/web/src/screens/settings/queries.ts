@@ -40,6 +40,15 @@ export function useRemoveHub() {
   });
 }
 
+type PlatformSyncResult = components["schemas"]["PlatformSyncResult"];
+
+/** `POST /hubs/{id}/platform-sync`: pin the hub to the running release, then `hub sync` in it. */
+export function useSyncPlatform() {
+  return useHubWrite<PlatformSyncResult, string>((hubId) =>
+    apiPost("/api/v1/hubs/{hub_id}/platform-sync", {}, { path: { hub_id: hubId } }),
+  );
+}
+
 /** `GET /tracker/linear`: whether hub web reads Linear (checked against Linear, cached 60 s). */
 export function useLinearConnection() {
   return useApi("/api/v1/tracker/linear");
