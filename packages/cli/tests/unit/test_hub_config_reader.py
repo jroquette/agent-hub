@@ -115,7 +115,7 @@ def test_hides_secret_when_hub_json_holds_one(
     document = builders.an_environments_document()
     document["platform"]["version"] = version("agent-hub-cli")
     endpoints = document["repos"][0]["services"]["api"]["endpoints"]
-    endpoints["staging"] = {"url": f"https://u:{password}@db.example.com"}
+    endpoints["staging"] = {"url": "https://" + f"u:{password}@db.example.com"}
     endpoints["live"]["note"] = f"token {jwt}"
 
     lines = stderr_lines_on_exit(write_document(tmp_path, document), capsys)

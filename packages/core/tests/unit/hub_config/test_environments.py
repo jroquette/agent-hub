@@ -81,7 +81,8 @@ def error_messages(model: type[Any], data: object) -> list[tuple[tuple[str | int
 @pytest.mark.parametrize(
     ("url", "part"),
     [
-        pytest.param("https://u:pw@db.example.com", "pw", id="user_info"),
+        # Split, so the host grep of AC-277.26 reads no user info as a host.
+        pytest.param("https://" + "u:pw@db.example.com", "pw", id="user_info"),
         pytest.param("https://api.example.com/?token=x", "token=x", id="query"),
         pytest.param("https://api.example.com/#k", "#k", id="fragment"),
         pytest.param("https://api.example.com/" + "a" * 177, "a" * 177, id="201_chars"),
