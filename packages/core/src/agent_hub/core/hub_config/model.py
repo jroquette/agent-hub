@@ -33,14 +33,14 @@ from agent_hub.core.hub_config.platform_repository import (
     PLATFORM_REPOSITORY_PATTERN,
     is_platform_repository,
 )
+from agent_hub.core.hub_config.text_shapes import FREE_TEXT_PATTERN, SAFE_SEGMENT
 
 HUB_ROOT = "@hub"
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 # Plain aliases, not ``type`` statements: pydantic inlines them, so the schema's ``$defs`` hold
 # only the object models.
-# Free text still lands in files and commands, so a control character is never part of it.
-FreeString = Annotated[str, Field(min_length=1, pattern=r"^[^\x00-\x1f\x7f]+$")]
+FreeString = Annotated[str, Field(min_length=1, pattern=FREE_TEXT_PATTERN)]
 # A repo's fast gate may be empty or blank: no Stop gate (project-config.md).
 CommandString = Annotated[str, Field(pattern=r"^[^\x00-\x1f\x7f]*$")]
 # ``str.isspace`` outside the control characters, spelled out: JSON Schema's ``\s`` (ECMA) and
@@ -52,12 +52,8 @@ MAX_CHECK_FAST_TIMEOUT: Final = 160
 # ``tracker.states.review``'s default: the state ``hub run`` and ``hub ship`` move an issue to.
 REVIEW_STATE: Final = "In Review"
 
-# Rendered values (project-config.md): values that land in shell, Make or YAML text. Pydantic's
-# Rust regex has no look-around, and ``[0-9]`` is spelled out because ``\d`` takes any digit.
-# A safe segment: no leading ``-`` or ``.`` (an option or a hidden path), no ``..``, no trailing
-# punctuation. The separator class leaves out ``_``, already a segment character: the hooks'
-# reader copies this pattern into Python's ``re``, which backtracks exponentially on an overlap.
-_SAFE_SEGMENT = r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*"
+# Rendered values (project-config.md): the safe segment and its comment are in text_shapes.py.
+_SAFE_SEGMENT = SAFE_SEGMENT
 _HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
 KebabName = Annotated[str, Field(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
 RepoDir = Annotated[str, Field(pattern=rf"^{_SAFE_SEGMENT}$")]
