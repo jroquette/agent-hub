@@ -225,7 +225,7 @@ test("Brain shows the tree and a note, and follows an in-app link", async ({ pag
   await visit(page, baseURL, "/projects/demo/brain/index.md", async () => {
     await expect(page.getByRole("heading", { level: 1, name: "Brain", exact: true })).toBeVisible();
     const tree = page.getByRole("navigation", { name: "Brain notes" });
-    await expect(tree.getByText("now.md")).toBeVisible();
+    await expect(tree.getByRole("link", { name: "Now" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Demo brain" })).toBeVisible();
     await page.getByRole("link", { name: "what we focus on now" }).click();
     await expect(page).toHaveURL(/\/projects\/demo\/brain\/now\.md$/);
