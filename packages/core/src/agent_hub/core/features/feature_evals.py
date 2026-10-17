@@ -3,7 +3,8 @@
 Each evaluation is its own file, ``brain/features/<slug>/evals/<delivery>.md``, whose frontmatter
 holds its scope: ``type: eval``, ``delivery``, ``verdict``, ``tickets``, ``acs`` (ids or ``all``),
 ``prs``, ``commit`` and ``evaluated_at``. A legacy ``eval.md`` is one delivery, ``legacy``, whose
-verdict is its first ``Verdict`` line and whose scope is its frontmatter, when it has one.
+verdict is its ``Final verdict`` line (an addendum that reverses the first verdict says so at the
+top), else its first ``Verdict`` line, and whose scope is its frontmatter, when it has one.
 
 For each AC the latest eval whose scope names it decides (S7): it is covered when that verdict is
 SHIP or SHIP-WITH-OWNER-STEPS. "Latest" is a partial order. Two evals that both have a usable
@@ -53,6 +54,10 @@ NOTE_SUFFIX: Final = ".md"
 DELIVERY_PATTERN: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 # The first ``Verdict`` line of a legacy ``eval.md`` (``**Verdict:** SHIP`` too).
 VERDICT_LINE: Final = re.compile(r"Verdict\W{0,4}(SHIP-WITH-OWNER-STEPS|NO-SHIP|SHIP)\b")
+# A ``Final verdict`` line of a legacy ``eval.md`` wins over its first ``Verdict`` line.
+FINAL_VERDICT_LINE: Final = re.compile(
+    r"Final\s+verdict\W{0,4}(SHIP-WITH-OWNER-STEPS|NO-SHIP|SHIP)\b", re.IGNORECASE
+)
 # An ISO date, optionally with a time and an offset.
 ISO_TIME: Final = re.compile(
     r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
@@ -241,11 +246,21 @@ def _legacy(head: bytes, *, slug: str) -> EvalRecord:
 
 
 def legacy_verdict(head: bytes) -> Verdict | None:
-    """The verdict of ``eval.md``'s first ``Verdict`` line; None without one."""
-    for line in head.decode("utf-8", "replace").splitlines():
-        found = VERDICT_LINE.search(line)
-        if found is not None:
-            return cast("Verdict", found.group(1))
+    """The verdict of ``eval.md``: its ``Final verdict`` line, else its first ``Verdict`` line;
+    None without one."""
+    found = legacy_verdict_line(head)
+    return None if found is None else found[0]
+
+
+def legacy_verdict_line(head: bytes) -> tuple[Verdict, str] | None:
+    """The verdict of ``eval.md`` and the line that holds it: the first ``Final verdict`` line,
+    else the first ``Verdict`` line; None without one."""
+    lines = head.decode("utf-8", "replace").splitlines()
+    for pattern in (FINAL_VERDICT_LINE, VERDICT_LINE):
+        for line in lines:
+            found = pattern.search(line)
+            if found is not None:
+                return cast("Verdict", found.group(1).upper()), line
     return None
 
 

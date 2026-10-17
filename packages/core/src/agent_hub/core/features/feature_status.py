@@ -18,7 +18,11 @@ from dataclasses import dataclass
 from typing import Final, Literal, cast
 
 from agent_hub.core.events.event import EventSource
-from agent_hub.core.features.feature_evals import eval_coverage, eval_records
+from agent_hub.core.features.feature_evals import (
+    eval_coverage,
+    eval_records,
+    legacy_verdict_line,
+)
 from agent_hub.core.features.feature_record import (
     RECORD_FILE,
     FeatureRecordFile,
@@ -59,7 +63,6 @@ _VERDICT_LINE_CHARS: Final = 200
 _SIZES: Final = ("spike", "bounded", "architectural")
 
 type FeatureSize = Literal["spike", "bounded", "architectural"]
-_VERDICT: Final = re.compile(r"Verdict\W{0,4}(SHIP-WITH-OWNER-STEPS|NO-SHIP|SHIP)\b")
 _MANUAL: Final = re.compile(r"\s*manual\b", re.IGNORECASE)
 # The records a feature detail lists, each with its file (AC-201.32), in the order shown.
 _RECORDS: Final[tuple[tuple[FeatureRecordName, str], ...]] = (
@@ -285,14 +288,11 @@ def _counts(rows: tuple[AcRow, ...]) -> AcCounts:
 
 
 def _verdict(head: bytes | None) -> tuple[Verdict | None, str | None]:
-    if head is None:
+    found = None if head is None else legacy_verdict_line(head)
+    if found is None:
         return None, None
-    for line in head.decode("utf-8", "replace").splitlines():
-        found = _VERDICT.search(line)
-        if found is not None:
-            shown = one_line(line.strip())[:_VERDICT_LINE_CHARS]
-            return cast("Verdict", found.group(1)), shown
-    return None, None
+    verdict, line = found
+    return verdict, one_line(line.strip())[:_VERDICT_LINE_CHARS]
 
 
 def _frontmatter(head: bytes | None) -> dict[str, str]:
