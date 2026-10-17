@@ -17,6 +17,7 @@ import { ApiProblem } from "../../lib/api";
 import { screenshotFor } from "../../lib/screenshotCopy";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { sessionControlUnavailable } from "../sessions-list/control";
+import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
 import { CostMeter } from "./CostMeter";
@@ -117,6 +118,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const transcript = useAgentTranscript(agentSessionId);
   const commands = useAgentSessionCommands(agentSessionId);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [forking, setForking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
@@ -190,6 +192,9 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const cloud = session.kind === "cloud";
   const endReason = state.endReason ?? session.end_reason;
   const canResume = resumable(session, endReason);
+  // A message resumes an ended session in place; Fork… starts a new conversation from it (AC-234.15).
+  const caps = capabilities.data;
+  const canFork = ended && canResume && caps?.available === true;
 
   const act = (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -226,6 +231,17 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 <Icon name="activity" size="sm" />
                 Observed session {short(session.claude_session_id)}
               </AppLink>
+            )}
+            {canFork && (
+              <Button
+                size="sm"
+                icon="git-branch"
+                onClick={() => {
+                  setForking(true);
+                }}
+              >
+                Fork…
+              </Button>
             )}
             {ended ? (
               <Button
@@ -305,6 +321,16 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           />
         </div>
       </footer>
+      {forking && caps && (
+        <StartSessionDialog
+          project={session.project}
+          capabilities={caps}
+          forkOf={{ ...session, status, mode, model }}
+          onClose={() => {
+            setForking(false);
+          }}
+        />
+      )}
       {confirmDelete && (
         <ConfirmDialog
           title="Delete this session?"

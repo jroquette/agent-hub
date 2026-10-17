@@ -76,6 +76,8 @@ export interface SessionTileProps {
   times?: ((now: number) => TileTimes) | undefined;
   onOpen?: (() => void) | undefined;
   hoverEvents?: { time: string; icon: IconName; text: string }[] | undefined;
+  /** A control in the head, such as Resume; it stops its own clicks from opening the tile. */
+  action?: ReactNode;
 }
 
 /** Renders `children` with the times at each second. */
@@ -105,7 +107,7 @@ function TileAction({ s, t }: { s: LiveSession; t: TileTimes }) {
   );
 }
 
-export function SessionTile({ s, times, onOpen, hoverEvents }: SessionTileProps) {
+export function SessionTile({ s, times, onOpen, hoverEvents, action }: SessionTileProps) {
   const [hover, setHover] = useState(false);
   const badgeStatus: Status = s.status === "ended" ? (s.outcome ?? "ended") : s.status;
   return (
@@ -140,6 +142,7 @@ export function SessionTile({ s, times, onOpen, hoverEvents }: SessionTileProps)
         />
         <span className="ah-grow" />
         {s.issue && <IssueLink id={s.issue} title={s.issueTitle} />}
+        {action}
         <IconButton size="sm" icon="ellipsis" label="Session actions" />
       </div>
       <div className="ah-row" style={{ gap: 6, minWidth: 0 }}>
