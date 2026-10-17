@@ -8,6 +8,7 @@ from agent_hub.core.hub_config.effective_environments import (
 )
 from agent_hub.core.hub_config.local_config import LocalConfig, check_local_document
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing.blocked_words_cases import BLOCKED_WORDS_CASES, BlockedWordsCase
 from agent_hub.core.testing.builders import (
     a_local_environments_document,
     an_environments_document,
@@ -215,3 +216,30 @@ def test_adds_local_service_when_local_names_new_one() -> None:
     assert [(row.environment, row.source) for row in services[2].endpoints] == [
         ("jane-cloud", "hub.local.json")
     ]
+
+
+@pytest.mark.parametrize(
+    "case", BLOCKED_WORDS_CASES, ids=[case.name for case in BLOCKED_WORDS_CASES]
+)
+def test_unions_blocked_words_when_case_table_read(case: BlockedWordsCase) -> None:
+    config = HubConfig.model_validate(case.hub_document())
+    local = check_local_document(case.local_document() or {})
+    assert isinstance(local, LocalConfig), local
+
+    effective = effective_environments(config, local)
+
+    assert [(entry.value, entry.layer) for entry in effective.blocked_words] == list(case.words)
+    assert [(entry.value, entry.layer) for entry in effective.blocked_files] == list(case.files)
+    assert [(entry.value, entry.layer) for entry in effective.blocked_env] == list(case.env)
+
+
+def test_covers_each_layer_when_case_table_read() -> None:
+    names = [case.name for case in BLOCKED_WORDS_CASES]
+    layers = {
+        layer for case in BLOCKED_WORDS_CASES for _, layer in (*case.words, *case.files, *case.env)
+    }
+
+    assert len(set(names)) == len(names)
+    assert layers == {"hub.json", "hub.local.json"}
+    assert any(case.local_document() is None for case in BLOCKED_WORDS_CASES)
+    assert any(case.env for case in BLOCKED_WORDS_CASES)
