@@ -500,6 +500,7 @@ def _summary_fields(summary: IssueSummary) -> Json:
         "estimate": summary.estimate,
         "state": {"name": summary.state.name, "type": summary.state.type},
         "assignee": None if summary.assignee is None else {"displayName": summary.assignee},
+        "parent": None if summary.parent is None else {"identifier": summary.parent},
     }
 
 
@@ -586,6 +587,7 @@ SYNTHETIC_SUMMARIES_ANSWER: Json = {
                     "estimate": None,
                     "state": {"name": "Todo", "type": "unstarted"},
                     "assignee": None,
+                    "parent": {"identifier": "DEM-11"},
                     "relations": {"nodes": [], "pageInfo": {"hasNextPage": False}},
                     "inverseRelations": {
                         "nodes": [
@@ -628,6 +630,7 @@ SYNTHETIC_SUMMARIES_ANSWER: Json = {
                     "estimate": 3,
                     "state": {"name": "In Progress", "type": "started"},
                     "assignee": {"displayName": "ada.example"},
+                    "parent": None,
                     "relations": {
                         "nodes": [
                             {

@@ -1,7 +1,8 @@
 """The ``features.json`` record of a feature folder, as the app parses it (AGH-136 S3).
 
-``tickets`` (optional) is the planner's ticket plan: a draft ``key`` (``T1``...), the tracker
-``id`` once the issue is created, ``blocked_by`` (keys or ids) and a plan ``order``. Each AC may
+``tickets`` (optional) is the planner's ticket plan: a draft ``key`` (``T1``...), the tracker ``id``
+once the issue is created, ``blocked_by`` (keys or ids), a plan ``order`` and its ``parent`` (the
+key or id of the epic it belongs to: a tracking ticket that is never worked on itself). Each AC may
 name its ``ticket`` (a key or id) and be ``withdrawn`` by a spec amendment. Older records, with
 neither, parse unchanged; unknown keys are ignored. Bounds keep one record from flooding a view.
 ``record_from_bytes`` parses the file's bytes, read whole up to ``MAX_RECORD_BYTES``.
@@ -47,6 +48,7 @@ class PlannedTicket(BaseModel):
     repo: StrictStr | None = None
     blocked_by: Annotated[tuple[TicketKey, ...], Field(max_length=MAX_BLOCKED_BY)] = ()
     order: Annotated[StrictInt, Field(ge=0)] | None = None
+    parent: TicketKey | None = None
 
 
 class RecordAc(BaseModel):

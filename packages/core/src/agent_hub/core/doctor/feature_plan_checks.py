@@ -2,11 +2,12 @@
 
 ``tickets`` (optional, at most ``MAX_TICKETS``) holds objects with a unique draft ``key``
 (``KEY_PATTERN``), an ``id`` (null or a tracker id), a ``title`` (null or at most
-``MAX_TITLE_CHARS``), a ``repo`` (null or a repo name), ``blocked_by`` (at most
-``MAX_BLOCKED_BY`` keys or ids of ``tickets``, never the ticket itself) and an ``order`` (null or
-a whole number, 0 or more). A cycle of ``blocked_by`` is a warning: the plan still reads, its
-tickets wait. An AC's ``ticket`` names a key or id of ``tickets`` or a ``linear`` id; its
-``withdrawn`` is true or false.
+``MAX_TITLE_CHARS``), a ``repo`` (null or a repo name), ``blocked_by`` (at most ``MAX_BLOCKED_BY``
+keys or ids of ``tickets``, never the ticket itself) and an ``order`` (null or a whole number, 0 or
+more) and a ``parent`` (null, or the key or id of the epic of ``tickets`` it belongs to, never the
+ticket itself). A cycle of ``blocked_by`` is a warning: the plan still reads, its tickets wait. An
+AC's ``ticket`` names a key or id of ``tickets`` or a ``linear`` id; its ``withdrawn`` is true or
+false.
 
 Each ``evals/<delivery>.md`` starts with a frontmatter block holding a ``verdict`` (one of
 ``VERDICTS``), a scope (``acs``: AC ids of ``features.json`` or ``all``; and/or ``tickets``) and a
@@ -14,7 +15,7 @@ Each ``evals/<delivery>.md`` starts with a frontmatter block holding a ``verdict
 """
 
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Final, NamedTuple
 
 from agent_hub.core.brain.frontmatter import FENCE, split_frontmatter
@@ -36,6 +37,7 @@ UNREAD: Final = "could not be read"
 UNREAD_FIX: Final = "run hub doctor again"
 TICKET_FIX: Final = "name a key or id of `tickets` (or add that ticket)"
 SELF_FIX: Final = "remove it from blocked_by"
+PARENT_FIX: Final = "name the key or id of the epic in `tickets`, or set parent to null"
 CYCLE_FIX: Final = "remove one blocked_by edge of the cycle"
 AC_TICKET_FIX: Final = (
     "name the ticket that delivers the AC: a key or id of `tickets`, or a `linear` id"
@@ -73,6 +75,7 @@ class _Ticket(NamedTuple):
     key: str
     id: str | None
     blocked_by: tuple[str, ...]
+    parent: str | None = None
 
 
 def ticket_plan(
@@ -93,6 +96,7 @@ def ticket_plan(
         problems.extend(_ticket_problems(index, item, names=names, tickets=tickets))
     to_key = {ref: ticket.key for ticket in tickets.values() for ref in _refs(ticket)}
     edges = {key: tuple(_edges(ticket, to_key, problems)) for key, ticket in tickets.items()}
+    problems.extend(_parent_problems(tickets.values(), to_key))
     problems.extend(
         Problem(f"{', '.join(cycle)}: a cycle of blocked_by", CYCLE_FIX, warning=True)
         for cycle in _cycles(edges)
@@ -127,10 +131,12 @@ def _ticket_problems(
     ]
     issue_id = item.get("id")
     blocked_by = item.get("blocked_by", [])
+    parent = item.get("parent")
     tickets[key] = _Ticket(
         key=key,
         id=issue_id if isinstance(issue_id, str) else None,
         blocked_by=_blockers(blocked_by),
+        parent=parent if isinstance(parent, str) else None,
     )
     return problems
 
@@ -154,6 +160,9 @@ def _field_messages(item: Mapping[str, JsonValue], names: Sequence[str]) -> Iter
         or not all(isinstance(ref, str) for ref in blocked_by)
     ):
         yield f"`blocked_by` must be a list of at most {MAX_BLOCKED_BY} keys or ids"
+    parent = item.get("parent")
+    if parent is not None and not (isinstance(parent, str) and _KEY.fullmatch(parent)):
+        yield "`parent` must be null or the key or id of a ticket"
     order = item.get("order")
     if order is not None and (isinstance(order, bool) or not isinstance(order, int) or order < 0):
         yield "`order` must be null or a whole number, 0 or more"
@@ -178,6 +187,21 @@ def _edges(ticket: _Ticket, to_key: Mapping[str, str], problems: list[Problem]) 
             problems.append(Problem(f"{ticket.key}: blocked by itself", SELF_FIX))
         else:
             yield blocker
+
+
+def _parent_problems(tickets: Iterable[_Ticket], to_key: Mapping[str, str]) -> Iterator[Problem]:
+    """A ``parent`` that names no ticket of the plan, or the ticket itself."""
+    for ticket in tickets:
+        if ticket.parent is None:
+            continue
+        parent = to_key.get(ticket.parent)
+        if parent is None:
+            message = (
+                f"{ticket.key}: parent {cut_echo(ticket.parent)} is not a key or id of `tickets`"
+            )
+            yield Problem(message, PARENT_FIX)
+        elif parent == ticket.key:
+            yield Problem(f"{ticket.key}: its own parent", PARENT_FIX)
 
 
 def _cycles(edges: Mapping[str, tuple[str, ...]]) -> Iterator[tuple[str, ...]]:

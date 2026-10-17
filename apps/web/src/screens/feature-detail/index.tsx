@@ -15,7 +15,6 @@ import {
   Skeleton,
   StatusBadge,
   Tabs,
-  Tooltip,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
 import { fmtClock } from "../../lib/format";
@@ -29,6 +28,7 @@ import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
 import { EvalTab, pickEval } from "./EvalTab";
 import { RecordSummary, summaryRequest } from "./RecordSummary";
+import { StateBadge } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
 import { useFeature, useFeatureTickets } from "./queries";
 
@@ -53,11 +53,34 @@ const RECORDS: Readonly<
   plan: { name: "plan", label: "Plan", missing: "Plans are written by /create-plan in the hub." },
 };
 
-/** The tab of `?doc=`: a record, `eval`, `tickets` or Criteria (`acs`, the default). */
-function tabOf(doc: string | null): string {
+type FeaturePhase = components["schemas"]["FeaturePhase"];
+
+/**
+ * The tab where each phase's work is: a record while it is being written, the tickets while
+ * they are built and reviewed, the criteria once it is evaluated or shipped. It is the tab a
+ * feature opens on, and the one a golden path step opens.
+ */
+const PHASE_TAB: Record<FeaturePhase, string> = {
+  spec: "spec",
+  research: "research",
+  plan: "plan",
+  tickets: "tickets",
+  implement: "tickets",
+  review: "tickets",
+  evaluate: "acs",
+  shipped: "acs",
+};
+
+/** The step's tab when the golden path opens it: Evaluate shows its eval records. */
+const STEP_TAB: Record<FeaturePhase, string> = { ...PHASE_TAB, evaluate: "eval" };
+
+/** The tab of `?doc=`: a record, `eval`, `tickets` or Criteria (`acs`); else the phase's tab. */
+function tabOf(doc: string | null, phase: FeaturePhase | undefined): string {
   if (doc === "issues") return "tickets"; // the old Issues tab's deep links (AC-136.28)
-  if (doc === "eval" || doc === "tickets" || (doc !== null && RECORDS[doc])) return doc;
-  return "acs";
+  if (doc === "acs" || doc === "eval" || doc === "tickets" || (doc !== null && RECORDS[doc])) {
+    return doc;
+  }
+  return phase ? PHASE_TAB[phase] : "acs";
 }
 
 /** An AC description as a sentence, so the callout's next sentence reads on. */
@@ -151,8 +174,8 @@ function RecordTab({
 }
 
 /**
- * The feature's tickets as header chips: each id links to Linear and carries its title once the
- * tickets route answered (its cached answer); until then the ids alone.
+ * The feature's tickets as header chips: each id links to Linear, with its title on hover and its
+ * status in Linear once the tickets route answered (its cached answer); until then the ids alone.
  */
 function TicketChips({ ids, rows }: { ids: readonly string[]; rows: readonly TicketRow[] }) {
   if (ids.length === 0) return null;
@@ -166,13 +189,10 @@ function TicketChips({ ids, rows }: { ids: readonly string[]; rows: readonly Tic
       {ids.map((id) => {
         const row = rows.find((r) => r.id === id || r.ref === id);
         return (
-          <IssueLink
-            key={id}
-            id={id}
-            title={row?.title}
-            href={linearHref(row?.url)}
-            showTitle={Boolean(row?.title)}
-          />
+          <span key={id} className="ah-row" style={{ gap: 6 }}>
+            <IssueLink id={id} title={row?.title} href={linearHref(row?.url)} />
+            {row?.state && <StateBadge row={row} />}
+          </span>
         );
       })}
     </span>
@@ -274,7 +294,7 @@ export function FeatureDetailScreen() {
   const navigate = useNavigate();
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
-  const tab = tabOf(params.get("doc"));
+  const tab = tabOf(params.get("doc"), feature.data?.phase);
   const tickets = useFeatureTickets(project, slug, tab === "tickets" && feature.isSuccess);
   const selectedEval = pickEval(feature.data?.evals ?? [], params.get("eval"));
   useDiscussTarget(featureDiscussTarget(feature.data, tab, selectedEval?.path));
@@ -305,7 +325,7 @@ export function FeatureDetailScreen() {
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
-        if (id === "acs") next.delete("doc");
+        if (id === PHASE_TAB[detail.phase]) next.delete("doc");
         else next.set("doc", id);
         return next;
       },
@@ -331,10 +351,13 @@ export function FeatureDetailScreen() {
   if (tab === "tickets") {
     body = (
       <TicketsTab
+        project={project}
+        slug={detail.slug}
         data={tickets.data}
         error={tickets.isError ? tickets.error : null}
         onRefresh={() => void tickets.refetch()}
         refreshing={tickets.isFetching}
+        acPasses={Object.fromEntries(detail.ac_rows.map((ac) => [ac.id, ac.passes]))}
       />
     );
   } else if (tab === "eval") {
@@ -401,12 +424,6 @@ export function FeatureDetailScreen() {
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
           <TicketChips ids={detail.issues} rows={tickets.data?.tickets ?? []} />
-          <Tooltip label="GitHub is not connected in this version.">
-            <span className="ah-row ah-subtle" style={{ gap: 4 }}>
-              <Icon name="git-pull-request" size="sm" />
-              PR —
-            </span>
-          </Tooltip>
           {detail.acs && (
             <>
               <span style={{ width: 1, height: 16, background: "var(--border)" }} />
@@ -422,7 +439,13 @@ export function FeatureDetailScreen() {
             Phase · derived from the record and the tickets
           </DerivedLabel>
         </div>
-        <GoldenPathStepper steps={detail.golden_path.steps} />
+        <GoldenPathStepper
+          steps={detail.golden_path.steps}
+          onSelect={(step) => {
+            setTab(STEP_TAB[step]);
+          }}
+          selectLabel={(step) => `Open the ${TAB_LABEL[STEP_TAB[step]] ?? step} of ${step}`}
+        />
       </div>
       {owners.length > 0 && (
         <Banner tone="warning" boxed icon="hand">

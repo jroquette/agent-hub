@@ -50,6 +50,18 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   is a draft kept in this browser (it survives a reload; Discard edits asks first; a warning shows when the hub's
   note changed since), and Accept sends it as `note_body`, so the hub PR's one commit moves the note and writes the
   edited body under its kept frontmatter (ADR 0037, AGH-272).
+- Feature detail's Tickets tab opens on a live flow of the tickets: the parallel groups left to right, then the
+  settled tickets, each card with its Linear status, readiness, AC progress, review and critical path, and the
+  feature's epic (a ticket that parents others: the plan's new `parent`, else Linear's parent issue) above it with its
+  children's progress. A started ticket reads "In progress", never "Can start now"; Implement counts the tickets in
+  progress and ends once every ticket is In Review or Done. The tab rereads Linear every 30 s and the Features list
+  its records every 30 s; `hub doctor` checks the plan's `parent` (AGH-268).
+- The ticket flow is a graph: an edge from each blocker to the ticket it holds back, cards that lead with id and
+  title, and done tickets kept in their step. A feature opens on the tab of its phase, each golden path step opens
+  the tab holding its evidence, and the header's ticket chips show their Linear status (AGH-268).
+- `GET /api/v1/sessions` takes `issue` (any case). The Tickets table lists each ticket's sessions, the title's scope in
+  its own column, and a ticket that can start now has Start: a Claude session in the hub folder that works it with
+  `/feature` (AGH-268).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key

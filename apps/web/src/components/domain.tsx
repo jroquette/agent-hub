@@ -862,9 +862,15 @@ const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
 export function GoldenPathStepper({
   steps,
   label = "Golden path",
+  onSelect,
+  selectLabel,
 }: {
   steps: readonly GoldenStep[];
   label?: string | undefined;
+  /** Makes each step's name a button (e.g. to open the tab that holds its evidence). */
+  onSelect?: ((step: FeaturePhase) => void) | undefined;
+  /** The accessible name of a step's button; "Open <step>" by default. */
+  selectLabel?: ((step: FeaturePhase) => string) | undefined;
 }) {
   return (
     <ol
@@ -884,7 +890,20 @@ export function GoldenPathStepper({
             <span className="ah-golden-dot" style={DOT_STYLE[step.state]} aria-hidden="true">
               {icon && <Icon name={icon} />}
             </span>
-            <span className="ah-golden-name">{GOLDEN_STEP_LABEL[step.name]}</span>
+            {onSelect ? (
+              <button
+                type="button"
+                className="ah-golden-name ah-golden-select"
+                aria-label={selectLabel?.(step.name) ?? `Open ${GOLDEN_STEP_LABEL[step.name]}`}
+                onClick={() => {
+                  onSelect(step.name);
+                }}
+              >
+                {GOLDEN_STEP_LABEL[step.name]}
+              </button>
+            ) : (
+              <span className="ah-golden-name">{GOLDEN_STEP_LABEL[step.name]}</span>
+            )}
             <span className="ah-golden-meta" style={{ fontSize: 11, fontWeight: 500 }}>
               {GOLDEN_STATE_TEXT[step.state]}
             </span>
