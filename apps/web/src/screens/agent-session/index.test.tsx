@@ -239,6 +239,57 @@ describe("AgentSessionScreen (transcript)", () => {
     expect(screen.queryByRole("button", { name: "Close session" })).toBeNull();
   });
 
+  it("resume: an ended session resumes by a message and offers Fork…, prefilled, which opens the fork", async () => {
+    const NEXT = anId(2, "0192a5e5");
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "failed", end_reason: "failed", mode: "plan" }),
+        "POST /api/v1/agent-sessions": anAgentSession({ id: NEXT, status: "idle" }),
+        [`/api/v1/agent-sessions/${NEXT}`]: anAgentSession({ id: NEXT, status: "idle" }),
+        [`/api/v1/agent-sessions/${NEXT}/events`]: { items: [], next_after: null },
+      }),
+    );
+    await screen.findByText("Starting.");
+    expect(screen.queryByRole("button", { name: /^Resume/ })).toBeNull();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Fork…" }));
+    const dialog = screen.getByRole("dialog", { name: "Fork session" });
+    expect(within(dialog).getByRole("group", { name: "Fork" })).toHaveTextContent("Run the tests");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${NEXT}`);
+    });
+    const create = view.requests.find(
+      (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+    );
+    expect(await bodyOf(create)).toMatchObject({
+      workdir_id: anAgentSession().workdir_id,
+      mode: "plan",
+      resume_session_id: anAgentSession().claude_session_id,
+      fork: true,
+    });
+  });
+
+  it("resume: a live, cloud or log-full session, or a machine that cannot start one, offers no Fork…", async () => {
+    for (const [session, caps] of [
+      [anAgentSession({ status: "idle" }), aCapabilities()],
+      [anAgentSession({ status: "ended", kind: "cloud" }), aCapabilities()],
+      [anAgentSession({ status: "ended", end_reason: "log_full" }), aCapabilities()],
+      [anAgentSession({ status: "ended" }), aCapabilities({ available: false })],
+    ] as const) {
+      const view = renderChat(
+        routes({ [SESSION]: session, "/api/v1/agent-sessions/capabilities": caps }),
+      );
+      await screen.findByText("Starting.");
+      await waitFor(() => {
+        expect(view.requests.some((r) => r.url.includes("/capabilities"))).toBe(true);
+      });
+      expect(screen.queryByRole("button", { name: "Fork…" })).toBeNull();
+      view.unmount();
+    }
+  });
+
   it("deletes the session after confirmation and goes back to Sessions", async () => {
     const view = renderChat(
       routes({
