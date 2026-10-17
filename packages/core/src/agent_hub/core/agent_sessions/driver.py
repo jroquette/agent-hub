@@ -149,12 +149,15 @@ class ToolCall(DriverModel):
 
 
 class ToolResult(DriverModel):
-    """What a tool call returned (text, or the tool's content blocks)."""
+    """What a tool call returned (text, or the tool's content blocks). ``diff`` is the change a
+    file tool made, as the engine reported it: a unified diff with the file's real line
+    numbers (``patch_diff``), when it reported one."""
 
     kind: Literal["tool.result"] = "tool.result"
     tool_use_id: str
     content: JsonValue
     is_error: bool = False
+    diff: str | None = None
 
 
 class TodoItem(DriverModel):
