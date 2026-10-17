@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -7,7 +8,7 @@ import {
   DerivedLabel,
   EmptyState,
   Icon,
-  IssueLink,
+  Popover,
   ProblemError,
   Skeleton,
   StatusBadge,
@@ -17,7 +18,7 @@ import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
 import { useCollectorState } from "../../shell/GlobalStream";
-import { GoldenPathBar } from "./GoldenPathBar";
+import { GOLDEN_PATH_ORDER, GoldenPathBar, waitsOnOwner } from "./GoldenPathBar";
 import { AcBar, FilterMenu, PHASES, VERDICT_STATUS, phaseIndex } from "./parts";
 import { useFeatures } from "./queries";
 
@@ -41,10 +42,72 @@ function matches(f: Feature, key: FilterKey, value: string): boolean {
   }
 }
 
-/** In progress first, furthest along first (spec 17). */
+const shipped = (f: Feature) => f.phase === "shipped";
+
+/** In progress first, furthest along first, shipped last (spec 17). */
 function byProgress(a: Feature, b: Feature): number {
-  return phaseIndex(b.phase) - phaseIndex(a.phase) || a.slug.localeCompare(b.slug);
+  return (
+    Number(shipped(a)) - Number(shipped(b)) ||
+    phaseIndex(b.phase) - phaseIndex(a.phase) ||
+    a.slug.localeCompare(b.slug)
+  );
 }
+
+/** The issue ids, mono and neutral: the list has no tracker URLs, so they are not links. */
+function IssuesCell({ issues }: { issues: string[] }) {
+  const [open, setOpen] = useState(false);
+  const [first, ...rest] = issues;
+  if (!first) return <span className="ah-subtle">—</span>;
+  return (
+    <span className="ah-row" style={{ gap: 4, position: "relative" }}>
+      <span className="ah-mono ah-small">{first}</span>
+      {rest.length > 0 && (
+        <button
+          type="button"
+          className="ah-btn ah-btn-sm ah-btn-ghost"
+          style={{ minHeight: 24, padding: "0 6px" }}
+          aria-expanded={open}
+          aria-label={`${String(rest.length)} more issue${rest.length === 1 ? "" : "s"}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen(!open);
+          }}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Escape") setOpen(false);
+          }}
+          onBlur={() => {
+            setOpen(false);
+          }}
+        >
+          +{rest.length}
+        </button>
+      )}
+      <Popover
+        open={open}
+        label="All issues"
+        style={{ top: 28, left: 0, minWidth: 140, padding: 8 }}
+      >
+        <span className="ah-stack" style={{ gap: 4 }}>
+          {issues.map((id) => (
+            <span key={id} className="ah-mono ah-small">
+              {id}
+            </span>
+          ))}
+        </span>
+      </Popover>
+    </span>
+  );
+}
+
+/** The Evaluate step's own meta when it is not done, so a verdict is not read as the whole feature's. */
+function verdictScope(f: Feature): string | null {
+  const evaluate = f.golden_path.steps.find((s) => s.name === "evaluate");
+  return evaluate && evaluate.state !== "done" ? (evaluate.meta ?? null) : null;
+}
+
+/** The eval's verdict line without its markdown, for the badge's tooltip. */
+const plainVerdictLine = (line: string) => line.replace(/\*\*|`/g, "").trim();
 
 export const featureHref = (f: Pick<Feature, "project" | "slug">) =>
   `/features/${encodeURIComponent(f.project)}/${encodeURIComponent(f.slug)}`;
@@ -55,12 +118,12 @@ function AcCell({ f }: { f: Feature }) {
       <Tooltip label={`${f.problem}. Fix it in a hub PR.`}>
         <span className="ah-row" style={{ gap: 4 }}>
           <Icon name="octagon-x" size="sm" style={{ color: "var(--blocked)" }} title={f.problem} />
-          <span className="ah-subtle">--</span>
+          <span className="ah-subtle">—</span>
         </span>
       </Tooltip>
     );
   }
-  if (!f.acs) return <span className="ah-subtle">--</span>;
+  if (!f.acs) return <span className="ah-subtle">—</span>;
   return <AcBar acs={f.acs} />;
 }
 
@@ -79,7 +142,9 @@ export function FeaturesScreen() {
     return value === null ? [] : [{ key, value }];
   });
   const rows = all.filter((f) => active.every(({ key, value }) => matches(f, key, value)));
-  const evaluated = all.filter((f) => f.verdict !== null).length;
+  const shippedCount = all.filter(shipped).length;
+  const waitingCount = all.filter((f) => waitsOnOwner(f.golden_path)).length;
+  const inProgress = all.length - shippedCount - waitingCount;
   const setFilter = (key: FilterKey, value: string | null) => {
     setParams(
       (current) => {
@@ -155,8 +220,16 @@ export function FeaturesScreen() {
             <b style={{ color: "var(--text)" }}>
               {all.length} feature{all.length === 1 ? "" : "s"}
             </b>{" "}
-            · {evaluated} evaluated · {all.length - evaluated} in progress · read from{" "}
-            <span className="ah-mono">brain/features/</span> in each hub · furthest along first
+            {waitingCount > 0 && (
+              <>
+                {" · "}
+                <b style={{ color: "var(--text)" }}>
+                  <Icon name="hand" size="sm" style={{ verticalAlign: "-3px" }} /> {waitingCount}{" "}
+                  waiting for you
+                </b>
+              </>
+            )}{" "}
+            · {inProgress} in progress · {shippedCount} shipped · furthest along first
           </span>
         ) : null}
       </div>
@@ -199,6 +272,7 @@ export function FeaturesScreen() {
               {
                 id: "slug",
                 label: "Feature",
+                width: "26%",
                 render: (f) => (
                   <span className="ah-stack" style={{ gap: 2 }}>
                     <Link
@@ -221,23 +295,13 @@ export function FeaturesScreen() {
               {
                 id: "issues",
                 label: "Issues",
-                render: (f) =>
-                  f.issues[0] ? (
-                    <span className="ah-row" style={{ gap: 4 }}>
-                      <IssueLink id={f.issues[0]} />
-                      {f.issues.length > 1 && (
-                        <Tooltip label={f.issues.slice(1).join(", ")}>
-                          <span className="ah-small ah-subtle">(+{f.issues.length - 1})</span>
-                        </Tooltip>
-                      )}
-                    </span>
-                  ) : (
-                    <span className="ah-subtle">—</span>
-                  ),
+                width: 140,
+                render: (f) => <IssuesCell issues={f.issues} />,
               },
               {
                 id: "size",
                 label: "Size",
+                width: 120,
                 render: (f) =>
                   f.size ? (
                     <span className="ah-fm-chip">{f.size}</span>
@@ -250,27 +314,43 @@ export function FeaturesScreen() {
                 label: (
                   <span className="ah-row" style={{ gap: 4 }}>
                     Golden path
-                    <DerivedLabel how="Derived from the record files, the tickets' status last read from Linear, and the review and eval records; Shipped needs GitHub, not connected in this version.">
+                    <DerivedLabel how="Derived from the record files, the tickets' status read from Linear, and the review and eval records.">
                       derived
                     </DerivedLabel>
                   </span>
                 ),
+                hint: `One segment per step, left to right: ${GOLDEN_PATH_ORDER}. Focus or hover the bar for each step's state.`,
                 render: (f) => <GoldenPathBar path={f.golden_path} />,
               },
-              { id: "acs", label: "ACs", render: (f) => <AcCell f={f} /> },
+              {
+                id: "acs",
+                label: "ACs",
+                width: 180,
+                hint: "Acceptance criteria passing, of the total. A full bar never hides a manual step: owner steps are counted and hatched in amber.",
+                render: (f) => <AcCell f={f} />,
+              },
               {
                 id: "verdict",
                 label: "Verdict",
-                render: (f) =>
-                  f.verdict ? (
-                    <StatusBadge
-                      status={VERDICT_STATUS[f.verdict]}
-                      label={f.verdict}
-                      title={f.verdict_line ?? "From eval.md"}
-                    />
-                  ) : (
-                    <span className="ah-subtle">--</span>
-                  ),
+                width: 200,
+                hint: "The verdict of the latest eval.md; “—” when the feature has no eval yet.",
+                render: (f) => {
+                  if (!f.verdict) return <span className="ah-subtle">—</span>;
+                  const scope = verdictScope(f);
+                  return (
+                    <span className="ah-stack" style={{ gap: 2, alignItems: "flex-start" }}>
+                      <Tooltip
+                        label={f.verdict_line ? plainVerdictLine(f.verdict_line) : "From eval.md"}
+                      >
+                        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+                        <span tabIndex={0}>
+                          <StatusBadge status={VERDICT_STATUS[f.verdict]} label={f.verdict} />
+                        </span>
+                      </Tooltip>
+                      {scope && <span className="ah-small ah-subtle">{scope}</span>}
+                    </span>
+                  );
+                },
               },
             ]}
             footer={
@@ -281,13 +361,6 @@ export function FeaturesScreen() {
               ) : undefined
             }
           />
-          {features.isSuccess && (
-            <div className="ah-small ah-subtle">
-              <Icon name="info" size="sm" style={{ verticalAlign: "-3px" }} /> A full AC bar never
-              hides a manual step: owner steps are counted and hatched in amber. Features without
-              eval.md show “--” as verdict.
-            </div>
-          )}
         </>
       )}
     </div>

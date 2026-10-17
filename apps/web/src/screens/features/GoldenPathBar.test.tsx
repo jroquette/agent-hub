@@ -3,14 +3,20 @@ import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { aGoldenPath, aGoldenStep } from "../../testing/builders";
-import { GoldenPathBar } from "./GoldenPathBar";
+import { GoldenPathBar, waitsOnOwner } from "./GoldenPathBar";
 
 describe("GoldenPathBar", () => {
   it("shows the phase with its meta and one segment per step (golden)", () => {
     const { container } = render(<GoldenPathBar path={aGoldenPath()} />);
 
     expect(screen.getByText("Implement")).toBeInTheDocument();
-    expect(screen.getByText("1/3 tickets · 40/66 ACs")).toBeInTheDocument();
+    // The ACs column counts the ACs, so the row's meta keeps only the tickets.
+    expect(screen.getByText("1/3 tickets")).toBeInTheDocument();
+    expect(screen.getByText("1/3 tickets").parentElement).not.toHaveTextContent("40/66 ACs");
+    expect(screen.getByRole("img")).toHaveAttribute("tabindex", "0");
+    expect(screen.getByText("Implement").parentElement).toHaveTextContent(
+      "Implement · step 5 of 8",
+    );
     expect(
       [...container.querySelectorAll("[data-state]")].map((el) => el.getAttribute("data-state")),
     ).toEqual(["done", "done", "done", "done", "current", "pending", "partial", "pending"]);
@@ -90,6 +96,17 @@ describe("GoldenPathBar", () => {
     );
 
     expect(screen.getByText("Shipped")).toBeInTheDocument();
+  });
+
+  it("flags a feature held at Evaluate by owner steps as waiting for you", () => {
+    const path = aGoldenPath({
+      phase: "evaluate",
+      steps: [aGoldenStep({ name: "evaluate", state: "current", meta: "waiting: owner steps" })],
+    });
+    render(<GoldenPathBar path={path} />);
+
+    expect(waitsOnOwner(path)).toBe(true);
+    expect(screen.getByText("Waiting for you")).toBeInTheDocument();
   });
 
   it("has no serious axe violation (golden a11y)", async () => {
