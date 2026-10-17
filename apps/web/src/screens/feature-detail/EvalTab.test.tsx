@@ -279,9 +279,16 @@ describe("EvalTab", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "AGH-200" })).toBeNull();
     expect(screen.getByRole("button", { name: "AGH-201" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("columnheader", { name: /Whole feature · AGH-200 epic/ }),
-    ).toBeInTheDocument();
+    // One scope only: no group header, the table reads as the feature's evals.
+    expect(screen.queryByRole("columnheader", { name: /Whole feature/ })).toBeNull();
+    expect(screen.getByText("1 eval · newest first")).toBeInTheDocument();
+  });
+
+  it("offers no scope choice when the feature has a single ticket", () => {
+    renderWithApi(tab({ tickets: ["AGH-200"] }), { routes: driving });
+
+    expect(screen.queryByRole("radiogroup", { name: "Evaluation scope" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Evaluate whole feature/ })).toBeInTheDocument();
   });
 
   it("leaves out an empty AC list instead of saying 0 ACs", () => {

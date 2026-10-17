@@ -207,11 +207,14 @@ function EvalRunStrip({
   onShow,
   primary,
   epics,
+  caption,
 }: {
   project: string;
   slug: string;
   tickets: readonly string[];
   evals: readonly EvalRecord[];
+  /** What the row says on its left, before the action: the eval count. */
+  caption?: ReactNode;
   onShow: (delivery: string) => void;
   /** The tab's main action (no eval yet); otherwise re-running is secondary to reading. */
   primary: boolean;
@@ -287,8 +290,9 @@ function EvalRunStrip({
   return (
     <section className="ah-stack" style={{ gap: 8 }} aria-label="Evaluate">
       <div className="ah-row ah-wrap" style={{ gap: 10 }}>
+        {caption}
         <span className="ah-grow" />
-        {scopes.length > 0 ? (
+        {scopes.length > 1 || (scopes.length > 0 && epics.length > 0) ? (
           <SegmentedControl
             label="Evaluation scope"
             value={shownScope}
@@ -605,6 +609,16 @@ export function EvalTab({
       onShow={onSelect}
       primary={evals.length === 0}
       epics={epics}
+      caption={
+        evals.length > 0 && (
+          <Tooltip label="Newest first per scope. The latest eval that names an AC decides it.">
+            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+            <span className="ah-small ah-muted" tabIndex={0}>
+              {evals.length} eval{evals.length === 1 ? "" : "s"} · newest first
+            </span>
+          </Tooltip>
+        )
+      }
     />
   );
   if (evals.length === 0) {
@@ -698,15 +712,17 @@ export function EvalTab({
 
           {history.map((group) => (
             <tbody key={group.scope}>
-              <tr className="ah-eval-group">
-                <th scope="colgroup" colSpan={columns.length}>
-                  {group.scope === FEATURE_SCOPE ? featureName(epics) : group.scope}
-                  <span className="ah-subtle">
-                    {" "}
-                    · {group.evals.length} eval{group.evals.length === 1 ? "" : "s"}
-                  </span>
-                </th>
-              </tr>
+              {history.length > 1 && (
+                <tr className="ah-eval-group">
+                  <th scope="colgroup" colSpan={columns.length}>
+                    {group.scope === FEATURE_SCOPE ? featureName(epics) : group.scope}
+                    <span className="ah-subtle">
+                      {" "}
+                      · {group.evals.length} eval{group.evals.length === 1 ? "" : "s"}
+                    </span>
+                  </th>
+                </tr>
+              )}
               {group.evals.map((e) => (
                 <tr
                   key={e.path}
@@ -725,12 +741,6 @@ export function EvalTab({
             </tbody>
           ))}
         </table>
-        <div className="ah-table-foot">
-          <span>
-            {evals.length} eval{evals.length === 1 ? "" : "s"}, newest first per scope · the latest
-            one that names an AC decides it
-          </span>
-        </div>
       </div>
       {selected && <EvalCard project={project} record={selected} named />}
     </div>
