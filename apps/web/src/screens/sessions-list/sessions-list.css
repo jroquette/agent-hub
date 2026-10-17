@@ -51,7 +51,7 @@
   align-items: center;
 }
 .sl-search {
-  width: 320px;
+  width: 420px;
   max-width: 100%;
 }
 .sl-search .ah-input {
@@ -70,43 +70,22 @@
   height: 30px;
 }
 
-/* The grouped table: one header that sticks while the page scrolls. */
-.sl-list {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  /* `overflow: auto` would make the header stick to this box instead of the page. */
-  overflow: clip;
+/* The list as an inbox (v2): groups of two-line rows, no table header. */
+.sl-inbox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5, 20px);
   overflow-anchor: none;
 }
-.sl-table {
-  table-layout: fixed;
-}
-.sl-table td,
-.sl-table th {
-  padding: 0 var(--space-2);
-}
-.sl-table th.sl-col-status,
-.sl-table td.sl-col-status {
-  padding-left: var(--space-3);
-}
-.sl-table td {
-  height: 40px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sl-table .sl-group-row th {
-  position: static;
-  height: 32px;
-  padding: 0 var(--space-3);
-  color: var(--text);
+.sl-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
   font-size: 13px;
+  line-height: 20px;
   font-weight: 600;
-  background: var(--surface-sunken);
-  border-top: 1px solid var(--border);
-}
-.sl-table tbody:first-of-type .sl-group-row th {
-  border-top: 0;
+  color: var(--text-muted);
 }
 .sl-group-toggle {
   all: unset;
@@ -116,93 +95,194 @@
   cursor: pointer;
   border-radius: var(--radius-sm);
 }
+.sl-group-toggle:hover {
+  color: var(--text);
+}
 .sl-group-toggle:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
-.sl-group-updating {
-  margin-left: var(--space-2);
-  font-weight: 400;
+.sl-group[data-group="waiting"] .sl-group-head {
+  color: var(--waiting);
 }
-.sl-table tbody[data-updating] td:first-child {
+.sl-group-hint,
+.sl-group-note {
+  font-weight: 400;
+  color: var(--text-subtle);
+}
+.sl-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.sl-group[data-updating] .sl-rows {
   box-shadow: inset 3px 0 0 var(--border-strong);
 }
-.sl-table tr.sl-static,
-.sl-table tr.sl-skeleton {
-  cursor: default;
+.sl-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
 }
-.sl-table tr.sl-static:hover td {
-  background: transparent;
+.sl-row:last-child {
+  border-bottom: 0;
 }
-.sl-more-row td {
-  height: 40px;
+.sl-row:hover {
+  background: var(--surface-hover);
 }
-.sl-more-row td > * + * {
-  margin-left: var(--space-3);
-}
-/* A problem only the owner can fix: a red edge, with the words in Doing now (E11). */
-.sl-table tr[data-trouble] td:first-child {
-  box-shadow: inset 3px 0 0 var(--failed);
-}
-.sl-table tbody tr[data-nav-row]:focus-visible {
+.sl-row:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
-
-/* Cells */
-.sl-session {
+/* A problem only the owner can fix: a red edge, with the words in the line (E11). */
+.sl-row[data-trouble] {
+  box-shadow: inset 3px 0 0 var(--failed);
+}
+.sl-group[data-group="waiting"] .sl-row:not([data-trouble]) {
+  box-shadow: inset 3px 0 0 var(--waiting);
+}
+.sl-row-skeleton {
+  cursor: default;
+}
+.sl-row-lead {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  align-self: start;
+  margin-top: 2px;
+  height: 20px;
+}
+.sl-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.sl-row-head {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
   min-width: 0;
 }
-.sl-session-title {
+.sl-row-title {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 14px;
+  line-height: 20px;
   font-weight: 500;
   color: var(--text);
   text-decoration: none;
 }
-.sl-session-title:hover {
+.sl-row-title:hover {
   text-decoration: underline;
 }
-.sl-session-detail {
-  flex: 1 1 0;
-  min-width: 40px;
+.sl-row[data-muted] .sl-row-title {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.sl-row-tag {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.sl-row-line {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
 }
-.sl-chat-mark {
-  display: inline-flex;
-  align-self: center;
+.sl-inferred {
+  text-decoration: underline dashed var(--text-subtle);
+  text-underline-offset: 3px;
+}
+.sl-row-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 96px) 72px 96px 112px;
+  align-items: center;
+  column-gap: var(--space-3);
+  font-size: 13px;
+}
+.sl-row-issue {
+  justify-self: end;
+  overflow: hidden;
+}
+.sl-row-cost {
+  justify-self: end;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.sl-row-time {
+  justify-self: end;
   color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.sl-doing {
+.sl-row-action {
+  display: inline-flex;
+  justify-content: flex-end;
+}
+.sl-row-hover {
+  opacity: 0;
+}
+.sl-row:hover .sl-row-hover,
+.sl-row:focus-within .sl-row-hover,
+.sl-row:focus .sl-row-hover {
+  opacity: 1;
+}
+.sl-row-chevron {
+  color: var(--text-subtle);
+  display: inline-flex;
+}
+.sl-more-link {
+  all: unset;
+  margin-top: var(--space-2);
+  padding: 2px var(--space-4);
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.sl-more-link:hover {
+  text-decoration: underline;
+}
+.sl-more-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}
+.sl-more-row {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  padding: 0 var(--space-4);
 }
-.sl-doing .ah-icon {
-  flex: none;
-  color: var(--text-subtle);
-}
-.sl-doing[style] .ah-icon {
-  color: inherit;
-}
-.sl-actions {
-  display: inline-flex;
-  gap: var(--space-1);
-  justify-content: flex-end;
-  font-family: var(--font-sans);
-}
-.sl-table th.sl-col-actions,
-.sl-table td.sl-col-actions {
-  padding-right: var(--space-3);
+@media (max-width: 1100px) {
+  .sl-row-meta {
+    grid-template-columns: 72px 88px 104px;
+  }
+  .sl-row-issue {
+    display: none;
+  }
 }
 
 .sl-foot {

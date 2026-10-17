@@ -18,7 +18,7 @@ import {
   useResumeLink,
 } from "./DrivenControls";
 import { rowHref } from "./drivenRows";
-import { FILTER_KEYS, STATUSES, periodOf, sortOf, viewOf, withinOf, type View } from "./filters";
+import { FILTER_KEYS, STATUSES, periodOf, viewOf, withinOf, type View } from "./filters";
 import { GridSection } from "./GridSection";
 import { LiveDigest } from "./LiveDigest";
 import {
@@ -28,7 +28,8 @@ import {
   useSectionRefresh,
   type Session,
 } from "./queries";
-import { fold, needsYou, openHref, searchText } from "./rows";
+import { commonRepoOf, orderRows } from "./inbox";
+import { fold, searchText } from "./rows";
 import {
   SECTIONS,
   isDriven,
@@ -39,7 +40,7 @@ import {
   type SectionRow,
 } from "./sections";
 import { SessionSection, useCollapsed } from "./SessionSection";
-import { SessionsTable, type TableGroup } from "./SessionsTable";
+import { SessionsInbox, type InboxGroup } from "./SessionsInbox";
 import { Toolbar, periodLabel } from "./Toolbar";
 import { useScrollAnchor } from "./useScrollAnchor";
 
@@ -252,9 +253,7 @@ export function SessionsListScreen() {
   const tab: SectionId | null = STATUSES.find((s) => s === statusParam) ?? null;
   const clearFilters = () => {
     update({
-      ...Object.fromEntries(
-        FILTER_KEYS.filter((key) => key !== "status").map((key) => [key, null]),
-      ),
+      ...Object.fromEntries(FILTER_KEYS.map((key) => [key, null])),
       q: null,
     });
   };
@@ -283,6 +282,13 @@ export function SessionsListScreen() {
     new Set(SECTIONS.filter(({ id }) => queries[id] !== null).map(({ id }) => id)),
     queries.ended?.from ?? null,
   );
+  const agentsById = new Map((driving.list.data?.items ?? []).map((a) => [a.id, a]));
+  const drvOf = (row: SectionRow) =>
+    isDriven(row)
+      ? row
+      : row.agent_session_id
+        ? (agentsById.get(row.agent_session_id) ?? null)
+        : null;
   const needle = fold(query.trim());
   const matches = (row: SectionRow) => !needle || fold(searchText(row)).includes(needle);
   const asked = SECTIONS.flatMap((section) => {
@@ -302,7 +308,6 @@ export function SessionsListScreen() {
       ({ pages }) => pages.isPending || pages.isPlaceholderData || pages.isFetchingNextPage,
     );
   const period = periodOf(params);
-  const sort = sortOf(params);
   const shownSections = asked.filter((section) => tab === null || section.id === tab);
   const loadedAll = asked.flatMap((section) => section.all);
   const projectCount = new Set(loadedAll.map((row) => row.project)).size;
@@ -331,88 +336,43 @@ export function SessionsListScreen() {
     ...new Set(loadedAll.flatMap((row) => (isDriven(row) ? [] : (row.label?.workflows ?? [])))),
   ].sort();
 
-  // What needs the owner: waiting sessions and rows with a problem only they can fix.
-  const waitingCount = countOf("waiting");
-  const troubled = loadedAll.filter(needsYou);
-  const liveCount = countOf("live");
-  const focusFirst = (pick: (row: HTMLElement) => boolean, group: SectionId | null) => {
-    if (group && collapsed.has(group)) toggleCollapsed(group);
-    if (tab !== null && group !== null && tab !== group) update({ status: null });
+  // What needs the owner: the Needs you group (waits and open sessions with a problem only they can fix).
+  const needCount = countOf("waiting") ?? 0;
+  const workingCount = countOf("live") ?? 0;
+  const pausedCount = countOf("idle") ?? 0;
+  const focusNeeds = () => {
+    if (collapsed.has("waiting")) toggleCollapsed("waiting");
+    if (tab !== null && tab !== "waiting") update({ status: null });
     requestAnimationFrame(() => {
-      const target = [...(screenRef.current?.querySelectorAll<HTMLElement>(NAV) ?? [])].find(pick);
+      const target = screenRef.current?.querySelector<HTMLElement>(
+        '[data-group="waiting"] [data-nav-row]',
+      );
       target?.focus();
       target?.scrollIntoView({ block: "nearest" });
     });
   };
+  const others = [
+    workingCount ? `${fmtInt(workingCount)} working` : "",
+    pausedCount ? `${fmtInt(pausedCount)} paused` : "",
+  ].filter(Boolean);
   const attention = pending ? (
     <Skeleton width={320} />
-  ) : waitingCount || troubled.length > 0 ? (
+  ) : needCount > 0 ? (
     <span className="sl-attention-parts">
-      {Boolean(waitingCount) && (
-        <button
-          type="button"
-          className="sl-attention-link"
-          onClick={() => {
-            focusFirst(
-              (el) => el.closest("[data-group]")?.getAttribute("data-group") === "waiting",
-              "waiting",
-            );
-          }}
-        >
-          <Icon name="hand" size="sm" />
-          {waitingCount === 1
-            ? "1 session is waiting for you"
-            : `${plural(waitingCount ?? 0, "session", "sessions")} are waiting for you`}
-        </button>
-      )}
-      {Boolean(waitingCount) && troubled.length > 0 && <span aria-hidden="true">·</span>}
-      {troubled.length > 0 && (
-        <button
-          type="button"
-          className="sl-attention-link sl-attention-trouble"
-          onClick={() => {
-            focusFirst((el) => el.hasAttribute("data-trouble"), null);
-          }}
-        >
-          <Icon name="circle-x" size="sm" />
-          {troubled.length === 1
-            ? "1 session has a problem that needs you"
-            : `${fmtInt(troubled.length)} sessions have problems that need you`}
-        </button>
-      )}
+      <button type="button" className="sl-attention-link" onClick={focusNeeds}>
+        <Icon name="hand" size="sm" />
+        {needCount === 1 ? "1 session needs you" : `${fmtInt(needCount)} sessions need you`}
+      </button>
+      {others.length > 0 && <span className="ah-muted">{`· ${others.join(" · ")}`}</span>}
     </span>
   ) : (
     <span className="sl-attention-calm">
       <Icon name="circle-check" size="sm" />
-      {liveCount
-        ? `Nothing needs you. ${liveCount === 1 ? "1 session" : `${fmtInt(liveCount)} sessions`} live.`
-        : "Nothing needs you. No session is live."}
+      {others.length > 0
+        ? `Nothing needs you. ${others.join(" · ")}.`
+        : "Nothing needs you. No session is working."}
     </span>
   );
-
-  const tabCount = (n: number | null, approx: boolean) =>
-    n === null ? "…" : `${approx ? "~" : ""}${fmtInt(n)}`;
-  const allCount = asked.reduce<number | null>(
-    (sum, section) =>
-      sum === null || counted(section) === null ? null : sum + (counted(section) ?? 0),
-    0,
-  );
-  const tabs = [
-    {
-      id: "all",
-      label: `All · ${tabCount(
-        allCount,
-        asked.some((s) => s.pages.hasNextPage),
-      )}`,
-    },
-    ...SECTIONS.map((section) => {
-      const found = asked.find((s) => s.id === section.id);
-      return {
-        id: section.id,
-        label: `${section.title} · ${found ? tabCount(counted(found), found.pages.hasNextPage) : "—"}`,
-      };
-    }),
-  ];
 
   const emptyFor = (id: SectionId | null) => {
     if (neverAny)
@@ -464,15 +424,15 @@ export function SessionsListScreen() {
       );
     const title =
       id === "waiting"
-        ? "Nothing is waiting for you."
+        ? "Nothing needs you."
         : id === "live"
-          ? "No session is live."
+          ? "No session is working."
           : id === "idle"
-            ? "No idle session."
+            ? "No paused session."
             : id === "ended"
               ? period === "All"
-                ? "No session ended yet."
-                : `No session ended in the ${periodLabel(period).toLowerCase()}.`
+                ? "No session finished yet."
+                : `No session finished in the ${periodLabel(period).toLowerCase()}.`
               : period === "All"
                 ? "No sessions."
                 : `No sessions in the ${periodLabel(period).toLowerCase()}.`;
@@ -550,7 +510,7 @@ export function SessionsListScreen() {
       </div>
     );
   } else {
-    const groups: TableGroup[] = visibleSections.map((section) => ({
+    const groups: InboxGroup[] = visibleSections.map((section) => ({
       id: section.id,
       title: section.title,
       count: counted(section),
@@ -560,7 +520,7 @@ export function SessionsListScreen() {
       updating: section.pages.isPlaceholderData,
       pending: section.pages.isPending,
       error: section.pages.error,
-      rows: section.rows,
+      rows: orderRows(section.id, section.rows, drvOf),
       hasNextPage: section.pages.hasNextPage,
       loadingMore: section.pages.isFetchingNextPage,
       onToggle: () => {
@@ -577,20 +537,16 @@ export function SessionsListScreen() {
           },
     }));
     body = (
-      <SessionsTable
+      <SessionsInbox
         groups={groups}
         tz={tz}
         showProject={!scope && projectCount > 1}
-        sort={sort}
-        onSort={(key) => {
-          const desc = `-${key}`;
-          update({ sort: sort === desc ? key : desc === "-started_at" ? null : desc });
+        commonRepo={commonRepoOf(loadedAll)}
+        drvOf={drvOf}
+        onOpen={(href) => {
+          void navigate(href);
         }}
-        onOpen={(row) => {
-          void navigate(openHref(row));
-        }}
-        resume={resumeLink}
-        endedScope={periodLabel(period).toLowerCase()}
+        endedScope={period === "All" ? null : periodLabel(period).toLowerCase()}
       />
     );
   }
@@ -627,16 +583,6 @@ export function SessionsListScreen() {
       <DrivenBanner driving={driving} />
       {!neverAny && (
         <>
-          <div className="sl-tabs">
-            <SegmentedControl
-              label="Status"
-              value={tab ?? "all"}
-              onChange={(id) => {
-                update({ status: id === "all" ? null : id });
-              }}
-              options={tabs}
-            />
-          </div>
           <Toolbar
             params={params}
             update={update}

@@ -1,4 +1,4 @@
-/* Sessions toolbar: search, the four filters people use, and More filters for the rest (sessions redesign). */
+/* Sessions toolbar: a wide search, the period, and one Filters popover for the rest (sessions v2). */
 import { useEffect, useRef, useState } from "react";
 
 import { Button, FacetMenu, FilterChip, Icon, Kbd, Popover } from "../../components";
@@ -19,9 +19,30 @@ const OUTCOME_LABEL: Record<(typeof OUTCOMES)[number], string> = {
   blocked: "Blocked",
   error: "Error",
 };
-/** The filters that live in More filters, shown as chips once set. */
-export const MORE_KEYS = ["agent", "file", "tool", "cost_min", "cost_max", "guard_denial"] as const;
+/** The filters that live in the Filters popover, shown as chips once set. */
+export const MORE_KEYS = [
+  "repo",
+  "outcome",
+  "workflow",
+  "agent",
+  "file",
+  "tool",
+  "cost_min",
+  "cost_max",
+  "guard_denial",
+  "status",
+] as const;
+const STATUS_LABEL: Record<string, string> = {
+  waiting: "Needs you",
+  live: "Working",
+  idle: "Paused",
+  ended: "Finished",
+};
 const MORE_LABEL: Record<(typeof MORE_KEYS)[number], string> = {
+  repo: "Repo",
+  outcome: "Outcome",
+  workflow: "Workflow",
+  status: "Status",
   agent: "Agent type",
   file: "Touched file",
   tool: "Used tool",
@@ -29,6 +50,11 @@ const MORE_LABEL: Record<(typeof MORE_KEYS)[number], string> = {
   cost_max: "Cost to",
   guard_denial: "Had a guard denial",
 };
+
+function outcomeText(value: string | null): string {
+  const outcome = OUTCOMES.find((o) => o === value);
+  return outcome ? OUTCOME_LABEL[outcome] : (value ?? "");
+}
 
 export function periodLabel(period: Period): string {
   return PERIOD_LABEL[period];
@@ -77,7 +103,52 @@ function SearchField({ value, onChange }: { value: string; onChange: (q: string)
   );
 }
 
-function MoreFilters({ params, update }: { params: URLSearchParams; update: Update }) {
+function Choices({
+  title,
+  options,
+  value,
+  onPick,
+  mono,
+}: {
+  title: string;
+  options: { id: string; label: string }[];
+  value: string | null;
+  onPick: (id: string | null) => void;
+  mono?: boolean;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <fieldset className="sl-more-field" style={{ border: 0, margin: 0, padding: 0 }}>
+      <legend className="ah-small" style={{ marginBottom: 4 }}>
+        {title}
+      </legend>
+      <div className={mono ? "ah-row ah-wrap ah-mono" : "ah-row ah-wrap"} style={{ gap: 4 }}>
+        {options.map((option) => (
+          <FilterChip
+            key={option.id}
+            value={option.label}
+            active={value === option.id}
+            onClick={() => {
+              onPick(value === option.id ? null : option.id);
+            }}
+          />
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function MoreFilters({
+  params,
+  update,
+  repos,
+  workflows,
+}: {
+  params: URLSearchParams;
+  update: Update;
+  repos: string[];
+  workflows: string[];
+}) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLSpanElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -113,7 +184,7 @@ function MoreFilters({ params, update }: { params: URLSearchParams; update: Upda
       document.removeEventListener("keydown", escape);
     };
   }, [open]);
-  const set = MORE_KEYS.filter((key) => params.get(key));
+  const set = MORE_KEYS.filter((key) => key !== "status" && params.get(key));
   const costBad = badDecimal(draft.cost_min) || badDecimal(draft.cost_max);
   const apply = () => {
     if (costBad) return;
@@ -155,11 +226,41 @@ function MoreFilters({ params, update }: { params: URLSearchParams; update: Upda
         }}
       >
         <Icon name="list-filter" size="sm" />
-        <span>{set.length > 0 ? `More filters · ${String(set.length)}` : "More filters"}</span>
+        <span>{set.length > 0 ? `Filters · ${String(set.length)}` : "Filters"}</span>
         <Icon name="chevron-down" size="sm" />
       </button>
-      <Popover open={open} label="More filters" style={{ top: 32, left: 0, width: 320 }}>
+      <Popover
+        open={open}
+        label="Filters"
+        style={{ top: 36, left: 0, width: 340, maxHeight: "70vh", overflow: "auto" }}
+      >
         <div className="ah-stack" style={{ gap: 12, padding: 4 }}>
+          <Choices
+            title="Repo"
+            mono
+            options={repos.map((r) => ({ id: r, label: r }))}
+            value={params.get("repo")}
+            onPick={(id) => {
+              update({ repo: id });
+            }}
+          />
+          <Choices
+            title="Outcome"
+            options={OUTCOMES.map((o) => ({ id: o, label: OUTCOME_LABEL[o] }))}
+            value={params.get("outcome")}
+            onPick={(id) => {
+              update({ outcome: id });
+            }}
+          />
+          <Choices
+            title="Workflow"
+            mono
+            options={workflows.map((w) => ({ id: w, label: w }))}
+            value={params.get("workflow")}
+            onPick={(id) => {
+              update({ workflow: id });
+            }}
+          />
           {text("agent", "Agent type", "Subagent type, e.g. Explore")}
           {text("file", "Touched file", "Path or glob")}
           <fieldset className="sl-more-field" style={{ border: 0, margin: 0, padding: 0 }}>
@@ -225,7 +326,11 @@ function MoreFilters({ params, update }: { params: URLSearchParams; update: Upda
               variant="ghost"
               onClick={() => {
                 setDraft({ agent: "", file: "", cost_min: "", cost_max: "" });
-                update(Object.fromEntries(MORE_KEYS.map((key) => [key, null])));
+                update(
+                  Object.fromEntries(
+                    MORE_KEYS.filter((key) => key !== "status").map((key) => [key, null]),
+                  ),
+                );
               }}
             >
               Clear these filters
@@ -275,17 +380,12 @@ export function Toolbar({
   onClearAll,
 }: ToolbarProps) {
   const repo = params.get("repo");
-  const outcome = params.get("outcome");
   const workflow = params.get("workflow");
   const repoOptions = repo && !repos.includes(repo) ? [...repos, repo] : repos;
   const workflowOptions =
     workflow && !workflows.includes(workflow) ? [...workflows, workflow] : workflows;
   const more = MORE_KEYS.filter((key) => params.get(key));
-  const anySet =
-    Boolean(query) ||
-    [repo, outcome, workflow].some(Boolean) ||
-    more.length > 0 ||
-    params.get("period") !== null;
+  const anySet = Boolean(query) || more.length > 0 || params.get("period") !== null;
   return (
     <div className="ah-row ah-wrap sl-toolbar" role="group" aria-label="Filters">
       <SearchField value={query} onChange={onQuery} />
@@ -294,58 +394,21 @@ export function Toolbar({
           {matches === 1 ? "1 match" : `${String(matches)} matches`}
         </span>
       )}
-      <span title="Applies to ended sessions. Waiting, live and idle sessions always show.">
+      <span title="Applies to finished sessions. Sessions that need you, work or are paused always show.">
         <FacetMenu
           label="Period"
           anyLabel={PERIOD_LABEL[period]}
           options={PERIODS.map((p) => ({
             id: p,
             label: PERIOD_LABEL[p],
-            checked: p === period,
+            // The default period is not a filter the owner set: the button stays quiet.
+            checked: p === period && p !== "7 d",
           }))}
           onToggle={(id) => {
             update({ period: id === "7 d" || id === period ? null : id });
           }}
         />
       </span>
-      <FacetMenu
-        label="Repo"
-        anyLabel="All"
-        options={repoOptions.map((r) => ({ id: r, label: r, mono: true, checked: r === repo }))}
-        onToggle={(id) => {
-          update({ repo: id === repo ? null : id });
-        }}
-        onClear={() => {
-          update({ repo: null });
-        }}
-      />
-      <FacetMenu
-        label="Outcome"
-        options={OUTCOMES.map((o) => ({ id: o, label: OUTCOME_LABEL[o], checked: o === outcome }))}
-        onToggle={(id) => {
-          update({ outcome: id === outcome ? null : id });
-        }}
-        onClear={() => {
-          update({ outcome: null });
-        }}
-      />
-      {workflowOptions.length > 0 && (
-        <FacetMenu
-          label="Workflow"
-          options={workflowOptions.map((w) => ({
-            id: w,
-            label: w,
-            mono: true,
-            checked: w === workflow,
-          }))}
-          onToggle={(id) => {
-            update({ workflow: id === workflow ? null : id });
-          }}
-          onClear={() => {
-            update({ workflow: null });
-          }}
-        />
-      )}
       {view === "grid" && (
         <FacetMenu
           label="Group"
@@ -360,7 +423,12 @@ export function Toolbar({
           }}
         />
       )}
-      <MoreFilters params={params} update={update} />
+      <MoreFilters
+        params={params}
+        update={update}
+        repos={repoOptions}
+        workflows={workflowOptions}
+      />
       {more.map((key) => (
         <FilterChip
           key={key}
@@ -370,7 +438,11 @@ export function Toolbar({
               ? MORE_LABEL[key]
               : key.startsWith("cost")
                 ? `$${params.get(key) ?? ""}`
-                : (params.get(key) ?? "")
+                : key === "status"
+                  ? (STATUS_LABEL[params.get(key) ?? ""] ?? params.get(key) ?? "")
+                  : key === "outcome"
+                    ? outcomeText(params.get(key))
+                    : (params.get(key) ?? "")
           }
           onRemove={() => {
             update({ [key]: null });
@@ -379,7 +451,7 @@ export function Toolbar({
       ))}
       {anySet && (
         <Button size="sm" variant="ghost" icon="x" onClick={onClearAll}>
-          Clear all
+          Clear filters
         </Button>
       )}
     </div>

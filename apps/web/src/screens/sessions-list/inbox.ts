@@ -48,7 +48,9 @@ const CLOSED: Record<string, string> = {
 };
 
 function problemText(s: Session): string {
-  return s.needs_you_problem ?? count(s.problems.needs_you, "problem needs you", "problems need you");
+  return (
+    s.needs_you_problem ?? count(s.problems.needs_you, "problem needs you", "problems need you")
+  );
 }
 
 /** When the session last did something (or was asked), for the right-hand time. */
@@ -92,10 +94,12 @@ function outcomeOf(
 function tagsOf(row: SectionRow, ctx: ViewContext): string[] {
   const tags: string[] = [];
   if (isDriven(row)) {
-    if (ctx.commonRepo !== null && row.workdir_label !== ctx.commonRepo) tags.push(row.workdir_label);
+    if (ctx.commonRepo !== null && row.workdir_label !== ctx.commonRepo)
+      tags.push(row.workdir_label);
   } else {
     if (!row.agent_session_id) tags.push("Terminal");
-    if (row.run_id) tags.push(`Run ${row.issue ?? short(row.run_id)}${row.step ? ` · ${row.step}` : ""}`);
+    if (row.run_id)
+      tags.push(`Run ${row.issue ?? short(row.run_id)}${row.step ? ` · ${row.step}` : ""}`);
     const repo = row.label?.repo ?? row.repo;
     const branch = row.label?.branch;
     if (repo && ctx.commonRepo !== null && repo !== ctx.commonRepo) {
@@ -133,7 +137,8 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
     else if (row.waiting_reason === "Guard ask") {
       line = "A guard asks you to confirm · no timeout";
       icon = "shield-alert";
-    } else if (row.waiting_reason === "Permission prompt") line = "Asks for a permission in the terminal";
+    } else if (row.waiting_reason === "Permission prompt")
+      line = "Asks for a permission in the terminal";
     else line = row.waiting_reason ?? "Waiting for you in the terminal";
     return {
       ...base,
@@ -147,7 +152,13 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
 
   if (group === "live") {
     if (isDriven(row))
-      return { ...base, lead: "pulse", line: "Working on your message", time: lastAt(row, drv), timeTip: "Last activity" };
+      return {
+        ...base,
+        lead: "pulse",
+        line: "Working on your message",
+        time: lastAt(row, drv),
+        timeTip: "Last activity",
+      };
     if (row.failing_notice)
       return {
         ...base,
@@ -168,7 +179,8 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
 
   if (group === "idle") {
     let line: string;
-    if (isDriven(row)) line = [`${modeLabel(row.mode)} mode`, row.model].filter(Boolean).join(" · ");
+    if (isDriven(row))
+      line = [`${modeLabel(row.mode)} mode`, row.model].filter(Boolean).join(" · ");
     else line = row.last_action ?? "No tool used yet";
     return { ...base, lead: null, line, time: lastAt(row, drv), timeTip: "Last activity" };
   }
@@ -183,7 +195,7 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
     lineTone = "failed";
     lead = { icon: "circle-x", tone: "failed" };
   } else if (outcome.word === "Failed") {
-    fact = (!isDriven(row) && (row.failing_notice ?? row.last_action)) || null;
+    fact = isDriven(row) ? null : (row.failing_notice ?? row.last_action ?? null);
   } else if (outcome.word === "Blocked" && !isDriven(row)) {
     fact = row.last_action ?? null;
   } else if (!isDriven(row) && row.pr) {
@@ -208,14 +220,16 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
   };
 }
 
-/** Order inside a group: the oldest wait first in Needs you, the latest activity first while open. */
+/** Order inside a group: the oldest wait first in Needs you, else the latest (activity or end) first. */
 export function orderRows(
   group: SectionId,
   rows: SectionRow[],
   drvOf: (row: SectionRow) => AgentSession | null,
 ): SectionRow[] {
-  if (group === "ended") return rows;
-  const at = (row: SectionRow) => Date.parse(lastAt(row, drvOf(row)));
+  const at = (row: SectionRow) =>
+    Date.parse(
+      group === "ended" ? (row.ended_at ?? lastAt(row, drvOf(row))) : lastAt(row, drvOf(row)),
+    );
   const sorted = [...rows];
   sorted.sort((a, b) => (group === "waiting" ? at(a) - at(b) : at(b) - at(a)));
   return sorted;
