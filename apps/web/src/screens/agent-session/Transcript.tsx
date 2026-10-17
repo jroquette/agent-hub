@@ -37,8 +37,7 @@ export interface TranscriptProps {
   state: TranscriptState;
   /** Posts a permission answer; without it the cards are read-only. */
   onAnswerPermission?:
-    | ((requestId: string, answer: PermissionAnswer) => Promise<unknown> | undefined)
-    | undefined;
+    ((requestId: string, answer: PermissionAnswer) => Promise<unknown> | undefined) | undefined;
   /** Receives the scroll container, for the chat's `useStickToBottom`. */
   scrollerRef?: ((element: HTMLDivElement | null) => void) | undefined;
   /** The chat's stick-to-bottom state; without it the transcript only renders. */
@@ -73,8 +72,7 @@ function attachedRequests(entries: readonly TranscriptEntry[]): Set<string> {
 
 type RunEntry = Extract<TranscriptEntry, { kind: "tool" | "thinking" }>;
 type Row =
-  | { kind: "entry"; entry: TranscriptEntry }
-  | { kind: "run"; key: string; entries: RunEntry[] };
+  { kind: "entry"; entry: TranscriptEntry } | { kind: "run"; key: string; entries: RunEntry[] };
 
 /** What the log shows from `start` on: attached cards leave their place, and what Claude does
  * between two messages (its calls and the thoughts between them) becomes one run. A run is keyed
