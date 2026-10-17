@@ -359,7 +359,7 @@ def _insert_agent_session(db_path: Path) -> None:
         engine.dispose()
 
 
-def test_keeps_events_and_sessions_when_upgraded_from_0004(tmp_path: Path) -> None:
+def test_keeps_events_and_sessions_when_item_versions_added(tmp_path: Path) -> None:
     db_path = tmp_path / "agent-hub.db"
     config = alembic_config(f"sqlite:///{db_path}")
     upgrade(config, "0002")
