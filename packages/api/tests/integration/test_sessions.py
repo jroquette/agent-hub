@@ -127,7 +127,7 @@ def test_lists_only_sessions_of_issue_when_issue_filter_given(
     assert [item["id"] for item in other] == ["session-2"]
 
 
-def test_reads_session_events_in_pages_of_up_to_1000_when_limit_given(composed: Any) -> None:
+def test_reads_session_events_in_larger_pages_than_other_lists_when_limit_given(composed: Any) -> None:
     tools = tuple(("Bash", {"command": f"make test-{n}"}) for n in range(600))
     composed.store.append(a_session_events("session-1", tools=tools))
     url = "/api/v1/sessions/session-1/events"
