@@ -2,6 +2,7 @@
 bounds a decoded row is held to."""
 
 import pytest
+from pydantic import ValidationError
 
 from agent_hub.core.item_versions.unit_content import (
     MAX_UNIT_FILES,
@@ -18,9 +19,9 @@ from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES
 def _folder() -> UnitContent:
     return UnitContent(
         files=(
-            UnitFile(path="scripts/run.sh", content=b"#!/bin/sh\necho run\n", executable=True),
             UnitFile(path="SKILL.md", content=b"---\nname: demo\n---\nBody\n", executable=False),
             UnitFile(path="assets/logo.bin", content=b"\x00\x01\xff", executable=False),
+            UnitFile(path="scripts/run.sh", content=b"#!/bin/sh\necho run\n", executable=True),
         )
     )
 
@@ -34,7 +35,7 @@ def test_round_trips_when_folder_encoded() -> None:
 
     decoded = decode(encode(content, folder=True), folder=True)
 
-    assert decoded == UnitContent(files=tuple(sorted(content.files, key=lambda f: f.path)))
+    assert decoded == content
 
 
 def test_writes_sorted_frames_when_folder_encoded() -> None:
@@ -115,7 +116,34 @@ def test_refuses_corrupt_blob_when_file_too_large() -> None:
 def test_keeps_bounds_when_file_at_limit() -> None:
     full = b"a" * MAX_SKILL_FILE_BYTES
 
-    assert decode(_frame(b"a.md", b"-", full), folder=True).files[0].content == full
+    assert decode(_frame(b"SKILL.md", b"-", full), folder=True).files[0].content == full
+
+
+@pytest.mark.parametrize(
+    "path",
+    [pytest.param("../x", id="parent"), pytest.param("/x", id="absolute"), "a//b", "", "a\0b"],
+)
+def test_refuses_file_when_path_not_relative(path: str) -> None:
+    with pytest.raises(ValidationError, match="relative"):
+        UnitFile(path=path, content=b"")
+
+
+def test_refuses_content_when_paths_repeat_or_unordered() -> None:
+    first, second = UnitFile(path="SKILL.md", content=b""), UnitFile(path="a.md", content=b"")
+
+    with pytest.raises(ValidationError, match="path order"):
+        UnitContent(files=(first, first))
+    with pytest.raises(ValidationError, match="path order"):
+        UnitContent(files=(second, first))
+
+
+@pytest.mark.parametrize(
+    "blob",
+    [pytest.param(b"", id="empty"), pytest.param(_frame(b"a.md", b"-", b"ok"), id="no-skill-md")],
+)
+def test_refuses_corrupt_blob_when_folder_has_no_skill_md(blob: bytes) -> None:
+    with pytest.raises(CorruptVersionError, match="SKILL.md"):
+        decode(blob, folder=True)
 
 
 def test_counts_file_bytes_when_size_taken() -> None:

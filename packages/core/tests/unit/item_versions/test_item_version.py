@@ -104,6 +104,26 @@ def test_carries_meta_and_content_when_version_built() -> None:
     assert version.meta().model_dump() == version.model_dump(exclude={"content"})
 
 
+@pytest.mark.parametrize(
+    "seq_and_first",
+    [pytest.param((1, False), id="seq-one-not-first"), pytest.param((2, True), id="later-first")],
+)
+def test_refuses_version_when_first_and_seq_disagree(seq_and_first: tuple[int, bool]) -> None:
+    seq, first = seq_and_first
+
+    with pytest.raises(ValidationError, match="seq 1"):
+        an_item_version(seq=seq, first=first)
+    with pytest.raises(ValidationError, match="seq 1"):
+        _new(seq=seq, first=first)
+
+
+def test_accepts_later_version_when_not_first() -> None:
+    version = an_item_version(seq=2, first=False)
+
+    assert version.meta().seq == 2
+    assert not version.first
+
+
 def test_refuses_change_when_version_frozen() -> None:
     version = an_item_version()
 
