@@ -583,12 +583,12 @@ only the version history below is stored:
   `item_versions`): a skill's whole folder, an agent's file, a hook's whole file (every hook of a file shares it). A
   unit seen for the first time gets an `external` baseline marked `first`; one whose content hash differs from its
   last version gets an `external` version (two edits between reads are one). The stat mark of each unit is memoized,
-  so a warm read touches neither the files nor the database, and an edit that keeps size and mtime is noticed at the
+  so a warm read reads no unit and no database row, and an edit that keeps size and mtime is noticed at the
   next real change. Nothing is stored for a unit with a secret match (r1), past the bounds (256 KiB per file,
   `SKILL.md` and 200 bundled files) or that cannot be read; a link is versioned at its target, never
-  `settings.local.json`. A catalog read captures at most 16 MiB of units; the rest wait for a later read. A capture
-  that cannot write within the database's busy timeout answers 503, and the next read captures again. The hub's
-  files stay untouched.
+  `settings.local.json`. A catalog read stops reading new units once 16 MiB have been read (the read that crosses it
+  still finishes); the rest wait for a later read. A capture that cannot write within the database's busy timeout
+  answers 503, and the next read captures again. The hub's files stay untouched.
 
 **Workflows (AGH-225 API, AGH-226 screen).** `GET /api/v1/workflows` lists each project's workflows (the
 hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema.md)) with their source (`hub` or
