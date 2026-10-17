@@ -49,7 +49,11 @@
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
-.ft-group[data-group="needs"] .ft-group-head {
+.ft-group-title {
+  margin: 0;
+  font: inherit;
+}
+.ft-group[data-group="needs"] .ft-group-count {
   color: var(--waiting);
 }
 .ft-group-hint {

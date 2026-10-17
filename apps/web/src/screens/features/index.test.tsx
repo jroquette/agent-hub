@@ -181,6 +181,63 @@ describe("FeaturesScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: /^In progress/ }));
   });
 
+  it("reads the owner step count from Evaluate's reason when the ACs do not carry it (needs)", async () => {
+    const held = aFeature({
+      slug: "held-by-reason",
+      acs: { owner_steps: 0, passing: 12, total: 12 },
+      golden_path: aGoldenPath({
+        steps: [
+          aGoldenStep({
+            name: "evaluate",
+            state: "partial",
+            meta: "waiting: owner steps",
+            reason: "3 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)",
+          }),
+        ],
+      }),
+    });
+    open({ "/api/v1/features": aPage([held]) });
+
+    await screen.findByRole("link", { name: "held-by-reason" });
+    expect(rowOf("held-by-reason")).toHaveTextContent("3 owner steps to do");
+  });
+
+  it("shortens the Linear reason on the row of a feature in progress (progress)", async () => {
+    const unread = aFeature({
+      slug: "unread",
+      golden_path: aGoldenPath({
+        steps: [
+          aGoldenStep({
+            state: "unknown",
+            meta: "33/33 ACs",
+            reason: "Ticket status from Linear not loaded yet; open the Tickets tab.",
+          }),
+        ],
+      }),
+    });
+    open({ "/api/v1/features": aPage([unread]) });
+
+    await screen.findByRole("link", { name: "unread" });
+    expect(rowOf("unread")).toHaveTextContent(
+      "Implement · step 1 of 1 · ticket status not read from Linear yet",
+    );
+  });
+
+  it("names every cell in the row's accessible name and moves with j and k (keyboard)", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    open();
+
+    await screen.findByRole("link", { name: "layered-memory" });
+    const row = rowOf("layered-memory");
+    expect(row).toHaveAccessibleName(
+      /^layered-memory\. .*\. golden path at Evaluate\. ACs 21 of 21\. verdict SHIP-WITH-OWNER-STEPS\. issues AGH-48, AGH-49, AGH-50$/,
+    );
+    await userEvent.keyboard("j");
+    expect(rowOf("broken-record")).toHaveFocus();
+    await userEvent.keyboard("j");
+    expect(row).toHaveFocus();
+  });
+
   it("finds features by name, issue or repo through the URL (search)", async () => {
     const { router } = open();
 

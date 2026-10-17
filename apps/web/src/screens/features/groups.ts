@@ -19,7 +19,7 @@ export const GROUPS: readonly { id: GroupId; title: string; hint: string; empty:
   {
     id: "progress",
     title: "In progress",
-    hint: "Furthest along first",
+    hint: "Furthest along first, then most ACs passing",
     empty: "No feature in progress.",
   },
   { id: "shipped", title: "Shipped", hint: "", empty: "No feature shipped yet." },
@@ -49,6 +49,25 @@ function stepMeta(meta: string | null): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
+/** How many ACs wait on the owner: the AC counts, else the Evaluate step's reason ("3 ACs wait on owner steps …"). */
+export function ownerStepCount(f: Feature): number {
+  if (f.acs?.owner_steps) return f.acs.owner_steps;
+  const reason = f.golden_path.steps.find((s) => s.name === "evaluate")?.reason ?? "";
+  return Number(/^(\d+) ACs?\b/.exec(reason)?.[1] ?? 0);
+}
+
+function ownerLine(f: Feature): string {
+  const n = ownerStepCount(f);
+  return n ? `${plural(n, "owner step")} to do` : "Owner steps to do";
+}
+
+/** A step's reason for the row's line, short: the Linear one repeats on every row otherwise. */
+function shortReason(reason: string): string {
+  return /Linear not (loaded|read|connected)/i.test(reason)
+    ? "ticket status not read from Linear yet"
+    : reason.replace(/[.;]\s*open the \w+ tab\.?$/i, "");
+}
+
 export function reasonOf(f: Feature): Reason {
   if (f.problem) {
     return {
@@ -72,13 +91,12 @@ export function reasonOf(f: Feature): Reason {
     };
   }
   if (f.phase !== "shipped" && waitsOnOwner(f.golden_path)) {
-    const n = f.acs?.owner_steps ?? 0;
     return {
       group: "needs",
       rank: 2,
       icon: "hand",
       tone: "waiting",
-      line: n ? `${plural(n, "owner step")} to do` : "Owner steps to do",
+      line: ownerLine(f),
       doc: "acs",
     };
   }
@@ -100,7 +118,7 @@ export function reasonOf(f: Feature): Reason {
   ];
   const meta = stepMeta(step?.meta ?? null);
   if (meta) parts.push(meta);
-  if (step?.state === "unknown" && step.reason) parts.push(step.reason);
+  if (step?.reason && step.state !== "done") parts.push(shortReason(step.reason));
   return { group: "progress", rank: 0, icon: null, tone: null, line: parts.join(" · "), doc: null };
 }
 

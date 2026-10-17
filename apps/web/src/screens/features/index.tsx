@@ -8,6 +8,7 @@ import {
   AsOfStamp,
   Button,
   DerivedLabel,
+  GOLDEN_STEP_LABEL,
   EmptyState,
   FacetMenu,
   FilterChip,
@@ -23,6 +24,7 @@ import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
 import { readStored, writeStored } from "../../lib/storage";
+import { useRowKeys } from "../../lib/useRowKeys";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { typingIn } from "../../shell/goSequence";
 import { GOLDEN_PATH_ORDER, GoldenPathBar } from "./GoldenPathBar";
@@ -219,6 +221,25 @@ function AcCell({ f }: { f: Feature }) {
   return <AcBar acs={f.acs} width={96} />;
 }
 
+/** Everything the row's cells show, for keyboard and screen-reader users: the bars are not tab stops. */
+function rowLabel(f: Feature, reason: Reason): string {
+  const acs =
+    f.acs && !f.problem
+      ? `ACs ${String(f.acs.passing + f.acs.owner_steps)} of ${String(f.acs.total)}`
+      : null;
+  const issues = f.issues.length ? `issues ${f.issues.map(issueId).join(", ")}` : null;
+  return [
+    f.slug,
+    reason.line,
+    `golden path at ${GOLDEN_STEP_LABEL[f.phase]}`,
+    acs,
+    `verdict ${f.verdict ?? "none"}`,
+    issues,
+  ]
+    .filter(Boolean)
+    .join(". ");
+}
+
 function FeatureRow({
   f,
   reason,
@@ -246,7 +267,8 @@ function FeatureRow({
       data-muted={reason.group === "shipped" || undefined}
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
-      aria-label={`${f.slug}. ${reason.line}`}
+      data-nav-row=""
+      aria-label={rowLabel(f, reason)}
       onClick={() => {
         onOpen(href);
       }}
@@ -286,7 +308,9 @@ function FeatureRow({
           className="ft-row-line"
           title={reason.line}
           style={
-            reason.tone && reason.tone !== "done" ? { color: TONE_COLOR[reason.tone] } : undefined
+            reason.tone === "failed" || reason.tone === "blocked"
+              ? { color: TONE_COLOR[reason.tone] }
+              : undefined
           }
         >
           {reason.line}
@@ -306,14 +330,27 @@ function FeatureRow({
 
 function ColumnHeads() {
   const head = (label: string, hint: string, className?: string) => (
-    <Tooltip label={hint}>
-      <span className={className}>{label}</span>
-    </Tooltip>
+    <span className={className}>
+      <span className="ah-row" style={{ gap: 4 }}>
+        {label}
+        <Tooltip label={hint}>
+          <span
+            role="img"
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+            tabIndex={0}
+            aria-label={`${label}: ${hint}`}
+            style={{ display: "inline-flex" }}
+          >
+            <Icon name="info" size="sm" />
+          </span>
+        </Tooltip>
+      </span>
+    </span>
   );
   return (
-    <div className="ft-cols" aria-hidden="true">
-      <span />
-      <span />
+    <div className="ft-cols">
+      <span aria-hidden="true" />
+      <span aria-hidden="true" />
       <div className="ft-cols-meta">
         {head("Issues", "The tracker issues of the feature.", "ft-col-issues")}
         {head("Golden path", `One segment per step: ${GOLDEN_PATH_ORDER}.`)}
@@ -355,19 +392,21 @@ function Group({
   const hidden = (rows?.length ?? 0) - (shown?.length ?? 0);
   return (
     <section className="ft-group" aria-labelledby={headId} data-group={id}>
-      <h2 className="ft-group-head">
-        <button
-          type="button"
-          id={headId}
-          className="ft-group-toggle"
-          aria-expanded={open}
-          onClick={onToggle}
-        >
-          <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
-          {`${meta.title} · ${count}`}
-        </button>
+      <div className="ft-group-head">
+        <h2 className="ft-group-title">
+          <button
+            type="button"
+            id={headId}
+            className="ft-group-toggle"
+            aria-expanded={open}
+            onClick={onToggle}
+          >
+            <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
+            {meta.title} · <span className="ft-group-count">{count}</span>
+          </button>
+        </h2>
         {open && meta.hint && <span className="ft-group-hint">{meta.hint}</span>}
-      </h2>
+      </div>
       {open &&
         (shown === null ? (
           <ul className="ft-rows" aria-hidden="true">
@@ -422,6 +461,8 @@ export function FeaturesScreen() {
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
   const [collapsed, toggle] = useCollapsed();
+  const screenRef = useRef<HTMLDivElement>(null);
+  useRowKeys(screenRef);
 
   const all = features.data?.items ?? [];
   const q = params.get("q") ?? "";
@@ -458,6 +499,13 @@ export function FeaturesScreen() {
   const clearAll = () => {
     update({ q: null, phase: null, repo: null, size: null, verdict: null });
   };
+  const countFor = (key: FilterKey, test: (f: Feature) => boolean) =>
+    all.filter(
+      (f) =>
+        test(f) &&
+        matchesQuery(f, q) &&
+        active.every((a) => a.key === key || matches(f, a.key, a.values)),
+    ).length;
   const facet = (
     key: FilterKey,
     ids: readonly { id: string; label: string }[],
@@ -472,12 +520,17 @@ export function FeaturesScreen() {
   const onOpen = (href: string) => void navigate(href);
 
   return (
-    <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
+    <div ref={screenRef} style={{ padding: "16px 32px 40px" }} className="ah-stack">
       <div className="ah-row ah-wrap">
         <h1 className="ah-h1">Features</h1>
-        {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
+        {state === "offline" ? (
+          <AsOfStamp stale time={fmtClock(asOf, tz)} />
+        ) : (
+          features.isError &&
+          features.data && <AsOfStamp stale time={fmtClock(new Date(features.dataUpdatedAt), tz)} />
+        )}
       </div>
-      {features.isError ? (
+      {features.isError && !features.data ? (
         <ProblemError
           title={features.error.title}
           detail={features.error.detail}
@@ -506,7 +559,7 @@ export function FeaturesScreen() {
               options={facet(
                 "phase",
                 PHASES.map((p) => ({ id: p.id, label: p.label })),
-                (id) => all.filter((f) => f.phase === id).length,
+                (id) => countFor("phase", (f) => f.phase === id),
               )}
               onToggle={(id) => {
                 toggleValue("phase", id);
@@ -521,7 +574,7 @@ export function FeaturesScreen() {
                 options={facet(
                   "repo",
                   repos.map((r) => ({ id: r, label: r })),
-                  (id) => all.filter((f) => f.repos.includes(id)).length,
+                  (id) => countFor("repo", (f) => f.repos.includes(id)),
                 )}
                 onToggle={(id) => {
                   toggleValue("repo", id);
@@ -536,7 +589,7 @@ export function FeaturesScreen() {
               options={facet(
                 "size",
                 SIZES.map((s) => ({ id: s, label: s })),
-                (id) => all.filter((f) => f.size === id).length,
+                (id) => countFor("size", (f) => f.size === id),
               )}
               onToggle={(id) => {
                 toggleValue("size", id);
