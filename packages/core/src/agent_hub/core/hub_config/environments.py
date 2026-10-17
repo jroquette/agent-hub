@@ -142,7 +142,7 @@ class Endpoint(ConfigObject):
     )
 
 
-def _comment_keyed_map(schema: dict[str, Any]) -> None:
+def comment_keyed_map(schema: dict[str, Any]) -> None:
     """Move the key pattern pydantic exports as ``patternProperties`` to ``propertyNames`` and
     give the values ``additionalProperties``, so ``patternProperties`` holds only the comment
     keys, which may hold anything (a ``_`` key matches the name pattern too)."""
@@ -157,7 +157,7 @@ def _comment_keyed_map(schema: dict[str, Any]) -> None:
 Endpoints = Annotated[
     dict[EnvironmentName, Endpoint],
     BeforeValidator(drop_map_comment_keys),
-    Field(json_schema_extra=_comment_keyed_map),
+    Field(json_schema_extra=comment_keyed_map),
 ]
 
 
@@ -176,10 +176,10 @@ class Service(ConfigObject):
 Services = Annotated[
     dict[ServiceName, Service],
     BeforeValidator(drop_map_comment_keys),
-    Field(json_schema_extra=_comment_keyed_map),
+    Field(json_schema_extra=comment_keyed_map),
 ]
 Environments = Annotated[
     dict[EnvironmentName, Environment],
     BeforeValidator(drop_map_comment_keys),
-    Field(json_schema_extra=_comment_keyed_map),
+    Field(json_schema_extra=comment_keyed_map),
 ]

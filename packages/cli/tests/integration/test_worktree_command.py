@@ -744,8 +744,8 @@ class TestRepoProblems:
 LOCAL_PREFIX = "me/"
 LOCAL_BRANCH = f"me/{NAME}"
 HUB_ONLY = (
-    "hub.local.json: modules: set only in hub.json; hub.local.json holds project.branch_prefix,"
-    " author_name, author_email and tracker.transport"
+    "hub.local.json: modules: set only in hub.json (hub.local.json's keys:"
+    " docs/design/developer-identity.md)"
 )
 
 
