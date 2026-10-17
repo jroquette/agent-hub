@@ -24,6 +24,8 @@ MAX_NAME_CHARS: Final = 40
 MAX_CREDENTIAL_ENV: Final = 10
 MAX_URL_CHARS: Final = 200
 MAX_KIND_CHARS: Final = 32
+# The error type of a value with a secret's shape; ``document_check`` hides such a map key.
+CREDENTIAL_SHAPE_ERROR: Final = "secret_shape"
 
 
 def _no_secret_shape(value: str) -> str:
@@ -31,7 +33,7 @@ def _no_secret_shape(value: str) -> str:
     kind = secret_kind(value)
     if kind is not None:
         raise PydanticCustomError(
-            "secret_shape",
+            CREDENTIAL_SHAPE_ERROR,
             "looks like a secret ({kind}); reference a profile or variable name instead",
             {"kind": kind},
         )
