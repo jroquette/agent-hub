@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { seriousViolations } from "../testing/axe";
 import {
   DataTable,
+  FacetMenu,
   FilterChip,
   FilterRail,
   KpiStat,
@@ -113,6 +114,42 @@ describe("DataTable", () => {
 });
 
 describe("filters", () => {
+  it("says what a facet menu keeps, lists options with counts and clears them", () => {
+    const onToggle = vi.fn();
+    const onClear = vi.fn();
+    const options = [
+      { id: "a", label: "Alpha", count: 3, checked: false },
+      { id: "b", label: "Beta", count: 1, checked: false },
+    ];
+    const { rerender } = render(<FacetMenu label="Kind" options={options} onToggle={onToggle} />);
+    expect(screen.getByRole("button", { name: "Kind: Any" })).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Kind: Any" }));
+    const menu = screen.getByRole("dialog", { name: "Kind filter" });
+    expect(within(menu).getByText("3")).toBeInTheDocument();
+    fireEvent.click(within(menu).getByRole("checkbox", { name: /Beta/ }));
+    expect(onToggle).toHaveBeenCalledWith("b");
+
+    rerender(
+      <FacetMenu
+        label="Kind"
+        options={options.map((o) => ({ ...o, checked: true }))}
+        onToggle={onToggle}
+        onClear={onClear}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Kind: 2 selected" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear kind" }));
+    expect(onClear).toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Kind filter" })).not.toBeInTheDocument();
+  });
+
   it("toggles and removes a chip, and adds one", () => {
     const onClick = vi.fn();
     const onRemove = vi.fn();
