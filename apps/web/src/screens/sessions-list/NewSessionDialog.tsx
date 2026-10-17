@@ -8,6 +8,7 @@ import { readStored, writeStored } from "../../lib/storage";
 import type { ApiProblem } from "../../lib/api";
 import { offeredModes, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
 import { modeLabel, type PermissionMode } from "../agent-session/model";
+import { ScreenshotThumb } from "../../components/ScreenshotLightbox";
 
 type Schemas = components["schemas"];
 export type Workdir = Schemas["Workdir"];
@@ -130,6 +131,8 @@ export function NewSessionDialog({
   const modeName = useId();
   const whereId = useId();
   const optionsId = useId();
+  // The screenshot's marked-up copy, once edited in the lightbox; it is the one sent.
+  const [marked, setMarked] = useState<string | null>(null);
   const summaryId = useId();
   const reasonId = useId();
   const modelField = useId();
@@ -193,7 +196,10 @@ export function NewSessionDialog({
       attached
         ? {
             ...body,
-            screenshot: { media_type: "image/png", data: shot.slice(shot.indexOf(",") + 1) },
+            screenshot: {
+              media_type: "image/png",
+              data: (marked ?? shot).slice((marked ?? shot).indexOf(",") + 1),
+            },
           }
         : body,
     );
@@ -388,7 +394,21 @@ export function NewSessionDialog({
             {shot === null ? (
               <span className="ah-small ah-subtle">No screenshot was taken</span>
             ) : (
-              <img className="as-shot" src={shot} alt="Screenshot of the screen you shook" />
+              <>
+                <ScreenshotThumb
+                  className="as-shot"
+                  src={marked ?? shot}
+                  alt="Screenshot of the screen you shook"
+                  disabled={pending}
+                  onSave={(edited) => {
+                    setMarked(edited);
+                    setAttach(true);
+                  }}
+                />
+                <span className="ah-small ah-subtle">
+                  Click it to view it larger and mark it up (arrows, boxes, pen, text).
+                </span>
+              </>
             )}
           </div>
         )}

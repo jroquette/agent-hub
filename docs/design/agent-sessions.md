@@ -89,7 +89,7 @@ is refused (`terminal`, or `log-full` naming Resume); a command while an interru
 | idle seconds (`--session-idle-seconds`) | 1800 | 1-86400 |
 | permission answer seconds (`--permission-timeout-seconds`) | 600 | 1-86400 |
 | log records (`--session-log-records`) / bytes (`--session-log-bytes`) | 50000 / 32 MiB | 100-1000000 / 64 KiB-1 GiB |
-| message bytes (`--message-max-bytes`) | 65536 | 1024-524288 |
+| message bytes (`--message-max-bytes`) | 1048576 | 1024-4194304 |
 | cloud command seconds (`--cloud-timeout-seconds`) | 60 | 5-600 |
 | retention days after the end (`--session-retention-days`) | 30 | 1-3650 |
 
@@ -170,6 +170,32 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   modal (`aria-modal`) is open;
   Shift+Esc focuses the composer; ArrowUp in an empty composer recalls the last prompt sent. The shortcut sheet has a
   "Chat" group. A new pending card never takes focus from a composer holding text.
+- **Screenshots (AGH-266).**
+  - AC-266.1: a screenshot thumbnail, in a chat message or in New session, opens it large in a lightbox; in the chat
+    it only views (Download, close with Esc or the X).
+  - AC-266.2: the chat shows the screenshot sent with the first message again after a reload: the browser keeps the
+    latest 20 in IndexedDB (`agent-hub-screenshots`); the server still stores no image bytes. Without IndexedDB the
+    copy lasts for the page only and a reload shows the record's "Screenshot attached" marker.
+  - AC-266.3: in New session the lightbox is a markup editor: arrow, rectangle, ellipse, pen, highlighter and text
+    (keys A, R, O, P, H, T), five colours, undo (Ctrl/Cmd+Z) and Clear. Done flattens the marks into the PNG that is
+    sent and checks "Attach"; the chat then shows the image sent, marked up or not.
+  - AC-266.4: a marked-up PNG over the screenshot limit (3,932,160 bytes decoded) is scaled down until it fits.
+  - AC-266.5: Crop (key C) is one more entry of the edit history, so undo and Clear take it back; the area cut away is
+    dimmed while editing, a crop under 10 image pixels is ignored, and the saved PNG keeps only the cropped area,
+    marks included.
+- **Images in a message (AGH-266).**
+  - AC-266.6: an image pasted into the composer, dropped on it or picked with "Add an image" shows as a thumbnail
+    above the text (open it to mark it up, or remove it); a message takes up to 10, more are refused with "A message
+    takes up to 10 images."; the browser converts any image it decodes to a PNG scaled under the screenshot limit. A
+    message with images needs text; a cloud session takes no image.
+  - AC-266.7: `POST /{id}/messages` takes `screenshots[]` (1 to 10), each checked like the first prompt's screenshot
+    before anything is logged or sent, and sent to Claude before the text.
+  - AC-266.8: the `user.message` record keeps one marker per image, never its bytes; the chat shows the images this
+    browser sent with each message (kept by the message's seq), else "N images attached".
+  - AC-266.9: a message's text may be up to `--message-max-bytes`, 1 MiB by default (at most 4 MiB); the body caps
+    are 64 MiB for a message and 16 MiB for a session's first prompt.
+  - AC-266.10: the composer's toolbar shows mode and model as compact pills (icon, value, caret) over native selects,
+    the mode tinting its pill; Stop shows only while a turn can be stopped; the hint sits under the bar.
 - **Accessibility.** No serious or critical axe violation in any state (empty, streaming, waiting, detached, menu
   open, ended). The log keeps `role="log"` and `aria-busy` and has a visually hidden h2; under
   `prefers-reduced-motion` no caret, shimmer or smooth scroll animates.
