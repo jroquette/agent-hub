@@ -2176,3 +2176,59 @@ def test_names_problem_when_local_blocked_list_unusable(
     layer = layer_read(hook_python, local_json)["layer"]
 
     assert layer == NO_LOCAL_LAYER | {"problem": problem}
+
+
+# AGH-284 review: a secret-shaped key under ``guard`` is never echoed in the problem (as AGH-281
+# hid such map keys), and a ``guard`` that is not an object is a problem at ``guard``.
+SECRET_SHAPED_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
+
+
+@pytest.mark.parametrize(
+    "key", [SECRET_SHAPED_KEY, "Blocked_words", "a" * 42, "x-y", "\u00e9t\u00e9"]
+)
+def test_hides_guard_key_when_not_plain_shape(
+    tmp_path: Path, *, hook_python: str, read: Reader, layer_read: Callable[..., Any], key: str
+) -> None:
+    hub_json = write_hub_file(tmp_path, with_blocked({key: ["x"]}))
+    local_json = write_local_file(tmp_path, {"guard": {key: ["x"]}})
+
+    hub_problem = read(hook_python, hub_json)["hub_file"]["guard"]["problem"]
+    local_problem = layer_read(hook_python, local_json)["layer"]["problem"]
+
+    assert (hub_problem, local_problem) == ("guard.<key>", "guard.<key>")
+
+
+@pytest.mark.parametrize(
+    "guard", ["prod", ["prod"], None, 7], ids=["string", "list", "null", "number"]
+)
+def test_names_guard_problem_when_guard_not_object(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    read: Reader,
+    layer_read: Callable[..., Any],
+    guard: object,
+) -> None:
+    document = a_hub_document()
+    document["guard"] = guard
+    hub_json = write_hub_file(tmp_path, document)
+    local_json = write_local_file(tmp_path, {"guard": guard})
+
+    hub_guard = read(hook_python, hub_json)["hub_file"]["guard"]
+    layer = layer_read(hook_python, local_json)["layer"]
+
+    assert hub_guard["problem"] == "guard"
+    assert layer == NO_LOCAL_LAYER | {"problem": "guard"}
+
+
+def test_names_no_guard_problem_when_guard_absent(
+    tmp_path: Path, *, hook_python: str, read: Reader, layer_read: Callable[..., Any]
+) -> None:
+    hub_json = write_hub_file(tmp_path, a_minimal_document())
+    local_json = write_local_file(tmp_path, {"project": {"branch_prefix": "jane/"}})
+
+    hub_guard = read(hook_python, hub_json)["hub_file"]["guard"]
+    layer = layer_read(hook_python, local_json)["layer"]
+
+    assert hub_guard["problem"] == ""
+    assert layer == NO_LOCAL_LAYER

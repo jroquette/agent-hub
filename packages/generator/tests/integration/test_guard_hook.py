@@ -4265,3 +4265,101 @@ def test_shows_blocked_reason_when_both_rules_match(decide: Decide, blocked_hub:
     verdicts = decide([(bash_call("aws s3 ls --profile demo-prod"), None)])
 
     assert verdicts == [blocked_word("prod", "the command")]
+
+
+# AGH-284 review: what a layer's ``guard`` holds reaches the ask's reason only as a location; a
+# key without a plain shape is ``guard.<key>``, and a ``guard`` that is not an object is ``guard``.
+SECRET_SHAPED_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
+
+
+def guard_in_layer(hub: Path, layer: str, guard_value: object, *, tmp_path: Path) -> dict[str, str]:
+    """Put ``guard_value`` as ``guard`` in ``layer`` (W stays hub.json's otherwise); the env."""
+    if layer == "hub.json":
+        document = builders.an_environments_document()
+        document["guard"] = guard_value
+        write_hub_json(hub, document)
+        return {}
+    if layer == "hub.local.json":
+        write_local_json(hub, {"guard": guard_value})
+        return {}
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"project": {"name": "demo"}, "guard": guard_value}))
+    return {"HUB_CONFIG": str(config)}
+
+
+def printed_verdict(
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    python: str,
+    hub: Path,
+    *,
+    env: Mapping[str, str],
+) -> tuple[str, str]:
+    event = bash_call("git status") | {"cwd": str(hub)}
+    completed = run_hook_file(
+        python, hub / HOOKS / "guard.py", stdin=json.dumps(event).encode(), cwd=hub, env=env
+    )
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    output = json.loads(completed.stdout)["hookSpecificOutput"]
+    return output["permissionDecision"], output["permissionDecisionReason"]
+
+
+LAYERS = ("hub.json", "hub.local.json", "$HUB_CONFIG")
+
+
+@pytest.mark.parametrize("layer", LAYERS)
+def test_hides_guard_key_when_secret_shaped_in_layer(
+    blocked_hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+    layer: str,
+) -> None:
+    guard_value = {"blocked_words": ["prod"], SECRET_SHAPED_KEY: ["x"]}
+    env = guard_in_layer(blocked_hub, layer, guard_value, tmp_path=tmp_path)
+
+    verdict = printed_verdict(
+        run_hook_file, hook_python, blocked_hub, env={"HOME": str(tmp_path)} | env
+    )
+
+    assert verdict == (
+        "ask",
+        f"[hub guard] blocked words not checked: {layer} guard.<key> cannot be used (fix it:"
+        " docs/design/environments.md); confirm this call",
+    )
+    assert SECRET_SHAPED_KEY not in verdict[1]
+
+
+@pytest.mark.parametrize("layer", LAYERS)
+@pytest.mark.parametrize("guard_value", ["prod", ["prod"]], ids=["string", "list"])
+def test_asks_when_guard_not_object_in_layer(
+    blocked_hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+    layer: str,
+    guard_value: object,
+) -> None:
+    env = guard_in_layer(blocked_hub, layer, guard_value, tmp_path=tmp_path)
+
+    verdict = printed_verdict(
+        run_hook_file, hook_python, blocked_hub, env={"HOME": str(tmp_path)} | env
+    )
+
+    assert verdict == (
+        "ask",
+        f"[hub guard] blocked words not checked: {layer} guard cannot be used (fix it:"
+        " docs/design/environments.md); confirm this call",
+    )
+
+
+def test_denies_command_when_dollar_quote_splits_word(decide: Decide) -> None:
+    commands = ["echo p$''rod", 'echo p$""rod', "echo p$'r'od"]
+
+    verdicts = decided(decide, [*commands, "echo $HOME", "echo $'x' \"$PWD\""])
+
+    assert verdicts == dict.fromkeys(commands, blocked_word("prod", "the command")) | {
+        "echo $HOME": None,
+        "echo $'x' \"$PWD\"": None,
+    }
