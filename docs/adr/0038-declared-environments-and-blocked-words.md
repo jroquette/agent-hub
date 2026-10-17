@@ -73,8 +73,9 @@ Chosen option: 1.
 ### Consequences
 
 - Good: agents know which environments and services exist and how to reach them, without credentials in any file.
-- Good: a blocked word stops the commands, files and sessions that name it, across tools, with the word, layer and
-  surface named in the reason and recorded with `rule: blocked_word`, never the value.
+- Good: a blocked word stops the Bash commands, file-tool paths, WebFetch URLs, listed files' contents and scanned
+  session variables that name it, with the word, layer and surface named in the reason and recorded with
+  `rule: blocked_word`, never the value.
 - Good: a developer's own replica and stricter rules live in their own file and never change the team's.
 - Good: "nothing in `hub.local.json` relaxes a guard" still holds: it adds words and tightens access only.
 - Bad: false positives are accepted (a word in a harmless command denies it, `prod2` included); the list is the
@@ -82,11 +83,14 @@ Chosen option: 1.
 - Bad: `access` is advisory; an agent that ignores its instructions is held only by blocked words and the existing
   guards.
 - Bad: two more writers of config files that were write-once; `hub env` guards against concurrent edits but a writer
-  between its check and its replace can still be overwritten (a narrow window, documented).
+  between its check and its replace can still be overwritten (a narrow window, stated in environments.md).
 - Bad: blind spots: variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` reach Bash but not the guard
-  hook; `hub run`'s implement sessions run without the hub's hooks (an older gap, tracked separately); plugin-cache
-  mode with `$HUB_CONFIG` reads no `hub.local.json`; tool output, obfuscated names, Grep's search regex and edit
-  contents are not checked.
+  hook; `hub run`'s implement sessions run without the hub's hooks (an older gap, AGH-278); plugin-cache mode with
+  `$HUB_CONFIG` reads no `hub.local.json`; MCP tools, WebSearch and subagent (Task) prompts are not checked, nor files
+  a program opens without the command naming them (`python sync.py` reading `config/app.json`, `find … -exec cat`),
+  tool output, obfuscated names, Grep's search regex and edit contents.
+- Bad: blocked words are a best-effort text tripwire, not a security boundary; the boundary is which credentials the
+  agent's machine holds.
 
 ## More Information
 
