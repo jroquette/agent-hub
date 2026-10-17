@@ -973,3 +973,100 @@ def test_only_tightens_infra_verdict_when_extension_answers(
     assert allow_then_ask == [("ask", f"{PREFIX}project guard: x")]
     assert on_none == [None, INFRA_ASK]
     assert ask_then_deny == [("deny", f"{PREFIX}project guard: x")]
+
+
+# AGH-277 D-order (AC-277.17) and the NFR latency: blocked words beside the extension.
+def with_blocked_words(hub: Path) -> None:
+    """``hub``'s ``hub.json`` with the spec's ``W`` blocked words and file globs."""
+    found = document()
+    found["guard"] |= {
+        "blocked_words": ["prod", "production"],
+        "blocked_words_files": ["config/*.json", "serverless.yml"],
+    }
+    (hub / "hub.json").write_text(json.dumps(found), encoding="utf-8")
+
+
+def test_skips_extension_when_blocked_word_denies(hub: Path, guard: Guard, marker: Path) -> None:
+    install(hub, marker=marker, body='return ("ask", "project says ask")')
+    with_blocked_words(hub)
+
+    [denied] = guard(hub / HOOKS, [(bash("echo prod"), hub)])
+    before_allow = seen(marker)
+    [allowed] = guard(hub / HOOKS, [(bash("echo product"), hub)])
+
+    assert denied == (
+        "deny",
+        f"{PREFIX}blocked word `prod` (guard.blocked_words, hub.json) in the command: agents do"
+        " not reach what a blocked word names",
+    )
+    assert before_allow == []
+    # the same extension does run on a call the blocked words let through
+    assert allowed == ("ask", f"{PREFIX}project guard: project says ask")
+    assert seen(marker) == ["Bash"]
+
+
+@pytest.mark.serial
+def test_keeps_latency_ceiling_when_blocked_words_set(
+    *,
+    hook_python: str,
+    rendered_tree: Callable[..., Path],
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+) -> None:
+    hub = render_at(rendered_tree, tmp_path / "ws" / "demo-hub")
+    with_blocked_words(hub)
+    env = {"HOME": str(tmp_path), "AWS_PROFILE": "demo-dev", "DATABASE_URL": "postgres://localhost"}
+    events = [bash("git status --short"), read(hub / "README.md")]
+    samples: list[float] = []
+
+    for _ in range(LATENCY_RUNS):
+        for event in events:
+            stdin = json.dumps(event | {"cwd": str(hub)}).encode()
+            start = time.perf_counter()
+            completed = run_hook_file(
+                hook_python, hub / HOOKS / "guard.py", stdin=stdin, cwd=hub, env=env
+            )
+            samples.append(time.perf_counter() - start)
+            assert completed.returncode == 0, completed.stderr
+            # the seeded stub extension lets both through
+            assert completed.stdout == b"", completed.stdout
+
+    assert len(samples) == 2 * LATENCY_RUNS
+    assert p95(samples) <= LATENCY_CEILING
+
+
+# argv: none. The blocked-word rule's own time on one Bash call with W and no file to scan: the
+# median of 50 runs, each compiling its pattern afresh (``re.purge``), with 40 more variables set.
+RULE_TIME = """
+import json, os, re, statistics, time
+from guard import check_blocked
+from hubhooks import load_config
+cfg = load_config(None)
+environ = dict(os.environ)
+environ.update({"DEMO_VAR_%d" % n: "x" * 40 for n in range(40)})
+environ.update({"AWS_PROFILE": "demo-dev", "DATABASE_URL": "postgres://localhost/demo"})
+tool_input = {"command": "git status && make check-fast > fast.log 2>&1; echo $?"}
+samples = []
+for _ in range(50):
+    re.purge()
+    start = time.perf_counter()
+    verdict = check_blocked("Bash", tool_input, cfg, environ)
+    samples.append(time.perf_counter() - start)
+    assert verdict is None, verdict
+print(json.dumps(statistics.median(samples)))
+"""
+# NFR: with W and no file to scan, the rule adds at most this to a call (seconds).
+RULE_BUDGET = 0.005
+
+
+@pytest.mark.serial
+def test_adds_little_time_when_no_file_to_scan(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    with_blocked_words(hub)
+
+    median = run_python(
+        hook_python, RULE_TIME, path=hub / HOOKS, cwd=hub, env={"HOME": str(tmp_path)}
+    )
+
+    assert median <= RULE_BUDGET
