@@ -1,0 +1,36 @@
+---
+name: overengineering-review
+description: Read-only review of a diff, branch, PR or path for over-engineering — abstractions, options, layers and tests with no real consumer today — each finding proved by a search, with the smaller shape it should take. Use before a PR, after a feature's tasks, or when code feels heavier than the problem.
+disable-model-invocation: true
+argument-hint: "[PR | branch | path] (default: the current diff)"
+---
+
+# /overengineering-review [target]
+
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo under review.
+The yardstick is the **minimum-sufficient rule** at the top of the `/feature` skill: the smallest change that solves today's problem; a generic or shared module needs a named second consumer that exists now; constants, arguments, options and tests arrive with their first real user.
+This skill applies that rule alone and in depth, where `quality-reviewer` checks it as one bullet among many. It never edits, commits, pushes or posts: findings go to the user, and removals go through `/fix` or `/refactor`.
+Step types: `script` (commands, no judgement), `agent` (reasoning in the session), `gate` (the user decides).
+
+1. `script` **Scope** the target, read-only:
+   - none: the current worktree's diff against its default branch (`git diff origin/<default>...HEAD` plus uncommitted changes);
+   - a PR: `gh pr view <PR> --json number,title,body,headRefOid,files` and `gh pr diff <PR>`; code beyond the diff is read at the head commit (`git fetch origin pull/<n>/head`, then `git show <sha>:<path>`), never by checking it out;
+   - a branch: `git diff origin/<default>...<branch>`;
+   - a path: the files under it as they are now (a whole-module audit, not a diff).
+   Read the tracker issue (@@{tracker_team_key}) when the branch, title or body names one, and `brain/features/<slug>/spec.md` and `plan.md` when they exist: they say what today's problem is. **Stop** when the target cannot be read or its repo is not in `hub.json`.
+2. `agent` **Today's problem** in two or three lines: what the change must do, for whom, and what is out of scope, from the ticket, spec or PR body. With none of them, infer it from the diff and say so: every finding below is weighed against this paragraph.
+3. `agent` **Hunt**, through the catalogue in [references/patterns.md](references/patterns.md), every added or touched symbol (module, class, interface, function, parameter, option, config key, constant, branch, test).
+   For each suspect, **prove it with a search** in the repo (`rg` / Grep across the whole repo, not just the diff): its consumers, the callers that pass each option, the inputs that reach each defensive branch. Record the command and the count.
+   A suspect with a real consumer, caller or input today is not a finding. A finding without a search behind it is dropped or kept as a question.
+   Respect what binds the repo: a pattern its `AGENTS.md`, `brain/decisions/index.md` or an ADR requires (a port, a layer, a contract) is not over-engineering; cite it and move on.
+4. `agent` **Report** one list, most costly first. Each finding:
+   - `path:line` and the pattern id from the catalogue (e.g. `P1 single-consumer abstraction`);
+   - **evidence**: the search and its result (e.g. `rg "BaseExporter" → 1 subclass, 1 caller`);
+   - **cost**: what it adds today (files, indirection to follow, lines, tests to maintain);
+   - **smaller shape**: the concrete replacement (inline it, drop the parameter, hard-code the constant, delete the branch and the test), with the rough lines saved;
+   - severity: `cut` (no consumer, safe to remove now) or `watch` (justified only by a plan that exists: name it, and when to revisit).
+   End with a one-line verdict: `LEAN`, `SOME FAT` or `OVER-ENGINEERED`, and the total lines a full cut would remove.
+   Do not propose new abstractions, helpers or "a cleaner design": the fix for over-engineering is less code. Do not mix in bugs, style or naming; mention a bug found on the way in one line, for `/fix`.
+5. `gate` **The user picks** what to act on. Nothing is applied here. A cut inside the current task's own diff is the author's to make before the PR; a cut in merged code becomes a tracker issue for `/fix` (within its limits) or `/refactor`, created only after the user says so. This skill posts nothing on a PR; to turn findings into review comments, use `/review`.
+
+A pattern that keeps coming back (the same kind of finding in two reviews) goes to `/learn` as a proposal in `brain/_inbox/`, so plans and reviewers check for it earlier; the review itself writes nothing in `brain/`.

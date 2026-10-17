@@ -1,0 +1,38 @@
+---
+name: ux-review
+description: Read-only UX review of a screen, component, diff, branch or PR in a repo's front end, held to the project's approved design system (principles, copy, tokens, status, accessibility, states, responsive) and to standard heuristics, each finding cited and paired with a concrete improvement. Use before a UI PR, after a screen's tasks, or when a screen feels confusing, noisy or inconsistent.
+disable-model-invocation: true
+argument-hint: "[screen | path | PR | branch] (default: the current diff)"
+---
+
+# /ux-review [target]
+
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo under review.
+The yardstick is the repo's **approved design system**, not taste: the files its `AGENTS.md` names for it (the product principles, content and copy rules, visual foundations, iconography and any list of departures that wins over the screen specs; one spec per screen; the design tokens; the shared components). With none named, say so and review against the heuristics alone.
+It never edits, commits, pushes or posts: findings go to the user, fixes go through `/fix` or `/feature`, and a change to the design system itself goes through `/adr`.
+Step types: `script` (commands, no judgement), `agent` (reasoning in the session), `gate` (the user decides).
+
+1. `script` **Scope** the target, read-only:
+   - none: the current worktree's diff against its default branch (`git diff origin/<default>...HEAD` plus uncommitted changes), front-end files only;
+   - a screen name: its spec in the design system (its sitemap or navigation spec maps names to routes) and the code that renders it;
+   - a PR: `gh pr view <PR> --json number,title,body,headRefOid,files` and `gh pr diff <PR>`; code beyond the diff is read at the head commit (`git fetch origin pull/<n>/head`, then `git show <sha>:<path>`), never by checking it out;
+   - a branch: `git diff origin/<default>...<branch>`;
+   - a path: the files under it as they are now (a whole-screen audit, not a diff).
+   Read the tracker issue (@@{tracker_team_key}) when the branch, title or body names one, and `brain/features/<slug>/spec.md` and any `ux-*.md` design there when they exist. **Stop** when the target cannot be read, its repo is not in `hub.json`, or it touches no UI.
+2. `agent` **Load the yardstick**, on demand, never in bulk: the design system's principles and fundamentals, the spec of each touched screen (its question, layout, states, interactions, the principles it applies), the responsive and the first-run, empty and error rules when layout or states are touched, and the open design decisions. Then the shared components the screen should be using (the components index the repo's `AGENTS.md` names).
+3. `agent` **The screen's job** in two lines: the question it answers, for whom, and the one action that matters most, quoted from its spec. Every finding below is weighed against it; a screen with no spec gets the job inferred from the code, and the report says so.
+4. `agent` **Hunt** through the checklist in [references/checklist.md](references/checklist.md), every touched screen and component, in its order: principles, copy, status and color, layout and density, states, interaction and keyboard, accessibility, responsive, reuse.
+   Each suspect needs **evidence**: the `path:line` that shows it, and the rule it breaks cited by path and section (e.g. `README.md#content-fundamentals`, `specs/<screen>.md#states`) or by heuristic id (`H3`, `WCAG 2.5.8`). A `rg` proves reuse findings (`rg "function StatusBadge"` → it exists, the screen rolls its own).
+   When a check can run, run it: the repo's own accessibility test for the screen, as its `AGENTS.md` names it (redirect the output to a file and check `$?`). Never start a server or a browser against anything but local.
+   A suspect the spec, a design decision or an ADR explicitly chose is not a finding: cite it and move on, or raise it as a question if it now looks wrong.
+5. `agent` **Report** one list, most harmful first. Each finding:
+   - `path:line` and the checklist id (e.g. `C2 vague button verb`);
+   - **rule**: the design-system section or heuristic it breaks, cited;
+   - **impact**: what the user gets wrong or slower today (misreads a status, cannot find the action, loses context, cannot use it by keyboard);
+   - **improvement**: the concrete change, using what exists (the component, token, copy from the glossary, state from the spec), never a new pattern when one exists;
+   - severity: `blocker` (breaks a product principle, WCAG 2.2 AA, or the screen's spec), `friction` (slows or confuses), or `polish`.
+   Then, apart, **Proposals**: at most three improvements that go beyond the current spec (a better flow, a missing state, a clearer default), each tied to the screen's job and the heuristic behind it, marked `needs a spec change`. End with a one-line verdict: `ON SYSTEM`, `DRIFTING` or `OFF SYSTEM`.
+   Do not redesign screens, invent tokens, colors or components, or mix in bugs and code style; mention a bug found on the way in one line, for `/fix`.
+6. `gate` **The user picks** what to act on. Nothing is applied here. A finding inside the current task's own diff is the author's to fix before the PR; one in merged code becomes a tracker issue for `/fix` or `/feature`, created only after the user says so. A proposal that changes the design system or a screen's spec updates that spec in the same PR, and a new principle or a reversed decision goes through `/adr`. This skill posts nothing on a PR; to turn findings into review comments, use `/review`.
+
+A finding that keeps coming back (the same checklist id in two reviews) goes to `/learn` as a proposal in `brain/_inbox/`, so plans and reviewers check for it earlier; the review itself writes nothing in `brain/` or in the design docs.

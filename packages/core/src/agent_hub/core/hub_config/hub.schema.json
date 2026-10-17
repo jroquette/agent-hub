@@ -62,6 +62,14 @@
             "large"
           ],
           "type": "string"
+        },
+        "ux-designer": {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
         }
       },
       "title": "AgentTiers",
