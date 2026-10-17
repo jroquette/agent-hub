@@ -382,3 +382,16 @@ def test_rejects_local_value_when_hub_shape_fails(change: dict[str, Any], path: 
     (problem,) = problems_of({**builders.a_local_environments_document(), **change})
 
     assert problem.path == path
+
+
+@pytest.mark.parametrize("second", ["demo-api", "Demo-API"], ids=["same", "case"])
+def test_rejects_local_repo_when_dir_repeated_ignoring_case(second: str) -> None:
+    document = builders.a_local_environments_document()
+    document["repos"].append({"dir": second, "services": {}})
+
+    assert problems_of(document) == (
+        ConfigProblem(
+            "repos[1].dir",
+            f"repo dir {json.dumps(second)} is already used by repos[0], ignoring case",
+        ),
+    )
