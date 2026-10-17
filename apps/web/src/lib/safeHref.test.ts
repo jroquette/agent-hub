@@ -54,8 +54,8 @@ describe("isInAppPath", () => {
 
 describe("linearHref", () => {
   it("keeps only an https URL on linear.app when given issue urls (linear-link)", () => {
-    expect(linearHref("https://linear.app/acme/issue/TIP-1")).toBe(
-      "https://linear.app/acme/issue/TIP-1",
+    expect(linearHref("https://linear.app/acme/issue/ACME-1")).toBe(
+      "https://linear.app/acme/issue/ACME-1",
     );
     expect(linearHref("https://evil.example/x")).toBeNull();
     expect(linearHref("javascript:x")).toBeNull();
@@ -68,7 +68,7 @@ describe("linearHref", () => {
     "https://linear.app:444/x",
     "https://evil.example/https://linear.app/x",
     "https://linear.app",
-    "/acme/issue/TIP-1",
+    "/acme/issue/ACME-1",
     null,
     undefined,
   ])("returns null when given the look-alike %j (linear-link)", (value) => {

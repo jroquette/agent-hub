@@ -141,7 +141,7 @@ describe("Triage with Claude", () => {
 
   it("asks for one project when the queue spans several", async () => {
     open({
-      "/api/v1/learnings": aPage([first, aLearning({ id: "l-9", project: "tipple" })]),
+      "/api/v1/learnings": aPage([first, aLearning({ id: "l-9", project: "storefront" })]),
     });
 
     const button = await screen.findByRole("button", { name: /Triage with Claude/ });

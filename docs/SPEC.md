@@ -367,7 +367,7 @@ them. The approved UI design and the departures from it are in
 **Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
 
 - **Session identity.** Each session carries a `label` (issue, workflow, repo, branch): the issue from its git branch,
-  else its task worktree name, matched against the hub's tracker teams and branch prefix (`TIP-1511`; no match gives
+  else its task worktree name, matched against the hub's tracker teams and branch prefix (`ACME-1511`; no match gives
   `null`, never a guess); the workflow is its first slash command or skill that is not a routine one (`/kickoff`,
   `/handoff`, …). Its `actors` are the main agent and each subagent by type, linked to the Agent call that started it.
   The stored `agent` value `main` is kept, never shown as a label, and deprecated in the API. The label's `title` is

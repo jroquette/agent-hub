@@ -24,19 +24,19 @@ describe("Header", () => {
       aSession({
         agent: "main",
         issue: null,
-        label: aSessionLabel({ issue: "TIP-1511", repo: "tipple", branch: "main" }),
+        label: aSessionLabel({ issue: "ACME-1511", repo: "storefront", branch: "main" }),
       }),
     );
 
     expect(
-      screen.getByRole("heading", { level: 1, name: "TIP-1511 · /feature" }),
+      screen.getByRole("heading", { level: 1, name: "ACME-1511 · /feature" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("tipple · main")).toBeInTheDocument();
+    expect(screen.getByText("storefront · main")).toBeInTheDocument();
     const texts = [...container.querySelectorAll("*")]
       .flatMap((element) => [...element.childNodes])
       .filter((node) => node.nodeType === Node.TEXT_NODE)
       .map((node) => node.textContent ?? "");
-    expect(texts.filter((text) => /\bmain\b/.test(text))).toEqual(["tipple · main"]);
+    expect(texts.filter((text) => /\bmain\b/.test(text))).toEqual(["storefront · main"]);
   });
 
   it("falls back to the short id when the label is missing (label)", () => {

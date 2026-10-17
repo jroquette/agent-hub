@@ -73,7 +73,7 @@ Field lists are the API shapes. "Source" names who writes the field; "Latency" i
 | `parent_session_id` | always null: subagents share their session's id (AGH-201) | — | — |
 | `run_id`, `step`, `attempt` | | executor | < 1 s |
 | `issue` | `AGH-48` | executor, or branch name parse (derived, labelled) | < 1 s |
-| `label` (AGH-201) | `{ issue: "TIP-1511" \| null, workflow: "/feature", workflows: ["/feature","/fix"], repo, branch, worktree, derived: true }` | derived (transcript `git_branch`, `cwd`, slash commands, Skill calls; the hub's tracker teams) | 2–10 s |
+| `label` (AGH-201) | `{ issue: "ACME-1511" \| null, workflow: "/feature", workflows: ["/feature","/fix"], repo, branch, worktree, derived: true }` | derived (transcript `git_branch`, `cwd`, slash commands, Skill calls; the hub's tracker teams) | 2–10 s |
 | `actors` (AGH-201) | `[{ kind: "main" \| "subagent", type, agent_id, description, started_by_event_id }]` | derived (hooks `agent_id`, Agent tool calls) | < 1 s |
 | `problems` (AGH-201) | `{ needs_you, open, handled, by_you }`; the items via `/problems` | derived (tool results, guard asks, gates) | < 1 s |
 | `started_at`, `ended_at`, `last_activity_at` | | hooks | < 1 s |

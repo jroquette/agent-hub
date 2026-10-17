@@ -27,16 +27,16 @@ function nth<T>(items: readonly T[], index: number): T {
 describe("PlanningView", () => {
   it("heads the flow with the epic and its children's progress, never as a step", () => {
     const epic = aTicketRow({
-      ref: "TIP-1",
+      ref: "ACME-1",
       key: "T0",
-      id: "TIP-1",
+      id: "ACME-1",
       title: "The epic",
       url: null,
       readiness: "epic",
       state: { name: "Backlog", type: "backlog" },
       acs: [],
       blocked_by: [],
-      children: ["TIP-2", "TIP-3"],
+      children: ["ACME-2", "ACME-3"],
     });
     const child = (ref: string, readiness: "done" | "in_progress") =>
       aTicketRow({
@@ -48,30 +48,30 @@ describe("PlanningView", () => {
         readiness,
         blocked_by: [],
         acs: [`AC-${ref}`],
-        parent: "TIP-1",
+        parent: "ACME-1",
       });
     render(
       <PlanningView
-        tickets={[epic, child("TIP-2", "done"), child("TIP-3", "in_progress")]}
+        tickets={[epic, child("ACME-2", "done"), child("ACME-3", "in_progress")]}
         planning={aTicketPlan({
-          layers: [["TIP-3"]],
+          layers: [["ACME-3"]],
           can_start: [],
-          order: ["TIP-3"],
+          order: ["ACME-3"],
           waiting: [],
-          critical_path: ["TIP-3"],
-          epics: ["TIP-1"],
+          critical_path: ["ACME-3"],
+          epics: ["ACME-1"],
         })}
-        acPasses={{ "AC-TIP-2": true, "AC-TIP-3": false }}
+        acPasses={{ "AC-ACME-2": true, "AC-ACME-3": false }}
       />,
     );
 
-    const card = screen.getByRole("region", { name: "Epic TIP-1 · The epic" });
+    const card = screen.getByRole("region", { name: "Epic ACME-1 · The epic" });
     expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
     expect(card).toHaveTextContent("1/2 child tickets done");
     expect(card).toHaveTextContent("1 in progress");
     expect(card).toHaveTextContent("1/2 ACs passing");
     const flow = screen.getByRole("list", { name: "Ticket flow" });
-    expect(within(flow).queryByRole("listitem", { name: /TIP-1 ·/ })).not.toBeInTheDocument();
+    expect(within(flow).queryByRole("listitem", { name: /ACME-1 ·/ })).not.toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Tickets by readiness" })).not.toHaveTextContent(
       "epic",
     );
@@ -199,22 +199,22 @@ describe("PlanningView", () => {
           cycles: [["T1", "T2"]],
           external_blockers: [
             {
-              id: "TIP-9",
+              id: "ACME-9",
               title: "Upgrade the runtime",
               state: { name: "In Progress", type: "started" },
-              url: "https://linear.app/demo/issue/TIP-9",
+              url: "https://linear.app/demo/issue/ACME-9",
               done: false,
             },
-            { id: "TIP-8", title: null, state: null, url: null, done: false },
+            { id: "ACME-8", title: null, state: null, url: null, done: false },
             {
-              id: "TIP-7",
+              id: "ACME-7",
               title: "Done elsewhere",
               state: { name: "Done", type: "completed" },
               url: "javascript:x",
               done: true,
             },
           ],
-          warnings: ["TIP-5 has more than 50 relations; the first 50 were read."],
+          warnings: ["ACME-5 has more than 50 relations; the first 50 were read."],
         })}
       />,
     );
@@ -222,8 +222,8 @@ describe("PlanningView", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Dependency cycle: T1 → T2.");
     const outside = screen.getByText("Blocked from outside this feature:").closest("[role=status]");
     expect(outside).toHaveTextContent("Upgrade the runtime · In Progress (not done)");
-    expect(outside).toHaveTextContent("TIP-8 · status unknown");
-    expect(outside).toHaveTextContent("TIP-7 · Done elsewhere · done");
+    expect(outside).toHaveTextContent("ACME-8 · status unknown");
+    expect(outside).toHaveTextContent("ACME-7 · Done elsewhere · done");
     expect(within(outside as HTMLElement).getAllByRole("link")).toHaveLength(1);
     expect(screen.getByText(/more than 50 relations/)).toBeInTheDocument();
   });

@@ -127,12 +127,12 @@ def test_serializes_timeline_event_when_dumped() -> None:
 
 def test_serializes_label_when_session_has_issue() -> None:
     label = SessionLabel(
-        issue="TIP-1511",
+        issue="ACME-1511",
         workflow="/feature",
         workflows=("/feature", "/fix", "/create-plan"),
         repo="demo-api",
-        branch="roquettejh/tip-1511-fix-login",
-        worktree="tip-1511-fix-login",
+        branch="roquettejh/acme-1511-fix-login",
+        worktree="acme-1511-fix-login",
     )
     main = Actor(kind="main")
     explorer = Actor(
@@ -151,7 +151,7 @@ def test_serializes_label_when_session_has_issue() -> None:
         ).model_dump_json()
     )
 
-    assert document["label"]["issue"] == "TIP-1511"
+    assert document["label"]["issue"] == "ACME-1511"
     assert document["label"]["workflows"] == ["/feature", "/fix", "/create-plan"]
     assert document["label"]["derived"] is True
     assert document["actors"][0] == {

@@ -277,30 +277,30 @@ describe("AppShell", () => {
 describe("AppShell scope on a project's Brain or Skills", () => {
   const scoped = {
     "/api/v1/projects": aPage([
-      aProjectSummary({ name: "tipple" }),
+      aProjectSummary({ name: "storefront" }),
       aProjectSummary({ name: "agent-hub" }),
     ]),
   };
   const switcher = () =>
     within(screen.getByRole("banner")).getByRole("button", {
       expanded: false,
-      name: /tipple|agent-hub|All projects/,
+      name: /storefront|agent-hub|All projects/,
     });
 
   it("shows the project in the route, not the stored scope", () => {
     renderWithApi(<AppShell />, {
       routes: scoped,
-      path: "/projects/tipple/skills?scope=agent-hub",
+      path: "/projects/storefront/skills?scope=agent-hub",
       route: "*",
     });
 
-    expect(switcher()).toHaveTextContent("tipple");
+    expect(switcher()).toHaveTextContent("storefront");
   });
 
   it("opens the same section of the project picked in the switcher", async () => {
     const { router } = renderWithApi(<AppShell />, {
       routes: scoped,
-      path: "/projects/tipple/brain/now.md",
+      path: "/projects/storefront/brain/now.md",
       route: "*",
     });
 
@@ -313,7 +313,7 @@ describe("AppShell scope on a project's Brain or Skills", () => {
   it("opens the section's project index when All projects is picked", async () => {
     const { router } = renderWithApi(<AppShell />, {
       routes: scoped,
-      path: "/projects/tipple/skills",
+      path: "/projects/storefront/skills",
       route: "*",
     });
 

@@ -74,7 +74,7 @@ describe("LearningDetail", () => {
         note: aBrainNote({
           frontmatter: {
             type: "learning",
-            repos: ["Tipple_API", "tipple-ui"],
+            repos: ["Storefront_API", "storefront-ui"],
             provenance: "agent-from-code",
             sources: ["x.py:1"],
           },
@@ -84,7 +84,7 @@ describe("LearningDetail", () => {
 
     const detail = await region();
     expect(within(detail).getByText("learning")).toBeInTheDocument();
-    expect(within(detail).getByText("Tipple_API, tipple-ui")).toBeInTheDocument();
+    expect(within(detail).getByText("Storefront_API, storefront-ui")).toBeInTheDocument();
     expect(within(detail).getByText("agent-from-code")).toBeInTheDocument();
   });
 

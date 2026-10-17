@@ -156,16 +156,16 @@ def test_stops_at_bound_when_folders_too_many(
 def test_reads_eval_heads_when_evals_folder_present_evals(tmp_path: Path) -> None:
     folder = a_feature(features_of(tmp_path), "demo-feature", {})
     (folder / "evals").mkdir()
-    (folder / "evals" / "tip-1521.md").write_bytes(b"---\nverdict: NO-SHIP\n---\n")
-    (folder / "evals" / "tip-1520.md").write_bytes(b"x" * (EVAL_HEAD_BYTES + 10))
+    (folder / "evals" / "acme-1521.md").write_bytes(b"---\nverdict: NO-SHIP\n---\n")
+    (folder / "evals" / "acme-1520.md").write_bytes(b"x" * (EVAL_HEAD_BYTES + 10))
     (folder / "evals" / ".draft.md").write_bytes(b"hidden\n")
     (folder / "evals" / "notes.txt").write_bytes(b"not an eval\n")
 
     [read] = read_feature_folders(tmp_path)
 
     assert read.evals == (
-        RecordHead(name="tip-1520.md", head=b"x" * EVAL_HEAD_BYTES, problem=None),
-        RecordHead(name="tip-1521.md", head=b"---\nverdict: NO-SHIP\n---\n", problem=None),
+        RecordHead(name="acme-1520.md", head=b"x" * EVAL_HEAD_BYTES, problem=None),
+        RecordHead(name="acme-1521.md", head=b"---\nverdict: NO-SHIP\n---\n", problem=None),
     )
     assert (read.evals_skipped, read.reviews, read.reviews_skipped) == (0, (), 0)
     assert read.files == ()
@@ -234,16 +234,16 @@ def test_reads_review_heads_when_reviews_present_reviews(
 ) -> None:
     folder = a_feature(features_of(tmp_path), "demo-feature", {})
     (folder / "reviews").mkdir()
-    (folder / "reviews" / "tip-1520.md").write_bytes(b"y" * (REVIEW_HEAD_BYTES + 1))
-    (folder / "reviews" / "tip-1521.md").write_bytes(b"---\noutcome: approved\n---\n")
-    (folder / "reviews" / "tip-1522.md").write_bytes(b"---\n---\n")
+    (folder / "reviews" / "acme-1520.md").write_bytes(b"y" * (REVIEW_HEAD_BYTES + 1))
+    (folder / "reviews" / "acme-1521.md").write_bytes(b"---\noutcome: approved\n---\n")
+    (folder / "reviews" / "acme-1522.md").write_bytes(b"---\n---\n")
     monkeypatch.setattr("agent_hub.generator.feature_files.MAX_REVIEW_FILES", 2)
 
     [read] = read_feature_folders(tmp_path)
 
     assert read.reviews == (
-        RecordHead(name="tip-1520.md", head=b"y" * REVIEW_HEAD_BYTES, problem=None),
-        RecordHead(name="tip-1521.md", head=b"---\noutcome: approved\n---\n", problem=None),
+        RecordHead(name="acme-1520.md", head=b"y" * REVIEW_HEAD_BYTES, problem=None),
+        RecordHead(name="acme-1521.md", head=b"---\noutcome: approved\n---\n", problem=None),
     )
     assert read.reviews_skipped == 1
     assert MAX_REVIEW_FILES == 500

@@ -37,22 +37,22 @@ def acs_named(count: int, *, passes: bool = False) -> tuple[RecordAc, ...]:
 def test_lists_every_delivery_when_two_evals_present_aggregate() -> None:
     heads = (
         an_eval(
-            "tip-1520.md",
+            "acme-1520.md",
             type="eval",
-            delivery="tip-1520",
+            delivery="acme-1520",
             verdict="SHIP",
-            tickets="[TIP-1520]",
+            tickets="[ACME-1520]",
             acs="[AC-7.1, AC-7.2, AC-7.3]",
             prs="[demo-api#12]",
             commit="0a1b2c3",
             evaluated_at="2026-10-09",
         ),
         an_eval(
-            "tip-1521.md",
+            "acme-1521.md",
             type="eval",
-            delivery="tip-1521",
+            delivery="acme-1521",
             verdict="NO-SHIP",
-            tickets="[TIP-1521]",
+            tickets="[ACME-1521]",
             acs="[AC-7.4, AC-7.5]",
             prs="[demo-api#13]",
             commit="1b2c3d4",
@@ -64,12 +64,12 @@ def test_lists_every_delivery_when_two_evals_present_aggregate() -> None:
     coverage = eval_coverage(records, acs_named(36))
 
     assert [(r.delivery, r.verdict, r.path) for r in records] == [
-        ("tip-1520", "SHIP", "features/demo-feature/evals/tip-1520.md"),
-        ("tip-1521", "NO-SHIP", "features/demo-feature/evals/tip-1521.md"),
+        ("acme-1520", "SHIP", "features/demo-feature/evals/acme-1520.md"),
+        ("acme-1521", "NO-SHIP", "features/demo-feature/evals/acme-1521.md"),
     ]
     first = records[0]
     assert (first.tickets, first.acs, first.prs, first.commit, first.evaluated_at) == (
-        ("TIP-1520",),
+        ("ACME-1520",),
         ("AC-7.1", "AC-7.2", "AC-7.3"),
         ("demo-api#12",),
         "0a1b2c3",
@@ -83,16 +83,16 @@ def test_lists_every_delivery_when_two_evals_present_aggregate() -> None:
 
 def test_lets_latest_eval_decide_when_ac_reevaluated_latest_wins() -> None:
     heads = (
-        an_eval("tip-1520.md", verdict="SHIP", acs="[AC-7.1, AC-7.2]", evaluated_at="2026-10-09"),
-        an_eval("tip-1521-r2.md", verdict="SHIP", acs="[AC-7.3]", evaluated_at="2026-10-11"),
-        an_eval("tip-1521.md", verdict="NO-SHIP", acs="[AC-7.3]", evaluated_at="2026-10-11"),
+        an_eval("acme-1520.md", verdict="SHIP", acs="[AC-7.1, AC-7.2]", evaluated_at="2026-10-09"),
+        an_eval("acme-1521-r2.md", verdict="SHIP", acs="[AC-7.3]", evaluated_at="2026-10-11"),
+        an_eval("acme-1521.md", verdict="NO-SHIP", acs="[AC-7.3]", evaluated_at="2026-10-11"),
         an_eval("feature.md", verdict="NO-SHIP", acs="[AC-7.2]", evaluated_at="2026-10-12"),
     )
 
     records = eval_records(heads, None, slug=SLUG)
     coverage = eval_coverage(records, acs_named(3))
 
-    assert {r.delivery for r in records} == {"tip-1520", "tip-1521", "tip-1521-r2", "feature"}
+    assert {r.delivery for r in records} == {"acme-1520", "acme-1521", "acme-1521-r2", "feature"}
     assert coverage == EvalCoverage(
         covered=("AC-7.1", "AC-7.3"),
         owner_steps=(),
@@ -104,8 +104,8 @@ def test_lets_latest_eval_decide_when_ac_reevaluated_latest_wins() -> None:
 
 def test_orders_by_date_before_rerun_when_dates_differ_latest_wins() -> None:
     heads = (
-        an_eval("tip-1521.md", verdict="SHIP", acs="[AC-7.1]", evaluated_at="2026-10-12"),
-        an_eval("tip-1521-r2.md", verdict="NO-SHIP", acs="[AC-7.1]", evaluated_at="2026-10-11"),
+        an_eval("acme-1521.md", verdict="SHIP", acs="[AC-7.1]", evaluated_at="2026-10-12"),
+        an_eval("acme-1521-r2.md", verdict="NO-SHIP", acs="[AC-7.1]", evaluated_at="2026-10-11"),
     )
 
     coverage = eval_coverage(eval_records(heads, None, slug=SLUG), acs_named(1))
@@ -313,13 +313,13 @@ def test_reports_problem_when_file_name_not_a_delivery_malformed() -> None:
 
 def test_maps_tickets_scope_when_acs_absent() -> None:
     heads = (
-        an_eval("tip-1520.md", verdict="SHIP-WITH-OWNER-STEPS", tickets="[TIP-1520]"),
+        an_eval("acme-1520.md", verdict="SHIP-WITH-OWNER-STEPS", tickets="[ACME-1520]"),
         an_eval("t2.md", verdict="SHIP", tickets="[t2]"),
     )
-    tickets = (PlannedTicket(key="T1", id="TIP-1520"), PlannedTicket(key="T2"))
+    tickets = (PlannedTicket(key="T1", id="ACME-1520"), PlannedTicket(key="T2"))
     acs = (
         an_ac("AC-7.1", ticket="T1"),
-        an_ac("AC-7.2", ticket="TIP-1520"),
+        an_ac("AC-7.2", ticket="ACME-1520"),
         an_ac("AC-7.3", ticket="T2"),
         an_ac("AC-7.4", ticket="T3"),
     )
@@ -348,7 +348,7 @@ def test_ignores_withdrawn_ac_when_legacy_rule_checks_passes() -> None:
     assert (coverage.covered, coverage.unscoped) == (("AC-7.1",), False)
 
 
-@pytest.mark.parametrize("name", ["tip-1520", "pr-demo-api-12", "feature", "tip-1521-r2"])
+@pytest.mark.parametrize("name", ["acme-1520", "pr-demo-api-12", "feature", "acme-1521-r2"])
 def test_accepts_delivery_when_name_follows_pattern(name: str) -> None:
     assert DELIVERY_PATTERN.fullmatch(name)
 

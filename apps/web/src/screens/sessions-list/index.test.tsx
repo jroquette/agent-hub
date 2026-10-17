@@ -57,7 +57,7 @@ function sessions() {
     aSession({
       id: anId(2, "aaaa0002"),
       agent: "main",
-      label: aSessionLabel({ issue: "TIP-1511", repo: "tipple", branch: "main" }),
+      label: aSessionLabel({ issue: "ACME-1511", repo: "storefront", branch: "main" }),
       status: "ended",
       outcome: "error",
       ended_at: at(1800),
@@ -108,9 +108,9 @@ describe("SessionsListScreen", () => {
   it("names each session by its label over repo · branch and has no Agent column (label, AC-201.4)", async () => {
     renderList(routes());
 
-    await screen.findByText("TIP-1511 · /feature");
+    await screen.findByText("ACME-1511 · /feature");
     const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
-    expect(within(ended).getByText("tipple · main")).toBeInTheDocument();
+    expect(within(ended).getByText("storefront · main")).toBeInTheDocument();
     expect(
       within(screen.getByRole("table", { name: "Live sessions" })).getByText(
         "agent-hub · dev/agh-48-live-tiles",
@@ -127,18 +127,18 @@ describe("SessionsListScreen", () => {
         .getAllByRole("table")
         .flatMap((table) => within(table).queryAllByText(/\bmain\b/))
         .map((node) => node.textContent),
-    ).toEqual(["tipple · main"]);
+    ).toEqual(["storefront · main"]);
 
     fireEvent.click(screen.getByRole("button", { name: "Compact rows" }));
     expect(headers()).toContain("Session");
     expect(headers()).not.toContain("Agent");
-    expect(screen.getByText("TIP-1511 · /feature")).toBeInTheDocument();
+    expect(screen.getByText("ACME-1511 · /feature")).toBeInTheDocument();
   });
 
   it("sends filters from the URL and the rail to the API", async () => {
     const { requests, router } = renderList(routes(), "/sessions?outcome=error&period=24 h");
     // An outcome asks only the Ended section.
-    await screen.findByText("TIP-1511 · /feature");
+    await screen.findByText("ACME-1511 · /feature");
     expect(screen.queryByText("/evaluator")).toBeNull();
 
     const first = new URL(requests.find((r) => new URL(r.url).pathname === SESSIONS)?.url ?? "");
@@ -316,7 +316,7 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
     const view = renderList(
       routes({
         "/api/v1/projects": aPage([
-          aProjectSummary({ name: "tipple" }),
+          aProjectSummary({ name: "storefront" }),
           aProjectSummary({ name: "agent-hub" }),
         ]),
         [`${AGENT}/workdirs`]: (request: Request) =>
@@ -329,11 +329,11 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
                 warnings: [],
               }
             : {
-                items: [aWorkdir({ label: "tipple-hub", workdir_id: "0000000000000001" })],
+                items: [aWorkdir({ label: "storefront-hub", workdir_id: "0000000000000001" })],
                 warnings: [],
               },
       }),
-      "/sessions?scope=tipple",
+      "/sessions?scope=storefront",
     );
 
     await waitFor(
