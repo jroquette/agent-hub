@@ -411,6 +411,26 @@ describe("FeatureDetailScreen", () => {
       ).toBeInTheDocument();
     });
 
+    it("asks for no summary the brain does not list, so no 404 reaches the console (AC-269.16, records)", async () => {
+      const { requests } = open(
+        {
+          "/api/v1/projects/agent-hub/brain": aBrainTree({
+            entries: [{ path: "features/layered-memory/plan.md", size: 90 }],
+          }),
+        },
+        "/features/agent-hub/layered-memory?doc=plan",
+      );
+
+      expect(await screen.findByText("No human summary of plan.md yet.")).toBeInTheDocument();
+      expect(
+        requests.some(
+          (r) =>
+            new URL(r.url).pathname === NOTE &&
+            new URL(r.url).searchParams.get("path")?.includes("/summaries/") === true,
+        ),
+      ).toBe(false);
+    });
+
     it("says No plan.md yet when the plan record is absent (records)", async () => {
       open({
         [API]: aFeatureDetail({
