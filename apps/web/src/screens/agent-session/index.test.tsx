@@ -1374,4 +1374,23 @@ describe("AgentSessionScreen (review-comments)", () => {
     });
     expect(within(sending).getByText("Why 2?")).toBeInTheDocument();
   });
+
+  it("keeps the review read-only once the session ended and cannot resume (AC-265.16)", async () => {
+    const user = userEvent.setup();
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "ended", end_reason: "log_full" }),
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+
+    const card = await screen.findByRole("region", { name: "Files edited in this turn" });
+    await user.click(within(card).getByRole("button", { name: /^Open src\/app\.py/ }));
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    expect(within(panel).getByText("+a = 2", { exact: false })).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: /^Comment on/ })).toBeNull();
+  });
 });
