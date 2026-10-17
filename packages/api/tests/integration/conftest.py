@@ -563,6 +563,7 @@ class FakeLinear:
     def _node(self, issue_id: str) -> dict[str, Any]:
         blocks = [other for other, issue in self.issues.items() if issue_id in issue.blocked_by]
         return self._summary(issue_id) | {
+            "parent": None,
             "relations": {
                 "nodes": [{"type": "blocks", "relatedIssue": self._related(o)} for o in blocks],
                 "pageInfo": {"hasNextPage": False},
