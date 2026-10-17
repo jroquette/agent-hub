@@ -1,9 +1,20 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { aCapabilities, aWorkdir, anAgentSession, anId, renderWithApi } from "../testing/builders";
+import { captureScreen } from "../lib/screenCapture";
+import { screenshotFor } from "../lib/screenshotCopy";
+
+import {
+  aCapabilities,
+  aPage,
+  aProjectSummary,
+  aWorkdir,
+  anAgentSession,
+  anId,
+  renderWithApi,
+} from "../testing/builders";
 import {
   discussPrompt,
   DiscussProvider,
@@ -13,6 +24,9 @@ import {
 } from "./discuss";
 import type { DiscussReference, DiscussTarget } from "./discuss";
 import { DiscussPanel } from "./DiscussPanel";
+import { ScreenDiscussFallback, screenDiscussTarget } from "./screenContext";
+
+vi.mock("../lib/screenCapture", () => ({ captureScreen: vi.fn() }));
 
 const ID = anId(3, "0192a5e5");
 const SESSION = `/api/v1/agent-sessions/${ID}`;
@@ -126,3 +140,135 @@ describe("DiscussPanel", () => {
     );
   });
 });
+
+const SHOT = "data:image/png;base64,iVBORw0KGgo=";
+
+function ScreenPage({ fallback }: { fallback: DiscussTarget | null }) {
+  const { setFallback } = useDiscuss();
+  return (
+    <>
+      <main id="main">
+        <h1>Workflow runs</h1>
+        <p>3 runs failed in verify</p>
+      </main>
+      <button
+        type="button"
+        onClick={() => {
+          setFallback(fallback);
+        }}
+      >
+        name screen
+      </button>
+      <DiscussPanel />
+    </>
+  );
+}
+
+function renderScreen(fallback: DiscussTarget | null, workdirs = [aWorkdir()]) {
+  window.localStorage.setItem("ah.discuss.open", "1");
+  return renderWithApi(
+    <DiscussProvider>
+      <ScreenPage fallback={fallback} />
+    </DiscussProvider>,
+    {
+      routes: {
+        "/api/v1/agent-sessions/capabilities": aCapabilities(),
+        "/api/v1/agent-sessions/workdirs": { items: workdirs, warnings: [] },
+        "POST /api/v1/agent-sessions": anAgentSession({ id: ID, status: "running" }),
+        [SESSION]: anAgentSession({ id: ID, status: "idle", last_seq: 0 }),
+        [`${SESSION}/events`]: { items: [], next_after: null },
+      },
+    },
+  );
+}
+
+async function sendFirst(view: ReturnType<typeof renderScreen>, text: string) {
+  await userEvent.click(screen.getByRole("button", { name: "name screen" }));
+  const box = await screen.findByRole("textbox", { name: "Message Claude" });
+  await waitFor(() => {
+    expect(box).toBeEnabled();
+  });
+  await userEvent.type(box, `${text}{Enter}`);
+  const created = await waitFor(() => {
+    const found = view.requests.find(
+      (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+    );
+    expect(found).toBeDefined();
+    return found;
+  });
+  return JSON.parse((await created?.clone().text()) ?? "{}") as {
+    prompt: string;
+    screenshot?: { media_type: string; data: string };
+  };
+}
+
+describe("DiscussPanel on a whole screen (AGH-273)", () => {
+  const runs = screenDiscussTarget({
+    project: "demo",
+    pathname: "/runs",
+    search: "?status=failed",
+    title: "Workflow runs",
+  });
+
+  it("AC-273.2: sends the screen's text and a screenshot with the first message", async () => {
+    vi.mocked(captureScreen).mockResolvedValue({ ok: true, dataUrl: SHOT, bytes: 8 });
+    const view = renderScreen(runs);
+    await userEvent.click(screen.getByRole("button", { name: "name screen" }));
+    expect(
+      await screen.findByText(/Your first message takes its text and a screenshot along/),
+    ).toBeInTheDocument();
+
+    const body = await sendFirst(view, "Why did these fail?");
+
+    expect(body.prompt).toMatch(/<screen>\n.*Workflow runs.*3 runs failed in verify.*\n<\/screen>/);
+    expect(body.prompt).toContain("`/runs?status=failed`");
+    expect(body.prompt).toContain("Why did these fail?");
+    expect(body.screenshot).toEqual({ media_type: "image/png", data: "iVBORw0KGgo=" });
+    expect(screenshotFor(ID)).toBe(SHOT);
+  });
+
+  it("AC-273.3: still sends the text when the screenshot cannot be taken", async () => {
+    vi.mocked(captureScreen).mockResolvedValue({ ok: false, reason: "timeout" });
+    const view = renderScreen(runs);
+
+    const body = await sendFirst(view, "What is this?");
+
+    expect(body.prompt).toContain("3 runs failed in verify");
+    expect(body.screenshot).toBeUndefined();
+  });
+
+  it("AC-273.5: asks for a registered project when there is nothing to discuss", () => {
+    renderScreen(null);
+
+    expect(
+      screen.getByText(/Register a project to talk with Claude about any screen/),
+    ).toBeInTheDocument();
+  });
+
+  it("AC-273.1: names the open screen by its heading as the panel's target", async () => {
+    vi.mocked(captureScreen).mockResolvedValue({ ok: false, reason: "timeout" });
+    renderWithApi(
+      <DiscussProvider>
+        <main id="main">
+          <h1>Health</h1>
+        </main>
+        <ScreenDiscussFallback />
+        <TargetProbe />
+      </DiscussProvider>,
+      {
+        path: "/health?x=1",
+        routes: {
+          "/api/v1/agent-sessions/capabilities": aCapabilities(),
+          "/api/v1/projects": aPage([aProjectSummary({ name: "demo" })]),
+        },
+      },
+    );
+
+    expect(await screen.findByTestId("probe")).toHaveTextContent("screen:demo:/health · Health");
+  });
+});
+
+function TargetProbe() {
+  const { target } = useDiscuss();
+  return target ? <span data-testid="probe">{`${target.key} · ${target.title}`}</span> : null;
+}

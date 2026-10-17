@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -6,7 +6,13 @@ import { Dialog } from "../components/Dialog";
 import { ConfirmDialog } from "../components/feedback";
 
 import { seriousViolations } from "../testing/axe";
-import { aPage, aProjectSummary, aStreamCounts, renderWithApi } from "../testing/builders";
+import {
+  aCapabilities,
+  aPage,
+  aProjectSummary,
+  aStreamCounts,
+  renderWithApi,
+} from "../testing/builders";
 import { AppShell, useShell } from "./AppShell";
 
 const routes = { "/api/v1/projects": aPage([aProjectSummary()]) };
@@ -238,6 +244,27 @@ describe("AppShell", () => {
 
     expect(router.state.location.search).toBe("?scope=agent-hub");
     window.localStorage.clear();
+  });
+
+  it("AC-273.7: asks for the screen as a Discuss target only while the panel is open", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    const { requests } = renderWithApi(<AppShell />, {
+      path: "/health",
+      routes: { ...routes, "/api/v1/agent-sessions/capabilities": aCapabilities() },
+    });
+    const asked = () =>
+      requests.filter((r) => new URL(r.url).pathname === "/api/v1/agent-sessions/capabilities");
+    expect(asked()).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole("button", { name: "Discuss" }));
+
+    expect(
+      await screen.findByRole("complementary", { name: "Discuss with Claude" }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(asked().length).toBeGreaterThan(0);
+    });
+    window.localStorage.removeItem("ah.discuss.open");
   });
 
   it("has no serious or critical a11y violation", async () => {
