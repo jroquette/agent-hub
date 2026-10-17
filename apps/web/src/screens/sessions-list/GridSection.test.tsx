@@ -98,7 +98,7 @@ describe("SessionsListScreen grid", () => {
     const done = tileOf("/done");
     expect(within(done).getByText("Ended · done")).toBeInTheDocument();
     expect(within(done).queryByRole("img", { name: /Events per 5 s/ })).toBeNull();
-    expect(tilesIn(section(/^Ended · last 7 days/))).toEqual([done]);
+    expect(tilesIn(section(/^Finished · last 7 days/))).toEqual([done]);
   });
 
   it("shows 50 tiles in a section, then Load more fetches the next cursor page", async () => {
@@ -116,7 +116,7 @@ describe("SessionsListScreen grid", () => {
     });
 
     await screen.findByText("/s50");
-    const live = section(/^Live/);
+    const live = section(/^Working/);
     expect(tilesIn(live)).toHaveLength(50);
     expect(within(live).queryByText("/s51")).toBeNull();
     fireEvent.click(within(live).getByRole("button", { name: "Load more" }));
@@ -156,11 +156,11 @@ describe("SessionsListScreen grid", () => {
       path: "/sessions?within=repo",
     });
     await screen.findByText("/a");
-    expect(heads(section(/^Live/))).toEqual([
+    expect(heads(section(/^Working/))).toEqual([
       "agent-hub › storefront · 1",
       "agent-hub › agent-hub · 2",
     ]);
-    expect(heads(section(/^Idle/))).toEqual(["agent-hub › agent-hub · 1"]);
+    expect(heads(section(/^Paused/))).toEqual(["agent-hub › agent-hub · 1"]);
     repo.unmount();
 
     const run = renderWithApi(<SessionsListScreen />, {
@@ -168,8 +168,8 @@ describe("SessionsListScreen grid", () => {
       path: "/sessions?within=run",
     });
     await screen.findByText("/a");
-    expect(heads(section(/^Live/))).toEqual(["Run AGH-9 · implement · 1", "Not in a run · 2"]);
-    expect(within(section(/^Live/)).getByRole("group", { name: "Not in a run" })).toContainElement(
+    expect(heads(section(/^Working/))).toEqual(["Run AGH-9 · implement · 1", "Not in a run · 2"]);
+    expect(within(section(/^Working/)).getByRole("group", { name: "Not in a run" })).toContainElement(
       tileOf("/c"),
     );
     run.unmount();
@@ -179,8 +179,8 @@ describe("SessionsListScreen grid", () => {
       path: "/sessions?within=flat",
     });
     await screen.findByText("/a");
-    expect(heads(section(/^Live/))).toEqual([]);
-    expect(tilesIn(section(/^Live/))).toHaveLength(3);
+    expect(heads(section(/^Working/))).toEqual([]);
+    expect(tilesIn(section(/^Working/))).toHaveLength(3);
   });
 
   it("resume: an ended driven tile offers Resume, a link to its chat, where a message resumes it", async () => {
@@ -254,7 +254,7 @@ describe("SessionsListScreen grid", () => {
     });
 
     await screen.findByText("Fix the build");
-    const live = section(/^Live · 3/);
+    const live = section(/^Working · 3/);
     expect(tilesIn(live)).toHaveLength(3);
     expect(within(tileOf("Fix the build")).getByText("Chat")).toBeInTheDocument();
     // The twin has no title of its own yet: its tile reads the driven session's prompt.

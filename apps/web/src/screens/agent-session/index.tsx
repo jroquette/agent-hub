@@ -6,7 +6,6 @@ import { useNavigate, useParams } from "react-router";
 import {
   AppLink,
   Banner,
-  Button,
   ConfirmDialog,
   EmptyState,
   Icon,
@@ -24,6 +23,7 @@ import { CostMeter } from "./CostMeter";
 import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
 import { useResolvedThreads } from "./ReviewDiff";
 import { reviewThreads } from "./review";
+import { SessionMenu } from "./SessionMenu";
 import {
   isTerminal,
   useAgentSession,
@@ -266,41 +266,39 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 }}
               />
             )}
-            {canFork && (
-              <Button
-                size="sm"
-                icon="git-branch"
-                onClick={() => {
-                  setForking(true);
-                }}
-              >
-                Fork…
-              </Button>
-            )}
-            {ended ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                icon="file-x"
-                disabled={busy}
-                onClick={() => {
-                  setConfirmDelete(true);
-                }}
-              >
-                Delete session
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                icon="x"
-                disabled={busy}
-                onClick={() => {
-                  act(commands.close);
-                }}
-              >
-                Close session
-              </Button>
-            )}
+            <SessionMenu
+              busy={busy}
+              onOpenObserved={
+                session.claude_session_id
+                  ? () => {
+                      void navigate(
+                        `/sessions/${encodeURIComponent(session.claude_session_id ?? "")}`,
+                      );
+                    }
+                  : undefined
+              }
+              onFork={
+                canFork
+                  ? () => {
+                      setForking(true);
+                    }
+                  : undefined
+              }
+              onClose={
+                ended
+                  ? undefined
+                  : () => {
+                      act(commands.close);
+                    }
+              }
+              onDelete={
+                ended
+                  ? () => {
+                      setConfirmDelete(true);
+                    }
+                  : undefined
+              }
+            />
           </div>
           <div className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 12 }}>
             <span>
@@ -311,16 +309,6 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
               {model ? ` · ${model}` : ""}
             </span>
             <CostMeter meter={state.meter} />
-            {session.claude_session_id && (
-              <AppLink
-                className="ah-row ah-small"
-                style={{ gap: 4 }}
-                href={`/sessions/${encodeURIComponent(session.claude_session_id)}`}
-              >
-                <Icon name="activity" size="sm" />
-                Observed session {short(session.claude_session_id)}
-              </AppLink>
-            )}
           </div>
           {actionError && (
             <p className="ah-small as-error" role="alert">

@@ -109,6 +109,11 @@ async function bodyOf(request: Request | undefined): Promise<unknown> {
 const posts = (requests: Request[], suffix: string) =>
   requests.filter((r) => r.method === "POST" && new URL(r.url).pathname === `${SESSION}${suffix}`);
 
+/** Opens the header's "⋯" menu, where close, fork, delete and the observed session live. */
+async function openSessionMenu() {
+  await userEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+}
+
 describe("AgentSessionScreen (screenshot-thumbnail)", () => {
   const SHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
   const shotLog = () => [
@@ -237,6 +242,7 @@ describe("AgentSessionScreen (transcript)", () => {
     await screen.findByText("Starting.");
     expect(screen.getByText(/Ended · closed/)).toBeInTheDocument();
     expect(() => view.stream(STREAM)).toThrow();
+    await openSessionMenu();
     expect(screen.getByRole("button", { name: "Delete session" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Close session" })).toBeNull();
   });
@@ -254,6 +260,7 @@ describe("AgentSessionScreen (transcript)", () => {
     await screen.findByText("Starting.");
     expect(screen.queryByRole("button", { name: /^Resume/ })).toBeNull();
 
+    await openSessionMenu();
     await userEvent.click(await screen.findByRole("button", { name: "Fork…" }));
     const dialog = screen.getByRole("dialog", { name: "Fork session" });
     expect(within(dialog).getByRole("group", { name: "Fork" })).toHaveTextContent("Run the tests");
@@ -287,6 +294,7 @@ describe("AgentSessionScreen (transcript)", () => {
       await waitFor(() => {
         expect(view.requests.some((r) => r.url.includes("/capabilities"))).toBe(true);
       });
+      await openSessionMenu();
       expect(screen.queryByRole("button", { name: "Fork…" })).toBeNull();
       view.unmount();
     }
@@ -301,6 +309,7 @@ describe("AgentSessionScreen (transcript)", () => {
     );
     await screen.findByText("Starting.");
 
+    await openSessionMenu();
     await userEvent.click(screen.getByRole("button", { name: "Delete session" }));
     const dialog = screen.getByRole("alertdialog");
     await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
@@ -350,10 +359,13 @@ describe("AgentSessionScreen (transcript)", () => {
   });
 
   it("links the agent session to its observed session", async () => {
-    renderChat();
+    const view = renderChat();
 
-    const link = await screen.findByRole("link", { name: /Observed session/ });
-    expect(link).toHaveAttribute("href", `/sessions/${anId(1, "5091b986")}`);
+    await openSessionMenu();
+    await userEvent.click(screen.getByRole("button", { name: "Open observed session" }));
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/sessions/${anId(1, "5091b986")}`);
+    });
   });
 });
 
@@ -435,6 +447,7 @@ describe("AgentSessionScreen (layout)", () => {
     expect(within(header).getByRole("heading", { level: 1 })).toBeInTheDocument();
     expect(within(header).getByText("Running")).toBeInTheDocument();
     expect(within(header).getByRole("group", { name: /Cost and tokens/ })).toBeInTheDocument();
+    await userEvent.click(within(header).getByRole("button", { name: "Session actions" }));
     expect(within(header).getByRole("button", { name: "Close session" })).toBeInTheDocument();
 
     const scroller = conversation.closest(".as-scroll");

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -14,7 +14,7 @@ import {
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
 
-// These tests read the list (the default view): one table, a row group per section.
+// These tests read the list (the default view): the inbox, one titled group per section.
 beforeEach(() => {
   window.localStorage.setItem("ah.sessions.view", "list");
 });
@@ -41,29 +41,26 @@ function routes(sessions: ApiRoutes[string] = aSessionsByStatus(SAMPLE)): ApiRou
 
 const sessionRequests = (requests: Request[]) =>
   requests.filter((r) => new URL(r.url).pathname === SESSIONS).map((r) => new URL(r.url));
-/** The row-group header buttons of the list, in page order (the status tabs are not among them). */
-const toggles = () =>
-  screen.queryByRole("table")
-    ? within(screen.getByRole("table"))
-        .queryAllByRole("button")
-        .filter((button) => button.hasAttribute("aria-expanded"))
-    : [];
+/** The groups' header buttons, in page order. */
+const toggles = () => [
+  ...document.querySelectorAll<HTMLButtonElement>("[data-group] h2 button[aria-expanded]"),
+];
 const headers = () => toggles().map((button) => button.textContent);
 const collapsedHeaders = () =>
   toggles()
     .filter((button) => button.getAttribute("aria-expanded") === "false")
     .map((button) => button.textContent);
-/** A section's row group, by its header. */
-const group = (name: RegExp) => screen.getByRole("rowgroup", { name });
-/** A section's header button, inside the table (a status tab can read the same). */
-const toggle = (name: string) => within(screen.getByRole("table")).getByRole("button", { name });
+/** A group of the inbox, by its header. */
+const group = (name: RegExp | string) => screen.getByRole("region", { name });
+/** A group's header button. */
+const toggle = (name: string) => within(group(name)).getByRole("button", { name });
 
 afterEach(() => {
   window.localStorage.clear();
 });
 
 describe("SessionsListScreen status-sections", () => {
-  it("shows the sections in order with their counts, one query each, and hides an empty one", async () => {
+  it("shows the groups in order with their counts, one query each, and hides an empty one", async () => {
     const live = { ...aPage([one(2, "live", "runner")], { next_cursor: "c2" }), total_estimate: 4 };
     const { requests } = renderWithApi(<SessionsListScreen />, {
       routes: routes((request: Request) =>
@@ -75,12 +72,12 @@ describe("SessionsListScreen status-sections", () => {
     });
 
     await screen.findByText("/runner");
-    // One table, one header row, the sections as its row groups.
-    expect(screen.getAllByRole("table")).toHaveLength(1);
-    expect(screen.getAllByRole("columnheader", { name: "Status" })).toHaveLength(1);
-    expect(headers()).toEqual(["Waiting for you · 1", "Live · ~4", "Ended · last 7 days · 1"]);
-    expect(screen.queryByRole("rowgroup", { name: /^Idle/ })).toBeNull();
-    expect(within(group(/^Live/)).getByText("/runner")).toBeInTheDocument();
+    // No table: one titled list per group.
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("columnheader")).toBeNull();
+    expect(headers()).toEqual(["Needs you · 1", "Working · ~4", "Finished · last 7 days · 1"]);
+    expect(screen.queryByRole("region", { name: /^Paused/ })).toBeNull();
+    expect(within(group(/^Working/)).getByText("/runner")).toBeInTheDocument();
     expect(
       sessionRequests(requests)
         .map((url) => url.searchParams.get("status"))
@@ -88,11 +85,11 @@ describe("SessionsListScreen status-sections", () => {
     ).toEqual(["ended", "idle", "live", "waiting"]);
   });
 
-  it("collapses a section from its header and remembers it", async () => {
+  it("collapses a group from its header and remembers it", async () => {
     const first = renderWithApi(<SessionsListScreen />, { routes: routes(), path: "/sessions" });
     await screen.findByText("/runner");
 
-    const live = toggle("Live · 1");
+    const live = toggle("Working · 1");
     fireEvent.click(live);
     expect(live).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("/runner")).toBeNull();
@@ -102,13 +99,13 @@ describe("SessionsListScreen status-sections", () => {
 
     renderWithApi(<SessionsListScreen />, { routes: routes(), path: "/sessions" });
     await screen.findByText("/asker");
-    expect(toggle("Live · 1")).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(toggle("Live · 1"));
+    expect(toggle("Working · 1")).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle("Working · 1"));
     expect(screen.getByText("/runner")).toBeInTheDocument();
     expect(window.localStorage.getItem(COLLAPSED)).toBe("[]");
   });
 
-  it("shows one empty state and no section when every section is empty", async () => {
+  it("shows one empty state and no group when every section is empty", async () => {
     const { router } = renderWithApi(<SessionsListScreen />, {
       routes: routes(aPage([])),
       path: "/sessions",
@@ -116,10 +113,10 @@ describe("SessionsListScreen status-sections", () => {
 
     expect(await screen.findByText("No sessions yet.")).toBeInTheDocument();
     expect(headers()).toEqual([]);
-    expect(screen.queryByRole("table")).toBeNull();
-    // The first run replaces the tabs and the toolbar.
-    expect(screen.queryByRole("group", { name: "Status" })).toBeNull();
+    expect(screen.queryByRole("region", { name: /·/ })).toBeNull();
+    // The first run replaces the toolbar.
     expect(screen.queryByRole("searchbox", { name: "Find sessions" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Filters/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show all time" }));
     expect(router.state.location.search).toBe("?period=All");
   });
@@ -130,13 +127,13 @@ describe("SessionsListScreen collapsed-bad-json", () => {
     ["{not json", []],
     ['{"live":true}', []],
     ['"live"', []],
-    ['["live","bogus","live",3]', ["Live · 1"]],
+    ['["live","bogus","live",3]', ["Working · 1"]],
   ])("reads %s as the collapsed set %j", async (stored, collapsed) => {
     window.localStorage.setItem(COLLAPSED, stored);
     renderWithApi(<SessionsListScreen />, { routes: routes(), path: "/sessions" });
     await screen.findByText("/asker");
 
-    expect(headers()).toEqual(["Waiting for you · 1", "Live · 1", "Ended · last 7 days · 1"]);
+    expect(headers()).toEqual(["Needs you · 1", "Working · 1", "Finished · last 7 days · 1"]);
     expect(collapsedHeaders()).toEqual(collapsed);
   });
 
@@ -145,13 +142,13 @@ describe("SessionsListScreen collapsed-bad-json", () => {
     renderWithApi(<SessionsListScreen />, { routes: routes(), path: "/sessions" });
     await screen.findByText("/asker");
 
-    fireEvent.click(toggle("Waiting for you · 1"));
+    fireEvent.click(toggle("Needs you · 1"));
     expect(window.localStorage.getItem(COLLAPSED)).toBe('["live","waiting"]');
   });
 });
 
 describe("SessionsListScreen section-error", () => {
-  it("shows the error and Retry in the failing section while the others keep rendering", async () => {
+  it("shows the error and Retry in the failing group while the others keep rendering", async () => {
     let failing = true;
     const { requests } = renderWithApi(<SessionsListScreen />, {
       routes: routes((request: Request) =>
@@ -162,17 +159,17 @@ describe("SessionsListScreen section-error", () => {
       path: "/sessions",
     });
 
-    const ended = await screen.findByRole("rowgroup", { name: /^Ended/ });
-    expect(await within(ended).findByText("Could not load ended sessions")).toBeVisible();
+    const ended = await screen.findByRole("region", { name: /^Finished/ });
+    expect(await within(ended).findByText("Could not load finished sessions")).toBeVisible();
     // No query returned a count: the header shows the ellipsis, not 0.
-    expect(headers()).toEqual(["Waiting for you · 1", "Live · 1", "Ended · last 7 days · …"]);
+    expect(headers()).toEqual(["Needs you · 1", "Working · 1", "Finished · last 7 days · …"]);
     expect(screen.getByText("/asker")).toBeInTheDocument();
     expect(screen.getByText("/runner")).toBeInTheDocument();
 
     failing = false;
     fireEvent.click(within(ended).getByRole("button", { name: "Try again" }));
     expect(await within(ended).findByText("/done")).toBeInTheDocument();
-    expect(headers()).toEqual(["Waiting for you · 1", "Live · 1", "Ended · last 7 days · 1"]);
+    expect(headers()).toEqual(["Needs you · 1", "Working · 1", "Finished · last 7 days · 1"]);
     await waitFor(() => {
       expect(sessionRequests(requests).map((url) => url.searchParams.get("status"))).toHaveLength(
         5,
@@ -185,24 +182,30 @@ describe("SessionsListScreen section-error", () => {
 });
 
 describe("SessionsListScreen filters-both-views", () => {
-  it("shows only the tab's section but asks every one, with the period on Ended only", async () => {
+  it("shows only the status link's group, with its chip, but asks every one, the period on Finished only", async () => {
     const faceted = renderWithApi(<SessionsListScreen />, {
       routes: routes(),
       path: "/sessions?status=waiting",
     });
     await screen.findByText("/asker");
-    // A tab's group cannot collapse: its header is a title, not a button.
+    // The one group cannot collapse: its header is a title, not a button.
     expect(headers()).toEqual([]);
-    expect(screen.getAllByRole("rowgroup", { name: /·/ }).map((g) => g.dataset.group)).toEqual([
-      "waiting",
-    ]);
-    expect(screen.getByRole("rowgroup", { name: "Waiting for you · 1" })).toBeInTheDocument();
+    expect(
+      [...document.querySelectorAll<HTMLElement>("[data-group]")].map((g) => g.dataset.group),
+    ).toEqual(["waiting"]);
+    expect(group("Needs you · 1")).toBeInTheDocument();
+    const chip = screen.getByRole("button", { name: "Remove filter Status Needs you" });
     expect(screen.queryByText("/runner")).toBeNull();
     expect(
       sessionRequests(faceted.requests)
         .map((url) => url.searchParams.get("status"))
         .sort(),
     ).toEqual(["ended", "idle", "live", "waiting"]);
+    // Removing the chip shows every group again.
+    fireEvent.click(chip);
+    expect(faceted.router.state.location.search).toBe("");
+    expect(await screen.findByText("/runner")).toBeInTheDocument();
+    expect(headers()).toEqual(["Needs you · 1", "Working · 1", "Finished · last 7 days · 1"]);
     faceted.unmount();
 
     const all = renderWithApi(<SessionsListScreen />, {
@@ -230,7 +233,7 @@ async function settled(requests: Request[], count: number) {
 }
 
 describe("SessionsListScreen filter-requests", () => {
-  it("asks only Ended again on a period change, and every section once on a repo filter", async () => {
+  it("asks only Finished again on a period change, and every section once on a repo filter", async () => {
     const { requests } = renderWithApi(<SessionsListScreen />, {
       routes: routes(),
       path: "/sessions",
@@ -244,11 +247,16 @@ describe("SessionsListScreen filter-requests", () => {
     const afterPeriod = (await settled(requests, 5)).slice(4);
     expect(afterPeriod.map((url) => url.searchParams.get("status"))).toEqual(["ended"]);
     expect(afterPeriod[0]?.searchParams.has("from")).toBe(true);
-    // The period filters Ended only, and its header says so.
-    expect(await screen.findByRole("button", { name: "Ended · last 24 hours · 1" })).toBeVisible();
+    // The period filters Finished only, and its header says so.
+    expect(
+      await screen.findByRole("button", { name: "Finished · last 24 hours · 1" }),
+    ).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Repo: All" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "agent-hub" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    const repo = within(screen.getByRole("dialog", { name: "Filters" })).getByRole("group", {
+      name: "Repo",
+    });
+    fireEvent.click(within(repo).getByRole("button", { name: "agent-hub" }));
     const afterRepo = (await settled(requests, 9)).slice(5);
     expect(afterRepo.map((url) => url.searchParams.get("status")).sort()).toEqual([
       "ended",
@@ -261,9 +269,9 @@ describe("SessionsListScreen filter-requests", () => {
 });
 
 describe("SessionsListScreen keep-previous", () => {
-  it("keeps the shown sections while a sort refetches; a hidden empty one stays hidden", async () => {
+  it("keeps the shown groups while a sort from the URL refetches; a hidden empty one stays hidden", async () => {
     // The sorted pages never arrive, so the screen stays mid-refetch.
-    const { requests } = renderWithApi(<SessionsListScreen />, {
+    const { requests, router } = renderWithApi(<SessionsListScreen />, {
       routes: routes((request: Request) =>
         new URL(request.url).searchParams.get("sort") === "-cost"
           ? "pending"
@@ -272,21 +280,23 @@ describe("SessionsListScreen keep-previous", () => {
       path: "/sessions",
     });
     await screen.findByText("/asker");
-    expect(headers()).toEqual(["Waiting for you · 1", "Live · 1", "Ended · last 7 days · 1"]);
+    expect(headers()).toEqual(["Needs you · 1", "Working · 1", "Finished · last 7 days · 1"]);
 
-    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
+    await act(async () => {
+      await router.navigate("/sessions?sort=-cost");
+    });
     await waitFor(() => {
       expect(
         sessionRequests(requests).filter((url) => url.searchParams.get("sort") === "-cost"),
       ).toHaveLength(4);
     });
-    // Mid-refetch: the same sections and rows, no Idle placeholder, no skeleton.
-    expect(headers()).toEqual(["Waiting for you · 1", "Live · 1", "Ended · last 7 days · 1"]);
+    // Mid-refetch: the same groups and rows, no Paused placeholder, no skeleton.
+    expect(headers()).toEqual(["Needs you · 1", "Working · 1", "Finished · last 7 days · 1"]);
     expect(screen.getByText("/runner")).toBeInTheDocument();
   });
 
-  it("marks a section busy and hides Load more while it shows the previous pages", async () => {
-    renderWithApi(<SessionsListScreen />, {
+  it("marks a group busy and hides Load more while it shows the previous pages", async () => {
+    const { router } = renderWithApi(<SessionsListScreen />, {
       routes: routes((request: Request) =>
         new URL(request.url).searchParams.get("sort") === "-cost"
           ? "pending"
@@ -295,11 +305,13 @@ describe("SessionsListScreen keep-previous", () => {
       path: "/sessions",
     });
     await screen.findByText("/runner");
-    const live = group(/^Live/);
+    const live = group(/^Working/);
     expect(live).not.toHaveAttribute("aria-busy");
     expect(within(live).getByRole("button", { name: "Load more" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
+    await act(async () => {
+      await router.navigate("/sessions?sort=-cost");
+    });
     await waitFor(() => {
       expect(live).toHaveAttribute("aria-busy", "true");
     });
@@ -310,38 +322,7 @@ describe("SessionsListScreen keep-previous", () => {
 });
 
 describe("SessionsListScreen list-groups", () => {
-  it("sorts every section from the one header and marks the sorted column", async () => {
-    const { router, requests } = renderWithApi(<SessionsListScreen />, {
-      routes: routes(),
-      path: "/sessions",
-    });
-    await screen.findByText("/asker");
-
-    const started = screen.getByRole("columnheader", { name: /^Started/ });
-    expect(started).toHaveAttribute("aria-sort", "descending");
-    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
-    expect(router.state.location.search).toBe("?sort=-cost");
-    expect(screen.getByRole("columnheader", { name: /^Cost/ })).toHaveAttribute(
-      "aria-sort",
-      "descending",
-    );
-    expect(started).not.toHaveAttribute("aria-sort");
-    await waitFor(() => {
-      expect(
-        sessionRequests(requests)
-          .filter((url) => url.searchParams.get("sort") === "-cost")
-          .map((url) => url.searchParams.get("status"))
-          .sort(),
-      ).toEqual(["ended", "idle", "live", "waiting"]);
-    });
-    // A second click flips it; back to the default sort, the URL drops it.
-    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
-    expect(router.state.location.search).toBe("?sort=cost");
-    fireEvent.click(screen.getByRole("button", { name: /^Started/ }));
-    expect(router.state.location.search).toBe("");
-  });
-
-  it("pages one section with Load more in its group, the others untouched", async () => {
+  it("shows Finished's five latest, then all loaded on Show more, then pages it with Load more", async () => {
     const rows = [...many(3, "live", 1000), ...many(50, "ended", 2000)];
     const { requests } = renderWithApi(<SessionsListScreen />, {
       routes: routes((request: Request) => {
@@ -357,9 +338,13 @@ describe("SessionsListScreen list-groups", () => {
     });
     await screen.findByText("/live-0");
 
-    const ended = group(/^Ended/);
-    expect(within(group(/^Live/)).queryByRole("button", { name: "Load more" })).toBeNull();
-    expect(within(ended).getByText("Showing 50 of ~51 ended sessions")).toBeInTheDocument();
+    const ended = group(/^Finished/);
+    expect(within(group(/^Working/)).queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(within(ended).getAllByRole("listitem")).toHaveLength(5);
+    expect(within(ended).queryByRole("button", { name: "Load more" })).toBeNull();
+    fireEvent.click(within(ended).getByRole("button", { name: "Show 45 more finished sessions" }));
+    expect(within(ended).getAllByRole("listitem")).toHaveLength(50);
+    expect(within(ended).getByText("Showing 50 of ~51")).toBeInTheDocument();
     fireEvent.click(within(ended).getByRole("button", { name: "Load more" }));
     await waitFor(() => {
       expect(
@@ -370,6 +355,6 @@ describe("SessionsListScreen list-groups", () => {
     });
     expect(await within(ended).findByText("/older")).toBeInTheDocument();
     expect(within(ended).queryByRole("button", { name: "Load more" })).toBeNull();
-    expect(within(group(/^Live/)).getAllByRole("row")).toHaveLength(4);
+    expect(within(group(/^Working/)).getAllByRole("listitem")).toHaveLength(3);
   });
 });

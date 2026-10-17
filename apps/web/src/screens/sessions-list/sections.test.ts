@@ -16,10 +16,10 @@ const queries = (search: string) => sectionQueries(new URLSearchParams(search), 
 describe("status sections (filters-both-views)", () => {
   it("orders the sections needs-me first", () => {
     expect(SECTIONS.map((section) => section.title)).toEqual([
-      "Waiting for you",
-      "Live",
-      "Idle",
-      "Ended",
+      "Needs you",
+      "Working",
+      "Paused",
+      "Finished",
     ]);
   });
 
@@ -184,5 +184,34 @@ describe("placeDriven (driven-in-list)", () => {
       removed: 0,
     });
     expect(placed.live).toEqual({ rows: [runAgent, liveRow], added: 1, removed: 1 });
+  });
+
+  it("moves open rows with a problem only the owner can fix into Waiting, keeping their status", () => {
+    const needs = { by_you: 0, handled: 0, needs_you: 1, open: 1 };
+    const live = aSession({ id: anId(5), status: "live", problems: needs });
+    const idle = aSession({ id: anId(6), status: "idle", problems: needs });
+    const calm = aSession({ id: anId(7), status: "idle" });
+    const ended = aSession({ id: anId(8), status: "ended", problems: needs });
+    const waitingRow = aSession({ id: anId(9), status: "waiting" });
+    const placed = placeDriven(
+      { waiting: [waitingRow], live: [live], idle: [idle, calm], ended: [ended] },
+      [],
+      all,
+    );
+    expect(placed.waiting).toEqual({ rows: [live, idle, waitingRow], added: 2, removed: 0 });
+    expect(placed.live).toEqual({ rows: [], added: 0, removed: 1 });
+    expect(placed.idle).toEqual({ rows: [calm], added: 0, removed: 1 });
+    expect(placed.ended).toEqual({ rows: [ended], added: 0, removed: 0 });
+    expect(sectionCount(1, placed.waiting)).toBe(3);
+  });
+
+  it("keeps a troubled open row in its own section when Waiting is not asked", () => {
+    const live = aSession({
+      status: "live",
+      problems: { by_you: 0, handled: 0, needs_you: 2, open: 2 },
+    });
+    const placed = placeDriven({ ...empty(), live: [live] }, [], new Set(["live"]));
+    expect(placed.live).toEqual({ rows: [live], added: 0, removed: 0 });
+    expect(placed.waiting.rows).toEqual([]);
   });
 });

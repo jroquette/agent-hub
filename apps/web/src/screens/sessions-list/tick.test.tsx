@@ -13,14 +13,9 @@ import {
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
 
-// These tests read the list (the default view), wide enough to show its Duration column.
-const width = window.innerWidth;
+// These tests read the list (the default view) unless they switch to the grid.
 beforeEach(() => {
   window.localStorage.setItem("ah.sessions.view", "list");
-  window.innerWidth = 1440;
-});
-afterEach(() => {
-  window.innerWidth = width;
 });
 
 const durations = vi.hoisted(() => ({ calls: 0, money: 0 }));
@@ -74,18 +69,21 @@ function renderScreen() {
 }
 
 describe("SessionsListScreen clock-ticks", () => {
-  it("re-renders only the running sessions' durations on each second", async () => {
+  it("re-renders no row on each second: the list shows no running clock", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderScreen();
-    await screen.findByText("/ended-29");
+    // Finished shows its five latest rows; the running row reads its last activity.
+    await screen.findByText("/ended-0");
+    expect(screen.getByText("/runner")).toBeInTheDocument();
 
     durations.calls = 0;
+    durations.money = 0;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3_000);
     });
-    // Three ticks re-format the one running duration, not the 30 ended ones.
-    expect(durations.calls).toBeGreaterThan(0);
-    expect(durations.calls).toBeLessThanOrEqual(3);
+    // A finished row's "ran …" is formatted when it renders: no row rendered again.
+    expect(durations.calls).toBe(0);
+    expect(durations.money).toBe(0);
   });
 });
 
