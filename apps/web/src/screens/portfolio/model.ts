@@ -35,7 +35,7 @@ export function orderNeeds(items: readonly NeedsYouItem[]): NeedsYouItem[] {
  * Proposed learnings collapse into one "Triage N learnings" line per project (spec 12: learnings
  * are always one aggregated line), so they never push an approval or a failure out of view.
  */
-export function groupLearnings(items: readonly NeedsYouItem[], now: number): NeedsYouItem[] {
+export function groupLearnings(items: readonly NeedsYouItem[]): NeedsYouItem[] {
   const byProject = new Map<string, NeedsYouItem[]>();
   for (const item of items) {
     if (item.kind !== "learning") continue;
@@ -50,7 +50,7 @@ export function groupLearnings(items: readonly NeedsYouItem[], now: number): Nee
     grouped.push({
       ...oldest,
       verb: `Triage ${String(learnings.length)} learnings`,
-      context: `${project} · oldest waiting ${age(oldest.since, now)}`,
+      context: `${project} · proposed, waiting for review`,
       href: "/knowledge/learnings?status=proposed",
     });
   }
@@ -145,7 +145,7 @@ export function projectCard(project: ProjectSummary): ProjectCardData {
     failed7d: project.failed_runs_7d,
     ready: project.ready_issues ?? null,
     cost: toNumber(project.cost_period),
-    costDelta: delta.text,
+    costDelta: delta.pct === null ? "First period tracked" : delta.text,
     costDeltaTone: delta.tone,
     costSpark: project.cost_daily.map((value) => toNumber(value) ?? 0),
   };

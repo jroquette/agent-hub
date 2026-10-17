@@ -223,11 +223,8 @@ describe("ProjectCard and ActivityFeed", () => {
     render(<ProjectCard p={card} onOpen={onOpen} />);
 
     expect(screen.getByText("Sync pending")).toHaveAttribute("title", "hub.lock 0.3.0, pin 0.4.0");
-    expect(screen.getByText("Open PRs").nextElementSibling).toHaveAttribute(
-      "title",
-      "GitHub is not connected in this version.",
-    );
-    expect(screen.getByText("Ready issues").nextElementSibling).toHaveTextContent("—");
+    expect(screen.getByText(/GitHub and Linear are not connected/)).toBeInTheDocument();
+    expect(screen.getByText("Doctor warnings")).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("article"), { key: "Enter" });
     expect(onOpen).toHaveBeenCalled();
   });

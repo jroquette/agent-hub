@@ -88,7 +88,7 @@ function NeedsRegion({ project, live }: { project: string | null; live: number }
       />
     );
   }
-  const ordered = orderNeeds(groupLearnings(needs.data.items, now));
+  const ordered = orderNeeds(groupLearnings(needs.data.items));
   if (ordered.length === 0 && live === 0) {
     return (
       <section className="ah-needs" aria-labelledby="needs-title">
