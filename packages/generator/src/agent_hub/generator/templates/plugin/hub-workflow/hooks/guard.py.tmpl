@@ -7,7 +7,10 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         local-only form; without it: the fixed infra rule; both see a redirection glued to the tool word,
         aws>/dev/null; values in their reasons are escaped and capped), AI attribution in commits/PRs/branches,
         editing .git internals, network to guard.deny_hosts, reading or changing paths in guard.deny_paths,
-        from a file tool or any Bash token)
+        from a file tool or any Bash token; first of all, a blocked word (guard.blocked_words of hub.json,
+        hub.local.json and $HUB_CONFIG together, ignoring ASCII case, no letter beside it) in the Bash
+        command, raw, joined or with its quotes removed, or in a scanned session variable's value: the infra
+        selectors, the usual stage and connection names, credentials.env and guard.blocked_words_env names)
 ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment, anywhere
         after the tool (aws's s3 … rm and cloudformation … deploy too, quoted or not); with guard.infra, a
         command it would let through that holds a character other than ASCII letters, digits, space, tab,
@@ -20,7 +23,9 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
         plugin/<project>/hooks/, .claude/settings*.json, hub.lock and hub.json, in the hub or a hub worktree,
         and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
-        editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/)
+        editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/,
+        and any Bash or file-tool call while blocked words cannot be checked: a command over 1 MiB, the rule's
+        300 ms spent, a blocked list of any layer unusable, or a hub.local.json that exists but is unusable)
 Project values (default branch, tracker team, guard lists) come from hub.json. The branch prefix of a deny's
 hint is the developer's: hub.local.json, else hub.json, else the local part of git config user.email plus `/`
 (git runs only on that deny); with none, the hint has no prefix. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
