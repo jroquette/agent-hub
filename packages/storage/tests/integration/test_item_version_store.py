@@ -1,5 +1,5 @@
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -7,6 +7,8 @@ from typing import Any, Final
 
 from sqlalchemy import Engine, event
 
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions, UnitState
+from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import (
     NewItemVersion,
     UnitKind,
@@ -18,13 +20,14 @@ from agent_hub.core.item_versions.version_store import (
     ItemVersionSequenceError,
     ItemVersionStore,
 )
+from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader
 from agent_hub.storage.item_version_store import open_item_version_store
 
 T0 = datetime(2026, 10, 17, 9, 0, 0, 123456, tzinfo=UTC)
 AGENT: Final = "plugin/demo/agents/reviewer.md"
 CONTENT: Final = b"---\nname: reviewer\n---\nReview the diff.\n"
 READERS: Final = 10
-ATTEMPTS: Final = 3
+HUB: Final = "/hubs/demo-hub"
 WAIT_SECONDS: Final = 30.0
 
 
@@ -43,20 +46,12 @@ def _version(seq: int, content: bytes = CONTENT) -> NewItemVersion:
     )
 
 
-def _capture(store: ItemVersionStore, content: bytes) -> None:
-    """The capture rule (D2, risk 8): re-read the last version, stop when its hash equals,
-    otherwise append the next seq; a lost race retries, at most ``ATTEMPTS`` times."""
-    for _ in range(ATTEMPTS):
-        last = store.last("demo", AGENT)
-        if last is not None and last.content_hash == file_hash(content):
-            return
-        try:
-            store.append(_version(1 if last is None else last.seq + 1, content))
-        except ItemVersionSequenceError:
-            continue
-        return
-    msg = "capture gave up"
-    raise AssertionError(msg)
+def _capture(store: ItemVersionStore, content: bytes) -> Mapping[str, UnitState]:
+    """One reader's capture of the agent (its own ``CaptureItemVersions``, so no memo is
+    shared and every reader reaches the store)."""
+    reader = FakeHubFileReader({HUB: FakeHub(skill_files={AGENT: content})})
+    unit = ItemUnit(project="demo", unit_path=AGENT, kind=UnitKind.AGENT)
+    return CaptureItemVersions(store, reader, lambda: T0).capture("demo", HUB, [(unit, "mark")])
 
 
 @contextmanager
@@ -77,12 +72,13 @@ def _statements() -> Iterator[list[str]]:
 def test_stores_one_version_when_concurrent_append_races(tmp_path: Path) -> None:
     store = open_item_version_store(tmp_path / "events.db")
     errors: list[BaseException] = []
+    states: list[Mapping[str, UnitState]] = []
     start = threading.Barrier(READERS, timeout=WAIT_SECONDS)
 
     def read() -> None:
         start.wait()
         try:
-            _capture(store, CONTENT)
+            states.append(_capture(store, CONTENT))
         except BaseException as error:  # noqa: BLE001 -- every failure is checked below
             errors.append(error)
 
@@ -94,6 +90,7 @@ def test_stores_one_version_when_concurrent_append_races(tmp_path: Path) -> None
 
     assert not any(reader.is_alive() for reader in readers)
     assert errors == []
+    assert states == [{AGENT: UnitState.OK}] * READERS
     stored = store.page("demo", AGENT)
     assert [(version.seq, version.content_hash) for version in stored] == [(1, file_hash(CONTENT))]
 
