@@ -37,8 +37,9 @@ this reader falls back instead.
 - ``guard.blocked_words``, ``blocked_words_files`` and ``blocked_words_env`` keep a list only when
   every item has the model's shape and the list is within the model's length; else that list is
   ``()`` and ``GuardSection.problem`` names the first unusable location (``guard.<key>`` or
-  ``guard.<key>[<i>]``), or a key under ``guard`` the model does not know (``guard.<key>``), in
-  document order. The guard asks while it is set (docs/design/environments.md § Fail closed).
+  ``guard.<key>[<i>]``), or a key under ``guard`` the model does not know (``guard.<key>``, the
+  key shown only when it is lowercase letters, digits and ``_``, else the literal ``<key>``), in
+  document order; a ``guard`` that is not an object is ``guard``. The guard asks while it is set (docs/design/environments.md § Fail closed).
 - ``environments`` keeps each entry whose name is a safe segment of at most 40 characters, whose
   ``access`` is ``read``, ``write`` or ``ask`` and whose ``production`` (default ``false``) is a
   boolean; any other entry is dropped. ``credential_env`` keeps the ``credentials.env`` items with
@@ -126,6 +127,9 @@ GUARD_KEYS = (
     "blocked_words_env",
 )
 BLOCKED_LISTS = ("blocked_words", "blocked_words_files", "blocked_words_env")
+# An unknown ``guard`` key is named in a problem only with this shape; any other is ``<key>``, so
+# a secret pasted as a key never reaches a reason.
+PLAIN_GUARD_KEY = re.compile(r"[a-z][a-z0-9_]{0,40}")
 # The model's ``BlockedWord``, ``WordFileGlob`` and ``EnvVarPattern`` shapes and bounds
 # (core/hub_config/environments.py), for ``fullmatch``. No separator character is also a segment
 # character, so ``re`` matches in linear time.
@@ -267,6 +271,7 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
     schema_version = document.get("schema_version")
     project_branch = _text(project, "default_branch", ProjectSection.default_branch)
     blocked, blocked_problem = _blocked(guard, GUARD_KEYS)
+    blocked_problem = _guard_shape_problem(document) or blocked_problem
     return HubFile(
         # ``bool`` is an ``int``; only a JSON integer is a schema version.
         schema_version=schema_version if type(schema_version) is int else None,
@@ -358,6 +363,7 @@ def load_local_layer(path: str | os.PathLike[str]) -> LocalLayer:
     if document is None:
         return LocalLayer(file_problem=LOCAL_FILE)
     lists, problem = _blocked(_object(document.get("guard")), BLOCKED_LISTS)
+    problem = _guard_shape_problem(document) or problem
     return LocalLayer(
         environments=_environments(document.get("environments"), needs_access=False),
         blocked_words=lists.get("blocked_words", ()),
@@ -574,9 +580,17 @@ def _blocked(
         if key in BLOCKED_LISTS:
             lists[key], problem = _blocked_list(key, value)
         else:
-            problem = "" if key in known else "guard." + key
+            shown = key if PLAIN_GUARD_KEY.fullmatch(key) else "<key>"
+            problem = "" if key in known else "guard." + shown
         first_problem = first_problem or problem
     return lists, first_problem
+
+
+def _guard_shape_problem(document: dict[str, object]) -> str:
+    """``guard`` when the file has a ``guard`` that is not an object (its words would vanish)."""
+    if "guard" in document and not isinstance(document["guard"], dict):
+        return "guard"
+    return ""
 
 
 def _blocked_list(key: str, value: object) -> tuple[tuple[str, ...], str]:

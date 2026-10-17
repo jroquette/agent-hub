@@ -1147,9 +1147,11 @@ def _blocked_hit(pattern: re.Pattern[str], text: str, deadline: float) -> str | 
 
 def _command_views(cmd: str) -> tuple[str, ...]:
     """The raw command, with backslash-newlines removed (as bash joins them), and then with every
-    quote and backslash removed (p''rod, p\\rod); each distinct view once."""
+    quote and backslash removed, and a `$` just before a quote (p''rod, p\\rod, p$''rod: bash's
+    ANSI-C and locale quotes); each distinct view once."""
     joined = cmd.replace("\\\n", "")
-    return tuple(dict.fromkeys((cmd, joined, re.sub(r"['\"\\\\]", "", joined))))
+    unquoted = re.sub(r"['\"\\\\]", "", re.sub(r"\$(?=['\"])", "", joined))
+    return tuple(dict.fromkeys((cmd, joined, unquoted)))
 
 
 def _scanned_variables(cfg: Config, environ: dict) -> list[str]:
