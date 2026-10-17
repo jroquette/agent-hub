@@ -44,6 +44,8 @@ from agent_hub.api.agent_session_runtime import (
 from agent_hub.api.app import create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
 from agent_hub.api.dependencies import ApiPorts
+from agent_hub.api.feature_names import FILE_NAME as FEATURE_NAMES_FILE
+from agent_hub.api.feature_names import FeatureNames
 from agent_hub.api.linear_connection import (
     KEY_FILE_NAME,
     LinearConnection,
@@ -652,6 +654,7 @@ def build_app(
         owner_signoff=SignOffOwnerSteps(
             ProjectHubPaths(hubs), reader, HubEvalWriter(), clock=settings.clock
         ),
+        feature_names=FeatureNames(settings.registry_path.parent / FEATURE_NAMES_FILE),
         linear=LinearConnection(
             linear_environ,
             key_file,

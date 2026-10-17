@@ -1913,6 +1913,81 @@
         "title": "FeatureDetail",
         "type": "object"
       },
+      "FeatureName": {
+        "description": "One feature's nickname.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project",
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "slug",
+          "name"
+        ],
+        "title": "FeatureName",
+        "type": "object"
+      },
+      "FeatureNameBody": {
+        "additionalProperties": false,
+        "description": "``PUT /feature-names``: the feature and its new name (\"\" clears it).",
+        "properties": {
+          "name": {
+            "maxLength": 80,
+            "title": "Name",
+            "type": "string"
+          },
+          "project": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project",
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "slug",
+          "name"
+        ],
+        "title": "FeatureNameBody",
+        "type": "object"
+      },
+      "FeatureNamesView": {
+        "description": "``GET /feature-names``: every nickname set on this machine.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureName"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "FeatureNamesView",
+        "type": "object"
+      },
       "FeaturePhase": {
         "enum": [
           "spec",
@@ -11030,6 +11105,98 @@
         "summary": "Stream Events",
         "tags": [
           "streams"
+        ]
+      }
+    },
+    "/api/v1/feature-names": {
+      "get": {
+        "description": "The nicknames the owner gave features on this machine (the slug stays the identity).",
+        "operationId": "list_feature_names_api_v1_feature_names_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureNamesView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Feature Names",
+        "tags": [
+          "features"
+        ]
+      },
+      "put": {
+        "description": "Give a feature a nickname, or clear it with an empty name.",
+        "operationId": "set_feature_name_api_v1_feature_names_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeatureNameBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureName"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Set Feature Name",
+        "tags": [
+          "features"
         ]
       }
     },

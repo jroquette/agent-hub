@@ -474,6 +474,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/feature-names": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Feature Names
+     * @description The nicknames the owner gave features on this machine (the slug stays the identity).
+     */
+    get: operations["list_feature_names_api_v1_feature_names_get"];
+    /**
+     * Set Feature Name
+     * @description Give a feature a nickname, or clear it with an empty name.
+     */
+    put: operations["set_feature_name_api_v1_feature_names_put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/features": {
     parameters: {
       query?: never;
@@ -2088,6 +2112,38 @@ export interface components {
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
+    };
+    /**
+     * FeatureName
+     * @description One feature's nickname.
+     */
+    FeatureName: {
+      /** Name */
+      name: string;
+      /** Project */
+      project: string;
+      /** Slug */
+      slug: string;
+    };
+    /**
+     * FeatureNameBody
+     * @description ``PUT /feature-names``: the feature and its new name ("" clears it).
+     */
+    FeatureNameBody: {
+      /** Name */
+      name: string;
+      /** Project */
+      project: string;
+      /** Slug */
+      slug: string;
+    };
+    /**
+     * FeatureNamesView
+     * @description ``GET /feature-names``: every nickname set on this machine.
+     */
+    FeatureNamesView: {
+      /** Items */
+      items: components["schemas"]["FeatureName"][];
     };
     /** @enum {string} */
     FeaturePhase:
@@ -5740,6 +5796,86 @@ export interface operations {
         };
         content: {
           "text/event-stream": string;
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  list_feature_names_api_v1_feature_names_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FeatureNamesView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  set_feature_name_api_v1_feature_names_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FeatureNameBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FeatureName"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
