@@ -2871,6 +2871,19 @@ button.ah-tree-item {
   border-color: var(--accent);
   color: var(--accent);
 }
+.ah-facet-btn {
+  height: 28px;
+  font-size: 12px;
+}
+.ah-facet-btn[data-active="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ah-facet-btn[data-active="true"] .ah-subtle {
+  color: inherit;
+  opacity: 0.8;
+}
 .ah-chip-part,
 .ah-th-sort {
   all: unset;

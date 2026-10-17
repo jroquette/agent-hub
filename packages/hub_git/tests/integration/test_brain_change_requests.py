@@ -267,7 +267,7 @@ def test_fails_when_open_pull_requests_cannot_be_listed(
     assert origin.pull_requests() == ()
 
 
-def test_refuses_when_note_absent_from_default_branch(
+def test_refuses_when_note_absent_from_default_branch_and_checkout(
     git_world: GitWorld, brain_origin: GitBrainOrigin
 ) -> None:
     probe = brain_origin
@@ -276,19 +276,38 @@ def test_refuses_when_note_absent_from_default_branch(
     with pytest.raises(ChangeRequestConflictError) as conflict:
         git_world.adapter().accept(_change(git_world))
 
-    assert conflict.value.reason == "Note not on origin/main: brain/_inbox/testing-x.md"
+    assert conflict.value.reason == (
+        "Note not on origin/main nor in the hub checkout: brain/_inbox/testing-x.md"
+    )
     assert probe.branch_names() == {"main"}
     assert git_world.gh_calls() == [["auth", "token", "--hostname", "github.com"]]
 
 
-def test_refuses_when_note_only_in_user_checkout(git_world: GitWorld) -> None:
+def test_adds_note_from_checkout_when_never_pushed(
+    git_world: GitWorld, brain_origin: GitBrainOrigin
+) -> None:
     inbox = git_world.hub / "brain" / "_inbox"
     inbox.mkdir(parents=True)
     (inbox / "testing-x.md").write_text(NOTE_TEXT)
-    git_world.git("add", "brain")
-    git_world.git("commit", "--quiet", "-m", "docs: local only")
+    before = git_world.snapshot()
+    change = _change(git_world)
 
-    with pytest.raises(ChangeRequestConflictError, match="Note not on origin/main"):
+    git_world.adapter().accept(change)
+
+    moved = brain_origin.file_on(change.branch, "brain/learnings/testing-x.md")
+    assert moved is not None
+    assert moved.endswith("# Testing x\n\nRun it first.\n")
+    assert brain_origin.file_on(change.branch, NOTE) is None
+    assert git_world.snapshot() == before
+    assert (inbox / "testing-x.md").read_text() == NOTE_TEXT
+
+
+def test_refuses_checkout_note_when_it_is_a_link(git_world: GitWorld) -> None:
+    inbox = git_world.hub / "brain" / "_inbox"
+    inbox.mkdir(parents=True)
+    (inbox / "testing-x.md").symlink_to("../../README.md")
+
+    with pytest.raises(ChangeRequestConflictError, match="Note is not a regular file"):
         git_world.adapter().accept(_change(git_world))
 
 

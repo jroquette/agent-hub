@@ -78,7 +78,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
 - The learning decisions ([Learning decisions](#learning-decisions)): every refusal is a 409 whose extension members
   `code` and `reason` say why, nothing pushed or stored. `code` is `learning_conflict` (already decided, with
   `pr_url` when its PR is known; another action running for the hub; no reason to reject; a target the brain rules
-  refuse), `change_request_conflict` (the note is not on `origin/<default branch>`, the destination or the branch
+  refuse), `change_request_conflict` (the note is neither on `origin/<default branch>` nor in the hub checkout
+  ([ADR 0037](adr/0037-learning-decisions-unpushed-notes-and-edits.md)), the destination or the branch
   exists, `origin` is not the hub repo), `push_refused` (the push guard refused the branch) or `hub_read_only`
   (actions unavailable for this hub, title "Learning actions unavailable", the same reason the learning's
   `actions_unavailable` shows). A git or `gh` step that fails → 502 "Could not open the pull request" with the
@@ -153,7 +154,9 @@ filled for the rows of the page only; every one is optional and `null` when ther
 ## Learning decisions
 
 `POST /api/v1/learnings/{learning_id}/accept` with `{"target": "<folder or .md path under brain/>"}` (1 to 200
-characters) and `POST /api/v1/learnings/{learning_id}/reject` with `{"reason": "…"}` (1 to 300 characters once
+characters) and an optional `"note_body"` (the note's text after its frontmatter as the owner edited it, 1 to 262,144
+characters, an empty one is 422; a blank one or one over 256 KiB of UTF-8 is a 409 `learning_conflict`; [ADR 0037](adr/0037-learning-decisions-unpushed-notes-and-edits.md)),
+and `POST /api/v1/learnings/{learning_id}/reject` with `{"reason": "…"}` (1 to 300 characters once
 stripped; an empty one is 422) each open one pull request in the hub repo and answer 201 with
 `{"state": "accepted_pr_open" | "rejected_pr_open", "pr_url": "https://github.com/<hub_repo>/pull/<n>", "branch": "…"}`.
 They are actions, not resources, a deliberate exception to "resources are nouns"
@@ -165,7 +168,9 @@ They are actions, not resources, a deliberate exception to "resources are nouns"
   `roquettejh/learning-accept-testing-x`): a learning has no tracker issue, so the `<team>-<n>-<desc>` rule of
   [CONTRIBUTING.md](CONTRIBUTING.md) does not apply to these branches only. The push guard refuses any other name.
 - The PR title is `Accept learning: <title>` or `Reject learning: <title>` (redacted, at most 72 characters); its body
-  names the move, quotes the note's first paragraph (redacted, 200) and, for a reject, the reason. The commit is
+  names the move, says when the note was edited in agent-hub, quotes the note's first paragraph (the edited one when
+  there is an edit; redacted, 200) and, for a reject, the reason. An edited accept writes the new body after the kept
+  frontmatter in the same commit. The commit is
   authored as the hub's author (ADR 0016) with no trailer.
 - A decision is idempotent by the learning's state: a second call answers 409 with the PR already open.
 

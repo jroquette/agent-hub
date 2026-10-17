@@ -16,6 +16,8 @@ from agent_hub.hub_git.github_remote import (
         "https://github.com/acme/demo-hub/",
         "git@github.com:acme/demo-hub.git",
         "ssh://git@github.com/acme/demo-hub.git",
+        "git@github.com-acme:acme/demo-hub.git",
+        "ssh://git@github.com-work-account/acme/demo-hub.git",
         "  https://GitHub.com/acme/demo-hub.git\n",
     ],
 )
@@ -29,6 +31,9 @@ def test_names_repo_when_url_is_github(url: str) -> None:
         "https://gitlab.com/acme/demo-hub.git",
         "/srv/git/demo-hub.git",
         "https://github.com.evil.example/acme/demo-hub.git",
+        "git@github.com.evil.example:acme/demo-hub.git",
+        "https://github.com-acme/acme/demo-hub.git",
+        "git@github.com-x.evil.example:acme/demo-hub.git",
         "https://user:secret@github.com/acme/demo-hub.git",
         "https://github.com/acme",
         "",

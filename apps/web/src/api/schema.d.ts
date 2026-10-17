@@ -630,7 +630,8 @@ export interface paths {
     put?: never;
     /**
      * Accept Learning
-     * @description Open a hub PR that moves the note into the brain; nothing changes until it is merged.
+     * @description Open a hub PR that moves the note into the brain, with the edited body when one is sent;
+     *     nothing changes until it is merged.
      */
     post: operations["accept_learning_api_v1_learnings__learning_id__accept_post"];
     delete?: never;
@@ -1305,9 +1306,12 @@ export interface components {
     /**
      * AcceptLearningBody
      * @description ``POST /learnings/{learning_id}/accept``: the brain folder (or ``.md`` path) to move the
-     *     note to, relative to ``brain/``.
+     *     note to, relative to ``brain/``, and optionally the note's edited text after its frontmatter
+     *     (the frontmatter itself is kept; ``status`` and ``last_verified`` are set as for any accept).
      */
     AcceptLearningBody: {
+      /** Note Body */
+      note_body?: string | null;
       /** Target */
       target: string;
     };
