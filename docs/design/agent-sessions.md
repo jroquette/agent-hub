@@ -69,6 +69,18 @@ is refused (`terminal`, or `log-full` naming Resume); a command while an interru
   `.claude/worktrees/*`, directories only, no link followed, at most 200 worktrees per repo; `workdir_id` is the first
   16 hex of SHA-256 over `kind\0realpath`, resolved only by lookup in a fresh listing.
 
+- Title (ADR 0035): a driven session is named by its first prompt until Claude Code gives it a title (its
+  `ai-title`, or the user's `/rename`), read through `session_title(cwd, claude_session_id)`. Acceptance criteria
+  (AGH-267):
+  - **AC-267.1** Given a live session not named yet whose first turn still runs, when `sweep` runs, then it reads the
+    title at most once per `TITLE_POLL` (5 s) and stores it while the session keeps running.
+  - **AC-267.2** Given a live session, when it ends (closed, idle timeout, server stopped), then its title is read once
+    more before it is stored ended, so a session stopped during its first turn takes Claude Code's title.
+  - **AC-267.3** Given stored sessions that ended unnamed (a server stopped before the title was read), when the first
+    `sweep` of a new `hub web` runs, then each takes Claude Code's title; one whose project or workdir is gone keeps
+    its own.
+  - **AC-267.4** A title is still read at the end of each turn; a missing or failing reader keeps the current name.
+
 ### Limits (`SessionLimits`, `hub web` options and `AGENT_HUB_*` variables)
 
 | Limit | Default | Range |

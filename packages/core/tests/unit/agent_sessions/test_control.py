@@ -18,7 +18,11 @@ from agent_hub.core.agent_sessions.agent_session import (
     SendMessage,
     SessionSettings,
 )
-from agent_hub.core.agent_sessions.control import AgentSessionCommands, AgentSessionControl
+from agent_hub.core.agent_sessions.control import (
+    TITLE_POLL,
+    AgentSessionCommands,
+    AgentSessionControl,
+)
 from agent_hub.core.agent_sessions.diff import OFF_LOOP_BYTES, edit_diff
 from agent_hub.core.agent_sessions.driver import (
     Allow,
@@ -141,6 +145,75 @@ async def test_keeps_prompt_title_when_claude_title_missing_or_failing(make_rig:
 
     assert (await untitled.until_status(first.id, "idle")).title == "Say hello."
     assert (await broken.until_status(second.id, "idle")).title == "Say hello."
+
+
+async def test_takes_claude_title_while_first_turn_runs_when_swept(make_rig: MakeRig) -> None:
+    asked: list[str] = []
+
+    def session_title(_cwd: str, claude_session_id: str) -> str | None:
+        asked.append(claude_session_id)
+        return "Greeting the user"
+
+    rig = make_rig(
+        replies={"Work.": (TextBlock(block=0, text="working"), Hold())},
+        session_title=session_title,
+    )
+    working = await rig.create("Work.")
+    await rig.until(lambda: "text" in rig.kinds(working.id))
+
+    await rig.control.sweep(rig.clock(), purge=False)
+    await rig.control.sweep(rig.clock.advance(1), purge=False)
+
+    named = rig.store.get(working.id)
+    assert (named.status, named.title) == (AgentSessionStatus.RUNNING, "Greeting the user")
+    assert asked == [named.claude_session_id]
+
+
+async def test_checks_unnamed_live_session_once_per_poll_when_swept(make_rig: MakeRig) -> None:
+    asked: list[str] = []
+
+    def session_title(_cwd: str, claude_session_id: str) -> str | None:
+        asked.append(claude_session_id)
+        return None
+
+    rig = make_rig(session_title=session_title)
+    idle = await rig.create()
+
+    await rig.control.sweep(rig.clock(), purge=False)
+    await rig.control.sweep(rig.clock.advance(1), purge=False)
+    await rig.control.sweep(rig.clock.advance(TITLE_POLL.total_seconds()), purge=False)
+
+    assert len(asked) == 2
+    assert rig.store.get(idle.id).title is None
+
+
+async def test_takes_claude_title_when_stopped_during_first_turn(make_rig: MakeRig) -> None:
+    rig = make_rig(
+        replies={"Work.": (TextBlock(block=0, text="working"), Hold())},
+        session_title=lambda _cwd, _claude_session_id: "Greeting the user",
+    )
+    working = await rig.create("Work.")
+    await rig.until(lambda: "text" in rig.kinds(working.id))
+
+    await rig.control.shutdown()
+
+    stopped = rig.store.get(working.id)
+    assert (stopped.end_reason, stopped.title) == (EndReason.SERVER_STOPPED, "Greeting the user")
+
+
+async def test_names_stored_sessions_ended_unnamed_when_first_swept(make_rig: MakeRig) -> None:
+    before = make_rig(replies={"Work.": (TextBlock(block=0, text="working"), Hold())})
+    working = await before.create("Work.")
+    await before.until(lambda: "text" in before.kinds(working.id))
+    await before.control.shutdown()
+    assert before.store.get(working.id).title == "Work."
+    rig = make_rig(
+        store=before.store, session_title=lambda _cwd, _claude_session_id: "Greeting the user"
+    )
+
+    await rig.control.sweep(rig.clock(), purge=False)
+
+    assert rig.store.get(working.id).title == "Greeting the user"
 
 
 async def test_starts_idle_without_init_when_created_without_prompt(make_rig: MakeRig) -> None:
