@@ -96,6 +96,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/agents/requirements-analyst.md",
     "plugin/hub-workflow/agents/researcher.md",
     "plugin/hub-workflow/agents/spec-reviewer.md",
+    "plugin/hub-workflow/agents/ux-designer.md",
     "plugin/hub-workflow/hooks/event_sensor.py",
     "plugin/hub-workflow/hooks/guard.py",
     "plugin/hub-workflow/hooks/hooks.json",
@@ -122,6 +123,8 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/learn/SKILL.md",
     "plugin/hub-workflow/skills/onboard/SKILL.md",
     "plugin/hub-workflow/skills/onboard/reference.md",
+    "plugin/hub-workflow/skills/overengineering-review/SKILL.md",
+    "plugin/hub-workflow/skills/overengineering-review/references/patterns.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
     "plugin/hub-workflow/skills/refactor/SKILL.md",
     "plugin/hub-workflow/skills/release/SKILL.md",
@@ -130,6 +133,8 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/review/SKILL.md",
     "plugin/hub-workflow/skills/triage/SKILL.md",
     "plugin/hub-workflow/skills/upgrade/SKILL.md",
+    "plugin/hub-workflow/skills/ux-review/SKILL.md",
+    "plugin/hub-workflow/skills/ux-review/references/checklist.md",
     "scripts/cloud-setup.sh",
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
@@ -176,6 +181,7 @@ BASE_AGENTS = (
     "requirements-analyst",
     "researcher",
     "spec-reviewer",
+    "ux-designer",
 )
 BASE_SKILLS = (
     "adr",
@@ -188,6 +194,7 @@ BASE_SKILLS = (
     "kickoff",
     "learn",
     "onboard",
+    "overengineering-review",
     "recall",
     "refactor",
     "release",
@@ -196,6 +203,7 @@ BASE_SKILLS = (
     "review",
     "triage",
     "upgrade",
+    "ux-review",
 )
 
 GENERATOR_PACKAGE = "agent_hub.generator"
@@ -301,13 +309,13 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered, RenderedHub)
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
-    # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix and the ten AGH-99
-    # skills: 25, sorted by path.
+    # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix, the ten AGH-99
+    # skills and AGH-274's two review skills and ux-designer agent: 28, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 25
+    assert len(rendered.links) == 28
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -1995,6 +2003,7 @@ SKILL_FRONTMATTER_KEYS = {
     "kickoff": ["name", "description", "disable-model-invocation"],
     "learn": ["name", "description", "disable-model-invocation", "argument-hint"],
     "onboard": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "overengineering-review": ["name", "description", "disable-model-invocation", "argument-hint"],
     "recall": ["name", "description", "argument-hint"],
     "refactor": ["name", "description", "disable-model-invocation", "argument-hint"],
     "release": ["name", "description", "disable-model-invocation", "argument-hint"],
@@ -2003,6 +2012,7 @@ SKILL_FRONTMATTER_KEYS = {
     "review": ["name", "description", "disable-model-invocation", "argument-hint"],
     "triage": ["name", "description", "disable-model-invocation", "argument-hint"],
     "upgrade": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "ux-review": ["name", "description", "disable-model-invocation", "argument-hint"],
 }
 
 
@@ -4808,6 +4818,7 @@ TEMPLATE_TIERS = {
     "requirements-analyst": "large",
     "researcher": "medium",
     "spec-reviewer": "large",
+    "ux-designer": "large",
 }
 TIER_LINE = re.compile(r"^model: @@\{model_(small|medium|large)\}$")
 
@@ -4911,6 +4922,7 @@ def test_overrides_agent_tier_when_models_agents_set() -> None:
         "requirements-analyst": "model: claude-opus-4-1",
         "researcher": "model: claude-opus-4-1",
         "spec-reviewer": "model: claude-opus-4-1",
+        "ux-designer": "model: claude-opus-4-1",
     }
     # Only the overridden or retiered model lines differ from the default render.
     default_lines = agent_model_lines(HubConfig.model_validate(a_hub_document()))
