@@ -9,9 +9,10 @@ stored; a hash that differs from the unit's last version is appended as ``extern
 (``first`` when the unit has none). An append that loses the race for its ``seq`` reads the
 last version again and stops once that hash equals, up to ``ATTEMPTS`` tries, so racing reads
 store one row. A unit is marked only after it is settled: a store error (the database busy past
-its timeout, a 503) leaves it, and every unit after it, for the next read. One call reads at
-most ``budget_bytes`` of unit bytes (the catalog's 16 MiB); once spent, the units left are read
-by a later call. A unit gone before its read is left out of the answer.
+its timeout, a 503) leaves it, and every unit after it, for the next read. One call stops reading
+new units once ``budget_bytes`` (the catalog's 16 MiB) have been read; the read that crosses it
+still finishes, and the units left are read by a later call. A unit gone before its read is
+left out of the answer.
 """
 
 import threading
