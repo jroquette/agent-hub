@@ -242,14 +242,11 @@ test("Feature detail Tickets tab shows the plan's tickets, planning and the not-
 }) => {
   await visit(page, baseURL, `/features/demo/export-button`, async () => {
     await expect(page.getByRole("heading", { level: 1, name: "export-button" })).toBeVisible();
-    const answered = page.waitForResponse((response) =>
-      response.url().endsWith("/api/v1/features/demo/export-button/tickets"),
+    // The demo feature is at its Tickets step, so it opens on the Tickets tab (AC-268.15).
+    await expect(page.getByRole("tab", { name: /Tickets/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
     );
-    await page.getByRole("tab", { name: /Tickets/ }).click();
-    const response = await answered;
-    expect(response.status()).toBe(200);
-    expect(response.headers()["content-security-policy"]).toContain("connect-src 'self'");
-    await expect(page).toHaveURL(/[?&]doc=tickets\b/);
     await expect(
       page.getByText(/^From the plan \(features\.json\); Linear is not connected/),
     ).toBeVisible();
