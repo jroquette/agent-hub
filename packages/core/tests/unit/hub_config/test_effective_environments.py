@@ -243,3 +243,12 @@ def test_covers_each_layer_when_case_table_read() -> None:
     assert layers == {"hub.json", "hub.local.json"}
     assert any(case.local_document() is None for case in BLOCKED_WORDS_CASES)
     assert any(case.env for case in BLOCKED_WORDS_CASES)
+
+
+@pytest.mark.parametrize(("name", "committed"), [("staging", "ask"), ("live", "read")])
+def test_rejects_committed_name_when_local_entry_sets_nothing(name: str, committed: str) -> None:
+    document = with_change(("environments", name), {})
+
+    assert local_problems(document) == [
+        (f"environments.{name}.access", f"may only tighten hub.json's {committed}")
+    ]
