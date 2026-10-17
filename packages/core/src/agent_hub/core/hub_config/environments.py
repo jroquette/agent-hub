@@ -68,6 +68,35 @@ ServiceKind = Annotated[
 ]
 
 
+# The guard's blocked words (docs/design/environments.md § Blocked words). The hooks' reader
+# keeps its own copy of these shapes.
+MAX_BLOCKED_WORDS: Final = 200
+MAX_BLOCKED_GLOBS: Final = 100
+MAX_BLOCKED_ENV: Final = 50
+MAX_GLOB_CHARS: Final = 200
+BlockedWord = Annotated[
+    str, Field(min_length=2, max_length=64, pattern=r"^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$")
+]
+
+
+def _no_parent_segment(value: str) -> str:
+    # Pydantic's regex has no look-around, so the ``..`` segment is refused here.
+    if ".." in value.split("/"):
+        raise PydanticCustomError("parent_segment", "must not hold a .. segment")
+    return value
+
+
+# Printable ASCII without space, never starting with ``/``; a glob without ``/`` matches a file's
+# last path component, one with ``/`` a trailing run of segments.
+WordFileGlob = Annotated[
+    str,
+    Field(pattern=r"^[!-.0-~][!-~]*$", max_length=MAX_GLOB_CHARS),
+    AfterValidator(_no_parent_segment),
+]
+# A variable name whose value the guard scans; a trailing ``*`` matches names by prefix.
+EnvVarPattern = Annotated[str, Field(pattern=rf"^{_ENV_VAR_NAME}\*?$")]
+
+
 class Credentials(ConfigObject):
     """Where the credentials of an environment come from: names, never values."""
 

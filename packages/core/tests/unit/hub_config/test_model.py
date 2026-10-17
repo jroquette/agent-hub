@@ -30,6 +30,7 @@ from agent_hub.core.testing.builders import (
     a_hub_document,
     a_second_repo,
     a_two_team_document,
+    an_environments_document,
 )
 from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
@@ -1682,3 +1683,85 @@ class TestPlatformRepository:
         [error] = caught.value.errors()
         assert (error["loc"], error["type"]) == (("platform", "repository"), "null_not_allowed")
         assert error["msg"] == "null is not a value; give a value or leave the key out"
+
+
+def a_blocked_words_document() -> dict[str, Any]:
+    """``a_hub_document`` with ``W``'s guard: its blocked words and files, nothing else of ``W``."""
+    document = a_hub_document()
+    document["guard"] = an_environments_document()["guard"]
+    return document
+
+
+def test_loads_blocked_words_when_guard_lists_them() -> None:
+    document = a_blocked_words_document()
+    document["guard"]["blocked_words_env"] = ["DEMO_TARGET", "DEMO_*"]
+
+    guard = HubConfig.model_validate(document).guard
+
+    assert guard.blocked_words == ("prod", "production")
+    assert guard.blocked_words_files == ("config/*.json", "serverless.yml")
+    assert guard.blocked_words_env == ("DEMO_TARGET", "DEMO_*")
+
+
+def test_defaults_blocked_words_when_guard_lists_none() -> None:
+    guard = HubConfig.model_validate(a_hub_document()).guard
+
+    assert (guard.blocked_words, guard.blocked_words_files, guard.blocked_words_env) == (
+        (),
+        (),
+        (),
+    )
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "loc"),
+    [
+        pytest.param("blocked_words", ["prod", "p rod"], ("blocked_words", 1), id="word_space"),
+        pytest.param("blocked_words", ["x"], ("blocked_words", 0), id="word_short"),
+        pytest.param("blocked_words", [""], ("blocked_words", 0), id="word_empty"),
+        pytest.param("blocked_words", ["a" * 65], ("blocked_words", 0), id="word_long"),
+        pytest.param("blocked_words", ["-prod"], ("blocked_words", 0), id="word_dash"),
+        pytest.param(
+            "blocked_words", [f"w{index}" for index in range(201)], ("blocked_words",), id="w201"
+        ),
+        pytest.param("blocked_words_files", ["/etc/*"], ("blocked_words_files", 0), id="glob_root"),
+        pytest.param("blocked_words_files", ["../x"], ("blocked_words_files", 0), id="glob_up"),
+        pytest.param(
+            "blocked_words_files", ["config/../x"], ("blocked_words_files", 0), id="glob_inner_up"
+        ),
+        pytest.param("blocked_words_files", ["a b"], ("blocked_words_files", 0), id="glob_space"),
+        pytest.param(
+            "blocked_words_files", ["a" * 201], ("blocked_words_files", 0), id="glob_long"
+        ),
+        pytest.param(
+            "blocked_words_files",
+            [f"g{index}.json" for index in range(101)],
+            ("blocked_words_files",),
+            id="g101",
+        ),
+        pytest.param("blocked_words_env", ["lower"], ("blocked_words_env", 0), id="env_lower"),
+        pytest.param("blocked_words_env", ["A*B"], ("blocked_words_env", 0), id="env_inner_star"),
+        pytest.param(
+            "blocked_words_env",
+            [f"DEMO_{index}" for index in range(51)],
+            ("blocked_words_env",),
+            id="e51",
+        ),
+        pytest.param("blocked_words", "prod", ("blocked_words",), id="not_list"),
+    ],
+)
+def test_rejects_blocked_words_when_fault_given(
+    key: str, value: object, loc: tuple[str | int, ...]
+) -> None:
+    document = a_blocked_words_document()
+    document["guard"][key] = value
+
+    assert error_locs(document) == [("guard", *loc)]
+
+
+@pytest.mark.parametrize("glob", ["..x/a", "a/...", "config/*.json", "**/prod/*.yml"])
+def test_accepts_blocked_glob_when_dots_not_a_segment(glob: str) -> None:
+    document = a_blocked_words_document()
+    document["guard"]["blocked_words_files"] = [glob]
+
+    assert HubConfig.model_validate(document).guard.blocked_words_files == (glob,)
