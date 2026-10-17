@@ -70,6 +70,7 @@ hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files b
 hub doctor [--only RULE]… [--json]   # checks rules, links, dead references and instruction size
 hub validate-output review|eval FILE   # checks one agent JSON output: a review round or an eval
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
+hub env list|show|add|set|remove|service … [--local] [--json]   # the declared environments and services: list, show, or change hub.json (--local: hub.local.json), no prompt
 hub worktree NAME [--only REPO] [--remove] [--no-fetch]   # isolated worktrees for one task (--remove removes them; --no-fetch starts from the already-fetched base)
 hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
@@ -234,11 +235,18 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `project.conventions`, `repos[].conventions` | Patterns for the task branch (`{prefix}`, `{ISSUE}`, `{issue_lower}`, `{slug}`; needs the issue) and the commit and PR titles (`{ISSUE}`, `{type}`, `{scope}`, `{summary}`; needs `{summary}`); a repo's keys override the project's, key by key; `hub worktree`, `hub run`, its prompt and `AGENTS.md` follow them; not settable in `hub.local.json` | Today's shapes: `{prefix}{issue_lower}-{slug}`, `{type}({scope}): {summary} ({ISSUE})`; a `pr_title` that no layer sets follows the effective `commit_title` | AGH-57 |
 | `guard.infra.allow`, `guard.infra.prod_markers` | Regexes over infra commands (`aws`, `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam`, `serverless`), checked by the guard per part of the command: a prod marker anywhere denies, an environment on the part itself that `allow` matches passes (deploy, destroy and delete verbs ask), a local-only form passes, anything else is denied; `guard.infra` present, even `{}`, turns it on (rule below), and the generated `.claude/settings.json` then drops its `Bash(terraform *)` and `Bash(aws *)` denies so the guard decides (run `./hub sync` after adding or removing it; a project re-adds them in `settings.project.json`); not settable in `hub.local.json` | The fixed infra rule: `terraform apply\|destroy\|import`, any `aws` subcommand, `pulumi up\|destroy`, `kubectl apply\|delete` and `cdk deploy\|destroy` (the verb right after `cdk`) are denied | AGH-45 |
 | `guard.readable_env_files`, `guard.secret_env_files` | Env file names (`.env.<suffix>`, never `.env` itself, a path or a key file) the guard stops treating as secret, on top of its fixed list (`.env.example`, …), or always treats as secret, even when that list or `readable_env_files` names one; a name in both is a schema error. A `hub.json` named by `$HUB_CONFIG` can add secret names but never release one; `hub doctor`'s `secrets.config` shows both lists as infos | The guard's fixed list | AGH-210 |
+| `environments` | The project's environments, keyed by a name it chooses: `access` (required: `read`, `write`, or `ask` the user before any write; `write` covers data, never a deploy), `production` (a flag, not a policy), `description` and `credentials` (an AWS profile name and variable names, never values); secret-looking values are rejected. `AGENTS.md` lists them (from `hub.json` only; run `./hub sync`), the SessionStart brief shows both files', and `hub env` lists and edits them; `hub sync`, `hub setup` and `hub env` name each production environment whatever doctor's settings, and doctor's `environments.production` (an ordinary rule, which can be disabled or retuned) warns for `write` or `ask` and informs for `read`. An undeclared environment is out of bounds for the agent by instruction; like `access`, that is rendered for the agent, not enforced by the guard (Blocked words, below; [design/environments.md](design/environments.md), [ADR 0038](adr/0038-declared-environments-and-blocked-words.md)) | No section in `AGENTS.md` or the brief; the hub renders as before | AGH-277 |
+| `repos[].services` | The services a repo runs, keyed by name: `kind` (informational), `description` and `endpoints` per declared environment, each a `url` (no user info, query or fragment) or a `resource`, with a `note` and credential references; `AGENTS.md` lists the service names, the brief and `hub env show` the endpoints | No services | AGH-277 |
+| `guard.blocked_words` | Words the guard denies in a Bash command, a file-tool path, a WebFetch URL, a listed file's contents or a scanned session variable (Blocked words, below): at most 200, `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2 to 64 characters, matched literally; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | No blocked-word rule | AGH-277 |
+| `guard.blocked_words_files` | Globs of files whose contents the guard checks for a blocked word, besides every `.env*` file: at most 100, each at most 200 printable ASCII characters, no leading `/`, `..` segment or space; a glob without `/` matches the last path component, one with `/` a trailing run of segments; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | `.env*` files only | AGH-277 |
+| `guard.blocked_words_env` | Variable names whose values in the session the guard also checks, besides its fixed list and every `credentials.env` name: at most 50, `^[A-Z_][A-Z0-9_]{0,63}$`, a trailing `*` matching a prefix; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | The fixed list and the `credentials.env` names | AGH-277 |
 | `tracker.states.started`, `tracker.states.review` | The workflow state names: `hub start` moves an issue to `started` on a fresh start, or on a resume while it is unstarted; `review` is reserved for the review step and read by nothing yet; not settable in `hub.local.json` | `In Progress`, `In Review` | AGH-62 |
 | Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`; the prefix, when no file sets it, is the effective email's local part plus `/` (ADR 0016) | Set per developer, by `hub setup` in `hub.local.json`; `hub worktree`, `hub run` and `hub start` refuse without a prefix | AGH-65 |
 
-`hub.local.json` may hold only those identity keys and `tracker.transport`; any other key is an error, and nothing in it
-can relax a guard. Commits are authored by the developer running the session, and cloud setup writes `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL`
+`hub.local.json` may hold only those identity keys, `tracker.transport`, the developer's own `environments` and their
+endpoints on `hub.json`'s repos (`repos: [{dir, services}]`), a stricter `access` on a committed environment (`write` →
+`ask` → `read`) and the three `guard.blocked_words*` lists; any other key is an error, and nothing in it can relax a
+guard: it adds blocked words, never removes them, and only tightens access. Commits are authored by the developer running the session, and cloud setup writes `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL`
 repo-local, never global, only when `hub.json` holds no author.
 
 **The infra guard.** With `guard.infra`, the guard hook checks a Bash command only when it names a covered tool: the
@@ -325,6 +333,37 @@ the environment twice (`--chdir` and `--var-file` count with `-chdir` and `-var-
 checked, not others a tool reads (`--endpoint-url`, `--region`, `TF_VAR_*`, a tool's own config files); a command a
 wrapper runs elsewhere (`ssh host aws …`) is checked as text only. The selector flags are not scoped per tool, so
 `aws ecs … --cluster x` asks too.
+
+**Blocked words** (AGH-277, [ADR 0038](adr/0038-declared-environments-and-blocked-words.md), contract in
+[design/environments.md](design/environments.md)). With `guard.blocked_words`, the guard denies a call that names a
+blocked word. A word matches case-insensitively (ASCII) wherever no ASCII letter touches it: every other character is
+a boundary, digits included, so `prod` matches `my-prod-db`, `prod.example.com`, `AWS_PROFILE=prod`, `/envs/prod/`,
+`PROD` and `prod2`, not `product`, `reproduce` or `demoProd`. The guard checks the Bash command text in three views
+(raw; backslash-newlines joined; every `'`, `"` and `\` removed), which covers inline assignments and selector flags
+(`STAGE=prod cmd`, `--profile prod`); the session environment, the values (never the names) of the infra selector
+names above, of `STAGE`, `SLS_STAGE`, `ENV`, `ENVIRONMENT`, `APP_ENV`, `NODE_ENV`, `RAILS_ENV`, `RACK_ENV`,
+`FLASK_ENV`, `DATABASE_URL`, `PGHOST`, `PGSERVICE`, `PGDATABASE`, `MYSQL_HOST`, `REDIS_URL`, `MONGODB_URI`,
+`AWS_ENDPOINT_URL`, of every declared `credentials.env` name and of every `guard.blocked_words_env` name, where a match
+denies every Bash call of the session; the path fields of every file tool (`file_path`, `notebook_path`, `path`,
+Grep's `glob`, Glob's `pattern`, WebFetch's `url`); and the contents of `.env*` files and of files a
+`guard.blocked_words_files` glob matches, read through Read, Grep (a directory is walked) and every Bash token that
+names one (glob tokens expanded; not `ls`, `test`, `[` or `stat`). The rule runs first on every surface: its deny is
+final and wins over any declared `access` and any `guard.infra.allow` match, and `prod_markers` still applies beside
+it. It never opens a file the secret-file rule treats as secret; that file keeps the secret-file reason unless its
+path or the command text holds a word. Scans are bounded (1 MiB per command or file, 64 files and 4 MiB per call,
+300 ms); over a bound, on a file that is not regular, on an unusable list in any layer and while an existing
+`hub.local.json` is unusable, the guard asks. The lists are the union of `hub.json`, `hub.local.json` and a `hub.json`
+named by `$HUB_CONFIG` (the hooks only); no layer removes an entry. A reason names the word, its first layer and the
+surface, never the command, a value or a line, and the recorded event carries `rule: blocked_word`.
+**`access` is not enforced by the guard in v1**: the guard cannot tell a read from a write in `psql`, `curl`, `aws` or
+an SDK script, so `access` is an instruction rendered for the agent, and the only hard blocks are blocked words and the
+existing `guard.infra`, `deny_hosts` and `deny_paths`. Blocked words are a best-effort text tripwire, not a security
+boundary: the boundary is which credentials the agent's machine holds. The guard runs only on Bash, Read, Grep, Glob,
+Edit, Write, MultiEdit, NotebookEdit and WebFetch. Accepted limits: false positives; MCP tools, WebSearch and subagent
+(Task) prompts are not checked; nor are files a program opens without the command naming them (`python sync.py`
+reading `config/app.json`, `find … -exec cat`), tool output, obfuscation past the three views, Grep's search regex and
+edit contents; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen; `hub run`'s implement
+sessions run without the hub's hooks (AGH-278).
 
 ## Layer 2: control plane and observability
 
@@ -697,7 +736,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-17, latest release v0.16.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-17, latest release v0.16.1; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
@@ -705,8 +744,9 @@ through hub PRs, the Brain browser and feature records) in v0.11.0, and ticket p
 from Linear, the golden path per feature, evals per delivery) in v0.13.0. Phase 4's session subset is delivered
 early in v0.14.0: `hub web` starts and drives Claude Code sessions (AGH-165). The generic executor
 ([ADR 0032](adr/0032-workflow-engine.md): `hub workflow`, `hub run` on the engine) and gate approvals and run controls
-from the UI ship in v0.15.0 (AGH-213), and v0.16.0 brings the Sessions grid, the New session dialog and the live
-playground (Discuss, Studio, resume in place) to `hub web`; other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open; pilot: AGH-54.
+from the UI ship in v0.15.0 (AGH-213). v0.16.1 adds to `hub web` the Sessions grid, the New session dialog, resume in
+place, Discuss on every screen, the Studio and `make playground`; other agents' adapters stay in Phase 4. The Phase 1
+gate (Loki hub recreated) is open; pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
 

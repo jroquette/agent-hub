@@ -7,6 +7,7 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 |---|---|---|
 | [project-config.md](project-config.md) | the `hub.json` contract: fields, validation, versioning, readers, tracker | a change reads or adds a config key |
 | [developer-identity.md](developer-identity.md) | each developer's branch prefix, author and transport: `hub.local.json`, then `hub.json`, then git config, in the CLI, hooks, rendering, doctor and cloud setup | a change reads the identity keys or `hub.local.json` |
+| [environments.md](environments.md) | declared environments and services in `hub.json` and `hub.local.json`, `access`, what agents see, the blocked words the guard enforces (surfaces, order, bounds, layers), `hub env`, known limits | a change reads environments, services or blocked words, or touches the guard's blocked-word rule or `hub env` |
 | [hub-generator.md](hub-generator.md) | what a hub holds and who owns it, `hub init`, plugin and hooks, commands, releases | generating hub files, a hook, a `hub` command that replaces a script |
 | [hub-sync.md](hub-sync.md) | `hub.lock`, `hub sync`, `--check`, the write path, the `*.project.json` merge, the project-entry links | syncing a hub, reading the lock |
 | [hub-adopt.md](hub-adopt.md) | `hub sync --adopt`: per-path rules, `--accept`, the directory-link migration, listing lines, exit codes, project guards on adoption | adopting a hand-made hub (with [hub-sync.md](hub-sync.md)) |
@@ -53,3 +54,4 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0035](../adr/0035-session-titles.md): a session's name is the short title Claude Code writes in its transcript, kept as `session.title`.
 - [ADR 0036](../adr/0036-live-playground-and-auto-mode.md): `make playground`, a live loop for agent-hub's own web app whose sessions run in Claude Code's `auto` mode.
 - [ADR 0037](../adr/0037-learning-decisions-unpushed-notes-and-edits.md): a learning decision reads an unpushed inbox note from the hub checkout.
+- [ADR 0038](../adr/0038-declared-environments-and-blocked-words.md): environments and services in `hub.json` and `hub.local.json`; the guard enforces blocked words, `access` is an instruction (proposed).
