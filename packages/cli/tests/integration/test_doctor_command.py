@@ -2034,3 +2034,24 @@ def test_reports_nothing_when_remote_answers_in_claude_session(
     lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=0)
 
     assert lines == [CLEAN]
+
+
+def test_rewrites_brain_note_when_fix_given(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, *, demo_checkout: CheckoutFactory
+) -> None:
+    # --fix rewrites the brain side only, then checks again: the leak is gone, the repo untouched.
+    own = "\n".join(
+        f"Own brain line {n}, which no repo file holds at all, kept as it is." for n in range(3)
+    )
+    note = demo_two_repo_hub / "brain/note.md"
+    note.write_text(f"# Note\n\n{own}\n{BRAIN_LINE}\n", encoding="utf-8")
+    api = demo_checkout("demo-api")
+    (api / "LEAK.md").write_text(f"{BRAIN_LINE}\n", encoding="utf-8")
+    demo_checkout("demo-web")
+
+    result = run_doctor(demo_two_repo_hub, "--fix", "--only", "brain.leak")
+
+    assert result.exit_code == 0, result.output
+    assert note.read_text(encoding="utf-8") == f"# Note\n\n{own}\n[in ../demo-api/LEAK.md:1]\n"
+    assert (api / "LEAK.md").read_text(encoding="utf-8") == f"{BRAIN_LINE}\n"
+    assert "fixed brain/note.md: 1 lines now point at the repo" in result.stderr
