@@ -1,0 +1,205 @@
+/* Features list as an inbox: Needs you, In progress, Shipped (spec 17, grouped). */
+.ft-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ft-search {
+  width: 360px;
+  max-width: 100%;
+}
+.ft-search .ah-input {
+  height: 30px;
+  padding-right: 28px;
+}
+.ft-search-kbd {
+  position: absolute;
+  right: 8px;
+  pointer-events: none;
+}
+.ft-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6, 24px);
+}
+.ft-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.ft-group-toggle {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 24px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.ft-group-toggle:hover {
+  color: var(--text);
+}
+.ft-group-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ft-group[data-group="needs"] .ft-group-head {
+  color: var(--waiting);
+}
+.ft-group-hint {
+  font-weight: 400;
+  color: var(--text-subtle);
+}
+.ft-empty {
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+.ft-cols,
+.ft-rows {
+  --ft-meta: 112px 108px 120px 200px;
+}
+.ft-cols {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-1);
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.ft-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.ft-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.ft-row:last-child {
+  border-bottom: 0;
+}
+.ft-row:hover {
+  background: var(--surface-hover);
+}
+.ft-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+/* The edge repeats what the line already says in words (E11). */
+.ft-row[data-tone="waiting"] {
+  box-shadow: inset 3px 0 0 var(--waiting);
+}
+.ft-row[data-tone="failed"],
+.ft-row[data-tone="blocked"] {
+  box-shadow: inset 3px 0 0 var(--failed);
+}
+.ft-row-lead {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  align-self: start;
+  margin-top: 2px;
+}
+.ft-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ft-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.ft-row-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: none;
+}
+.ft-row-title:hover {
+  text-decoration: underline;
+}
+.ft-row[data-muted] .ft-row-title {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.ft-row-tag {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.ft-row-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.ft-row-meta,
+.ft-cols-meta {
+  display: grid;
+  grid-template-columns: var(--ft-meta);
+  align-items: center;
+  column-gap: var(--space-4);
+  font-size: 13px;
+}
+.ft-more-link {
+  all: unset;
+  margin-top: var(--space-2);
+  padding: 2px var(--space-4);
+  min-height: 24px;
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.ft-more-link:hover {
+  text-decoration: underline;
+}
+.ft-more-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}
+@media (max-width: 1100px) {
+  .ft-cols,
+  .ft-rows {
+    --ft-meta: 108px 120px 180px;
+  }
+  .ft-col-issues {
+    display: none;
+  }
+}

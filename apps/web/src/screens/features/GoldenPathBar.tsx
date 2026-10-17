@@ -50,13 +50,48 @@ function listMeta(meta: string | null): string | null {
  * server's states, the phase with its meta, and every step's state, meta and reason in the
  * tooltip and the accessible name.
  */
-export function GoldenPathBar({ path }: { path: GoldenPath }) {
+export function GoldenPathBar({ path, compact = false }: { path: GoldenPath; compact?: boolean }) {
   const steps = shownGoldenSteps(path.steps);
   const label = GOLDEN_STEP_LABEL[path.phase];
   const waiting = waitsOnOwner(path);
   const meta = waiting ? null : listMeta(steps.find((s) => s.name === path.phase)?.meta ?? null);
   const position = steps.findIndex((s) => s.name === path.phase) + 1;
   const summaries = steps.map(goldenStepSummary);
+  const segments = steps.map((step) => (
+    <span
+      key={step.name}
+      data-state={step.state}
+      style={{
+        width: compact ? 12 : 14,
+        height: 8,
+        borderRadius: 2,
+        border: "1px solid transparent",
+        ...SEGMENT[step.state],
+      }}
+    />
+  ));
+  if (compact) {
+    // The row's line names the step and its own description reads every step: no tab stop here.
+    return (
+      <Tooltip
+        label={
+          <span className="ah-stack" style={{ gap: 2 }}>
+            {summaries.map((line) => (
+              <span key={line}>{line}</span>
+            ))}
+          </span>
+        }
+      >
+        <span
+          style={{ display: "flex", gap: 2, width: "fit-content" }}
+          role="img"
+          aria-label={`Golden path: ${label}. ${summaries.join("; ")}`}
+        >
+          {segments}
+        </span>
+      </Tooltip>
+    );
+  }
   return (
     <Tooltip
       label={
@@ -76,19 +111,7 @@ export function GoldenPathBar({ path }: { path: GoldenPath }) {
           tabIndex={0}
           aria-label={`Golden path: ${label}. ${summaries.join("; ")}`}
         >
-          {steps.map((step) => (
-            <span
-              key={step.name}
-              data-state={step.state}
-              style={{
-                width: 14,
-                height: 8,
-                borderRadius: 2,
-                border: "1px solid transparent",
-                ...SEGMENT[step.state],
-              }}
-            />
-          ))}
+          {segments}
         </span>
         <span className="ah-small ah-row" style={{ gap: 6 }}>
           <span>

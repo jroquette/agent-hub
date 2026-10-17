@@ -84,48 +84,124 @@ function open(extra: ApiRoutes = {}, connected = true, path = "/features") {
 }
 
 function rowOf(slug: string): HTMLElement {
-  const row = screen.getByRole("link", { name: slug }).closest("tr");
+  const row = screen.getByRole("link", { name: slug }).closest("li");
   if (!row) throw new Error(`no row ${slug}`);
   return row;
 }
 
+function groupOf(title: RegExp): HTMLElement {
+  const head = screen.getByRole("button", { name: title });
+  const section = head.closest("section");
+  if (!section) throw new Error(`no group ${title.source}`);
+  return section;
+}
+
+const slugsIn = (el: HTMLElement) =>
+  within(el)
+    .queryAllByRole("link")
+    .map((l) => l.textContent);
+
+const waiting = aFeature({
+  slug: "owner-held",
+  verdict: "SHIP-WITH-OWNER-STEPS",
+  acs: { owner_steps: 2, passing: 19, total: 21 },
+  golden_path: aGoldenPath({
+    phase: "evaluate",
+    steps: [aGoldenStep({ name: "evaluate", state: "partial", meta: "waiting: owner steps" })],
+  }),
+  phase: "evaluate",
+});
+
 describe("FeaturesScreen", () => {
-  it("lists features furthest along first", async () => {
-    open();
-
-    await screen.findByRole("link", { name: "layered-memory" });
-    const slugs = screen
-      .getAllByRole("link")
-      .map((l) => l.textContent)
-      .filter((t) => features.some((f) => f.slug === t));
-    expect(slugs).toEqual(["layered-memory", "control-plane", "tracker-team-cap", "broken-record"]);
-    expect(screen.getByText("4 features").parentElement).toHaveTextContent(
-      "4 features · 4 in progress · 0 shipped · furthest along first",
-    );
-  });
-
-  it("sorts shipped features last and counts them apart (order)", async () => {
+  it("groups features into Needs you, In progress and Shipped (groups)", async () => {
     const done = aFeature({
       slug: "shipped-one",
       phase: "shipped",
+      verdict: "SHIP",
       golden_path: aGoldenPath({ phase: "shipped" }),
     });
-    open({ "/api/v1/features": aPage([done, ...features]) });
+    open({ "/api/v1/features": aPage([done, waiting, ...features]) });
 
-    await screen.findByRole("link", { name: "shipped-one" });
-    const slugs = screen
-      .getAllByRole("link")
-      .map((l) => l.textContent)
-      .filter((t) => t === "shipped-one" || features.some((f) => f.slug === t));
-    expect(slugs.at(-1)).toBe("shipped-one");
-    expect(screen.getByText("5 features").parentElement).toHaveTextContent("1 shipped");
+    await screen.findByRole("link", { name: "layered-memory" });
+    expect(slugsIn(groupOf(/^Needs you · 2$/))).toEqual(["broken-record", "owner-held"]);
+    expect(slugsIn(groupOf(/^In progress · 3$/))).toEqual([
+      "layered-memory",
+      "control-plane",
+      "tracker-team-cap",
+    ]);
+    expect(slugsIn(groupOf(/^Shipped · 1$/))).toEqual(["shipped-one"]);
+  });
+
+  it("says why a feature needs you and opens the tab that acts on it (needs)", async () => {
+    const { router } = open({ "/api/v1/features": aPage([waiting, ...features]) });
+
+    await screen.findByRole("link", { name: "owner-held" });
+    expect(rowOf("owner-held")).toHaveTextContent("2 owner steps to do");
+    expect(rowOf("broken-record")).toHaveTextContent(
+      "features.json could not be parsed (line 38: trailing comma). Fix it in a hub PR.",
+    );
+    await userEvent.click(rowOf("owner-held"));
+    expect(router.state.location.pathname).toBe("/features/agent-hub/owner-held");
+    expect(router.state.location.search).toBe("?doc=acs");
+  });
+
+  it("names the current step on the row of a feature in progress (progress)", async () => {
+    open();
+
+    await screen.findByRole("link", { name: "tracker-team-cap" });
+    expect(rowOf("tracker-team-cap")).toHaveTextContent("Plan · step 3 of 8 · plan.md");
+  });
+
+  it("shows five shipped features until asked for more (shipped)", async () => {
+    const shipped = Array.from({ length: 7 }, (_, i) =>
+      aFeature({
+        slug: `shipped-${String(i)}`,
+        phase: "shipped",
+        golden_path: aGoldenPath({ phase: "shipped" }),
+      }),
+    );
+    open({ "/api/v1/features": aPage(shipped) });
+
+    await screen.findByRole("link", { name: "shipped-0" });
+    expect(slugsIn(groupOf(/^Shipped · 7$/))).toHaveLength(5);
+    await userEvent.click(screen.getByRole("button", { name: "Show 2 more shipped features" }));
+    expect(slugsIn(groupOf(/^Shipped · 7$/))).toHaveLength(7);
+  });
+
+  it("collapses a group from its header (groups)", async () => {
+    open();
+
+    await screen.findByRole("link", { name: "control-plane" });
+    await userEvent.click(screen.getByRole("button", { name: /^In progress/ }));
+    expect(screen.queryByRole("link", { name: "control-plane" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^In progress/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^In progress/ }));
+  });
+
+  it("finds features by name, issue or repo through the URL (search)", async () => {
+    const { router } = open();
+
+    await screen.findByRole("link", { name: "layered-memory" });
+    await userEvent.type(screen.getByRole("searchbox", { name: "Find features" }), "agh-49");
+
+    expect(router.state.location.search).toBe("?q=agh-49");
+    expect(screen.getByRole("link", { name: "layered-memory" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "control-plane" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 4 features");
+    expect(screen.queryByRole("button", { name: /^Needs you/ })).not.toBeInTheDocument();
+
+    await userEvent.clear(screen.getByRole("searchbox", { name: "Find features" }));
+    await userEvent.type(screen.getByRole("searchbox", { name: "Find features" }), "tradesentinel");
+    expect(screen.getByRole("link", { name: "broken-record" })).toBeInTheDocument();
   });
 
   it("opens the extra issues in a popover (issues)", async () => {
     open();
 
-    const row = (await screen.findByRole("link", { name: "layered-memory" })).closest("tr");
-    if (!row) throw new Error("no row");
+    const row = rowOf((await screen.findByRole("link", { name: "layered-memory" })).textContent);
     expect(within(row).getByText("AGH-48")).toBeInTheDocument();
     await userEvent.click(within(row).getByRole("button", { name: "2 more issues" }));
 
@@ -139,26 +215,6 @@ describe("FeaturesScreen", () => {
     );
     expect(issueId("AGH-48")).toBe("AGH-48");
     expect(issueId("TBD")).toBe("TBD");
-  });
-
-  it("puts the verdict's scope under its badge while Evaluate is not done (verdict)", async () => {
-    const held = aFeature({
-      slug: "held",
-      verdict: "SHIP-WITH-OWNER-STEPS",
-      golden_path: aGoldenPath({
-        phase: "evaluate",
-        steps: [
-          aGoldenStep({ name: "evaluate", state: "partial", meta: "partial: covers 2 of 9 ACs" }),
-        ],
-      }),
-    });
-    open({ "/api/v1/features": aPage([held]) });
-
-    const row = (await screen.findByRole("link", { name: "held" })).closest("tr");
-    if (!row) throw new Error("no row");
-    const verdict = within(row).getAllByRole("cell").at(-1);
-    expect(verdict).toHaveTextContent("SHIP-WITH-OWNER-STEPS");
-    expect(verdict).toHaveTextContent("partial: covers 2 of 9 ACs");
   });
 
   it("reads the AC bar as N/M · K owner step with the owner segment hatched", async () => {
@@ -199,39 +255,47 @@ describe("FeaturesScreen", () => {
       "partial",
       "blocked",
     ]);
-    expect(within(row).getByText("plan.md")).toBeInTheDocument();
-    expect(within(row).getByText("—", { selector: "td > span" })).toBeInTheDocument();
   });
 
-  it("degrades only the malformed feature's ACs", async () => {
+  it("degrades only the malformed feature's ACs and tags its repo", async () => {
     open();
 
     await screen.findByRole("link", { name: "broken-record" });
     const row = rowOf("broken-record");
-    expect(
-      within(row).getByRole("img", {
-        name: "features.json could not be parsed (line 38: trailing comma)",
-      }),
-    ).toBeInTheDocument();
-    expect(row).toHaveTextContent("loki-trader · tradeSentinel");
+    expect(within(row).queryByRole("img", { name: /passing by command/ })).not.toBeInTheDocument();
+    expect(within(row).getByText("tradeSentinel")).toBeInTheDocument();
+    expect(within(row).getByText("loki-trader")).toBeInTheDocument();
   });
 
-  it("filters by verdict through the URL", async () => {
+  it("filters by step through the URL (filters)", async () => {
     const { router } = open();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Verdict: All" }));
-    await userEvent.click(screen.getByRole("button", { name: "Not evaluated" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Step:/ }));
+    await userEvent.click(screen.getByRole("checkbox", { name: /Plan/ }));
 
-    expect(router.state.location.search).toBe("?verdict=none");
+    expect(router.state.location.search).toBe("?phase=plan");
+    expect(screen.getByRole("link", { name: "tracker-team-cap" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "control-plane" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an old verdict link as a removable chip (filters)", async () => {
+    open({}, true, "/features?verdict=none");
+
+    await screen.findByRole("link", { name: "control-plane" });
     expect(screen.queryByRole("link", { name: "layered-memory" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "control-plane" })).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove filter Verdict Not evaluated" }),
+    );
+    expect(screen.getByRole("link", { name: "layered-memory" })).toBeInTheDocument();
   });
 
   it("says no feature matches and clears the filters", async () => {
     open({}, true, "/features?size=architectural&verdict=NO-SHIP");
 
-    expect(await screen.findByText("No features match these filters.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(await screen.findByText(/No features match these filters\./)).toBeInTheDocument();
+    const [clear] = screen.getAllByRole("button", { name: "Clear filters" });
+    if (!clear) throw new Error("no Clear filters");
+    await userEvent.click(clear);
     expect(screen.getByRole("link", { name: "control-plane" })).toBeInTheDocument();
   });
 
@@ -249,7 +313,6 @@ describe("FeaturesScreen", () => {
     await screen.findByRole("link", { name: "control-plane" });
     expect(new URL(requests[0]?.url ?? "").searchParams.get("project")).toBe("agent-hub");
   });
-
   describe("states", () => {
     it("shows skeleton rows while loading", async () => {
       const { container } = open({ "/api/v1/features": "pending" });
