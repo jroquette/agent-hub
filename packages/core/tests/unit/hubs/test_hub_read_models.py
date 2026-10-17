@@ -25,6 +25,7 @@ from agent_hub.core.hubs.hub_registry import (
     HubInvalidError,
     UnreadHubFile,
 )
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
 from agent_hub.core.projects.project_views import ProjectActivity
 from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, HubReadModels
@@ -37,6 +38,7 @@ from agent_hub.core.testing.hub_fakes import (
     InMemoryHubRegistry,
     hub_json_bytes,
 )
+from agent_hub.core.testing.item_version_fakes import InMemoryItemVersionStore
 from agent_hub.core.testing.read_model_builders import a_skill_usage
 from agent_hub.core.testing.skill_trees import a_skills_fixture_tree, fake_hub_of
 from agent_hub.core.testing.tracker_reader_fakes import (
@@ -604,3 +606,29 @@ def test_reads_skill_catalog_when_project_known() -> None:
     with pytest.raises(EntityNotFoundError) as unknown:
         models.skill_catalog("nope")
     assert unknown.value.entity == "project"
+
+
+def test_captures_skill_units_when_capture_given() -> None:
+    hub = fake_hub_of(a_skills_fixture_tree(), hub_json=hub_json_bytes(pin=RUNNING))
+    reader = FakeHubFileReader({DEMO: hub})
+    store = InMemoryItemVersionStore()
+    registry = InMemoryHubRegistry(clock=lambda: NOW)
+    registry.add(DEMO)
+    models = HubFilesReadModels(
+        registry=registry,
+        reader=reader,
+        activity=FakeActivity(),
+        running_version=RUNNING,
+        settings=SETTINGS,
+        clock=lambda: NOW,
+        capture=CaptureItemVersions(store, reader, lambda: NOW),
+    )
+
+    models.skill_catalog("demo")
+    unit = models.skill_unit("demo", kind=ItemKind.AGENT, source="demo", name="scout")
+
+    assert unit is not None
+    assert unit.unit_path == "plugin/demo/agents/scout.md"
+    last = store.last("demo", unit.unit_path)
+    assert last is not None
+    assert last.first
