@@ -14,7 +14,7 @@ export function clearGoSequence(): void {
 
 /**
  * Whether a `g` sequence waits for its second key. A screen's own single-key shortcut (a card's
- * `a`) leaves such a key to the shell, so `g a` goes to Approvals and never answers the card.
+ * `a`) leaves such a key to the shell, so `g a` never answers the card.
  */
 export function goSequencePending(now = Date.now()): boolean {
   return armedAt !== 0 && now - armedAt < SEQUENCE_MS;

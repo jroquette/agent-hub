@@ -261,8 +261,8 @@ overrides a built-in of the same name.
 
 In `hub web`, the Workflows screen shows each workflow's graph; Workflow runs › Start run starts one live from a form
 built from its `inputs:`; Run detail shows the run's graph with each node's state, decides a waiting gate, and
-cancels, resumes or abandons the run. Approvals lists every gate waiting for a person. The format and the engine's
-rules: [workflow-schema.md](docs/design/workflow-schema.md), [workflow-engine-rules.md](docs/design/workflow-engine-rules.md).
+cancels, resumes or abandons the run. Portfolio's Needs you lists every gate waiting for a person. The format and
+the engine's rules: [workflow-schema.md](docs/design/workflow-schema.md), [workflow-engine-rules.md](docs/design/workflow-engine-rules.md).
 
 ## 🔄 Daily workflow
 
