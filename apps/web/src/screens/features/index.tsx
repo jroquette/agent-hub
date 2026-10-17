@@ -17,7 +17,6 @@ import {
   Popover,
   ProblemError,
   Skeleton,
-  StatusBadge,
   Tooltip,
 } from "../../components";
 import { fmtClock } from "../../lib/format";
@@ -33,13 +32,13 @@ import {
   byGroupOrder,
   issueId,
   matchesQuery,
-  plainVerdictLine,
+  missesLinear,
   reasonOf,
   type GroupId,
   type Reason,
 } from "./groups";
 import { FeatureNameField, RenameButton, useFeatureNames } from "./names";
-import { AcBar, PHASES, VERDICT_STATUS } from "./parts";
+import { AcBar, PHASES } from "./parts";
 import { useFeatures } from "./queries";
 
 export { issueId } from "./groups";
@@ -198,25 +197,6 @@ function IssuesCell({ issues }: { issues: string[] }) {
   );
 }
 
-/** The Evaluate step's own meta when it is not done, so a verdict is not read as the whole feature's. */
-function verdictScope(f: Feature): string | null {
-  const evaluate = f.golden_path.steps.find((s) => s.name === "evaluate");
-  return evaluate && evaluate.state !== "done" ? (evaluate.meta ?? null) : null;
-}
-
-function VerdictCell({ f }: { f: Feature }) {
-  if (!f.verdict) return <span className="ah-subtle">—</span>;
-  const scope = verdictScope(f);
-  const line = f.verdict_line ? plainVerdictLine(f.verdict_line) : "From eval.md";
-  return (
-    <Tooltip label={scope ? `${line} · ${scope}` : line}>
-      <span>
-        <StatusBadge status={VERDICT_STATUS[f.verdict]} label={f.verdict} />
-      </span>
-    </Tooltip>
-  );
-}
-
 function AcCell({ f }: { f: Feature }) {
   if (f.problem || !f.acs) return <span className="ah-subtle">—</span>;
   return <AcBar acs={f.acs} width={96} />;
@@ -257,11 +237,7 @@ function FeatureRow({
   const [editing, setEditing] = useState(false);
   const href = featureHref(f) + (reason.doc ? `?doc=${reason.doc}` : "");
   const lineId = `ft-line-${f.project}-${f.slug}`;
-  const tags = [
-    ...(showProject ? [f.project] : []),
-    ...f.repos.filter((r) => r !== f.project),
-    ...(f.size ? [f.size] : []),
-  ];
+  const tags = [...(showProject ? [f.project] : []), ...f.repos.filter((r) => r !== f.project)];
   return (
     // The row is one keyboard stop (Enter opens), as the Sessions inbox rows are.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -347,10 +323,25 @@ function FeatureRow({
         </span>
         <GoldenPathBar path={f.golden_path} compact />
         <AcCell f={f} />
-        <VerdictCell f={f} />
       </div>
     </li>
   );
+}
+
+/** The group's hint: for Needs you, how many of each kind, so the reason is read at a glance. */
+function hintOf(id: GroupId, rows: Feature[]): string {
+  const meta = GROUPS.find((g) => g.id === id);
+  if (id !== "needs") return meta?.hint ?? "";
+  const ranks = rows.map((f) => reasonOf(f).rank);
+  const count = (rank: number) => ranks.filter((r) => r === rank).length;
+  return [
+    [count(2), "wait on your steps"],
+    [count(1), "no ship"],
+    [count(0), "record cannot be read"],
+  ]
+    .filter(([n]) => Number(n) > 0)
+    .map(([n, words]) => `${String(n)} ${String(words)}`)
+    .join(" · ");
 }
 
 /** The column titles at the top of each group's card; the first card also explains them. */
@@ -389,7 +380,6 @@ function ColumnHeads({ withHints }: { withHints: boolean }) {
           "ACs",
           "Acceptance criteria passing, of the total. Owner steps are counted and hatched in amber.",
         )}
-        {head("Verdict", "The verdict of the latest eval.md; “—” when there is no eval yet.")}
       </div>
     </div>
   );
@@ -440,7 +430,9 @@ function Group({
             {meta.title} · <span className="ft-group-count">{count}</span>
           </button>
         </h2>
-        {open && meta.hint && <span className="ft-group-hint">{meta.hint}</span>}
+        {open && (rows?.length ? hintOf(id, rows) : meta.hint) && (
+          <span className="ft-group-hint">{rows?.length ? hintOf(id, rows) : meta.hint}</span>
+        )}
       </div>
       {open &&
         (shown === null ? (
@@ -688,6 +680,15 @@ export function FeaturesScreen() {
             </div>
           ) : (
             <div className="ft-groups">
+              {features.isSuccess && missesLinear(all) && (
+                <p className="ft-notice" role="note">
+                  <Icon name="info" size="sm" />
+                  <span>
+                    Ticket status is not read from Linear on this list, so Review and Shipped show
+                    as unknown. A feature&apos;s Tickets tab reads it.
+                  </span>
+                </p>
+              )}
               {GROUPS.map((g) => {
                 const list = features.isSuccess ? (byGroup.get(g.id) ?? []) : null;
                 if (filtered && list?.length === 0) return null;

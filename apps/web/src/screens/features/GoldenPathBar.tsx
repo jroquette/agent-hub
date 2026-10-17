@@ -82,12 +82,23 @@ export function GoldenPathBar({ path, compact = false }: { path: GoldenPath; com
           </span>
         }
       >
-        <span
-          style={{ display: "flex", gap: 2, width: "fit-content" }}
-          role="img"
-          aria-label={`Golden path: ${label}. ${summaries.join("; ")}`}
-        >
-          {segments}
+        <span className="ah-stack" style={{ gap: 3 }}>
+          <span
+            style={{ display: "flex", gap: 2, width: "fit-content" }}
+            role="img"
+            aria-label={`Golden path: ${label}. ${summaries.join("; ")}`}
+          >
+            {segments}
+          </span>
+          <span className="ft-gp-label" aria-hidden="true">
+            {label}
+            {path.phase !== "shipped" && position > 0 && (
+              <span className="ah-subtle">
+                {" "}
+                · {position}/{steps.length}
+              </span>
+            )}
+          </span>
         </span>
       </Tooltip>
     );

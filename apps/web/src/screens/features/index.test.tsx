@@ -136,7 +136,7 @@ describe("FeaturesScreen", () => {
     const { router } = open({ "/api/v1/features": aPage([waiting, ...features]) });
 
     await screen.findByRole("link", { name: "owner-held" });
-    expect(rowOf("owner-held")).toHaveTextContent("2 owner steps to do");
+    expect(rowOf("owner-held")).toHaveTextContent("2 steps left for you");
     expect(rowOf("broken-record")).toHaveTextContent(
       "features.json could not be parsed (line 38: trailing comma). Fix it in a hub PR.",
     );
@@ -149,7 +149,7 @@ describe("FeaturesScreen", () => {
     open();
 
     await screen.findByRole("link", { name: "tracker-team-cap" });
-    expect(rowOf("tracker-team-cap")).toHaveTextContent("Plan · step 3 of 8 · plan.md");
+    expect(rowOf("tracker-team-cap")).toHaveTextContent("Plan · plan.md");
   });
 
   it("shows five shipped features until asked for more (shipped)", async () => {
@@ -199,10 +199,10 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([held]) });
 
     await screen.findByRole("link", { name: "held-by-reason" });
-    expect(rowOf("held-by-reason")).toHaveTextContent("3 owner steps to do");
+    expect(rowOf("held-by-reason")).toHaveTextContent("3 steps left for you");
   });
 
-  it("shortens the Linear reason on the row of a feature in progress (progress)", async () => {
+  it("says the Linear gap once above the list, not on each row (progress)", async () => {
     const unread = aFeature({
       slug: "unread",
       golden_path: aGoldenPath({
@@ -218,9 +218,8 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([unread]) });
 
     await screen.findByRole("link", { name: "unread" });
-    expect(rowOf("unread")).toHaveTextContent(
-      "Implement · step 1 of 1 · ticket status not read from Linear yet",
-    );
+    expect(within(rowOf("unread")).getByText("Implement · step 1 of 1")).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("not read from Linear on this list");
   });
 
   it("names every cell in the row's accessible name and moves with j and k (keyboard)", async () => {
@@ -287,7 +286,7 @@ describe("FeaturesScreen", () => {
         name: "20 passing by command · 1 owner step · 0 not passing yet",
       }),
     ).toBeInTheDocument();
-    expect(within(row).getByText("SHIP-WITH-OWNER-STEPS")).toBeInTheDocument();
+    expect(row).toHaveTextContent("evaluator says ship after your steps");
   });
 
   it("draws the server's golden path with each state's text and reason (golden)", async () => {
@@ -479,5 +478,35 @@ describe("FeaturesScreen", () => {
 
     expect(await screen.findByRole("link", { name: "Brain layers" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "control-plane" })).not.toBeInTheDocument();
+  });
+
+  it("puts a ship verdict with every AC passing under Evaluated, with the eval's own words (evaluated)", async () => {
+    const evaluated = aFeature({
+      slug: "evaluated-one",
+      verdict: "SHIP",
+      verdict_line: "**Verdict: SHIP.** All 9 ACs pass on main.",
+      acs: { owner_steps: 0, passing: 9, total: 9 },
+    });
+    open({ "/api/v1/features": aPage([evaluated, ...features]) });
+
+    await screen.findByRole("link", { name: "evaluated-one" });
+    expect(slugsIn(groupOf(/^Evaluated · 1$/))).toEqual(["evaluated-one"]);
+    expect(rowOf("evaluated-one")).toHaveTextContent(
+      "Evaluator says ship · All 9 ACs pass on main.",
+    );
+  });
+
+  it("tells waiting rows apart by what their eval says is left (needs)", async () => {
+    const told = aFeature({
+      ...waiting,
+      slug: "told",
+      acs: { owner_steps: 0, passing: 9, total: 9 },
+      verdict_line: "**Verdict: SHIP-WITH-OWNER-STEPS.** Publish the plugin release.",
+    });
+    open({ "/api/v1/features": aPage([told]) });
+
+    await screen.findByRole("link", { name: "told" });
+    expect(rowOf("told")).toHaveTextContent("Your steps are left · Publish the plugin release.");
+    expect(groupOf(/^Needs you · 1$/)).toHaveTextContent("1 wait on your steps");
   });
 });
