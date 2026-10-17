@@ -70,7 +70,7 @@
   height: 30px;
 }
 
-/* The list as an inbox (v2): groups of two-line rows, no table header. */
+/* The list: status groups, each a table under one shared column header. */
 .sl-inbox {
   display: flex;
   flex-direction: column;
@@ -110,10 +110,64 @@
   font-weight: 400;
   color: var(--text-subtle);
 }
-.sl-rows {
-  list-style: none;
-  margin: 0;
+/* Each group is a table with the same fixed columns, so the shared header lines up with every row. */
+.sl-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.sl-col-status {
+  width: 156px;
+}
+.sl-col-where {
+  width: 232px;
+}
+.sl-col-cost {
+  width: 80px;
+}
+.sl-col-time {
+  width: 112px;
+}
+.sl-col-action {
+  width: 144px;
+}
+.sl-table-head {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky, 10);
+  background: var(--bg);
+  margin-bottom: calc(-1 * var(--space-3));
+}
+.sl-table-head th {
+  padding: var(--space-2) var(--space-3);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-subtle);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.sl-table-head th:first-child {
+  padding-left: var(--space-4);
+}
+.sl-th-cost,
+.sl-th-time {
+  text-align: right !important;
+}
+.sl-thead-sr th {
+  position: absolute;
+  width: 1px;
+  height: 1px;
   padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.sl-rows {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -123,20 +177,22 @@
   box-shadow: inset 3px 0 0 var(--border-strong);
 }
 .sl-row {
-  position: relative;
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: var(--space-3);
-  min-height: 56px;
-  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--border);
   cursor: pointer;
 }
-.sl-row:last-child {
+.sl-row > td {
+  padding: var(--space-3);
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 20px;
+}
+.sl-row > td:first-child {
+  padding-left: var(--space-4);
+}
+.sl-row:last-child > td {
   border-bottom: 0;
 }
-.sl-row:hover {
+.sl-row:hover > td {
   background: var(--surface-hover);
 }
 .sl-row:focus-visible {
@@ -144,33 +200,25 @@
   outline-offset: -2px;
 }
 /* A problem only the owner can fix: a red edge, with the words in the line (E11). */
-.sl-row[data-trouble] {
+.sl-row[data-trouble] > td:first-child {
   box-shadow: inset 3px 0 0 var(--failed);
 }
-.sl-group[data-group="waiting"] .sl-row:not([data-trouble]) {
+.sl-group[data-group="waiting"] .sl-row:not([data-trouble]) > td:first-child {
   box-shadow: inset 3px 0 0 var(--waiting);
 }
 .sl-row-skeleton {
   cursor: default;
 }
-.sl-row-lead {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  align-self: start;
-  margin-top: 2px;
-  height: 20px;
+.sl-row-skeleton > td > * + * {
+  margin-top: 6px;
 }
-.sl-row-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+.sl-cell-status .ah-badge {
+  max-width: 100%;
+  white-space: nowrap;
 }
 .sl-row-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
   min-width: 0;
 }
@@ -191,44 +239,73 @@
 }
 .sl-row[data-muted] .sl-row-title {
   font-weight: 400;
-  color: var(--text-muted);
 }
 .sl-row-tag {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 11px;
-  line-height: 16px;
-  color: var(--text-subtle);
+  line-height: 18px;
+  color: var(--text-muted);
   white-space: nowrap;
 }
 .sl-row-line {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 2px;
   font-size: 13px;
   line-height: 18px;
   color: var(--text-muted);
+}
+.sl-row-line > .ah-icon {
+  flex: none;
+}
+.sl-row-say {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sl-row-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-subtle);
 }
 .sl-inferred {
   text-decoration: underline dashed var(--text-subtle);
   text-underline-offset: 3px;
 }
-.sl-row-meta {
-  display: grid;
-  grid-template-columns: minmax(0, 96px) 168px 72px 96px 112px;
-  align-items: center;
-  column-gap: var(--space-3);
-  font-size: 13px;
+.sl-cell-where {
+  color: var(--text-muted);
 }
-.sl-row-issue {
-  justify-self: end;
+.sl-where-place {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
 }
-.sl-row-files {
-  justify-self: end;
-  min-width: 0;
+.sl-where-extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+}
+.sl-where-run {
+  color: var(--text-subtle);
+  white-space: nowrap;
 }
 .sl-files {
   display: inline-flex;
@@ -241,6 +318,16 @@
 .sl-files[data-due] {
   color: var(--waiting);
   font-weight: 500;
+}
+.sl-cell-cost,
+.sl-cell-time {
+  text-align: right;
+}
+.sl-cell-action {
+  text-align: right;
+}
+.sl-cell-action .ah-btn {
+  white-space: nowrap;
 }
 /* A chat's conversation so far: your last ask over Claude's last reply. */
 .sl-talk {
@@ -275,33 +362,15 @@
 .sl-talk-reply {
   color: var(--text);
 }
-.sl-row-cost {
-  justify-self: end;
+.sl-cell-cost {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
 .sl-row-time {
-  justify-self: end;
   color: var(--text-subtle);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-.sl-row-action {
-  display: inline-flex;
-  justify-content: flex-end;
-}
-.sl-row-hover {
-  opacity: 0;
-}
-.sl-row:hover .sl-row-hover,
-.sl-row:focus-within .sl-row-hover,
-.sl-row:focus .sl-row-hover {
-  opacity: 1;
-}
-.sl-row-chevron {
-  color: var(--text-subtle);
-  display: inline-flex;
 }
 .sl-more-link {
   all: unset;
@@ -326,11 +395,11 @@
   padding: 0 var(--space-4);
 }
 @media (max-width: 1100px) {
-  .sl-row-meta {
-    grid-template-columns: 148px 72px 88px 104px;
+  .sl-col-where {
+    width: 168px;
   }
-  .sl-row-issue {
-    display: none;
+  .sl-col-status {
+    width: 128px;
   }
 }
 

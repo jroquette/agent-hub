@@ -80,7 +80,7 @@ const group = (name: RegExp) => screen.getByRole("region", { name });
 /** A group's header button in the list. */
 const head = (name: RegExp) => within(group(name)).getByRole("button", { name });
 /** A list row, by its title. */
-const rowOf = (title: string) => screen.getByText(title).closest("li") as HTMLElement;
+const rowOf = (title: string) => screen.getByText(title).closest("tr") as HTMLElement;
 
 /**
  * Each row or tile (or bounded region, or with `headers` each section header) sits ROW px below the previous
@@ -436,7 +436,7 @@ describe("SessionsListScreen no-jump", () => {
     release();
     const ended = group(/^Finished/);
     await waitFor(() => {
-      expect(document.activeElement).toBe(within(ended).getByText("/s1").closest("li"));
+      expect(document.activeElement).toBe(within(ended).getByText("/s1").closest("tr"));
     });
   });
 

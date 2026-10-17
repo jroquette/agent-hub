@@ -91,10 +91,13 @@ const groupToggles = () =>
   [...document.querySelectorAll<HTMLButtonElement>("[data-group] h2 button[aria-expanded]")].map(
     (button) => button.textContent,
   );
-const rowOf = (text: string) => screen.getByText(text).closest("li") as HTMLElement;
+const rowOf = (text: string) => screen.getByText(text).closest("tr") as HTMLElement;
 const lineOf = (text: string) => rowOf(text).querySelector(".sl-row-line")?.textContent;
 const tagsOf = (text: string) =>
   [...rowOf(text).querySelectorAll(".sl-row-tag")].map((tag) => tag.textContent);
+/** The Where column of a row: "project / repo · branch". */
+const placeOf = (text: string) => rowOf(text).querySelector(".sl-where-place")?.textContent;
+const badgeOf = (text: string) => rowOf(text).querySelector(".sl-cell-status")?.textContent;
 
 function renderList(apiRoutes: ApiRoutes, path = "/sessions") {
   return renderWithApi(<SessionsListScreen />, { routes: apiRoutes, path });
@@ -109,10 +112,21 @@ describe("SessionsListScreen", () => {
     const ended = group(/^Finished/);
     expect(within(live).getByText("/evaluator")).toBeInTheDocument();
     expect(lineOf("/evaluator")).toBe("Starting");
-    expect(lineOf("ACME-1511 · /feature")).toBe("Failed · ran 30 min");
-    // No column header and no status badge: the group says the status.
-    expect(screen.queryByRole("columnheader")).toBeNull();
-    expect(within(live).queryByText("Live")).toBeNull();
+    expect(lineOf("ACME-1511 · /feature")).toBe("Ran 30 min");
+    // Each group is a table naming its columns for readers; every row carries its status badge.
+    expect(within(live).getByRole("table", { name: "Working sessions" })).toBeInTheDocument();
+    expect(
+      within(live)
+        .getAllByRole("columnheader")
+        .map((th) => th.textContent),
+    ).toEqual(["Status", "Session", "Where", "Cost", "Last activity", "Action"]);
+    expect(badgeOf("/evaluator")).toBe("Working");
+    expect(badgeOf("ACME-1511 · /feature")).toBe("Failed");
+    // Each group says what it asks of the owner and how it is ordered.
+    expect(
+      within(live).getByText("Claude is on it, nothing to do yet · latest first"),
+    ).toBeInTheDocument();
+    expect(within(ended).getByText("Newest first")).toBeInTheDocument();
     // Two decimals on the row, four on hover.
     expect(within(live).getByText("$1.25")).toHaveAttribute("title", "$1.2500 USD");
     expect(within(ended).getByText("$1.25")).toBeInTheDocument();
@@ -136,18 +150,18 @@ describe("SessionsListScreen", () => {
     expect(screen.queryByText("6,400")).toBeNull();
   });
 
-  it("names each session by its label, a repo only when it differs from the common one, never main (label, AC-201.4)", async () => {
+  it("names each session by its label, tags where it came from, and places it by repo, branch and run (label, AC-201.4)", async () => {
     renderList(routes());
 
     await screen.findByText("ACME-1511 · /feature");
-    // The common repo (agent-hub) is not repeated; storefront is, without its main branch.
-    expect(tagsOf("ACME-1511 · /feature")).toEqual([
-      "Terminal",
-      "Run AGH-48 · implement",
-      "storefront",
-    ]);
-    expect(tagsOf("/evaluator")).toEqual(["Terminal", "dev/agh-48-live-tiles"]);
-    expect(screen.queryByText(/\bmain\b/)).toBeNull();
+    // Every row says it came from a terminal or a chat; the Where column names repo and branch.
+    expect(tagsOf("ACME-1511 · /feature")).toEqual(["Terminal"]);
+    expect(tagsOf("/evaluator")).toEqual(["Terminal"]);
+    expect(placeOf("ACME-1511 · /feature")).toBe("storefront · main");
+    expect(placeOf("/evaluator")).toBe("agent-hub · dev/agh-48-live-tiles");
+    expect(
+      within(rowOf("ACME-1511 · /feature")).getByText("Run ACME-1511 · implement"),
+    ).toHaveClass("sl-where-run");
     // The title is a real link to the session.
     expect(
       within(group(/^Finished/)).getByRole("link", { name: "ACME-1511 · /feature" }),
@@ -514,8 +528,10 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     const live = group(/^Working/);
     expect(within(live).getByText("Twin chat")).toBeInTheDocument();
     const twin = rowOf("Twin chat");
-    // A chat carries no mark; only a terminal session does.
+    // A twin reads as the chat it is, not as a terminal session.
     expect(within(twin).queryByText("Terminal")).toBeNull();
+    expect(tagsOf("Twin chat")).toEqual(["Chat"]);
+    expect(within(twin).getByRole("link", { name: "Open chat Twin chat" })).toBeInTheDocument();
     expect(within(twin).getByRole("link", { name: "Twin chat" })).toHaveAttribute(
       "href",
       `/agent-sessions/${anId(11, "0192a5e5")}`,
@@ -530,17 +546,23 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(within(group(/^Needs you/)).getByText("Approve me")).toBeInTheDocument();
     expect(lineOf("Approve me")).toBe("Asks to use Bash: git status");
     expect(within(group(/^Finished/)).getByText("Broke")).toBeInTheDocument();
-    expect(lineOf("Broke")).toBe("Failed");
-    const idle = within(group(/^In progress/))
+    expect(badgeOf("Broke")).toBe("Failed");
+    expect(lineOf("Broke")).toBe("No details recorded");
+    const idle = within(group(/^Your turn/))
       .getAllByText(/idle$/)
       .map((node) => node.textContent);
     expect(idle).toEqual(["Newer idle", "Older idle"]);
     expect(groupToggles()).toEqual([
       "Needs you · 1",
       "Working · 3",
-      "In progress · 2",
+      "Your turn · 2",
       "Finished · last 7 days · 2",
     ]);
+    expect(
+      within(group(/^Your turn/)).getByText(
+        "Claude finished its turn: check the work or send your next message · latest first",
+      ),
+    ).toBeInTheDocument();
 
     fireEvent.click(twin);
     expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(11, "0192a5e5")}`);
@@ -623,7 +645,10 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     await screen.findByText("Full");
     expect(within(rowOf("Broke")).getByRole("link", { name: "Resume Broke" })).toBeInTheDocument();
     expect(within(rowOf("Full")).queryByRole("link", { name: /^Resume/ })).toBeNull();
-    expect(lineOf("Full")).toBe("Closed: the conversation is full");
+    expect(badgeOf("Full")).toBe("Closed");
+    expect(lineOf("Full")).toMatch(/^Closed: the conversation is full/);
+    // Without Resume, the row still offers a way in: its chat.
+    expect(within(rowOf("Full")).getByRole("link", { name: "Open chat Full" })).toBeInTheDocument();
     view.unmount();
 
     renderList({
@@ -662,10 +687,14 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
       "title",
       "$0.0012 USD",
     );
-    expect(lineOf("Newer idle")).toBe("Ask before edits mode · sonnet");
-    // Most loaded rows run in agent-hub-hub: it is not repeated; the observed rows name agent-hub.
-    expect(tagsOf("Fix the build")).toEqual([]);
-    expect(tagsOf("/evaluator")).toEqual(["Terminal", "agent-hub · dev/agh-48-live-tiles"]);
+    expect(lineOf("Newer idle")).toBe("Waiting for your next message");
+    expect(badgeOf("Newer idle")).toBe("Your turn");
+    // A chat in the default mode names no mode; the Where column names its folder.
+    expect(tagsOf("Newer idle")).toEqual(["Chat"]);
+    expect(tagsOf("Fix the build")).toEqual(["Chat"]);
+    expect(placeOf("Fix the build")).toBe("agent-hub-hub");
+    expect(tagsOf("/evaluator")).toEqual(["Terminal"]);
+    expect(placeOf("/evaluator")).toBe("agent-hub · dev/agh-48-live-tiles");
   });
 
   it("adds placed rows and drops moved ones once in the paged footer, the group counts and the attention line", async () => {
@@ -689,14 +718,14 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(within(group(/^Working/)).getByText("Showing 2 of ~120")).toBeInTheDocument();
     expect(groupToggles()).toContain("Needs you · 2");
     expect(document.querySelector(".sl-attention")).toHaveTextContent(
-      "2 sessions need you· 120 working · 2 in progress",
+      "2 sessions need you· 120 working · 2 your turn",
     );
   });
 
   it("opens a twinless driven session's chat from its row", async () => {
     const view = renderList(drivenFixture());
 
-    fireEvent.click((await screen.findByText("Fix the build")).closest("li") as HTMLElement);
+    fireEvent.click((await screen.findByText("Fix the build")).closest("tr") as HTMLElement);
     expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(12, "0192a5e5")}`);
   });
 
@@ -715,7 +744,7 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(groupToggles()).toEqual([
       "Needs you · 2",
       "Working · 2",
-      "In progress · 2",
+      "Your turn · 2",
       "Finished · last 7 days · 2",
     ]);
   });
@@ -724,7 +753,7 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     renderList(drivenFixture(), "/sessions?repo=agent-hub");
 
     await screen.findByText("Twin chat");
-    expect(within(rowOf("Twin chat")).queryByText("Terminal")).toBeNull();
+    expect(tagsOf("Twin chat")).toEqual(["Chat"]);
     expect(screen.queryByText("Fix the build")).toBeNull();
     expect(screen.queryByText("Approve me")).toBeNull();
   });

@@ -36,7 +36,7 @@ const one = (n: number, status: Session["status"], name: string, extra: Partial<
 
 const SAMPLE: [Session, Session, Session, Session] = [
   one(1, "waiting", "asker", { waiting_reason: "Permission prompt" }),
-  one(2, "live", "runner", { last_action: "make check-fast", last_tool: "Bash" }),
+  one(2, "live", "runner", { last_action: "Ran make check-fast", last_tool: "Bash" }),
   one(3, "idle", "rester"),
   one(4, "ended", "done", { outcome: "done" }),
 ];
@@ -67,8 +67,13 @@ function focused(): Element {
   return document.activeElement;
 }
 const scrolls = vi.fn();
-const rowOf = (text: string) => screen.getByText(text).closest("li") as HTMLElement;
-const lineOf = (text: string) => rowOf(text).querySelector(".sl-row-line")?.textContent;
+const rowOf = (text: string) => screen.getByText(text).closest("tr") as HTMLElement;
+/** What the row says it does or did, without the exact command or path. */
+const lineOf = (text: string) => rowOf(text).querySelector(".sl-row-say")?.textContent;
+const detailOf = (text: string) => rowOf(text).querySelector(".sl-row-detail")?.textContent;
+const badgeOf = (text: string) => rowOf(text).querySelector(".sl-cell-status")?.textContent;
+/** The session rows of a group's table (its column header row is for screen readers only). */
+const rowsIn = (el: HTMLElement) => [...el.querySelectorAll<HTMLElement>("tbody tr[data-nav-row]")];
 const sessionRequests = (requests: Request[]) =>
   requests.filter((r) => new URL(r.url).pathname === SESSIONS).map((r) => new URL(r.url));
 
@@ -83,27 +88,47 @@ afterEach(() => {
 });
 
 describe("SessionsListScreen inbox-groups", () => {
-  it("shows the four plain groups with their counts, no tabs, no table and no per-row status", async () => {
+  it("shows the four groups with their counts and hints, one table each, a status on every row", async () => {
     renderList();
     await screen.findByText("/runner");
 
     expect(groups()).toEqual(["waiting", "live", "idle", "ended"]);
     expect(headers()).toEqual([
-      "Needs you · 1",
-      "Working · 1",
-      "In progress · 1Your turn: check what the agent did, or send your next message.",
-      "Finished · last 7 days · 1",
+      "Needs you · 1Answer so the agent can continue · oldest first",
+      "Working · 1Claude is on it, nothing to do yet · latest first",
+      "Your turn · 1Claude finished its turn: check the work or send your next message · latest first",
+      "Finished · last 7 days · 1Newest first",
     ]);
     expect(screen.queryByRole("group", { name: "Status" })).toBeNull();
-    expect(screen.queryByRole("table")).toBeNull();
-    expect(document.querySelector(".ah-status")).toBeNull();
-    // One useful line per row, never the same sentence on each.
+    // One table per group, named for readers; the shared column header is hidden from them.
+    expect(
+      screen.getAllByRole("table").map((t) => t.querySelector("caption")?.textContent),
+    ).toEqual([
+      "Needs you sessions",
+      "Working sessions",
+      "Your turn sessions",
+      "Finished · last 7 days sessions",
+    ]);
+    const shared = document.querySelector(".sl-table-head");
+    expect(shared).toHaveAttribute("aria-hidden", "true");
+    expect(shared?.textContent).toBe("StatusSessionWhereCostLast activity");
+    expect(
+      within(group(/^Needs you/))
+        .getAllByRole("columnheader")
+        .map((th) => th.textContent),
+    ).toEqual(["Status", "Session", "Where", "Cost", "Last activity", "Action"]);
+    // Each row says its status in the same words, and one useful line.
+    expect(badgeOf("/asker")).toBe("Waiting for you");
+    expect(badgeOf("/runner")).toBe("Working");
+    expect(badgeOf("/rester")).toBe("Your turn");
+    expect(badgeOf("/done")).toBe("Done");
     expect(lineOf("/asker")).toBe("Asks for a permission in the terminal");
-    expect(lineOf("/runner")).toBe("make check-fast");
-    expect(lineOf("/rester")).toBe("No tool used yet");
-    expect(lineOf("/done")).toBe("Done · ran 10 min");
-    // Each group is a list of rows.
-    expect(within(group(/^Needs you/)).getAllByRole("listitem")).toEqual([rowOf("/asker")]);
+    expect(lineOf("/runner")).toBe("Running a command");
+    expect(detailOf("/runner")).toBe("make check-fast");
+    expect(lineOf("/rester")).toBe("Turn finished");
+    expect(lineOf("/done")).toBe("Ran 10 min");
+    // Each group's body holds its rows.
+    expect(rowsIn(group(/^Needs you/))).toEqual([rowOf("/asker")]);
   });
 
   it("shows a status link's group from the URL, even collapsed or empty, which cannot collapse", async () => {
@@ -123,7 +148,7 @@ describe("SessionsListScreen inbox-groups", () => {
     await act(async () => {
       await router.navigate("/sessions?status=idle");
     });
-    expect(await screen.findByText("No session in progress.")).toBeInTheDocument();
+    expect(await screen.findByText("No session waits for a reply.")).toBeInTheDocument();
   });
 
   it("marks a count that has more pages as approximate", async () => {
@@ -141,7 +166,7 @@ describe("SessionsListScreen inbox-groups", () => {
     expect(within(group(/^Working/)).getByText("Showing 1 of ~40")).toBeInTheDocument();
   });
 
-  it("orders Needs you oldest wait first, and Working and Paused latest activity first", async () => {
+  it("orders Needs you oldest wait first, and Working and Your turn latest activity first", async () => {
     const sessions = [
       one(1, "waiting", "new-ask", { last_activity_at: at(500) }),
       one(2, "waiting", "old-ask", { last_activity_at: at(100) }),
@@ -152,11 +177,9 @@ describe("SessionsListScreen inbox-groups", () => {
     await screen.findByText("/old-ask");
 
     const titles = (name: RegExp) =>
-      within(group(name))
-        .getAllByRole("listitem")
-        .map((row) => row.querySelector(".sl-row-title")?.textContent);
+      rowsIn(group(name)).map((row) => row.querySelector(".sl-row-title")?.textContent);
     expect(titles(/^Needs you/)).toEqual(["/old-ask", "/new-ask"]);
-    expect(titles(/^In progress/)).toEqual(["/just-rested", "/rested-long"]);
+    expect(titles(/^Your turn/)).toEqual(["/just-rested", "/rested-long"]);
   });
 
   it("shows Finished's five latest, then the rest on Show more", async () => {
@@ -167,7 +190,7 @@ describe("SessionsListScreen inbox-groups", () => {
     await screen.findByText("/e0");
 
     const finished = group(/^Finished/);
-    expect(within(finished).getAllByRole("listitem")).toHaveLength(5);
+    expect(rowsIn(finished)).toHaveLength(5);
     expect(screen.queryByText("/e5")).toBeNull();
     // Finished rows read muted.
     expect(rowOf("/e0")).toHaveAttribute("data-muted", "true");
@@ -175,7 +198,7 @@ describe("SessionsListScreen inbox-groups", () => {
     fireEvent.click(
       within(finished).getByRole("button", { name: "Show 2 more finished sessions" }),
     );
-    expect(within(finished).getAllByRole("listitem")).toHaveLength(7);
+    expect(rowsIn(finished)).toHaveLength(7);
     expect(within(finished).queryByRole("button", { name: /^Show/ })).toBeNull();
   });
 });
@@ -186,7 +209,7 @@ describe("SessionsListScreen attention-line", () => {
     await screen.findByText("/asker");
 
     expect(document.querySelector(".sl-attention")).toHaveTextContent(
-      "1 session needs you· 1 working · 1 in progress",
+      "1 session needs you· 1 working · 1 your turn",
     );
     fireEvent.click(screen.getByRole("button", { name: "1 session needs you" }));
     await waitFor(() => {
@@ -217,7 +240,9 @@ describe("SessionsListScreen attention-line", () => {
     expect(rowOf("/broken")).toHaveAttribute("data-trouble", "true");
     expect(rowOf("/runner")).not.toHaveAttribute("data-trouble");
     expect(lineOf("/stuck")).toBe("Needs you: Bash failed");
-    expect(lineOf("/broken")).toBe("Failed · 1 problem needs you");
+    expect(badgeOf("/stuck")).toBe("Problem");
+    expect(badgeOf("/broken")).toBe("Failed");
+    expect(lineOf("/broken")).toBe("1 problem needs you · Ran 10 min");
     expect(
       within(rowOf("/stuck")).getByRole("link", { name: "Review problem in /stuck" }),
     ).toHaveAttribute("href", `/sessions/${anId(5, "dddd0005")}`);
@@ -250,7 +275,7 @@ describe("SessionsListScreen attention-line", () => {
   it("says nothing needs the owner, with how many work and pause", async () => {
     const calm = renderList(routes(aSessionsByStatus(SAMPLE.slice(1))));
     expect(
-      await screen.findByText("Nothing needs you. 1 working · 1 in progress."),
+      await screen.findByText("Nothing needs you. 1 working · 1 your turn."),
     ).toBeInTheDocument();
     calm.unmount();
 
@@ -345,13 +370,14 @@ describe("SessionsListScreen row-actions", () => {
     anAgentSession({ id: anId(14, "0192a5e5"), title: "Ready", status: "idle" }),
     anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" }),
   ];
+  /** The row's action: its last column. */
   const links = (text: string) =>
-    within(rowOf(text))
-      .queryAllByRole("link")
-      .slice(1)
-      .map((link) => [link.getAttribute("aria-label"), link.getAttribute("href")]);
+    [...(rowOf(text).querySelector(".sl-cell-action")?.querySelectorAll("a") ?? [])].map((link) => [
+      link.getAttribute("aria-label"),
+      link.getAttribute("href"),
+    ]);
 
-  it("offers Answer only where the owner is needed, Resume on a resumable chat, a chevron elsewhere", async () => {
+  it("offers Answer where the owner is needed, Resume on a resumable chat, Open or Open chat elsewhere", async () => {
     const { container } = renderList(routes(aSessionsByStatus([...SAMPLE, twin]), AGENTS));
     await screen.findByText("Broke");
 
@@ -361,11 +387,26 @@ describe("SessionsListScreen row-actions", () => {
     ]);
     expect(lineOf("Approve me")).toBe("Asks to use Bash: git status");
     expect(links("Broke")).toEqual([["Resume Broke", `/agent-sessions/${anId(16, "0192a5e5")}`]]);
-    // No Open chat or Open button on every row: the row opens, a chevron says so.
-    for (const text of ["/runner", "Run the tests", "Ready", "/rester", "/done"]) {
-      expect(links(text)).toEqual([]);
-      expect(rowOf(text).querySelector(".sl-row-chevron")).not.toBeNull();
-    }
+    // Every other row says where it opens: the chat, or the session.
+    expect(links("/runner")).toEqual([
+      ["Open session /runner", `/sessions/${anId(2, "dddd0002")}`],
+    ]);
+    expect(links("/rester")).toEqual([
+      ["Open session /rester", `/sessions/${anId(3, "dddd0003")}`],
+    ]);
+    expect(links("/done")).toEqual([["Open session /done", `/sessions/${anId(4, "dddd0004")}`]]);
+    expect(links("Run the tests")).toEqual([
+      ["Open chat Run the tests", `/agent-sessions/${anId(11, "0192a5e5")}`],
+    ]);
+    expect(links("Ready")).toEqual([
+      ["Open chat Ready", `/agent-sessions/${anId(14, "0192a5e5")}`],
+    ]);
+    expect(within(rowOf("Ready")).getByRole("link", { name: "Open chat Ready" })).toHaveTextContent(
+      "Open chat",
+    );
+    expect(
+      within(rowOf("/runner")).getByRole("link", { name: "Open session /runner" }),
+    ).toHaveTextContent(/^Open$/);
     // The title link goes where the row opens.
     expect(
       within(rowOf("Run the tests")).getByRole("link", { name: "Run the tests" }),
@@ -377,8 +418,10 @@ describe("SessionsListScreen row-actions", () => {
     expect(within(rowOf("Broke")).getByRole("link", { name: "Resume Broke" })).not.toHaveClass(
       "ah-btn-primary",
     );
-    // A chat that started from hub web carries no mark; a terminal one does.
+    // Every row says where it started: a chat from hub web, or a terminal.
     expect(within(rowOf("/runner")).getByText("Terminal")).toBeInTheDocument();
+    expect(within(rowOf("Run the tests")).getByText("Chat")).toBeInTheDocument();
+    expect(within(rowOf("Ready")).getByText("Chat")).toBeInTheDocument();
     expect(within(rowOf("Run the tests")).queryByText("Terminal")).toBeNull();
     expect(await seriousViolations(container)).toEqual([]);
   });
@@ -389,7 +432,9 @@ describe("SessionsListScreen row-actions", () => {
       [`${AGENT}/capabilities`]: aCapabilities({ available: false }),
     });
     await screen.findByText("Broke");
-    expect(links("Broke")).toEqual([]);
+    expect(links("Broke")).toEqual([
+      ["Open chat Broke", `/agent-sessions/${anId(16, "0192a5e5")}`],
+    ]);
   });
 
   it("opens the row where it leads on click and Enter, and its button where the button leads", async () => {

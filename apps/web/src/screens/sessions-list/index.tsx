@@ -353,7 +353,7 @@ export function SessionsListScreen() {
   };
   const others = [
     workingCount ? `${fmtInt(workingCount)} working` : "",
-    pausedCount ? `${fmtInt(pausedCount)} in progress` : "",
+    pausedCount ? `${fmtInt(pausedCount)} your turn` : "",
   ].filter(Boolean);
   const attention = pending ? (
     <Skeleton width={320} />
@@ -428,7 +428,7 @@ export function SessionsListScreen() {
         : id === "live"
           ? "No session is working."
           : id === "idle"
-            ? "No session in progress."
+            ? "No session waits for a reply."
             : id === "ended"
               ? period === "All"
                 ? "No session finished yet."

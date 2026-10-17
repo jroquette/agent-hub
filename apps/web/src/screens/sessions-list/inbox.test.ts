@@ -9,6 +9,7 @@ import {
   at,
 } from "../../testing/builders";
 import {
+  activityOf,
   commonRepoOf,
   filesToReview,
   orderRows,
@@ -32,13 +33,110 @@ const ctx = (
 const view = (row: SectionRow, group: SectionId, drv: AgentSession | null = null) =>
   rowView(row, ctx(group, drv));
 
+describe("activityOf", () => {
+  it.each([
+    [
+      "Ran make check",
+      "Bash",
+      "terminal",
+      "Running a command",
+      "Last step: ran a command",
+      "make check",
+    ],
+    [
+      "Edited src/a.ts",
+      "Edit",
+      "file-pen",
+      "Editing a file",
+      "Last step: edited a file",
+      "src/a.ts",
+    ],
+    [
+      "Edited src/new.ts",
+      "Write",
+      "file-plus",
+      "Writing a file",
+      "Last step: wrote a file",
+      "src/new.ts",
+    ],
+    [
+      "Read docs/SPEC.md",
+      "Read",
+      "file-text",
+      "Reading a file",
+      "Last step: read a file",
+      "docs/SPEC.md",
+    ],
+    [
+      "Searched rowView",
+      "Grep",
+      "text-search",
+      "Searching the code",
+      "Last step: searched the code",
+      "rowView",
+    ],
+  ] as const)(
+    "says %s in plain words, the exact command or path as the detail",
+    (action, tool, icon, now, past, detail) => {
+      expect(activityOf(action, tool, "now")).toEqual({ icon, line: now, detail });
+      expect(activityOf(action, tool, "past")).toEqual({ icon, line: past, detail });
+    },
+  );
+
+  it("falls back to the verb's icon when the tool is unknown or missing", () => {
+    expect(activityOf("Ran ls", null, "now")).toEqual({
+      icon: "terminal",
+      line: "Running a command",
+      detail: "ls",
+    });
+    expect(activityOf("Read a.ts", "SomethingNew", "now").icon).toBe("file-text");
+  });
+
+  it("names the tool it uses, and a subagent in words", () => {
+    expect(activityOf("Used WebFetch", "WebFetch", "now")).toEqual({
+      icon: "globe",
+      line: "Using WebFetch",
+      detail: null,
+    });
+    expect(activityOf("Used mcp__linear", null, "past")).toEqual({
+      icon: "plug",
+      line: "Last step: used mcp__linear",
+      detail: null,
+    });
+    expect(activityOf("Used Agent", "Agent", "now")).toEqual({
+      icon: "network",
+      line: "Working with a subagent",
+      detail: null,
+    });
+    expect(activityOf("Used Task", null, "past").line).toBe("Last step: used a subagent");
+  });
+
+  it("says Starting or Turn finished before any tool, and keeps an unknown action as the detail", () => {
+    expect(activityOf(null, null, "now")).toEqual({ icon: null, line: "Starting", detail: null });
+    expect(activityOf(undefined, null, "past")).toEqual({
+      icon: null,
+      line: "Turn finished",
+      detail: null,
+    });
+    expect(activityOf("Compacted the context", null, "now")).toEqual({
+      icon: null,
+      line: "Working",
+      detail: "Compacted the context",
+    });
+    expect(activityOf("Compacted the context", null, "past").line).toBe("Turn finished");
+  });
+});
+
 describe("rowView: Needs you", () => {
   it("says what a driven session asks to use, with Answer, timed when it asked", () => {
     const ask = aPermissionRequest({ tool: "Bash", summary: "make playground-export" });
     const drv = anAgentSession({ status: "waiting_permission", open_permission: ask });
     expect(view(drv, "waiting", drv)).toMatchObject({
-      lead: { icon: "hand", tone: "waiting" },
+      status: { status: "waiting", label: "Waiting for you" },
+      icon: "hand",
       line: "Asks to use Bash: make playground-export",
+      detail: null,
+      origin: "chat",
       action: "answer",
       time: ask.asked_at,
       timeTip: "Asked",
@@ -63,8 +161,10 @@ describe("rowView: Needs you", () => {
   ])("reads an observed wait for %s", (reason, icon, line) => {
     const row = observed({ status: "waiting", waiting_reason: reason });
     expect(view(row, "waiting")).toMatchObject({
-      lead: { icon, tone: "waiting" },
+      status: { status: "waiting", label: "Waiting for you" },
+      icon,
       line,
+      origin: "terminal",
       action: "answer",
       time: row.last_activity_at,
     });
@@ -77,7 +177,8 @@ describe("rowView: Needs you", () => {
       needs_you_problem: "Needs you: Bash failed in make check",
     });
     expect(view(named, "waiting")).toMatchObject({
-      lead: { icon: "circle-x", tone: "failed" },
+      status: { status: "failed", label: "Problem" },
+      icon: "circle-x",
       line: "Needs you: Bash failed in make check",
       lineTone: "failed",
       action: "review",
@@ -92,35 +193,48 @@ describe("rowView: Needs you", () => {
 
   it("keeps Answer on a waiting session that also has a problem", () => {
     const row = observed({ status: "waiting", problems: NEEDS(1), waiting_reason: "Guard ask" });
-    expect(view(row, "waiting").action).toBe("answer");
+    expect(view(row, "waiting")).toMatchObject({
+      action: "answer",
+      status: { label: "Waiting for you" },
+    });
   });
 });
 
 describe("rowView: Working", () => {
-  it("says the last action of an observed session, with the live pulse", () => {
-    expect(view(observed({ last_action: "Ran make check" }), "live")).toMatchObject({
-      lead: "pulse",
-      line: "Ran make check",
+  it("says what an observed session does in plain words, its command as the detail", () => {
+    const row = observed({ last_action: "Ran make check", last_tool: "Bash" });
+    expect(view(row, "live")).toMatchObject({
+      status: { status: "live", label: "Working" },
+      icon: "terminal",
+      line: "Running a command",
+      detail: "make check",
       lineTone: null,
       action: null,
       timeTip: "Last activity",
     });
   });
 
-  it("says a failing notice first, in the failed tone", () => {
+  it("says a failing notice first, in the failed tone, still Working", () => {
     const row = observed({ last_action: "Ran make check", failing_notice: "3 tool errors" });
     expect(view(row, "live")).toMatchObject({
-      lead: { icon: "circle-x", tone: "failed" },
+      status: { status: "live", label: "Working" },
+      icon: "circle-x",
       line: "3 tool errors",
+      detail: null,
       lineTone: "failed",
     });
   });
 
   it("says Starting before any tool, and Working on your message for a chat", () => {
-    expect(view(observed({ last_action: null }), "live").line).toBe("Starting");
+    expect(view(observed({ last_action: null }), "live")).toMatchObject({
+      line: "Starting",
+      icon: null,
+      detail: null,
+    });
     const drv = anAgentSession({ status: "running" });
     expect(view(drv, "live", drv)).toMatchObject({
-      lead: "pulse",
+      status: { status: "live", label: "Working" },
+      icon: "message-square",
       line: "Working on your message",
     });
     const twin = observed({ last_action: null, agent_session_id: drv.id });
@@ -135,23 +249,37 @@ describe("rowView: Working", () => {
   });
 });
 
-describe("rowView: In progress", () => {
-  it("says the last action of an observed session, or that no tool ran yet, with no lead", () => {
-    expect(view(observed({ status: "idle", last_action: "Edited a.ts" }), "idle")).toMatchObject({
-      lead: null,
-      line: "Edited a.ts",
+describe("rowView: Your turn", () => {
+  it("says the last step of an observed session, or that its turn finished", () => {
+    const row = observed({ status: "idle", last_action: "Edited a.ts", last_tool: "Edit" });
+    expect(view(row, "idle")).toMatchObject({
+      status: { status: "idle", label: "Your turn" },
+      icon: "file-pen",
+      line: "Last step: edited a file",
+      detail: "a.ts",
       action: null,
     });
     expect(view(observed({ status: "idle", last_action: null }), "idle").line).toBe(
-      "No tool used yet",
+      "Turn finished",
     );
   });
 
-  it("says a twinless chat's mode and model, the model left out when unknown", () => {
+  it("says a chat waits for your next message, with its mode only when not the default", () => {
     const drv = anAgentSession({ status: "idle", mode: "plan", model: "opus" });
-    expect(view(drv, "idle", drv).line).toBe("Plan mode · opus");
+    expect(view(drv, "idle", drv)).toMatchObject({
+      status: { status: "idle", label: "Your turn" },
+      icon: "message-square",
+      line: "Waiting for your next message",
+      mode: "Plan mode",
+      origin: "chat",
+    });
     const bare = anAgentSession({ status: "idle", mode: "default", model: null });
-    expect(view(bare, "idle", bare).line).toBe("Ask before edits mode");
+    expect(view(bare, "idle", bare).mode).toBeNull();
+    const twin = observed({ status: "idle", agent_session_id: drv.id, last_action: null });
+    expect(view(twin, "idle", drv)).toMatchObject({
+      line: "Waiting for your next message",
+      mode: "Plan mode",
+    });
   });
 });
 
@@ -160,36 +288,49 @@ describe("rowView: Finished", () => {
     observed({ status: "ended", ended_at: at(47), ...overrides });
 
   it.each([
-    ["done", "Done · ran 47 s", "circle-check", "done"],
-    ["stopped", "Stopped · ran 47 s", "octagon-x", "blocked"],
-    ["blocked", "Blocked · Ran make check", "octagon-x", "blocked"],
-    ["error", "Failed · Ran make check", "circle-x", "failed"],
-  ] as const)("reads the outcome %s as a word, an icon and a fact", (outcome, line, icon, tone) => {
-    const row = ended({ outcome, last_action: "Ran make check" });
-    expect(view(row, "ended")).toMatchObject({
-      lead: { icon, tone },
-      line,
-      time: at(47),
-      timeTip: "Ended",
-      action: null,
-    });
-  });
+    ["done", "Done", "done", "Ran 47 s"],
+    ["stopped", "Stopped", "blocked", "Ran 47 s"],
+    ["blocked", "Blocked", "blocked", "Ran make check · Ran 47 s"],
+    ["error", "Failed", "failed", "Ran make check · Ran 47 s"],
+  ] as const)(
+    "reads the outcome %s as a badge and the line as a fact",
+    (outcome, label, status, line) => {
+      const row = ended({ outcome, last_action: "Ran make check" });
+      expect(view(row, "ended")).toMatchObject({
+        status: { status, label },
+        line,
+        time: at(47),
+        timeTip: "Ended",
+        action: null,
+      });
+    },
+  );
 
   it("says a failure's notice over its last action", () => {
     const row = ended({ outcome: "error", failing_notice: "3 tool errors in the last 5 min" });
-    expect(view(row, "ended").line).toBe("Failed · 3 tool errors in the last 5 min");
+    expect(view(row, "ended").line).toBe("3 tool errors in the last 5 min · Ran 47 s");
   });
 
-  it("says a pull request over the duration", () => {
+  it("says a pull request before the duration, with its icon", () => {
     const row = ended({ outcome: "done", pr: { number: 212, state: "MERGED", url: "https://x" } });
-    expect(view(row, "ended").line).toBe("Done · PR #212 merged");
+    expect(view(row, "ended")).toMatchObject({
+      status: { label: "Done" },
+      icon: "git-merge",
+      line: "PR #212 merged · Ran 47 s",
+    });
+    const open = ended({ outcome: "done", pr: { number: 7, state: "OPEN", url: "https://x" } });
+    expect(view(open, "ended")).toMatchObject({
+      icon: "git-pull-request",
+      line: "PR #7 open · Ran 47 s",
+    });
   });
 
   it("says a problem that needs the owner, in the failed tone", () => {
     const row = ended({ outcome: "done", problems: NEEDS(2) });
     expect(view(row, "ended")).toMatchObject({
-      lead: { icon: "circle-x", tone: "failed" },
-      line: "Done · 2 problems need you",
+      status: { status: "done", label: "Done" },
+      icon: "circle-x",
+      line: "2 problems need you · Ran 47 s",
       lineTone: "failed",
     });
   });
@@ -200,48 +341,61 @@ describe("rowView: Finished", () => {
       return view(ended({ outcome: "done", agent_session_id: drv.id }), "ended", drv);
     };
     expect(twin("closed")).toMatchObject({
-      line: "Closed by you · ran 47 s",
-      lead: { icon: "circle-stop", tone: "subtle" },
+      status: { status: "ended", label: "Closed" },
+      line: "Closed by you · Ran 47 s",
     });
-    expect(twin("idle_timeout").line).toBe("Closed automatically after a pause · ran 47 s");
-    expect(twin("server_stopped").line).toBe("Closed when hub web stopped · ran 47 s");
-    expect(twin("log_full").line).toBe("Closed: the conversation is full · ran 47 s");
+    expect(twin("idle_timeout")).toMatchObject({
+      status: { label: "Closed" },
+      line: "Closed automatically after a pause · Ran 47 s",
+    });
+    expect(twin("server_stopped").line).toBe("Closed when hub web stopped · Ran 47 s");
+    expect(twin("log_full").line).toBe("Closed: the conversation is full · Ran 47 s");
     // No driven end reason: the observed outcome says it.
-    expect(twin(null).line).toBe("Done · ran 47 s");
+    expect(twin(null)).toMatchObject({ status: { label: "Done" }, line: "Ran 47 s" });
   });
 
   it("keeps an observed error as Failed over a driven close", () => {
     const drv = anAgentSession({ status: "ended", end_reason: "closed" });
     const row = ended({ outcome: "error", agent_session_id: drv.id });
-    expect(view(row, "ended", drv).line).toBe("Failed · ran 47 s");
+    expect(view(row, "ended", drv)).toMatchObject({
+      status: { status: "failed", label: "Failed" },
+      line: "Ran 47 s",
+    });
   });
 
   it("reads a failed driven session as Failed, and one with no reason as Closed", () => {
     const failed = anAgentSession({ status: "failed", ended_at: at(30) });
     expect(view(failed, "ended", failed)).toMatchObject({
-      line: "Failed · ran 30 s",
-      lead: { icon: "circle-x", tone: "failed" },
+      status: { status: "failed", label: "Failed" },
+      line: "Ran 30 s",
     });
     const closed = anAgentSession({ status: "ended" });
-    expect(view(closed, "ended", closed).line).toBe("Closed");
+    expect(view(closed, "ended", closed)).toMatchObject({
+      status: { status: "ended", label: "Closed" },
+      line: "No details recorded",
+    });
   });
 
-  it("says an assumed close with the dashed mark when no end signal arrived", () => {
+  it("says an assumed close with the inferred mark when no end signal arrived", () => {
     const row = ended({ outcome: null, end_inferred: true });
     expect(view(row, "ended")).toMatchObject({
-      line: "Closed · ran 47 s",
-      lead: { icon: "circle-dashed", tone: "subtle" },
+      status: { status: "ended", label: "Closed" },
+      line: "Ran 47 s",
       inferred: true,
     });
     expect(view(ended({ outcome: null }), "ended")).toMatchObject({
-      line: "Closed · ran 47 s",
+      status: { label: "Closed" },
       inferred: false,
     });
   });
 
-  it("says the word only without an end time, timed by the last activity", () => {
+  it("says no details without an end time, timed by the last activity", () => {
     const row = ended({ outcome: "done", ended_at: null });
-    expect(view(row, "ended")).toMatchObject({ line: "Done", time: row.last_activity_at });
+    expect(view(row, "ended")).toMatchObject({
+      status: { label: "Done" },
+      line: "No details recorded",
+      time: row.last_activity_at,
+    });
   });
 
   it("marks a finished chat resumable unless the log is full or it never got a Claude id", () => {
@@ -256,43 +410,70 @@ describe("rowView: Finished", () => {
   });
 });
 
-describe("rowView: tags", () => {
-  it("tags a terminal session, and nothing on a chat in the common repo", () => {
-    expect(view(observed(), "live").tags).toEqual(["Terminal"]);
-    expect(view(observed({ agent_session_id: anId(9) }), "live").tags).toEqual([]);
+describe("rowView: origin, mode and where", () => {
+  it("says Terminal for an observed session, and Chat for a twin or a twinless chat", () => {
+    expect(view(observed(), "live").origin).toBe("terminal");
+    expect(view(observed({ agent_session_id: anId(9) }), "live").origin).toBe("chat");
+    const drv = anAgentSession({ status: "running" });
+    expect(view(drv, "live", drv).origin).toBe("chat");
   });
 
-  it("tags a run by its issue, else its short id, with its step", () => {
-    const run = observed({ run_id: "a1b2c3d4-e5f6-7890", issue: "AGH-9", step: "implement" });
-    expect(view(run, "live").tags).toEqual(["Terminal", "Run AGH-9 · implement"]);
-    const bare = observed({ run_id: "a1b2c3d4-e5f6-7890", issue: null, step: null });
-    expect(view(bare, "live").tags).toEqual(["Terminal", "Run a1b2c3d4"]);
+  it("names a chat's mode when it is not the default one", () => {
+    const auto = anAgentSession({ status: "running", mode: "auto" });
+    expect(view(auto, "live", auto).mode).toBe("Auto mode");
+    expect(view(observed(), "live").mode).toBeNull();
   });
 
-  it("names a repo only when it differs from the common one, and a branch unless HEAD or main", () => {
-    const tags = (repo: string, branch: string | null) =>
-      view(observed({ agent_session_id: anId(9), label: aSessionLabel({ repo, branch }) }), "live")
-        .tags;
-    expect(tags("storefront", "HEAD")).toEqual(["storefront"]);
-    expect(tags("storefront", "main")).toEqual(["storefront"]);
-    expect(tags("storefront", "dev/x")).toEqual(["storefront · dev/x"]);
-    expect(tags("agent-hub", "HEAD")).toEqual([]);
-    expect(tags("agent-hub", null)).toEqual([]);
-    expect(tags("agent-hub", "dev/x")).toEqual(["dev/x"]);
+  it("places an observed session by its repo, branch and issue, a detached HEAD naming no branch", () => {
+    const where = (label: Partial<Session["label"] & object>) =>
+      view(observed({ label: aSessionLabel(label) }), "live").where;
+    expect(where({ repo: "storefront", branch: "dev/x", issue: "AGH-9" })).toEqual({
+      project: null,
+      repo: "storefront",
+      branch: "dev/x",
+      issue: "AGH-9",
+      run: null,
+    });
+    expect(where({ repo: "agent-hub", branch: "HEAD" })).toMatchObject({
+      repo: "agent-hub",
+      branch: null,
+    });
+    expect(where({ branch: "main" }).branch).toBe("main");
+    expect(
+      view(observed({ label: null, repo: "storefront", issue: "AGH-3" }), "live").where,
+    ).toMatchObject({
+      repo: "storefront",
+      branch: null,
+      issue: "AGH-3",
+    });
   });
 
-  it("names a chat's folder only when it differs from the common repo", () => {
+  it("names a run by its issue, else its short id, with its step", () => {
+    const run = observed({
+      run_id: "a1b2c3d4-e5f6-7890",
+      label: null,
+      issue: "AGH-9",
+      step: "implement",
+    });
+    expect(view(run, "live").where.run).toBe("Run AGH-9 · implement");
+    const bare = observed({ run_id: "a1b2c3d4-e5f6-7890", label: null, issue: null, step: null });
+    expect(view(bare, "live").where.run).toBe("Run a1b2c3d4");
+  });
+
+  it("places a chat by its folder, and shows the project only when every project shows", () => {
     const drv = anAgentSession({ workdir_label: "agent-hub-hub" });
-    expect(view(drv, "idle", drv).tags).toEqual(["agent-hub-hub"]);
-    expect(rowView(drv, ctx("idle", drv, { commonRepo: "agent-hub-hub" })).tags).toEqual([]);
-  });
-
-  it("leads with the project when every project shows", () => {
+    expect(view(drv, "idle", drv).where).toEqual({
+      project: null,
+      repo: "agent-hub-hub",
+      branch: null,
+      issue: null,
+      run: null,
+    });
     const row = observed({ project: "loki-trader" });
-    expect(rowView(row, ctx("live", null, { showProject: true })).tags).toEqual([
+    expect(rowView(row, ctx("live", null, { showProject: true })).where.project).toBe(
       "loki-trader",
-      "Terminal",
-    ]);
+    );
+    expect(view(row, "live").where.project).toBeNull();
   });
 });
 
@@ -309,7 +490,7 @@ describe("orderRows", () => {
     expect(ids(orderRows("waiting", rows, none))).toEqual([anId(2), anId(1), anId(3)]);
   });
 
-  it("puts the latest activity first in Working and In progress, without changing its input", () => {
+  it("puts the latest activity first in Working and Your turn, without changing its input", () => {
     expect(ids(orderRows("live", rows, none))).toEqual([anId(3), anId(1), anId(2)]);
     expect(ids(orderRows("idle", rows, none))).toEqual([anId(3), anId(1), anId(2)]);
     expect(ids(rows)).toEqual([anId(1), anId(2), anId(3)]);
@@ -389,7 +570,7 @@ describe("the conversation of a chat", () => {
     ],
   });
 
-  it("shows your last ask and Claude's last reply in Working and In progress", () => {
+  it("shows your last ask and Claude's last reply in Working and Your turn", () => {
     expect(view(drv, "idle", drv).conversation).toEqual({
       prompt: "Make the list less minimal",
       reply: "Done: rows show your ask and my reply",
@@ -397,7 +578,8 @@ describe("the conversation of a chat", () => {
     const twin = observed({ status: "live", agent_session_id: drv.id, last_action: "Ran make" });
     expect(view(twin, "live", drv)).toMatchObject({
       conversation: { prompt: "Make the list less minimal" },
-      line: "Ran make",
+      line: "Running a command",
+      detail: "make",
     });
   });
 

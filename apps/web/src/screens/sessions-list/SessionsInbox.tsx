@@ -1,21 +1,23 @@
-/* The list view as an inbox: four plain groups; a chat row shows your last ask, Claude's reply and its files. */
+/* The list view: one table per status group, labelled columns, a status badge and a visible action on every row. */
 import { useState, type ReactNode } from "react";
 
-import { AppLink, Button, Icon, IssueLink, Money, ProblemError, Skeleton } from "../../components";
+import {
+  AppLink,
+  Button,
+  Icon,
+  IssueLink,
+  Money,
+  PathText,
+  ProblemError,
+  Skeleton,
+  StatusBadge,
+} from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtClock, fmtInt } from "../../lib/format";
 import { rowHref } from "./drivenRows";
 import { readStored } from "../../lib/storage";
 import { reviewedKey } from "../agent-session/FilesPanel";
-import {
-  filesToReview,
-  rowTitle,
-  rowView,
-  summaryOf,
-  type RowView,
-  type Tone,
-  type ViewContext,
-} from "./inbox";
+import { filesToReview, rowTitle, rowView, summaryOf, type Tone, type ViewContext } from "./inbox";
 import type { AgentSession } from "./queries";
 import { openHref } from "./rows";
 import { isDriven, type SectionId, type SectionRow } from "./sections";
@@ -26,9 +28,60 @@ type Tz = "local" | "utc";
 /** Finished shows this many rows until the owner asks for more. */
 export const FINISHED_PREVIEW = 5;
 
-const HINT: Partial<Record<SectionId, string>> = {
-  idle: "Your turn: check what the agent did, or send your next message.",
+/** What each group asks of the owner, and the order of its rows. */
+const HINT: Record<SectionId, string> = {
+  waiting: "Answer so the agent can continue · oldest first",
+  live: "Claude is on it, nothing to do yet · latest first",
+  idle: "Claude finished its turn: check the work or send your next message · latest first",
+  ended: "Newest first",
 };
+
+/** The columns of every group's table; the widths live in sessions-list.css. */
+const COLUMNS = [
+  { id: "status", label: "Status" },
+  { id: "session", label: "Session" },
+  { id: "where", label: "Where" },
+  { id: "cost", label: "Cost", title: "Estimated from transcript usage" },
+  {
+    id: "time",
+    label: "Last activity",
+    title:
+      "When the session last did something. Needs you: when it asked. Finished: when it ended.",
+  },
+  { id: "action", label: "Action" },
+] as const;
+
+function Cols() {
+  return (
+    <colgroup>
+      {COLUMNS.map((column) => (
+        <col key={column.id} className={`sl-col-${column.id}`} />
+      ))}
+    </colgroup>
+  );
+}
+
+/** The one visible header row over all groups; each group's table names its columns for readers. */
+export function ColumnHeader() {
+  return (
+    <table className="sl-table sl-table-head" aria-hidden="true">
+      <Cols />
+      <thead>
+        <tr>
+          {COLUMNS.map((column) => (
+            <th
+              key={column.id}
+              className={`sl-th-${column.id}`}
+              title={"title" in column ? column.title : undefined}
+            >
+              {column.id === "action" ? "" : column.label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+    </table>
+  );
+}
 
 const plural = (n: number, word: string) => `${String(n)} ${word}${n === 1 ? "" : "s"}`;
 
@@ -104,21 +157,6 @@ function When({ iso, tip, tz }: { iso: string; tip: string; tz: Tz }) {
   );
 }
 
-function Lead({ lead }: { lead: RowView["lead"] }) {
-  if (lead === null) return <span className="sl-row-lead" aria-hidden="true" />;
-  if (lead === "pulse")
-    return (
-      <span className="sl-row-lead" aria-hidden="true">
-        <span className="ah-dot ah-pulse" style={{ background: "var(--live)" }} />
-      </span>
-    );
-  return (
-    <span className="sl-row-lead" aria-hidden="true" style={{ color: TONE[lead.tone] }}>
-      <Icon name={lead.icon} size="sm" />
-    </span>
-  );
-}
-
 function Row({
   row,
   group,
@@ -134,25 +172,24 @@ function Row({
 }) {
   const view = rowView(row, { ...ctx, group });
   const talk = view.conversation;
-  // While it works, what Claude does now says more than its previous reply.
-  const claudeSays = group === "live" ? view.line : (talk?.reply ?? view.line);
   const files = ctx.drv ? filesToReview(summaryOf(ctx.drv).files, readReviewed(ctx.drv.id)) : null;
   const title = rowTitle(row);
   const named = isDriven(row) || Boolean(row.label?.title?.trim());
   const href = openHref(row);
   const lineId = `sl-line-${row.id}`;
-  const issue = isDriven(row) ? null : (row.label?.issue ?? row.issue ?? null);
   const cost = row.cost_usd;
-  let action: ReactNode = null;
+  const where = view.where;
+  const stop = (event: { stopPropagation: () => void }) => {
+    event.stopPropagation();
+  };
+  let action: ReactNode;
   if (view.action === "answer") {
     action = (
       <AppLink
         href={isDriven(row) ? rowHref(row) : waitingLink(row).href}
         className="ah-btn ah-btn-sm ah-btn-primary"
         aria-label={`Answer ${title}`}
-        onClick={(event) => {
-          event.stopPropagation();
-        }}
+        onClick={stop}
       >
         Answer
       </AppLink>
@@ -163,9 +200,7 @@ function Row({
         href={`/sessions/${encodeURIComponent(row.id)}`}
         className="ah-btn ah-btn-sm"
         aria-label={`Review problem in ${title}`}
-        onClick={(event) => {
-          event.stopPropagation();
-        }}
+        onClick={stop}
       >
         Review problem
       </AppLink>
@@ -174,45 +209,78 @@ function Row({
     action = (
       <AppLink
         href={rowHref(row)}
-        className="ah-btn ah-btn-sm ah-btn-ghost sl-row-hover"
+        className="ah-btn ah-btn-sm"
         aria-label={`Resume ${title}`}
-        onClick={(event) => {
-          event.stopPropagation();
-        }}
+        onClick={stop}
       >
         <Icon name="play" size="sm" />
         Resume
       </AppLink>
     );
   } else {
+    const chat = view.origin === "chat" && href.startsWith("/agent-sessions/");
     action = (
-      <span className="sl-row-hover sl-row-chevron" aria-hidden="true">
+      <AppLink
+        href={href}
+        className="ah-btn ah-btn-sm ah-btn-ghost"
+        aria-label={`${chat ? "Open chat" : "Open session"} ${title}`}
+        onClick={stop}
+      >
+        {chat ? "Open chat" : "Open"}
         <Icon name="chevron-right" size="sm" />
-      </span>
+      </AppLink>
     );
   }
+  const place = [where.project, where.repo].filter(Boolean).join(" / ");
+  const placeText = where.branch ? (place ? `${place} · ${where.branch}` : where.branch) : place;
+  const hasExtra = Boolean(where.issue ?? where.run) || (files !== null && files.total > 0);
+  const activity = (
+    <div
+      className="sl-row-line"
+      style={view.lineTone ? { color: TONE[view.lineTone] } : undefined}
+      title={
+        view.inferred
+          ? `${view.line} · No end signal arrived. agent-hub assumes the session closed.`
+          : view.line
+      }
+    >
+      {view.icon && <Icon name={view.icon} size="sm" />}
+      <span className="sl-row-say">{view.line}</span>
+      {view.detail && (
+        <span className="sl-row-detail ah-mono">
+          <PathText path={view.detail} max={72} />
+        </span>
+      )}
+    </div>
+  );
   return (
     // The row is one keyboard stop (j/k move between rows, Enter opens), as the session tiles are.
-    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-    <li
+    <tr
       className="sl-row"
       data-nav-row=""
       data-key={row.id}
       data-group-row={group}
       data-trouble={view.lineTone === "failed" || undefined}
       data-muted={group === "ended" || undefined}
-      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
-      aria-label={`${title}. ${view.line}`}
-      onClick={() => {
+      aria-label={`${title}. ${view.status.label}. ${view.line}`}
+      onClick={(event) => {
+        // A link inside the row (the issue) goes where it says, not to the session.
+        if (event.target instanceof Element && event.target.closest("a")) return;
         onOpen(href);
       }}
       onKeyDown={(event) => {
         if (event.key === "Enter" && event.target === event.currentTarget) onOpen(href);
       }}
     >
-      <Lead lead={view.lead} />
-      <div className="sl-row-main">
+      <td className="sl-cell-status">
+        <StatusBadge
+          status={view.status.status}
+          label={view.status.label}
+          inferred={view.inferred}
+        />
+      </td>
+      <td className="sl-cell-session">
         <div className="sl-row-head">
           <AppLink
             href={href}
@@ -220,90 +288,106 @@ function Row({
             title={title}
             aria-describedby={lineId}
             tabIndex={-1}
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
+            onClick={stop}
           >
             {title}
           </AppLink>
-          {view.tags.map((tag) => (
-            <span key={tag} className="sl-row-tag">
-              {tag}
-            </span>
-          ))}
-        </div>
-        {talk ? (
-          <div id={lineId} className="sl-talk">
-            {talk.prompt && (
-              <div className="sl-talk-line" title={talk.prompt}>
-                <span className="sl-talk-who">You</span>
-                <span className="sl-talk-text">{talk.prompt}</span>
-              </div>
-            )}
-            <div
-              className="sl-talk-line"
-              title={claudeSays}
-              style={view.lineTone ? { color: TONE[view.lineTone] } : undefined}
-            >
-              <span className="sl-talk-who">Claude</span>
-              <span className="sl-talk-text sl-talk-reply">{claudeSays}</span>
-            </div>
-          </div>
-        ) : (
-          <div
-            id={lineId}
-            className="sl-row-line"
-            style={view.lineTone ? { color: TONE[view.lineTone] } : undefined}
+          <span
+            className="sl-row-tag"
+            data-origin={view.origin}
             title={
-              view.inferred
-                ? `${view.line} · No end signal arrived. agent-hub assumes the session closed.`
-                : view.line
+              view.origin === "chat"
+                ? "Started from the app: opens the chat"
+                : "Observed from a terminal session"
             }
           >
-            {view.line}
-          </div>
-        )}
-      </div>
-      <div className="sl-row-meta">
-        <span className="sl-row-issue">{issue && <IssueLink id={issue} />}</span>
-        <span className="sl-row-files">
-          {files && files.total > 0 && (
-            <span
-              className="sl-files"
-              data-due={files.toReview > 0 || undefined}
-              title={
-                files.toReview > 0
-                  ? `${plural(files.total, "file")} changed; ${String(files.toReview)} changed since you last viewed them in the chat`
-                  : `${plural(files.total, "file")} changed, all viewed`
-              }
-            >
-              <Icon name="file-pen" size="sm" />
-              {files.toReview > 0
-                ? `${plural(files.total, "file")} · ${String(files.toReview)} to review`
-                : plural(files.total, "file")}
-            </span>
+            <Icon name={view.origin === "chat" ? "message-square" : "square-terminal"} size="sm" />
+            {view.origin === "chat" ? "Chat" : "Terminal"}
+          </span>
+          {view.mode && <span className="sl-row-tag">{view.mode}</span>}
+        </div>
+        <div id={lineId}>
+          {talk ? (
+            <div className="sl-talk">
+              {talk.prompt && (
+                <div className="sl-talk-line" title={talk.prompt}>
+                  <span className="sl-talk-who">You</span>
+                  <span className="sl-talk-text">{talk.prompt}</span>
+                </div>
+              )}
+              {group === "live" ? (
+                <div className="sl-talk-line">
+                  <span className="sl-talk-who">Claude</span>
+                  {activity}
+                </div>
+              ) : (
+                <div
+                  className="sl-talk-line"
+                  title={talk.reply ?? view.line}
+                  style={view.lineTone ? { color: TONE[view.lineTone] } : undefined}
+                >
+                  <span className="sl-talk-who">Claude</span>
+                  <span className="sl-talk-text sl-talk-reply">{talk.reply ?? view.line}</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            activity
           )}
-        </span>
-        <span className="sl-row-cost">
-          {cost ? (
-            <Money value={cost} />
-          ) : group === "waiting" || group === "live" ? null : (
-            <span
-              className="ah-subtle"
-              title={
-                isDriven(row)
-                  ? "Cost appears after the first turn ends."
-                  : (row.cost_unknown_reason ?? "Cost unknown.")
-              }
-            >
+        </div>
+      </td>
+      <td className="sl-cell-where">
+        <div className="sl-where-place ah-mono" title={placeText || undefined}>
+          {placeText || (
+            <span className="ah-subtle" title="No repo recorded for this session.">
               —
             </span>
           )}
-        </span>
-        {view.time ? <When iso={view.time} tip={view.timeTip} tz={tz} /> : <span />}
-        <span className="sl-row-action">{action}</span>
-      </div>
-    </li>
+        </div>
+        {hasExtra && (
+          <div className="sl-where-extra">
+            {where.issue && <IssueLink id={where.issue} />}
+            {where.run && <span className="sl-where-run">{where.run}</span>}
+            {files && files.total > 0 && (
+              <span
+                className="sl-files"
+                data-due={files.toReview > 0 || undefined}
+                title={
+                  files.toReview > 0
+                    ? `${plural(files.total, "file")} changed; ${String(files.toReview)} changed since you last viewed them in the chat`
+                    : `${plural(files.total, "file")} changed, all viewed`
+                }
+              >
+                <Icon name="file-pen" size="sm" />
+                {files.toReview > 0
+                  ? `${plural(files.total, "file")} · ${String(files.toReview)} to review`
+                  : plural(files.total, "file")}
+              </span>
+            )}
+          </div>
+        )}
+      </td>
+      <td className="sl-cell-cost">
+        {cost ? (
+          <Money value={cost} />
+        ) : (
+          <span
+            className="ah-subtle"
+            title={
+              isDriven(row)
+                ? "Cost appears after the first turn ends."
+                : (row.cost_unknown_reason ?? "Cost appears after the first turn ends.")
+            }
+          >
+            —
+          </span>
+        )}
+      </td>
+      <td className="sl-cell-time">
+        {view.time ? <When iso={view.time} tip={view.timeTip} tz={tz} /> : null}
+      </td>
+      <td className="sl-cell-action">{action}</td>
+    </tr>
   );
 }
 
@@ -343,22 +427,37 @@ function Group({ group, tz, props }: { group: InboxGroup; tz: Tz; props: Session
           </button>
         )}
         {group.updating && <span className="sl-group-note">Updating…</span>}
-        {hint && open && <span className="sl-group-hint">{hint}</span>}
+        {open && <span className="sl-group-hint">{hint}</span>}
       </h2>
       {open && (
         <>
           {group.pending && (
-            <ul className="sl-rows" aria-hidden="true">
-              {Array.from({ length: 3 }, (_, i) => (
-                <li key={i} className="sl-row sl-row-skeleton">
-                  <span className="sl-row-lead" />
-                  <div className="sl-row-main">
-                    <Skeleton width="40%" />
-                    <Skeleton width="60%" />
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <table className="sl-table sl-rows" aria-hidden="true">
+              <Cols />
+              <tbody>
+                {Array.from({ length: 3 }, (_, i) => (
+                  <tr key={i} className="sl-row sl-row-skeleton">
+                    <td>
+                      <Skeleton width={96} />
+                    </td>
+                    <td>
+                      <Skeleton width="50%" />
+                      <Skeleton width="75%" />
+                    </td>
+                    <td>
+                      <Skeleton width="70%" />
+                    </td>
+                    <td>
+                      <Skeleton width={40} />
+                    </td>
+                    <td>
+                      <Skeleton width={56} />
+                    </td>
+                    <td />
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
           {group.error && (
             <ProblemError
@@ -372,23 +471,36 @@ function Group({ group, tz, props }: { group: InboxGroup; tz: Tz; props: Session
             />
           )}
           {!group.pending && rows.length > 0 && (
-            <ul className="sl-rows">
-              {rows.map((row) => (
-                <Row
-                  key={row.id}
-                  row={row}
-                  group={group.id}
-                  tz={tz}
-                  ctx={{
-                    drv: props.drvOf(row),
-                    commonRepo: props.commonRepo,
-                    showProject: props.showProject,
-                    canDrive: props.canDrive,
-                  }}
-                  onOpen={props.onOpen}
-                />
-              ))}
-            </ul>
+            <table className="sl-table sl-rows">
+              <caption className="ah-sr">{`${title} sessions`}</caption>
+              <Cols />
+              <thead className="sl-thead-sr">
+                <tr>
+                  {COLUMNS.map((column) => (
+                    <th key={column.id} scope="col">
+                      {column.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <Row
+                    key={row.id}
+                    row={row}
+                    group={group.id}
+                    tz={tz}
+                    ctx={{
+                      drv: props.drvOf(row),
+                      commonRepo: props.commonRepo,
+                      showProject: props.showProject,
+                      canDrive: props.canDrive,
+                    }}
+                    onOpen={props.onOpen}
+                  />
+                ))}
+              </tbody>
+            </table>
           )}
           {hidden > 0 && (
             <button
@@ -426,6 +538,7 @@ function Group({ group, tz, props }: { group: InboxGroup; tz: Tz; props: Session
 export function SessionsInbox(props: SessionsInboxProps) {
   return (
     <div className="sl-inbox">
+      <ColumnHeader />
       {props.groups.map((group) => (
         <Group key={group.id} group={group} tz={props.tz} props={props} />
       ))}

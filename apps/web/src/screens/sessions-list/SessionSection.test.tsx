@@ -52,6 +52,8 @@ const collapsedHeaders = () =>
     .map((button) => button.textContent);
 /** A group of the inbox, by its header. */
 const group = (name: RegExp | string) => screen.getByRole("region", { name });
+/** The session rows of a group's table (its screen-reader header row left out). */
+const rowsOf = (el: HTMLElement) => el.querySelectorAll("tbody tr[data-nav-row]");
 /** A group's header button. */
 const toggle = (name: string) => within(group(name)).getByRole("button", { name });
 
@@ -72,11 +74,27 @@ describe("SessionsListScreen status-sections", () => {
     });
 
     await screen.findByText("/runner");
-    // No table: one titled list per group.
-    expect(screen.queryByRole("table")).toBeNull();
-    expect(screen.queryByRole("columnheader")).toBeNull();
+    // One table per shown group, named by its caption, its columns named for screen readers.
+    expect(
+      screen.getAllByRole("table").map((table) => table.querySelector("caption")?.textContent),
+    ).toEqual(["Needs you sessions", "Working sessions", "Finished · last 7 days sessions"]);
+    expect(
+      within(group(/^Working/))
+        .getAllByRole("columnheader")
+        .map((th) => th.textContent),
+    ).toEqual(["Status", "Session", "Where", "Cost", "Last activity", "Action"]);
     expect(headers()).toEqual(["Needs you · 1", "Working · ~4", "Finished · last 7 days · 1"]);
-    expect(screen.queryByRole("region", { name: /^In progress/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: /^Your turn/ })).toBeNull();
+    // Each header says what the group asks of the owner, and the order of its rows.
+    expect(
+      [/^Needs you/, /^Working/, /^Finished/].map(
+        (name) => group(name).querySelector(".sl-group-hint")?.textContent,
+      ),
+    ).toEqual([
+      "Answer so the agent can continue · oldest first",
+      "Claude is on it, nothing to do yet · latest first",
+      "Newest first",
+    ]);
     expect(within(group(/^Working/)).getByText("/runner")).toBeInTheDocument();
     expect(
       sessionRequests(requests)
@@ -340,10 +358,10 @@ describe("SessionsListScreen list-groups", () => {
 
     const ended = group(/^Finished/);
     expect(within(group(/^Working/)).queryByRole("button", { name: "Load more" })).toBeNull();
-    expect(within(ended).getAllByRole("listitem")).toHaveLength(5);
+    expect(rowsOf(ended)).toHaveLength(5);
     expect(within(ended).queryByRole("button", { name: "Load more" })).toBeNull();
     fireEvent.click(within(ended).getByRole("button", { name: "Show 45 more finished sessions" }));
-    expect(within(ended).getAllByRole("listitem")).toHaveLength(50);
+    expect(rowsOf(ended)).toHaveLength(50);
     expect(within(ended).getByText("Showing 50 of ~51")).toBeInTheDocument();
     fireEvent.click(within(ended).getByRole("button", { name: "Load more" }));
     await waitFor(() => {
@@ -355,6 +373,6 @@ describe("SessionsListScreen list-groups", () => {
     });
     expect(await within(ended).findByText("/older")).toBeInTheDocument();
     expect(within(ended).queryByRole("button", { name: "Load more" })).toBeNull();
-    expect(within(group(/^Working/)).getAllByRole("listitem")).toHaveLength(3);
+    expect(rowsOf(group(/^Working/))).toHaveLength(3);
   });
 });

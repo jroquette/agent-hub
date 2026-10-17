@@ -1,5 +1,5 @@
 /* Sessions as an inbox (v2 design): what each row says, in plain words, one fact per row. */
-import { sessionIdentity, type IconName } from "../../components";
+import { sessionIdentity, TOOL_ICON, type IconName, type Status } from "../../components";
 import { fmtDuration } from "../../lib/format";
 import { modeLabel, resumable } from "../agent-session/model";
 import type { AgentSession, Session } from "./queries";
@@ -7,20 +7,35 @@ import { isDriven, type SectionId, type SectionRow } from "./sections";
 
 export type Tone = "waiting" | "failed" | "done" | "blocked" | "subtle" | "live";
 
+/** Where a session runs: the context column of the list. */
+export interface RowWhere {
+  project: string | null;
+  repo: string | null;
+  branch: string | null;
+  issue: string | null;
+  run: string | null;
+}
+
 export interface RowView {
-  /** Leading mark: an icon, the live pulse, or nothing. */
-  lead: { icon: IconName; tone: Tone } | "pulse" | null;
-  /** The one useful fact under the title. */
+  /** The status badge of the row: icon + label, the same words for terminal and chat sessions. */
+  status: { status: Status; label: string };
+  /** What the session does or did, in plain words, with the tool's icon. */
+  icon: IconName | null;
   line: string;
+  /** The exact command, path or pattern behind the line (mono, secondary). */
+  detail: string | null;
   lineTone: Tone | null;
-  /** Shown after the title only when they say something: Terminal, run, repo, project. */
-  tags: string[];
+  /** Started from the app's chat, or observed from a terminal. */
+  origin: "chat" | "terminal";
+  /** The chat's permission mode when it is not the default one ("Auto mode"). */
+  mode: string | null;
+  where: RowWhere;
   /** The time on the right and its tooltip. */
   time: string | null;
   timeTip: string;
   /** The always-visible button: only for what needs the owner. */
   action: "answer" | "review" | null;
-  /** The conversation so far, for a chat in Working or In progress: your last ask, Claude's last reply. */
+  /** The conversation so far, for a chat in Working or Your turn: your last ask, Claude's last reply. */
   conversation: { prompt: string | null; reply: string | null } | null;
   /** True when the row may offer Resume (finished, resumable chat). */
   resumable: boolean;
@@ -39,7 +54,6 @@ export interface ViewContext {
 
 const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
 const count = (n: number, one: string, many: string) => `${String(n)} ${n === 1 ? one : many}`;
-const QUIET_BRANCHES = new Set(["HEAD", "main", "master"]);
 
 const CLOSED: Record<string, string> = {
   closed: "Closed by you",
@@ -93,46 +107,101 @@ function outcomeOf(
   }
 }
 
-function tagsOf(row: SectionRow, ctx: ViewContext): string[] {
-  const tags: string[] = [];
-  if (isDriven(row)) {
-    if (ctx.commonRepo !== null && row.workdir_label !== ctx.commonRepo)
-      tags.push(row.workdir_label);
-  } else {
-    if (!row.agent_session_id) tags.push("Terminal");
-    if (row.run_id)
-      tags.push(`Run ${row.issue ?? short(row.run_id)}${row.step ? ` · ${row.step}` : ""}`);
-    const repo = row.label?.repo ?? row.repo;
-    const branch = row.label?.branch;
-    if (repo && ctx.commonRepo !== null && repo !== ctx.commonRepo) {
-      tags.push(branch && !QUIET_BRANCHES.has(branch) ? `${repo} · ${branch}` : repo);
-    } else if (branch && !QUIET_BRANCHES.has(branch)) {
-      tags.push(branch);
-    }
+function whereOf(row: SectionRow, ctx: ViewContext): RowWhere {
+  const project = ctx.showProject ? row.project : null;
+  if (isDriven(row))
+    return { project, repo: row.workdir_label || null, branch: null, issue: null, run: null };
+  const issue = row.label?.issue ?? row.issue ?? null;
+  const branch = row.label?.branch ?? null;
+  return {
+    project,
+    repo: row.label?.repo ?? row.repo ?? ctx.drv?.workdir_label ?? null,
+    // A detached HEAD names no branch.
+    branch: branch === "HEAD" ? null : branch,
+    issue,
+    run: row.run_id ? `Run ${issue ?? short(row.run_id)}${row.step ? ` · ${row.step}` : ""}` : null,
+  };
+}
+
+const VERBS: { prefix: string; now: string; past: string; icon: IconName }[] = [
+  { prefix: "Ran ", now: "Running a command", past: "ran a command", icon: "terminal" },
+  { prefix: "Edited ", now: "Editing a file", past: "edited a file", icon: "file-pen" },
+  { prefix: "Read ", now: "Reading a file", past: "read a file", icon: "file-text" },
+  {
+    prefix: "Searched ",
+    now: "Searching the code",
+    past: "searched the code",
+    icon: "text-search",
+  },
+];
+
+/**
+ * The last tool call in plain words: "Running a command" while it works, "Last step: ran a command"
+ * once its turn ended, with the command, path or pattern as the detail (`live_tiles._last_action`).
+ */
+export function activityOf(
+  lastAction: string | null | undefined,
+  lastTool: string | null | undefined,
+  tense: "now" | "past",
+): { icon: IconName | null; line: string; detail: string | null } {
+  const toolIcon = lastTool ? (TOOL_ICON[lastTool] ?? null) : null;
+  if (!lastAction)
+    return { icon: null, line: tense === "now" ? "Starting" : "Turn finished", detail: null };
+  const say = (now: string, past: string) => (tense === "now" ? now : `Last step: ${past}`);
+  for (const verb of VERBS) {
+    if (!lastAction.startsWith(verb.prefix)) continue;
+    const write = verb.prefix === "Edited " && lastTool === "Write";
+    return {
+      icon: toolIcon ?? verb.icon,
+      line: write ? say("Writing a file", "wrote a file") : say(verb.now, verb.past),
+      detail: lastAction.slice(verb.prefix.length),
+    };
   }
-  if (ctx.showProject) tags.unshift(row.project);
-  return tags;
+  if (lastAction.startsWith("Used ")) {
+    const tool = lastAction.slice(5);
+    if (tool === "Agent" || tool === "Task")
+      return {
+        icon: "network",
+        line: say("Working with a subagent", "used a subagent"),
+        detail: null,
+      };
+    return { icon: toolIcon ?? "plug", line: say(`Using ${tool}`, `used ${tool}`), detail: null };
+  }
+  return {
+    icon: toolIcon,
+    line: tense === "now" ? "Working" : "Turn finished",
+    detail: lastAction,
+  };
 }
 
 export function rowView(row: SectionRow, ctx: ViewContext): RowView {
   const { group, drv } = ctx;
-  const tags = tagsOf(row, ctx);
   const summary = drv ? summaryOf(drv) : null;
+  const talk =
+    summary && (summary.prompt || summary.reply)
+      ? { prompt: summary.prompt, reply: summary.reply }
+      : null;
+  const driven = isDriven(row);
+  const chatMode = driven ? row.mode : (drv?.mode ?? null);
   const base = {
-    tags,
+    where: whereOf(row, ctx),
+    origin: driven || drv || row.agent_session_id ? "chat" : "terminal",
+    mode: chatMode && chatMode !== "default" ? `${modeLabel(chatMode)} mode` : null,
     resumable: false,
     inferred: false,
     action: null,
     lineTone: null,
     conversation: null,
+    detail: null,
   } as const;
   const ask = drv?.open_permission ?? null;
 
   if (group === "waiting") {
-    if (!isDriven(row) && row.problems.needs_you > 0 && row.status !== "waiting") {
+    if (!driven && row.problems.needs_you > 0 && row.status !== "waiting") {
       return {
         ...base,
-        lead: { icon: "circle-x", tone: "failed" },
+        status: { status: "failed", label: "Problem" },
+        icon: "circle-x",
         line: problemText(row),
         lineTone: "failed",
         time: lastAt(row, drv),
@@ -143,7 +212,7 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
     let line: string;
     let icon: IconName = "hand";
     if (ask) line = `Asks to use ${ask.tool}: ${ask.summary}`;
-    else if (isDriven(row) || drv) line = "Asks for a permission";
+    else if (driven || drv) line = "Asks for a permission";
     else if (row.waiting_reason === "Guard ask") {
       line = "A guard asks you to confirm · no timeout";
       icon = "shield-alert";
@@ -152,7 +221,8 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
     else line = row.waiting_reason ?? "Waiting for you in the terminal";
     return {
       ...base,
-      lead: { icon, tone: "waiting" },
+      status: { status: "waiting", label: "Waiting for you" },
+      icon,
       line,
       time: ask?.asked_at ?? lastAt(row, drv),
       timeTip: "Asked",
@@ -161,15 +231,13 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
   }
 
   if (group === "live") {
-    const talk =
-      summary && (summary.prompt || summary.reply)
-        ? { prompt: summary.prompt, reply: summary.reply }
-        : null;
-    if (isDriven(row))
+    const working = { status: "live", label: "Working" } as const;
+    if (driven)
       return {
         ...base,
+        status: working,
         conversation: talk,
-        lead: "pulse",
+        icon: "message-square",
         line: "Working on your message",
         time: lastAt(row, drv),
         timeTip: "Last activity",
@@ -177,68 +245,80 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
     if (row.failing_notice)
       return {
         ...base,
-        lead: { icon: "circle-x", tone: "failed" },
+        status: working,
+        icon: "circle-x",
         line: row.failing_notice,
         lineTone: "failed",
         time: lastAt(row, drv),
         timeTip: "Last activity",
       };
+    const act =
+      row.last_action || !drv
+        ? activityOf(row.last_action, row.last_tool, "now")
+        : { icon: "message-square" as const, line: "Working on your message", detail: null };
     return {
       ...base,
+      status: working,
       conversation: talk,
-      lead: "pulse",
-      line: row.last_action ?? (drv ? "Working on your message" : "Starting"),
+      ...act,
       time: lastAt(row, drv),
       timeTip: "Last activity",
     };
   }
 
   if (group === "idle") {
-    let line: string;
-    if (isDriven(row))
-      line = [`${modeLabel(row.mode)} mode`, row.model].filter(Boolean).join(" · ");
-    else line = row.last_action ?? "No tool used yet";
-    const talk =
-      summary && (summary.prompt || summary.reply)
-        ? { prompt: summary.prompt, reply: summary.reply }
-        : null;
+    const yourTurn = { status: "idle", label: "Your turn" } as const;
+    const act =
+      driven || (drv && !row.last_action)
+        ? { icon: "message-square" as const, line: "Waiting for your next message", detail: null }
+        : activityOf(row.last_action, row.last_tool, "past");
     return {
       ...base,
+      status: yourTurn,
       conversation: talk,
-      lead: null,
-      line,
+      ...act,
       time: lastAt(row, drv),
       timeTip: "Last activity",
     };
   }
 
-  // Finished
+  // Finished: the badge says how it ended, the line adds why or what it produced.
   const outcome = outcomeOf(row, drv);
-  let fact: string | null = null;
+  const facts: string[] = [];
   let lineTone: Tone | null = null;
-  let lead: RowView["lead"] = { icon: outcome.icon, tone: outcome.tone };
-  if (!isDriven(row) && row.problems.needs_you > 0) {
-    fact = problemText(row);
+  let icon: IconName | null = null;
+  let status: RowView["status"] = { status: STATUS_OF[outcome.tone], label: outcome.word };
+  if (outcome.word.startsWith("Closed") && outcome.word !== "Closed") {
+    // "Closed by you" and friends: the badge says Closed, the line says how.
+    status = { status: "ended", label: "Closed" };
+    facts.push(outcome.word);
+  }
+  if (!driven && row.problems.needs_you > 0) {
+    facts.push(problemText(row));
     lineTone = "failed";
-    lead = { icon: "circle-x", tone: "failed" };
+    icon = "circle-x";
   } else if (outcome.word === "Failed") {
-    fact = isDriven(row) ? null : (row.failing_notice ?? row.last_action ?? null);
-  } else if (outcome.word === "Blocked" && !isDriven(row)) {
-    fact = row.last_action ?? null;
-  } else if (!isDriven(row) && row.pr) {
-    fact = `PR #${String(row.pr.number)} ${row.pr.state.toLowerCase()}`;
+    const why = driven ? null : (row.failing_notice ?? row.last_action ?? null);
+    if (why) facts.push(why);
+  } else if (outcome.word === "Blocked" && !driven) {
+    if (row.last_action) facts.push(row.last_action);
+  } else if (!driven && row.pr) {
+    facts.push(`PR #${String(row.pr.number)} ${row.pr.state.toLowerCase()}`);
+    icon = row.pr.state.toLowerCase() === "merged" ? "git-merge" : "git-pull-request";
   }
   const ended = row.ended_at ?? null;
-  if (fact === null && ended)
-    fact = `ran ${fmtDuration((Date.parse(ended) - Date.parse(startOf(row))) / 1000)}`;
+  if (ended)
+    facts.push(`Ran ${fmtDuration((Date.parse(ended) - Date.parse(startOf(row))) / 1000)}`);
   const canResume =
     drv !== null &&
     (drv.status === "ended" || drv.status === "failed") &&
     resumable(drv, drv.end_reason);
+  const line = facts.length > 0 ? facts.join(" · ") : "No details recorded";
   return {
     ...base,
-    lead,
-    line: fact ? `${outcome.word} · ${fact}` : outcome.word,
+    status,
+    icon,
+    line: line.charAt(0).toUpperCase() + line.slice(1),
     lineTone,
     time: ended ?? lastAt(row, drv),
     timeTip: "Ended",
@@ -246,6 +326,15 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
     inferred: outcome.inferred,
   };
 }
+
+const STATUS_OF: Record<Tone, Status> = {
+  done: "done",
+  failed: "failed",
+  blocked: "blocked",
+  subtle: "ended",
+  waiting: "waiting",
+  live: "live",
+};
 
 /** What hub web keeps about a chat: its last ask and reply, and the files it changed. */
 export interface ChatSummary {
