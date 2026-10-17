@@ -128,6 +128,82 @@ def test_hides_secret_when_hub_json_holds_one(
     assert all(password not in line and jwt not in line for line in lines)
 
 
+# Assembled at run time, so the repo holds no secret-shaped text.
+KEY_SHAPED = "AK" + "IA" + "ABCDEFGHIJKLMNOP"
+KEY_PLACEHOLDER = '["<key>"]'
+
+
+def secret_key_documents() -> list[tuple[str, dict[str, Any], str]]:
+    """``W`` with a secret-shaped name at an environment, a service and an endpoint key."""
+    environment = builders.an_environments_document()
+    environment["environments"][KEY_SHAPED] = {"access": "read"}
+    service = builders.an_environments_document()
+    service["repos"][0]["services"][KEY_SHAPED] = {"kind": "api"}
+    endpoint = builders.an_environments_document()
+    endpoint["repos"][0]["services"]["api"]["endpoints"][KEY_SHAPED] = {"url": "http://localhost:1"}
+    return [
+        ("environment", environment, "environments"),
+        ("service", service, "repos[0].services"),
+        ("endpoint", endpoint, "repos[0].services.api.endpoints"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("document", "parent"),
+    [pytest.param(document, parent, id=name) for name, document, parent in secret_key_documents()],
+)
+def test_hides_secret_key_when_hub_json_names_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], *, document: dict[str, Any], parent: str
+) -> None:
+    document["platform"]["version"] = version("agent-hub-cli")
+
+    lines = stderr_lines_on_exit(write_document(tmp_path, document), capsys)
+
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(f"hub.json: {parent}{KEY_PLACEHOLDER}: looks like a secret ("), lines
+    assert KEY_SHAPED not in lines[0]
+
+
+@pytest.mark.parametrize(
+    ("document", "parent"),
+    [
+        pytest.param({"environments": {KEY_SHAPED: {"access": "read"}}}, "environments", id="env"),
+        pytest.param(
+            {"repos": [{"dir": "demo-api", "services": {KEY_SHAPED: {}}}]},
+            "repos[0].services",
+            id="service",
+        ),
+        pytest.param(
+            {
+                "repos": [
+                    {
+                        "dir": "demo-api",
+                        "services": {"api": {"endpoints": {KEY_SHAPED: {"resource": "t"}}}},
+                    }
+                ]
+            },
+            "repos[0].services.api.endpoints",
+            id="endpoint",
+        ),
+    ],
+)
+def test_hides_secret_key_when_local_file_names_one(
+    tmp_path: Path, *, document: dict[str, Any], parent: str
+) -> None:
+    path = tmp_path / "hub.local.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    problems = read_local_json(path)
+
+    assert isinstance(problems, tuple)
+    lines = local_lines(problems)
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(
+        f"hub.local.json: {parent}{KEY_PLACEHOLDER}: looks like a secret ("
+    ), lines
+    assert KEY_SHAPED not in lines[0]
+
+
 def test_keeps_each_error_on_one_line_when_value_has_newline(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
