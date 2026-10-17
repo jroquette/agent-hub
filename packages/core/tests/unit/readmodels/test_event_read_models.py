@@ -843,6 +843,26 @@ def test_applies_issue_when_hub_rules_known() -> None:
     assert again["s-dem"].label.issue is None
 
 
+def test_lists_sessions_of_issue_when_filter_in_any_case() -> None:
+    rules = {
+        "demo": LabelRules(teams=("DEM",), branch_prefix="jdoe/"),
+        "other": LabelRules(teams=("OTH",)),
+    }
+    service = FoldedEventReadModels(
+        _labelled_store(),
+        now=Clock(SCENARIO_START + timedelta(minutes=8)),
+        label_rules_of=rules.get,
+    )
+
+    dem = service.list_sessions(SessionFilter(issue="dem-7")).items
+    oth = service.list_sessions(SessionFilter(issue="OTH-3")).items
+    none = service.list_sessions(SessionFilter(issue="DEM-8")).items
+
+    assert [s.id for s in dem] == ["s-dem"]
+    assert [s.id for s in oth] == ["s-other"]
+    assert none == ()
+
+
 def test_leaves_issue_empty_when_no_hub_rules() -> None:
     service = FoldedEventReadModels(
         _labelled_store(), now=Clock(SCENARIO_START + timedelta(minutes=8))

@@ -260,7 +260,7 @@
     "plugin/hub-workflow/agents/planner.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "703db29e7407541e9895e66b1868f7615335c0599db68d57a5dfb7916811c00e"
+      "sha256": "9c80e0c912359f9b59b78482f444f475be8756b648c83d91b32f3a352eb45c12"
     },
     "plugin/hub-workflow/agents/quality-reviewer.md": {
       "executable": false,

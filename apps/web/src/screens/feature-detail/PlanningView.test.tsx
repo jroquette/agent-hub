@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { aFeatureTickets, aTicketPlan, aTicketRow } from "../../testing/builders";
-import { PlanningView, ticketAnchor } from "./PlanningView";
+import { PlanningView, splitTitle, ticketAnchor } from "./PlanningView";
 
 const rows = ["T1", "T2", "T3", "T4", "T5"].map((ref) =>
   aTicketRow({ ref, key: ref, id: null, title: `Ticket ${ref}`, url: null }),
@@ -17,43 +17,174 @@ const plan = aTicketPlan({
   critical_path: ["T1", "T3", "T5"],
 });
 
-function section(name: string) {
-  return within(screen.getByRole("region", { name }));
+/** The `index`th item, failing the test when there is none. */
+function nth<T>(items: readonly T[], index: number): T {
+  const item = items[index];
+  if (item === undefined) throw new Error(`no item ${String(index)}`);
+  return item;
 }
 
 describe("PlanningView", () => {
-  it("shows what can start, the numbered layers, the order and the critical path (planning)", () => {
+  it("heads the flow with the epic and its children's progress, never as a step", () => {
+    const epic = aTicketRow({
+      ref: "TIP-1",
+      key: "T0",
+      id: "TIP-1",
+      title: "The epic",
+      url: null,
+      readiness: "epic",
+      state: { name: "Backlog", type: "backlog" },
+      acs: [],
+      blocked_by: [],
+      children: ["TIP-2", "TIP-3"],
+    });
+    const child = (ref: string, readiness: "done" | "in_progress") =>
+      aTicketRow({
+        ref,
+        key: ref,
+        id: ref,
+        title: `Child ${ref}`,
+        url: null,
+        readiness,
+        blocked_by: [],
+        acs: [`AC-${ref}`],
+        parent: "TIP-1",
+      });
+    render(
+      <PlanningView
+        tickets={[epic, child("TIP-2", "done"), child("TIP-3", "in_progress")]}
+        planning={aTicketPlan({
+          layers: [["TIP-3"]],
+          can_start: [],
+          order: ["TIP-3"],
+          waiting: [],
+          critical_path: ["TIP-3"],
+          epics: ["TIP-1"],
+        })}
+        acPasses={{ "AC-TIP-2": true, "AC-TIP-3": false }}
+      />,
+    );
+
+    const card = screen.getByRole("region", { name: "Epic TIP-1 · The epic" });
+    expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
+    expect(card).toHaveTextContent("1/2 child tickets done");
+    expect(card).toHaveTextContent("1 in progress");
+    expect(card).toHaveTextContent("1/2 ACs passing");
+    const flow = screen.getByRole("list", { name: "Ticket flow" });
+    expect(within(flow).queryByRole("listitem", { name: /TIP-1 ·/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Tickets by readiness" })).not.toHaveTextContent(
+      "epic",
+    );
+  });
+
+  it("draws each parallel group as a step, left to right (flow)", () => {
     render(<PlanningView tickets={rows} planning={plan} />);
 
-    expect(screen.getByRole("heading", { name: "Planning" })).toBeInTheDocument();
-    expect(
-      section("Can start now")
-        .getAllByRole("link")
-        .map((a) => a.textContent),
-    ).toEqual(["T1", "T2", "T4"]);
-    const layers = section("Parallel groups").getAllByRole("listitem");
-    expect(layers.map((li) => li.textContent)).toEqual([
-      "Layer 1T1, T2, T4",
-      "Layer 2T3",
-      "Layer 3T5",
+    expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
+    const steps = within(screen.getByRole("list", { name: "Ticket flow" }))
+      .getAllByRole("listitem")
+      .filter((li) => li.tagName === "SECTION");
+    expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual([
+      "Step 1 · in parallel",
+      "Step 2 · after step 1",
+      "Step 3 · after step 2",
     ]);
     expect(
-      section("Recommended order")
+      within(nth(steps, 0))
         .getAllByRole("listitem")
-        .map((li) => li.textContent),
-    ).toEqual([
-      "T1 · Ticket T1",
-      "T2 · Ticket T2",
-      "T4 · Ticket T4",
-      "T3 · Ticket T3",
-      "T5 · Ticket T5",
-    ]);
-    expect(section("Critical path").getByText(/longest chain/).parentElement).toHaveTextContent(
-      "T1 → T3 → T5 (3 tickets, the longest chain not done)",
+        .map((li) => li.getAttribute("aria-label")),
+    ).toEqual(["T1 · Ticket T1", "T2 · Ticket T2", "T4 · Ticket T4"]);
+    expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).toHaveTextContent(
+      "critical path",
     );
-    expect(section("Can start now").getByRole("link", { name: "T1" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Ticket T1" })).toHaveAttribute(
       "href",
       `#${ticketAnchor("T1")}`,
+    );
+  });
+
+  it("keeps a done ticket in its step, so the steps after it do not move (flow)", () => {
+    const first = aTicketRow({
+      ref: "T1",
+      key: "T1",
+      id: null,
+      title: "Ticket T1",
+      url: null,
+      readiness: "done",
+      state: { name: "Done", type: "completed" },
+      blocked_by: [],
+    });
+    const second = aTicketRow({
+      ref: "T2",
+      key: "T2",
+      id: null,
+      title: "Ticket T2",
+      url: null,
+      readiness: "in_progress",
+      blocked_by: [{ ref: "T1", source: "both" }],
+    });
+    const canceled = aTicketRow({
+      ref: "T3",
+      key: "T3",
+      id: null,
+      title: "Ticket T3",
+      url: null,
+      readiness: "canceled",
+      blocked_by: [],
+    });
+    render(
+      <PlanningView
+        tickets={[first, second, canceled]}
+        planning={aTicketPlan({
+          layers: [["T2"]],
+          can_start: [],
+          order: ["T2"],
+          waiting: [],
+          critical_path: ["T2"],
+        })}
+      />,
+    );
+
+    const steps = within(screen.getByRole("list", { name: "Ticket flow" }))
+      .getAllByRole("listitem")
+      .filter((li) => li.tagName === "SECTION");
+    expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual([
+      "Step 1 · done",
+      "Step 2 · after step 1",
+      "Done · settled",
+    ]);
+    expect(nth(steps, 0)).toHaveAttribute("data-kind", "done");
+    expect(within(nth(steps, 0)).getByRole("listitem", { name: "T1 · Ticket T1" })).toHaveAttribute(
+      "data-readiness",
+      "done",
+    );
+    expect(
+      within(nth(steps, 1)).getByRole("listitem", { name: "T2 · Ticket T2" }),
+    ).toBeInTheDocument();
+    expect(
+      within(nth(steps, 2)).getByRole("listitem", { name: "T3 · Ticket T3" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a started ticket as in progress, never as can start (flow)", () => {
+    const started = rows.map((row) =>
+      row.ref === "T1"
+        ? {
+            ...row,
+            readiness: "in_progress" as const,
+            state: { name: "In Review", type: "started" as const },
+          }
+        : row,
+    );
+    render(<PlanningView tickets={started} planning={{ ...plan, can_start: ["T2", "T4"] }} />);
+
+    const card = screen.getByRole("listitem", { name: "T1 · Ticket T1" });
+    expect(card).toHaveAttribute("data-readiness", "in_progress");
+    expect(card).toHaveTextContent("In Review");
+    expect(card).toHaveTextContent("In progress");
+    expect(card).not.toHaveTextContent("Can start now");
+    expect(screen.getByRole("list", { name: "Tickets by readiness" })).toHaveTextContent(
+      "1 in progress",
     );
   });
 
@@ -97,10 +228,10 @@ describe("PlanningView", () => {
     expect(screen.getByText(/more than 50 relations/)).toBeInTheDocument();
   });
 
-  it("says when nothing can start and nothing is left (planning states)", () => {
+  it("says when there is no ticket to show (flow states)", () => {
     render(
       <PlanningView
-        tickets={rows}
+        tickets={[]}
         planning={aTicketPlan({
           layers: [],
           can_start: [],
@@ -111,9 +242,49 @@ describe("PlanningView", () => {
       />,
     );
 
-    expect(screen.getByText("Nothing can start now.")).toBeInTheDocument();
-    expect(screen.getByText("No ticket left to plan.")).toBeInTheDocument();
-    expect(screen.getByText("No chain left: every ticket is done.")).toBeInTheDocument();
+    expect(screen.getByText("No ticket to show.")).toBeInTheDocument();
+  });
+
+  it("draws an edge from each blocker to the ticket it holds back (flow graph)", () => {
+    const linked = rows.map((row) => {
+      if (row.ref === "T3") {
+        return {
+          ...row,
+          blocked_by: [
+            { ref: "T1", source: "both" as const },
+            { ref: "T2", source: "plan" as const },
+          ],
+        };
+      }
+      if (row.ref === "T5") {
+        return {
+          ...row,
+          readiness: "in_progress" as const,
+          blocked_by: [{ ref: "T3", source: "linear" as const }],
+          waiting_on: ["T3"],
+        };
+      }
+      return row;
+    });
+    const { container } = render(<PlanningView tickets={linked} planning={plan} />);
+
+    const edge = (id: string) => container.querySelector(`[data-edge="${id}"]`);
+    expect(edge("T1→T3")).toHaveAttribute("data-critical", "true");
+    expect(edge("T2→T3")).toHaveAttribute("data-source", "plan");
+    expect(edge("T2→T3")).not.toHaveAttribute("data-critical");
+    expect(edge("T3→T5")).toHaveAttribute("data-early", "true");
+    // A blocker drawn as an edge is not repeated in words on the card.
+    expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).not.toHaveTextContent("after");
+  });
+
+  it("splits a conventional title into its type, scope and words (title)", () => {
+    expect(splitTitle("feat(brand-api): generate the iban")).toEqual({
+      type: "feat",
+      scope: "brand-api",
+      text: "generate the iban",
+    });
+    expect(splitTitle("fix: a typo")).toEqual({ type: "fix", scope: null, text: "a typo" });
+    expect(splitTitle("Ticket T1")).toEqual({ type: null, scope: null, text: "Ticket T1" });
   });
 
   it("has no serious axe violation (a11y)", async () => {

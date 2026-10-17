@@ -6,19 +6,44 @@ import { ApiProblem } from "../../lib/api";
 import { seriousViolations } from "../../testing/axe";
 import {
   aFeatureTickets,
+  aPage,
+  aSession,
   aTicketPlan,
   aTicketRow,
   renderWithApi,
+  type ApiRoutes,
   type FeatureTickets,
 } from "../../testing/builders";
 import { TicketsTab } from "./TicketsTab";
 
-function show(data: FeatureTickets | undefined, extra: { error?: ApiProblem | null } = {}) {
+function show(
+  data: FeatureTickets | undefined,
+  extra: {
+    error?: ApiProblem | null;
+    acPasses?: Record<string, boolean>;
+    routes?: ApiRoutes;
+  } = {},
+) {
   const onRefresh = vi.fn();
   const result = renderWithApi(
-    <TicketsTab data={data} error={extra.error ?? null} onRefresh={onRefresh} />,
+    <TicketsTab
+      project="agent-hub"
+      slug="control-plane"
+      data={data}
+      error={extra.error ?? null}
+      onRefresh={onRefresh}
+      acPasses={extra.acPasses}
+    />,
+    { routes: { "/api/v1/sessions": aPage([]), ...extra.routes } },
   );
   return { ...result, onRefresh };
+}
+
+/** The `index`th item, failing the test when there is none. */
+function nth<T>(items: readonly T[], index: number): T {
+  const item = items[index];
+  if (item === undefined) throw new Error(`no item ${String(index)}`);
+  return item;
 }
 
 function rowOf(ref: string): HTMLElement {
@@ -28,6 +53,33 @@ function rowOf(ref: string): HTMLElement {
 }
 
 describe("TicketsTab", () => {
+  it("lists the epic first, tagged, with its children under it", () => {
+    const epic = aTicketRow({
+      ref: "AGH-9",
+      key: "T0",
+      id: "AGH-9",
+      readiness: "epic",
+      blocked_by: [],
+      children: ["AGH-202"],
+    });
+    const data = aFeatureTickets();
+    show({
+      ...data,
+      tickets: [
+        ...data.tickets.map((t) => (t.ref === "AGH-202" ? { ...t, parent: "AGH-9" } : t)),
+        epic,
+      ],
+      planning: { ...data.planning, epics: ["AGH-9"] },
+    });
+
+    const rows = within(screen.getByRole("table", { name: "Tickets" })).getAllByRole("row");
+    expect(nth(rows, 1)).toHaveAttribute("id", "ticket-AGH-9");
+    expect(nth(rows, 1)).toHaveTextContent("Epic");
+    expect(nth(rows, 1)).toHaveTextContent("Epic · 0/1 done");
+    expect(nth(rows, 2)).toHaveAttribute("id", "ticket-AGH-202");
+    expect(rowOf("AGH-202")).toHaveAttribute("data-child", "true");
+  });
+
   it("shows each ticket's id, title, status, assignee, blockers, ACs and readiness (tickets)", () => {
     show(aFeatureTickets());
 
@@ -198,10 +250,89 @@ describe("TicketsTab", () => {
     expect(onRefresh).toHaveBeenCalledOnce();
   });
 
-  it("shows the planning view under the table (planning)", () => {
+  it("shows the ticket flow above the table (planning)", () => {
     show(aFeatureTickets());
 
-    expect(screen.getByRole("heading", { name: "Planning" })).toBeInTheDocument();
+    const flow = screen.getByRole("heading", { name: "Ticket flow" });
+    const table = screen.getByRole("table", { name: "Tickets" });
+    expect(flow.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("says a started ticket is in progress, and when it was reviewed (readiness)", () => {
+    const data = aFeatureTickets();
+    const first = nth(data.tickets, 0);
+    const second = nth(data.tickets, 1);
+    show(
+      aFeatureTickets({
+        tickets: [
+          {
+            ...first,
+            state: { name: "In Review", type: "started" },
+            readiness: "in_progress",
+            reviewed: true,
+          },
+          {
+            ...second,
+            state: { name: "In Progress", type: "started" },
+            readiness: "in_progress",
+            reviewed: false,
+            waiting_on: [first.ref],
+          },
+        ],
+      }),
+    );
+
+    const rows = within(screen.getByRole("table", { name: "Tickets" })).getAllByRole("row");
+    expect(nth(rows, 1)).toHaveTextContent("Reviewed · waiting for Done");
+    expect(nth(rows, 2)).toHaveTextContent(`In progressstarted before ${first.ref} was done`);
+    expect(screen.getByRole("listitem", { name: /in progress/ })).toHaveTextContent(
+      "2 in progress",
+    );
+  });
+
+  it("folds a long AC list into how many pass (tickets)", () => {
+    const data = aFeatureTickets();
+    const row = { ...nth(data.tickets, 0), acs: ["AC-1", "AC-2", "AC-3", "AC-4"] };
+    show(aFeatureTickets({ tickets: [row] }), {
+      acPasses: { "AC-1": true, "AC-2": true, "AC-3": true, "AC-4": false },
+    });
+
+    const table = within(screen.getByRole("table", { name: "Tickets" }));
+    expect(table.getByText("3/4 passing")).toBeInTheDocument();
+    expect(screen.getByText("3/4 ACs passing")).toBeInTheDocument();
+  });
+
+  it("shows the title's scope in its own column, apart from the words (tickets)", () => {
+    const data = aFeatureTickets();
+    show({
+      ...data,
+      tickets: data.tickets.map((t) =>
+        t.ref === "AGH-201" ? { ...t, title: "feat(brand-api): add the bank details" } : t,
+      ),
+    });
+
+    const cells = within(rowOf("AGH-201")).getAllByRole("cell");
+    expect(nth(cells, 1)).toHaveTextContent(/^brand-api$/);
+    expect(nth(cells, 2)).toHaveTextContent(/^add the bank details$/);
+  });
+
+  it("links the sessions that worked on each ticket, asked by its issue (sessions)", async () => {
+    const { requests } = show(aFeatureTickets(), {
+      routes: {
+        "/api/v1/sessions": (request: Request) =>
+          new URL(request.url).searchParams.get("issue") === "AGH-201"
+            ? aPage([aSession({ id: "sess-1", status: "ended", outcome: "done" })])
+            : aPage([]),
+      },
+    });
+
+    const link = await within(rowOf("AGH-201")).findByRole("link", { name: /Done/ });
+    expect(link).toHaveAttribute("href", "/sessions/sess-1");
+    expect(await within(rowOf("AGH-202")).findByText("none")).toBeInTheDocument();
+    const asked = requests.map((r) => new URL(r.url).searchParams);
+    expect(
+      asked.some((q) => q.get("issue") === "AGH-201" && q.get("project") === "agent-hub"),
+    ).toBe(true);
   });
 
   it("shows a skeleton while loading (states)", () => {
