@@ -22,6 +22,21 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   and links them into `.claude/`; a project skill or agent of the same name is a conflict, so rename yours first.
 - Discuss with Claude works on every screen: a screen that names no feature, workflow, skill, agent, hook or note is
   itself the subject, and the first message takes along the screen's text and a screenshot of it (AGH-273).
+- A feature's Spec, Research and Plan tabs open on a short human summary of the record (For humans), with the
+  record itself one click away (Agent markdown); a summary point opens the record at its section, and the tab says
+  when the record changed after its summary was written. The new hub-workflow `/summarize` skill writes
+  `brain/features/<slug>/summaries/<record>.md`, and `/feature`, `/research` and `/create-plan` run it whenever a
+  record is written or amended (run `hub sync` to get it). The brain note route returns the file's `sha256`
+  (AGH-269).
+- A feature's acceptance criteria read as sentences: the tab is "Acceptance criteria", every criterion is listed at
+  once with its status in words, the evidence in plain words ("4 tests passed", with the commit and date), how many
+  of the feature's records cite it and a labelled Discuss button; opening one shows what must be true, how it was
+  proven (commit, pull request, result, failed before the change, its eval), the command to check it, and every
+  record and section that cites it (AGH-269).
+- A feature's Eval tab runs the hub-workflow evaluator: pick the whole feature or one ticket and press Evaluate; a
+  session starts in the project's hub folder and the tab follows it (Evaluating, Waiting for you with Answer in chat,
+  Finished with a Show link to the new eval, Finished without a new eval) with a link to its chat. The selected eval
+  is read in place below the list, kept in `?eval=` (default: the newest), and Discuss follows it (AGH-269).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key

@@ -139,6 +139,48 @@ describe("DiscussPanel", () => {
       `/agent-sessions/${ID}`,
     );
   });
+
+  it("starts the conversation with a starter's message in one click (AC-269.16)", async () => {
+    const withStarter: DiscussTarget = {
+      ...feature,
+      openOnArrive: true,
+      starters: [{ label: "Write the human summary of spec", message: "Run /summarize x spec" }],
+    };
+    function Starter() {
+      useDiscussTarget(withStarter);
+      return <DiscussPanel />;
+    }
+    const view = renderWithApi(
+      <DiscussProvider>
+        <Starter />
+      </DiscussProvider>,
+      {
+        routes: {
+          "/api/v1/agent-sessions/capabilities": aCapabilities(),
+          "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
+          "POST /api/v1/agent-sessions": anAgentSession({ id: ID, status: "running" }),
+          [SESSION]: anAgentSession({ id: ID, status: "idle", last_seq: 0 }),
+          [`${SESSION}/events`]: { items: [], next_after: null },
+        },
+      },
+    );
+
+    const starter = await screen.findByRole("button", { name: "Write the human summary of spec" });
+    await waitFor(() => {
+      expect(starter).toBeEnabled();
+    });
+    await userEvent.click(starter);
+
+    const created = await waitFor(() => {
+      const found = view.requests.find(
+        (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+      );
+      if (!found) throw new Error("no POST");
+      return found;
+    });
+    const body = JSON.parse(await created.clone().text()) as { prompt: string };
+    expect(body.prompt).toBe(discussPrompt(withStarter, "Run /summarize x spec"));
+  });
 });
 
 const SHOT = "data:image/png;base64,iVBORw0KGgo=";

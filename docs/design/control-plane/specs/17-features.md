@@ -35,6 +35,73 @@ README's "Sources not connected": Linear is read for a feature's tickets; GitHub
   run. No step names an approver, a date range, sessions or a PR; "GitHub not connected" no longer appears. The
   Features list draws the same steps in its phase bar, and its `phase` equals the detail's.
 
+## Departures (AGH-269, acceptance criteria, evals and records)
+
+Built after the owner validated these in the playground; where this file says otherwise, this list wins.
+
+**Eval tab**
+
+- **AC-269.1** Given a project whose hub folder this machine can drive, when the owner picks a scope (Whole feature,
+  or one of the feature's tickets) and presses "Evaluate <scope>", then a session starts in the hub folder in
+  `acceptEdits` mode, asking the hub-workflow evaluator for that scope only, to write the next free
+  `evals/<delivery>.md` and never to edit an existing eval, merge, push or change tickets.
+- **AC-269.2** Given a run started from the tab, when the tab shows, then a strip gives its status as icon and label
+  in a polite live region (Evaluating, Waiting for you, Finished, Finished without a new eval, Ended, Failed), its
+  scope, its start time as relative time (absolute on hover) and an "Open chat" link; while it runs, Evaluate is off
+  with "An evaluation is already running. Open its chat to follow it." and the scope control is disabled. The run is
+  kept in the browser per feature.
+- **AC-269.3** Given a run waiting for the owner's answer, then its action is the primary "Answer in chat" with the
+  hand icon and the note "Claude asks before running a command. Answer in the chat."
+- **AC-269.4** Given `?doc=eval&eval=<delivery>`, then that eval is read in place below the list (verdict, tickets,
+  ACs, date, commit as `IdChip`, path as `PathText`, "Discuss this eval", "Open in Brain"); a row press selects
+  another and keeps it in `?eval=` (replace). Without `?eval=`, the newest eval by `evaluated_at` is selected, else
+  the last by name. The Discuss panel's target follows the selected eval.
+- **AC-269.5** Given a run that went idle, then it reads "Finished" with a "Show <delivery>" button for each eval it
+  wrote, or "Finished without a new eval" (not done) with a note to open the chat when it wrote none; a run no longer
+  in flight can be cleared ("Clear this run"); a run whose session was deleted is forgotten.
+- **AC-269.6** Given the machine cannot drive Claude or the project has no hub folder, then Evaluate is off with the
+  reason in its tooltip and accessible name, and the capability problem shows as a warning banner.
+- **AC-269.7** `SegmentedControl` takes `disabled`: every segment is off for pointer, keyboard and screen readers,
+  and the value still shows.
+- **AC-269.8** Given no eval yet, then the empty state says "No evals yet." and points to Evaluate.
+
+**Acceptance criteria tab** (replaces "AC table" below where they differ)
+
+- **AC-269.9** The tab reads "Acceptance criteria" with the `list-checks` icon and the count (`?doc=acs` unchanged).
+- **AC-269.10** Each row shows: the status as icon and word ("Passes", "Owner step", "Not passing"); the criterion
+  (id, repo chip, the whole description wrapped, Given/When/Then kept as text); the evidence in plain words, read
+  from the evidence text ("4 tests passed" in `done`, "2 of 12 tests failed" in `failed`, "Command succeeded",
+  "Superseded", "Recorded note", "No evidence yet"), with the commit (a GitHub link when the repo's `github` is
+  known) and the date below it and a tooltip that explains each number; the documents citing it ("2 docs · 3×");
+  and a labelled "Discuss" button (accessible name "Discuss AC-n with Claude", "In next message" while attached).
+  A hint line under the filters says what Discuss does. The verification command leaves the row.
+- **AC-269.11** An expanded row is a card in four labelled regions: *What must be true* (Given / When / Then on
+  three lines); *How it was proven* (result in plain words and as recorded, commit, pull request, date, the
+  `NAME=VALUE` settings it ran with, "Failed before" for a red-on-base clause, the eval records it names or the
+  latest eval naming the AC as links to `?doc=eval&eval=`, an open owner check, and the recorded text, kept whole);
+  *Check it yourself* (the command in a `CodeBlock` with "Copy command", or "Manual owner step:" with the steps);
+  *Where it is cited* (each record of `brain/features/<slug>/` naming the id, in document order, with its first
+  section, mention count and snippet, linking to the record tab, the eval, or the Brain note at the section).
+  Facts read from the evidence text are marked derived; the recorded text is the source.
+- **AC-269.12** Every criterion is listed at once: no fold, no "Show all".
+
+**Record tabs: human summaries** (replaces "Rendered documents" below for Spec, Research and Plan)
+
+- **AC-269.13** Given `brain/features/<slug>/summaries/<record>.md`, when a Spec, Research or Plan tab opens, then
+  it shows that summary ("For humans", with when it was written and from which record); the "Agent markdown"
+  segment shows the record itself as before, kept in `?view=agent`.
+- **AC-269.14** A summary point linking to the record's section (`../plan.md#approach`) opens Agent markdown at that
+  heading, in the same tab.
+- **AC-269.15** Given the record's `sha256` (brain note route) differs from the summary's `source_sha256`, then a
+  warning says the record changed after the summary was written, with "Ask Claude to update it" and "Read the full
+  <record>.md".
+- **AC-269.16** Given no summary yet, then the tab says so with "Ask Claude to write it" (opens Discuss, whose
+  one-click starter "Write the human summary of <record>" asks for `/summarize <slug> <record>`) and "Read the full
+  <record>.md". A Discuss target can carry such starters: one click sends the starter's message as the first one.
+- **AC-269.17** `GET /projects/{project}/brain/note` returns `sha256`, the hex SHA-256 of the file's bytes.
+- **AC-269.18** hub-workflow ships `/summarize` (records: [feature-records.md](../../feature-records.md)), and
+  `/feature`, `/research` and `/create-plan` run it each time they write or amend a record.
+
 ---
 
 ## Screen 1: Features list

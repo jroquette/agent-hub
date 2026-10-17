@@ -6,6 +6,7 @@ import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
 import {
   aBrainNote,
+  aBrainTree,
   aFeatureDetail,
   aFeatureRecord,
   aFeatureTickets,
@@ -23,14 +24,37 @@ const API = "/api/v1/features/agent-hub/layered-memory";
 const TICKETS = `${API}/tickets`;
 const NOTE = "/api/v1/projects/agent-hub/brain/note";
 
-/** Answers each record with a note naming its path and linking the brain index. */
-function records(request: Request) {
-  const path = new URL(request.url).searchParams.get("path") ?? "";
+const RECORD_HASH = "a".repeat(64);
+
+/** A record's human summary, written from the record version `source`. */
+function summaryNote(path: string, source = RECORD_HASH) {
   return aBrainNote({
     path,
+    frontmatter: { type: "summary", source_sha256: source, written_at: "2026-10-16" },
+    markdown:
+      "# Layered memory, in short\n\n**Bottom line:** it ships in phase 1.\n\n## Open questions\n\n" +
+      "- Who owns the cache? ([Open questions](../plan.md#open-questions))\n",
+  });
+}
+
+/** Answers each record with a note naming its path and linking the brain index, and its summary. */
+function records(request: Request) {
+  const path = new URL(request.url).searchParams.get("path") ?? "";
+  if (path.includes("/summaries/")) return summaryNote(path);
+  return aBrainNote({
+    path,
+    sha256: RECORD_HASH,
     frontmatter: { status: "approved" },
     markdown: `# Record ${path}\n\n## Open questions\n\nSee [the index](../../index.md).\n`,
   });
+}
+
+/** `records`, with the summaries answered by `summary` instead. */
+function recordsWithSummary(summary: (path: string) => unknown) {
+  return (request: Request) => {
+    const path = new URL(request.url).searchParams.get("path") ?? "";
+    return path.includes("/summaries/") ? summary(path) : records(request);
+  };
 }
 const route = "features/:project/:slug";
 
@@ -168,17 +192,68 @@ describe("FeatureDetailScreen", () => {
     );
   });
 
-  it("shows nine AC rows, then all of them on Show all", async () => {
+  it("shows every AC row at once, with no Show all fold (AC-269.12)", async () => {
     open();
 
     const table = await screen.findByRole("table", { name: "Acceptance criteria" });
     expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
-      9,
-    );
-    await userEvent.click(within(table).getByRole("button", { name: /Show all 13/ }));
-    expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
       13,
     );
+    expect(within(table).queryByRole("button", { name: /Show all/ })).toBeNull();
+  });
+
+  it("reads each criterion as status, evidence in plain words, citations and Discuss (AC-269.10, AC-269.11)", async () => {
+    const proven = {
+      ...rows[0],
+      id: "AC-48.1",
+      evidence:
+        "agent-hub@0a1b2c3d4 (PR #80), 2026-10-11, whole-feature eval: exit 0, 4 passed, 9 deselected; red on merge base 9f8e7d6c5 (ImportError on brief). evals/agh-48.md",
+    };
+    const cited = (request: Request) => {
+      const path = new URL(request.url).searchParams.get("path") ?? "";
+      return aBrainNote({
+        path,
+        markdown: path.endsWith("spec.md")
+          ? "# Spec\n\n## Acceptance criteria\n\n**AC-48.1: workspace ignored**\n"
+          : `# Record ${path}\n`,
+      });
+    };
+    open({
+      [API]: { ...detail, ac_rows: [proven, ...rows.slice(1)] },
+      [NOTE]: cited,
+      "/api/v1/projects/agent-hub/brain": aBrainTree({
+        entries: [
+          { path: "features/layered-memory/spec.md", size: 90 },
+          { path: "features/layered-memory/plan.md", size: 90 },
+        ],
+      }),
+    });
+
+    const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+    expect(within(table).getAllByText("Passes").length).toBeGreaterThan(0);
+    expect(within(table).getByText("4 tests passed")).toHaveAttribute(
+      "title",
+      expect.stringContaining("4 tests that check this criterion ran and passed."),
+    );
+    expect(
+      within(table).getByRole("button", { name: "Discuss AC-48.1 with Claude" }),
+    ).toHaveTextContent("Discuss");
+
+    await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.1" }));
+    const how = within(table).getByRole("region", { name: "How it was proven" });
+    expect(how).toHaveTextContent("PR");
+    expect(how).toHaveTextContent("#80");
+    expect(how).toHaveTextContent("red on merge base 9f8e7d6c5 (ImportError on brief)");
+    expect(within(how).getByRole("link", { name: /agh-48/ })).toHaveAttribute(
+      "href",
+      expect.stringContaining("doc=eval&eval=agh-48"),
+    );
+    const where = within(table).getByRole("region", { name: "Where it is cited" });
+    expect(await within(where).findByRole("link", { name: "Spec" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("doc=spec"),
+    );
+    expect(where).toHaveTextContent("Acceptance criteria");
   });
 
   it("filters the ACs to owner steps and marks them", async () => {
@@ -190,8 +265,8 @@ describe("FeatureDetailScreen", () => {
     expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
       1,
     );
-    expect(within(table).getByText("owner")).toBeInTheDocument();
-    expect(within(table).getByText("manual · see eval.md")).toBeInTheDocument();
+    expect(within(table).getAllByText("Owner step").length).toBeGreaterThan(0);
+    expect(within(table).getByText(/Manual owner step/)).toBeInTheDocument();
   });
 
   it("opens the first owner step's row by default", async () => {
@@ -227,7 +302,7 @@ describe("FeatureDetailScreen", () => {
   });
 
   describe("records", () => {
-    it("has the Spec, Research, Plan, Eval and Criteria tabs (records)", async () => {
+    it("has the Spec, Research, Plan, Eval and Acceptance criteria tabs (AC-269.9, records)", async () => {
       open();
 
       const tabs = within(await screen.findByRole("tablist", { name: "Feature record" }));
@@ -236,16 +311,43 @@ describe("FeatureDetailScreen", () => {
         "Research",
         "Plan",
         "Eval",
-        "Criteria13",
+        "Acceptance criteria13",
         "Tickets2",
       ]);
-      expect(tabs.getByRole("tab", { name: /Criteria/ })).toHaveAttribute("aria-selected", "true");
+      expect(tabs.getByRole("tab", { name: /Acceptance criteria/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
     });
 
-    it("reads the plan from the brain and renders it (records)", async () => {
+    it("opens the plan on its human summary, read from the brain (AC-269.13, records)", async () => {
       const { requests } = open();
 
       await userEvent.click(await screen.findByRole("tab", { name: "Plan" }));
+
+      expect(
+        await screen.findByRole("heading", { level: 1, name: "Layered memory, in short" }),
+      ).toBeInTheDocument();
+      const asked = requests
+        .filter((r) => new URL(r.url).pathname === NOTE)
+        .map((r) => new URL(r.url).searchParams.get("path"));
+      expect(asked).toContain("features/layered-memory/summaries/plan.md");
+      expect(await screen.findByText(/\(the current version\)/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /For humans/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      expect(screen.getByRole("link", { name: "Open in Brain" })).toHaveAttribute(
+        "href",
+        "/projects/agent-hub/brain/features/layered-memory/plan.md",
+      );
+    });
+
+    it("shows the record as the agents wrote it on Agent markdown (AC-269.13, records)", async () => {
+      const { router } = open();
+      await userEvent.click(await screen.findByRole("tab", { name: "Plan" }));
+
+      await userEvent.click(screen.getByRole("button", { name: /Agent markdown/ }));
 
       expect(
         await screen.findByRole("heading", {
@@ -253,17 +355,59 @@ describe("FeatureDetailScreen", () => {
           name: "Record features/layered-memory/plan.md",
         }),
       ).toBeInTheDocument();
-      const asked = requests.find((r) => new URL(r.url).pathname === NOTE);
-      expect(new URL(asked?.url ?? "").searchParams.get("path")).toBe(
-        "features/layered-memory/plan.md",
-      );
       expect(screen.getByRole("list", { name: "Frontmatter" })).toHaveTextContent(
         "status: approved",
       );
-      expect(screen.getByRole("link", { name: "Open in Brain" })).toHaveAttribute(
-        "href",
-        "/projects/agent-hub/brain/features/layered-memory/plan.md",
+      expect(router.state.location.search).toContain("view=agent");
+    });
+
+    it("opens the record at the section a summary point comes from (AC-269.14, records)", async () => {
+      const scroll = vi.fn();
+      Element.prototype.scrollIntoView = scroll;
+      const { router } = open({}, "/features/agent-hub/layered-memory?doc=plan");
+
+      await userEvent.click(await screen.findByRole("link", { name: "Open questions" }));
+
+      expect(router.state.location.search).toContain("view=agent");
+      expect(router.state.location.hash).toBe("#open-questions");
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "Record features/layered-memory/plan.md",
+        }),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(scroll).toHaveBeenCalled();
+      });
+    });
+
+    it("warns when the record changed after its summary was written (AC-269.15, records)", async () => {
+      open(
+        { [NOTE]: recordsWithSummary((path) => summaryNote(path, "b".repeat(64))) },
+        "/features/agent-hub/layered-memory?doc=plan",
       );
+
+      expect(
+        await screen.findByText("plan.md changed after this summary was written."),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Ask Claude to update it" })).toBeInTheDocument();
+    });
+
+    it("offers Claude and the full record when a record has no summary (AC-269.16, records)", async () => {
+      open(
+        { [NOTE]: recordsWithSummary(() => aProblem({ status: 404, title: "Not found" })) },
+        "/features/agent-hub/layered-memory?doc=plan",
+      );
+
+      expect(await screen.findByText("No human summary of plan.md yet.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Ask Claude to write it" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Read the full plan.md" }));
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "Record features/layered-memory/plan.md",
+        }),
+      ).toBeInTheDocument();
     });
 
     it("says No plan.md yet when the plan record is absent (records)", async () => {
@@ -289,7 +433,7 @@ describe("FeatureDetailScreen", () => {
     });
 
     it("opens a brain link of a record inside the app (records)", async () => {
-      const { router } = open({}, "/features/agent-hub/layered-memory?doc=spec");
+      const { router } = open({}, "/features/agent-hub/layered-memory?doc=spec&view=agent");
 
       await userEvent.click(await screen.findByRole("link", { name: "the index" }));
 
@@ -313,7 +457,15 @@ describe("FeatureDetailScreen", () => {
       );
     });
 
-    it("expands an AC into its verification command and evidence (records)", async () => {
+    it("reads the eval ?eval= names in place and keeps a new choice in the URL (AC-269.4)", async () => {
+      open({}, "/features/agent-hub/layered-memory?doc=eval&eval=agh-48");
+
+      expect(await screen.findByRole("article", { name: "Eval agh-48" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: /^agh-49,/ }));
+      expect(await screen.findByRole("article", { name: "Eval agh-49" })).toBeInTheDocument();
+    });
+
+    it("expands an AC into its verification command and evidence (AC-269.11, records)", async () => {
       const write = vi.fn(() => Promise.resolve());
       Object.defineProperty(navigator, "clipboard", {
         value: { writeText: write },
@@ -324,21 +476,21 @@ describe("FeatureDetailScreen", () => {
       const table = await screen.findByRole("table", { name: "Acceptance criteria" });
       await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
 
-      const details = within(table).getByText("Verification").closest("dl");
-      expect(details).toHaveTextContent("uv run pytest -k case_2");
-      expect(details).toHaveTextContent("Evidencetest run 2");
-      await userEvent.click(
-        within(table).getByRole("button", { name: "Copy the verification of AC-48.2" }),
-      );
+      const check = within(table).getByRole("region", { name: "Check it yourself" });
+      expect(check).toHaveTextContent("uv run pytest -k case_2");
+      const proven = within(table).getByRole("region", { name: "How it was proven" });
+      expect(proven).toHaveTextContent("test run 2");
+      await userEvent.click(within(check).getByRole("button", { name: "Copy command" }));
       expect(write).toHaveBeenCalledWith("uv run pytest -k case_2");
     });
 
     it("marks a manual AC's verification as an owner step (records)", async () => {
       open();
 
-      const details = (await screen.findByText("Verification")).closest("dl");
-      expect(details).toHaveTextContent("Manual owner step.");
-      expect(details).toHaveTextContent("eval.md §Owner steps");
+      const check = await screen.findByRole("region", { name: "Check it yourself" });
+      expect(check).toHaveTextContent("Manual owner step:");
+      const proven = screen.getByRole("region", { name: "How it was proven" });
+      expect(proven).toHaveTextContent("eval.md §Owner steps");
     });
 
     it("says when an AC has no evidence or verification yet (records)", async () => {
