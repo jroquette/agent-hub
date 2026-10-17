@@ -161,3 +161,15 @@ class Service(ConfigObject):
     endpoints: Endpoints = Field(
         default_factory=dict, description="Keyed by a declared environment's name."
     )
+
+
+Services = Annotated[
+    dict[ServiceName, Service],
+    BeforeValidator(drop_map_comment_keys),
+    Field(json_schema_extra=COMMENT_KEYS_SCHEMA),
+]
+Environments = Annotated[
+    dict[EnvironmentName, Environment],
+    BeforeValidator(drop_map_comment_keys),
+    Field(json_schema_extra=COMMENT_KEYS_SCHEMA),
+]
