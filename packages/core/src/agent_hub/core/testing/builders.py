@@ -9,6 +9,8 @@ from typing import Any, Final
 from uuid import uuid4
 
 from agent_hub.core.events.event import Event
+from agent_hub.core.item_versions.item_version import ItemVersion, UnitKind, VersionOrigin
+from agent_hub.core.item_versions.unit_hash import file_hash
 from agent_hub.core.learnings.brain_change_requests import BrainChange, CommitAuthor
 from agent_hub.core.runner.brief import BRIEF_SECTIONS
 from agent_hub.core.testing.fakes import FakeTrackerBackend, TrackerState
@@ -270,6 +272,28 @@ def a_brain_change(**overrides: object) -> BrainChange:
         "commit_message": "docs(brain): accept learning testing-x",
     }
     return BrainChange.model_validate(fields | overrides)
+
+
+def an_item_version(**overrides: object) -> ItemVersion:
+    """A synthetic stored version: the first, ``external`` version of an agent file of ``demo``;
+    ``content_hash`` and ``size`` are not recomputed from an overridden ``content``."""
+    content = b"---\nname: reviewer\ndescription: Reviews a diff.\n---\nReview the diff.\n"
+    fields: dict[str, object] = {
+        "id": "0199f0a0-0000-7000-8000-000000000001",
+        "project": "demo",
+        "unit_path": "plugin/demo/agents/reviewer.md",
+        "kind": UnitKind.AGENT,
+        "seq": 1,
+        "origin": VersionOrigin.EXTERNAL,
+        "first": True,
+        "author": None,
+        "recorded_at": datetime(2026, 10, 17, 9, 0, tzinfo=UTC),
+        "content_hash": file_hash(content),
+        "size": len(content),
+        "restored_from": None,
+        "content": content,
+    }
+    return ItemVersion.model_validate(fields | overrides)
 
 
 def _png_chunk(kind: bytes, payload: bytes) -> bytes:
