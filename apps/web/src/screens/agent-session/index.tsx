@@ -254,6 +254,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
               {session.title ?? "Untitled session"}
             </h1>
             <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
+            <span className="ah-grow" />
             {files.length > 0 && (
               <ChangedFilesChip
                 files={files}
@@ -264,17 +265,6 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                   else openFile(null);
                 }}
               />
-            )}
-            <span className="ah-grow" />
-            {session.claude_session_id && (
-              <AppLink
-                className="ah-row ah-small"
-                style={{ gap: 4 }}
-                href={`/sessions/${encodeURIComponent(session.claude_session_id)}`}
-              >
-                <Icon name="activity" size="sm" />
-                Observed session {short(session.claude_session_id)}
-              </AppLink>
             )}
             {canFork && (
               <Button
@@ -321,6 +311,16 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
               {model ? ` · ${model}` : ""}
             </span>
             <CostMeter meter={state.meter} />
+            {session.claude_session_id && (
+              <AppLink
+                className="ah-row ah-small"
+                style={{ gap: 4 }}
+                href={`/sessions/${encodeURIComponent(session.claude_session_id)}`}
+              >
+                <Icon name="activity" size="sm" />
+                Observed session {short(session.claude_session_id)}
+              </AppLink>
+            )}
           </div>
           {actionError && (
             <p className="ah-small as-error" role="alert">

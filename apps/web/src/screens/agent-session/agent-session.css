@@ -1769,13 +1769,13 @@ body.as-resizing .as-drawer {
   outline-offset: 2px;
 }
 .as-files-chip-due {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: var(--accent-soft);
-  color: var(--accent);
+  border-color: color-mix(in srgb, var(--waiting) 45%, var(--border));
+  background: var(--waiting-soft);
+  color: var(--waiting);
 }
 .as-files-chip-due:hover {
-  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
-  color: var(--accent);
+  background: color-mix(in srgb, var(--waiting) 18%, var(--surface));
+  color: var(--waiting);
 }
 .as-files-chip-open,
 .as-files-chip-open:hover {
@@ -1786,13 +1786,23 @@ body.as-resizing .as-drawer {
   color: var(--text);
   font-weight: 600;
 }
+.as-files-chip-count {
+  color: var(--text-muted);
+}
 .as-files-chip-due-count {
   padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--waiting) 55%, transparent);
   border-radius: var(--radius-full);
-  background: var(--accent);
-  color: var(--on-accent);
+  color: var(--waiting);
   font-size: 11px;
   font-weight: 600;
+}
+/* Narrow column: the chip keeps its verb and what waits; the line counts live in the drawer. */
+@media (max-width: 1279px) {
+  .as-files-chip .as-files-chip-count,
+  .as-files-chip > .as-files-stats {
+    display: none;
+  }
 }
 .as-files-chip-done {
   color: var(--done);

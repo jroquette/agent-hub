@@ -1342,9 +1342,9 @@ describe("AgentSessionScreen (changed-files)", () => {
       }),
     );
 
-    const button = await screen.findByRole("button", { name: /^Changed files/ });
+    const button = await screen.findByRole("button", { name: /^Review changes:/ });
     expect(button).toHaveAccessibleName(
-      "Changed files: 1 file, 1 lines added, 1 removed, 1 to review",
+      "Review changes: 1 file, 1 lines added, 1 removed, 1 to review",
     );
     expect(button).toHaveTextContent("1 file+1−11 to review");
     await userEvent.click(button);
@@ -1386,8 +1386,8 @@ describe("AgentSessionScreen (run-files-card)", () => {
     expect(
       within(card).getByRole("button", { name: "Open src/app.py, modified, +1 −1, viewed" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Changed files/ })).toHaveAccessibleName(
-      "Changed files: 1 file, 1 lines added, 1 removed, all reviewed",
+    expect(screen.getByRole("button", { name: /^Review changes:/ })).toHaveAccessibleName(
+      "Review changes: 1 file, 1 lines added, 1 removed, all reviewed",
     );
   });
 });

@@ -130,7 +130,7 @@ describe("ChangedFilesChip (review)", () => {
     );
 
     const chip = screen.getByRole("button", {
-      name: "Changed files: 2 files, 2 lines added, 1 removed, 2 to review",
+      name: "Review changes: 2 files, 2 lines added, 1 removed, 2 to review",
     });
     expect(chip).toHaveClass("as-files-chip-due");
     await userEvent.click(chip);
@@ -146,7 +146,7 @@ describe("ChangedFilesChip (review)", () => {
       />,
     );
     const done = screen.getByRole("button", {
-      name: "Changed files: 2 files, 2 lines added, 1 removed, all reviewed",
+      name: "Review changes: 2 files, 2 lines added, 1 removed, all reviewed",
     });
     expect(done).not.toHaveClass("as-files-chip-due");
     expect(done).toHaveAttribute("aria-expanded", "true");

@@ -610,12 +610,13 @@ export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFiles
       className={cx("as-files-chip", due > 0 && "as-files-chip-due", open && "as-files-chip-open")}
       aria-expanded={open}
       aria-controls={open ? FILES_PANEL_ID : undefined}
-      aria-label={`Changed files: ${count}, ${String(added)} lines added, ${String(removed)} removed, ${due > 0 ? `${String(due)} to review` : "all reviewed"}`}
-      title={open ? "Close the changed files" : "Review the files Claude changed"}
+      aria-label={`Review changes: ${count}, ${String(added)} lines added, ${String(removed)} removed, ${due > 0 ? `${String(due)} to review` : "all reviewed"}`}
+      title={open ? "Close the changed files" : "Open the changed files"}
       onClick={onToggle}
     >
       <Icon name="git-compare" size="sm" />
-      <span className="as-files-chip-label">{count}</span>
+      <span className="as-files-chip-label">Review changes</span>
+      <span className="as-files-chip-count">{count}</span>
       <Stats added={added} removed={removed} />
       {due > 0 ? (
         <span className="as-files-chip-due-count">{due} to review</span>
