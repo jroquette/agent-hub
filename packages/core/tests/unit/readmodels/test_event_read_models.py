@@ -818,7 +818,7 @@ def test_applies_issue_when_hub_rules_known() -> None:
     assert again["s-dem"].label.issue is None
 
 
-def test_filters_sessions_by_issue_in_any_case() -> None:
+def test_lists_sessions_of_issue_when_filter_in_any_case() -> None:
     rules = {
         "demo": LabelRules(teams=("DEM",), branch_prefix="jdoe/"),
         "other": LabelRules(teams=("OTH",)),
