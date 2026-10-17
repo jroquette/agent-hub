@@ -44,11 +44,13 @@ const routes = {
   "/api/v1/projects": aPage([aProjectSummary(), aProjectSummary({ name: "loki-trader" })]),
 };
 
-/** Opens More filters and returns its panel. */
+/** Opens the Filters popover and returns its panel. */
 function openMore(): HTMLElement {
-  fireEvent.click(screen.getByRole("button", { name: /^More filters/ }));
-  return screen.getByRole("dialog", { name: "More filters" });
+  fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+  return screen.getByRole("dialog", { name: "Filters" });
 }
+/** One choice section of the Filters popover (Repo, Outcome, Workflow, Used tool). */
+const choices = (panel: HTMLElement, name: string) => within(panel).getByRole("group", { name });
 
 describe("SessionsListScreen controls", () => {
   it("exports the loaded rows as CSV metadata from the foot of the list", async () => {
@@ -63,7 +65,7 @@ describe("SessionsListScreen controls", () => {
     await screen.findByText("/waiter");
     const exportButton = screen.getByRole("button", { name: "Export 3 sessions as CSV" });
     expect(
-      screen.getByRole("table").compareDocumentPosition(exportButton) &
+      screen.getByRole("region", { name: /^Finished/ }).compareDocumentPosition(exportButton) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     fireEvent.click(exportButton);
@@ -72,7 +74,7 @@ describe("SessionsListScreen controls", () => {
     expect(revoke).toHaveBeenCalledWith("blob:sessions");
   });
 
-  it("writes the toolbar's menus and the sort into the URL", async () => {
+  it("writes Repo, Workflow and the period into the URL, each set filter as a chip", async () => {
     const { router } = renderWithApi(<SessionsListScreen />, {
       routes,
       path: "/sessions?sort=cost",
@@ -80,20 +82,33 @@ describe("SessionsListScreen controls", () => {
     await screen.findByText("/waiter");
     const search = () => new URLSearchParams(router.state.location.search);
 
-    fireEvent.click(screen.getByRole("button", { name: "Repo: All" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "agent-hub" }));
+    // Repo, Outcome and Workflow live in the one Filters popover, not as menus of their own.
+    expect(screen.queryByRole("button", { name: /^Repo/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Outcome/ })).toBeNull();
+    const panel = openMore();
+    fireEvent.click(within(choices(panel, "Repo")).getByRole("button", { name: "agent-hub" }));
     expect(search().get("repo")).toBe("agent-hub");
-    expect(screen.getByRole("button", { name: "Repo: agent-hub" })).toBeInTheDocument();
+    expect(
+      within(choices(panel, "Repo")).getByRole("button", { name: "agent-hub" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "Remove filter Repo agent-hub" }),
+    ).toBeInTheDocument();
 
     // The workflows offered are the loaded sessions' own.
-    fireEvent.click(screen.getByRole("button", { name: "Workflow: Any" }));
     expect(
-      within(screen.getByRole("dialog", { name: "Workflow filter" }))
-        .getAllByRole("checkbox")
-        .map((box) => box.closest("label")?.textContent),
+      within(choices(panel, "Workflow"))
+        .getAllByRole("button")
+        .map((button) => button.textContent),
     ).toEqual(["/a,b", "/idler", "/waiter"]);
-    fireEvent.click(screen.getByRole("checkbox", { name: "/waiter" }));
+    fireEvent.click(within(choices(panel, "Workflow")).getByRole("button", { name: "/waiter" }));
     expect(search().get("workflow")).toBe("/waiter");
+    expect(screen.getByRole("button", { name: "Filters · 2" })).toBeInTheDocument();
+    // A second press on a chosen chip clears it.
+    fireEvent.click(within(choices(panel, "Workflow")).getByRole("button", { name: "/waiter" }));
+    expect(search().has("workflow")).toBe(false);
+    fireEvent.click(within(choices(panel, "Workflow")).getByRole("button", { name: "/idler" }));
+    fireEvent.keyDown(document.body, { key: "Escape" });
 
     fireEvent.click(screen.getByRole("button", { name: "Period: Last 7 days" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Last 30 days" }));
@@ -103,37 +118,37 @@ describe("SessionsListScreen controls", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Last 7 days" }));
     expect(search().has("period")).toBe(false);
 
-    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
-    expect(search().get("sort")).toBe("-cost");
-
-    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter Repo agent-hub" }));
+    expect(search().has("repo")).toBe(false);
+    // Clear filters keeps the sort, which is not a filter.
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect([...search().keys()]).toEqual(["sort"]);
   });
 
-  it("asks only Ended for an outcome, and clears it from its menu", async () => {
+  it("asks only Finished for an outcome, and clears it from its chip", async () => {
     const { router, requests } = renderWithApi(<SessionsListScreen />, {
       routes,
       path: "/sessions",
     });
     await screen.findByText("/waiter");
 
-    fireEvent.click(screen.getByRole("button", { name: "Outcome: Any" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Error" }));
+    const panel = openMore();
+    fireEvent.click(within(choices(panel, "Outcome")).getByRole("button", { name: "Error" }));
     expect(router.state.location.search).toBe("?outcome=error");
     await waitFor(() => {
       expect(screen.queryByText("/waiter")).toBeNull();
     });
     const last = requests.at(-1);
     expect(new URL(last?.url ?? "").searchParams.get("status")).toBe("ended");
-    expect(screen.getByRole("button", { name: "Waiting for you · —" })).toBeInTheDocument();
+    // Only Finished is asked: the other groups do not show.
+    expect(screen.queryByRole("region", { name: /^Needs you/ })).toBeNull();
+    expect(screen.getByRole("region", { name: /^Finished/ })).toBeInTheDocument();
 
-    // The menu stays open, now offering to clear the outcome.
-    expect(screen.getByRole("button", { name: "Outcome: Error" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Clear outcome" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter Outcome Error" }));
     expect(router.state.location.search).toBe("");
   });
 
-  it("sets More filters into the URL, shows each as a removable chip, and counts them", async () => {
+  it("sets the Filters popover's fields into the URL, shows each as a removable chip, and counts them", async () => {
     const { router } = renderWithApi(<SessionsListScreen />, { routes, path: "/sessions" });
     await screen.findByText("/waiter");
     const search = () => new URLSearchParams(router.state.location.search);
@@ -147,12 +162,17 @@ describe("SessionsListScreen controls", () => {
       const input = within(panel).getByRole("textbox", { name });
       fireEvent.change(input, { target: { value } });
       fireEvent.keyDown(input, { key: "Enter" });
-      panel = screen.getByRole("dialog", { name: "More filters" });
+      panel = screen.getByRole("dialog", { name: "Filters" });
     }
-    fireEvent.click(within(panel).getByRole("button", { name: "Bash" }));
+    fireEvent.click(within(choices(panel, "Used tool")).getByRole("button", { name: "Bash" }));
     fireEvent.click(within(panel).getByRole("checkbox", { name: /Had a guard denial/ }));
-    fireEvent.click(within(panel).getByRole("button", { name: "Done" }));
-    expect(screen.queryByRole("dialog", { name: "More filters" })).toBeNull();
+    // The Outcome section has a "Done" chip of its own: the close button is the one outside it.
+    const done = within(panel)
+      .getAllByRole("button", { name: "Done" })
+      .find((button) => !button.closest("fieldset"));
+    if (!done) throw new Error("no Done button");
+    fireEvent.click(done);
+    expect(screen.queryByRole("dialog", { name: "Filters" })).toBeNull();
     expect(Object.fromEntries(search())).toEqual({
       agent: "Explore",
       file: "a.py",
@@ -161,7 +181,7 @@ describe("SessionsListScreen controls", () => {
       guard_denial: "1",
     });
 
-    expect(screen.getByRole("button", { name: "More filters · 5" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Filters · 5" })).toBeInTheDocument();
     for (const chip of [
       "Remove filter Agent type Explore",
       "Remove filter Touched file a.py",
@@ -172,7 +192,7 @@ describe("SessionsListScreen controls", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: "Remove filter Cost from $2" }));
     expect(search().has("cost_min")).toBe(false);
-    expect(screen.getByRole("button", { name: "More filters · 4" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Filters · 4" })).toBeInTheDocument();
 
     // A bad decimal is said, not sent.
     panel = openMore();
@@ -186,7 +206,7 @@ describe("SessionsListScreen controls", () => {
     expect(router.state.location.search).toBe("");
   });
 
-  it("keeps More filters open while the owner moves from one field to the next", async () => {
+  it("keeps Filters open while the owner moves from one field to the next", async () => {
     const { router } = renderWithApi(<SessionsListScreen />, { routes, path: "/sessions" });
     await screen.findByText("/waiter");
 
@@ -195,7 +215,7 @@ describe("SessionsListScreen controls", () => {
     fireEvent.change(agent, { target: { value: "Explore" } });
     fireEvent.blur(agent);
     expect(router.state.location.search).toBe("?agent=Explore");
-    const file = within(screen.getByRole("dialog", { name: "More filters" })).getByRole("textbox", {
+    const file = within(screen.getByRole("dialog", { name: "Filters" })).getByRole("textbox", {
       name: "Touched file",
     });
     fireEvent.change(file, { target: { value: "a.py" } });
@@ -204,14 +224,14 @@ describe("SessionsListScreen controls", () => {
     expect(screen.getByRole("textbox", { name: "Agent type" })).toHaveValue("Explore");
   });
 
-  it("closes More filters on Escape, back on its button", async () => {
+  it("closes Filters on Escape, back on its button", async () => {
     renderWithApi(<SessionsListScreen />, { routes, path: "/sessions" });
     await screen.findByText("/waiter");
 
     openMore();
     fireEvent.keyDown(document.body, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "More filters" })).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^More filters/ }));
+    expect(screen.queryByRole("dialog", { name: "Filters" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Filters/ }));
   });
 
   it("widens the period and shows all time from the empty states", async () => {
@@ -223,7 +243,11 @@ describe("SessionsListScreen controls", () => {
     expect(await screen.findByText("No sessions match these filters.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show last 30 days" }));
     expect(filtered.router.state.location.search).toContain("period=30+d");
-    fireEvent.click(await screen.findByRole("button", { name: "Clear filters" }));
+    // The toolbar and the empty state both offer it: the empty state's comes last.
+    await screen.findByText("No sessions match these filters.");
+    const clear = screen.getAllByRole("button", { name: "Clear filters" }).at(-1);
+    if (!clear) throw new Error("no Clear filters");
+    fireEvent.click(clear);
     expect(filtered.router.state.location.search).toBe("");
     filtered.unmount();
 
@@ -232,9 +256,9 @@ describe("SessionsListScreen controls", () => {
     expect(never.router.state.location.search).toBe("?period=All");
   });
 
-  it("says a tab with no session in it, with all time offered on Ended only", async () => {
+  it("says a status link's group has no session, with all time offered on Finished only", async () => {
     const live = renderWithApi(<SessionsListScreen />, { routes, path: "/sessions?status=live" });
-    expect(await screen.findByText("No session is live.")).toBeInTheDocument();
+    expect(await screen.findByText("No session is working.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Show all time" })).toBeNull();
     live.unmount();
 
@@ -254,7 +278,7 @@ describe("SessionsListScreen controls", () => {
       },
       path: "/sessions?status=ended",
     });
-    expect(await screen.findByText("No session ended in the last 7 days.")).toBeInTheDocument();
+    expect(await screen.findByText("No session finished in the last 7 days.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show all time" }));
     expect(router.state.location.search).toBe("?status=ended&period=All");
   });

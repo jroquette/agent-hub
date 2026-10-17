@@ -3,8 +3,8 @@ import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 import type { SectionId } from "./sections";
 
-/** A table row or a grid tile, keyed by its session. */
-const ROW = "tr[data-key], article[data-key]";
+/** A list row or a grid tile, keyed by its session. */
+const ROW = "li[data-key], tr[data-key], article[data-key]";
 /** A section past 100 rows scrolls in its own bounded region. */
 const REGION = ".ah-table-wrap > div[tabindex]";
 /** Visible rows remembered per scroller: the first one still in place among its neighbours wins. */

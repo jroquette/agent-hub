@@ -169,9 +169,9 @@ describe("SessionsListScreen grid", () => {
     });
     await screen.findByText("/a");
     expect(heads(section(/^Working/))).toEqual(["Run AGH-9 · implement · 1", "Not in a run · 2"]);
-    expect(within(section(/^Working/)).getByRole("group", { name: "Not in a run" })).toContainElement(
-      tileOf("/c"),
-    );
+    expect(
+      within(section(/^Working/)).getByRole("group", { name: "Not in a run" }),
+    ).toContainElement(tileOf("/c"));
     run.unmount();
 
     renderWithApi(<SessionsListScreen />, {

@@ -51,6 +51,8 @@ export interface SessionsInboxProps {
   showProject: boolean;
   commonRepo: string | null;
   drvOf: (row: SectionRow) => AgentSession | null;
+  /** Sessions can start here: a finished chat may offer Resume. */
+  canDrive: boolean;
   onOpen: (href: string) => void;
   /** The Finished header names the period, so its scope is never hidden. */
   endedScope: string | null;
@@ -102,7 +104,7 @@ function Row({
   row: SectionRow;
   group: SectionId;
   tz: Tz;
-  ctx: Omit<ViewContext, "group" | "drv"> & { drv: AgentSession | null };
+  ctx: Omit<ViewContext, "group" | "drv"> & { drv: AgentSession | null; canDrive: boolean };
   onOpen: (href: string) => void;
 }) {
   const view = rowView(row, { ...ctx, group });
@@ -139,7 +141,7 @@ function Row({
         Review problem
       </AppLink>
     );
-  } else if (view.resumable && ctx.drv) {
+  } else if (view.resumable && ctx.drv && ctx.canDrive) {
     action = (
       <AppLink
         href={rowHref(row)}
@@ -315,6 +317,7 @@ function Group({ group, tz, props }: { group: InboxGroup; tz: Tz; props: Session
                     drv: props.drvOf(row),
                     commonRepo: props.commonRepo,
                     showProject: props.showProject,
+                    canDrive: props.canDrive,
                   }}
                   onOpen={props.onOpen}
                 />

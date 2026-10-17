@@ -543,6 +543,7 @@ export function SessionsListScreen() {
         showProject={!scope && projectCount > 1}
         commonRepo={commonRepoOf(loadedAll)}
         drvOf={drvOf}
+        canDrive={driving.canDrive}
         onOpen={(href) => {
           void navigate(href);
         }}
