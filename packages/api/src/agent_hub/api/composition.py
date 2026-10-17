@@ -50,6 +50,7 @@ from agent_hub.api.linear_connection import (
     LinearEnviron,
     LinearKeyFile,
 )
+from agent_hub.api.owner_signoff_files import HubEvalWriter, ProjectHubPaths
 from agent_hub.api.rfc9457 import (
     ProblemFactory,
     busy_problem,
@@ -57,6 +58,7 @@ from agent_hub.api.rfc9457 import (
     hub_invalid_problem,
     hub_registry_problem,
     invalid_cursor_problem,
+    owner_signoff_problem,
 )
 from agent_hub.api.run_launcher import ProcessRunLauncher
 from agent_hub.api.settings import ApiSettings, utc_now
@@ -74,6 +76,7 @@ from agent_hub.core.agent_sessions.control import AgentSessionControl, WorkdirSo
 from agent_hub.core.agent_sessions.driver import SessionDriver
 from agent_hub.core.agent_sessions.links import AgentSessionLinks, ObservedSessionLookup
 from agent_hub.core.agent_sessions.store import AgentSessionStore
+from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRequest,
     TicketSnapshots,
@@ -131,6 +134,7 @@ from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE, 
 
 # The errors of the wired adapters, each answered by its problem (API.md "Error mapping").
 COMPOSED_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
+    OwnerSignOffError: owner_signoff_problem,
     DatabaseBusyError: busy_problem,
     InvalidCursorError: invalid_cursor_problem,
     HubInvalidError: hub_invalid_problem,
@@ -645,6 +649,9 @@ def build_app(
         run_control=None if guard is None else ControlWorkflowRun(hubs, guard),
         workflow_gates=gates,
         gate_decisions=None if guard is None else DecideWorkflowGate(gates, guard),
+        owner_signoff=SignOffOwnerSteps(
+            ProjectHubPaths(hubs), reader, HubEvalWriter(), clock=settings.clock
+        ),
         linear=LinearConnection(
             linear_environ,
             key_file,

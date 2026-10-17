@@ -174,6 +174,11 @@ def hub_conflict_problem(error: Any) -> Problem:
     return Problem(409, "Hub already registered", str(error))
 
 
+def owner_signoff_problem(error: Any) -> Problem:
+    """``OwnerSignOffError`` (core/features): 409, nothing to sign off and why."""
+    return Problem(409, "Owner steps cannot be signed off", error.reason)
+
+
 def hub_registry_problem(_: Any) -> Problem:
     """``HubRegistryError`` (core/hubs): 503; the cause names files, so it stays in the log."""
     return Problem(

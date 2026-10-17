@@ -514,6 +514,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/features/{project}/{slug}/owner-signoff": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Sign Off Owner Steps
+     * @description The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over
+     *     the ACs that waited on them (409 when no AC waits, or one is not covered by a SHIP).
+     */
+    post: operations["sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/features/{project}/{slug}/tickets": {
     parameters: {
       query?: never;
@@ -5664,6 +5685,47 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["FeatureDetail"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EvalRecord"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

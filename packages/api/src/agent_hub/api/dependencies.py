@@ -20,6 +20,7 @@ from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.links import AgentSessionLinkLookup
 from agent_hub.core.brain.brain_path import DEFAULT_ACCEPT_FOLDER
 from agent_hub.core.events.event_reader import EventReader
+from agent_hub.core.features.owner_signoff import SignOffOwnerSteps
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.learnings.learning import Learning, LearningDetail
@@ -53,6 +54,7 @@ class ApiPorts:
     workflow_gates: WorkflowGates | None = None
     gate_decisions: DecideWorkflowGate | None = None
     linear: LinearConnection | None = None
+    owner_signoff: SignOffOwnerSteps | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -76,6 +78,14 @@ def event_read_models(request: Request) -> EventReadModels:
 def hub_read_models(request: Request) -> HubReadModels:
     """The hub read models, or 501 when not wired."""
     port = _ports(request).hub_read_models
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def owner_signoff(request: Request) -> SignOffOwnerSteps:
+    """The owner's sign-off of a feature's owner steps, or 501 when not wired."""
+    port = _ports(request).owner_signoff
     if port is None:
         raise _unwired(request)
     return port
@@ -252,6 +262,7 @@ def parse_filter[M: BaseModel](model: type[M], **fields: object) -> M:
 
 EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
 HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
+OwnerSignOffDep = Annotated[SignOffOwnerSteps, Depends(owner_signoff)]
 WorkflowReadsDep = Annotated[WorkflowReads, Depends(workflow_reads)]
 RunStartsDep = Annotated[StartWorkflowRun, Depends(run_starts)]
 RunControlDep = Annotated[ControlWorkflowRun, Depends(run_control)]

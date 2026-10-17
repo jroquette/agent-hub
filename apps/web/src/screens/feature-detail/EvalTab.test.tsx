@@ -156,6 +156,37 @@ describe("EvalTab", () => {
     expect(screen.getByRole("button", { name: /An evaluation is already running/ })).toBeDisabled();
   });
 
+  it("signs off the owner steps after a confirmation when the eval waits on them", async () => {
+    const SIGNOFF = "/api/v1/features/agent-hub/control-plane/owner-signoff";
+    const onSelect = vi.fn();
+    const written = anEvalRecord({
+      delivery: "owner-signoff",
+      path: "features/control-plane/evals/owner-signoff.md",
+      verdict: "SHIP",
+    });
+    const view = renderWithApi(
+      tab({ evals, onSelect, ownerWait: "17 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)" }),
+      { routes: { ...driving, [`POST ${SIGNOFF}`]: written } },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Mark owner steps done" }));
+    expect(view.requests.some((r) => r.method === "POST")).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Yes, I did them" }));
+
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith("owner-signoff");
+    });
+    expect(
+      view.requests.some((r) => r.method === "POST" && new URL(r.url).pathname === SIGNOFF),
+    ).toBe(true);
+  });
+
+  it("offers no sign-off when nothing waits on the owner", () => {
+    renderWithApi(tab({ evals }), { routes: driving });
+
+    expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
+  });
+
   it("lists every delivery's eval with its verdict, scope and note (golden)", () => {
     renderWithApi(tab({ evals }));
 

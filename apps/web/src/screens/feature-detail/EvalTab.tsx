@@ -1,3 +1,4 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
@@ -18,7 +19,7 @@ import {
   Tooltip,
   type Status,
 } from "../../components";
-import { ApiProblem, useApi } from "../../lib/api";
+import { ApiProblem, apiCommand, apiKey, useApi } from "../../lib/api";
 import { brainRoute } from "../../lib/brainLinks";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtDateTime } from "../../lib/format";
@@ -322,6 +323,106 @@ function EvalRunStrip({
   );
 }
 
+/* ---------- The owner's sign-off ---------- */
+
+/**
+ * The owner confirms the owner steps of a SHIP-WITH-OWNER-STEPS eval are done: the server writes
+ * an `owner-signoff` SHIP eval over the ACs that waited, and the Evaluate step turns done.
+ */
+function OwnerSignOff({
+  project,
+  slug,
+  reason,
+  onShow,
+}: {
+  project: string;
+  slug: string;
+  reason: string;
+  onShow: (delivery: string) => void;
+}) {
+  const client = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const path = { path: { project, slug } };
+  const signOff = useMutation<EvalRecord, ApiProblem>({
+    mutationFn: () => apiCommand("/api/v1/features/{project}/{slug}/owner-signoff", path),
+    onSuccess: (written) => {
+      setConfirming(false);
+      onShow(written.delivery);
+      for (const key of [
+        apiKey("/api/v1/features"),
+        apiKey("/api/v1/features/{project}/{slug}", path),
+        apiKey("/api/v1/features/{project}/{slug}/tickets", path),
+      ]) {
+        void client.invalidateQueries({ queryKey: key });
+      }
+    },
+  });
+  return (
+    <section
+      className="ah-card ah-pad ah-stack"
+      style={{ gap: 10, borderColor: "var(--waiting)" }}
+      aria-label="Owner steps"
+    >
+      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+        <Icon name="hand" size="sm" />
+        <b>Waiting on your steps</b>
+        <span className="ah-small ah-muted">{reason}</span>
+        <span className="ah-grow" />
+        {confirming ? (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setConfirming(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              icon="check"
+              disabled={signOff.isPending}
+              onClick={() => {
+                signOff.mutate();
+              }}
+            >
+              {signOff.isPending ? "Signing off…" : "Yes, I did them"}
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant="primary"
+            icon="check"
+            onClick={() => {
+              setConfirming(true);
+            }}
+          >
+            Mark owner steps done
+          </Button>
+        )}
+      </div>
+      <span className="ah-small ah-muted">
+        {confirming
+          ? "Confirm you did every owner step the eval lists. This writes evals/owner-signoff.md with verdict SHIP, signed by you; existing evals are kept."
+          : "Did the manual steps the eval lists? Sign them off and the Evaluate step turns done."}
+      </span>
+      {signOff.error && (
+        <ProblemError
+          compact
+          title="Could not sign off the owner steps"
+          detail={signOff.error.detail ?? signOff.error.title}
+          status={signOff.error.status || undefined}
+          onRetry={() => {
+            signOff.mutate();
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
 /* ---------- The selected eval ---------- */
 
 /** A frontmatter time as the app writes times; a bare date (no time) stays as it is. */
@@ -400,15 +501,36 @@ export interface EvalTabProps {
   /** The delivery shown below the list (`pickEval`). */
   selected: EvalRecord | undefined;
   onSelect: (delivery: string) => void;
+  /** Why the Evaluate step waits on the owner's steps; null when it does not. */
+  ownerWait?: string | null;
 }
 
 /**
  * The Eval tab (AC-136.32): a run of the evaluator, every delivery's eval (never only the last
  * one) with its verdict and scope, and the selected eval's note read in place.
  */
-export function EvalTab({ project, slug, tickets, evals, selected, onSelect }: EvalTabProps) {
+export function EvalTab({
+  project,
+  slug,
+  tickets,
+  evals,
+  selected,
+  onSelect,
+  ownerWait = null,
+}: EvalTabProps) {
   const strip = (
-    <EvalRunStrip project={project} slug={slug} tickets={tickets} evals={evals} onShow={onSelect} />
+    <>
+      {ownerWait && (
+        <OwnerSignOff project={project} slug={slug} reason={ownerWait} onShow={onSelect} />
+      )}
+      <EvalRunStrip
+        project={project}
+        slug={slug}
+        tickets={tickets}
+        evals={evals}
+        onShow={onSelect}
+      />
+    </>
   );
   if (evals.length === 0) {
     return (

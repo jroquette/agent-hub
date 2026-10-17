@@ -131,6 +131,11 @@ LINEAR_PATHS: frozenset[tuple[str, str]] = frozenset(
     (method, f"{API_PREFIX}/tracker/linear") for method in ("get", "put", "delete")
 )
 
+# The owner signs off a feature's owner steps (playground): a new SHIP eval in the hub.
+OWNER_SIGNOFF_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/owner-signoff")}
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
     P2_PATHS
@@ -142,6 +147,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | RUN_COMMAND_PATHS
     | GATE_PATHS
     | LINEAR_PATHS
+    | OWNER_SIGNOFF_PATHS
 )
 
 

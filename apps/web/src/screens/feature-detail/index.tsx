@@ -286,6 +286,13 @@ function featureDiscussTarget(
   };
 }
 
+/** Why the Evaluate step waits on the owner's steps (SHIP-WITH-OWNER-STEPS); null otherwise. */
+function ownerWait(steps: readonly { name: string; meta: string | null; reason: string | null }[]) {
+  const step = steps.find((s) => s.name === "evaluate");
+  if (step?.meta !== "waiting: owner steps") return null;
+  return step.reason ?? "Some ACs wait on owner steps.";
+}
+
 /** Feature detail (spec 17, D23): golden path, owner steps, acceptance criteria. */
 export function FeatureDetailScreen() {
   const { project = "", slug = "" } = useParams();
@@ -367,6 +374,7 @@ export function FeatureDetailScreen() {
         slug={detail.slug}
         tickets={detail.issues}
         evals={detail.evals}
+        ownerWait={ownerWait(detail.golden_path.steps)}
         selected={selectedEval}
         onSelect={(delivery) => {
           setParams(
