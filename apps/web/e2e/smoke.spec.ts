@@ -234,7 +234,7 @@ test("Brain shows the tree and a note, and follows an in-app link", async ({ pag
 });
 
 // AGH-136 (AC-136.35, E4): `hub web` runs without LINEAR_API_KEY, so the Tickets tab shows the
-// plan's tickets (T1 is DEM-7; T2, not created yet, waits on it), the planning view and the
+// plan's tickets (T1 is DEM-7; T2, not created yet, waits on it), the ticket flow and the
 // "not connected" notice. Run alone by test_shows_plan_notice_when_feature_tickets_opened.
 test("Feature detail Tickets tab shows the plan's tickets, planning and the not-connected notice", async ({
   page,
@@ -260,10 +260,10 @@ test("Feature detail Tickets tab shows the plan's tickets, planning and the not-
     await expect(table.getByText("Add the button")).toBeVisible();
     await expect(table.getByText("not created")).toBeVisible();
     await expect(page.getByText(/2 tickets · from the plan \(features\.json\)/)).toBeVisible();
-    const planning = page.getByRole("region", { name: "Planning" });
-    await expect(planning.getByRole("heading", { name: "Parallel groups" })).toBeVisible();
-    await expect(planning.getByText("Layer 2")).toBeVisible();
-    await expect(planning.getByRole("heading", { name: "Recommended order" })).toBeVisible();
+    const flow = page.getByRole("region", { name: "Ticket flow" });
+    await expect(flow.getByRole("heading", { name: "Ticket flow" })).toBeVisible();
+    await expect(flow.getByRole("listitem", { name: /^Step 1 · / })).toBeVisible();
+    await expect(flow.getByRole("listitem", { name: /^Step 2 · / })).toBeVisible();
   });
 });
 
