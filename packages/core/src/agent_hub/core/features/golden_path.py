@@ -2,10 +2,12 @@
 
 Steps, in order: Spec, Research and Plan (their record file is written; one left out while a
 later record exists is ``skipped``), Tickets (every planned ticket has a tracker id), Implement
-(every ticket Done in Linear and every AC passing), Review (every ticket reviewed: Done in Linear
-or an approved review record), Evaluate (the latest eval of every AC is a SHIP, none waiting on
-owner steps) and Shipped (every ticket Done in Linear). Canceled tickets and withdrawn ACs are
-left out of every count.
+(every ticket delivered: In Review or Done in Linear, or with an approved review record; with no
+tickets, every AC passing; its meta also counts the ACs passing and the tickets still in
+progress), Review (every ticket reviewed: Done in Linear or an approved review record),
+Evaluate (the latest eval of every AC is a SHIP, none waiting on owner steps) and Shipped
+(every ticket Done in Linear). Canceled tickets and withdrawn ACs are left out of every count;
+an epic (a ticket with children) counts only under Tickets, as it tracks the others.
 
 The fold: steps hold in turn until the first that does not, the gate; it is ``current`` (or
 ``unknown`` when its evidence cannot be read) and the ``phase``. No step after the gate is
@@ -57,7 +59,7 @@ _DOC_STEPS: Final[tuple[tuple[FeaturePhase, str], ...]] = (
     ("plan", PLAN_FILE),
 )
 _CANCELED: Final = frozenset({"canceled", "duplicate"})
-_NOT_YET: Final = {"tickets": "tickets not Done", "ACs": "ACs not passing"}
+_NOT_YET: Final = {"tickets": "tickets not in review or Done yet", "ACs": "ACs not passing"}
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -118,9 +120,13 @@ class _Own:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class _Facts:
     inputs: GoldenInputs
+    # Every ticket not canceled; ``active`` leaves out the epics, which only track the others.
+    planned: tuple[TicketRow, ...]
     active: tuple[TicketRow, ...]
     acs: tuple[RecordAc, ...]
     done: int
+    # Tickets whose work is handed over: Done, in a review state, or with an approved review.
+    delivered: int
 
     @property
     def linear(self) -> bool:
@@ -176,14 +182,17 @@ def _after_gate(own: _Own, gate: GoldenStep) -> tuple[StepState, str | None]:
 
 
 def _owns(inputs: GoldenInputs) -> dict[FeaturePhase, _Own]:
-    active = tuple(
+    planned = tuple(
         row for row in inputs.rows if row.state is None or row.state.type not in _CANCELED
     )
+    active = tuple(row for row in planned if not row.children)
     facts = _Facts(
         inputs=inputs,
+        planned=planned,
         active=active,
         acs=tuple(ac for ac in inputs.acs if not ac.withdrawn),
         done=sum(row.state is not None and row.state.type == "completed" for row in active),
+        delivered=sum(_delivered(row) for row in active),
     )
     owns: dict[FeaturePhase, _Own] = {
         name: _document(facts, file=file, later=_DOC_STEPS[index + 1 :])
@@ -214,12 +223,12 @@ def _document(facts: _Facts, *, file: str, later: tuple[tuple[FeaturePhase, str]
 
 
 def _tickets(facts: _Facts) -> _Own:
-    total = len(facts.active)
+    total = len(facts.planned)
     if total == 0:
         if ISSUES_FILE in facts.inputs.files:
             return _Own(holds=True)
         return _Own(holds=False, reason="no tickets planned in features.json")
-    created = sum(row.id is not None for row in facts.active)
+    created = sum(row.id is not None for row in facts.planned)
     return _Own(
         holds=created == total,
         meta=f"{created} of {total} created",
@@ -229,20 +238,49 @@ def _tickets(facts: _Facts) -> _Own:
     )
 
 
+def _delivered(row: TicketRow) -> bool:
+    """Whether the ticket's implementation is handed over: Done in Linear, in a review state
+    (a started state whose name says review, such as In Review), or with an approved review."""
+    if row.reviewed is True:
+        return True
+    if row.state is None:
+        return False
+    if row.state.type == "completed":
+        return True
+    return row.state.type == "started" and "review" in row.state.name.lower()
+
+
 def _implement(facts: _Facts) -> _Own:
+    """Implement is the code being written: it ends when every ticket is delivered (In Review
+    or Done), not when it ships. The ACs gate it only when there are no tickets to count; with
+    tickets, a failing AC is Evaluate's to report, and here it is only counted in the meta."""
     total, acs = len(facts.active), len(facts.acs)
     passing = sum(ac.passes for ac in facts.acs)
     if total == 0 and acs == 0:
         return _Own(holds=False, reason="no tickets or acceptance criteria recorded")
+    tickets_read = bool(total) and facts.linear
     counts: list[tuple[int, int, str]] = []
-    if total and facts.linear:
-        counts.append((facts.done, total, "tickets"))
+    if tickets_read:
+        counts.append((facts.delivered, total, "tickets"))
     if acs:
         counts.append((passing, acs, "ACs"))
     progress = StepProgress(done=counts[0][0], total=counts[0][1]) if counts else None
-    meta = " · ".join(f"{done}/{of} {noun}" for done, of, noun in counts) or None
-    started = passing > 0 or facts.done > 0
-    missing = [f"{of - done} of {of} {_NOT_YET[noun]}" for done, of, noun in counts if done < of]
+    parts = [
+        f"{done}/{of} {'tickets delivered' if noun == 'tickets' else noun}"
+        for done, of, noun in counts
+    ]
+    # Tickets under way (In Progress) are not delivered yet but are not idle either.
+    working = (
+        sum(row.readiness == "in_progress" and not _delivered(row) for row in facts.active)
+        if facts.linear
+        else 0
+    )
+    if working:
+        parts.insert(1 if total else 0, f"{working} in progress")
+    meta = " · ".join(parts) or None
+    started = passing > 0 or facts.delivered > 0 or working > 0
+    gating = counts[:1] if tickets_read else counts
+    missing = [f"{of - done} of {of} {_NOT_YET[noun]}" for done, of, noun in gating if done < of]
     if missing:
         reason = "; ".join(missing)
         return _Own(holds=False, meta=meta, reason=reason, progress=progress, started=started)

@@ -25,7 +25,6 @@ import {
   VIRTUAL_THRESHOLD,
   type DataTableColumn,
   type Facet,
-  type Status,
 } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtClock, fmtDuration, fmtInt, fmtMoney, fmtTokens } from "../../lib/format";
@@ -58,6 +57,7 @@ import {
   useResumeLink,
 } from "./DrivenControls";
 import { LiveDigest } from "./LiveDigest";
+import { badgeOf } from "./badge";
 import { rowHref, withDriven } from "./drivenRows";
 import { GridSection } from "./GridSection";
 import {
@@ -88,21 +88,6 @@ const VIEWS: { name: string; params: Record<string, string> }[] = [
   { name: "Guard denials", params: { guard_denial: "1", period: "30 d" } },
   { name: "Expensive sessions", params: { sort: "-cost", period: "30 d" } },
 ];
-
-const OUTCOME_BADGE: Record<NonNullable<Session["outcome"]>, [Status, string]> = {
-  done: ["done", "Done"],
-  stopped: ["stopped", "Stopped"],
-  blocked: ["blocked", "Blocked"],
-  error: ["error", "Error"],
-};
-
-function badgeOf(session: Session): [Status, string] {
-  if (session.status === "live") return ["live", "Live"];
-  if (session.status === "waiting") return ["waiting", "Waiting"];
-  if (session.status === "idle") return ["idle", "Idle"];
-  if (session.outcome) return OUTCOME_BADGE[session.outcome];
-  return ["ended", session.end_inferred ? "Ended · no end event" : "Ended"];
-}
 
 function tokensTotal(session: Session): number | null {
   const tokens = session.tokens;

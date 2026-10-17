@@ -3131,7 +3131,15 @@ export interface components {
       url: string;
     };
     /** @enum {string} */
-    Readiness: "can_start" | "waiting" | "done" | "canceled" | "in_cycle" | "unknown";
+    Readiness:
+      | "can_start"
+      | "in_progress"
+      | "waiting"
+      | "done"
+      | "canceled"
+      | "in_cycle"
+      | "epic"
+      | "unknown";
     /** @enum {string} */
     RecordBy: "web" | "timeout" | "closed" | "driver" | "server";
     /** @enum {string} */
@@ -3981,9 +3989,11 @@ export interface components {
      * @description The planning of the feature's tickets, every ticket named by its row's ``ref``.
      *
      *     ``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);
-     *     ``can_start`` the first layer's tickets that wait on nothing; ``order`` the recommended
-     *     order; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle
-     *     (left out of the layers); ``critical_path`` the longest chain of tickets not done.
+     *     ``can_start`` the first layer's tickets that wait on nothing and are not started yet;
+     *     ``order`` the recommended order; ``waiting`` the tickets with a blocker not done;
+     *     ``cycles`` each dependency cycle (left out of the layers); ``critical_path`` the longest
+     *     chain of tickets not done; ``epics`` the rows that are a parent of other rows: they track
+     *     the work, are left out of the layers and never block.
      */
     TicketPlan: {
       /** Can Start */
@@ -3992,6 +4002,11 @@ export interface components {
       critical_path: string[];
       /** Cycles */
       cycles: string[][];
+      /**
+       * Epics
+       * @default []
+       */
+      epics: string[];
       /** External Blockers */
       external_blockers: components["schemas"]["ExternalBlocker"][];
       /** Layers */
@@ -4012,6 +4027,8 @@ export interface components {
      *     come from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the
      *     AC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of
      *     its blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).
+     *     ``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent
+     *     issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
      */
     TicketRow: {
       /** Acs */
@@ -4022,6 +4039,11 @@ export interface components {
       blocked_by: components["schemas"]["TicketEdge"][];
       /** Blocks */
       blocks: string[];
+      /**
+       * Children
+       * @default []
+       */
+      children: string[];
       /** Estimate */
       estimate: number | null;
       /** Id */
@@ -4030,6 +4052,8 @@ export interface components {
       key: string | null;
       /** Order */
       order: number | null;
+      /** Parent */
+      parent?: string | null;
       /** Priority */
       priority: number | null;
       readiness: components["schemas"]["Readiness"];
@@ -6535,6 +6559,7 @@ export interface operations {
         outcome?: components["schemas"]["Outcome"] | null;
         workflow?: string | null;
         run_id?: string | null;
+        issue?: string | null;
         from?: string | null;
         to?: string | null;
         cost_min?: number | string | null;

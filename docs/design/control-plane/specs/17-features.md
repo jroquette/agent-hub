@@ -101,6 +101,61 @@ Built after the owner validated these in the playground; where this file says ot
 - **AC-269.17** `GET /projects/{project}/brain/note` returns `sha256`, the hex SHA-256 of the file's bytes.
 - **AC-269.18** hub-workflow ships `/summarize` (records: [feature-records.md](../../feature-records.md)), and
   `/feature`, `/research` and `/create-plan` run it each time they write or amend a record.
+## Departures (AGH-268, ticket flow)
+
+Built with the changes below, validated by the owner in the playground; where this file or the AGH-136 list says
+otherwise, this list wins. Each item is an acceptance criterion.
+
+- **AC-268.1 In progress.** Given a ticket started in Linear (a `started` state such as In Progress or In Review),
+  when the tickets are planned, then its readiness is `in_progress` ("In progress"): it wins over waiting on a
+  blocker and is never listed in `can_start`.
+- **AC-268.2 Flow.** Given the Tickets tab, when it opens, then it leads with a flow: the parallel groups as steps
+  left to right, then the settled tickets; each card shows the ticket's Linear status, readiness, AC progress,
+  review and whether it is on the critical path.
+- **AC-268.3 Folded ACs.** Given a ticket with many ACs, when the table shows it, then its ACs fold into how many
+  pass.
+- **AC-268.4 Live.** Given the Tickets tab is open, then it rereads Linear every 30 s (the server still caches it for
+  60 s) and the record every 15 s, and the source line says how long ago Linear was read.
+- **AC-268.5 Implement counts work under way.** Given tickets in progress, when the golden path is built, then
+  Implement's meta counts them ("0/3 tickets delivered · 2 in progress · 17/18 ACs") and a started ticket marks the
+  step as started.
+- **AC-268.6 Features list refresh.** Given the Features list is open, then it rereads the records every 30 s.
+- **AC-268.7 Epics.** Given a ticket that is the parent of another row (the plan's optional `parent`, else Linear's
+  parent issue), when the tickets are planned, then it is an epic: readiness `epic`, listed under `planning.epics`,
+  never in a layer, on the critical path or in a blocker's place; the golden path counts it under Tickets only.
+- **AC-268.8 Epic card.** Given an epic, when the Tickets tab opens, then an epic card heads the flow (its Linear
+  status and link, a bar of its children done and in progress, their AC count), and the table lists the epic
+  first, tagged, with its children under it.
+- **AC-268.9 Plan parent.** Given a plan whose `parent` names no ticket of the plan or the ticket itself, when
+  `hub doctor` runs, then it reports it; the planner writes `parent` on each child of an epic.
+- **AC-268.10 Implement ends at review.** Given every ticket In Review or Done in Linear (or with an approved review
+  record), when the golden path is built, then Implement is done; with tickets, a failing AC no longer holds
+  Implement (Evaluate reports it) and is only counted in Implement's meta.
+- **AC-268.11 Graph.** Given the ticket flow, then its steps share the width and an edge is drawn from each blocker
+  to the ticket it holds back, the critical path, plan-only and started-early edges styled apart (the node
+  measuring is the workflow graph's, as a shared hook).
+- **AC-268.12 Cards.** Given a card of the flow, then it leads with the id and the title (a conventional-commit prefix
+  as a chip), with readiness and an AC meter below a divider; the legend folds beside the flow's title.
+- **AC-268.13 Table.** Given the Tickets table, then ids stay on one line, an epic is tagged in its title and its
+  children are marked with a branch.
+- **AC-268.14 Done stays put.** Given a ticket that is done, when the flow is drawn, then it stays in its step, so the
+  steps after it do not move.
+- **AC-268.15 Opening tab.** Given a feature without `?doc=`, when it opens, then it opens where its work is: the
+  record being written (Spec, Research, Plan), Tickets while it is built and reviewed, Criteria once it is evaluated
+  or shipped.
+- **AC-268.16 Steps open tabs.** Given the golden path, when a step is chosen, then the tab holding its evidence opens
+  (Evaluate opens Eval).
+- **AC-268.17 Header chips.** Given the feature's tickets, then each header chip shows the id with its Linear status
+  and the title on hover; the "PR —" placeholder is gone while GitHub is not connected.
+- **AC-268.18 Sessions by issue.** Given `GET /sessions?issue=<id>` (any case), then it lists the sessions about that
+  issue: the issue their run names, else the one their branch or worktree names for the hub's tracker teams.
+- **AC-268.19 Ticket sessions.** Given the Tickets table, then each ticket lists its sessions (asked by its issue), each
+  linked to its detail (or its chat when driven), with its status (as the Sessions list shows it) and start time.
+- **AC-268.20 Scope column.** Given ticket titles with a conventional-commit scope, then the scope has its own column,
+  so the chips and the titles line up across rows.
+- **AC-268.21 Start a ticket.** Given a created ticket that can start now, then its card and row offer Start, which
+  starts a Claude session in the hub folder that works that one ticket with `/feature` from its workspace step and
+  opens its chat; disabled, with the reason, when this machine cannot drive Claude or the hub has no folder.
 
 ---
 

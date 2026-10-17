@@ -19,6 +19,7 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { FeatureDetailScreen } from "./index";
+import { FEATURE_REFRESH_MS, TICKETS_REFRESH_MS } from "./queries";
 
 const API = "/api/v1/features/agent-hub/layered-memory";
 const TICKETS = `${API}/tickets`;
@@ -494,23 +495,26 @@ describe("FeatureDetailScreen", () => {
     });
 
     it("says when an AC has no evidence or verification yet (records)", async () => {
-      open({
-        [API]: aFeatureDetail({
-          slug: "layered-memory",
-          acs: { owner_steps: 0, passing: 0, total: 1 },
-          ac_rows: [
-            {
-              id: "AC-48.1",
-              description: "Plain",
-              repo: null,
-              passes: false,
-              manual: false,
-              evidence: null,
-              command: null,
-            },
-          ],
-        }),
-      });
+      open(
+        {
+          [API]: aFeatureDetail({
+            slug: "layered-memory",
+            acs: { owner_steps: 0, passing: 0, total: 1 },
+            ac_rows: [
+              {
+                id: "AC-48.1",
+                description: "Plain",
+                repo: null,
+                passes: false,
+                manual: false,
+                evidence: null,
+                command: null,
+              },
+            ],
+          }),
+        },
+        "/features/agent-hub/layered-memory?doc=acs",
+      );
 
       await userEvent.click(await screen.findByRole("button", { name: "Expand AC-48.1" }));
 
@@ -561,6 +565,7 @@ describe("FeatureDetailScreen", () => {
         external_blockers: [],
         critical_path: ["AGH-48", "AGH-49"],
         warnings: [],
+        epics: [],
       },
     });
     const asked = (requests: Request[], path: string) =>
@@ -588,6 +593,33 @@ describe("FeatureDetailScreen", () => {
       expect(asked(requests, TICKETS)).toBe(1);
     });
 
+    it("rereads the record every 15 s and Linear every 30 s while the Tickets tab is open (refresh)", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const { requests } = open(
+          { [TICKETS]: tickets },
+          "/features/agent-hub/layered-memory?doc=tickets",
+        );
+        await screen.findByRole("table", { name: "Tickets" });
+        const record = asked(requests, API);
+        const linear = asked(requests, TICKETS);
+
+        await vi.advanceTimersByTimeAsync(FEATURE_REFRESH_MS);
+        await waitFor(() => {
+          expect(asked(requests, API)).toBeGreaterThan(record);
+        });
+        await vi.advanceTimersByTimeAsync(TICKETS_REFRESH_MS - FEATURE_REFRESH_MS);
+        await waitFor(() => {
+          expect(asked(requests, TICKETS)).toBeGreaterThan(linear);
+        });
+        expect(screen.getByText(/Live from Linear · read/)).toHaveTextContent(
+          "updates every 30 s while this tab is open",
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("opens the Tickets tab from an old ?doc=issues link (tickets)", async () => {
       open({ [TICKETS]: tickets }, "/features/agent-hub/layered-memory?doc=issues");
 
@@ -595,19 +627,40 @@ describe("FeatureDetailScreen", () => {
       expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
     });
 
-    it("names the header chips with ticket titles once the tickets load, linking to Linear (tickets)", async () => {
+    it("shows each header chip with its Linear status and title on hover, and no PR placeholder (tickets)", async () => {
       open({ [TICKETS]: tickets }, "/features/agent-hub/layered-memory?doc=tickets");
 
       await screen.findByRole("table", { name: "Tickets" });
 
       const header = screen.getByRole("group", { name: "Tickets of this feature" });
-      expect(header).toHaveTextContent("AGH-48Load the memory layers");
-      expect(header).toHaveTextContent("AGH-49Show the layers");
-      expect(within(header).getByRole("link", { name: /AGH-48/ })).toHaveAttribute(
-        "href",
-        "https://linear.app/demo/issue/AGH-48",
-      );
+      const link = within(header).getByRole("link", { name: /AGH-48/ });
+      expect(link).toHaveAttribute("href", "https://linear.app/demo/issue/AGH-48");
+      expect(link).toHaveAttribute("title", "AGH-48 · Load the memory layers · opens in Linear");
+      expect(header).not.toHaveTextContent("Load the memory layers");
       expect(within(header).queryByRole("link", { name: /AGH-49/ })).toBeNull();
+      expect(within(header).getAllByText("In Progress")).toHaveLength(2);
+      expect(screen.queryByText("PR —")).toBeNull();
+    });
+
+    it("opens on the Tickets tab while the feature is implemented (tabs)", async () => {
+      const { requests } = open({ [API]: { ...detail, phase: "implement" }, [TICKETS]: tickets });
+
+      expect(await screen.findByRole("table", { name: "Tickets" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
+      expect(asked(requests, TICKETS)).toBe(1);
+    });
+
+    it("opens a step's tab from the golden path (golden path)", async () => {
+      const { router } = open({ [TICKETS]: tickets });
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Open the ticket plan of implement" }),
+      );
+
+      expect(await screen.findByRole("table", { name: "Tickets" })).toBeInTheDocument();
+      expect(router.state.location.search).toBe("?doc=tickets");
+      await userEvent.click(screen.getByRole("button", { name: "Open the eval of evaluate" }));
+      expect(screen.getByRole("tab", { name: "Eval" })).toHaveAttribute("aria-selected", "true");
     });
 
     it("shows the ticket ids in the header until the tickets load (tickets)", async () => {
@@ -718,7 +771,7 @@ describe("FeatureDetailScreen", () => {
           problem: "features.json could not be parsed (line 38: trailing comma)",
         }),
       },
-      "/features/agent-hub/layered-memory",
+      "/features/agent-hub/layered-memory?doc=acs",
     );
 
     const alert = await screen.findByRole("alert");
@@ -727,7 +780,10 @@ describe("FeatureDetailScreen", () => {
   });
 
   it("explains a feature without features.json", async () => {
-    open({ [API]: aFeatureDetail({ acs: null, ac_rows: [] }) });
+    open(
+      { [API]: aFeatureDetail({ acs: null, ac_rows: [] }) },
+      "/features/agent-hub/layered-memory?doc=acs",
+    );
 
     expect(await screen.findByText("No features.json yet.")).toBeInTheDocument();
   });
