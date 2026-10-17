@@ -98,9 +98,10 @@ function liveCall(state: TranscriptState, tool: ToolView, depth: number): LiveCa
   };
 }
 
-/** The index of the open turn's user message (a message queued during it starts none). */
-function turnIndex(state: TranscriptState): number {
-  if (!state.turnOpen) return -1;
+/** The index of the open turn's user message (a message queued during it starts none); with
+ * `ended`, of the last turn's even once it ended. */
+function turnIndex(state: TranscriptState, ended = false): number {
+  if (!state.turnOpen && !ended) return -1;
   return state.entries.findLastIndex((entry) => entry.kind === "user" && !entry.queued);
 }
 
@@ -155,9 +156,13 @@ function toolItem(state: TranscriptState, tool: ToolView, live: boolean): FeedIt
   };
 }
 
-/** The open turn's steps, oldest first: thoughts and the main agent's calls. */
-export function turnFeed(state: TranscriptState): { feed: FeedItem[]; earlier: number } {
-  const start = turnIndex(state);
+/** The open turn's steps (with `ended`, the last turn's), oldest first: thoughts and the main
+ * agent's calls, the last `max`. */
+export function turnFeed(
+  state: TranscriptState,
+  { ended = false, max = FEED_MAX }: { ended?: boolean; max?: number } = {},
+): { feed: FeedItem[]; earlier: number } {
+  const start = turnIndex(state, ended);
   if (start < 0) return { feed: [], earlier: 0 };
   const live = state.status === "running" || state.status === "waiting_permission";
   const items = state.entries.slice(start + 1).flatMap((entry): FeedItem[] => {
@@ -167,7 +172,7 @@ export function turnFeed(state: TranscriptState): { feed: FeedItem[]; earlier: n
     const tool = state.tools[entry.toolId];
     return tool ? [toolItem(state, tool, live)] : [];
   });
-  return { feed: items.slice(-FEED_MAX), earlier: Math.max(0, items.length - FEED_MAX) };
+  return { feed: items.slice(-max), earlier: Math.max(0, items.length - max) };
 }
 
 /** What the session is doing now; null when no turn runs (idle, ended, failed). */

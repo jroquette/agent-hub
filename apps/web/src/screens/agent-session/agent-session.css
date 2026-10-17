@@ -2282,12 +2282,35 @@ body.as-resizing .as-drawer {
   flex-direction: column;
   gap: 6px;
 }
-.as-feed-root {
-  max-height: min(45vh, 420px);
-  overflow: auto;
-  padding: var(--space-2) var(--space-3);
+/* The Live activity drawer: the turn's steps, following new ones. */
+.as-live-panel-now {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border);
+}
+.as-live-panel > .as-live-stall {
+  flex: none;
+  padding-inline: var(--space-4);
+}
+.as-live-panel-steps {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3) var(--space-4) var(--space-6, 24px);
   font-size: 13px;
+}
+.as-live-open-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+.as-live-bar:hover .as-live-open-label {
+  color: var(--accent);
 }
 .as-feed-nested {
   margin: 4px 0 0 18px;

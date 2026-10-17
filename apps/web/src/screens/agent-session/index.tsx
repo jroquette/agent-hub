@@ -19,8 +19,8 @@ import { sessionControlUnavailable } from "../sessions-list/control";
 import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
-import { liveActivity } from "./liveActivity";
-import { LiveActivityBar } from "./LiveActivityBar";
+import { liveActivity, turnFeed } from "./liveActivity";
+import { LiveActivityBar, LiveActivityPanel } from "./LiveActivityBar";
 import { CostMeter } from "./CostMeter";
 import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
 import { useResolvedThreads } from "./ReviewDiff";
@@ -135,6 +135,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [liveOpen, setLiveOpen] = useState(false);
   // The file a card in the conversation asked for; the nonce re-opens it in an open drawer.
   const [filePick, setFilePick] = useState<{ path: string | null; nonce: number }>({
     path: null,
@@ -145,8 +146,17 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const closeFiles = useCallback(() => {
     setFilesOpen(false);
   }, []);
+  // One drawer at a time: opening one closes the other.
+  const closePanels = useCallback(() => {
+    setFilesOpen(false);
+    setLiveOpen(false);
+  }, []);
+  const closeLive = useCallback(() => {
+    setLiveOpen(false);
+  }, []);
   const openFile = useCallback((path: string | null) => {
     setFilePick((before) => ({ path, nonce: before.nonce + 1 }));
+    setLiveOpen(false);
     setFilesOpen(true);
   }, []);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
@@ -220,6 +230,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   }
 
   const status = state.status ?? session.status;
+  const activity = liveActivity(state);
   const ended = isTerminal(status);
   const mode = state.mode ?? session.mode;
   const model = state.model ?? session.model ?? null;
@@ -343,12 +354,18 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           follow={follow}
           screenshotUrl={screenshotUrl}
           messageScreenshots={messageScreenshots}
-          onActivityOpen={closeFiles}
+          onActivityOpen={closePanels}
           files={files}
           reviewed={review.reviewed}
           onOpenFile={openFile}
           sidePanel={
-            filesOpen ? (
+            liveOpen ? (
+              <LiveActivityPanel
+                activity={activity}
+                {...turnFeed(state, { ended: true, max: 300 })}
+                onClose={closeLive}
+              />
+            ) : filesOpen ? (
               <FilesPanel
                 files={files}
                 sessionId={agentSessionId}
@@ -372,7 +389,14 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
       </OldestPendingContext.Provider>
       <footer className="as-footer">
         <div className="as-column">
-          <LiveActivityBar activity={liveActivity(state)} />
+          <LiveActivityBar
+            activity={activity}
+            open={liveOpen}
+            onToggle={() => {
+              setFilesOpen(false);
+              setLiveOpen(!liveOpen);
+            }}
+          />
           <Composer
             status={status}
             mode={mode}
