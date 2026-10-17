@@ -1,10 +1,220 @@
-/* Sessions list: tighter cells so the default columns fit at 1440 px (design SessionsList). */
-.sl-table .ah-table td,
-.sl-table .ah-table th {
-  padding: 0 var(--space-2);
+/* Sessions (redesign): calm header, status tabs, a filter toolbar, one grouped table. */
+.sl-screen {
+  padding: var(--space-4) var(--space-6) var(--space-8);
+  gap: var(--space-3);
 }
 
-/* Status sections (spec 14): a header button collapses each one. */
+/* What needs the owner, under the title. */
+.sl-attention {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  margin-top: calc(-1 * var(--space-2));
+}
+.sl-attention-parts,
+.sl-attention-calm {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.sl-attention-calm {
+  color: var(--text-muted);
+}
+.sl-attention-calm .ah-icon {
+  color: var(--done);
+}
+.sl-attention-link {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-weight: 600;
+  color: var(--waiting);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.sl-attention-trouble {
+  color: var(--failed);
+}
+.sl-attention-link:hover {
+  text-decoration: underline;
+}
+.sl-attention-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Toolbar: search + filter buttons + chips. */
+.sl-toolbar {
+  gap: var(--space-2);
+  align-items: center;
+}
+.sl-search {
+  width: 320px;
+  max-width: 100%;
+}
+.sl-search .ah-input {
+  height: 30px;
+  padding-right: 28px;
+}
+.sl-search-kbd {
+  position: absolute;
+  right: 8px;
+  pointer-events: none;
+}
+.sl-more-field {
+  gap: 4px;
+}
+.sl-more-field .ah-input {
+  height: 30px;
+}
+
+/* The grouped table: one header that sticks while the page scrolls. */
+.sl-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  /* `overflow: auto` would make the header stick to this box instead of the page. */
+  overflow: clip;
+  overflow-anchor: none;
+}
+.sl-table {
+  table-layout: fixed;
+}
+.sl-table td,
+.sl-table th {
+  padding: 0 var(--space-2);
+}
+.sl-table th.sl-col-status,
+.sl-table td.sl-col-status {
+  padding-left: var(--space-3);
+}
+.sl-table td {
+  height: 40px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sl-table .sl-group-row th {
+  position: static;
+  height: 32px;
+  padding: 0 var(--space-3);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--surface-sunken);
+  border-top: 1px solid var(--border);
+}
+.sl-table tbody:first-of-type .sl-group-row th {
+  border-top: 0;
+}
+.sl-group-toggle {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.sl-group-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.sl-group-updating {
+  margin-left: var(--space-2);
+  font-weight: 400;
+}
+.sl-table tbody[data-updating] td:first-child {
+  box-shadow: inset 3px 0 0 var(--border-strong);
+}
+.sl-table tr.sl-static,
+.sl-table tr.sl-skeleton {
+  cursor: default;
+}
+.sl-table tr.sl-static:hover td {
+  background: transparent;
+}
+.sl-more-row td {
+  height: 40px;
+}
+.sl-more-row td > * + * {
+  margin-left: var(--space-3);
+}
+/* A problem only the owner can fix: a red edge, with the words in Doing now (E11). */
+.sl-table tr[data-trouble] td:first-child {
+  box-shadow: inset 3px 0 0 var(--failed);
+}
+.sl-table tbody tr[data-nav-row]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Cells */
+.sl-session {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.sl-session-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: none;
+}
+.sl-session-title:hover {
+  text-decoration: underline;
+}
+.sl-session-detail {
+  flex: 1 1 0;
+  min-width: 40px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sl-chat-mark {
+  display: inline-flex;
+  align-self: center;
+  color: var(--text-subtle);
+}
+.sl-doing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.sl-doing .ah-icon {
+  flex: none;
+  color: var(--text-subtle);
+}
+.sl-doing[style] .ah-icon {
+  color: inherit;
+}
+.sl-actions {
+  display: inline-flex;
+  gap: var(--space-1);
+  justify-content: flex-end;
+  font-family: var(--font-sans);
+}
+.sl-table th.sl-col-actions,
+.sl-table td.sl-col-actions {
+  padding-right: var(--space-3);
+}
+
+.sl-foot {
+  gap: var(--space-3);
+  justify-content: space-between;
+  align-items: center;
+}
+.sl-keys .ah-kbd {
+  font-size: 11px;
+}
+
+/* Status sections of the grid view: a header button collapses each one. */
 .sl-sections {
   gap: var(--space-4);
   /* useScrollAnchor keeps the reader's row in place; the browser's own anchoring would double it. */
@@ -19,10 +229,6 @@
 .sl-section-updating {
   margin-left: var(--space-2);
   font-weight: 400;
-}
-/* A non-text cue that the rows are the previous ones; their text keeps its contrast. */
-.sl-section[data-updating] .ah-table-wrap {
-  box-shadow: inset 3px 0 0 var(--border-strong);
 }
 .sl-section-toggle {
   all: unset;

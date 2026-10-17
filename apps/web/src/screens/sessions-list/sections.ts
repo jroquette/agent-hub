@@ -5,10 +5,10 @@ import type { AgentSession, Session, SessionQuery } from "./queries";
 export type SectionId = "waiting" | "live" | "idle" | "ended";
 
 export const SECTIONS: { id: SectionId; title: string }[] = [
-  { id: "waiting", title: "Waiting" },
+  { id: "waiting", title: "Waiting for you" },
   { id: "live", title: "Live" },
   { id: "idle", title: "Idle" },
-  { id: "ended", title: "Ended or failed" },
+  { id: "ended", title: "Ended" },
 ];
 
 const SECTION_OF: Record<string, SectionId> = {
@@ -28,7 +28,7 @@ export function sectionOf(status: string): SectionId {
 
 /**
  * One `GET /sessions` query per section (null: the section is not asked). The URL's filters apply to
- * every section; a status facet keeps its own section, an outcome keeps Ended, and the period
+ * every section but the status (a tab, applied on screen); an outcome keeps Ended, and the period
  * filters Ended only, so a running session older than the period still shows (O-4).
  */
 export function sectionQueries(
@@ -36,8 +36,12 @@ export function sectionQueries(
   project: string | null,
   now: number,
 ): Record<SectionId, SessionQuery | null> {
-  const { from, status, ...base } = queryOf(params, project, now);
-  const only: SectionId | undefined = status ?? (base.outcome ? "ended" : undefined);
+  // The status tab only picks which group shows: every section is asked, so each tab has its count.
+  const base: SessionQuery = { ...queryOf(params, project, now) };
+  const { from } = base;
+  delete base.from;
+  delete base.status;
+  const only: SectionId | undefined = base.outcome ? "ended" : undefined;
   const ask = (id: SectionId): SessionQuery | null => {
     if (only && only !== id) return null;
     return id === "ended" && from ? { ...base, status: id, from } : { ...base, status: id };

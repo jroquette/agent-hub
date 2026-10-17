@@ -1,54 +1,15 @@
 import "./sessions-list.css";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
-import {
-  AsOfStamp,
-  Button,
-  DataTable,
-  EmptyState,
-  FilterChip,
-  FilterRail,
-  Icon,
-  IdChip,
-  IssueLink,
-  Popover,
-  ProblemError,
-  SavedViewMenu,
-  SegmentedControl,
-  SessionLabel,
-  Skeleton,
-  StatusBadge,
-  Tooltip,
-  VIRTUAL_THRESHOLD,
-  type DataTableColumn,
-  type Facet,
-} from "../../components";
-import { useNow } from "../../lib/clock";
-import { fmtClock, fmtDuration, fmtInt, fmtMoney, fmtTokens } from "../../lib/format";
+import { AsOfStamp, Button, EmptyState, Icon, SegmentedControl, Skeleton } from "../../components";
+import { fmtClock, fmtInt } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
 import { readStored, writeStored } from "../../lib/storage";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { typingIn } from "../../shell/goSequence";
-import {
-  FILTER_KEYS,
-  OUTCOMES,
-  PERIODS,
-  STATUSES,
-  TOOLS,
-  badDecimal,
-  chipsOf,
-  WITHINS,
-  periodOf,
-  sortOf,
-  viewOf,
-  withinOf,
-  type Period,
-  type View,
-} from "./filters";
 import {
   CloudSessions,
   DrivenBanner,
@@ -56,10 +17,10 @@ import {
   useDriving,
   useResumeLink,
 } from "./DrivenControls";
-import { LiveDigest } from "./LiveDigest";
-import { badgeOf } from "./badge";
-import { rowHref, withDriven } from "./drivenRows";
+import { rowHref } from "./drivenRows";
+import { FILTER_KEYS, STATUSES, periodOf, sortOf, viewOf, withinOf, type View } from "./filters";
 import { GridSection } from "./GridSection";
+import { LiveDigest } from "./LiveDigest";
 import {
   useAgentSessions,
   useProjects,
@@ -67,476 +28,24 @@ import {
   useSectionRefresh,
   type Session,
 } from "./queries";
-import { SECTIONS, placeDriven, sectionCount, sectionQueries, type SectionId } from "./sections";
+import { fold, needsYou, openHref, searchText } from "./rows";
+import {
+  SECTIONS,
+  isDriven,
+  placeDriven,
+  sectionCount,
+  sectionQueries,
+  type SectionId,
+  type SectionRow,
+} from "./sections";
 import { SessionSection, useCollapsed } from "./SessionSection";
+import { SessionsTable, type TableGroup } from "./SessionsTable";
+import { Toolbar, periodLabel } from "./Toolbar";
 import { useScrollAnchor } from "./useScrollAnchor";
 
-const COLUMNS_KEY = "ah.sessions.columns";
-/** A section past VIRTUAL_THRESHOLD rows scrolls inside this height (as the learnings table). */
-const SECTION_MAX_HEIGHT = 640;
-const DENSITY_KEY = "ah.sessions.density";
 const VIEW_KEY = "ah.sessions.view";
-const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
 /** The session's issue: the label's (S1), else the run's. */
 const issueOf = (s: Session) => s.label?.issue ?? s.issue ?? null;
-
-/** Built-in saved views (spec 14): each is a set of URL filters. */
-const VIEWS: { name: string; params: Record<string, string> }[] = [
-  { name: "Default", params: {} },
-  { name: "Live now", params: { status: "live", period: "All" } },
-  { name: "Errors this week", params: { outcome: "error", period: "7 d" } },
-  { name: "Guard denials", params: { guard_denial: "1", period: "30 d" } },
-  { name: "Expensive sessions", params: { sort: "-cost", period: "30 d" } },
-];
-
-function tokensTotal(session: Session): number | null {
-  const tokens = session.tokens;
-  return tokens ? tokens.input + tokens.output + tokens.cache_read + tokens.cache_write : null;
-}
-
-function tokensTip(session: Session): string {
-  const tokens = session.tokens;
-  if (!tokens) return "No token usage in the transcript yet.";
-  return `Input ${fmtInt(tokens.input)} · output ${fmtInt(tokens.output)} · cache read ${fmtInt(tokens.cache_read)} · cache write ${fmtInt(tokens.cache_write)}`;
-}
-
-function zeroSubtle(value: number, danger = false): ReactNode {
-  return (
-    <span
-      style={
-        value === 0
-          ? { color: "var(--text-subtle)" }
-          : danger
-            ? { color: "var(--failed)" }
-            : undefined
-      }
-    >
-      {fmtInt(value)}
-    </span>
-  );
-}
-
-/** A session's duration; only a running one reads the second clock, so a tick re-renders just its cell. */
-function Elapsed({ session }: { session: Session }) {
-  return session.ended_at ? (
-    fmtDuration((Date.parse(session.ended_at) - Date.parse(session.started_at)) / 1000)
-  ) : (
-    <RunningFor start={session.started_at} />
-  );
-}
-
-function RunningFor({ start }: { start: string }) {
-  const now = useNow(1000);
-  return fmtDuration((now - Date.parse(start)) / 1000);
-}
-
-interface ColumnDef {
-  id: string;
-  label: string;
-  on: boolean;
-  sort?: "started_at" | "last_activity_at" | "cost" | undefined;
-  column: (ctx: { tz: "local" | "utc" }) => DataTableColumn<Session>;
-}
-
-const COLUMN_DEFS: ColumnDef[] = [
-  {
-    id: "started",
-    label: "Started",
-    on: true,
-    sort: "started_at",
-    column: ({ tz }) => ({
-      id: "started",
-      label: "Started",
-      sortable: true,
-      render: (s) => (
-        <span className="ah-mono" style={{ fontSize: 12 }} title={s.started_at}>
-          {new Date(s.started_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}{" "}
-          {fmtClock(s.started_at, tz)}
-        </span>
-      ),
-    }),
-  },
-  {
-    id: "duration",
-    label: "Duration",
-    on: true,
-    column: () => ({
-      id: "duration",
-      label: "Duration",
-      align: "right",
-      render: (s) => <Elapsed session={s} />,
-    }),
-  },
-  {
-    id: "project",
-    label: "Project",
-    on: true,
-    column: () => ({ id: "project", label: "Project", render: (s) => s.project }),
-  },
-  {
-    id: "repo",
-    label: "Repo",
-    on: true,
-    column: () => ({
-      id: "repo",
-      label: "Repo",
-      render: (s) => (
-        <span className="ah-mono" style={{ fontSize: 12 }}>
-          {s.repo ?? "—"}
-        </span>
-      ),
-    }),
-  },
-  {
-    id: "session",
-    label: "Session",
-    on: true,
-    column: () => ({
-      id: "session",
-      label: "Session",
-      render: (s) => (
-        <span style={{ display: "inline-block", maxWidth: 240, verticalAlign: "middle" }}>
-          <SessionLabel session={s} />
-        </span>
-      ),
-    }),
-  },
-  {
-    id: "issue",
-    label: "Issue / run",
-    on: true,
-    column: () => ({
-      id: "issue",
-      label: "Issue / run",
-      render: (s) => (
-        <span className="ah-row" style={{ gap: 6 }}>
-          {issueOf(s) ? <IssueLink id={issueOf(s) ?? ""} /> : null}
-          {s.run_id ? (
-            <Tooltip
-              label={`Run ${s.run_id}${s.step ? ` · step ${s.step}` : ""}${s.attempt ? ` #${String(s.attempt)}` : ""}`}
-            >
-              <span className="ah-mono ah-small ah-subtle">run {short(s.run_id)}</span>
-            </Tooltip>
-          ) : (
-            <span className="ah-small ah-subtle">no run</span>
-          )}
-        </span>
-      ),
-    }),
-  },
-  {
-    id: "outcome",
-    label: "Outcome",
-    on: true,
-    column: () => ({
-      id: "outcome",
-      label: "Outcome",
-      render: (s) => {
-        const [status, label] = badgeOf(s);
-        return <StatusBadge status={status} label={label} />;
-      },
-    }),
-  },
-  {
-    id: "turns",
-    label: "Turns",
-    on: true,
-    column: () => ({ id: "turns", label: "Turns", align: "right", render: (s) => fmtInt(s.turns) }),
-  },
-  {
-    id: "tokens",
-    label: "Tokens",
-    on: true,
-    column: () => ({
-      id: "tokens",
-      label: "Tokens",
-      align: "right",
-      render: (s) => <span title={tokensTip(s)}>{fmtTokens(tokensTotal(s))}</span>,
-    }),
-  },
-  {
-    id: "cost",
-    label: "Cost",
-    on: true,
-    sort: "cost",
-    column: () => ({
-      id: "cost",
-      label: "Cost",
-      align: "right",
-      sortable: true,
-      hint: "Estimated from transcript",
-      render: (s) => (
-        <span title={s.cost_unknown_reason ?? `${fmtMoney(s.cost_usd, 4)} USD · estimated`}>
-          {fmtMoney(s.cost_usd, 4)}
-        </span>
-      ),
-    }),
-  },
-  {
-    id: "files",
-    label: "Files",
-    on: true,
-    column: () => ({
-      id: "files",
-      label: "Files",
-      align: "right",
-      render: (s) => zeroSubtle(s.files_touched),
-    }),
-  },
-  {
-    id: "errors",
-    label: "Errors",
-    on: true,
-    column: () => ({
-      id: "errors",
-      label: "Errors",
-      align: "right",
-      hint: "Tool errors and guard denials",
-      render: (s) => zeroSubtle(s.errors + s.guard_denials, true),
-    }),
-  },
-  {
-    id: "transcript",
-    label: "Transcript",
-    on: true,
-    column: () => ({
-      id: "transcript",
-      label: "Transcript",
-      render: (s) => (
-        <span className="ah-small ah-muted">{s.has_transcript ? "local file" : "—"}</span>
-      ),
-    }),
-  },
-  {
-    id: "id",
-    label: "Session id",
-    on: false,
-    column: () => ({ id: "id", label: "Session id", render: (s) => <IdChip id={s.id} /> }),
-  },
-  {
-    id: "model",
-    label: "Model",
-    on: false,
-    column: () => ({
-      id: "model",
-      label: "Model",
-      render: (s) => <span className="ah-mono ah-small">{s.model ?? "—"}</span>,
-    }),
-  },
-  {
-    id: "last",
-    label: "Last activity",
-    on: false,
-    sort: "last_activity_at",
-    column: ({ tz }) => ({
-      id: "last",
-      label: "Last activity",
-      sortable: true,
-      render: (s) => (
-        <span className="ah-mono" style={{ fontSize: 12 }}>
-          {fmtClock(s.last_activity_at, tz)}
-        </span>
-      ),
-    }),
-  },
-  {
-    id: "guard",
-    label: "Guard denials",
-    on: false,
-    column: () => ({
-      id: "guard",
-      label: "Guard denials",
-      align: "right",
-      render: (s) => zeroSubtle(s.guard_denials),
-    }),
-  },
-  {
-    id: "resumed",
-    label: "Resumed",
-    on: false,
-    column: () => ({
-      id: "resumed",
-      label: "Resumed",
-      align: "right",
-      render: (s) => (s.segments.length > 1 ? `${String(s.segments.length)} segments` : ""),
-    }),
-  },
-];
-
-/** Comfortable density: two-line cells, as the design's default view (spec 14). */
-const COMFORTABLE: ColumnDef[] = [
-  {
-    id: "started",
-    label: "Started",
-    on: true,
-    sort: "started_at",
-    column: ({ tz }) => ({
-      id: "started",
-      label: "Started",
-      sortable: true,
-      render: (s) => (
-        <div className="ah-stack" style={{ gap: 0, padding: "4px 0" }}>
-          <span className="ah-mono" style={{ fontSize: 12 }} title={s.started_at}>
-            {new Date(s.started_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}{" "}
-            {fmtClock(s.started_at, tz)}
-          </span>
-          <span className="ah-small ah-subtle">
-            <Elapsed session={s} />
-          </span>
-        </div>
-      ),
-    }),
-  },
-  {
-    id: "session",
-    label: "Session",
-    on: true,
-    column: () => ({
-      id: "session",
-      label: "Session",
-      render: (s) => (
-        <div style={{ maxWidth: 260, padding: "4px 0" }}>
-          <SessionLabel session={s} />
-        </div>
-      ),
-    }),
-  },
-  ...COLUMN_DEFS.filter((def) => def.id === "project"),
-  {
-    id: "issue",
-    label: "Issue / run",
-    on: true,
-    column: () => ({
-      id: "issue",
-      label: "Issue / run",
-      render: (s) => (
-        <div className="ah-stack" style={{ gap: 0 }}>
-          {issueOf(s) ? (
-            <IssueLink id={issueOf(s) ?? ""} />
-          ) : (
-            <span className="ah-small ah-subtle">no issue</span>
-          )}
-          {s.run_id ? (
-            <span
-              className="ah-mono ah-small ah-subtle"
-              title={`Run ${s.run_id}${s.step ? ` · step ${s.step}` : ""}`}
-            >
-              run {short(s.run_id)}
-            </span>
-          ) : (
-            <span className="ah-small ah-subtle">no run</span>
-          )}
-        </div>
-      ),
-    }),
-  },
-  ...COLUMN_DEFS.filter((def) => def.id === "outcome"),
-  {
-    id: "turns",
-    label: "Turns · tok.",
-    on: true,
-    column: () => ({
-      id: "turns",
-      label: "Turns · tok.",
-      align: "right",
-      render: (s) => (
-        <div className="ah-stack" style={{ gap: 0, alignItems: "flex-end" }}>
-          <span>{fmtInt(s.turns)}</span>
-          <span
-            className="ah-subtle"
-            style={{ fontSize: 12, whiteSpace: "nowrap" }}
-            title={tokensTip(s)}
-          >
-            {fmtTokens(tokensTotal(s))}
-          </span>
-        </div>
-      ),
-    }),
-  },
-  ...COLUMN_DEFS.filter((def) => def.id === "cost"),
-  {
-    id: "fe",
-    label: "Files · err",
-    on: true,
-    column: () => ({
-      id: "fe",
-      label: "Files · err",
-      align: "right",
-      hint: "Files touched (edits, no reads) · tool errors and guard denials",
-      render: (s) => (
-        <span className="ah-row" style={{ gap: 0, justifyContent: "flex-end" }}>
-          <span style={{ width: 28 }}>{zeroSubtle(s.files_touched)}</span>
-          <span style={{ width: 28 }}>{zeroSubtle(s.errors + s.guard_denials, true)}</span>
-        </span>
-      ),
-    }),
-  },
-  ...COLUMN_DEFS.filter((def) => def.id === "transcript"),
-];
-
-function storedColumns(): Set<string> {
-  const stored = readStored(COLUMNS_KEY);
-  // "agent" was the Agent column before AGH-201; the Session column replaces it.
-  if (stored) return new Set(stored.split(",").map((id) => (id === "agent" ? "session" : id)));
-  return new Set(COLUMN_DEFS.filter((def) => def.on).map((def) => def.id));
-}
-
-function ColumnChooser({
-  chosen,
-  onChange,
-}: {
-  chosen: Set<string>;
-  onChange: (next: Set<string>) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ position: "relative" }}>
-      <Button
-        size="sm"
-        icon="columns-3"
-        aria-expanded={open}
-        onClick={() => {
-          setOpen(!open);
-        }}
-      >
-        Columns
-      </Button>
-      <Popover
-        open={open}
-        label="Columns"
-        style={{ top: 32, right: 0, width: 240, maxHeight: 420, overflow: "auto" }}
-      >
-        {COLUMN_DEFS.map((def) => (
-          <label key={def.id} className="ah-facet-opt">
-            <input
-              type="checkbox"
-              className="ah-check"
-              checked={chosen.has(def.id)}
-              onChange={() => {
-                const next = new Set(chosen);
-                if (next.has(def.id)) next.delete(def.id);
-                else next.add(def.id);
-                onChange(next);
-              }}
-            />
-            {def.label}
-          </label>
-        ))}
-        <div className="ah-menu-sep" />
-        <Button
-          size="sm"
-          variant="ghost"
-          icon="rotate-ccw"
-          onClick={() => {
-            onChange(new Set(COLUMN_DEFS.filter((def) => def.on).map((def) => def.id)));
-          }}
-        >
-          Reset to default
-        </Button>
-      </Popover>
-    </div>
-  );
-}
 
 function csvOf(rows: Session[]): string {
   const head = [
@@ -596,14 +105,6 @@ function download(name: string, text: string): void {
   URL.revokeObjectURL(url);
 }
 
-function currentView(params: URLSearchParams): string {
-  const keys: string[] = [...FILTER_KEYS, "sort"];
-  const view = VIEWS.find((candidate) =>
-    keys.every((key) => (params.get(key) ?? "") === (candidate.params[key] ?? "")),
-  );
-  return view?.name ?? "Unsaved view";
-}
-
 /** The stale stamp while the collector is offline; its second clock re-renders only this stamp. */
 function OfflineStamp({ tz }: { tz: "local" | "utc" }) {
   const collector = useCollectorState();
@@ -612,7 +113,7 @@ function OfflineStamp({ tz }: { tz: "local" | "utc" }) {
   ) : null;
 }
 
-/** The grid or the table: the URL's `view`, else `ah.sessions.view`, else the grid; `v` switches (AC-234.3). */
+/** The grid or the list: the URL's `view`, else `ah.sessions.view`, else the list; `v` switches. */
 function useView(
   params: URLSearchParams,
   update: (changes: Record<string, string | null>) => void,
@@ -632,7 +133,7 @@ function useView(
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "v" || event.defaultPrevented) return;
       if (event.ctrlKey || event.metaKey || event.altKey || typingIn(event.target)) return;
-      latest.current.setView(latest.current.view === "grid" ? "table" : "grid");
+      latest.current.setView(latest.current.view === "grid" ? "list" : "grid");
     };
     document.addEventListener("keydown", onKey);
     return () => {
@@ -642,7 +143,54 @@ function useView(
   return [view, setView];
 }
 
-/** Sessions: "Which sessions happened, and which one do I need to look at?" (spec 14). */
+const NAV = "[data-nav-row], .ah-tile";
+
+/** `j` / `k` move across rows and tiles of every group; `o` opens; `l` loads more in the focused group. */
+function useRowKeys(root: RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (typingIn(event.target)) return;
+      const el = root.current;
+      if (!el) return;
+      const items = [...el.querySelectorAll<HTMLElement>(NAV)];
+      const active = document.activeElement;
+      const at = items.findIndex((item) => item === active || item.contains(active));
+      if (event.key === "j" || event.key === "k") {
+        if (items.length === 0) return;
+        event.preventDefault();
+        const next =
+          at < 0
+            ? event.key === "j"
+              ? 0
+              : items.length - 1
+            : Math.min(items.length - 1, Math.max(0, at + (event.key === "j" ? 1 : -1)));
+        items[next]?.focus();
+        items[next]?.scrollIntoView({ block: "nearest" });
+      } else if (event.key === "o" && at >= 0) {
+        event.preventDefault();
+        items[at]?.click();
+      } else if (event.key === "l" && at >= 0) {
+        const group = items[at]?.closest("[data-group]");
+        const more = group?.querySelector<HTMLButtonElement>("[data-load-more]");
+        if (more && !more.disabled) {
+          event.preventDefault();
+          more.click();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [root]);
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${fmtInt(n)} ${n === 1 ? one : many}`;
+}
+
+/** Sessions: "Does any session need me right now, and which one do I open?" */
 export function SessionsListScreen() {
   const [params, setParams] = useSearchParams();
   const [scope] = useScope();
@@ -656,6 +204,7 @@ export function SessionsListScreen() {
   const agentsUpdatedAt = useAgentSessions(scope).dataUpdatedAt;
   const askedIds = SECTIONS.map((section) => section.id).filter((id) => queries[id] !== null);
   const screenRef = useRef<HTMLDivElement>(null);
+  useRowKeys(screenRef);
   const arm = useScrollAnchor(
     screenRef,
     Object.fromEntries(
@@ -682,15 +231,6 @@ export function SessionsListScreen() {
     (projects.data?.items ?? []).map((project) => project.name),
   );
   const resumeLink = useResumeLink(driving);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [columns, setColumns] = useState(storedColumns);
-  const [density, setDensity] = useState(() =>
-    readStored(DENSITY_KEY) === "compact" ? "compact" : "comfortable",
-  );
-  const [costDraft, setCostDraft] = useState({
-    min: params.get("cost_min") ?? "",
-    max: params.get("cost_max") ?? "",
-  });
 
   const update = (changes: Record<string, string | null>) => {
     setParams(
@@ -707,17 +247,33 @@ export function SessionsListScreen() {
   };
   const [view, setView] = useView(params, update);
   const within = withinOf(params);
+  const query = params.get("q") ?? "";
+  const statusParam = params.get("status");
+  const tab: SectionId | null = STATUSES.find((s) => s === statusParam) ?? null;
   const clearFilters = () => {
-    update(Object.fromEntries(FILTER_KEYS.map((key) => [key, null])));
-    setCostDraft({ min: "", max: "" });
+    update({
+      ...Object.fromEntries(
+        FILTER_KEYS.filter((key) => key !== "status").map((key) => [key, null]),
+      ),
+      q: null,
+    });
   };
 
-  const chips = chipsOf(params);
   const observed = Object.fromEntries(
     SECTIONS.map(({ id }) => [id, (sections[id].data?.pages ?? []).flatMap((page) => page.items)]),
   ) as Record<SectionId, Session[]>;
-  // A driven session without a twin has none of the observed fields a filter (beyond status and period) reads.
-  const narrowed = chips.some((chip) => chip.key !== "period" && chip.key !== "status");
+  // A driven session without a twin has none of the observed fields a filter (beyond period) reads.
+  const narrowed = [
+    "repo",
+    "agent",
+    "outcome",
+    "workflow",
+    "cost_min",
+    "cost_max",
+    "file",
+    "tool",
+    "guard_denial",
+  ].some((key) => params.get(key));
   const driven = (driving.list.data?.items ?? []).filter(
     (a) => Boolean(a.observed_session_id) || !narrowed,
   );
@@ -727,16 +283,16 @@ export function SessionsListScreen() {
     new Set(SECTIONS.filter(({ id }) => queries[id] !== null).map(({ id }) => id)),
     queries.ended?.from ?? null,
   );
+  const needle = fold(query.trim());
+  const matches = (row: SectionRow) => !needle || fold(searchText(row)).includes(needle);
   const asked = SECTIONS.flatMap((section) => {
     if (queries[section.id] === null) return [];
     const pages = sections[section.id];
-    const { rows } = placed[section.id];
+    const all = placed[section.id].rows;
     const count = sectionCount(pages.data?.pages[0]?.total_estimate ?? 0, placed[section.id]);
-    return [{ ...section, pages, rows, count }];
+    return [{ ...section, pages, all, rows: all.filter(matches), count }];
   });
   const rows = asked.flatMap((section) => observed[section.id]);
-  const shown = asked.reduce((sum, section) => sum + section.rows.length, 0);
-  const total = asked.reduce((sum, section) => sum + section.count, 0);
   const pending = asked.some((section) => section.pages.isPending);
   // The digest takes rows that only loaded (first page, Load more) or another query's rows as its baseline.
   const digestKey = JSON.stringify([scope, queries]);
@@ -745,541 +301,382 @@ export function SessionsListScreen() {
     !asked.some(
       ({ pages }) => pages.isPending || pages.isPlaceholderData || pages.isFetchingNextPage,
     );
-  const hasNextPage = asked.some((section) => section.pages.hasNextPage);
-  const period: Period = periodOf(params);
+  const period = periodOf(params);
   const sort = sortOf(params);
-  const visible = useMemo(
-    () =>
-      density === "compact"
-        ? COLUMN_DEFS.filter((def) => columns.has(def.id) && !(def.id === "project" && scope))
-        : COMFORTABLE.filter((def) => !(def.id === "project" && scope)),
-    [density, columns, scope],
-  );
-  const tableColumns = useMemo(
-    () => visible.map((def) => withDriven(def.column({ tz }), tz, resumeLink)),
-    [visible, tz, resumeLink],
-  );
-  const sortColumn = visible.find((def) => def.sort === sort.replace("-", ""));
-  const projectCount = new Set(rows.map((s) => s.project)).size;
-  const filtered = chips.some((chip) => chip.key !== "period");
-  const costError = badDecimal(costDraft.min) || badDecimal(costDraft.max);
-
-  const facets: Facet[] = [
-    {
-      id: "status",
-      title: "Status",
-      options: STATUSES.map((status) => ({
-        id: status,
-        label: status,
-        checked: params.get("status") === status,
-      })),
-    },
-    {
-      id: "outcome",
-      title: "Outcome",
-      options: OUTCOMES.map((outcome) => ({
-        id: outcome,
-        label: outcome,
-        checked: params.get("outcome") === outcome,
-      })),
-    },
-    {
-      id: "repo",
-      title: "Repo",
-      input: (
-        <div className="ah-search">
-          <Icon name="book" size="sm" />
-          <input
-            className="ah-input ah-mono"
-            aria-label="Repo"
-            placeholder="repo dir"
-            defaultValue={params.get("repo") ?? ""}
-            style={{ height: 28, fontSize: 12 }}
-            onBlur={(event) => {
-              update({ repo: event.target.value.trim() });
-            }}
-          />
-        </div>
-      ),
-    },
-    {
-      id: "agent",
-      title: "Agent type",
-      input: (
-        <div className="ah-search">
-          <Icon name="network" size="sm" />
-          <input
-            className="ah-input ah-mono"
-            aria-label="Agent type"
-            placeholder="subagent type, e.g. Explore"
-            defaultValue={params.get("agent") ?? ""}
-            style={{ height: 28, fontSize: 12 }}
-            onBlur={(event) => {
-              update({ agent: event.target.value.trim() });
-            }}
-          />
-        </div>
-      ),
-    },
-    {
-      id: "workflow",
-      title: "Workflow",
-      options: [
-        {
-          id: "issue-to-pr",
-          label: "issue-to-pr",
-          mono: true,
-          checked: params.get("workflow") === "issue-to-pr",
-        },
-      ],
-    },
-    {
-      id: "cost",
-      title: "Cost range",
-      input: (
-        <div className="ah-stack" style={{ gap: 4 }}>
-          <div className="ah-row" style={{ gap: 6 }}>
-            {(["min", "max"] as const).map((bound) => (
-              <input
-                key={bound}
-                className="ah-input"
-                aria-label={bound === "min" ? "Minimum cost" : "Maximum cost"}
-                aria-invalid={badDecimal(costDraft[bound]) || undefined}
-                placeholder={`$ ${bound}`}
-                value={costDraft[bound]}
-                style={{
-                  height: 28,
-                  width: 96,
-                  borderColor: badDecimal(costDraft[bound]) ? "var(--failed)" : undefined,
-                }}
-                onChange={(event) => {
-                  setCostDraft({ ...costDraft, [bound]: event.target.value });
-                }}
-                onBlur={(event) => {
-                  if (!badDecimal(event.target.value))
-                    update({ [`cost_${bound}`]: event.target.value.trim() });
-                }}
-              />
-            ))}
-          </div>
-          {costError && (
-            <span className="ah-small" style={{ color: "var(--failed)" }}>
-              Use a decimal with a dot, e.g. 1.5
-            </span>
-          )}
-        </div>
-      ),
-    },
-    {
-      id: "file",
-      title: "Touched file",
-      input: (
-        <div className="ah-search">
-          <Icon name="file-text" size="sm" />
-          <input
-            className="ah-input ah-mono"
-            aria-label="Touched file (path or glob)"
-            placeholder="path or glob"
-            defaultValue={params.get("file") ?? ""}
-            style={{ height: 28, fontSize: 12 }}
-            onBlur={(event) => {
-              update({ file: event.target.value.trim() });
-            }}
-          />
-        </div>
-      ),
-    },
-    {
-      id: "tool",
-      title: "Used tool",
-      input: (
-        <div className="ah-row ah-wrap" style={{ gap: 4 }}>
-          {TOOLS.map((tool) => (
-            <FilterChip
-              key={tool}
-              value={tool}
-              active={params.get("tool") === tool}
-              onClick={() => {
-                update({ tool: params.get("tool") === tool ? null : tool });
-              }}
-            />
-          ))}
-        </div>
-      ),
-    },
-    {
-      id: "flags",
-      title: "Flags",
-      options: [
-        {
-          id: "guard_denial",
-          label: "Had a guard denial",
-          checked: params.get("guard_denial") === "1",
-          icon: <Icon name="shield-x" size="sm" style={{ color: "var(--guard)" }} />,
-        },
-      ],
-    },
-  ];
-  if (!scope && (projects.data?.items.length ?? 0) > 1) {
-    facets.unshift({
-      id: "project",
-      title: "Project",
-      input: (
-        <span className="ah-small ah-subtle">
-          Use the project switcher in the top bar to scope this list.
-        </span>
-      ),
-    });
-  }
-
-  const countLine = pending
-    ? "Loading sessions…"
-    : `Showing ${fmtInt(shown)}${hasNextPage ? ` of ~${fmtInt(total)}` : ""} · Ended: ${period === "All" ? "all time" : `last ${period}`} · ${String(projectCount)} ${projectCount === 1 ? "project" : "projects"}`;
-  const compareOk = selected.length === 2;
+  const shownSections = asked.filter((section) => tab === null || section.id === tab);
+  const loadedAll = asked.flatMap((section) => section.all);
+  const projectCount = new Set(loadedAll.map((row) => row.project)).size;
+  const filtered =
+    Boolean(needle) ||
+    FILTER_KEYS.some((key) => key !== "period" && key !== "status" && params.get(key));
   const allEmpty =
-    !pending && asked.every((section) => !section.pages.error && section.rows.length === 0);
-  const neverAny = !filtered && allEmpty;
+    !pending && asked.every((section) => !section.pages.error && section.all.length === 0);
+  const neverAny = !filtered && allEmpty && period === "All";
 
-  const empty = neverAny ? (
-    <EmptyState
-      icon="square-terminal"
-      title="No sessions yet."
-      command="cd ~/agent-hub-hub && claude"
-      action={
-        period === "All" ? undefined : (
-          <Button
-            variant="ghost"
-            onClick={() => {
-              update({ period: "All" });
-            }}
-          >
-            Show all time
-          </Button>
-        )
-      }
-    >
-      Sessions appear when Claude Code runs in a registered hub with the collector on. Start one in
-      the hub directory:
-    </EmptyState>
+  const counted = (section: (typeof asked)[number]) =>
+    section.pages.isPending || (section.pages.error && !section.pages.data) ? null : section.count;
+  const countOf = (id: SectionId) => {
+    const section = asked.find((s) => s.id === id);
+    return section ? counted(section) : 0;
+  };
+  const repos = [
+    ...new Set(
+      (projects.data?.items ?? [])
+        .filter((project) => !scope || project.name === scope)
+        .flatMap((project) => project.repos),
+    ),
+  ].sort();
+  const workflows = [
+    ...new Set(loadedAll.flatMap((row) => (isDriven(row) ? [] : (row.label?.workflows ?? [])))),
+  ].sort();
+
+  // What needs the owner: waiting sessions and rows with a problem only they can fix.
+  const waitingCount = countOf("waiting");
+  const troubled = loadedAll.filter(needsYou);
+  const liveCount = countOf("live");
+  const focusFirst = (pick: (row: HTMLElement) => boolean, group: SectionId | null) => {
+    if (group && collapsed.has(group)) toggleCollapsed(group);
+    if (tab !== null && group !== null && tab !== group) update({ status: null });
+    requestAnimationFrame(() => {
+      const target = [...(screenRef.current?.querySelectorAll<HTMLElement>(NAV) ?? [])].find(pick);
+      target?.focus();
+      target?.scrollIntoView({ block: "nearest" });
+    });
+  };
+  const attention = pending ? (
+    <Skeleton width={320} />
+  ) : waitingCount || troubled.length > 0 ? (
+    <span className="sl-attention-parts">
+      {Boolean(waitingCount) && (
+        <button
+          type="button"
+          className="sl-attention-link"
+          onClick={() => {
+            focusFirst(
+              (el) => el.closest("[data-group]")?.getAttribute("data-group") === "waiting",
+              "waiting",
+            );
+          }}
+        >
+          <Icon name="hand" size="sm" />
+          {waitingCount === 1
+            ? "1 session is waiting for you"
+            : `${plural(waitingCount ?? 0, "session", "sessions")} are waiting for you`}
+        </button>
+      )}
+      {Boolean(waitingCount) && troubled.length > 0 && <span aria-hidden="true">·</span>}
+      {troubled.length > 0 && (
+        <button
+          type="button"
+          className="sl-attention-link sl-attention-trouble"
+          onClick={() => {
+            focusFirst((el) => el.hasAttribute("data-trouble"), null);
+          }}
+        >
+          <Icon name="circle-x" size="sm" />
+          {troubled.length === 1
+            ? "1 session has a problem that needs you"
+            : `${fmtInt(troubled.length)} sessions have problems that need you`}
+        </button>
+      )}
+    </span>
   ) : (
-    <EmptyState
-      icon="list-filter"
-      title="No sessions match these filters."
-      action={
-        <div className="ah-row" style={{ gap: 8 }}>
-          <Button icon="x" onClick={clearFilters}>
-            Clear filters
-          </Button>
-          {period !== "30 d" && period !== "All" && (
+    <span className="sl-attention-calm">
+      <Icon name="circle-check" size="sm" />
+      {liveCount
+        ? `Nothing needs you. ${liveCount === 1 ? "1 session" : `${fmtInt(liveCount)} sessions`} live.`
+        : "Nothing needs you. No session is live."}
+    </span>
+  );
+
+  const tabCount = (n: number | null, approx: boolean) =>
+    n === null ? "…" : `${approx ? "~" : ""}${fmtInt(n)}`;
+  const allCount = asked.reduce<number | null>(
+    (sum, section) =>
+      sum === null || counted(section) === null ? null : sum + (counted(section) ?? 0),
+    0,
+  );
+  const tabs = [
+    {
+      id: "all",
+      label: `All · ${tabCount(
+        allCount,
+        asked.some((s) => s.pages.hasNextPage),
+      )}`,
+    },
+    ...SECTIONS.map((section) => {
+      const found = asked.find((s) => s.id === section.id);
+      return {
+        id: section.id,
+        label: `${section.title} · ${found ? tabCount(counted(found), found.pages.hasNextPage) : "—"}`,
+      };
+    }),
+  ];
+
+  const emptyFor = (id: SectionId | null) => {
+    if (neverAny)
+      return (
+        <EmptyState
+          icon="square-terminal"
+          title="No sessions yet."
+          command="cd ~/agent-hub-hub && claude"
+        >
+          Each Claude Code session in a registered hub is listed here after its first event. Start
+          one in the hub directory:
+        </EmptyState>
+      );
+    if (filtered)
+      return (
+        <EmptyState
+          icon="list-filter"
+          title="No sessions match these filters."
+          action={
+            <div className="ah-row" style={{ gap: 8 }}>
+              <Button icon="x" onClick={clearFilters}>
+                Clear filters
+              </Button>
+              {(period === "24 h" || period === "7 d") && (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    update({ period: "30 d" });
+                  }}
+                >
+                  Show last 30 days
+                </Button>
+              )}
+            </div>
+          }
+        />
+      );
+    const title =
+      id === "waiting"
+        ? "Nothing is waiting for you."
+        : id === "live"
+          ? "No session is live."
+          : id === "idle"
+            ? "No idle session."
+            : id === "ended"
+              ? period === "All"
+                ? "No session ended yet."
+                : `No session ended in the ${periodLabel(period).toLowerCase()}.`
+              : period === "All"
+                ? "No sessions."
+                : `No sessions in the ${periodLabel(period).toLowerCase()}.`;
+    return (
+      <EmptyState
+        icon="circle-dashed"
+        title={title}
+        action={
+          period !== "All" && (id === "ended" || id === null) ? (
             <Button
               variant="ghost"
               onClick={() => {
-                update({ period: "30 d" });
+                update({ period: "All" });
               }}
             >
-              Widen to 30 d
+              Show all time
             </Button>
-          )}
-        </div>
-      }
-    />
-  );
-
-  const sectionBody = ({ title, pages, rows: sectionRows, count }: (typeof asked)[number]) => {
-    if (pages.error) {
-      return (
-        <div className="ah-stack" style={{ gap: 8 }}>
-          <ProblemError
-            title={`Could not load ${title.toLowerCase()} sessions`}
-            detail={pages.error.detail}
-            status={pages.error.status}
-            type={pages.error.type}
-            instance={pages.error.instance}
-            onRetry={() => {
-              void pages.refetch();
-            }}
-          />
-          <div>
-            <Button size="sm" variant="ghost" icon="x" onClick={clearFilters}>
-              Clear filters
-            </Button>
-          </div>
-        </div>
-      );
-    }
-    // A light placeholder: four skeleton tables at once made role queries crawl under coverage.
-    if (pages.isPending) return <Skeleton lines={2} />;
-    if (view === "grid") {
-      return (
-        <GridSection
-          title={title}
-          rows={sectionRows}
-          count={count}
-          within={within}
-          pages={pages}
-          action={resumeLink}
-          onOpen={(row) => {
-            void navigate(rowHref(row));
-          }}
-        />
-      );
-    }
-    const keys = new Set(sectionRows.map((s) => s.id));
-    // Past the threshold a section scrolls in its own window, so only the rows in view render.
-    const bounded = sectionRows.length > VIRTUAL_THRESHOLD;
-    return (
-      <DataTable
-        caption={`${title} sessions`}
-        maxHeight={bounded ? SECTION_MAX_HEIGHT : undefined}
-        scrollLabel={bounded ? `Scrollable ${title.toLowerCase()} sessions` : undefined}
-        columns={tableColumns}
-        rows={sectionRows}
-        rowKey={(s) => s.id}
-        density={density === "compact" ? "compact" : undefined}
-        sort={
-          sortColumn ? { id: sortColumn.id, dir: sort.startsWith("-") ? "desc" : "asc" } : undefined
-        }
-        onSort={(id) => {
-          const def = COLUMN_DEFS.find((column) => column.id === id);
-          if (!def?.sort) return;
-          const desc = `-${def.sort}`;
-          update({ sort: sort === desc ? def.sort : desc === "-started_at" ? null : desc });
-        }}
-        selectable
-        selected={selected.filter((id) => keys.has(id))}
-        onSelect={(id) => {
-          setSelected(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
-        }}
-        onSelectAll={(checked) => {
-          const others = selected.filter((id) => !keys.has(id));
-          setSelected(checked ? [...others, ...keys] : others);
-        }}
-        onRowClick={(s) => {
-          void navigate(rowHref(s));
-        }}
-        footer={
-          sectionRows.length > 0 ? (
-            <>
-              <span>
-                {pages.hasNextPage
-                  ? `Showing ${fmtInt(sectionRows.length)} of ~${fmtInt(count)}`
-                  : `Showing all ${fmtInt(sectionRows.length)}`}
-              </span>
-              {/* On placeholder pages TanStack would refetch page 1, not the next one. */}
-              {pages.hasNextPage && !pages.isPlaceholderData && (
-                <Button
-                  size="sm"
-                  disabled={pages.isFetchingNextPage}
-                  onClick={() => {
-                    void pages.fetchNextPage();
-                  }}
-                >
-                  Load more
-                </Button>
-              )}
-              <span className="ah-row" style={{ gap: 4 }}>
-                <Icon name="link" size="sm" />
-                Filters are in the URL
-              </span>
-            </>
           ) : undefined
         }
       />
     );
   };
 
-  // Empty sections are hidden; when all are, one empty state shows (spec 14).
-  const body = allEmpty ? (
-    empty
-  ) : (
-    <div className="ah-stack sl-sections">
-      {asked
-        .filter(
-          (section) =>
-            section.pages.isPending || section.pages.error !== null || section.rows.length > 0,
-        )
-        .map((section) => (
+  const visibleSections = shownSections.filter(
+    (section) =>
+      tab !== null ||
+      section.pages.isPending ||
+      section.pages.error !== null ||
+      section.rows.length > 0,
+  );
+  const nothingShown =
+    !pending &&
+    visibleSections.every((section) => !section.pages.error && section.rows.length === 0);
+
+  let body;
+  if (nothingShown) {
+    body = emptyFor(tab);
+  } else if (view === "grid") {
+    body = (
+      <div className="ah-stack sl-sections">
+        {visibleSections.map((section) => (
           <SessionSection
             key={section.id}
             id={section.id}
-            title={section.title}
-            // No count while loading, or when the query failed before returning any page.
-            count={
-              section.pages.isPending || (section.pages.error && !section.pages.data)
-                ? null
-                : section.count
+            title={
+              section.id === "ended"
+                ? `${section.title} · ${periodLabel(period).toLowerCase()}`
+                : section.title
             }
+            count={counted(section)}
             approximate={section.pages.hasNextPage}
             updating={section.pages.isPlaceholderData}
-            collapsed={collapsed.has(section.id)}
+            collapsed={tab === null && collapsed.has(section.id)}
             onToggle={() => {
               toggleCollapsed(section.id);
             }}
           >
-            {sectionBody(section)}
+            {section.pages.isPending ? (
+              <Skeleton lines={2} />
+            ) : (
+              <GridSection
+                title={section.title}
+                rows={section.rows}
+                count={section.count}
+                within={within}
+                pages={section.pages}
+                action={resumeLink}
+                onOpen={(row) => {
+                  void navigate(rowHref(row));
+                }}
+              />
+            )}
           </SessionSection>
         ))}
-    </div>
-  );
+      </div>
+    );
+  } else {
+    const groups: TableGroup[] = visibleSections.map((section) => ({
+      id: section.id,
+      title: section.title,
+      count: counted(section),
+      approximate: section.pages.hasNextPage,
+      collapsed: collapsed.has(section.id),
+      fixed: tab !== null,
+      updating: section.pages.isPlaceholderData,
+      pending: section.pages.isPending,
+      error: section.pages.error,
+      rows: section.rows,
+      hasNextPage: section.pages.hasNextPage,
+      loadingMore: section.pages.isFetchingNextPage,
+      onToggle: () => {
+        toggleCollapsed(section.id);
+      },
+      onRetry: () => {
+        void section.pages.refetch();
+      },
+      // On placeholder pages TanStack would refetch page 1, not the next one.
+      onLoadMore: section.pages.isPlaceholderData
+        ? null
+        : () => {
+            void section.pages.fetchNextPage();
+          },
+    }));
+    body = (
+      <SessionsTable
+        groups={groups}
+        tz={tz}
+        showProject={!scope && projectCount > 1}
+        sort={sort}
+        onSort={(key) => {
+          const desc = `-${key}`;
+          update({ sort: sort === desc ? key : desc === "-started_at" ? null : desc });
+        }}
+        onOpen={(row) => {
+          void navigate(openHref(row));
+        }}
+        resume={resumeLink}
+        endedScope={periodLabel(period).toLowerCase()}
+      />
+    );
+  }
+
+  const searchNote =
+    needle && asked.some((section) => section.pages.hasNextPage)
+      ? "Search looks through the loaded sessions only. Load more to search older ones."
+      : null;
+  const matchCount = needle ? shownSections.reduce((sum, s) => sum + s.rows.length, 0) : null;
+  const exportable = rows.filter(matches);
 
   return (
-    <div style={{ padding: "16px 32px 40px" }} className="ah-stack" ref={screenRef}>
+    <div className="ah-stack sl-screen" ref={screenRef}>
       <div className="ah-row ah-wrap" style={{ gap: 8 }}>
         <h1 className="ah-h1">Sessions</h1>
         <OfflineStamp tz={tz} />
         <span className="ah-grow" />
-        <SavedViewMenu
-          views={VIEWS.map((view) => ({ name: view.name }))}
-          current={currentView(params)}
-          onPick={(name) => {
-            const view = VIEWS.find((candidate) => candidate.name === name);
-            if (!view) return;
-            update({
-              ...Object.fromEntries(FILTER_KEYS.map((key) => [key, null])),
-              sort: null,
-              ...view.params,
-            });
-          }}
-        />
         <SegmentedControl
           label="View"
           value={view}
           onChange={(id) => {
-            setView(id === "table" ? "table" : "grid");
+            setView(id === "grid" ? "grid" : "list");
           }}
           options={[
-            { id: "grid", label: "Grid", title: "Grid view (v)" },
-            { id: "table", label: "Table", title: "Table view (v)" },
+            { id: "list", label: "List", icon: "list", title: "List view (v)" },
+            { id: "grid", label: "Grid", icon: "layout-dashboard", title: "Grid view (v)" },
           ]}
-        />
-        {view === "grid" ? (
-          <SegmentedControl
-            label="Group within sections"
-            value={within ?? "flat"}
-            onChange={(id) => {
-              update({ within: id === "flat" ? null : id });
-            }}
-            options={WITHINS.map(({ id, label }) => ({ id, label }))}
-          />
-        ) : (
-          <>
-            <ColumnChooser
-              chosen={columns}
-              onChange={(next) => {
-                writeStored(COLUMNS_KEY, [...next].join(","));
-                writeStored(DENSITY_KEY, "compact");
-                setColumns(next);
-                setDensity("compact");
-              }}
-            />
-            <SegmentedControl
-              label="Density"
-              value={density}
-              onChange={(id) => {
-                writeStored(DENSITY_KEY, id);
-                setDensity(id === "compact" ? "compact" : "comfortable");
-              }}
-              options={[
-                { id: "comfortable", icon: "list", title: "Comfortable rows" },
-                { id: "compact", icon: "list-filter", title: "Compact rows" },
-              ]}
-            />
-          </>
-        )}
-        <SegmentedControl
-          label="Period"
-          value={period}
-          onChange={(id) => {
-            update({ period: id === "7 d" ? null : id });
-          }}
-          options={PERIODS}
         />
         <NewSessionControl driving={driving} />
       </div>
+      <div className="sl-attention ah-small" aria-live="off">
+        {attention}
+      </div>
       <DrivenBanner driving={driving} />
-      <div className="ah-row ah-wrap" style={{ gap: 12, minHeight: 28 }}>
-        <span className="ah-muted">{countLine}</span>
-        <span className="ah-grow" />
-        {selected.length > 0 && (
-          <>
-            <span className="ah-small">
-              Selected <b>{selected.length}</b>
-            </span>
-            <Button
-              size="sm"
-              variant={compareOk ? "primary" : "default"}
-              icon="git-compare"
-              phase="P3"
-            >
-              Compare 2 sessions
-            </Button>
+      {!neverAny && (
+        <>
+          <div className="sl-tabs">
+            <SegmentedControl
+              label="Status"
+              value={tab ?? "all"}
+              onChange={(id) => {
+                update({ status: id === "all" ? null : id });
+              }}
+              options={tabs}
+            />
+          </div>
+          <Toolbar
+            params={params}
+            update={update}
+            query={query}
+            onQuery={(q) => {
+              update({ q });
+            }}
+            period={period}
+            repos={repos}
+            workflows={workflows}
+            view={view}
+            within={within}
+            matches={matchCount}
+            onClearAll={clearFilters}
+          />
+        </>
+      )}
+      <div className="sl-body ah-stack" style={{ minWidth: 0 }}>
+        {body}
+        {searchNote && (
+          <p className="ah-small ah-subtle" style={{ margin: 0 }}>
+            {searchNote}
+          </p>
+        )}
+        <div className="ah-row ah-wrap sl-foot">
+          {exportable.length > 0 && (
             <Button
               size="sm"
               variant="ghost"
+              icon="arrow-down"
               onClick={() => {
-                setSelected([]);
+                download(
+                  `sessions-${new Date().toISOString().slice(0, 10)}.csv`,
+                  csvOf(exportable),
+                );
               }}
             >
-              Clear
+              {`Export ${plural(exportable.length, "session", "sessions")} as CSV`}
             </Button>
-          </>
-        )}
-        <Button
-          size="sm"
-          variant="ghost"
-          icon="arrow-down"
-          disabled={rows.length === 0}
-          onClick={() => {
-            download(`sessions-${new Date().toISOString().slice(0, 10)}.csv`, csvOf(rows));
-          }}
-        >
-          Export CSV
-        </Button>
+          )}
+          <span className="ah-small ah-subtle sl-keys">
+            <kbd className="ah-kbd">j</kbd> <kbd className="ah-kbd">k</kbd> move ·{" "}
+            <kbd className="ah-kbd">o</kbd> open · <kbd className="ah-kbd">/</kbd> find ·{" "}
+            <kbd className="ah-kbd">v</kbd> grid or list
+          </span>
+        </div>
+        <CloudSessions driving={driving} />
       </div>
-      {chips.length > 0 && (
-        <div className="ah-row ah-wrap" style={{ gap: 6 }}>
-          {chips.map((chip) => (
-            <FilterChip
-              key={chip.key}
-              k={chip.label}
-              value={chip.value}
-              onRemove={() => {
-                update({ [chip.key]: null });
-                if (chip.key === "cost_min" || chip.key === "cost_max") {
-                  setCostDraft({ ...costDraft, [chip.key === "cost_min" ? "min" : "max"]: "" });
-                }
-              }}
-            />
-          ))}
-        </div>
-      )}
-      <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
-        <div style={{ position: "relative", width: 232, flex: "none" }}>
-          <div className="ah-row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
-            <span className="ah-small" style={{ fontWeight: 500 }}>
-              {filtered
-                ? `${String(chips.filter((chip) => chip.key !== "period").length)} filters`
-                : "Filters"}
-            </span>
-            <Button size="sm" variant="ghost" onClick={clearFilters}>
-              Clear all
-            </Button>
-          </div>
-          <FilterRail
-            facets={facets}
-            onToggle={(facet, option) => {
-              if (facet === "flags")
-                update({ guard_denial: params.get("guard_denial") === "1" ? null : "1" });
-              else update({ [facet]: params.get(facet) === option ? null : option });
-            }}
-          />
-        </div>
-        <div className="ah-grow sl-table ah-stack" style={{ minWidth: 0 }}>
-          {body}
-          <CloudSessions driving={driving} />
-        </div>
-      </div>
-      <LiveDigest sections={asked} settled={settled} resetKey={digestKey} />
+      <LiveDigest
+        sections={asked.map((section) => ({ id: section.id, rows: section.all }))}
+        settled={settled}
+        resetKey={digestKey}
+      />
     </div>
   );
 }

@@ -132,7 +132,7 @@ export function badDecimal(value: string | null): boolean {
   return value !== null && value.trim() !== "" && !/^\d+(\.\d+)?$/.test(value.trim());
 }
 
-export type View = "grid" | "table";
+export type View = "grid" | "list";
 export type Within = "repo" | "run" | "workflow";
 export const WITHINS: { id: Within | "flat"; label: string }[] = [
   { id: "flat", label: "Flat" },
@@ -140,13 +140,16 @@ export const WITHINS: { id: Within | "flat"; label: string }[] = [
   { id: "run", label: "Run" },
   { id: "workflow", label: "Workflow" },
 ];
-const isView = (value: string | null): value is View => value === "grid" || value === "table";
+/** "table" was the list's name before the redesign: old links and stored values still work. */
+function asView(value: string | null): View | null {
+  if (value === "grid") return "grid";
+  if (value === "list" || value === "table") return "list";
+  return null;
+}
 
-/** The URL's `view` wins over the stored one; with neither, or an unknown value, the grid (O-3). */
+/** The URL's `view` wins over the stored one; with neither, or an unknown value, the list. */
 export function viewOf(params: URLSearchParams, stored: string | null): View {
-  const asked = params.get("view");
-  if (isView(asked)) return asked;
-  return isView(stored) ? stored : "grid";
+  return asView(params.get("view")) ?? asView(stored) ?? "list";
 }
 
 /** The grid's sub-groups inside each section; any other value is none. */
