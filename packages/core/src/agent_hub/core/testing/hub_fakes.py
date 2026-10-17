@@ -2,7 +2,7 @@
 and ``FakeHubFileReader``, whose hubs are synthetic files kept in memory (``brain`` holds the
 files under ``brain/``, ``brain_links`` the ones that play links; ``skill_files``,
 ``skill_links`` and ``skill_specials`` the hub-relative files, links and FIFOs under the skill
-roots, checked by ``SkillSourcesContract``).
+roots, ``executable`` the files whose executable bit is set, checked by ``SkillSourcesContract``).
 """
 
 import json
@@ -25,12 +25,18 @@ from agent_hub.core.hubs.hub_registry import (
     BrainListing,
     HubConflictError,
     UnreadHubFile,
+    UnreadUnit,
     to_milliseconds,
 )
 from agent_hub.core.hubs.registered_hub import RegisteredHub
+from agent_hub.core.item_versions.item_units import unit_parts
+from agent_hub.core.item_versions.item_version import UnitKind
+from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent, UnitFile
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_sources import (
     DEFAULT_LIMITS,
+    MAX_SKILL_FILE_BYTES,
+    SKILL_FILE,
     SkillLimits,
     SkillPathError,
     SkillSources,
@@ -104,6 +110,7 @@ class FakeHub:
     skill_files: dict[str, bytes] = field(default_factory=dict)
     skill_links: dict[str, str] = field(default_factory=dict)
     skill_specials: frozenset[str] = frozenset()
+    executable: frozenset[str] = frozenset()
 
 
 def _listed(path: str) -> bool:
@@ -119,7 +126,8 @@ class FakeHubFileReader:
     ``feature_reads`` records each feature read, ``("*", hub_path)`` for a listing and
     ``(slug, hub_path)`` for one folder, so a test sees how much a request read;
     ``skill_listings`` records each ``skill_sources`` call's hub and ``skill_reads`` each
-    ``read_skill_file`` call as ``(hub_path, path)``, refused paths included.
+    ``read_skill_file`` call as ``(hub_path, path)``, refused paths included, and
+    ``unit_reads`` each ``read_unit`` call the same way.
     """
 
     def __init__(
@@ -131,6 +139,7 @@ class FakeHubFileReader:
         self.feature_reads: list[tuple[str, str]] = []
         self.skill_listings: list[str] = []
         self.skill_reads: list[tuple[str, str]] = []
+        self.unit_reads: list[tuple[str, str]] = []
 
     def resolve(self, path: str) -> str:
         """The aliased path, or the path itself."""
@@ -269,8 +278,64 @@ class FakeHubFileReader:
             return UnreadHubFile(message=message, is_missing=False, kind="too_large")
         return content
 
+    def read_unit(
+        self, hub_path: str, unit_path: str, *, kind: UnitKind
+    ) -> UnitContent | UnreadUnit:
+        """The unit's files from ``skill_files`` (bits from ``executable``), or why not, by the
+        rules the adapter holds the disk to; recorded in ``unit_reads`` as ``(hub_path, path)``."""
+        self.unit_reads.append((hub_path, unit_path))
+        try:
+            unit_parts(unit_path, kind)
+        except SkillPathError:
+            return UnreadUnit(kind="missing")
+        hub = self._hub(hub_path)
+        if kind is UnitKind.SKILL:
+            return _fake_folder_unit(hub, unit_path)
+        if unit_path in hub.skill_specials or _under_link(unit_path, hub.skill_links):
+            return UnreadUnit(kind="unreadable")
+        content = hub.skill_files.get(unit_path)
+        if content is None:
+            return UnreadUnit(kind="missing")
+        if len(content) > MAX_SKILL_FILE_BYTES:
+            return UnreadUnit(kind="too_large")
+        name = unit_path.rsplit("/", 1)[-1]
+        executable = unit_path in hub.executable
+        return UnitContent(files=(UnitFile(path=name, content=content, executable=executable),))
+
     def _hub(self, hub_path: str) -> FakeHub:
         return self.hubs.get(hub_path) or FakeHub()
+
+
+def _fake_folder_unit(hub: FakeHub, unit_path: str) -> UnitContent | UnreadUnit:
+    """A skill folder as the adapter reads it: hidden names left out, a link or special file in
+    it (or on the way) ``unreadable``, past the files, depth or size bounds ``too_large``."""
+    below = f"{unit_path}/"
+    if _under_link(unit_path, hub.skill_links) or unit_path in hub.skill_specials:
+        return UnreadUnit(kind="unreadable")
+    odd = [*hub.skill_links, *hub.skill_specials]
+    if any(path.startswith(below) and not _hidden_below(path, below) for path in odd):
+        return UnreadUnit(kind="unreadable")
+    files = sorted(
+        (path.removeprefix(below), content)
+        for path, content in hub.skill_files.items()
+        if path.startswith(below) and not _hidden_below(path, below)
+    )
+    if not any(path == SKILL_FILE for path, _ in files):
+        return UnreadUnit(kind="missing")
+    too_deep = any(path.count("/") >= DEFAULT_LIMITS.skill_depth for path, _ in files)
+    too_big = any(len(content) > MAX_SKILL_FILE_BYTES for _, content in files)
+    if too_deep or too_big or len(files) > MAX_UNIT_FILES:
+        return UnreadUnit(kind="too_large")
+    return UnitContent(
+        files=tuple(
+            UnitFile(path=path, content=content, executable=below + path in hub.executable)
+            for path, content in files
+        )
+    )
+
+
+def _hidden_below(path: str, below: str) -> bool:
+    return any(segment.startswith(".") for segment in path.removeprefix(below).split("/"))
 
 
 def _under_link(path: str, links: dict[str, str]) -> bool:

@@ -5,10 +5,12 @@ whole file that holds it, so every hook of one file shares one unit. An item who
 entry is a link has no unit: a link inside the hub is versioned once, at its target (which
 carries ``linked_from``), and a link out of it not at all. ``settings.local.json`` is never a
 unit. A unit is managed when ``hub.lock`` holds a managed entry for its main path: a skill's
-``SKILL.md``, otherwise the file itself.
+``SKILL.md``, otherwise the file itself. ``unit_parts`` is the path rule a unit is read by: a
+skill folder, an agent file, a hook file or a hub workflow file, each where its kind lives.
 """
 
 import bisect
+import re
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,12 +19,22 @@ from agent_hub.core.doctor.snapshot import LockState
 from agent_hub.core.hub_files.hub_lock import HubLock, ManagedFileEntry, ManagedLinkEntry
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.skills.skill_sources import (
+    AGENTS_FOLDER,
+    CLAUDE_FOLDER,
+    HOOKS_FILE,
+    HOOKS_FOLDER,
     LOCAL_SETTINGS_PATH,
+    PROJECT_SETTINGS_PATH,
+    SETTINGS_PATH,
     SKILL_FILE,
+    SKILLS_FOLDER,
+    SkillPathError,
     SkillSources,
     SourceFile,
+    skill_relative,
 )
 from agent_hub.core.skills.skill_view import CatalogItem, ItemKind
+from agent_hub.core.workflows.catalog import HUB_WORKFLOWS_FOLDER
 
 _UNIT_KINDS: Final = {
     ItemKind.SKILL: UnitKind.SKILL,
@@ -30,6 +42,14 @@ _UNIT_KINDS: Final = {
     ItemKind.HOOK: UnitKind.HOOK,
 }
 _SKILL_SUFFIX: Final = f"/{SKILL_FILE}"
+
+# A unit's folder (skill, agent) is ``.claude/<folder>`` or ``plugin/<p>/<folder>``, by length.
+_UNIT_DEPTHS: Final = {CLAUDE_FOLDER: 3, "plugin": 4}
+_HOOK_SETTINGS: Final = frozenset({SETTINGS_PATH, PROJECT_SETTINGS_PATH})
+_WORKFLOW_SEGMENTS: Final = 3
+_WORKFLOW_SUFFIXES: Final = (".yaml", ".json")
+_REFUSED: Final = "Path is not a unit of its kind"
+_BAD_CHARACTER: Final = re.compile(r"[\\\x00-\x1f\x7f]")
 
 # One listing entry as the capture memo compares it: path, size, mtime_ns, regular, link target.
 type FingerprintEntry = tuple[str, int, int, bool, str | None]
@@ -105,3 +125,41 @@ def is_managed(lock: LockState | None, unit: ItemUnit) -> bool:
         return False
     main = f"{unit.unit_path}{_SKILL_SUFFIX}" if unit.kind is UnitKind.SKILL else unit.unit_path
     return isinstance(lock.files.get(main), ManagedFileEntry | ManagedLinkEntry)
+
+
+def unit_parts(unit_path: str, kind: UnitKind) -> tuple[str, ...]:
+    """``unit_path``'s segments when it is a unit of ``kind``, or ``SkillPathError``: a skill
+    folder ``.claude/skills/<n>`` or ``plugin/<p>/skills/<n>``, an agent file ``.claude/agents/
+    <n>.md`` or ``plugin/<p>/agents/<n>.md``, a hook file (``.claude/settings.json``,
+    ``.claude/settings.project.json``, ``plugin/<p>/hooks/hooks.json``), a workflow file
+    ``workflows/<pack>/<n>.yaml`` or ``.json``. Never ``settings.local.json``; never touches the
+    disk."""
+    if kind is UnitKind.WORKFLOW:
+        return _workflow_parts(unit_path)
+    checked = f"{unit_path}/{SKILL_FILE}" if kind is UnitKind.SKILL else unit_path
+    segments = skill_relative(checked).parts
+    if kind is UnitKind.SKILL:
+        segments = segments[:-1]
+    if kind is UnitKind.HOOK:
+        accepted = unit_path in _HOOK_SETTINGS or segments[2:] == (HOOKS_FOLDER, HOOKS_FILE)
+    else:
+        folder = SKILLS_FOLDER if kind is UnitKind.SKILL else AGENTS_FOLDER
+        depth = _UNIT_DEPTHS.get(segments[0])
+        accepted = len(segments) == depth and segments[-2] == folder
+    if not accepted:
+        raise SkillPathError(_REFUSED)
+    return segments
+
+
+def _workflow_parts(unit_path: str) -> tuple[str, ...]:
+    segments = tuple(unit_path.split("/"))
+    shaped = (
+        len(segments) == _WORKFLOW_SEGMENTS
+        and segments[0] == HUB_WORKFLOWS_FOLDER
+        and segments[-1].endswith(_WORKFLOW_SUFFIXES)
+        and all(segment and not segment.startswith(".") for segment in segments)
+        and not _BAD_CHARACTER.search(unit_path)
+    )
+    if not shaped:
+        raise SkillPathError(_REFUSED)
+    return segments
