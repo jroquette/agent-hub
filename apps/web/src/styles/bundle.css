@@ -2480,6 +2480,9 @@ pre {
 }
 .ah-shell-main {
   grid-column: 2;
+  /* Contains absolutely positioned content (.ah-sr captions): without it they anchor to the page and
+     stretch it past the 100vh shell, so the whole page scrolls and the sidebar is left behind. */
+  position: relative;
   overflow: auto;
   min-width: 0;
 }
