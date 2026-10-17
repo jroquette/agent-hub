@@ -2,7 +2,10 @@ from typing import Any
 
 import pytest
 
-from agent_hub.core.hub_config.effective_environments import local_environment_problems
+from agent_hub.core.hub_config.effective_environments import (
+    effective_environments,
+    local_environment_problems,
+)
 from agent_hub.core.hub_config.local_config import LocalConfig, check_local_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import (
@@ -134,3 +137,81 @@ def test_rejects_tighten_when_access_looser_or_equal(
 )
 def test_accepts_tighten_when_access_stricter(name: str, access: str) -> None:
     assert local_problems(with_change(("environments", name), {"access": access})) == []
+
+
+def environment_rows(local: dict[str, Any]) -> list[tuple[str, str, bool, str]]:
+    effective = effective_environments(hub_config(), local_config(local))
+    return [
+        (environment.name, environment.access, environment.production, environment.source)
+        for environment in effective.environments
+    ]
+
+
+def test_merges_local_environments_when_local_declares_them() -> None:
+    effective = effective_environments(hub_config(), local_config(a_local_environments_document()))
+
+    assert environment_rows(a_local_environments_document()) == [
+        ("local", "write", False, "hub.json"),
+        ("staging", "ask", False, "hub.json"),
+        ("live", "read", True, "hub.json"),
+        ("jane-cloud", "write", False, "hub.local.json"),
+    ]
+    jane = effective.environments[-1]
+    assert jane.credentials is not None
+    assert jane.credentials.aws_profile == "jane-sandbox"
+    assert [(service.repo, service.name) for service in effective.services] == [
+        ("demo-api", "api"),
+        ("demo-api", "orders"),
+    ]
+    api = effective.services[0]
+    assert api.kind == "api"
+    assert [(row.environment, row.endpoint.url, row.source) for row in api.endpoints] == [
+        ("local", "http://localhost:8000", "hub.json"),
+        ("staging", "https://api.staging.example.com", "hub.json"),
+        ("live", "https://api.example.com", "hub.json"),
+        ("jane-cloud", "https://api.jane.example.com", "hub.local.json"),
+    ]
+    assert [(entry.value, entry.layer) for entry in effective.blocked_words] == [
+        ("prod", "hub.json"),
+        ("production", "hub.json"),
+        ("demo-live", "hub.local.json"),
+    ]
+    assert [entry.value for entry in effective.blocked_files] == [
+        "config/*.json",
+        "serverless.yml",
+        "deploy/*.tfvars",
+    ]
+
+
+def test_tightens_access_when_local_sets_stricter() -> None:
+    local = a_local_environments_document()
+    local["environments"]["staging"] = {"access": "read"}
+
+    assert environment_rows(local)[1] == ("staging", "read", False, "hub.local.json")
+
+
+def test_keeps_hub_environments_when_local_file_absent() -> None:
+    assert environment_rows({}) == [
+        ("local", "write", False, "hub.json"),
+        ("staging", "ask", False, "hub.json"),
+        ("live", "read", True, "hub.json"),
+    ]
+
+
+def test_adds_local_service_when_local_names_new_one() -> None:
+    local = a_local_environments_document()
+    local["repos"][0]["services"]["queue"] = {
+        "kind": "sqs",
+        "endpoints": {"jane-cloud": {"resource": "jane-queue"}},
+    }
+
+    services = effective_environments(hub_config(), local_config(local)).services
+
+    assert [(service.name, service.kind) for service in services] == [
+        ("api", "api"),
+        ("orders", "dynamodb"),
+        ("queue", "sqs"),
+    ]
+    assert [(row.environment, row.source) for row in services[2].endpoints] == [
+        ("jane-cloud", "hub.local.json")
+    ]
