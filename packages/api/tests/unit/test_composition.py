@@ -43,6 +43,7 @@ from agent_hub.core.hub_config.local_config import LocalConfig, LocalProject
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hubs.hub_registry import HubRegistryError, UnreadHubFile
 from agent_hub.core.hubs.registered_hub import RegisteredHub
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
 from agent_hub.core.learnings.brain_change_requests import CommitAuthor
 from agent_hub.core.learnings.learning_ports import LearningHub
 from agent_hub.core.learnings.read_learnings import HUB_NOT_REGISTERED, UnavailableHub
@@ -74,6 +75,7 @@ from agent_hub.core.workflows.catalog import WorkflowFile
 from agent_hub.core.workflows.workflow_reads import ReadWorkflows
 from agent_hub.storage.agent_session_store import open_agent_session_store
 from agent_hub.storage.event_store import open_event_store
+from agent_hub.storage.item_version_store import SqliteItemVersionStore
 
 RUNNING = "0.9.0"
 HUB = "/work/demo-hub"
@@ -450,6 +452,26 @@ def test_wires_control_cloud_and_links_when_sessions_on(tmp_path: Path) -> None:
     assert isinstance(ports.agent_sessions, AgentSessionControl)
     assert isinstance(ports.cloud_sessions, CloudSessions)
     assert isinstance(ports.agent_session_links, AgentSessionLinks)
+
+
+def test_wires_capture_when_app_built(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    passed: dict[str, Any] = {}
+    real = composition.hub_read_models
+
+    def spy(settings: ApiSettings, **ports: Any) -> Any:
+        passed.update(ports)
+        return real(settings, **ports)
+
+    monkeypatch.setattr(composition, "hub_read_models", spy)
+
+    _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
+
+    capture = passed["capture"]
+    assert isinstance(capture, CaptureItemVersions)
+    # One store on the app's database, behind the same file reader the hub reads use.
+    assert isinstance(capture._store, SqliteItemVersionStore)  # noqa: SLF001 - the wiring
+    assert capture._store._engine.url.database == str(tmp_path / "agent-hub.db")  # noqa: SLF001
+    assert capture._reader is passed["reader"]  # noqa: SLF001 - one reader for both
 
 
 def test_wires_workflow_reads_when_app_built(tmp_path: Path) -> None:

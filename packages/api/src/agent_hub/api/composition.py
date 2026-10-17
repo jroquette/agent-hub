@@ -93,6 +93,7 @@ from agent_hub.core.hubs.hub_registry import (
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
 from agent_hub.core.learnings.brain_change_requests import BrainChangeRequests, CommitAuthor
 from agent_hub.core.learnings.decide_learning import DecideLearning
 from agent_hub.core.learnings.learning_ports import LearningHub
@@ -120,6 +121,7 @@ from agent_hub.hub_git.git_runner import GitRunner
 from agent_hub.storage.agent_session_store import open_agent_session_store
 from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
 from agent_hub.storage.hub_registry import JsonHubRegistry
+from agent_hub.storage.item_version_store import open_item_version_store
 from agent_hub.tracker_linear.graphql_reader import LinearGraphqlTrackerReader
 from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE, Post
 
@@ -509,9 +511,11 @@ def hub_read_models(  # noqa: PLR0913 - the hub reads' ports, all keyword-only
     activity: ProjectActivitySource,
     usage: SkillUsageSource,
     ticket_snapshots: TicketSnapshots | None,
+    capture: CaptureItemVersions | None = None,
 ) -> HubFilesReadModels:
     """The hub read models of ``hub web``: ``activity`` and ``usage`` are the event read models
-    (the project cards' numbers, the Skills tab's 30-day counts)."""
+    (the project cards' numbers, the Skills tab's 30-day counts); ``capture`` records the units
+    the Toolkit reads show (AGH-295)."""
     return HubFilesReadModels(
         registry=registry,
         reader=reader,
@@ -528,6 +532,7 @@ def hub_read_models(  # noqa: PLR0913 - the hub reads' ports, all keyword-only
         clock=settings.clock,
         ticket_snapshots=ticket_snapshots,
         usage=usage,
+        capture=capture,
     )
 
 
@@ -561,6 +566,7 @@ def build_app(
     ingest = IngestHook(store, ClaudeHookMapper(), tail, status=counters)
     hub_paths = _HubPaths()
     reader = HubFileSystem() if read_git is None else HubFileSystem(read_git=read_git)
+    capture = CaptureItemVersions(open_item_version_store(settings.db_path), reader, settings.clock)
     registry = JsonHubRegistry(settings.registry_path)
     facts = RegisteredHubFacts(
         registry=registry,
@@ -600,6 +606,7 @@ def build_app(
         activity=events,
         usage=events,
         ticket_snapshots=snapshots,
+        capture=capture,
     )
     hub_paths.hubs = hubs
     changes = default_brain_changes() if brain_changes is None else brain_changes
