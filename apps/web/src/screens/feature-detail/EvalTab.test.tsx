@@ -187,7 +187,7 @@ describe("EvalTab", () => {
     expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
   });
 
-  it("lists every delivery's eval with its verdict, scope and note (golden)", () => {
+  it("lists every delivery's eval with its verdict, scope and date (golden)", () => {
     renderWithApi(tab({ evals }));
 
     const table = screen.getByRole("table", { name: "Evals" });
@@ -195,33 +195,63 @@ describe("EvalTab", () => {
 
     const first = within(rowOf("agh-201"));
     expect(first.getByText("SHIP")).toBeInTheDocument();
-    expect(first.getByText("AGH-201")).toBeInTheDocument();
     expect(first.getByText("3 ACs")).toBeInTheDocument();
-    expect(first.getByText("agent-hub#80")).toBeInTheDocument();
-    expect(first.getByText("0a1b2c3")).toBeInTheDocument();
     expect(first.getByText("2026-10-11")).toBeInTheDocument();
-    expect(first.getByRole("link", { name: "agh-201.md, the eval of agh-201" })).toHaveAttribute(
-      "href",
-      "/projects/agent-hub/brain/features/control-plane/evals/agh-201.md",
-    );
 
     expect(within(rowOf("agh-202")).getByText("NO-SHIP")).toBeInTheDocument();
     expect(within(rowOf("legacy")).getByText("All ACs")).toBeInTheDocument();
-    expect(within(rowOf("legacy")).getByText("eval.md")).toBeInTheDocument();
+    expect(rowOf("legacy")).toHaveTextContent(/^eval\.md/);
+    expect(within(rowOf("legacy")).queryByText("legacy")).toBeNull();
     expect(within(rowOf("agh-203")).getByText(/no verdict/)).toBeInTheDocument();
   });
 
-  it("names the ACs of a scope in the cell's title (golden)", () => {
-    renderWithApi(tab({ evals: [anEvalRecord()] }));
+  it("reads a single eval in place, its details folded, with no list (golden)", async () => {
+    renderWithApi(tab({ evals: [anEvalRecord()], selected: anEvalRecord() }), {
+      routes: { "/api/v1/projects/agent-hub/brain/note": aBrainNote() },
+    });
 
-    expect(screen.getByText("3 ACs")).toHaveAttribute("title", "AC-200.1, AC-200.2, AC-200.3");
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+    const card = within(screen.getByRole("article", { name: "Eval agh-201" }));
+    expect(card.getByText("SHIP")).toBeInTheDocument();
+    expect(card.getByText("3 ACs")).toHaveAttribute("title", "AC-200.1, AC-200.2, AC-200.3");
+    expect(card.getByText("Evaluated 2026-10-11")).toBeInTheDocument();
+    expect(card.getByText(/AGH-201/)).toBeInTheDocument();
+    expect(card.getByText(/agent-hub#80/)).toBeInTheDocument();
+    expect(card.getByText("0a1b2c3")).toBeInTheDocument();
+    expect(card.getByRole("link", { name: "Open in Brain" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/brain/features/control-plane/evals/agh-201.md",
+    );
+    const details = (await card.findByText("Details")).closest("details");
+    expect(details).not.toHaveAttribute("open");
+  });
+
+  it("leaves out an empty AC list instead of saying 0 ACs", () => {
+    const none = anEvalRecord({ acs: [] });
+    renderWithApi(tab({ evals: [none], selected: none }));
+
+    expect(screen.queryByText(/0 ACs/)).toBeNull();
+  });
+
+  it("makes Evaluate secondary once an eval exists, primary before (AC-269.8)", async () => {
+    const view = renderWithApi(tab({ evals: [anEvalRecord()] }), { routes: driving });
+    expect(await screen.findByRole("button", { name: "Evaluate whole feature" })).not.toHaveClass(
+      "ah-btn-primary",
+    );
+    view.unmount();
+    renderWithApi(tab(), { routes: driving });
+    expect(await screen.findByRole("button", { name: "Evaluate whole feature" })).toHaveClass(
+      "ah-btn-primary",
+    );
   });
 
   it("says no eval was written yet and points to Evaluate when there is none (AC-269.8, golden states)", () => {
     renderWithApi(tab());
 
     expect(screen.getByText("No evals yet.")).toBeInTheDocument();
-    expect(screen.getByText(/Press Evaluate above to write the first one/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Press Evaluate whole feature to write the first one/),
+    ).toBeInTheDocument();
   });
 
   it("puts a run waiting for the owner up front, scope locked (AC-269.3, AC-269.7, golden a11y)", async () => {

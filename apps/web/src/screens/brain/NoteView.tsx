@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import type { ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -31,13 +32,18 @@ export interface NoteViewProps {
   path: string;
   /** What a missing note (404) says; defaults to "No note <path> in the <project> brain." */
   missing?: string;
+  /**
+   * Fold the frontmatter into a closed "Details" disclosure instead of showing it above the body,
+   * with `lead` (e.g. the note's path) first inside it. For views where the body is the point.
+   */
+  foldFrontmatter?: { lead?: ReactNode };
 }
 
 /**
  * One brain note rendered with the safe `Markdown` (D3, AC-201.35/36): frontmatter as chips, links
  * to other notes open in the app, and the URL's `#anchor` scrolls to its heading once loaded.
  */
-export function NoteView({ project, path, missing }: NoteViewProps) {
+export function NoteView({ project, path, missing, foldFrontmatter }: NoteViewProps) {
   const note = useBrainNote(project, path);
   const navigate = useNavigate();
   const { hash } = useLocation();
@@ -92,13 +98,8 @@ export function NoteView({ project, path, missing }: NoteViewProps) {
   );
   const chips = fields.filter(([, text]) => text.length <= CHIP_MAX);
   const long = fields.filter(([, text]) => text.length > CHIP_MAX);
-  return (
-    <div className="ah-stack" style={{ gap: 12 }}>
-      {data.frontmatter_problem && (
-        <Banner tone="warning" boxed>
-          The frontmatter could not be read: {data.frontmatter_problem}. The whole file is shown.
-        </Banner>
-      )}
+  const frontmatter = (
+    <>
       {chips.length > 0 && (
         <ul
           aria-label="Frontmatter"
@@ -121,6 +122,26 @@ export function NoteView({ project, path, missing }: NoteViewProps) {
             </div>
           ))}
         </dl>
+      )}
+    </>
+  );
+  return (
+    <div className="ah-stack" style={{ gap: 12 }}>
+      {data.frontmatter_problem && (
+        <Banner tone="warning" boxed>
+          The frontmatter could not be read: {data.frontmatter_problem}. The whole file is shown.
+        </Banner>
+      )}
+      {foldFrontmatter ? (
+        <details className="ah-note-details">
+          <summary>Details</summary>
+          <div className="ah-stack" style={{ gap: 8, marginTop: 8 }}>
+            {foldFrontmatter.lead}
+            {frontmatter}
+          </div>
+        </details>
+      ) : (
+        frontmatter
       )}
       <Markdown
         source={data.markdown}

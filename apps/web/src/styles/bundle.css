@@ -2251,6 +2251,17 @@ pre {
   margin: 0;
   overflow-wrap: anywhere;
 }
+.ah-note-details summary {
+  cursor: pointer;
+  width: max-content;
+  min-height: 24px;
+  font-size: 12px;
+  line-height: 24px;
+  color: var(--text-muted);
+}
+.ah-note-details summary:hover {
+  color: var(--text);
+}
 .ah-actable td.ah-ac-desc {
   white-space: normal;
   min-width: 260px;

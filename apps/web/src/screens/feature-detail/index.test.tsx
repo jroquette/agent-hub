@@ -470,11 +470,9 @@ describe("FeatureDetailScreen", () => {
       expect(table).toHaveTextContent("agh-48");
       expect(table).toHaveTextContent("agh-49");
       expect(table).toHaveTextContent("NO-SHIP");
-      expect(
-        within(table).getByRole("link", { name: "agh-49.md, the eval of agh-49" }),
-      ).toHaveAttribute(
-        "href",
-        "/projects/agent-hub/brain/features/layered-memory/evals/agh-49.md",
+      expect(within(table).getByRole("button", { name: /^agh-49,/ })).toHaveAttribute(
+        "title",
+        "brain/features/layered-memory/evals/agh-49.md",
       );
     });
 
