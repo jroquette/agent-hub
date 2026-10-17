@@ -5,10 +5,10 @@ import type { AgentSession, Session, SessionQuery } from "./queries";
 export type SectionId = "waiting" | "live" | "idle" | "ended";
 
 export const SECTIONS: { id: SectionId; title: string }[] = [
-  { id: "waiting", title: "Waiting for you" },
-  { id: "live", title: "Live" },
-  { id: "idle", title: "Idle" },
-  { id: "ended", title: "Ended" },
+  { id: "waiting", title: "Needs you" },
+  { id: "live", title: "Working" },
+  { id: "idle", title: "Paused" },
+  { id: "ended", title: "Finished" },
 ];
 
 const SECTION_OF: Record<string, SectionId> = {
@@ -103,13 +103,17 @@ export function placeDriven(
   const moved: Session[] = [];
   const kept = (id: SectionId) =>
     observed[id].map(withPrompt).filter((s) => {
-      const move =
-        id !== "waiting" &&
-        asked.has("waiting") &&
-        s.agent_session_id != null &&
-        waitingTwins.has(s.agent_session_id);
-      if (move) moved.push({ ...s, status: "waiting" });
-      return !move;
+      if (id === "waiting" || !asked.has("waiting")) return true;
+      if (s.agent_session_id != null && waitingTwins.has(s.agent_session_id)) {
+        moved.push({ ...s, status: "waiting" });
+        return false;
+      }
+      // An open session with a problem only the owner can fix needs them too (it keeps its status).
+      if (id !== "ended" && s.problems.needs_you > 0) {
+        moved.push(s);
+        return false;
+      }
+      return true;
     });
   const placed = {} as Record<SectionId, Placed>;
   for (const { id } of SECTIONS) {

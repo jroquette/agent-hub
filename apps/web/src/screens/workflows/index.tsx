@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useParams } from "react-router";
 
 import {
   AppLink,
@@ -14,7 +14,9 @@ import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { NodePanel, useNodeParam, WorkflowGraph } from "./WorkflowGraph";
+import { StartRun } from "../runs-list/StartRun";
 import { useWorkflow, useWorkflows, type WorkflowDetail, type WorkflowSummary } from "./queries";
+import { countLabel, kindCounts, STEP_KINDS, type StepKind } from "./steps";
 
 /* Workflows (plan 6.3, AC-213.15): the catalog with the files that do not load, and one
  * workflow's layered graph and document, read-only. */
@@ -40,10 +42,116 @@ function Page({ children }: { children: ReactNode }) {
   );
 }
 
+/** The catalog's opening: what a workflow is, in a few lines, and the step kinds. */
+function WhatIsAWorkflow() {
+  const kinds: [StepKind, string][] = [
+    ["agent", "AI agent"],
+    ["command", "Command"],
+    ["approval", "Your approval"],
+    ["repeat", "Rounds"],
+  ];
+  return (
+    <section
+      aria-label="What is a workflow"
+      className="ah-card ah-card-body ah-stack"
+      style={{ gap: 12 }}
+    >
+      <p style={{ margin: 0, maxWidth: 820 }}>
+        A workflow is a <b>recipe the hub follows on its own</b> to get a job done, such as taking
+        an issue to a pull request. It is a list of steps in a fixed order. An agent decides{" "}
+        <i>how</i> to do its step; the workflow decides <i>which</i> steps happen, in what order,
+        and when to stop. Each start shows up in <AppLink href="/runs">Workflow runs</AppLink>.
+      </p>
+      <ul
+        aria-label="Kinds of step"
+        style={{
+          listStyle: "none",
+          margin: 0,
+          padding: 0,
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: 12,
+        }}
+      >
+        {kinds.map(([kind, title]) => (
+          <li key={kind} className="ah-row" style={{ gap: 8, alignItems: "flex-start" }}>
+            <Icon name={STEP_KINDS[kind].icon} style={{ marginTop: 2, color: "var(--accent)" }} />
+            <span className="ah-small">
+              <b style={{ fontWeight: 600 }}>{title}</b>
+              <br />
+              <span className="ah-subtle">{STEP_KINDS[kind].hint}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** The step kinds of a workflow as quiet chips: "3 AI agents", "5 commands". */
+export function StepChips({ types }: { types: Record<string, number> }) {
+  const counts = kindCounts(types);
+  if (counts.length === 0) return null;
+  return (
+    <span className="ah-row ah-wrap" style={{ gap: 6 }}>
+      {counts.map(([kind, n]) => (
+        <span key={kind} className="ah-badge ah-badge-quiet" title={STEP_KINDS[kind].hint}>
+          <Icon name={STEP_KINDS[kind].icon} />
+          {countLabel(kind, n)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function WorkflowCard({ item, showProject }: { item: WorkflowSummary; showProject: boolean }) {
+  const needs = item.inputs.filter((input) => input.required);
+  return (
+    <li>
+      <AppLink
+        href={workflowHref(item)}
+        className="ah-pcard"
+        style={{ height: "100%", color: "inherit", textDecoration: "none" }}
+      >
+        <span className="ah-row" style={{ gap: 8 }}>
+          <Icon name="workflow" style={{ color: "var(--accent)" }} />
+          <span className="ah-mono" style={{ fontWeight: 600, fontSize: 15 }}>
+            {item.name}
+          </span>
+          <span className="ah-grow" />
+          <SourceBadge source={item.source} />
+        </span>
+        <span className="ah-muted" style={{ minHeight: 40 }}>
+          {item.description ?? "No description."}
+        </span>
+        <StepChips types={item.step_types ?? {}} />
+        <span className="ah-row ah-wrap ah-small ah-subtle" style={{ gap: 6 }}>
+          {needs.length > 0 ? (
+            <>
+              <span>You give it:</span>
+              {needs.map((input) => (
+                <span key={input.name} className="ah-mono" title={input.description ?? undefined}>
+                  {input.name}
+                </span>
+              ))}
+            </>
+          ) : (
+            <span>Takes no input.</span>
+          )}
+          <span className="ah-grow" />
+          {showProject && <span className="ah-mono">{item.project}</span>}
+          <span className="ah-row" style={{ gap: 2, color: "var(--accent)" }}>
+            See the steps <Icon name="arrow-right" size="sm" />
+          </span>
+        </span>
+      </AppLink>
+    </li>
+  );
+}
+
 /** The catalog: every workflow of the projects in scope, and the files that do not load. */
 export function WorkflowsScreen() {
   const [scope] = useScope();
-  const navigate = useNavigate();
   const catalog = useWorkflows(scope);
 
   let content: ReactNode;
@@ -64,57 +172,33 @@ export function WorkflowsScreen() {
         </EmptyState>
       </div>
     );
+  } else if (catalog.isPending) {
+    content = <Skeleton width="100%" height={160} />;
   } else {
-    const problems = catalog.data?.problems ?? [];
+    const items = catalog.data.items;
+    const problems = catalog.data.problems;
+    const projects = new Set(items.map((item) => item.project));
     content = (
       <>
-        <DataTable
-          caption="Workflows"
-          density="compact"
-          loading={catalog.isPending}
-          rows={catalog.data?.items ?? []}
-          rowKey={(item) => `${item.project}/${item.name}`}
-          onRowClick={(item) => void navigate(workflowHref(item))}
-          columns={[
-            {
-              id: "name",
-              label: "Workflow",
-              render: (item) => (
-                <div className="ah-stack" style={{ gap: 0, padding: "5px 0" }}>
-                  <span className="ah-mono" style={{ fontWeight: 500 }}>
-                    {item.name}
-                  </span>
-                  {item.description && (
-                    <span className="ah-small ah-subtle">{item.description}</span>
-                  )}
-                </div>
-              ),
-            },
-            {
-              id: "project",
-              label: "Project",
-              width: 160,
-              render: (item) => <span className="ah-mono">{item.project}</span>,
-            },
-            {
-              id: "source",
-              label: "Source",
-              width: 110,
-              render: (item) => <SourceBadge source={item.source} />,
-            },
-            {
-              id: "size",
-              label: "Revision · size",
-              width: 180,
-              render: (item) => (
-                <span className="ah-small">
-                  <span className="ah-mono">r{item.revision}</span> · {item.node_count} nodes ·{" "}
-                  {item.layer_count} layers
-                </span>
-              ),
-            },
-          ]}
-        />
+        <ul
+          aria-label="Workflows"
+          style={{
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))",
+            gap: 16,
+          }}
+        >
+          {items.map((item) => (
+            <WorkflowCard
+              key={`${item.project}/${item.name}`}
+              item={item}
+              showProject={projects.size > 1}
+            />
+          ))}
+        </ul>
         {problems.length > 0 && (
           <DataTable
             caption="Files that do not load"
@@ -149,10 +233,12 @@ export function WorkflowsScreen() {
 
   return (
     <Page>
-      <h1 className="ah-h1">Workflows</h1>
-      <p className="ah-muted" style={{ margin: 0 }}>
-        The workflows each hub can run: its own files, then the built-ins it does not override.
-      </p>
+      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+        <h1 className="ah-h1">Workflows</h1>
+        <span className="ah-grow" />
+        <StartRun project={scope} />
+      </div>
+      <WhatIsAWorkflow />
       {content}
     </Page>
   );

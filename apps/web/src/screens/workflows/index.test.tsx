@@ -27,19 +27,29 @@ function renderDetail(reply: ApiRoutes[string] = aWorkflowDetail(), query = "") 
 }
 
 describe("WorkflowsScreen", () => {
-  it("lists each workflow with its source, revision and size", async () => {
+  it("lists each workflow as a card with its source, step kinds and inputs", async () => {
     renderList();
 
     await screen.findByText("issue-to-pr");
-    const table = screen.getByRole("table", { name: "Workflows" });
-    const rows = within(table).getAllByRole("row").slice(1);
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent("feature-flow");
-    expect(rows[0]).toHaveTextContent("Hub");
-    expect(rows[0]).toHaveTextContent("r3");
-    expect(rows[0]).toHaveTextContent("4 nodes · 3 layers");
-    expect(rows[1]).toHaveTextContent("issue-to-pr");
-    expect(rows[1]).toHaveTextContent("Built-in");
+    const list = screen.getByRole("list", { name: "Workflows" });
+    const cards = within(list).getAllByRole("listitem");
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toHaveTextContent("feature-flow");
+    expect(cards[0]).toHaveTextContent("Hub");
+    expect(cards[0]).toHaveTextContent("1 AI agent");
+    expect(cards[0]).toHaveTextContent("2 commands");
+    expect(cards[0]).toHaveTextContent("1 approval by you");
+    expect(cards[0]).toHaveTextContent("You give it:feature");
+    expect(cards[1]).toHaveTextContent("issue-to-pr");
+    expect(cards[1]).toHaveTextContent("Built-in");
+  });
+
+  it("explains what a workflow is and its kinds of step", async () => {
+    renderList();
+
+    const intro = await screen.findByRole("region", { name: "What is a workflow" });
+    expect(intro).toHaveTextContent("recipe the hub follows on its own");
+    expect(within(intro).getAllByRole("listitem")).toHaveLength(4);
   });
 
   it("lists the files that do not load with their line and key", async () => {
@@ -54,11 +64,11 @@ describe("WorkflowsScreen", () => {
   it("asks the API for the project in scope", async () => {
     const { requests } = renderList(undefined, "?scope=agent-hub");
 
-    await screen.findByRole("table", { name: "Workflows" });
+    await screen.findByRole("list", { name: "Workflows" });
     expect(requests.some((r) => r.url.includes("project=agent-hub"))).toBe(true);
   });
 
-  it("opens a workflow's detail when its row is chosen", async () => {
+  it("opens a workflow's detail when its card is chosen", async () => {
     const user = userEvent.setup();
     const { router } = renderList();
 

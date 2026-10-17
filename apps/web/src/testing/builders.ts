@@ -1471,12 +1471,14 @@ export function aBundledFileText(overrides: Partial<BundledFileText> = {}): Bund
 export function aWorkflowSummary(overrides: Partial<WorkflowSummary> = {}): WorkflowSummary {
   return {
     description: "Plans, builds and documents a feature, then asks for a review.",
+    inputs: [{ name: "feature", type: "string", required: true, description: "What to build." }],
     layer_count: 3,
     name: "feature-flow",
     node_count: 4,
     project: "agent-hub",
     revision: 3,
     source: "hub",
+    step_types: { agent: 1, shell: 1, script: 1, approval: 1 },
     ...overrides,
   };
 }
