@@ -25,6 +25,7 @@ from agent_hub.cli.hub_config_reader import (
 from agent_hub.core.hub_config.local_config import LOCAL_FILE_MAX_BYTES, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_hub_document
 
 
@@ -103,6 +104,28 @@ def test_prints_one_line_per_error_when_fields_invalid(
     assert len(lines) == 2
     assert all(line.startswith("hub.json: ") for line in lines)
     assert sorted(line.split(": ")[1] for line in lines) == ["project.name", "repos[0].dir"]
+
+
+def test_hides_secret_when_hub_json_holds_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Assembled at run time, so the repo holds no secret-shaped text.
+    password = "pw" + "s3cr3t"
+    jwt = "ey" + "J" + "a" * 15 + "." + "b" * 15
+    document = builders.an_environments_document()
+    document["platform"]["version"] = version("agent-hub-cli")
+    endpoints = document["repos"][0]["services"]["api"]["endpoints"]
+    endpoints["staging"] = {"url": f"https://u:{password}@db.example.com"}
+    endpoints["live"]["note"] = f"token {jwt}"
+
+    lines = stderr_lines_on_exit(write_document(tmp_path, document), capsys)
+
+    assert [line.split(": ")[1] for line in lines] == [
+        "repos[0].services.api.endpoints.staging.url",
+        "repos[0].services.api.endpoints.live.note",
+    ]
+    assert "JWT" in lines[1]
+    assert all(password not in line and jwt not in line for line in lines)
 
 
 def test_keeps_each_error_on_one_line_when_value_has_newline(
