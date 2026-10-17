@@ -490,7 +490,11 @@ export function FeatureDetailScreen() {
           )}
         </div>
       </div>
-      <section className="ah-stack" style={{ gap: 10 }} aria-label="Where the feature is">
+      <section
+        className="ah-stack"
+        style={{ gap: 10, marginTop: 8 }}
+        aria-label="Where the feature is"
+      >
         <div className="ah-row" style={{ gap: 8 }}>
           <b className="ah-small">Golden path</b>
           <DerivedLabel how="Each step is derived from the record files, the tickets' status in Linear when it was read, and the review and eval records; Shipped needs GitHub, not connected in this version. Hover a step for its details." />
