@@ -3,9 +3,10 @@
 A unit is keyed by ``(project, unit_path)``, ``unit_path`` hub-relative with ``/`` separators and
 no trailing slash. ``seq`` counts a unit's versions from 1 without gaps. An ``external`` version
 was seen on disk and has no author (D11); a ``publish`` or ``restore`` carries the hub's
-effective identity, and a ``restore`` names the version it restored. A unit's ``first`` version
-(``first``, exactly ``seq`` 1) is ``external`` (D20) or, for a new item, ``publish``
-(AC-295.12), never a ``restore``.
+effective identity, and a ``restore`` names the version it restored. A ``publish`` made from a
+Studio draft names that draft (``draft_id``, A5); no other origin carries one. A unit's
+``first`` version (``first``, exactly ``seq`` 1) is ``external`` (D20) or, for a new item,
+``publish`` (AC-295.12), never a ``restore``.
 ``recorded_at`` must carry an offset and is kept in UTC.
 """
 
@@ -20,6 +21,9 @@ from agent_hub.core.events.event import UtcTimestamp
 CONTENT_HASH: Final = r"^sha256:[0-9a-f]{64}$"
 
 type ContentHash = Annotated[str, Field(pattern=CONTENT_HASH)]
+
+# A Studio draft's id (the spec's vocabulary): its kind and six lowercase letters or digits.
+DRAFT_ID: Final = r"^(skill|agent|hook)-[a-z0-9]{6}$"
 
 
 class VersionOrigin(StrEnum):
@@ -64,6 +68,7 @@ class _VersionFacts(_Frozen):
     content_hash: ContentHash
     size: int = Field(ge=0)
     restored_from: str | None = None
+    draft_id: Annotated[str, Field(pattern=DRAFT_ID)] | None = None
 
     @model_validator(mode="after")
     def _origin_rules(self) -> Self:
@@ -76,6 +81,9 @@ class _VersionFacts(_Frozen):
             raise ValueError(msg)
         if (self.origin is VersionOrigin.RESTORE) != (self.restored_from is not None):
             msg = "restored_from is set exactly when the origin is restore"
+            raise ValueError(msg)
+        if self.draft_id is not None and self.origin is not VersionOrigin.PUBLISH:
+            msg = "draft_id is set only when the origin is publish"
             raise ValueError(msg)
         if self.first != (self.seq == 1):
             msg = "first is set exactly on a unit's seq 1"
