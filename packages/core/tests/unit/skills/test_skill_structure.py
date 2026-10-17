@@ -4,6 +4,7 @@ from agent_hub.core.skills.skill_structure import (
     CLAUDE_CODE_COMMANDS,
     MAX_HEADING_CHARS,
     MAX_REFERENCES,
+    MAX_STEP_SUMMARY_CHARS,
     MAX_STEP_TITLE_CHARS,
     MAX_STEPS,
     derive_structure,
@@ -22,11 +23,39 @@ def test_derives_steps_when_body_shaped_like_feature() -> None:
     structure = derive_structure(a_feature_shaped_body(), agents=AGENTS, skills=SKILLS)
 
     assert structure.steps == (
-        Step(index=1, title="Spec", tags=("agent",), agents=("requirements-analyst",)),
-        Step(index=2, title="Gate: user approves the spec", tags=("gate", "human")),
-        Step(index=3, title="Plan", skills=("create-plan",)),
-        Step(index=4, title="Implement", tags=("command",), commands=("make check",)),
-        Step(index=5, title="Doctor", tags=("command",), commands=("./hub doctor",)),
+        Step(
+            index=1,
+            title="Spec",
+            summary="the requirements-analyst agent writes spec.md.",
+            tags=("agent",),
+            agents=("requirements-analyst",),
+        ),
+        Step(
+            index=2,
+            title="Gate: user approves the spec",
+            summary="Stop until they do.",
+            tags=("gate", "human"),
+        ),
+        Step(
+            index=3,
+            title="Plan",
+            summary="run /create-plan on the approved spec.",
+            skills=("create-plan",),
+        ),
+        Step(
+            index=4,
+            title="Implement",
+            summary="in a worktree; run make check before the PR.",
+            tags=("command",),
+            commands=("make check",),
+        ),
+        Step(
+            index=5,
+            title="Doctor",
+            summary="run ./hub doctor and fix what it finds.",
+            tags=("command",),
+            commands=("./hub doctor",),
+        ),
     )
     assert structure.agents == ("requirements-analyst",)
     assert structure.skills == ("create-plan",)
@@ -147,6 +176,40 @@ def test_tags_scripts_when_step_names_skill_scripts() -> None:
     assert step.tags == ("script",)
     assert step.scripts == ("scripts/check.sh", "${CLAUDE_SKILL_DIR}/scripts/two.py")
     assert step.title == "Run `scripts/check.sh` then `${CLAUDE_SKILL_DIR}/scripts/two.py`."
+
+
+def test_reads_declared_type_when_step_starts_with_type_token() -> None:
+    body = (
+        "1. `agent` **Batch**, one at a time: an empty one is a missing gate; ask the user.\n"
+        "2. `gate` **Batch plan**: ordered batches, each one PR.\n"
+        "3. `human` **Merge** the PR.\n"
+    )
+
+    agent, gate, human = derive_structure(body, agents=AGENTS, skills=SKILLS).steps
+
+    assert (agent.declared_type, agent.title, agent.tags) == ("agent", "Batch", ())
+    assert agent.summary == "one at a time: an empty one is a missing gate; ask the user."
+    assert (gate.declared_type, gate.title, gate.tags) == ("gate", "Batch plan", ("gate",))
+    assert gate.summary == "ordered batches, each one PR."
+    assert (human.declared_type, human.title, human.tags) == ("human", "Merge", ("human",))
+    assert human.summary == "the PR."
+
+
+def test_lists_only_declared_gates_when_steps_declare_types() -> None:
+    body = "1. `agent` **Review**: re-run both gates.\n2. `gate` **Approve**: the user decides.\n"
+
+    structure = derive_structure(body, agents=AGENTS, skills=SKILLS)
+
+    assert structure.gates == ("Approve",)
+
+
+def test_clips_summary_when_first_line_long() -> None:
+    body = "1. **Long**: " + "word " * 100 + "\n"
+
+    (step,) = derive_structure(body, agents=AGENTS, skills=SKILLS).steps
+
+    assert len(step.summary) <= MAX_STEP_SUMMARY_CHARS
+    assert step.summary.endswith("…")
 
 
 def test_stops_at_bounds_when_body_has_many_steps() -> None:

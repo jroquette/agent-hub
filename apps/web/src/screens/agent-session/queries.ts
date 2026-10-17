@@ -12,6 +12,8 @@ import {
   useApi,
   type ApiProblem,
 } from "../../lib/api";
+import { screenshotBody } from "../../lib/pastedImage";
+import { rememberMessageScreenshots } from "../../lib/screenshotCopy";
 import { useEventStream, type StreamHandlers, type StreamHealth } from "../../lib/sse";
 import {
   applySnapshot,
@@ -234,8 +236,13 @@ export interface AgentTranscript {
   health: StreamHealth;
   /** Whether the stream is (meant to be) open: a live session whose log has loaded. */
   streaming: boolean;
-  /** Posts `text` with `post`, showing it as "Sending…" until its record arrives (AC-234.27). */
-  send: (text: string, post: (text: string) => Promise<MessageAccepted>) => Promise<unknown>;
+  /** Posts `text` (and the images pasted in it) with `post`, showing it as "Sending…" until its
+   * record arrives (AC-234.27); the images are kept in this browser under the accepted seq. */
+  send: (
+    text: string,
+    post: (text: string) => Promise<MessageAccepted>,
+    screenshots?: readonly string[],
+  ) => Promise<unknown>;
 }
 
 /**
@@ -313,13 +320,19 @@ export function useAgentTranscript(id: string): AgentTranscript {
     ended.current = isTerminal(state.status);
   });
   const send = useCallback(
-    async (text: string, post: (text: string) => Promise<MessageAccepted>) => {
+    async (
+      text: string,
+      post: (text: string) => Promise<MessageAccepted>,
+      screenshots: readonly string[] = [],
+    ) => {
       const sendKey = `send-${String((sends.current += 1))}`;
       // A message to an ended session reopens it in place: reload, so the stream opens again.
       const reopens = ended.current;
-      batcher.push({ type: "sending", key: sendKey, text });
+      batcher.push({ type: "sending", key: sendKey, text, screenshots });
       try {
         const { seq } = await post(text);
+        // The server keeps no image: this browser does, for the message's bubble.
+        if (screenshots.length > 0) rememberMessageScreenshots(id, seq, screenshots);
         batcher.push({ type: "accepted", key: sendKey, seq });
       } catch (cause) {
         batcher.push({ type: "failed", key: sendKey });
@@ -358,7 +371,8 @@ function isSession(data: unknown): data is AgentSession {
 }
 
 export interface AgentSessionCommands {
-  send: (text: string) => Promise<MessageAccepted>;
+  /** Posts a message, with the PNG data URLs of the images pasted in it. */
+  send: (text: string, screenshots?: readonly string[]) => Promise<MessageAccepted>;
   interrupt: () => Promise<unknown>;
   settings: (change: SettingsBody) => Promise<unknown>;
   answer: (requestId: string, answer: PermissionAnswer) => Promise<unknown>;
@@ -379,8 +393,14 @@ export function useAgentSessionCommands(id: string): AgentSessionCommands {
       return data;
     };
     return {
-      send: (text) =>
-        apiPost("/api/v1/agent-sessions/{agent_session_id}/messages", { text }, params),
+      send: (text, screenshots = []) =>
+        apiPost(
+          "/api/v1/agent-sessions/{agent_session_id}/messages",
+          screenshots.length > 0
+            ? { text, screenshots: screenshots.map(screenshotBody) }
+            : { text },
+          params,
+        ),
       interrupt: () =>
         apiPost("/api/v1/agent-sessions/{agent_session_id}/interrupt", NO_BODY, params).then(keep),
       settings: (change) =>

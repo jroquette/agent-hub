@@ -142,7 +142,7 @@ describe("SlashMenu (slash-menu)", () => {
     expect(props.onInterrupt).not.toHaveBeenCalled();
     expect(box).toHaveValue("/compact");
     await userEvent.keyboard("{Enter}");
-    expect(props.onSend).toHaveBeenCalledWith("/compact");
+    expect(props.onSend).toHaveBeenCalledWith("/compact", []);
   });
 
   it("announces the menu opening, its match count and No commands, once per change", async () => {

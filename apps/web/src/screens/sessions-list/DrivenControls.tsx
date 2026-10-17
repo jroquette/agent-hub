@@ -1,9 +1,10 @@
 /* Driving sessions from Sessions (AGH-165, AC-234.8): New session in the header, why it is unavailable, cloud guidance. */
-import { useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 
-import { Banner, Button, ProblemError } from "../../components";
+import { AppLink, Banner, Button, Icon, ProblemError } from "../../components";
+import { resumable } from "../agent-session/model";
 import { CloudPanel } from "./CloudPanel";
-import { sessionControlUnavailable } from "./control";
+import { agentSessionHref, sessionControlUnavailable } from "./control";
 import {
   useAgentCapabilities,
   useAgentSessions,
@@ -11,6 +12,7 @@ import {
   useServedFolder,
   useWorkdirs,
 } from "./queries";
+import { isDriven, type SectionRow } from "./sections";
 import { StartSessionDialog } from "./StartSessionDialog";
 
 /**
@@ -66,6 +68,39 @@ export function NewSessionControl({ driving }: { driving: Driving }) {
         />
       )}
     </>
+  );
+}
+
+/**
+ * "Resume" on the rows and tiles of ended or failed driven sessions, twins included (AC-234.15): a
+ * link to the chat, where a message resumes the session in place, as in its chat (ADR 0036).
+ * Stable while the list is, so the memoised tiles and the table columns do not render again.
+ */
+export function useResumeLink(driving: Driving) {
+  const { canDrive } = driving;
+  const items = driving.list.data?.items;
+  return useCallback(
+    (row: SectionRow): ReactNode => {
+      const session = isDriven(row) ? row : items?.find((a) => a.id === row.agent_session_id);
+      if (!canDrive || !session || (session.status !== "ended" && session.status !== "failed"))
+        return null;
+      if (!resumable(session, session.end_reason)) return null;
+      return (
+        <AppLink
+          href={agentSessionHref(session.id)}
+          className="ah-btn ah-btn-sm"
+          aria-label={`Resume ${session.title ?? "Untitled session"}`}
+          // The row or tile around it opens on click too: one navigation is enough.
+          onClick={(event) => {
+            event.stopPropagation();
+          }}
+        >
+          <Icon name="play" size="sm" />
+          Resume
+        </AppLink>
+      );
+    },
+    [canDrive, items],
   );
 }
 

@@ -39,31 +39,23 @@ interface PaletteItem {
 
 const SHORTCUT: Record<string, string> = {
   "/": "g p",
-  "/approvals": "g a",
   "/sessions": "g s",
   "/runs": "g r",
+  "/knowledge/learnings": "g k",
   "/features": "g f",
   "/health": "g h",
   "/settings": "g ,",
 };
 
 const SCREENS: PaletteItem[] = NAV.flatMap((group) =>
-  group.items.flatMap((item) => [
-    {
-      key: `screen:${item.id}`,
-      icon: item.icon ?? "circle-dot",
-      label: item.label,
-      hint: SHORTCUT[item.to],
-      href: item.to,
-    },
-    ...(item.children ?? []).map((child) => ({
-      key: `screen:${child.id}`,
-      icon: "lightbulb" as const,
-      label: child.label,
-      href: child.to,
-    })),
-  ]),
-).filter((item, i, all) => all.findIndex((other) => other.href === item.href) === i);
+  group.items.map((item) => ({
+    key: `screen:${item.id}`,
+    icon: item.icon,
+    label: item.label,
+    hint: SHORTCUT[item.to],
+    href: item.to,
+  })),
+);
 
 function useDebounced(value: string, ms: number): string {
   const [debounced, setDebounced] = useState(value);

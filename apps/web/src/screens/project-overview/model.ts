@@ -6,7 +6,6 @@ import type { Finding, Session } from "./queries";
 /* View models of the Project overview (spec 12): Kanban, Now staleness, health and sessions. */
 
 export const WEEK_MS = 7 * 86_400_000;
-export const COLUMN_CAP = 5;
 /** Knowledge not verified for longer than this turns amber (calibrated trust). */
 export const STALE_DAYS = 60;
 

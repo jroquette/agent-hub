@@ -97,6 +97,25 @@ def test_pushes_branch_with_moved_note_when_accepted(
     )
 
 
+def test_adds_note_from_checkout_when_accepted_note_never_pushed(
+    world_app: Any, propose: Any, hub_world: Any
+) -> None:
+    learning_id = propose(world_app, "gate-first.md", NOTE, push=False)
+    main_before = hub_world.head("main")
+    checkout_before = hub_world.snapshot()
+
+    response = _accept(world_app, learning_id, "learnings/")
+
+    assert response.status_code == 201, response.text
+    branch = response.json()["branch"]
+    moved = hub_world.file_on(branch, "brain/learnings/gate-first.md")
+    assert moved is not None
+    assert "status: accepted" in moved
+    assert "# Run the gate before the PR" in moved
+    assert hub_world.head("main") == main_before
+    assert hub_world.snapshot() == checkout_before
+
+
 def test_archives_note_with_reason_when_rejected(
     world_app: Any, propose: Any, hub_world: Any
 ) -> None:
@@ -150,8 +169,6 @@ def _conflict_case(case: str, app: Any, *, propose: Any, world: Any) -> tuple[st
         learning_id = propose(app, "gate-first.md", NOTE)
         assert _accept(app, learning_id).status_code == 201
         return learning_id, "learnings/again.md"
-    if case == "not_on_origin":
-        return propose(app, "gate-first.md", NOTE, push=False), "learnings/"
     learning_id = propose(app, "gate-first.md", NOTE)
     if case == "target_exists":
         world.put_note("brain/learnings/taken.md", "# Taken\n")
@@ -176,7 +193,6 @@ def _conflict_case(case: str, app: Any, *, propose: Any, world: Any) -> tuple[st
         "inbox",
         "decisions",
         "auto",
-        "not_on_origin",
     ],
 )
 def test_refuses_with_conflict_when_learning_or_target_conflicts(

@@ -46,6 +46,12 @@ Redirect the output to a file and check the exit code: `make check > check.log 2
 - `docs/API.md`: REST API standard (implemented in Phase 2).
 - `docs/CONTRIBUTING.md`: task workflow, branches, commits, PRs, Definition of Ready and Done, ADR process.
 - [docs/design/README.md](docs/design/README.md): design docs (config, generator, doctor, domain model), one file per subject.
+- Design system (what `/ux-review` and the `ux-designer` agent hold the web app to):
+  `docs/design/control-plane/README.md` (product principles, content fundamentals, visual foundations, iconography,
+  and the Departures list, which wins over the specs), one spec per screen in `docs/design/control-plane/specs/`
+  (sitemap and keyboard map in `01-navigation.md`, states in `22-first-run-and-errors.md`, `31-responsive.md`, open
+  items in `32-decisions.md`), tokens in `apps/web/design/tokens.json`, shared components in
+  `apps/web/src/components/index.ts`; the screen a11y tests run with `npm test -- -t a11y` in `apps/web`.
 - `docs/adr/`: architecture decision records. Accepted ADRs are never edited; a new ADR supersedes them.
 
 ## Rules

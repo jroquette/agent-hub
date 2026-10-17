@@ -258,11 +258,126 @@ describe("LearningsScreen", () => {
     });
   });
 
+  it("lists decidable proposals before blocked ones and says why each is blocked", async () => {
+    const blocked = aLearning({
+      id: "l-gone",
+      text: "Proposal: a note nobody pushed",
+      proposed_at: at(10),
+      summary: null,
+      note_unavailable: "Note not in the hub checkout",
+      actions_unavailable: "Note not in the hub checkout",
+    });
+    open({
+      "/api/v1/learnings": aPage([blocked, older]),
+      "/api/v1/learnings/l-gone": detailOf(blocked),
+    });
+
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Retry flaky CI before calling a run failed");
+    const [first, second] = within(table).getAllByRole("row").slice(1);
+    if (!first || !second) throw new Error("expected two rows");
+    expect(first.textContent).toContain("Retry flaky CI");
+    expect(second.textContent).toContain("a note nobody pushed");
+    expect(second.textContent).not.toContain("Proposal:");
+    expect(within(second).getByText("Note not in the hub checkout")).toBeVisible();
+    const decision = screen.getByRole("group", { name: "Decision" });
+    expect(within(decision).getByRole("button", { name: "Ready to decide · 1" })).toBeVisible();
+    expect(within(decision).getByRole("button", { name: "Blocked · 1" })).toBeVisible();
+
+    await userEvent.click(within(decision).getByRole("button", { name: "Blocked · 1" }));
+    await waitFor(() => {
+      expect(within(table).queryByText(/Retry flaky CI/)).not.toBeInTheDocument();
+    });
+    expect(within(table).getByText(/a note nobody pushed/)).toBeInTheDocument();
+  });
+
+  it("keeps the status in the URL", async () => {
+    open({}, "/knowledge/learnings?status=rejected");
+
+    await screen.findByRole("table", { name: "Proposed learnings" });
+    expect(screen.getByRole("button", { name: "Rejected" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("writes the status to the URL and goes back to the previous one", async () => {
+    const user = userEvent.setup();
+    const { router } = open();
+    await screen.findByRole("table", { name: "Proposed learnings" });
+
+    await user.click(screen.getByRole("button", { name: "Accepted" }));
+    expect(router.state.location.search).toBe("?status=accepted");
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    expect(router.state.location.search).toBe("");
+    expect(screen.getByRole("button", { name: "Proposed" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("wraps a long title and keeps it whole on hover", async () => {
+    const long = "A".repeat(30) + " long learning title that needs two lines in the queue";
+    open({ "/api/v1/learnings": aPage([aLearning({ id: "l-long", text: long })]) });
+
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    const title = await within(table).findByTitle(long);
+    expect(title.style.webkitLineClamp).toBe("2");
+  });
+
   it("has no serious a11y violations (a11y)", async () => {
     const { container } = open();
     const detail = await screen.findByRole("region", { name: "Proposal" });
     await within(detail).findByRole("button", { name: "Accept" });
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("LearningsScreen filters", () => {
+  it("narrows the queue to one project and keeps the choice in the URL", async () => {
+    const { router } = open();
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Order book snapshot before diff replay");
+
+    await userEvent.click(screen.getByRole("button", { name: "Project: All" }));
+    const menu = screen.getByRole("dialog", { name: "Project filter" });
+    await userEvent.click(within(menu).getByRole("checkbox", { name: /loki-trader/ }));
+
+    await waitFor(() => {
+      expect(within(table).queryByText(/Retry flaky CI/)).not.toBeInTheDocument();
+    });
+    expect(within(table).getByText("Order book snapshot before diff replay")).toBeInTheDocument();
+    expect(router.state.location.search).toContain("project=loki-trader");
+    expect(screen.getByRole("button", { name: "Project: loki-trader" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+  });
+
+  it("closes a filter menu on Escape and on a click outside it", async () => {
+    open();
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Order book snapshot before diff replay");
+
+    await userEvent.click(screen.getByRole("button", { name: "Project: All" }));
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Project filter" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Project: All" }));
+    await userEvent.click(screen.getByRole("heading", { level: 1, name: "Knowledge" }));
+    expect(screen.queryByRole("dialog", { name: "Project filter" })).not.toBeInTheDocument();
+  });
+
+  it("says nothing matches when the search finds no learning", async () => {
+    open();
+    await screen.findByRole("table", { name: "Proposed learnings" });
+
+    await userEvent.type(await screen.findByRole("searchbox", { name: "Search learnings" }), "zzz");
+
+    expect(await screen.findByText("No learnings match these filters.")).toBeInTheDocument();
   });
 });

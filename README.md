@@ -31,7 +31,7 @@ hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO \
 ```
 
 ```text
-created 74 files (52 managed, 22 seeded) and 25 links in /home/jdoe/work/demo-hub
+created 113 files (61 managed, 52 seeded) and 28 links in /home/jdoe/work/demo-hub
 
 Next steps:
   1. cd /home/jdoe/work/demo-hub
@@ -165,7 +165,7 @@ uvx --from 'git+https://github.com/jroquette/agent-hub@v0.15.0#subdirectory=pack
   hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
-You should see `created 74 files (52 managed, 22 seeded) and 25 links` followed by the next steps.
+You should see `created 113 files (61 managed, 52 seeded) and 28 links` followed by the next steps.
 
 > [!NOTE]
 > `hub init` writes only into an empty folder (a `.git` is fine). Run it again in the same folder and it refuses with
@@ -261,8 +261,8 @@ overrides a built-in of the same name.
 
 In `hub web`, the Workflows screen shows each workflow's graph; Workflow runs › Start run starts one live from a form
 built from its `inputs:`; Run detail shows the run's graph with each node's state, decides a waiting gate, and
-cancels, resumes or abandons the run. Approvals lists every gate waiting for a person. The format and the engine's
-rules: [workflow-schema.md](docs/design/workflow-schema.md), [workflow-engine-rules.md](docs/design/workflow-engine-rules.md).
+cancels, resumes or abandons the run. Portfolio's Needs you lists every gate waiting for a person. The format and
+the engine's rules: [workflow-schema.md](docs/design/workflow-schema.md), [workflow-engine-rules.md](docs/design/workflow-engine-rules.md).
 
 ## 🔄 Daily workflow
 
@@ -383,6 +383,8 @@ The size decides the ceremony:
 | `/adr <question or issue>` | Records an architectural decision: options and trade-offs, your pick, a new ADR that supersedes and never edits | For a decision outside a `/feature` |
 | `/onboard [propose \| apply]` | Reads each repo read-only and proposes `hub.json` values, gates and `AGENTS.project.md` with `path:line` evidence; applies them only after your approval (`propose` only writes the proposal, for a headless run) | The first session in a new hub, or after adding a repo |
 | `/retro [period]` | Turns the period's run metrics into at most five evidence-backed changes to the workflows, filed as issues | Weekly, or after a rough stretch |
+| `/overengineering-review [PR \| branch \| path]` | Reads a diff or module for abstractions, options, layers and tests with no real consumer today, proving each with a search and naming the smaller shape; edits and posts nothing | Before a PR, after a feature's tasks, or when code feels heavier than the problem |
+| `/ux-review [screen \| path \| PR \| branch]` | Reviews a screen or a UI diff against the design system the repo's `AGENTS.md` names and standard heuristics, each finding cited with a concrete improvement; edits and posts nothing | Before a UI PR, after a screen's tasks |
 
 An AI agent that sets up agent-hub for another project follows [docs/USING.md](docs/USING.md), a runbook that ends in `/onboard`.
 
@@ -404,6 +406,7 @@ at most one learning proposal for `brain/_inbox/` (the `spec-reviewer` reports p
 | `spec-reviewer` | After each task: does the diff match the spec and plan, nothing missing and nothing extra | PASS or FAIL | Yes (no write tool) |
 | `quality-reviewer` | After `spec-reviewer` passes: domain invariants, security and secrets, idempotency | APPROVE or CHANGES | Yes (no write tool) |
 | `evaluator` | Final verdict: re-runs every verification, `check_fast`, `check` and `hub doctor` | `eval.md` (SHIP or NO-SHIP), `features.json` | Writes only those two files |
+| `ux-designer` | Not started by `/feature`: run it after the spec gate, before the plan, when a feature adds or changes a screen. Designs each screen against the repo's design system | `ux-<new\|change>-<screen>.md` | Writes only the designs |
 
 </details>
 

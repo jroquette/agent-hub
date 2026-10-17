@@ -13,8 +13,7 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 └ /projects/:project                Project overview                                 P2
     ?section=now|repos|work|sessions|health|cost   (scroll target, not a tab)
 
-/approvals                          Approvals inbox                                  P2 read-only · P4 actions
-└ /approvals/:approvalId            Approval detail (side panel over the inbox)      P2 · P4 actions
+/approvals                          retired (AGH-273): an approval is answered in its run or its session
 
 /live                               redirect (replace) to /sessions?view=grid        ADR 0033
     ?group=repo|run|workflow → within=; group=flat and unknown params dropped; scope (project) kept
@@ -47,6 +46,8 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 │   └ /projects/:project/skills/:kind/:source/:name   Skill, agent or hook detail   P2
 ├ /knowledge/learnings              Learnings triage                                 P3 (accept/reject/snooze P3)
 │   ?status=proposed|accepted|rejected|snoozed&target=team|repo|personal&learning=:id
+│   As built (AGH-272, specs/18-learnings.md): ?status=accepted|rejected (absent = proposed; push)
+│   &learning=:id&q=&project=&readiness=ready|blocked&claude=…&provenance=… (comma lists)
 │ └ /knowledge/learnings/:id/trace  Provenance trace                                 P3
 ├ /knowledge/decisions?project=&repo=&topic=&decision=:id  Decisions log            P3
 └ /knowledge/context?project=&repo=&agent=  Context inspector                        P3
@@ -120,6 +121,23 @@ Route rules:
 
 ## Sidebar
 
+**As built (AGH-273).** The sidebar is grouped by what the user comes to do; where the table and text below say
+otherwise, this list wins:
+
+- **AC-273.20** The sidebar lists, in order: Portfolio (no caption); **Work**: Sessions (`list`, the live badge,
+  ADR 0033), Workflow runs (`route`), Workflows (`workflow`), Features (`list-checks`); **Knowledge**: Learnings
+  (`lightbulb`, the learnings-to-triage badge on the waiting ground), Brain (`book-open`) and Skills (`package`) as
+  flat items, Brain and Skills following the project open or in scope; and Health and Settings pinned to the footer,
+  next to Shortcuts. There is no Approvals and no Live sessions entry. The command palette lists the same screens,
+  Learnings with its `g k` hint.
+- **AC-273.21** There is no Approvals screen: `/approvals` is an unknown route (404), `g a` goes nowhere (and still
+  never answers a focused permission card), and the shortcut sheet lists no Approvals. A Needs you item, an
+  activity row and a search hit for an approval link where it is answered: `/runs/<run>` for a workflow gate, else
+  `/sessions/<session>`. A waiting tile with no chat says "Open session" and opens its session; the session page's
+  waiting banner says "Approve in the terminal session". The project overview's "See N more" expands Needs you in
+  place (`?needs=all`), as the Portfolio does; a Needs you list with nowhere to go shows no "more" line.
+
+
 Groups appear in this order with `caption` style group labels in `text-subtle`. The selected item uses `accent-soft` ground, `accent` icon and a 2px `accent` left bar; hover uses `surface-hover`. Each item is a 32px (`size.control`) row; collapsed, each becomes a 40×40 icon button with a `Tooltip` showing the label and its shortcut.
 
 | Group | Item | Lucide icon | Route | Badge | Badge data source | Phase |
@@ -141,8 +159,8 @@ Knowledge expands into sub-items when its route is active: Brain (`book-open`), 
 
 As built (AGH-201, AGH-164), Knowledge shows Learnings, Brain and Skills, in that order. Skills sits right after
 Brain and links to the catalog of the project whose skills are open, else of the project in scope
-(`/projects/<p>/skills`), else to the picker `/knowledge/skills`, which lists the registered projects as Brain's
-picker does (the route is declared before `/knowledge/:section`, so it is not the Phase 3 placeholder). A skill
+(`/projects/<p>/skills`), else to the picker `/knowledge/skills`, which lists the registered projects with counts as
+Brain's picker does ([19-brain-and-skills.md](19-brain-and-skills.md), AGH-270) (the route is declared before `/knowledge/:section`, so it is not the Phase 3 placeholder). A skill
 detail's breadcrumb is Portfolio › project › Skills › name.
 
 Badge rules:
@@ -213,6 +231,29 @@ The "last event" age updates every second while < 60 s, then every 15 s ("2 min 
 - Time zone `SegmentedControl` "Local | UTC". Stored in `ah.tz` and `?tz=utc` when not default so shared links keep the reader's intent ("the times I saw were UTC"). Every `Time` component reads it; tooltips always show both ("14:02:11 local · 12:02:11 UTC").
 - Identity chip: initials avatar (`radius-full`) "JR" with the git `user.name` from the hub config. Menu: "José Henrique Roquette · roquettejh@gmail.com" (read-only, from hub config), "Keyboard shortcuts ?", "Settings", "About agent-hub". No sign-out (local single-user app, brief §12).
 
+## Discuss with Claude on any screen (AGH-273)
+
+The top bar's Discuss button opens a right-hand panel holding one driven session per artifact on screen (a
+feature, a workflow, a skill, an agent, a hook or a note, AGH-262). A screen that registers no artifact is itself
+the target, so the panel talks about any screen:
+
+- **AC-273.1** Given a screen that registers no Discuss target and a project to work in (the shake's: the served
+  checkout's, the route's, the scope, else the first registered one), when the panel is open, then its target is
+  the screen, kind "Screen", named by the page heading, else the breadcrumb's current page, else the path; one
+  conversation per project and path, whatever the query string.
+- **AC-273.2** Given the screen as target, when the owner sends the first message, then the new session's prompt
+  carries the route and the main column's text (blank runs squeezed, cut at 12,000 characters with "[… the rest of
+  the screen is cut]"), and the session starts with a screenshot of the main column, which the chat shows as the
+  first message's image.
+- **AC-273.3** Given the screenshot fails or times out, when the first message is sent, then the text still goes,
+  without an image.
+- **AC-273.4** Given a screen registers its own target, then it wins over the screen fallback.
+- **AC-273.5** Given no project is registered, when the panel opens, then it says "Register a project to talk with
+  Claude about any screen."
+- **AC-273.6** Given the screen as target, then the panel's note says the first message takes the screen's text and
+  a screenshot along, and that Discuss selection still points at one part.
+- **AC-273.7** Given the panel is closed, then the screen fallback is not mounted and asks the API nothing.
+
 ## Breadcrumbs
 
 `Breadcrumbs` appear only on detail screens, under the top bar, `small` style, separator `chevron-right` 12px in `text-subtle`.
@@ -244,7 +285,7 @@ Every entity, tab, filter and selected item is addressable. The URL is the sourc
 | Decision | `/sessions/:id?tab=decisions&decision=:id` (P3) or `/knowledge/decisions?decision=:id` | |
 | Raw event | `/sessions/:id?tab=raw&event=:eventId` | |
 | Run step | `/runs/:id?step=verify&attempt=2` | |
-| Approval | `/approvals/:id` | opens panel over inbox |
+| Approval | `/runs/:runId` (a workflow gate, Open gates) or `/sessions/:id` (any other) | the Approvals inbox is retired (AGH-273) |
 | Learning | `/knowledge/learnings?learning=:id`, trace `/knowledge/learnings/:id/trace` | |
 | Brain note | `/knowledge/brain?project=agent-hub&path=brain/now.md` | |
 | Skills catalog | `/projects/agent-hub/skills?q=plan&kind=skill&mode=user-only` | search and facets in the query, updated with `replace` (a departure from the push rule below: typing must not fill the history); unknown values ignored |
@@ -273,11 +314,10 @@ Shortcuts are listed in the `ShortcutSheet` (`?`). Two-key sequences start with 
 | `/` | Focus the page's search or filter field | On Session detail: search in session |
 | `Esc` | Close the topmost layer: palette → dialog → popover → side panel → clear selection | Never navigates |
 | `g p` | Portfolio | |
-| `g a` | Approvals | |
 | `g l` | Sessions, grid view (`/sessions?view=grid`; alias kept from the retired Live sessions) | |
 | `g s` | Sessions | |
 | `g r` | Workflow runs | |
-| `g k` | Knowledge | P3 |
+| `g k` | Learnings | |
 | `g f` | Features | |
 | `g w` | Workflows | P4 |
 | `g m` | Metrics | |
@@ -290,7 +330,7 @@ Shortcuts are listed in the `ShortcutSheet` (`?`). Two-key sequences start with 
 | `t` | Toggle Local / UTC | |
 | `Shift D` | Cycle theme | |
 
-### Lists and tables (Sessions, Runs, Approvals, Health, Tracker, Learnings)
+### Lists and tables (Sessions, Runs, Health, Tracker, Learnings)
 
 | Keys | Action |
 |---|---|
@@ -376,4 +416,4 @@ the chat's own keys are in [agent-sessions.md](../../agent-sessions.md#chat-beha
 ## Responsive
 
 - 1280×800 laptop: sidebar collapsed to 56 px by default (below 1360 px), top bar keeps all items; the search field shrinks to an `IconButton` `search` with `⌘K` hint below 1200 px. Breadcrumbs collapse middle crumbs.
-- Mobile (< 640 px), glance routes only (`/sessions?view=grid`, `/approvals`, `/sessions/:id` header; `/live` redirects to the first): sidebar becomes a bottom tab bar with four items (Portfolio, Approvals with badge, Sessions with live count, Search). The top bar keeps scope switcher and collector pill (dot only, label in tooltip). Other routes render a simplified read-only page with "Best viewed on a larger screen" note under the title. Targets ≥ 44 px on touch (above the 24 px `control-sm` floor). Keyboard shortcuts are not advertised on touch.
+- Mobile (< 640 px), glance routes only (`/sessions?view=grid`, `/sessions/:id` header; `/live` redirects to the first): sidebar becomes a bottom tab bar with three items (Portfolio, Sessions with live count, Search); the Approvals tab went with the screen (AGH-273). The top bar keeps scope switcher and collector pill (dot only, label in tooltip). Other routes render a simplified read-only page with "Best viewed on a larger screen" note under the title. Targets ≥ 44 px on touch (above the 24 px `control-sm` floor). Keyboard shortcuts are not advertised on touch.

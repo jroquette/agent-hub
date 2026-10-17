@@ -228,6 +228,9 @@ INERT_BUNDLE_URLS = frozenset(
         # (a link the owner opens in claude.ai); never requested.
         "https://claude.ai",
         "https://claude.ai/code",
+        # AGH-269: the origin of the commit and pull-request links an acceptance criterion's
+        # evidence opens on GitHub (a link the owner opens in a new tab); never requested.
+        "https://github.com",
         # AGH-252: text of highlight.js's console warnings in the lazy highlight chunk; never
         # requested.
         "https://github.com/highlightjs/highlight.js/issues/2277",
@@ -750,10 +753,10 @@ def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingest
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    # Eight pages, the Live bookmark redirect (AC-234.2; it replaced the Live sessions page and
-    # Live's red edge check, which the Sessions grid's covers), the long-session timing and six
-    # control-plane clarity checks, none skipped.
-    assert re.search(r"\b16 passed\b", result.stdout), result.stdout
+    # Seven pages (Approvals retired, AGH-273), the Live bookmark redirect (AC-234.2; it replaced
+    # the Live sessions page and Live's red edge check, which the Sessions grid's covers), the
+    # long-session timing and six control-plane clarity checks, none skipped.
+    assert re.search(r"\b15 passed\b", result.stdout), result.stdout
     assert "skipped" not in result.stdout, result.stdout
 
 

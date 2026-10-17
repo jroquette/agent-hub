@@ -167,6 +167,19 @@ class BrainChangeRequestsContract:
             "the commit message is the change's, with no trailer",
         )
 
+    def test_writes_edited_body_with_frontmatter_when_accepted_with_edit(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        change = _change(brain_origin, note_body="# Testing x\n\nRun it first, then check.\n")
+
+        brain_change_requests.accept(change)
+
+        moved = split_frontmatter(brain_origin.file_on(change.branch, _in_brain(ACCEPTED)) or "")
+        _check(moved.body == "# Testing x\n\nRun it first, then check.\n", "the body is the edit")
+        _check(moved.fields.get("type") == "learning", "the frontmatter is kept")
+        _check(moved.fields.get("status") == "accepted", "the frontmatter is set")
+
     def test_leaves_default_branch_when_accepted(
         self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
     ) -> None:

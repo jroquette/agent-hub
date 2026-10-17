@@ -1,5 +1,5 @@
 /* One status section of the Sessions grid: its tiles, sub-grouped `within`, then Load more (AC-234.5). */
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button, SessionTile } from "../../components";
 import { fmtInt } from "../../lib/format";
@@ -20,6 +20,8 @@ export interface GridSectionProps {
     fetchNextPage: () => unknown;
   };
   onOpen: (row: SectionRow) => void;
+  /** A control for a tile's head, such as Resume (AC-234.15). */
+  action?: ((row: SectionRow) => ReactNode) | undefined;
 }
 
 /**
@@ -29,15 +31,18 @@ export interface GridSectionProps {
 const GridTile = memo(function GridTile({
   row,
   onOpen,
+  action,
 }: {
   row: SectionRow;
   onOpen: (row: SectionRow) => void;
+  action?: ((row: SectionRow) => ReactNode) | undefined;
 }) {
   const [now] = useState(() => Date.now());
   return (
     <SessionTile
       s={tileOfRow(row, now)}
       times={tileTimesOf(row)}
+      action={action?.(row)}
       onOpen={() => {
         onOpen(row);
       }}
@@ -45,17 +50,25 @@ const GridTile = memo(function GridTile({
   );
 });
 
-function Tiles({ rows, onOpen }: Pick<GridSectionProps, "rows" | "onOpen">) {
+function Tiles({ rows, onOpen, action }: Pick<GridSectionProps, "rows" | "onOpen" | "action">) {
   return (
     <div className="sl-grid">
       {rows.map((row) => (
-        <GridTile key={row.id} row={row} onOpen={onOpen} />
+        <GridTile key={row.id} row={row} onOpen={onOpen} action={action} />
       ))}
     </div>
   );
 }
 
-export function GridSection({ title, rows, count, within, pages, onOpen }: GridSectionProps) {
+export function GridSection({
+  title,
+  rows,
+  count,
+  within,
+  pages,
+  onOpen,
+  action,
+}: GridSectionProps) {
   // A stable handler, so a screen render does not re-render every memoised tile.
   const latest = useRef(onOpen);
   useEffect(() => {
@@ -67,14 +80,14 @@ export function GridSection({ title, rows, count, within, pages, onOpen }: GridS
   return (
     <div className="ah-stack" style={{ gap: "var(--space-3)" }}>
       {within === null ? (
-        <Tiles rows={rows} onOpen={open} />
+        <Tiles rows={rows} onOpen={open} action={action} />
       ) : (
         groupWithin(rows, within).map((group) => (
           <div key={group.key} role="group" aria-label={group.label} className="ah-stack">
             <h3 className="sl-group-head ah-caption ah-muted">
               {group.label} · {fmtInt(group.rows.length)}
             </h3>
-            <Tiles rows={group.rows} onOpen={open} />
+            <Tiles rows={group.rows} onOpen={open} action={action} />
           </div>
         ))
       )}

@@ -7,7 +7,9 @@ from agent_hub.core.features.ticket_view import TicketEdge, TicketRow
 from agent_hub.core.testing.read_model_builders import a_ticket_snapshot, an_issue_summary
 from agent_hub.core.tracker.tracker_reader import IssueState, IssueStateType, IssueSummary
 
+_TODO = IssueState(name="Todo", type="unstarted")
 _STARTED = IssueState(name="In Progress", type="started")
+_IN_REVIEW = IssueState(name="In Review", type="started")
 _DONE = IssueState(name="Done", type="completed")
 _CANCELED = IssueState(name="Canceled", type="canceled")
 
@@ -27,7 +29,7 @@ def _summary(number: int, **fields: object) -> IssueSummary:
     values: dict[str, object] = {
         "id": f"DEM-{number}",
         "title": f"Ticket {number}",
-        "state": _STARTED,
+        "state": _TODO,
         "url": f"https://linear.app/demo/issue/DEM-{number}",
         "priority": 2,
         "blocks": (),
@@ -170,15 +172,15 @@ def test_orders_topologically_when_dag_generated_property(
             assert all(b in layer_of and layer_of[b] < layer_of[ref] for b in live)
         else:
             # A ticket is left out of the layers only behind an open (or unread) outside blocker.
-            assert rows[ref].readiness == "waiting"
-            assert ref in board.plan.waiting
+            assert rows[ref].readiness in ("waiting", "in_progress")
+            assert (ref in board.plan.waiting) == (rows[ref].readiness == "waiting")
             assert any(b not in layer_of for b in live)
         for b in live:
             if b in position and ref in position:
                 assert position[b] < position[ref]
     first = board.plan.layers[0] if board.plan.layers else ()
-    assert board.plan.can_start == first
-    assert all(rows[ref].readiness == "can_start" for ref in first)
+    assert board.plan.can_start == tuple(r for r in first if rows[r].state.type != "started")
+    assert all(rows[ref].readiness in ("can_start", "in_progress") for ref in first)
     shuffled = data.draw(st.permutations(planned))
     again = _board(
         tuple(shuffled),
@@ -459,3 +461,81 @@ def test_keeps_ticket_out_of_layers_when_outside_blocker_open() -> None:
     assert board.plan.waiting == ("DEM-1", "DEM-2")
     assert _row(board, "DEM-1").waiting_on == ("OPS-9",)
     assert board.plan.critical_path == ("DEM-3",)
+
+
+def test_marks_in_progress_not_can_start_when_ticket_started() -> None:
+    planned = (_planned(1), _planned(2), _planned(3))
+    summaries = (_summary(1, state=_IN_REVIEW), _summary(2, state=_STARTED), _summary(3))
+
+    board = _board(planned, summaries)
+
+    assert [row.readiness for row in board.rows] == ["in_progress", "in_progress", "can_start"]
+    assert board.plan.can_start == ("DEM-3",)
+    assert board.plan.layers == (("DEM-1", "DEM-2", "DEM-3"),)
+
+
+def test_marks_in_progress_when_started_ticket_has_open_blocker() -> None:
+    planned = (_planned(1), _planned(2, blocked_by=(1,)))
+    summaries = (_summary(1, state=_IN_REVIEW), _summary(2, state=_IN_REVIEW))
+
+    board = _board(planned, summaries)
+
+    row = _row(board, "DEM-2")
+    assert (row.readiness, row.waiting_on) == ("in_progress", ("DEM-1",))
+    assert board.plan.waiting == ()
+    assert board.plan.can_start == ()
+
+
+def test_leaves_epic_out_of_flow_when_linear_names_it_parent() -> None:
+    # The feature's epic is a sub-issue parent in Linear: it tracks the others, never runs.
+    planned = (_planned(1), _planned(2), _planned(3, blocked_by=(2,)))
+    summaries = (
+        _summary(1, state=IssueState(name="Backlog", type="backlog")),
+        _summary(2, state=_IN_REVIEW, parent="DEM-1"),
+        _summary(3, state=_IN_REVIEW, parent="DEM-1"),
+    )
+
+    board = _board(planned, summaries)
+
+    epic = _row(board, "DEM-1")
+    assert (epic.readiness, epic.children, epic.parent) == ("epic", ("DEM-2", "DEM-3"), None)
+    assert _row(board, "DEM-2").parent == "DEM-1"
+    assert board.plan.epics == ("DEM-1",)
+    assert board.plan.layers == (("DEM-2",), ("DEM-3",))
+    assert board.plan.can_start == ()
+    assert board.plan.critical_path == ("DEM-2", "DEM-3")
+
+
+def test_marks_epic_when_plan_names_parent_without_linear() -> None:
+    # A child the plan puts after its epic does not wait on it: an epic never blocks.
+    planned = (_planned(1), _planned(2, parent="T1"), _planned(3, parent="T1", blocked_by=(1,)))
+
+    board = _board(planned, None)
+
+    assert _row(board, "DEM-1").readiness == "epic"
+    assert _row(board, "DEM-3").readiness == "can_start"
+    assert _row(board, "DEM-3").waiting_on == ()
+    assert board.plan.layers == (("DEM-2", "DEM-3"),)
+
+
+def test_warns_when_plan_parent_unknown() -> None:
+    board = _board((_planned(1, parent="T9"),), None)
+
+    assert board.plan.epics == ()
+    assert board.plan.warnings == ("DEM-1 has the parent T9, which the plan does not list.",)
+
+
+def test_ignores_linear_parent_when_outside_feature() -> None:
+    board = _board((_planned(1),), (_summary(1, parent="DEM-99"),))
+
+    assert (_row(board, "DEM-1").parent, board.plan.epics) == (None, ())
+
+
+def test_marks_epic_done_when_linear_completes_it() -> None:
+    planned = (_planned(1), _planned(2))
+    summaries = (_summary(1, state=_DONE), _summary(2, state=_DONE, parent="DEM-1"))
+
+    board = _board(planned, summaries)
+
+    assert _row(board, "DEM-1").readiness == "done"
+    assert board.plan.epics == ("DEM-1",)

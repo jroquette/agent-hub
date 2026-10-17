@@ -31,7 +31,8 @@ end; where a spec file says otherwise, this list wins.
   an unknown model gives "Cost unknown: model <id> has no price".
   Exception (AGH-136, ADR 0025): the feature Tickets tab reads Linear server-side, read-only, when
   `LINEAR_API_KEY` is set; without it the tab shows the plan from `features.json` with a notice.
-- **Screens in Phase 2.** Portfolio, Project overview, Approvals (read-only), Live sessions, Sessions list (merged into one Sessions screen by
+- **Screens in Phase 2.** Portfolio, Project overview, Approvals (read-only; retired by AGH-273, answered in the run
+  or the session), Live sessions, Sessions list (merged into one Sessions screen by
   [ADR 0033](../../adr/0033-sessions-and-chat-interaction-model.md)), Session
   detail (Timeline, Files, Cost and Raw events tabs; no Decisions or Context tab), Workflow runs, Run detail,
   Features, Feature detail, Health, Knowledge › Learnings and Knowledge › Brain (both since AGH-201, no `P3` tag),
@@ -68,7 +69,8 @@ AGH-201 (control-plane clarity) changes the design further
   kinds add `guard_ask_open` (an unanswered guard ask) and `guard_ask_declined` resolves "You declined" (E4);
   resolution `open` ("Agent is on it") covers a problem while the session is live, so it becomes `needs_you` only once
   the session waits, idles or ends (E5). A live tile's red edge means a needs-you problem only; `failing_notice` keeps
-  its text without the edge (E11).
+  its text without the edge (E11). What the agent or the owner already dealt with folds into one line under
+  "Show N handled"; only what needs the owner stays listed (AGH-265, [agent-sessions.md](../agent-sessions.md) AC-265.6).
 - **Timeline.** Rows name the actor ("Main agent", "Subagent · <type>") and a plain verb ("Ran skill /feature",
   "Started subagent Explore: …"); runs of Reads collapse, with a legend.
 - **Learnings.** `status` has no `snoozed` value: snooze stays a disabled P3 button. A learning adds `note_path`,

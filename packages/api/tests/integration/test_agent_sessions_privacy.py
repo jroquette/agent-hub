@@ -304,7 +304,7 @@ def test_logs_no_message_text_when_requests_served_redaction_logs(
     app.until_status(session_id, "idle")
     sent = app.client.post(f"{BASE}/{session_id}/messages", json={"text": f"Then {MESSAGE}"})
     app.until_status(session_id, "idle")
-    too_large = app.client.post(f"{BASE}/{session_id}/messages", json={"text": MESSAGE * 5_000})
+    too_large = app.client.post(f"{BASE}/{session_id}/messages", json={"text": MESSAGE * 30_000})
     app.client.get(f"{BASE}/{session_id}/events")
     app.client.post(f"{BASE}/{session_id}/close", json={})
     app.client.get(f"{BASE}/{session_id}/stream")

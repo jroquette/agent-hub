@@ -22,7 +22,7 @@ describe("filtersFromParams url_query", () => {
 
     expect(filters).toEqual({
       q: "plan",
-      kind: ["skill", "agent"],
+      kind: ["agent", "skill"],
       origin: ["managed"],
       mode: ["user-only", "neither"],
       diag: true,
@@ -59,7 +59,7 @@ describe("withFilters url_query", () => {
       diag: false,
     });
 
-    expect(next.toString()).toBe("scope=demo&q=plan&kind=skill%2Cagent&mode=both");
+    expect(next.toString()).toBe("scope=demo&q=plan&kind=agent%2Cskill&mode=both");
   });
 
   it("removes every filter when cleared", () => {

@@ -627,6 +627,8 @@ export function aTicketRow(overrides: Partial<TicketRow> = {}): TicketRow {
     readiness: "can_start",
     waiting_on: [],
     reviewed: false,
+    parent: null,
+    children: [],
     ...overrides,
   };
 }
@@ -642,6 +644,7 @@ export function aTicketPlan(overrides: Partial<TicketPlan> = {}): TicketPlan {
     external_blockers: [],
     critical_path: ["AGH-202", "AGH-203"],
     warnings: [],
+    epics: [],
     ...overrides,
   };
 }
@@ -814,7 +817,7 @@ export function aNeedsYouItem(
 ): Schemas["NeedsYouItem"] {
   return {
     context: "agent-hub · AGH-48 · guarded path",
-    href: `/approvals/${anId(7, "0192bbbb")}`,
+    href: `/sessions/${anId(7, "0192bbbb")}`,
     kind: "approval",
     project: "agent-hub",
     since: at(300),
@@ -1309,6 +1312,7 @@ export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail 
           scripts: [],
           skills: [],
           tags: ["agent"],
+          summary: "the requirements-analyst agent writes spec.md.",
           title: "Spec",
         },
         {
@@ -1318,6 +1322,7 @@ export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail 
           scripts: [],
           skills: [],
           tags: ["gate", "human"],
+          summary: "Stop until they do.",
           title: "Gate: user approves the spec",
         },
         {
@@ -1327,6 +1332,7 @@ export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail 
           scripts: [],
           skills: ["create-plan"],
           tags: [],
+          summary: "run /create-plan on the approved spec.",
           title: "Plan",
         },
         {
@@ -1336,6 +1342,7 @@ export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail 
           scripts: [],
           skills: [],
           tags: ["command"],
+          summary: "in a worktree; run make check before the PR.",
           title: "Implement",
         },
         {
@@ -1345,6 +1352,7 @@ export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail 
           scripts: [],
           skills: [],
           tags: ["command"],
+          summary: "run ./hub doctor and fix what it finds.",
           title: "Doctor",
         },
       ],

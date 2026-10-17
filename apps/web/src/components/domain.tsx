@@ -76,6 +76,8 @@ export interface SessionTileProps {
   times?: ((now: number) => TileTimes) | undefined;
   onOpen?: (() => void) | undefined;
   hoverEvents?: { time: string; icon: IconName; text: string }[] | undefined;
+  /** A control in the head, such as Resume; it stops its own clicks from opening the tile. */
+  action?: ReactNode;
 }
 
 /** Renders `children` with the times at each second. */
@@ -105,7 +107,7 @@ function TileAction({ s, t }: { s: LiveSession; t: TileTimes }) {
   );
 }
 
-export function SessionTile({ s, times, onOpen, hoverEvents }: SessionTileProps) {
+export function SessionTile({ s, times, onOpen, hoverEvents, action }: SessionTileProps) {
   const [hover, setHover] = useState(false);
   const badgeStatus: Status = s.status === "ended" ? (s.outcome ?? "ended") : s.status;
   return (
@@ -140,6 +142,7 @@ export function SessionTile({ s, times, onOpen, hoverEvents }: SessionTileProps)
         />
         <span className="ah-grow" />
         {s.issue && <IssueLink id={s.issue} title={s.issueTitle} />}
+        {action}
         <IconButton size="sm" icon="ellipsis" label="Session actions" />
       </div>
       <div className="ah-row" style={{ gap: 6, minWidth: 0 }}>
@@ -317,7 +320,7 @@ export function NeedsYouList({
   items,
   more = 0,
   moreLabel,
-  moreHref = "/approvals",
+  moreHref,
   liveCount = 0,
   loading,
   since,
@@ -364,7 +367,7 @@ export function NeedsYouList({
           </AppLink>
         );
       })}
-      {more > 0 && (
+      {more > 0 && moreHref && (
         <AppLink
           className="ah-needs-item"
           href={moreHref}
@@ -859,9 +862,15 @@ const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
 export function GoldenPathStepper({
   steps,
   label = "Golden path",
+  onSelect,
+  selectLabel,
 }: {
   steps: readonly GoldenStep[];
   label?: string | undefined;
+  /** Makes each step's name a button (e.g. to open the tab that holds its evidence). */
+  onSelect?: ((step: FeaturePhase) => void) | undefined;
+  /** The accessible name of a step's button; "Open <step>" by default. */
+  selectLabel?: ((step: FeaturePhase) => string) | undefined;
 }) {
   return (
     <ol
@@ -881,7 +890,20 @@ export function GoldenPathStepper({
             <span className="ah-golden-dot" style={DOT_STYLE[step.state]} aria-hidden="true">
               {icon && <Icon name={icon} />}
             </span>
-            <span className="ah-golden-name">{GOLDEN_STEP_LABEL[step.name]}</span>
+            {onSelect ? (
+              <button
+                type="button"
+                className="ah-golden-name ah-golden-select"
+                aria-label={selectLabel?.(step.name) ?? `Open ${GOLDEN_STEP_LABEL[step.name]}`}
+                onClick={() => {
+                  onSelect(step.name);
+                }}
+              >
+                {GOLDEN_STEP_LABEL[step.name]}
+              </button>
+            ) : (
+              <span className="ah-golden-name">{GOLDEN_STEP_LABEL[step.name]}</span>
+            )}
             <span className="ah-golden-meta" style={{ fontSize: 11, fontWeight: 500 }}>
               {GOLDEN_STATE_TEXT[step.state]}
             </span>

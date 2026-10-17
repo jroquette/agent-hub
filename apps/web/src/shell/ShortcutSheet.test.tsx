@@ -24,7 +24,6 @@ describe("ShortcutSheet (one-tab)", () => {
       "Portfolio: g p",
       "Sessions: g s",
       "Workflow runs: g r",
-      "Approvals: g a",
       "Command palette: Ctrl K",
     ]);
   });

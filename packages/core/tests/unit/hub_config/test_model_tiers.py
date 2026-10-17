@@ -80,6 +80,7 @@ def test_lists_plugin_agents_when_agent_names_read() -> None:
         "requirements-analyst",
         "researcher",
         "spec-reviewer",
+        "ux-designer",
     )
 
 

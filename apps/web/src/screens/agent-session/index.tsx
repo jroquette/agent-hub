@@ -1,6 +1,6 @@
 import "./agent-session.css";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import {
@@ -14,12 +14,16 @@ import {
   Skeleton,
 } from "../../components";
 import { ApiProblem } from "../../lib/api";
-import { screenshotFor } from "../../lib/screenshotCopy";
+import { useMessageScreenshots, useScreenshot } from "../../lib/screenshotCopy";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { sessionControlUnavailable } from "../sessions-list/control";
+import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
 import { CostMeter } from "./CostMeter";
+import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
+import { useResolvedThreads } from "./ReviewDiff";
+import { reviewThreads } from "./review";
 import {
   isTerminal,
   useAgentSession,
@@ -30,7 +34,13 @@ import {
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
-import { modeLabel, pendingPermissions, resumable, type TranscriptState } from "./model";
+import {
+  changedFiles,
+  modeLabel,
+  pendingPermissions,
+  resumable,
+  type TranscriptState,
+} from "./model";
 import { useStickToBottom } from "./useStickToBottom";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
@@ -115,10 +125,28 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const snapshot = useAgentSession(agentSessionId);
   const capabilities = useCapabilities();
   const transcript = useAgentTranscript(agentSessionId);
+  const screenshotUrl = useScreenshot(agentSessionId);
+  const messageScreenshots = useMessageScreenshots(agentSessionId);
   const commands = useAgentSessionCommands(agentSessionId);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [forking, setForking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+  // The file a card in the conversation asked for; the nonce re-opens it in an open drawer.
+  const [filePick, setFilePick] = useState<{ path: string | null; nonce: number }>({
+    path: null,
+    nonce: 0,
+  });
+  const review = useReviewed(agentSessionId);
+  const resolvedThreads = useResolvedThreads(agentSessionId);
+  const closeFiles = useCallback(() => {
+    setFilesOpen(false);
+  }, []);
+  const openFile = useCallback((path: string | null) => {
+    setFilePick((before) => ({ path, nonce: before.nonce + 1 }));
+    setFilesOpen(true);
+  }, []);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const follow = useStickToBottom(scroller);
   const composer = useRef<HTMLTextAreaElement | null>(null);
@@ -134,6 +162,13 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const problem = snapshot.error ?? transcript.error;
   const session = snapshot.data;
   const { state } = transcript;
+  const { tools, permissions } = state;
+  // Only the calls and their permissions change the list, not every streamed text delta.
+  const files = useMemo(() => changedFiles({ tools, permissions }), [tools, permissions]);
+  const threads = useMemo(
+    () => reviewThreads(state.entries, state.sending),
+    [state.entries, state.sending],
+  );
   const crumbs = [
     { label: "Sessions", href: "/sessions" },
     { label: session?.title ?? `Agent session ${short(agentSessionId)}` },
@@ -190,6 +225,9 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const cloud = session.kind === "cloud";
   const endReason = state.endReason ?? session.end_reason;
   const canResume = resumable(session, endReason);
+  // A message resumes an ended session in place; Fork… starts a new conversation from it (AC-234.15).
+  const caps = capabilities.data;
+  const canFork = ended && canResume && caps?.available === true;
 
   const act = (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -216,6 +254,17 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
               {session.title ?? "Untitled session"}
             </h1>
             <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
+            {files.length > 0 && (
+              <ChangedFilesChip
+                files={files}
+                review={review}
+                open={filesOpen}
+                onToggle={() => {
+                  if (filesOpen) setFilesOpen(false);
+                  else openFile(null);
+                }}
+              />
+            )}
             <span className="ah-grow" />
             {session.claude_session_id && (
               <AppLink
@@ -226,6 +275,17 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 <Icon name="activity" size="sm" />
                 Observed session {short(session.claude_session_id)}
               </AppLink>
+            )}
+            {canFork && (
+              <Button
+                size="sm"
+                icon="git-branch"
+                onClick={() => {
+                  setForking(true);
+                }}
+              >
+                Fork…
+              </Button>
             )}
             {ended ? (
               <Button
@@ -280,7 +340,33 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           onAnswerPermission={ended ? undefined : commands.answer}
           scrollerRef={setScroller}
           follow={follow}
-          screenshotUrl={screenshotFor(agentSessionId)}
+          screenshotUrl={screenshotUrl}
+          messageScreenshots={messageScreenshots}
+          onActivityOpen={closeFiles}
+          files={files}
+          reviewed={review.reviewed}
+          onOpenFile={openFile}
+          sidePanel={
+            filesOpen ? (
+              <FilesPanel
+                files={files}
+                sessionId={agentSessionId}
+                onClose={closeFiles}
+                review={review}
+                initialPath={filePick.path}
+                pickNonce={filePick.nonce}
+                comments={{
+                  threads,
+                  resolved: resolvedThreads,
+                  // A comment is a message to this session's Claude: it answers in the chat too.
+                  onComment:
+                    cloud || (ended && !canResume)
+                      ? undefined
+                      : (text) => transcript.send(text, (message) => commands.send(message)),
+                }}
+              />
+            ) : undefined
+          }
         />
       </OldestPendingContext.Provider>
       <footer className="as-footer">
@@ -290,7 +376,10 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             mode={mode}
             model={model}
             models={models}
-            onSend={(text) => transcript.send(text, commands.send)}
+            onSend={(text, screenshots) =>
+              transcript.send(text, (message) => commands.send(message, screenshots), screenshots)
+            }
+            acceptsImages={!cloud}
             onInterrupt={commands.interrupt}
             onSettings={commands.settings}
             onSending={follow.pin}
@@ -305,6 +394,16 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           />
         </div>
       </footer>
+      {forking && caps && (
+        <StartSessionDialog
+          project={session.project}
+          capabilities={caps}
+          forkOf={{ ...session, status, mode, model }}
+          onClose={() => {
+            setForking(false);
+          }}
+        />
+      )}
       {confirmDelete && (
         <ConfirmDialog
           title="Delete this session?"

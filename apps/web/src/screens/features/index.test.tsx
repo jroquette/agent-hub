@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
@@ -14,6 +14,7 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { FeaturesScreen } from "./index";
+import { FEATURES_REFRESH_MS } from "./queries";
 
 const features = [
   aFeature({
@@ -99,8 +100,57 @@ describe("FeaturesScreen", () => {
       .filter((t) => features.some((f) => f.slug === t));
     expect(slugs).toEqual(["layered-memory", "control-plane", "tracker-team-cap", "broken-record"]);
     expect(screen.getByText("4 features").parentElement).toHaveTextContent(
-      "4 features · 1 evaluated · 3 in progress",
+      "4 features · 4 in progress · 0 shipped · furthest along first",
     );
+  });
+
+  it("sorts shipped features last and counts them apart (order)", async () => {
+    const done = aFeature({
+      slug: "shipped-one",
+      phase: "shipped",
+      golden_path: aGoldenPath({ phase: "shipped" }),
+    });
+    open({ "/api/v1/features": aPage([done, ...features]) });
+
+    await screen.findByRole("link", { name: "shipped-one" });
+    const slugs = screen
+      .getAllByRole("link")
+      .map((l) => l.textContent)
+      .filter((t) => t === "shipped-one" || features.some((f) => f.slug === t));
+    expect(slugs.at(-1)).toBe("shipped-one");
+    expect(screen.getByText("5 features").parentElement).toHaveTextContent("1 shipped");
+  });
+
+  it("opens the extra issues in a popover (issues)", async () => {
+    open();
+
+    const row = (await screen.findByRole("link", { name: "layered-memory" })).closest("tr");
+    if (!row) throw new Error("no row");
+    expect(within(row).getByText("AGH-48")).toBeInTheDocument();
+    await userEvent.click(within(row).getByRole("button", { name: "2 more issues" }));
+
+    const popover = within(row).getByLabelText("All issues");
+    expect(popover).toHaveTextContent("AGH-48AGH-49AGH-50");
+  });
+
+  it("puts the verdict's scope under its badge while Evaluate is not done (verdict)", async () => {
+    const held = aFeature({
+      slug: "held",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      golden_path: aGoldenPath({
+        phase: "evaluate",
+        steps: [
+          aGoldenStep({ name: "evaluate", state: "partial", meta: "partial: covers 2 of 9 ACs" }),
+        ],
+      }),
+    });
+    open({ "/api/v1/features": aPage([held]) });
+
+    const row = (await screen.findByRole("link", { name: "held" })).closest("tr");
+    if (!row) throw new Error("no row");
+    const verdict = within(row).getAllByRole("cell").at(-1);
+    expect(verdict).toHaveTextContent("SHIP-WITH-OWNER-STEPS");
+    expect(verdict).toHaveTextContent("partial: covers 2 of 9 ACs");
   });
 
   it("reads the AC bar as N/M · K owner step with the owner segment hatched", async () => {
@@ -142,7 +192,7 @@ describe("FeaturesScreen", () => {
       "blocked",
     ]);
     expect(within(row).getByText("plan.md")).toBeInTheDocument();
-    expect(within(row).getByText("--")).toBeInTheDocument();
+    expect(within(row).getByText("—", { selector: "td > span" })).toBeInTheDocument();
   });
 
   it("degrades only the malformed feature's ACs", async () => {
@@ -227,6 +277,25 @@ describe("FeaturesScreen", () => {
 
       expect(screen.getByText(/Stale · as of/)).toBeInTheDocument();
     });
+  });
+
+  it("rereads the records every 30 s while open (refresh)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { requests } = open();
+      await screen.findByRole("link", { name: "layered-memory" });
+      const reads = () =>
+        requests.filter((r) => new URL(r.url).pathname === "/api/v1/features").length;
+      const before = reads();
+
+      await vi.advanceTimersByTimeAsync(FEATURES_REFRESH_MS);
+
+      await waitFor(() => {
+        expect(reads()).toBeGreaterThan(before);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("has no serious a11y violations (a11y)", async () => {

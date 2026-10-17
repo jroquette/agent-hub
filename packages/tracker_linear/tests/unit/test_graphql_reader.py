@@ -97,7 +97,7 @@ def test_keeps_query_within_linear_complexity_when_batch_is_full(
     points = complexity_of(READ_ISSUE_SUMMARIES, {"first": BATCH_SIZE})
 
     assert points <= COMPLEXITY_BUDGET
-    assert points == 4_652  # noqa: PLR2004 - the score stated next to the query
+    assert points == 4_679  # noqa: PLR2004 - the score stated next to the query
 
 
 def test_reads_summaries_when_three_issues_and_one_unknown(
@@ -244,6 +244,7 @@ def test_accepts_recorded_answer_when_shape_checked(
     )
     assert (twelve.assignee, twelve.priority, twelve.estimate) == (None, 0, None)
     assert twelve.blocked_by == ("DEM-11", "OPS-4")
+    assert twelve.parent == "DEM-11"
     assert snapshot.missing == ()
     assert snapshot.external == (
         IssueSummary(

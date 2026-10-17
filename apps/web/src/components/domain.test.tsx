@@ -177,13 +177,14 @@ describe("NeedsYouList", () => {
         since="Since your last visit · 08:12"
         more={2}
         moreLabel="2 more: 1 doctor error, 1 learning"
+        moreHref="/?needs=all"
         items={[
           {
             kind: "approval",
             verb: "Approve plan",
             context: "AGH-48",
             age: "2 h",
-            href: "/approvals/a1",
+            href: "/sessions/s1",
           },
         ]}
       />,
@@ -191,10 +192,21 @@ describe("NeedsYouList", () => {
 
     expect(screen.getByRole("link", { name: /Approve plan/ })).toHaveAttribute(
       "href",
-      "/approvals/a1",
+      "/sessions/s1",
     );
     expect(screen.getByText("3")).toHaveAttribute("data-tone", "waiting");
-    expect(screen.getByRole("link", { name: /2 more/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /2 more/ })).toHaveAttribute("href", "/?needs=all");
+  });
+
+  it("shows no more line when there is nowhere to go", () => {
+    inRouter(
+      <NeedsYouList
+        more={2}
+        items={[{ kind: "failed", verb: "Check", context: "r1", age: "1 h", href: "/runs/r1" }]}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: /2 more/ })).toBeNull();
   });
 
   it("says nothing needs you when empty", () => {

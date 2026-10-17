@@ -61,22 +61,41 @@ const DRIVEN_CELLS: Record<string, (a: AgentSession, tz: Tz) => ReactNode> = {
   last: (a, tz) => when(a.updated_at, tz),
 };
 
-/** `column` for section rows: a driven row gets its own cell; a twin gets the Chat badge by its name. */
-export function withDriven(column: DataTableColumn<Session>, tz: Tz): DataTableColumn<SectionRow> {
+/**
+ * `column` for section rows: a driven row gets its own cell; a twin gets the Chat badge by its name.
+ * The session cell ends with `action(row)`, such as Resume (AC-234.15).
+ */
+export function withDriven(
+  column: DataTableColumn<Session>,
+  tz: Tz,
+  action: (row: SectionRow) => ReactNode = () => null,
+): DataTableColumn<SectionRow> {
   const render = column.render;
   const driven = DRIVEN_CELLS[column.id];
+  const cell = (row: SectionRow): ReactNode => {
+    if (isDriven(row)) return driven ? driven(row, tz) : "";
+    const own = render?.(row);
+    return column.id === "session" && row.agent_session_id ? (
+      <span className="ah-row" style={{ gap: 6 }}>
+        {own}
+        <ChatBadge />
+      </span>
+    ) : (
+      own
+    );
+  };
+  if (column.id !== "session") return { ...column, render: cell };
   return {
     ...column,
     render: (row) => {
-      if (isDriven(row)) return driven ? driven(row, tz) : "";
-      const cell = render?.(row);
-      return column.id === "session" && row.agent_session_id ? (
-        <span className="ah-row" style={{ gap: 6 }}>
-          {cell}
-          <ChatBadge />
+      const extra = action(row);
+      return extra ? (
+        <span className="ah-row" style={{ gap: 8 }}>
+          {cell(row)}
+          {extra}
         </span>
       ) : (
-        cell
+        cell(row)
       );
     },
   };

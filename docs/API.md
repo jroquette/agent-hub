@@ -67,7 +67,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   phrase) until a specific problem type is defined; `detail` is specific to this occurrence.
 - Each named domain exception maps to one problem in one place, `agent_hub/api/rfc9457.py`: unknown id → 404 naming
   the id; a bad parameter or cursor → 400 with `errors[]` naming the parameter; an invalid body → 422; a body over
-  1 MiB → 413 (8 MiB for `POST /api/v1/agent-sessions`, which may carry a screenshot); an unregistrable hub → 422 ("No hub.json", "Invalid hub.json" with JSON-pointer `errors[]`); a
+  1 MiB → 413 (16 MiB for `POST /api/v1/agent-sessions`, which may carry a screenshot, and 64 MiB for
+  `POST /api/v1/agent-sessions/{id}/messages`, which may carry up to ten); an unregistrable hub → 422 ("No hub.json", "Invalid hub.json" with JSON-pointer `errors[]`); a
   project registered twice → 409; an event conflict → 409; a busy or unreadable database or hub registry → 503.
   Anything else is a generic 500 problem; the server logs it as structured JSON without payload strings, so neither
   the answer nor the log holds a secret or a traceback.
@@ -77,7 +78,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
 - The learning decisions ([Learning decisions](#learning-decisions)): every refusal is a 409 whose extension members
   `code` and `reason` say why, nothing pushed or stored. `code` is `learning_conflict` (already decided, with
   `pr_url` when its PR is known; another action running for the hub; no reason to reject; a target the brain rules
-  refuse), `change_request_conflict` (the note is not on `origin/<default branch>`, the destination or the branch
+  refuse), `change_request_conflict` (the note is neither on `origin/<default branch>` nor in the hub checkout
+  ([ADR 0037](adr/0037-learning-decisions-unpushed-notes-and-edits.md)), the destination or the branch
   exists, `origin` is not the hub repo), `push_refused` (the push guard refused the branch) or `hub_read_only`
   (actions unavailable for this hub, title "Learning actions unavailable", the same reason the learning's
   `actions_unavailable` shows). A git or `gh` step that fails → 502 "Could not open the pull request" with the
@@ -98,7 +100,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
 Lists use cursor pagination: the client pages through a collection with an opaque cursor, never an offset (offsets skip
 or repeat items while sessions are being written). `GET /api/v1/sessions?limit=50&cursor=<opaque>` returns
 `{"items": [...], "next_cursor": "<opaque>", "total_estimate": N}`; `next_cursor` is `null` on the last page. `limit` is
-1 to 200 (default 50), a cursor at most 512 characters, `q` at most 200. A cursor carries the store's high-water mark of
+1 to 200 (default 50), and for a session's events (`GET /api/v1/sessions/{session_id}/events`) 1 to 1,000 (default
+200), which its detail page reads whole; a cursor is at most 512 characters, `q` at most 200. A cursor carries the store's high-water mark of
 its first page, so later pages fold only the events up to it and an append between pages never repeats or skips an
 item.
 
@@ -152,7 +155,9 @@ filled for the rows of the page only; every one is optional and `null` when ther
 ## Learning decisions
 
 `POST /api/v1/learnings/{learning_id}/accept` with `{"target": "<folder or .md path under brain/>"}` (1 to 200
-characters) and `POST /api/v1/learnings/{learning_id}/reject` with `{"reason": "…"}` (1 to 300 characters once
+characters) and an optional `"note_body"` (the note's text after its frontmatter as the owner edited it, 1 to 262,144
+characters, an empty one is 422; a blank one or one over 256 KiB of UTF-8 is a 409 `learning_conflict`; [ADR 0037](adr/0037-learning-decisions-unpushed-notes-and-edits.md)),
+and `POST /api/v1/learnings/{learning_id}/reject` with `{"reason": "…"}` (1 to 300 characters once
 stripped; an empty one is 422) each open one pull request in the hub repo and answer 201 with
 `{"state": "accepted_pr_open" | "rejected_pr_open", "pr_url": "https://github.com/<hub_repo>/pull/<n>", "branch": "…"}`.
 They are actions, not resources, a deliberate exception to "resources are nouns"
@@ -164,7 +169,9 @@ They are actions, not resources, a deliberate exception to "resources are nouns"
   `roquettejh/learning-accept-testing-x`): a learning has no tracker issue, so the `<team>-<n>-<desc>` rule of
   [CONTRIBUTING.md](CONTRIBUTING.md) does not apply to these branches only. The push guard refuses any other name.
 - The PR title is `Accept learning: <title>` or `Reject learning: <title>` (redacted, at most 72 characters); its body
-  names the move, quotes the note's first paragraph (redacted, 200) and, for a reject, the reason. The commit is
+  names the move, says when the note was edited in agent-hub, quotes the note's first paragraph (the edited one when
+  there is an edit; redacted, 200) and, for a reject, the reason. An edited accept writes the new body after the kept
+  frontmatter in the same commit. The commit is
   authored as the hub's author (ADR 0016) with no trailer.
 - A decision is idempotent by the learning's state: a second call answers 409 with the PR already open.
 
@@ -221,7 +228,7 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 | `GET /{id}` · `DELETE /{id}` | the session with its open permission request · delete an ended one with its log → 204 (409 when live) |
 | `GET /{id}/events?after=&limit=` | the persisted log, `seq` order, `limit` 1 to 500 (default 200), `next_after` |
 | `GET /{id}/stream` | the log over SSE (below) |
-| `POST /{id}/messages` | `{text}` (1 byte to 64 KiB UTF-8) → 202 `{seq}`; accepted while a turn runs |
+| `POST /{id}/messages` | `{text, screenshots?}` (text 1 byte to `--message-max-bytes`, 1 MiB UTF-8 by default; 1 to 10 screenshots) → 202 `{seq}`; accepted while a turn runs |
 | `POST /{id}/interrupt` | `{}` → 202; the turn's `result` follows on the stream |
 | `POST /{id}/permissions/{request_id}` | `{decision: allow \| deny \| always, message?, answers?, suggestion?, mode?}` → 200 |
 | `POST /{id}/settings` | `{mode?, model?}` (at least one) → 200 |
@@ -241,9 +248,14 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   accepted (else 422 "Invalid request body"). `data` must be strict base64 of a PNG (else 422 `invalid-screenshot`)
   of at most 3,932,160 bytes decoded (3.75 MiB, so its base64 fits the Anthropic API's 5 MiB image limit; else 413
   `screenshot-too-large`); every check runs before the session starts. The request body of this route alone may be
-  up to 8 MiB (413 "Request body too large" above it). No image byte is stored, streamed, logged or echoed: the first
+  up to 16 MiB (413 "Request body too large" above it). No image byte is stored, streamed, logged or echoed: the first
   `user.message` record's body carries a marker instead,
   `attachments: [{kind: "screenshot", media_type: "image/png", bytes: <decoded size>}]`.
+- **Images in a later message.** `POST /{id}/messages` may carry `screenshots: [{media_type: "image/png", data}]`
+  (1 to 10; an image pasted in the chat, converted to PNG by the browser), sent to Claude before the message's text.
+  Each is checked like the first prompt's screenshot, before anything is logged or sent (422 `invalid-screenshot`
+  points at `/screenshots/{index}/data`; 413 `screenshot-too-large`). This route's body may be up to 64 MiB. The
+  `user.message` record carries one `attachments` marker per image and never its bytes.
 - **Observed twin.** `GET ""` and `GET /{id}` carry `observed_session_id`: the `claude_session_id` once the hooks or
   transcripts observed that Claude session (it is then a row of `GET /api/v1/sessions`), else `null`, so a list shows a
   driven session once, with or without its twin. The other routes answer it `null`.
@@ -254,7 +266,8 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   Other combinations are 422. The first answer stands (a second is 409); none within 10 minutes is a deny by
   `timeout`.
 - **Records.** Each record is `{seq, at, kind, by, body}`. Kinds: `init`, `text`, `thinking`, `tool.call` (Edit and
-  Write carry a unified `diff`), `tool.result` (at most 64 KiB, then `truncated` and `original_bytes`), `todos`,
+  Write carry a unified `diff`), `tool.result` (at most 64 KiB, then `truncated` and `original_bytes`; a file tool's result carries the
+  engine's `diff` with the file's real line numbers when Claude reported one), `todos`,
   `permission.request`, `result` (cost, usage, terminal reason), `error`, `exited`, and the audit kinds
   `user.message`, `permission.decision`, `interrupt`, `settings`, `close`, `log.truncated`, `cloud.start`,
   `cloud.followup`; `by` is `web`, `timeout`, `closed`, `driver` or `server`. Stored text is redacted (the event store's rule
@@ -301,7 +314,7 @@ text or a value the browser sent):
 | `invalid-workdir` · `unknown-resume` · `invalid-decision` | 422 | an id not in `GET /workdirs` or `GET /resumable` (`errors[]`) · an answer that does not fit the request |
 | `message-too-large` | 413 | a prompt or message over the limit (`limit`, `size`) |
 | `screenshot-too-large` | 413 | a screenshot over 3,932,160 bytes decoded (`limit`, `size`) |
-| `invalid-screenshot` | 422 | a screenshot that is not strict base64 of a PNG (`errors[]` points at `/screenshot/data`) |
+| `invalid-screenshot` | 422 | a screenshot that is not strict base64 of a PNG (`errors[]` points at `/screenshot/data`, or `/screenshots/{index}/data` for a message's image) |
 | `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
 | `cloud-unavailable` · `cloud-failed` · `cloud-timeout` | 501 · 502 · 504 | link-out guidance (`guidance`) · the step that failed (`step`) · the 60 s deadline (`seconds`) |
 

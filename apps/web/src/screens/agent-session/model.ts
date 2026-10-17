@@ -44,7 +44,7 @@ export interface ResetFrame {
 
 /** A message this page posts: shown at once, accepted with its record's seq, or failed. */
 export type SendItem =
-  | { type: "sending"; key: string; text: string }
+  | { type: "sending"; key: string; text: string; screenshots?: readonly string[] }
   | { type: "accepted"; key: string; seq: number }
   | { type: "failed"; key: string };
 
@@ -61,6 +61,8 @@ export interface SendingView {
   key: string;
   text: string;
   seq: number | null;
+  /** The images pasted in it (PNG data URLs), shown while it sends. */
+  screenshots?: readonly string[];
 }
 
 export interface ToolResultView {
@@ -69,6 +71,9 @@ export interface ToolResultView {
   /** The server stored a clipped copy (over 64 KiB); `originalBytes` is the full size. */
   truncated: boolean;
   originalBytes: number | null;
+  /** The change a file tool made, as Claude reported it once it ran: a unified diff with the
+   * file's real line numbers. */
+  diff?: string | null;
 }
 
 export interface ToolView {
@@ -86,6 +91,10 @@ export interface PermissionDecisionView {
   by: RecordBy | null;
   message: string | null;
   at: string;
+  /** An `AskUserQuestion`'s answers, by question text. */
+  answers?: Record<string, string> | null;
+  /** The mode a plan approval continued in. */
+  mode?: "default" | "acceptEdits" | null;
 }
 
 export interface PermissionView {
@@ -129,6 +138,8 @@ export type TranscriptEntry =
       queued: boolean;
       /** A screenshot went with it (the record's `attachments` marker; the image is never stored). */
       screenshot: boolean;
+      /** How many images went with it (one marker each). */
+      screenshotCount: number;
     }
   | {
       kind: "assistant";
@@ -417,6 +428,101 @@ export function toolDiff(tool: ToolView): string | null {
   }
 }
 
+/* ---------- Changed files ---------- */
+
+/** One call that changed a file: its diff and where the call stands. */
+export interface FileChange {
+  tool: ToolView;
+  diff: string;
+  /** The diff carries the file's real line numbers (Claude reported it), so they can show. */
+  numbered: boolean;
+  state: ToolState;
+  added: number;
+  removed: number;
+}
+
+/** A file Claude changed in the session, with every change to it in order. */
+export interface ChangedFile {
+  path: string;
+  /** The first change wrote the whole file (Write): a new file, as far as the chat knows. */
+  created: boolean;
+  changes: FileChange[];
+  /** Lines added and removed by the changes that were applied (not denied or failed). */
+  added: number;
+  removed: number;
+  /** The id of the latest change: a review marked before it is out of date. */
+  lastChangeId: string;
+}
+
+/** Lines added and removed in a unified diff, headers left out. */
+export function diffStats(diff: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
+}
+
+const FILE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+
+function fileChangeDiff(tool: ToolView, path: string): string | null {
+  const reported = tool.result?.diff;
+  if (reported) return reported;
+  if (tool.name !== "NotebookEdit") return toolDiff(tool);
+  if (tool.diff !== null) return tool.diff;
+  return addedFileDiff(path, str(tool.input, "new_source") ?? "");
+}
+
+/** Every file the session's calls changed (subagents' included), first changed first. A change
+ * that was denied or failed stays listed, but counts no lines. */
+export function changedFiles(state: Pick<TranscriptState, "tools" | "permissions">): ChangedFile[] {
+  const files = new Map<string, ChangedFile>();
+  for (const tool of Object.values(state.tools)) {
+    if (!FILE_TOOLS.has(tool.name)) continue;
+    const path = str(tool.input, "file_path") ?? str(tool.input, "notebook_path");
+    if (path === null) continue;
+    const diff = fileChangeDiff(tool, path);
+    if (diff === null) continue;
+    const toolStateNow = toolState(tool, state.permissions[tool.id]);
+    const applied = toolStateNow !== "error" && toolStateNow !== "denied";
+    const stats = diffStats(diff);
+    const numbered = Boolean(tool.result?.diff);
+    const change: FileChange = { tool, diff, numbered, state: toolStateNow, ...stats };
+    const known = files.get(path);
+    const file = known ?? {
+      path,
+      created: tool.name === "Write",
+      changes: [],
+      added: 0,
+      removed: 0,
+      lastChangeId: tool.id,
+    };
+    file.changes.push(change);
+    file.lastChangeId = tool.id;
+    if (applied) {
+      file.added += stats.added;
+      file.removed += stats.removed;
+    }
+    if (!known) files.set(path, file);
+  }
+  return [...files.values()];
+}
+
+/** The directory every path shares (ending in "/"), or "" when they share none. */
+export function commonDir(paths: readonly string[]): string {
+  const first = paths[0];
+  if (first === undefined) return "";
+  let dir = first.slice(0, first.lastIndexOf("/") + 1);
+  for (const path of paths) {
+    while (dir && !path.startsWith(dir))
+      dir = dir.slice(0, dir.lastIndexOf("/", dir.length - 2) + 1);
+  }
+  return dir;
+}
+
 /* ---------- The reducer ---------- */
 
 function push(state: TranscriptState, entry: TranscriptEntry): TranscriptState {
@@ -517,6 +623,8 @@ function applyToolResult(state: TranscriptState, body: JsonObject): TranscriptSt
     truncated: body.truncated === true,
     originalBytes: num(body, "original_bytes"),
   };
+  const diff = str(body, "diff");
+  if (diff) result.diff = diff;
   const known = state.tools[id];
   if (known) return { ...state, tools: { ...state.tools, [id]: { ...known, result } } };
   const orphan: ToolView = { id, name: "Tool", input: {}, parentId: null, diff: null, result };
@@ -562,6 +670,20 @@ function applyPermissionRequest(state: TranscriptState, record: LogRecord): Tran
   });
 }
 
+function approvedMode(mode: string | null): "default" | "acceptEdits" | null {
+  return mode === "default" || mode === "acceptEdits" ? mode : null;
+}
+
+/** The answers of a decision record: question text to answer, strings only. */
+function answersOf(value: unknown): Record<string, string> | null {
+  const answers = obj(value);
+  if (!answers) return null;
+  const pairs = Object.entries(answers).filter(
+    (pair): pair is [string, string] => typeof pair[1] === "string",
+  );
+  return pairs.length > 0 ? Object.fromEntries(pairs) : null;
+}
+
 function applyDecision(state: TranscriptState, record: LogRecord): TranscriptState {
   const requestId = str(record.body, "request_id") ?? "";
   const known = state.permissions[requestId];
@@ -572,6 +694,8 @@ function applyDecision(state: TranscriptState, record: LogRecord): TranscriptSta
     by: record.by ?? null,
     message: str(record.body, "message"),
     at: record.at,
+    answers: answersOf(record.body.answers),
+    mode: approvedMode(str(record.body, "mode")),
   };
   return {
     ...state,
@@ -652,7 +776,18 @@ function applySend(state: TranscriptState, item: SendItem): TranscriptState {
   const others = state.sending.filter((send) => send.key !== item.key);
   switch (item.type) {
     case "sending":
-      return { ...state, sending: [...others, { key: item.key, text: item.text, seq: null }] };
+      return {
+        ...state,
+        sending: [
+          ...others,
+          {
+            key: item.key,
+            text: item.text,
+            seq: null,
+            ...(item.screenshots?.length ? { screenshots: item.screenshots } : {}),
+          },
+        ],
+      };
     case "accepted":
       // Its record may have come first: then it is already in the transcript.
       return item.seq <= state.lastSeq
@@ -701,6 +836,11 @@ function commandsOf(body: JsonObject): string[] {
   return [...names];
 }
 
+/** How many screenshot markers a user message's record carries. */
+function screenshotsOf(body: JsonObject): number {
+  return asArray(body.attachments).filter((item) => asObject(item)?.kind === "screenshot").length;
+}
+
 function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState {
   if (record.seq <= state.lastSeq) return state;
   const s = { ...state, lastSeq: record.seq, lastAt: record.at };
@@ -721,9 +861,8 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
           text,
           redacted: isRedacted(text),
           queued: s.turnOpen,
-          screenshot: asArray(body.attachments).some(
-            (item) => asObject(item)?.kind === "screenshot",
-          ),
+          screenshot: screenshotsOf(body) > 0,
+          screenshotCount: screenshotsOf(body),
         },
       );
     }
