@@ -610,8 +610,11 @@ def test_resumes_and_forks_listed_session_when_resume_fork_given(
 def test_refuses_create_naming_limit_when_concurrency_limit_reached(
     open_agent_session_app: Any,
 ) -> None:
-    app = open_agent_session_app(limits=SessionLimits(sessions_max=2))
-    first, _second = _created(app), _created(app)
+    app = open_agent_session_app(
+        limits=SessionLimits(sessions_max=2),
+        replies={"Long job.": (Hold(), TextBlock(block=0, text="x"))},
+    )
+    first, _second = _created(app, "Long job."), _created(app, "Long job.")
 
     refused = app.client.post(BASE, json=CREATE)
     app.client.post(f"{BASE}/{first['id']}/close", json={})
