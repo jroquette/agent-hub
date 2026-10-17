@@ -491,8 +491,16 @@ export interface SegmentedControlProps {
   value: string;
   onChange?: ((id: string) => void) | undefined;
   label?: string | undefined;
+  /** Every segment off (focusable no more, read as unavailable); the value still shows. */
+  disabled?: boolean | undefined;
 }
-export function SegmentedControl({ options, value, onChange, label }: SegmentedControlProps) {
+export function SegmentedControl({
+  options,
+  value,
+  onChange,
+  label,
+  disabled,
+}: SegmentedControlProps) {
   return (
     <div className="ah-seg" role="group" aria-label={label}>
       {options.map((option) => {
@@ -503,6 +511,7 @@ export function SegmentedControl({ options, value, onChange, label }: SegmentedC
             key={opt.id}
             type="button"
             aria-pressed={opt.id === value}
+            disabled={disabled}
             onClick={() => onChange?.(opt.id)}
             aria-label={opt.icon && !opt.label ? opt.title : undefined}
             title={opt.title}

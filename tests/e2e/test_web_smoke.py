@@ -228,6 +228,9 @@ INERT_BUNDLE_URLS = frozenset(
         # (a link the owner opens in claude.ai); never requested.
         "https://claude.ai",
         "https://claude.ai/code",
+        # AGH-269: the origin of the commit and pull-request links an acceptance criterion's
+        # evidence opens on GitHub (a link the owner opens in a new tab); never requested.
+        "https://github.com",
         # AGH-252: text of highlight.js's console warnings in the lazy highlight chunk; never
         # requested.
         "https://github.com/highlightjs/highlight.js/issues/2277",
