@@ -358,8 +358,17 @@ describe("AgentSessionScreen (transcript)", () => {
     expect(screen.getByRole("textbox", { name: "Message Claude" })).toBeDisabled();
   });
 
+  it("says there are no events when the hub's hooks never reported the session", async () => {
+    renderChat(routes({ [SESSION]: anAgentSession({ observed_session_id: null }) }));
+
+    expect(await screen.findByText("No events")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Events" })).toBeNull();
+  });
+
   it("links the agent session to its observed session", async () => {
-    const view = renderChat();
+    const view = renderChat(
+      routes({ [SESSION]: anAgentSession({ observed_session_id: anId(1, "5091b986") }) }),
+    );
 
     await userEvent.click(await screen.findByRole("link", { name: "Events" }));
     await waitFor(() => {

@@ -266,16 +266,25 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 }}
               />
             )}
-            {session.claude_session_id && (
+            {session.observed_session_id ? (
               <AppLink
                 className="ah-row ah-small"
-                href={`/sessions/${encodeURIComponent(session.claude_session_id)}`}
+                href={`/sessions/${encodeURIComponent(session.observed_session_id)}`}
                 style={{ gap: 4, fontWeight: 500 }}
                 title="Timeline, tools, errors and raw events of this session"
               >
                 <Icon name="activity" size="sm" />
                 Events
               </AppLink>
+            ) : (
+              <span
+                className="ah-row ah-small ah-subtle"
+                style={{ gap: 4 }}
+                title="The hub's hooks have sent no event for this session yet. They run only in a folder whose .claude/settings.json has them (the hub folder), so a session started in a repo folder has no timeline."
+              >
+                <Icon name="activity" size="sm" />
+                No events
+              </span>
             )}
             <SessionMenu
               busy={busy}
