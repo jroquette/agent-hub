@@ -15,6 +15,7 @@ from types import MappingProxyType
 from typing import Annotated, ClassVar, Final, Literal
 
 from pydantic import BaseModel, BeforeValidator, Field, StrictBool, ValidationError
+from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from agent_hub.core.hub_config.config_object import ConfigObject, absent_by_default
 from agent_hub.core.hub_config.doctor_rules import drop_map_comment_keys
@@ -150,6 +151,27 @@ class LocalConfig(ConfigObject):
     environments: LocalEnvironments = Field(default_factory=dict)
     repos: tuple[LocalRepo, ...] = ()
     guard: LocalGuard = Field(default_factory=LocalGuard)
+
+    def cross_field_problems(self) -> list[InitErrorDetails]:
+        """Each local repo dir once, ignoring case, as in ``hub.json``."""
+        first_index: dict[str, int] = {}
+        problems = []
+        for index, repo in enumerate(self.repos):
+            key = repo.dir.lower()
+            if key in first_index:
+                problems.append(
+                    InitErrorDetails(
+                        type=PydanticCustomError(
+                            "duplicate_repo_dir",
+                            "repo dir {dir} is already used by repos[{first}], ignoring case",
+                            {"dir": json.dumps(repo.dir), "first": first_index[key]},
+                        ),
+                        loc=("repos", index, "dir"),
+                        input=repo.dir,
+                    )
+                )
+            first_index.setdefault(key, index)
+        return problems
 
 
 def check_local_document(document: object) -> LocalConfig | tuple[ConfigProblem, ...]:
