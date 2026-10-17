@@ -158,7 +158,10 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const [filesOpen, setFilesOpen] = useState(false);
   // The Steps drawer opens as it was last left, in this browser.
   const [liveOpen, setLiveOpen] = useState(() => readStored(STEPS_OPEN_KEY) === "open");
+  const composer = useRef<HTMLTextAreaElement | null>(null);
   const stepsTrigger = useRef<HTMLElement | null>(null);
+  // Restored on load, the drawer leaves the keyboard in the composer.
+  const [stepsFocus, setStepsFocus] = useState(false);
   // The file a card in the conversation asked for; the nonce re-opens it in an open drawer.
   const [filePick, setFilePick] = useState<{ path: string | null; nonce: number }>({
     path: null,
@@ -180,10 +183,11 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
     if (open) {
       stepsTrigger.current =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setStepsFocus(true);
       setFilesOpen(false);
     } else {
-      // Focus goes back to what opened it.
-      stepsTrigger.current?.focus({ preventScroll: true });
+      // Focus goes back to what opened it, else to the composer.
+      (stepsTrigger.current ?? composer.current)?.focus({ preventScroll: true });
     }
   }, []);
   const closeLive = useCallback(() => {
@@ -200,7 +204,6 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   }, []);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const follow = useStickToBottom(scroller);
-  const composer = useRef<HTMLTextAreaElement | null>(null);
   // The chords answer tool permissions only (AC-234.29): a question or plan card ahead of them is skipped.
   const pending = pendingPermissions(transcript.state).filter(
     (id) => transcript.state.permissions[id]?.requestKind === "tool",
@@ -406,8 +409,8 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           reviewed={review.reviewed}
           onOpenFile={openFile}
           sidePanel={
-            liveOpen ? (
-              <StepsPanel steps={steps} onClose={closeLive} />
+            liveOpen && steps.end !== null ? (
+              <StepsPanel steps={steps} onClose={closeLive} focusOnOpen={stepsFocus} />
             ) : filesOpen ? (
               <FilesPanel
                 files={files}

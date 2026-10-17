@@ -2406,6 +2406,9 @@ body.as-resizing .as-drawer {
   background: var(--surface-sunken);
 }
 .as-feed-more {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   padding: 0;
   border: 0;
   background: none;
@@ -2424,6 +2427,22 @@ body.as-resizing .as-drawer {
 @media (max-width: 720px) {
   .as-live-bar > .as-live-todo,
   .as-live-bar > .as-live-detail {
+    display: none;
+  }
+}
+
+.as-steps-count {
+  color: var(--text-muted);
+}
+.as-live-bar > b {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .as-live-open-text {
     display: none;
   }
 }

@@ -207,13 +207,13 @@ function quietness(activity: LiveActivity, now: number) {
 
 function QuietLabel({ activity, now }: { activity: LiveActivity; now: number }) {
   const { quiet, stalled, isQuiet } = quietness(activity, now);
-  if (quiet === null || !isQuiet) return null;
+  if (quiet === null || !isQuiet || stalled) return null;
   return (
     <span
       className="ah-subtle ah-num"
       title="Time since the session's last record. A long command or subagent can be quiet for minutes."
     >
-      {stalled ? `no news for ${elapsed(quiet)}` : `quiet for ${elapsed(quiet)}`}
+      quiet for {elapsed(quiet)}
     </span>
   );
 }
@@ -254,6 +254,13 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
       : activity.phase === "tool"
         ? activity.calls[0]?.label
         : activity.todo;
+  const ask =
+    activity.phase === "waiting"
+      ? activity.feed.find(
+          (item): item is Extract<FeedItem, { kind: "tool" }> =>
+            item.kind === "tool" && item.state === "waiting",
+        )
+      : undefined;
   return (
     <section
       className={cx("as-live", `as-live-${activity.phase}`, stalled && "as-live-stalled")}
@@ -263,14 +270,22 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
       <button
         type="button"
         className="as-live-bar ah-small"
-        onClick={onToggle}
-        aria-expanded={open}
-        aria-controls={open ? STEPS_PANEL_ID : undefined}
-        aria-keyshortcuts={STEPS_KEYS}
+        onClick={
+          ask
+            ? () => {
+                showRequest(ask.tool.id);
+              }
+            : onToggle
+        }
+        aria-expanded={ask ? undefined : open}
+        aria-controls={!ask && open ? STEPS_PANEL_ID : undefined}
+        aria-keyshortcuts={ask ? undefined : STEPS_KEYS}
         title={
-          open
-            ? `Hide the turn's steps (${STEPS_KEY_LABEL})`
-            : `Show the turn's steps (${STEPS_KEY_LABEL})`
+          ask
+            ? "Go to the request that waits for you"
+            : open
+              ? `Hide the turn's steps (${STEPS_KEY_LABEL})`
+              : `Show the turn's steps (${STEPS_KEY_LABEL})`
         }
       >
         <span className="as-live-pulse" aria-hidden />
@@ -285,8 +300,10 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
         )}
         <QuietLabel activity={activity} now={now} />
         <span className="as-live-open-label">
-          {open ? "Hide steps" : "Show steps"}
-          <Icon name={open ? "chevron-right" : "chevron-left"} size="sm" />
+          <span className="as-live-open-text">
+            {ask ? "Show request" : open ? "Hide steps" : "Show steps"}
+          </span>
+          <Icon name={ask ? "arrow-up" : open ? "chevron-right" : "chevron-left"} size="sm" />
         </span>
       </button>
     </section>
@@ -321,9 +338,9 @@ export function StepsToggle({ steps, open, onToggle }: StepsToggleProps) {
       title={`${open ? "Hide" : "Show"} the turn's steps (${STEPS_KEY_LABEL})`}
       onClick={onToggle}
     >
-      {running ? <span className="as-live-pulse" aria-hidden /> : <Icon name="list" size="sm" />}
+      <Icon name="list" size="sm" />
       <span>Steps</span>
-      <span className="as-files-chip-count ah-num">{total}</span>
+      <span className="as-steps-count ah-num">{total}</span>
     </button>
   );
 }
@@ -345,6 +362,8 @@ function stepsHeadline(steps: TurnSteps): string {
 export interface StepsPanelProps {
   steps: TurnSteps;
   onClose: () => void;
+  /** Opened by the owner just now (not restored on page load): the keyboard goes to it. */
+  focusOnOpen?: boolean;
 }
 
 /**
@@ -353,7 +372,7 @@ export interface StepsPanelProps {
  * subagent as a group of its own calls. It follows new steps unless you scrolled up; Esc or Close
  * shuts it. Earlier turns stay in the conversation's activity lines.
  */
-export function StepsPanel({ steps, onClose }: StepsPanelProps) {
+export function StepsPanel({ steps, onClose, focusOnOpen = true }: StepsPanelProps) {
   const now = useNow(1000);
   const heading = useRef<HTMLHeadingElement>(null);
   const list = useRef<HTMLOListElement | null>(null);
@@ -363,7 +382,9 @@ export function StepsPanel({ steps, onClose }: StepsPanelProps) {
   const { activity, feed, earlier } = steps;
   const lastKey = feed.at(-1)?.key;
   useEffect(() => {
-    heading.current?.focus({ preventScroll: true });
+    if (focusOnOpen) heading.current?.focus({ preventScroll: true });
+    // Only on open: a later prop change never steals focus.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // New steps keep the list at its end, unless the reader scrolled up in it.
   useEffect(() => {
@@ -423,7 +444,7 @@ export function StepsPanel({ steps, onClose }: StepsPanelProps) {
       <div className="as-live-panel-now ah-small">
         {activity ? (
           <>
-            <span className="as-live-pulse" aria-hidden />
+            <Icon name={PHASE[activity.phase].icon} size="sm" />
             <b>{headline(activity)}</b>
             <span className="ah-grow" />
             {turn !== null && (
