@@ -3801,3 +3801,467 @@ def test_keeps_guard_output_when_server_slow_or_down(
     output = json.loads(completed.stdout)["hookSpecificOutput"]
     assert output["permissionDecisionReason"] == DENIED_PUSH
     assert elapsed < 1.5
+
+
+# AGH-277 blocked words (D-match, D-surfaces, D-env, D-order, D-fail, D-reason; AM-7): the spec's
+# ``W`` in a rendered demo hub at ``ws/demo-hub`` beside ``ws/demo-api``. ``decide`` runs in a
+# child on ``hook_python`` with the session variables each call gives (``None``: none scanned).
+BLOCKED_REASON = (
+    "blocked word `{}` (guard.blocked_words, {}) in {}: agents do not reach what a blocked word"
+    " names"
+)
+UNCHECKED_REASON = "blocked words not checked: {}; confirm this call"
+CONFIG_CAUSE = "{} cannot be used (fix it: docs/design/environments.md)"
+# AM-7: the longest command text the rule scans, as a literal (1 MiB).
+BLOCKED_TEXT_CAP = 1_048_576
+# argv: hub, a file of [event, environ] pairs (JSON), and seams (JSON: guard name -> value, set
+# before deciding). Prints decide's verdict for each pair.
+DECIDE = """
+import json
+from pathlib import Path
+import guard
+from hubhooks import load_config
+hub, calls, seams = Path(sys.argv[1]), sys.argv[2], json.loads(sys.argv[3])
+with open(calls, encoding="utf-8") as fh:
+    calls = json.load(fh)
+for name, value in seams.items():
+    setattr(guard, name, value)
+cfg = load_config(hub)
+print(json.dumps([guard.decide(event, cfg, environ) for event, environ in calls]))
+"""
+
+type Decide = Callable[..., list[tuple[str, str] | None]]
+
+
+def blocked_word(word: str, where: str, layer: str = "hub.json") -> tuple[str, str]:
+    return ("deny", BLOCKED_REASON.format(word, layer, where))
+
+
+def unchecked(cause: str) -> tuple[str, str]:
+    return ("ask", UNCHECKED_REASON.format(cause))
+
+
+def write_hub_json(hub: Path, document: Mapping[str, Any]) -> None:
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+def write_local_json(hub: Path, document: Mapping[str, Any]) -> None:
+    (hub / "hub.local.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+@pytest.fixture
+def blocked_hub(rendered_hub: Callable[[HubConfig], Path], demo_config: HubConfig) -> Path:
+    """``ws/demo-hub`` with ``W`` as its ``hub.json`` and no ``hub.local.json``."""
+    hub = rendered_hub(demo_config).resolve()
+    write_hub_json(hub, builders.an_environments_document())
+    (hub.parent / "demo-api" / "src").mkdir(parents=True)
+    return hub
+
+
+@pytest.fixture
+def decide(
+    blocked_hub: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> Decide:
+    """``decide(event, load_config(hub), environ)`` for each ``(event, environ)``, in order."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    def run(
+        calls: Sequence[tuple[Mapping[str, Any], Mapping[str, str] | None]],
+        *,
+        seams: Mapping[str, object] | None = None,
+    ) -> list[tuple[str, str] | None]:
+        batch = tmp_path / "decide.json"
+        batch.write_text(json.dumps([[event, environ] for event, environ in calls]))
+        found = run_python(
+            hook_python,
+            DECIDE,
+            path=blocked_hub / HOOKS,
+            args=[str(blocked_hub), str(batch), json.dumps(dict(seams or {}))],
+            cwd=elsewhere,
+            env={"HOME": str(tmp_path)},
+        )
+        return [tuple(verdict) if verdict else None for verdict in found]
+
+    return run
+
+
+def bash_call(command: str) -> dict[str, Any]:
+    return {"tool_name": "Bash", "tool_input": {"command": command}}
+
+
+def read_call(path: str) -> dict[str, Any]:
+    return {"tool_name": "Read", "tool_input": {"file_path": path}}
+
+
+def decided(decide: Decide, commands: Sequence[str]) -> dict[str, Any]:
+    return dict(zip(commands, decide([(bash_call(c), None) for c in commands]), strict=True))
+
+
+# AC-277.11: (command, the word its reason names); digits are boundaries (owner, Q-6).
+BLOCKED_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("psql -h my-prod-db", "prod"),
+    ("curl https://prod.example.com/x", "prod"),
+    ("echo demo_prod", "prod"),
+    ("ls envs/prod/", "prod"),
+    ("AWS_PROFILE=prod aws s3 ls", "prod"),
+    ("export STAGE=prod", "prod"),
+    ("serverless deploy --stage prod", "prod"),
+    ("aws s3 ls --profile=PROD", "prod"),
+    ("docker run -e ENV=Prod x", "prod"),
+    ("kubectl get pods --context production", "production"),
+    ("echo prod2", "prod"),
+    ("psql -h prod1-db", "prod"),
+    ("echo eu2prod", "prod"),
+)
+
+
+def test_denies_command_when_blocked_word_in_text(decide: Decide) -> None:
+    verdicts = decided(decide, [command for command, _ in BLOCKED_COMMANDS])
+
+    assert verdicts == {
+        command: blocked_word(word, "the command") for command, word in BLOCKED_COMMANDS
+    }
+
+
+def test_passes_command_when_word_inside_longer_run(decide: Decide) -> None:
+    commands = ["cat product.md", "grep products src", "make reproduce", "echo prodx demoProd"]
+
+    verdicts = decided(decide, commands)
+
+    assert verdicts == dict.fromkeys(commands)
+
+
+def test_denies_command_when_word_split_by_quotes_or_join(decide: Decide) -> None:
+    commands = ["pr\\\nod x", "p''rod x", 'p"r"od x', "p\\rod x"]
+
+    verdicts = decided(decide, commands)
+
+    assert verdicts == dict.fromkeys(commands, blocked_word("prod", "the command"))
+
+
+def test_names_word_layer_and_surface_when_denied(decide: Decide, blocked_hub: Path) -> None:
+    local = builders.a_local_environments_document()
+    local["guard"]["blocked_words"] = ["demo-live", "prod"]
+    write_local_json(blocked_hub, local)
+    hidden = "curl https://prod.example.com/x-hidden-path-9?k=v"
+
+    verdicts = decide(
+        [
+            (bash_call("echo DEMO-LIVE"), None),
+            (bash_call("echo prod"), None),
+            (bash_call(hidden), None),
+            (bash_call("git status"), {"AWS_PROFILE": "jane-demo-live-1"}),
+        ]
+    )
+
+    # the first layer that lists a word names it; the reason holds no command text or value
+    assert verdicts == [
+        blocked_word("demo-live", "the command", "hub.local.json"),
+        blocked_word("prod", "the command"),
+        blocked_word("prod", "the command"),
+        blocked_word("demo-live", "the session variable AWS_PROFILE", "hub.local.json"),
+    ]
+
+
+RULES_OF = """
+import json
+from guard import rule_of
+print(json.dumps([rule_of(reason) for reason in json.loads(sys.argv[1])]))
+"""
+
+
+def test_reads_blocked_word_rule_when_reason_given(
+    blocked_hub: Path, *, decide: Decide, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    write_hub_json(
+        blocked_hub,
+        builders.an_environments_document() | {"guard": {"blocked_words": ["ok", ""]}},
+    )
+    verdicts = decide([(bash_call("echo " + "x" * BLOCKED_TEXT_CAP), None)])
+    write_hub_json(blocked_hub, builders.an_environments_document())
+    verdicts += decide(
+        [(bash_call("echo prod"), None), (bash_call("git status"), {"STAGE": "prod"})]
+    )
+    reasons = [verdict[1] for verdict in verdicts if verdict]
+
+    rules = run_python(hook_python, RULES_OF, path=blocked_hub / HOOKS, args=[json.dumps(reasons)])
+
+    assert [verdict and verdict[0] for verdict in verdicts] == ["ask", "deny", "deny"]
+    assert rules == ["blocked_word"] * 3
+
+
+# D-env: the scanned session variables, by name (``TF_CLI_ARGS_*`` by prefix).
+SESSION_SCAN_NAMES = (
+    "AWS_PROFILE",
+    "AWS_DEFAULT_PROFILE",
+    "KUBECONFIG",
+    "KUBE_CONTEXT",
+    "HELM_KUBECONTEXT",
+    "TF_WORKSPACE",
+    "TF_DATA_DIR",
+    "TF_CLI_ARGS",
+    "TF_CLI_ARGS_plan",
+    "PULUMI_BACKEND_URL",
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_ROLE_ARN",
+    "CDK_DEFAULT_ACCOUNT",
+    "STAGE",
+    "SLS_STAGE",
+    "ENV",
+    "ENVIRONMENT",
+    "APP_ENV",
+    "NODE_ENV",
+    "RAILS_ENV",
+    "RACK_ENV",
+    "FLASK_ENV",
+    "DATABASE_URL",
+    "PGHOST",
+    "PGSERVICE",
+    "PGDATABASE",
+    "MYSQL_HOST",
+    "REDIS_URL",
+    "MONGODB_URI",
+    "AWS_ENDPOINT_URL",
+)
+
+
+def test_denies_every_bash_call_when_session_variable_holds_word(
+    decide: Decide, blocked_hub: Path
+) -> None:
+    by_name = decide(
+        [(bash_call("git status"), {name: "demo-prod"}) for name in SESSION_SCAN_NAMES]
+    )
+    database = {"DATABASE_URL": "postgres://u:pw@prod.example.com/db"}
+    every = decide([(bash_call(command), database) for command in ("git status", "ls", "echo hi")])
+    without_local = decide([(bash_call("git status"), {"DEMO_LIVE_DB_URL": "x-demo-live-y"})])
+    write_local_json(blocked_hub, builders.a_local_environments_document())
+    with_local = decide([(bash_call("git status"), {"DEMO_LIVE_DB_URL": "x-demo-live-y"})])
+
+    assert by_name == [
+        blocked_word("prod", f"the session variable {name}") for name in SESSION_SCAN_NAMES
+    ]
+    assert every == [blocked_word("prod", "the session variable DATABASE_URL")] * 3
+    # a declared credentials.env name is scanned; the word comes from hub.local.json
+    assert without_local == [None]
+    assert with_local == [
+        blocked_word("demo-live", "the session variable DEMO_LIVE_DB_URL", "hub.local.json")
+    ]
+
+
+def test_passes_when_word_only_in_unscanned_variable(decide: Decide) -> None:
+    environ = {
+        "HOME": "/home/prod",
+        "PATH": "/opt/prod/bin:/usr/bin",
+        "PWD": "/w/prod",
+        "VIRTUAL_ENV": "/w/prod/.venv",
+        "PROD_DB_URL": "prod",
+        "AWS_PROFILEX": "prod",
+        "TF_CLI": "prod",
+        "stage": "prod",
+    }
+
+    verdicts = decide([(bash_call("git status"), environ)])
+
+    assert verdicts == [None]
+
+
+def test_passes_read_when_session_variable_holds_word(decide: Decide) -> None:
+    environ = {"AWS_PROFILE": "demo-prod", "STAGE": "production"}
+    grep = {"tool_name": "Grep", "tool_input": {"pattern": "x", "path": "src"}}
+
+    verdicts = decide([(read_call("README.md"), environ), (grep, environ)])
+
+    assert verdicts == [None, None]
+
+
+def test_denies_from_hook_environment_when_session_variable_holds_word(
+    blocked_hub: Path, guard: Guard
+) -> None:
+    runs = [bash_run("git status", blocked_hub), bash_run("echo hi", blocked_hub)]
+    read = ({"tool_name": "Read", "tool_input": {"file_path": "README.md"}}, blocked_hub)
+
+    verdicts = guard(blocked_hub / HOOKS, [*runs, read], env={"AWS_PROFILE": "demo-prod"})
+    without = guard(blocked_hub / HOOKS, runs)
+
+    denied = blocked_word("prod", "the session variable AWS_PROFILE")
+    assert verdicts == [(denied[0], f"[hub guard] {denied[1]}")] * 2 + [None]
+    assert without == [None, None]
+
+
+@pytest.mark.parametrize("layer", ["hub.local.json", "hub.json"])
+def test_denies_when_listed_env_name_holds_word(
+    decide: Decide, blocked_hub: Path, layer: str
+) -> None:
+    names = ["DEMO_STAGE", "DEMO_*"]
+    if layer == "hub.json":
+        document = builders.an_environments_document()
+        document["guard"]["blocked_words_env"] = names
+        write_hub_json(blocked_hub, document)
+    else:
+        write_local_json(blocked_hub, {"guard": {"blocked_words_env": names}})
+
+    verdicts = decide(
+        [
+            (bash_call("git status"), {"DEMO_TARGET": "prod"}),
+            (bash_call("git status"), {"DEMO_STAGE": "Production"}),
+            (bash_call("git status"), {"DEMO": "prod", "DEMOX_Y": "prod"}),
+        ]
+    )
+
+    assert verdicts == [
+        blocked_word("prod", "the session variable DEMO_TARGET"),
+        blocked_word("production", "the session variable DEMO_STAGE"),
+        None,
+    ]
+
+
+# D-fail: (hub.json's guard lists over W's, hub.local.json's text or None, the problem named).
+UNUSABLE_BLOCKED: tuple[tuple[str, dict[str, Any], str | None, str], ...] = (
+    ("hub-string", {"blocked_words": "prod"}, None, "hub.json guard.blocked_words"),
+    ("hub-empty-item", {"blocked_words": ["ok", ""]}, None, "hub.json guard.blocked_words[1]"),
+    ("hub-glob", {"blocked_words_files": [3]}, None, "hub.json guard.blocked_words_files[0]"),
+    (
+        "local-item",
+        {},
+        '{"guard": {"blocked_words": ["ok", ""]}}',
+        "hub.local.json guard.blocked_words[1]",
+    ),
+    (
+        "local-env-name",
+        {},
+        '{"guard": {"blocked_words_env": ["A*B"]}}',
+        "hub.local.json guard.blocked_words_env[0]",
+    ),
+    ("hub-env-name", {"blocked_words_env": ["lower"]}, None, "hub.json guard.blocked_words_env[0]"),
+    ("local-not-json", {}, "{", "hub.local.json"),
+)
+
+
+@pytest.mark.parametrize(
+    ("hub_guard", "local_text", "problem"),
+    [(hub_guard, local_text, problem) for _, hub_guard, local_text, problem in UNUSABLE_BLOCKED],
+    ids=[name for name, _, _, _ in UNUSABLE_BLOCKED],
+)
+def test_asks_every_call_when_blocked_config_unusable(
+    blocked_hub: Path,
+    *,
+    decide: Decide,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+    hub_guard: dict[str, Any],
+    local_text: str | None,
+    problem: str,
+) -> None:
+    document = builders.an_environments_document()
+    document["guard"] |= hub_guard
+    write_hub_json(blocked_hub, document)
+    if local_text is not None:
+        (blocked_hub / "hub.local.json").write_text(local_text, encoding="utf-8")
+    event = bash_call("git status") | {"cwd": str(blocked_hub)}
+
+    verdicts = decide([(bash_call("git status"), None), (read_call("README.md"), None)])
+    completed = run_hook_file(
+        hook_python,
+        blocked_hub / HOOKS / "guard.py",
+        stdin=json.dumps(event).encode(),
+        cwd=blocked_hub,
+        env={"HOME": str(tmp_path)},
+    )
+
+    asked = unchecked(CONFIG_CAUSE.format(problem))
+    assert verdicts == [asked, asked]
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    output = json.loads(completed.stdout)["hookSpecificOutput"]
+    assert (output["permissionDecision"], output["permissionDecisionReason"]) == (
+        "ask",
+        f"[hub guard] {asked[1]}",
+    )
+
+
+def test_passes_when_local_file_absent(
+    blocked_hub: Path,
+    *,
+    decide: Decide,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+) -> None:
+    event = bash_call("git status") | {"cwd": str(blocked_hub)}
+
+    verdicts = decide([(bash_call("git status"), None), (read_call("README.md"), None)])
+    completed = run_hook_file(
+        hook_python,
+        blocked_hub / HOOKS / "guard.py",
+        stdin=json.dumps(event).encode(),
+        cwd=blocked_hub,
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert verdicts == [None, None]
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, b"", b"")
+
+
+def test_asks_when_command_over_cap(decide: Decide) -> None:
+    over = "echo " + "x" * (BLOCKED_TEXT_CAP - 4)
+    at_cap = "echo prod " + "x" * (BLOCKED_TEXT_CAP - 10)
+    assert (len(over), len(at_cap)) == (BLOCKED_TEXT_CAP + 1, BLOCKED_TEXT_CAP)
+
+    verdicts = decide([(bash_call(over), None), (bash_call(at_cap), None)])
+
+    assert verdicts == [
+        unchecked("the command is over 1 MiB (too large)"),
+        blocked_word("prod", "the command"),
+    ]
+
+
+def test_asks_when_scan_budget_spent(decide: Decide) -> None:
+    calls = [
+        (bash_call("echo hi"), None),
+        (bash_call("git status"), {"AWS_PROFILE": "demo-dev"}),
+    ]
+
+    verdicts = decide(calls, seams={"BLOCKED_SCAN_BUDGET": -1})
+
+    assert verdicts == [unchecked("out of time (300 ms)")] * 2
+
+
+# D-order (AC-277.17): the AGH-45 synthetic ``I`` (guard.infra) beside blocked words.
+def with_infra_and_words(words: Sequence[str]) -> dict[str, Any]:
+    document = builders.an_environments_document()
+    document["guard"]["infra"] = builders.a_guard_infra()
+    document["guard"]["blocked_words"] = list(words)
+    return document
+
+
+def test_denies_with_blocked_reason_when_infra_allow_matches(
+    decide: Decide, blocked_hub: Path
+) -> None:
+    write_hub_json(blocked_hub, with_infra_and_words(["dev"]))
+
+    verdicts = decide([(bash_call("aws s3 ls --profile demo-dev"), None)])
+
+    assert verdicts == [blocked_word("dev", "the command")]
+
+
+def test_keeps_marker_reason_when_no_blocked_words(decide: Decide, blocked_hub: Path) -> None:
+    write_hub_json(blocked_hub, with_infra_and_words([]))
+
+    verdicts = decide(
+        [
+            (bash_call("aws s3 ls --profile demo-prod"), None),
+            (bash_call("aws s3 ls --profile demo-dev"), None),
+        ]
+    )
+
+    assert verdicts == [marker(r"\bdemo-prod\b"), None]
+
+
+def test_shows_blocked_reason_when_both_rules_match(decide: Decide, blocked_hub: Path) -> None:
+    write_hub_json(blocked_hub, with_infra_and_words(["prod"]))
+
+    verdicts = decide([(bash_call("aws s3 ls --profile demo-prod"), None)])
+
+    assert verdicts == [blocked_word("prod", "the command")]

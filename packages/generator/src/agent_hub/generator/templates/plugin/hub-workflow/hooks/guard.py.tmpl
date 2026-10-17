@@ -52,6 +52,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from fnmatch import fnmatch
 from typing import IO, Callable, Optional
 
@@ -1083,6 +1084,115 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
     return None
 
 
+# Blocked words (docs/design/environments.md § Blocked words): a word from guard.blocked_words of
+# any layer, matched ignoring ASCII case, with no ASCII letter just before or after it (digits,
+# `_`, `-`, `.`, `/` and the like are boundaries), denies the call. The reason names the word, its
+# layer and where it was seen, never the text that held it.
+BLOCKED_REASON = "blocked word `{}` (guard.blocked_words, {}) in {}: agents do not reach what a blocked word names"
+BLOCKED_UNCHECKED_REASON = "blocked words not checked: {}; confirm this call"
+BLOCKED_CONFIG_CAUSE = "{} cannot be used (fix it: docs/design/environments.md)"
+BLOCKED_TEXT_CAP = 1 << 20  # characters of a command the rule scans; a longer one asks (AM-7)
+BLOCKED_TOO_LARGE = "the command is over 1 MiB (too large)"
+BLOCKED_SCAN_BUDGET = 0.3  # seconds for the command's views and the session variables together
+BLOCKED_OUT_OF_TIME = "out of time (300 ms)"
+BLOCKED_CHUNK = 1 << 16  # characters searched between two looks at the clock
+BLOCKED_WORD_MAX_CHARS = 64  # the longest blocked word (the reader's bound)
+# D-env: the session variables whose values are scanned (not every value: PATH, HOME and the like
+# hold folder and user names): the infra selectors and the usual stage and connection names, then
+# every credentials.env name declared and every guard.blocked_words_env name (`*`: a prefix).
+SESSION_SCAN_NAMES = frozenset((
+    "AWS_PROFILE", "AWS_DEFAULT_PROFILE", "KUBECONFIG", "KUBE_CONTEXT", "HELM_KUBECONTEXT", "TF_WORKSPACE",
+    "TF_DATA_DIR", "TF_CLI_ARGS", "PULUMI_BACKEND_URL", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_ROLE_ARN", "CDK_DEFAULT_ACCOUNT", "STAGE", "SLS_STAGE", "ENV", "ENVIRONMENT", "APP_ENV", "NODE_ENV",
+    "RAILS_ENV", "RACK_ENV", "FLASK_ENV", "DATABASE_URL", "PGHOST", "PGSERVICE", "PGDATABASE", "MYSQL_HOST",
+    "REDIS_URL", "MONGODB_URI", "AWS_ENDPOINT_URL",
+))
+SESSION_SCAN_PREFIXES = ("TF_CLI_ARGS_",)
+
+
+class BlockedScanBudgetSpent(Exception):
+    """The rule's time budget ran out before its scan ended."""
+
+
+def _blocked_matcher(cfg: Config) -> tuple[re.Pattern[str], dict[str, tuple[str, str]]]:
+    """One pattern for every blocked word (longest first), and each word's lowercase form mapped
+    to (the word as listed, the first layer listing it)."""
+    first: dict[str, tuple[str, str]] = {}
+    for word, layer in cfg.blocked_words:
+        first.setdefault(word.lower(), (word, layer))
+    words = sorted(first, key=lambda w: (-len(w), w))
+    pattern = r"(?<![A-Za-z])(?:" + "|".join(re.escape(w) for w in words) + r")(?![A-Za-z])"
+    return re.compile(pattern, re.I | re.A), first
+
+
+def _blocked_hit(pattern: re.Pattern[str], text: str, deadline: float) -> str | None:
+    """The first blocked word in text, searched a chunk at a time so the budget is checked; each
+    chunk is read on past its end by a word's length, so a word across the cut is seen whole."""
+    start = 0
+    while start < len(text):
+        if time.monotonic() > deadline:
+            raise BlockedScanBudgetSpent
+        end = start + BLOCKED_CHUNK
+        found = pattern.search(text, start, end + BLOCKED_WORD_MAX_CHARS + 1)
+        if found and found.start() < end:
+            return found.group(0)
+        start = end
+    return None
+
+
+def _command_views(cmd: str) -> tuple[str, ...]:
+    """The raw command, with backslash-newlines removed (as bash joins them), and then with every
+    quote and backslash removed (p''rod, p\\rod); each distinct view once."""
+    joined = cmd.replace("\\\n", "")
+    return tuple(dict.fromkeys((cmd, joined, re.sub(r"['\"\\\\]", "", joined))))
+
+
+def _scanned_variables(cfg: Config, environ: dict) -> list[str]:
+    """The names in environ whose values the rule scans (D-env), sorted."""
+    exact = set(SESSION_SCAN_NAMES) | set(cfg.credential_env)
+    prefixes = list(SESSION_SCAN_PREFIXES)
+    for name, _layer in cfg.blocked_env:
+        if name.endswith("*"):
+            prefixes.append(name[:-1])
+        else:
+            exact.add(name)
+    return sorted(name for name in environ if name in exact or name.startswith(tuple(prefixes)))
+
+
+def check_blocked(tool: str, ti: dict, cfg: Config, environ: Optional[dict] = None) -> Verdict:
+    """The blocked-word rule, before every other rule: a deny for a word in a Bash command (three
+    views) or in a scanned session variable (Bash only); an ask when it cannot check (the command
+    is too large, the budget is spent, or a layer's blocked list cannot be used); else None."""
+    if not cfg.blocked_words and not cfg.blocked_problem:
+        return None
+    unchecked = None
+    if tool == "Bash" and cfg.blocked_words:
+        pattern, first = _blocked_matcher(cfg)
+        deadline = time.monotonic() + BLOCKED_SCAN_BUDGET
+        cmd = _str(ti.get("command"))
+        try:
+            if len(cmd) > BLOCKED_TEXT_CAP:
+                unchecked = BLOCKED_TOO_LARGE
+            else:
+                for view in _command_views(cmd):
+                    hit = _blocked_hit(pattern, view, deadline)
+                    if hit:
+                        return "deny", BLOCKED_REASON.format(*first[hit.lower()], "the command")
+            for name in _scanned_variables(cfg, environ or {}):
+                hit = _blocked_hit(pattern, _str(environ[name]), deadline)
+                if hit:
+                    where = f"the session variable {_infra_value(name)}"
+                    return "deny", BLOCKED_REASON.format(*first[hit.lower()], where)
+        except BlockedScanBudgetSpent:
+            unchecked = unchecked or BLOCKED_OUT_OF_TIME
+    if unchecked:
+        return "ask", BLOCKED_UNCHECKED_REASON.format(unchecked)
+    if cfg.blocked_problem:
+        cause = BLOCKED_CONFIG_CAUSE.format(_infra_value(cfg.blocked_problem))
+        return "ask", BLOCKED_UNCHECKED_REASON.format(cause)
+    return None
+
+
 FILE_TOOLS = ("Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch")
 EXTENSION_TIMEOUT = 3  # seconds, inside the guard's own 10 s hook timeout (spec Q-5)
 RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_guard_runner.py")
@@ -1093,16 +1203,20 @@ REASON_CAP = 300  # characters of an extension's reason or of a failure's stderr
 STDERR_TAIL = 4096  # bytes of the runner's stderr that are read back
 
 
-def decide(data: dict, cfg: Config) -> Verdict:
-    """The base verdict for one PreToolUse event: pure, no output."""
+def decide(data: dict, cfg: Config, environ: Optional[dict] = None) -> Verdict:
+    """The base verdict for one PreToolUse event: no output. The blocked-word rule runs first and
+    its deny is final; environ holds the session variables it scans (None: none, as in tests)."""
     tool, ti = _str(data.get("tool_name")), data.get("tool_input")
     if not isinstance(ti, dict):
         ti = {}
+    if tool != "Bash" and tool not in FILE_TOOLS:
+        return None
+    blocked = check_blocked(tool, ti, cfg, environ)
+    if blocked and blocked[0] == "deny":
+        return blocked
     if tool == "Bash":
-        return check_bash(_str(ti.get("command")), cfg)
-    if tool in FILE_TOOLS:
-        return check_file(tool, ti, cfg)
-    return None
+        return tighten(blocked, check_bash(_str(ti.get("command")), cfg))
+    return tighten(blocked, check_file(tool, ti, cfg))
 
 
 def _one_line(text: str) -> str:
@@ -1244,6 +1358,8 @@ RULE_IDS = (
     ("skip_marker", re.compile(r"^this edit adds a skip")),
     ("secret_file", re.compile(r"^(\S.* may hold secrets|Grep over \.env files)")),
     ("project_guard", re.compile(r"^project guard: ")),
+    # before the unanchored patterns below, which a path in a blocked-word reason could hold
+    ("blocked_word", re.compile(r"^blocked words? ")),
     ("deny_hosts", re.compile(r" is in guard\.deny_hosts \(hub\.json\)")),
     ("deny_paths", re.compile(r" is under guard\.deny_paths `")),
     ("guard_files", re.compile(r" is the hub's own guard or config \(")),
@@ -1277,7 +1393,7 @@ def main() -> None:
     if tool != "Bash" and tool not in FILE_TOOLS:
         return
     cfg = load_config(data.get("cwd"))
-    verdict = decide(data, cfg)
+    verdict = decide(data, cfg, dict(os.environ))
     if verdict is None or verdict[0] != "deny":  # a deny is final: the extension never runs
         path = extension_file(cfg)
         if path:
