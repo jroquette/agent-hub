@@ -22,6 +22,7 @@ import { SkillDetailScreen, SkillsPickerScreen, SkillsScreen } from "./screens/s
 import { EditDraftScreen, NewDraftScreen, StudioScreen } from "./screens/skills/Studio";
 import { WelcomeScreen } from "./screens/welcome";
 import { WorkflowDetailScreen, WorkflowsScreen } from "./screens/workflows";
+import { NewWorkflowScreen } from "./screens/workflows/NewWorkflow";
 import { AppShell } from "./shell/AppShell";
 
 /**
@@ -80,6 +81,7 @@ export const appRoutes: RouteObject[] = [
           { path: "features", element: <FeaturesScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
           { path: "workflows", element: <WorkflowsScreen /> },
+          { path: "workflows/new", element: <NewWorkflowScreen /> },
           { path: "workflows/:project/:name", element: <WorkflowDetailScreen /> },
           { path: "health", element: <HealthScreen /> },
           { path: "*", element: <NotFoundScreen /> },

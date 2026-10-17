@@ -237,6 +237,10 @@ export function WorkflowsScreen() {
       <div className="ah-row ah-wrap" style={{ gap: 12 }}>
         <h1 className="ah-h1">Workflows</h1>
         <span className="ah-grow" />
+        <AppLink className="ah-btn" href="/workflows/new">
+          <Icon name="plus" />
+          New workflow
+        </AppLink>
         <StartRun project={scope} />
       </div>
       <WhatIsAWorkflow />
