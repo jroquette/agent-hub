@@ -432,4 +432,52 @@ describe("FeaturesScreen", () => {
 
     expect(await seriousViolations(container)).toEqual([]);
   });
+
+  it("shows a feature's nickname with its slug, and renames it inline (names)", async () => {
+    const saved: unknown[] = [];
+    const names = [{ project: "agent-hub", slug: "layered-memory", name: "Layered memory" }];
+    const { requests } = open({
+      "/api/v1/feature-names": () => ({ items: names }),
+      "PUT /api/v1/feature-names": (request: Request) => {
+        void request
+          .clone()
+          .json()
+          .then((body) => saved.push(body));
+        names.push({ project: "agent-hub", slug: "control-plane", name: "Control plane" });
+        return names[1];
+      },
+    });
+
+    const named = await screen.findByRole("link", { name: "Layered memory" });
+    expect(named.closest("li")).toHaveTextContent("layered-memory");
+
+    await userEvent.click(screen.getByRole("button", { name: "Give control-plane a name" }));
+    const field = screen.getByRole("textbox", { name: "Name for control-plane" });
+    await userEvent.type(field, "Control plane{Enter}");
+
+    expect(await screen.findByRole("link", { name: "Control plane" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(requests.some((r) => r.method === "PUT")).toBe(true);
+    });
+    await waitFor(() => {
+      expect(saved).toEqual([
+        { project: "agent-hub", slug: "control-plane", name: "Control plane" },
+      ]);
+    });
+  });
+
+  it("finds a feature by its nickname (names)", async () => {
+    open(
+      {
+        "/api/v1/feature-names": {
+          items: [{ project: "agent-hub", slug: "layered-memory", name: "Brain layers" }],
+        },
+      },
+      true,
+      "/features?q=brain",
+    );
+
+    expect(await screen.findByRole("link", { name: "Brain layers" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "control-plane" })).not.toBeInTheDocument();
+  });
 });

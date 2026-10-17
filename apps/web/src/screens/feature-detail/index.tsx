@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -22,6 +22,7 @@ import { usePreferences } from "../../lib/preferences";
 import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
+import { FeatureNameField, RenameButton, useFeatureNames } from "../features/names";
 import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
@@ -294,6 +295,38 @@ function ownerWait(steps: readonly { name: string; meta: string | null; reason: 
 }
 
 /** Feature detail (spec 17, D23): golden path, owner steps, acceptance criteria. */
+/** The feature's nickname as the title, the slug beside it; the pencil renames it. */
+function FeatureHeading({ project, slug }: { project: string; slug: string }) {
+  const nameOf = useFeatureNames();
+  const [editing, setEditing] = useState(false);
+  const name = nameOf({ project, slug });
+  if (editing) {
+    return (
+      <FeatureNameField
+        feature={{ project, slug }}
+        name={name}
+        className="fd-name-input"
+        onDone={() => {
+          setEditing(false);
+        }}
+      />
+    );
+  }
+  return (
+    <span className="ah-row" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}>
+      <h1 className={name ? "ah-h1" : "ah-h1 ah-mono"}>{name ?? slug}</h1>
+      {name && <span className="ah-mono ah-small ah-subtle">{slug}</span>}
+      <RenameButton
+        slug={slug}
+        named={name !== null}
+        onClick={() => {
+          setEditing(true);
+        }}
+      />
+    </span>
+  );
+}
+
 export function FeatureDetailScreen() {
   const { project = "", slug = "" } = useParams();
   const feature = useFeature(project, slug);
@@ -416,7 +449,7 @@ export function FeatureDetailScreen() {
     <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
       <div className="ah-stack" style={{ gap: 6 }}>
         <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-          <h1 className="ah-h1">{detail.slug}</h1>
+          <FeatureHeading project={detail.project} slug={detail.slug} />
           {detail.verdict && (
             <StatusBadge
               status={VERDICT_STATUS[detail.verdict]}

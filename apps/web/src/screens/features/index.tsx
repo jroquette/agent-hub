@@ -38,6 +38,7 @@ import {
   type GroupId,
   type Reason,
 } from "./groups";
+import { FeatureNameField, RenameButton, useFeatureNames } from "./names";
 import { AcBar, PHASES, VERDICT_STATUS } from "./parts";
 import { useFeatures } from "./queries";
 
@@ -222,14 +223,14 @@ function AcCell({ f }: { f: Feature }) {
 }
 
 /** Everything the row's cells show, for keyboard and screen-reader users: the bars are not tab stops. */
-function rowLabel(f: Feature, reason: Reason): string {
+function rowLabel(f: Feature, reason: Reason, name: string | null): string {
   const acs =
     f.acs && !f.problem
       ? `ACs ${String(f.acs.passing + f.acs.owner_steps)} of ${String(f.acs.total)}`
       : null;
   const issues = f.issues.length ? `issues ${f.issues.map(issueId).join(", ")}` : null;
   return [
-    f.slug,
+    name ? `${name} (${f.slug})` : f.slug,
     reason.line,
     `golden path at ${GOLDEN_STEP_LABEL[f.phase]}`,
     acs,
@@ -242,15 +243,18 @@ function rowLabel(f: Feature, reason: Reason): string {
 
 function FeatureRow({
   f,
+  name,
   reason,
   showProject,
   onOpen,
 }: {
   f: Feature;
+  name: string | null;
   reason: Reason;
   showProject: boolean;
   onOpen: (href: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
   const href = featureHref(f) + (reason.doc ? `?doc=${reason.doc}` : "");
   const lineId = `ft-line-${f.project}-${f.slug}`;
   const tags = [
@@ -268,7 +272,7 @@ function FeatureRow({
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
       data-nav-row=""
-      aria-label={rowLabel(f, reason)}
+      aria-label={rowLabel(f, reason, name)}
       onClick={() => {
         onOpen(href);
       }}
@@ -285,18 +289,39 @@ function FeatureRow({
       </span>
       <div className="ft-row-main">
         <div className="ft-row-head">
-          <Link
-            to={href}
-            className="ft-row-title"
-            title={f.slug}
-            aria-describedby={lineId}
-            tabIndex={-1}
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-          >
-            {f.slug}
-          </Link>
+          {editing ? (
+            <FeatureNameField
+              feature={f}
+              name={name}
+              onDone={() => {
+                setEditing(false);
+              }}
+            />
+          ) : (
+            <>
+              <Link
+                to={href}
+                className="ft-row-title"
+                data-named={name ? "" : undefined}
+                title={name ? `${name} · ${f.slug}` : f.slug}
+                aria-describedby={lineId}
+                tabIndex={-1}
+                onClick={(event) => {
+                  event.stopPropagation();
+                }}
+              >
+                {name ?? f.slug}
+              </Link>
+              {name && <span className="ft-row-slug">{f.slug}</span>}
+              <RenameButton
+                slug={f.slug}
+                named={name !== null}
+                onClick={() => {
+                  setEditing(true);
+                }}
+              />
+            </>
+          )}
           {tags.map((tag) => (
             <span key={tag} className="ft-row-tag">
               {tag}
@@ -371,6 +396,7 @@ function ColumnHeads({ withHints }: { withHints: boolean }) {
 }
 
 function Group({
+  nameOf,
   id,
   rows,
   collapsed,
@@ -380,6 +406,7 @@ function Group({
   filtered,
   withHints,
 }: {
+  nameOf: (f: Feature) => string | null;
   withHints: boolean;
   id: GroupId;
   rows: Feature[] | null;
@@ -439,6 +466,7 @@ function Group({
                   <FeatureRow
                     key={`${f.project}/${f.slug}`}
                     f={f}
+                    name={nameOf(f)}
                     reason={reasonOf(f)}
                     showProject={showProject}
                     onOpen={onOpen}
@@ -467,6 +495,7 @@ function Group({
 export function FeaturesScreen() {
   const [scope] = useScope();
   const features = useFeatures(scope);
+  const nameOf = useFeatureNames();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const { state, asOf } = useCollectorState();
@@ -483,7 +512,8 @@ export function FeaturesScreen() {
   });
   const filtered = q.trim() !== "" || active.length > 0;
   const rows = all.filter(
-    (f) => matchesQuery(f, q) && active.every(({ key, values }) => matches(f, key, values)),
+    (f) =>
+      matchesQuery(f, q, nameOf(f)) && active.every(({ key, values }) => matches(f, key, values)),
   );
   const byGroup = new Map<GroupId, Feature[]>(GROUPS.map((g) => [g.id, []]));
   for (const f of rows) byGroup.get(reasonOf(f).group)?.push(f);
@@ -514,7 +544,7 @@ export function FeaturesScreen() {
     all.filter(
       (f) =>
         test(f) &&
-        matchesQuery(f, q) &&
+        matchesQuery(f, q, nameOf(f)) &&
         active.every((a) => a.key === key || matches(f, a.key, a.values)),
     ).length;
   const facet = (
@@ -665,6 +695,7 @@ export function FeaturesScreen() {
                 return (
                   <Group
                     key={g.id}
+                    nameOf={nameOf}
                     id={g.id}
                     rows={list}
                     collapsed={collapsed.has(g.id)}

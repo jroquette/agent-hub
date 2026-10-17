@@ -164,10 +164,12 @@ export function byGroupOrder(a: Feature, b: Feature): number {
 const ISSUE_ID = /^[A-Z][A-Z0-9]*-\d+/;
 export const issueId = (raw: string): string => ISSUE_ID.exec(raw.trim())?.[0] ?? raw.trim();
 
-/** Case-insensitive match on the name, project, repos and issue ids; every word must match. */
-export function matchesQuery(f: Feature, q: string): boolean {
+/** Case-insensitive match on the nickname, slug, project, repos and issue ids; every word must match. */
+export function matchesQuery(f: Feature, q: string, name: string | null = null): boolean {
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
-  const hay = [f.slug, f.project, ...f.repos, ...f.issues.map(issueId)].join(" ").toLowerCase();
+  const hay = [name ?? "", f.slug, f.project, ...f.repos, ...f.issues.map(issueId)]
+    .join(" ")
+    .toLowerCase();
   return words.every((w) => hay.includes(w));
 }
