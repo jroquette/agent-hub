@@ -382,9 +382,10 @@ function EvalRunStrip({
 
 /**
  * The owner confirms the owner steps of a SHIP-WITH-OWNER-STEPS eval are done: the server writes
- * an `owner-signoff` SHIP eval over the ACs that waited, and the Evaluate step turns done.
+ * an `owner-signoff` SHIP eval over the ACs that waited, and the Evaluate step turns done. It is
+ * the page's one "waiting on you" place, above the tabs.
  */
-function OwnerSignOff({
+export function OwnerSignOff({
   project,
   slug,
   reason,
@@ -412,68 +413,71 @@ function OwnerSignOff({
       }
     },
   });
-  return (
-    <section
-      className="ah-card ah-pad ah-stack"
-      style={{ gap: 10, borderColor: "var(--waiting)" }}
-      aria-label="Owner steps"
+  const action = confirming ? (
+    <span className="ah-row" style={{ gap: 8 }}>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          setConfirming(false);
+        }}
+      >
+        Cancel
+      </Button>
+      <Button
+        size="sm"
+        variant="primary"
+        icon="check"
+        disabled={signOff.isPending}
+        onClick={() => {
+          signOff.mutate();
+        }}
+      >
+        {signOff.isPending ? "Signing off…" : "Yes, I did them"}
+      </Button>
+    </span>
+  ) : (
+    <Button
+      size="sm"
+      variant="primary"
+      icon="check"
+      onClick={() => {
+        setConfirming(true);
+      }}
     >
-      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-        <Icon name="hand" size="sm" />
-        <b>Waiting on your steps</b>
-        <span className="ah-small ah-muted">{reason}</span>
-        <span className="ah-grow" />
-        {confirming ? (
-          <>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setConfirming(false);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="primary"
-              icon="check"
-              disabled={signOff.isPending}
-              onClick={() => {
+      Mark owner steps done
+    </Button>
+  );
+  return (
+    <section aria-label="Owner steps">
+      <Banner tone="warning" boxed icon="hand" action={action}>
+        <span className="ah-stack" style={{ gap: 2 }}>
+          <span>
+            <b>Waiting on you</b>
+            <span className="ah-muted">
+              {" "}
+              · {reason.replace(/\s*\(SHIP-WITH-OWNER-STEPS\)/, "")}
+            </span>
+          </span>
+          {confirming && (
+            <span className="ah-small ah-muted">
+              Confirm you did every owner step the eval lists. This writes evals/owner-signoff.md
+              with verdict SHIP, signed by you; existing evals are kept.
+            </span>
+          )}
+          {signOff.error && (
+            <ProblemError
+              compact
+              title="Could not sign off the owner steps"
+              detail={signOff.error.detail ?? signOff.error.title}
+              status={signOff.error.status || undefined}
+              onRetry={() => {
                 signOff.mutate();
               }}
-            >
-              {signOff.isPending ? "Signing off…" : "Yes, I did them"}
-            </Button>
-          </>
-        ) : (
-          <Button
-            variant="primary"
-            icon="check"
-            onClick={() => {
-              setConfirming(true);
-            }}
-          >
-            Mark owner steps done
-          </Button>
-        )}
-      </div>
-      <span className="ah-small ah-muted">
-        {confirming
-          ? "Confirm you did every owner step the eval lists. This writes evals/owner-signoff.md with verdict SHIP, signed by you; existing evals are kept."
-          : "Did the manual steps the eval lists? Sign them off and the Evaluate step turns done."}
-      </span>
-      {signOff.error && (
-        <ProblemError
-          compact
-          title="Could not sign off the owner steps"
-          detail={signOff.error.detail ?? signOff.error.title}
-          status={signOff.error.status || undefined}
-          onRetry={() => {
-            signOff.mutate();
-          }}
-        />
-      )}
+            />
+          )}
+        </span>
+      </Banner>
     </section>
   );
 }
@@ -576,8 +580,6 @@ export interface EvalTabProps {
   /** The delivery shown below the list (`pickEval`). */
   selected: EvalRecord | undefined;
   onSelect: (delivery: string) => void;
-  /** Why the Evaluate step waits on the owner's steps; null when it does not. */
-  ownerWait?: string | null;
 }
 
 /**
@@ -592,24 +594,18 @@ export function EvalTab({
   evals,
   selected,
   onSelect,
-  ownerWait = null,
 }: EvalTabProps) {
   const { tz } = usePreferences();
   const strip = (
-    <>
-      {ownerWait && (
-        <OwnerSignOff project={project} slug={slug} reason={ownerWait} onShow={onSelect} />
-      )}
-      <EvalRunStrip
-        project={project}
-        slug={slug}
-        tickets={tickets}
-        evals={evals}
-        onShow={onSelect}
-        primary={evals.length === 0 && !ownerWait}
-        epics={epics}
-      />
-    </>
+    <EvalRunStrip
+      project={project}
+      slug={slug}
+      tickets={tickets}
+      evals={evals}
+      onShow={onSelect}
+      primary={evals.length === 0}
+      epics={epics}
+    />
   );
   if (evals.length === 0) {
     return (

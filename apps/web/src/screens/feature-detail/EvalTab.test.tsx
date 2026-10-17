@@ -13,7 +13,15 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
-import { EvalTab, evalHistory, evalPrompt, pickEval, ranBy, type EvalTabProps } from "./EvalTab";
+import {
+  EvalTab,
+  OwnerSignOff,
+  evalHistory,
+  evalPrompt,
+  pickEval,
+  ranBy,
+  type EvalTabProps,
+} from "./EvalTab";
 
 const AGENT = "/api/v1/agent-sessions";
 
@@ -191,7 +199,12 @@ describe("EvalTab", () => {
       verdict: "SHIP",
     });
     const view = renderWithApi(
-      tab({ evals, onSelect, ownerWait: "17 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)" }),
+      <OwnerSignOff
+        project="agent-hub"
+        slug="control-plane"
+        reason="17 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)"
+        onShow={onSelect}
+      />,
       { routes: { ...driving, [`POST ${SIGNOFF}`]: written } },
     );
 
@@ -207,7 +220,7 @@ describe("EvalTab", () => {
     ).toBe(true);
   });
 
-  it("offers no sign-off when nothing waits on the owner", () => {
+  it("offers no sign-off inside the Eval tab: the page's banner holds it", () => {
     renderWithApi(tab({ evals }), { routes: driving });
 
     expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();

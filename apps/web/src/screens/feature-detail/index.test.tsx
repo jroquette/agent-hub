@@ -187,10 +187,9 @@ describe("FeatureDetailScreen", () => {
   it("calls out the owner steps left", async () => {
     open();
 
-    const callout = await screen.findByText("1 owner step left: AC-48.13");
-    expect(callout.closest('[role="status"]')).toHaveTextContent(
-      "memory loads. Recorded in features.json",
-    );
+    const callout = await screen.findByText("Waiting on you: 1 owner step left");
+    expect(callout.closest('[role="status"]')).toHaveTextContent("AC-48.13");
+    expect(callout.closest('[role="status"]')).toHaveTextContent("memory loads.");
   });
 
   it("shows every AC row at once, with no Show all fold (AC-269.12)", async () => {

@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useId, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import type { components } from "../api/schema";
@@ -17,7 +17,6 @@ import {
   type Status,
 } from "./status";
 import { CodeBlock } from "./trace";
-
 
 /* ---------- Session tile (the Sessions grid) ---------- */
 export interface LiveSession {
@@ -884,11 +883,11 @@ export function goldenStepSummary(step: GoldenStep): string {
   return `${head}${meta ? ` · ${meta}` : ""}${reason}`;
 }
 
-function progressPercent(step: GoldenStep): number | null {
-  if (!step.progress || step.progress.total <= 0) return null;
-  return Math.round(
-    (100 * Math.min(step.progress.done, step.progress.total)) / step.progress.total,
-  );
+/** The one short line the step in focus shows under its state; the owner's wait reads as theirs. */
+function focusMeta(step: GoldenStep): string | null {
+  if (step.meta?.startsWith("waiting: owner")) return "Waiting on you";
+  if (step.meta) return step.meta;
+  return step.progress ? `${String(step.progress.done)}/${String(step.progress.total)}` : null;
 }
 
 const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
@@ -902,8 +901,9 @@ const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
 };
 
 /**
- * The golden path of a feature as the server computes it (S8): each step's name, its state as
- * text, its meta, its progress and the reason it is not done.
+ * The golden path of a feature as the server computes it (S8), kept calm: each step shows its dot,
+ * its name and its state as text; only the step in focus (the first one not done) adds one short
+ * line. Every step's meta, progress and reason are in its tooltip and its accessible description.
  */
 export function GoldenPathStepper({
   steps,
@@ -918,62 +918,55 @@ export function GoldenPathStepper({
   /** The accessible name of a step's button; "Open <step>" by default. */
   selectLabel?: ((step: FeaturePhase) => string) | undefined;
 }) {
+  const baseId = useId();
+  const shown = shownGoldenSteps(steps);
+  const focus = shown.find((s) => s.state !== "done" && s.state !== "skipped")?.name;
   return (
     <ol
       className="ah-golden"
       style={{ listStyle: "none", margin: 0, padding: 0 }}
       aria-label={label}
     >
-      {shownGoldenSteps(steps).map((step) => {
+      {shown.map((step) => {
         const icon = GOLDEN_STATE_ICON[step.state];
-        const percent = progressPercent(step);
-        const count = step.progress
-          ? `${String(step.progress.done)}/${String(step.progress.total)}`
-          : null;
+        const summary = goldenStepSummary(step);
+        const descId = `${baseId}-${step.name}`;
+        const meta = step.name === focus ? focusMeta(step) : null;
         return (
           <li key={step.name} className="ah-golden-step" data-state={step.state}>
             {/* Only the dot fades: faded text would fail the contrast check (axe). */}
             <span className="ah-golden-dot" style={DOT_STYLE[step.state]} aria-hidden="true">
               {icon && <Icon name={icon} />}
             </span>
-            {onSelect ? (
-              <button
-                type="button"
-                className="ah-golden-name ah-golden-select"
-                aria-label={selectLabel?.(step.name) ?? `Open ${GOLDEN_STEP_LABEL[step.name]}`}
-                onClick={() => {
-                  onSelect(step.name);
-                }}
-              >
-                {GOLDEN_STEP_LABEL[step.name]}
-              </button>
-            ) : (
-              <span className="ah-golden-name">{GOLDEN_STEP_LABEL[step.name]}</span>
-            )}
+            <Tooltip label={summary}>
+              {onSelect ? (
+                <button
+                  type="button"
+                  className="ah-golden-name ah-golden-select"
+                  aria-label={selectLabel?.(step.name) ?? `Open ${GOLDEN_STEP_LABEL[step.name]}`}
+                  aria-describedby={descId}
+                  onClick={() => {
+                    onSelect(step.name);
+                  }}
+                >
+                  {GOLDEN_STEP_LABEL[step.name]}
+                </button>
+              ) : (
+                // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+                <span className="ah-golden-name" tabIndex={0} aria-describedby={descId}>
+                  {GOLDEN_STEP_LABEL[step.name]}
+                </span>
+              )}
+            </Tooltip>
+            <span id={descId} hidden>
+              {summary}
+            </span>
             <span className="ah-golden-meta" style={{ fontSize: 11, fontWeight: 500 }}>
               {GOLDEN_STATE_TEXT[step.state]}
             </span>
-            {(step.meta ?? count) && (
+            {meta && (
               <span className="ah-golden-meta" style={{ fontSize: 11 }}>
-                {step.meta ?? count}
-              </span>
-            )}
-            {percent !== null && step.state !== "done" && (
-              <span
-                aria-hidden="true"
-                data-progress={percent}
-                style={{
-                  display: "block",
-                  height: 3,
-                  marginRight: 8,
-                  borderRadius: 2,
-                  background: `linear-gradient(90deg, var(--done) ${String(percent)}%, var(--surface-sunken) ${String(percent)}%)`,
-                }}
-              />
-            )}
-            {step.reason && step.state !== "done" && (
-              <span className="ah-golden-meta" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                {step.reason}
+                {meta}
               </span>
             )}
           </li>

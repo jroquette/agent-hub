@@ -27,7 +27,7 @@ import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
-import { EvalTab, pickEval } from "./EvalTab";
+import { EvalTab, OwnerSignOff, pickEval } from "./EvalTab";
 import { RecordSummary, summaryRequest } from "./RecordSummary";
 import { StateBadge } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
@@ -365,6 +365,7 @@ export function FeatureDetailScreen() {
 
   const detail = feature.data;
   const owners = detail.ac_rows.filter((ac) => passOf(ac) === "owner");
+  const waitReason = ownerWait(detail.golden_path.steps);
   const setTab = (id: string) => {
     setParams(
       (current) => {
@@ -412,7 +413,6 @@ export function FeatureDetailScreen() {
         tickets={detail.issues}
         epics={tickets.data?.planning.epics ?? []}
         evals={detail.evals}
-        ownerWait={ownerWait(detail.golden_path.steps)}
         selected={selectedEval}
         onSelect={(delivery) => {
           setParams(
@@ -478,12 +478,10 @@ export function FeatureDetailScreen() {
           )}
         </div>
       </div>
-      <div className="ah-card" style={{ padding: "16px 20px 14px" }}>
-        <div className="ah-row" style={{ marginBottom: 10 }}>
+      <section className="ah-stack" style={{ gap: 10 }} aria-label="Where the feature is">
+        <div className="ah-row" style={{ gap: 8 }}>
           <b className="ah-small">Golden path</b>
-          <DerivedLabel how="Each step is derived from the record files, the tickets' status in Linear when it was read, and the review and eval records; Shipped needs GitHub, not connected in this version.">
-            Phase · derived from the record and the tickets
-          </DerivedLabel>
+          <DerivedLabel how="Each step is derived from the record files, the tickets' status in Linear when it was read, and the review and eval records; Shipped needs GitHub, not connected in this version. Hover a step for its details." />
         </div>
         <GoldenPathStepper
           steps={detail.golden_path.steps}
@@ -492,16 +490,36 @@ export function FeatureDetailScreen() {
           }}
           selectLabel={(step) => `Open the ${TAB_LABEL[STEP_TAB[step]] ?? step} of ${step}`}
         />
-      </div>
-      {owners.length > 0 && (
-        <Banner tone="warning" boxed icon="hand">
-          <b>
-            {owners.length} owner step{owners.length === 1 ? "" : "s"} left:{" "}
-            {owners.map((ac) => ac.id).join(", ")}
-          </b>{" "}
-          {ownerLine(owners[0]?.description)} Recorded in features.json as passes:false (manual
-          owner step).
-        </Banner>
+      </section>
+      {waitReason ? (
+        <OwnerSignOff
+          project={detail.project}
+          slug={detail.slug}
+          reason={waitReason}
+          onShow={(delivery) => {
+            setParams(
+              (current) => {
+                const next = new URLSearchParams(current);
+                next.set("doc", "eval");
+                next.set("eval", delivery);
+                return next;
+              },
+              { replace: true },
+            );
+          }}
+        />
+      ) : (
+        owners.length > 0 && (
+          <Banner tone="warning" boxed icon="hand">
+            <b>
+              Waiting on you: {owners.length} owner step{owners.length === 1 ? "" : "s"} left
+            </b>
+            <span className="ah-muted">
+              {" "}
+              · {owners.map((ac) => ac.id).join(", ")}. {ownerLine(owners[0]?.description)}
+            </span>
+          </Banner>
+        )
       )}
       <Tabs tabs={tabs} value={tab} onChange={setTab} label="Feature record" />
       <div style={{ paddingTop: 4 }}>{body}</div>
