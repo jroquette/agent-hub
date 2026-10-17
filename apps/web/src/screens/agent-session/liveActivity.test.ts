@@ -70,6 +70,54 @@ describe("liveActivity", () => {
   });
 });
 
+describe("turn feed", () => {
+  it("lists the turn's calls with the first lines of their output and how many more", () => {
+    const output = ["a", "b", "c", "d", "e", "f"].join("\n");
+    const state = run([
+      message,
+      running,
+      call(2, "b", "Bash", { command: "ls" }),
+      record("tool.result", { seq: 3, body: { tool_use_id: "b", content: output } }),
+      call(4, "r", "Read", { file_path: "x.py" }),
+      record("tool.result", { seq: 5, body: { tool_use_id: "r", content: "1\n2\n3" } }),
+    ]);
+    const feed = liveActivity(state)?.feed ?? [];
+    expect(feed.map((item) => item.kind === "tool" && item.summary)).toEqual(["ls", "x.py"]);
+    const [bash, read] = feed;
+    expect(bash?.kind === "tool" && [bash.state, bash.preview, bash.more]).toEqual([
+      "done",
+      ["a", "b", "c", "d"],
+      2,
+    ]);
+    expect(read?.kind === "tool" && read.preview).toEqual(["Read 3 lines"]);
+  });
+
+  it("nests a subagent's latest calls under it and counts the rest", () => {
+    const state = run([
+      message,
+      running,
+      call(2, "a", "Agent", { description: "explore" }),
+      ...[3, 4, 5, 6].map((seq) => call(seq, `c${String(seq)}`, "Grep", { pattern: "p" }, "a")),
+    ]);
+    const agent = liveActivity(state)?.feed[0];
+    expect(agent?.kind === "tool" && [agent.children.length, agent.childCount]).toEqual([3, 4]);
+  });
+
+  it("starts at the turn's message, not at an earlier turn's", () => {
+    const state = run([
+      record("user.message", { seq: 1, body: { text: "first" } }),
+      call(2, "old", "Bash", { command: "old" }),
+      record("tool.result", { seq: 3, body: { tool_use_id: "old", content: "" } }),
+      record("result", { seq: 4, body: {} }),
+      record("user.message", { seq: 5, body: { text: "second" } }),
+      running,
+      call(6, "new", "Bash", { command: "new" }),
+    ]);
+    const feed = liveActivity(state)?.feed ?? [];
+    expect(feed.map((item) => item.key)).toEqual(["new"]);
+  });
+});
+
 describe("elapsed", () => {
   it("reads seconds, minutes and hours", () => {
     expect(elapsed(8_400)).toBe("8 s");

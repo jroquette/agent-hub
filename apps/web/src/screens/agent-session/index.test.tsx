@@ -484,7 +484,12 @@ function stubScrolling() {
   ) {
     return CARD_TOP[this.dataset.requestId ?? ""] ?? 0;
   });
-  const writes = vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation((value) => {
+  const writes = vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (
+    this: Element,
+    value,
+  ) {
+    // The live feed above the composer scrolls on its own, not the conversation.
+    if (this.closest(".as-live")) return;
     scrolled.top = Math.min(value, 600);
   });
   vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(() => scrolled.top);
@@ -1254,6 +1259,7 @@ describe("AgentSessionScreen (axe)", () => {
       ".as-spin",
       ".as-drawer",
       ".as-live-pulse",
+      ".as-feed-running > .as-feed-call .as-feed-mark",
     ]);
     const reduced =
       /@media \(prefers-reduced-motion: reduce\) \{\s*([^{]+)\{\s*animation: none;/.exec(css);

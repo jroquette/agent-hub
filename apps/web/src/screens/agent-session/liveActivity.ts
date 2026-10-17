@@ -4,7 +4,16 @@
  * running calls nested), the todo in progress and when the turn and its last record started. Pure:
  * derived from the transcript state, so the bar reads the same as the conversation below it.
  */
-import { toolSummary, type ToolView, type TranscriptState } from "./model";
+import { resultText } from "./ToolCallCard";
+import {
+  diffStats,
+  toolDiff,
+  toolState,
+  toolSummary,
+  type ToolState,
+  type ToolView,
+  type TranscriptState,
+} from "./model";
 
 export type LivePhase = "waiting" | "writing" | "subagents" | "tool" | "thinking" | "planning";
 
@@ -32,7 +41,32 @@ export interface LiveActivity {
   turnStartedAt: string | null;
   /** When the last record arrived. */
   lastEventAt: string | null;
+  /** The turn's steps so far, oldest first (the last `FEED_MAX`). */
+  feed: FeedItem[];
+  /** Steps of this turn left out of `feed`. */
+  earlier: number;
 }
+
+/** One step of the turn, as Claude Code prints it: the call, then a few lines of what it gave. */
+export type FeedItem =
+  | { kind: "thinking"; key: string; seconds: number | null }
+  | {
+      kind: "tool";
+      key: string;
+      tool: ToolView;
+      state: ToolState;
+      /** `Bash(make test)`: the call's one input. */
+      summary: string;
+      /** The first lines of its output, else a one-line digest ("Read 120 lines", "+3 -1"). */
+      preview: string[];
+      /** Lines of the output not in `preview`. */
+      more: number;
+      /** The whole output, for the expanded view. */
+      output: string | null;
+      /** A subagent's latest calls, and how many it made in all. */
+      children: FeedItem[];
+      childCount: number;
+    };
 
 const SUBAGENT = new Set(["Task", "Agent"]);
 
@@ -64,11 +98,76 @@ function liveCall(state: TranscriptState, tool: ToolView, depth: number): LiveCa
   };
 }
 
+/** The index of the open turn's user message (a message queued during it starts none). */
+function turnIndex(state: TranscriptState): number {
+  if (!state.turnOpen) return -1;
+  return state.entries.findLastIndex((entry) => entry.kind === "user" && !entry.queued);
+}
+
 /** The open turn's start: its user message, when the transcript holds it. */
 function turnStart(state: TranscriptState): string | null {
-  if (!state.turnOpen) return null;
-  const user = state.entries.findLast((entry) => entry.kind === "user");
+  const user = state.entries[turnIndex(state)];
   return user?.kind === "user" ? user.at : null;
+}
+
+export const FEED_MAX = 40;
+export const PREVIEW_LINES = 4;
+export const SUBAGENT_SHOWN = 3;
+
+function digest(tool: ToolView, text: string | null): string | null {
+  const diff = toolDiff(tool);
+  if (diff) {
+    const { added, removed } = diffStats(diff);
+    return `+${String(added)} -${String(removed)}`;
+  }
+  if (text === null) return null;
+  const lines = text.split("\n").length;
+  if (tool.name === "Read") return `Read ${String(lines)} ${lines === 1 ? "line" : "lines"}`;
+  return null;
+}
+
+function toolItem(state: TranscriptState, tool: ToolView, live: boolean): FeedItem {
+  const request = state.permissions[tool.id];
+  let status = toolState(tool, request);
+  // A call left without a result once the turn is over did not run on.
+  if (status === "running" && !live) status = "done";
+  const output = tool.result ? resultText(tool.result.content) : null;
+  const short = digest(tool, output);
+  const lines = output === null ? [] : output.replace(/\s+$/, "").split("\n");
+  const preview = short !== null ? [short] : lines.slice(0, PREVIEW_LINES);
+  const more = short !== null ? 0 : Math.max(0, lines.length - PREVIEW_LINES);
+  const childIds = state.children[tool.id] ?? [];
+  const children = childIds.slice(-SUBAGENT_SHOWN).flatMap((id) => {
+    const child = state.tools[id];
+    return child ? [toolItem(state, child, live)] : [];
+  });
+  return {
+    kind: "tool",
+    key: tool.id,
+    tool,
+    state: status,
+    summary: SUBAGENT.has(tool.name) ? subagentLabel(tool) : toolSummary(tool.input),
+    preview,
+    more,
+    output,
+    children,
+    childCount: childIds.length,
+  };
+}
+
+/** The open turn's steps, oldest first: thoughts and the main agent's calls. */
+export function turnFeed(state: TranscriptState): { feed: FeedItem[]; earlier: number } {
+  const start = turnIndex(state);
+  if (start < 0) return { feed: [], earlier: 0 };
+  const live = state.status === "running" || state.status === "waiting_permission";
+  const items = state.entries.slice(start + 1).flatMap((entry): FeedItem[] => {
+    if (entry.kind === "thinking")
+      return [{ kind: "thinking", key: entry.key, seconds: entry.seconds }];
+    if (entry.kind !== "tool") return [];
+    const tool = state.tools[entry.toolId];
+    return tool ? [toolItem(state, tool, live)] : [];
+  });
+  return { feed: items.slice(-FEED_MAX), earlier: Math.max(0, items.length - FEED_MAX) };
 }
 
 /** What the session is doing now; null when no turn runs (idle, ended, failed). */
@@ -105,6 +204,7 @@ export function liveActivity(state: TranscriptState): LiveActivity | null {
     todo: todo ? (todo.activeForm ?? todo.content) : null,
     turnStartedAt,
     lastEventAt: state.lastAt,
+    ...turnFeed(state),
   };
 }
 
@@ -119,3 +219,5 @@ export function elapsed(ms: number): string {
 
 /** Past this long without a record, the bar says so: still alive, just quiet. */
 export const QUIET_MS = 45_000;
+/** Past this long without a record and nothing running, the session is likely stuck. */
+export const STALLED_MS = 5 * 60_000;
