@@ -54,6 +54,21 @@ const LOCK: Record<LockState, [Status, string]> = {
 };
 /** Groups open by default only while the list is short (spec 16). */
 const OPEN_WARNINGS_UP_TO = 10;
+/** A rule group with more findings than this is split by file, so 174 cards become a few rows. */
+const SPLIT_BY_FILE_ABOVE = 10;
+/** Rows a file shows before "Show N more". */
+const FILE_ROWS_FIRST = 20;
+/** The rules `hub doctor --fix` fixes without a person, and what it does for each. */
+const AUTO_FIX: Record<string, string> = {
+  "brain.leak":
+    "rewrites the brain note, never a repo: a promoted draft becomes a short stub pointing at the repo file, and other copied lines become one pointer line each.",
+};
+const FIX_KINDS = ["auto", "person"] as const;
+type FixKind = (typeof FIX_KINDS)[number];
+const FIX_LABEL: Record<FixKind, string> = { auto: "Auto-fixable", person: "Needs a person" };
+const fixKind = (f: Finding): FixKind => (f.rule in AUTO_FIX ? "auto" : "person");
+/** `brain/x.md` from "line also in the brain at brain/x.md:3" (brain.leak's message). */
+const brainSource = (f: Finding) => /in the brain at (.+):\d+$/.exec(f.message)?.[1] ?? null;
 
 const areaOf = (rule: string) => rule.split(".")[0] ?? rule;
 const plural = (n: number, word: string) =>
@@ -172,18 +187,143 @@ function FindingBlock({ f, showProject }: { f: Finding; showProject: boolean }) 
   );
 }
 
+function hubCommand(hubs: HubView[], args: string): string {
+  const hub = hubs.length === 1 ? hubs[0] : undefined;
+  return hub ? `cd ${hub.path} && ./hub ${args}` : `./hub ${args}`;
+}
+
+/** Under the summary: how many findings the CLI fixes on its own, and the command that does it. */
+function FixStrip({ all, hubs }: { all: Finding[]; hubs: HubView[] }) {
+  const auto = all.filter((f) => fixKind(f) === "auto");
+  if (all.length === 0) return null;
+  const person = all.length - auto.length;
+  if (auto.length === 0) {
+    return (
+      <div className="ah-small ah-muted ah-row" style={{ gap: 8 }}>
+        <Icon name="file-pen" size="sm" />
+        No finding can be fixed automatically. Each one needs a person.
+      </div>
+    );
+  }
+  const files = new Set(auto.map((f) => brainSource(f) ?? f.path)).size;
+  return (
+    <section
+      className="ah-card ah-stack"
+      aria-label="Automatic fixes"
+      style={{ padding: "12px 16px", gap: 8 }}
+    >
+      <div className="ah-row ah-wrap" style={{ gap: 8 }}>
+        <Icon name="file-pen" size="sm" style={{ color: "var(--accent)" }} />
+        <b style={{ fontWeight: 600 }}>
+          {auto.length} of {all.length} findings can be fixed automatically
+        </b>
+        {person > 0 && <span className="ah-muted">· {person} need a person</span>}
+      </div>
+      <div className="ah-small ah-muted">
+        One command fixes them all, from {plural(files, "brain file")}. It writes only{" "}
+        <span className="ah-mono">brain/</span>, never a repo, commits nothing and checks again.
+        Review with <span className="ah-mono">git diff brain/</span>, then open the hub PR.
+      </div>
+      <CodeBlock code={hubCommand(hubs, "doctor --fix")} label="Fix command" />
+    </section>
+  );
+}
+
+/** One file of a large group: a row with its count, its findings on demand. */
+function FileRow({
+  path,
+  findings,
+  showProject,
+}: {
+  path: string;
+  findings: Finding[];
+  showProject: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [all, setAll] = useState(false);
+  const source = findings[0] ? brainSource(findings[0]) : null;
+  const rows = all ? findings : findings.slice(0, FILE_ROWS_FIRST);
+  return (
+    <div style={{ borderTop: "1px solid var(--border)" }}>
+      <button
+        type="button"
+        className="ah-row ah-small"
+        onClick={() => {
+          setOpen(!open);
+        }}
+        aria-expanded={open}
+        style={{
+          width: "100%",
+          padding: "8px 16px 8px 36px",
+          border: 0,
+          background: "none",
+          font: "inherit",
+          color: "var(--text)",
+          cursor: "pointer",
+          textAlign: "left",
+          gap: 8,
+        }}
+      >
+        <Icon
+          name={open ? "chevron-down" : "chevron-right"}
+          size="sm"
+          style={{ color: "var(--text-subtle)" }}
+        />
+        <span className="ah-mono" style={{ overflowWrap: "anywhere" }}>
+          {path}
+        </span>
+        <span className="ah-muted">{plural(findings.length, "line")}</span>
+        {source && <span className="ah-subtle">· from {source}</span>}
+      </button>
+      {open && (
+        <div style={{ paddingLeft: 20 }}>
+          {rows.map((f, i) => (
+            <FindingBlock key={`${location(f)}-${String(i)}`} f={f} showProject={showProject} />
+          ))}
+          {rows.length < findings.length && (
+            <div style={{ padding: "4px 16px 10px 44px" }}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setAll(true);
+                }}
+              >
+                Show {findings.length - rows.length} more lines
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function byFile(findings: Finding[]): [string, Finding[]][] {
+  const files = new Map<string, Finding[]>();
+  for (const f of findings) {
+    const path = f.path ?? "(no file)";
+    files.set(path, [...(files.get(path) ?? []), f]);
+  }
+  return [...files.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+}
+
 function GroupCard({
   group,
   open,
   onToggle,
   showProject,
+  hubs,
 }: {
   group: Group;
   open: boolean;
   onToggle: () => void;
   showProject: boolean;
+  hubs: HubView[];
 }) {
   const projects = [...new Set(group.findings.map((f) => f.project))];
+  const autoFix = AUTO_FIX[group.rule];
+  const split = group.findings.length > SPLIT_BY_FILE_ABOVE;
   return (
     <section className="ah-card" style={{ overflow: "visible" }} aria-label={group.rule}>
       <button
@@ -214,14 +354,35 @@ function GroupCard({
         <span className="ah-small ah-muted">{countText(group.findings)}</span>
         <span className="ah-grow" />
         {showProject && <span className="ah-small ah-subtle">{projects.join(", ")}</span>}
+        <StatusBadge
+          status={autoFix ? "done" : "idle"}
+          label={autoFix ? "Auto-fix" : "Needs a person"}
+          quiet
+        />
         <span className="ah-fm-chip">
           <i>area</i> {areaOf(group.rule)}
         </span>
       </button>
+      {open && autoFix && (
+        <div className="ah-stack ah-small" style={{ padding: "10px 16px 10px 44px", gap: 6 }}>
+          <span>
+            <b style={{ fontWeight: 600 }}>How to fix all {group.findings.length}</b>{" "}
+            <span className="ah-mono">./hub doctor --fix</span> {autoFix}
+          </span>
+          <CodeBlock
+            code={hubCommand(hubs, `doctor --fix --only ${group.rule}`)}
+            label={`Fix every ${group.rule} finding`}
+          />
+        </div>
+      )}
       {open &&
-        group.findings.map((f, i) => (
-          <FindingBlock key={`${location(f)}-${String(i)}`} f={f} showProject={showProject} />
-        ))}
+        (split
+          ? byFile(group.findings).map(([path, items]) => (
+              <FileRow key={path} path={path} findings={items} showProject={showProject} />
+            ))
+          : group.findings.map((f, i) => (
+              <FindingBlock key={`${location(f)}-${String(i)}`} f={f} showProject={showProject} />
+            )))}
     </section>
   );
 }
@@ -358,6 +519,7 @@ export function HealthScreen() {
     info: false,
   });
   const [areas, setAreas] = useState<Record<string, boolean>>({});
+  const [fixes, setFixes] = useState<Record<string, boolean>>({});
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
 
   const all = findings.data?.items ?? [];
@@ -368,8 +530,12 @@ export function HealthScreen() {
   for (const f of all) counts[f.severity] += 1;
   const anySev = SEVERITIES.some((s) => sev[s]);
   const anyArea = Object.values(areas).some(Boolean);
+  const anyFix = Object.values(fixes).some(Boolean);
   const shown = all.filter(
-    (f) => (!anySev || sev[f.severity]) && (!anyArea || areas[areaOf(f.rule)]),
+    (f) =>
+      (!anySev || sev[f.severity]) &&
+      (!anyArea || areas[areaOf(f.rule)]) &&
+      (!anyFix || fixes[fixKind(f)]),
   );
   const groups = groupByRule(shown);
   const openByDefault = (g: Group) =>
@@ -394,6 +560,16 @@ export function HealthScreen() {
       })),
     },
     {
+      id: "fix",
+      title: "Fix",
+      options: FIX_KINDS.map((k) => ({
+        id: k,
+        label: FIX_LABEL[k],
+        count: all.filter((f) => fixKind(f) === k).length,
+        checked: Boolean(fixes[k]),
+      })),
+    },
+    {
       id: "area",
       title: "Area",
       options: areaList.map((a) => ({
@@ -407,6 +583,7 @@ export function HealthScreen() {
   const toggle = (facet: string, option: string) => {
     if (facet === "severity") setSev((s) => ({ ...s, [option]: !s[option as Severity] }));
     if (facet === "area") setAreas((a) => ({ ...a, [option]: !a[option] }));
+    if (facet === "fix") setFixes((x) => ({ ...x, [option]: !x[option] }));
   };
   const setAll = (open: boolean) => {
     setToggled(Object.fromEntries(groups.map((g) => [g.rule, open])));
@@ -453,6 +630,7 @@ export function HealthScreen() {
           onClick={() => {
             setSev({ error: true, warning: true, info: true });
             setAreas({});
+            setFixes({});
           }}
         >
           Clear filters
@@ -466,6 +644,7 @@ export function HealthScreen() {
         group={g}
         open={isOpen(g)}
         showProject={showProject}
+        hubs={scopedHubs}
         onToggle={() => {
           setToggled((t) => ({ ...t, [g.rule]: !isOpen(g) }));
         }}
@@ -494,6 +673,7 @@ export function HealthScreen() {
         hubs={scopedHubs}
         loading={findings.isPending}
       />
+      {findings.isSuccess && <FixStrip all={all} hubs={scopedHubs} />}
       <div
         style={{
           display: "grid",
@@ -512,7 +692,8 @@ export function HealthScreen() {
               onToggle={toggle}
               footer={
                 <div className="ah-small ah-subtle" style={{ marginTop: 12 }}>
-                  Fixes are made by a person in a hub PR. <Kbd>Ctrl K</Kbd> to search.
+                  <span className="ah-mono">./hub doctor --fix</span> writes the hub checkout, never
+                  a repo; you review it and open the hub PR. <Kbd>Ctrl K</Kbd> to search.
                 </div>
               }
             />

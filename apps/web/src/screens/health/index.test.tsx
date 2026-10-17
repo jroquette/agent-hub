@@ -251,4 +251,33 @@ describe("HealthScreen", () => {
 
     expect(await seriousViolations(container)).toEqual([]);
   });
+
+  it("offers one command that fixes every brain.leak, split by file", async () => {
+    const user = userEvent.setup();
+    const leaks = Array.from({ length: 12 }, (_, n) =>
+      aFinding({
+        rule: "brain.leak",
+        severity: "error",
+        path: n < 11 ? "../demo-api/docs/adr/0001.md" : "../demo-api/README.md",
+        line: n + 1,
+        message: `line also in the brain at brain/drafts/0001.md:${String(n + 1)}`,
+        fix: "reword or remove the line here, or reword the brain note if it quotes this file",
+      }),
+    );
+    open({ "/api/v1/doctor/findings": aPage([...leaks, ...findings]) });
+
+    const strip = await screen.findByRole("region", { name: "Automatic fixes" });
+    expect(strip).toHaveTextContent("12 of 16 findings can be fixed automatically");
+    expect(strip).toHaveTextContent("4 need a person");
+    expect(strip).toHaveTextContent("./hub doctor --fix");
+
+    const leak = group("brain.leak");
+    expect(within(leak).getByText("Auto-fix")).toBeInTheDocument();
+    expect(within(leak).getByText(/doctor --fix --only brain\.leak/)).toBeInTheDocument();
+    const file = within(leak).getByRole("button", { name: /0001\.md.*11 lines/ });
+    expect(within(leak).queryByText("Copy fix")).toBeNull();
+    await user.click(file);
+    expect(within(leak).getAllByRole("button", { name: "Copy fix" })).toHaveLength(11);
+    expect(within(group("lock.drift")).getByText("Needs a person")).toBeInTheDocument();
+  });
 });
