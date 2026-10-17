@@ -13,7 +13,7 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
-import { FeaturesScreen } from "./index";
+import { FeaturesScreen, issueId } from "./index";
 import { FEATURES_REFRESH_MS } from "./queries";
 
 const features = [
@@ -131,6 +131,14 @@ describe("FeaturesScreen", () => {
 
     const popover = within(row).getByLabelText("All issues");
     expect(popover).toHaveTextContent("AGH-48AGH-49AGH-50");
+  });
+
+  it("keeps only the tracker id of an issue with a note (issues)", () => {
+    expect(issueId("AGH-200 (provisional id: the Linear connector was unreachable)")).toBe(
+      "AGH-200",
+    );
+    expect(issueId("AGH-48")).toBe("AGH-48");
+    expect(issueId("TBD")).toBe("TBD");
   });
 
   it("puts the verdict's scope under its badge while Evaluate is not done (verdict)", async () => {

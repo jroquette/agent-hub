@@ -53,14 +53,29 @@ function byProgress(a: Feature, b: Feature): number {
   );
 }
 
+const ISSUE_ID = /^[A-Z][A-Z0-9]*-\d+/;
+
+/** The tracker id at the head of an issue entry, so a note after it ("AGH-200 (provisional …)") never widens the column. */
+export const issueId = (raw: string): string => ISSUE_ID.exec(raw.trim())?.[0] ?? raw.trim();
+
 /** The issue ids, mono and neutral: the list has no tracker URLs, so they are not links. */
 function IssuesCell({ issues }: { issues: string[] }) {
   const [open, setOpen] = useState(false);
   const [first, ...rest] = issues;
   if (!first) return <span className="ah-subtle">—</span>;
+  const firstId = issueId(first);
   return (
-    <span className="ah-row" style={{ gap: 4, position: "relative" }}>
-      <span className="ah-mono ah-small">{first}</span>
+    <span className="ah-row" style={{ gap: 4, position: "relative", flexWrap: "nowrap" }}>
+      <Tooltip label={firstId === first.trim() ? undefined : first}>
+        <span
+          className="ah-mono ah-small"
+          style={{ whiteSpace: "nowrap" }}
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+          tabIndex={firstId === first.trim() ? undefined : 0}
+        >
+          {firstId}
+        </span>
+      </Tooltip>
       {rest.length > 0 && (
         <button
           type="button"
@@ -86,11 +101,11 @@ function IssuesCell({ issues }: { issues: string[] }) {
       <Popover
         open={open}
         label="All issues"
-        style={{ top: 28, left: 0, minWidth: 140, padding: 8 }}
+        style={{ top: 28, left: 0, minWidth: 140, maxWidth: 360, padding: 8 }}
       >
         <span className="ah-stack" style={{ gap: 4 }}>
           {issues.map((id) => (
-            <span key={id} className="ah-mono ah-small">
+            <span key={id} className="ah-mono ah-small" style={{ overflowWrap: "anywhere" }}>
               {id}
             </span>
           ))}
@@ -274,11 +289,11 @@ export function FeaturesScreen() {
                 label: "Feature",
                 width: "26%",
                 render: (f) => (
-                  <span className="ah-stack" style={{ gap: 2 }}>
+                  <span className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
                     <Link
                       to={featureHref(f)}
                       className="ah-mono"
-                      style={{ fontWeight: 500 }}
+                      style={{ fontWeight: 500, overflowWrap: "anywhere" }}
                       onClick={(e) => {
                         e.stopPropagation();
                       }}
