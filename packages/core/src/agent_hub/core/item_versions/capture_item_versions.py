@@ -8,8 +8,10 @@ secret match, a unit past the bounds or one that cannot be read is kept as its s
 stored; a hash that differs from the unit's last version is appended as ``external``
 (``first`` when the unit has none). An append that loses the race for its ``seq`` reads the
 last version again and stops once that hash equals, up to ``ATTEMPTS`` tries, so racing reads
-store one row. A unit is marked only after it is settled: a store error (the database busy past
-its timeout, a 503) leaves it, and every unit after it, for the next read. One call stops reading
+store one row. A unit's cold path (memo check, read, record, mark) runs with its key held, so of
+two reads of one unit the older is never appended after the newer. A unit is marked only after
+it is settled: a store error (the database busy past its timeout, a 503) leaves it, and every
+unit after it, for the next read. One call stops reading
 new units once ``budget_bytes`` (the catalog's 16 MiB) have been read; the read that crosses it
 still finishes, and the units left are read by a later call. A unit gone before its read is
 left out of the answer.
@@ -37,6 +39,10 @@ from agent_hub.core.skills.skill_sources import CATALOG_BUDGET_BYTES
 ATTEMPTS: Final = 3
 # The units the memo remembers; past it the oldest is read again (and stores nothing new).
 MEMO_UNITS: Final = 50_000
+
+# The cold path of a unit runs under one of these, chosen by its key: a unit's reads and appends
+# are serialised in this process, while other units mostly proceed in parallel.
+UNIT_LOCKS: Final = 64
 
 type UnitMark = Hashable
 
@@ -70,6 +76,7 @@ class CaptureItemVersions:
         self._budget = budget_bytes
         self._memo: OrderedDict[tuple[str, str], tuple[UnitMark, UnitState]] = OrderedDict()
         self._guard = threading.Lock()
+        self._unit_locks = tuple(threading.Lock() for _ in range(UNIT_LOCKS))
 
     def capture(
         self, project: str, hub_path: str, units: Iterable[tuple[ItemUnit, UnitMark]]
@@ -87,19 +94,35 @@ class CaptureItemVersions:
                 continue
             if spent >= self._budget:
                 continue
+            settled, read_bytes = self._settle(key, hub_path, unit, mark=mark)
+            spent += read_bytes
+            if settled is not None:
+                states[unit.unit_path] = settled
+        return states
+
+    def _settle(
+        self, key: tuple[str, str], hub_path: str, unit: ItemUnit, *, mark: UnitMark
+    ) -> tuple[UnitState | None, int]:
+        """Read, record and mark one unit with its key held, so an older read of it is never
+        appended after a newer one; answers its state (None: not settled) and the bytes read."""
+        with self._unit_locks[hash(key) % UNIT_LOCKS]:
+            with self._guard:
+                known = self._memo.get(key)
+            if known is not None and known[0] == mark:
+                return known[1], 0
             read = self._reader.read_unit(hub_path, unit.unit_path, kind=unit.kind)
             if isinstance(read, UnreadUnit):
                 if read.kind == "missing":
-                    continue
+                    return None, 0
                 state = _UNREAD_STATES[read.kind]
+                read_bytes = 0
             else:
-                spent += size_of(read)
+                read_bytes = size_of(read)
                 state = UnitState.SECRET if has_secret_match(read) else UnitState.OK
                 if state is UnitState.OK and not self._record(unit, read):
-                    continue
+                    return None, read_bytes
             self._mark(key, mark, state)
-            states[unit.unit_path] = state
-        return states
+            return state, read_bytes
 
     def _record(self, unit: ItemUnit, content: UnitContent) -> bool:
         """Append ``content`` unless the unit's last version holds it; False when every try lost

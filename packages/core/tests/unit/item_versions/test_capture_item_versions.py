@@ -3,16 +3,19 @@
 a lost race stores one row, a failed store or a spent budget leaves the unit for the next read,
 and a secret or too-large unit is never stored."""
 
+import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Final
 
 import pytest
 
+from agent_hub.core.hubs.hub_registry import UnreadUnit
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions, UnitState
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import (
     ItemVersion,
+    ItemVersionMeta,
     NewItemVersion,
     UnitKind,
     VersionOrigin,
@@ -29,6 +32,9 @@ from agent_hub.core.testing.item_version_fakes import InMemoryItemVersionStore
 
 HUB: Final = "/hubs/demo-hub"
 PROJECT: Final = "demo"
+# How long the first read waits for a second capture to land (it cannot while the unit is held).
+INTERLEAVE_SECONDS: Final = 0.3
+WAIT_SECONDS: Final = 10.0
 NOW: Final = datetime(2026, 10, 17, 9, 0, tzinfo=UTC)
 AGENT: Final = "plugin/demo/agents/scout.md"
 SKILL: Final = "plugin/demo/skills/alpha"
@@ -104,17 +110,80 @@ def test_records_baseline_when_unit_first_seen() -> None:
     assert skill.size == len(ALPHA) + len(REFERENCE)
 
 
+class _CountingStore(InMemoryItemVersionStore):
+    """Counts every ``last`` and ``append`` call."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def last(self, project: str, unit_path: str) -> ItemVersionMeta | None:
+        self.calls += 1
+        return super().last(project, unit_path)
+
+    def append(self, version: NewItemVersion) -> ItemVersion:
+        self.calls += 1
+        return super().append(version)
+
+
 def test_adds_nothing_when_mark_unchanged() -> None:
-    capture, reader, hub, store = _rig({AGENT: SCOUT})
+    store = _CountingStore()
+    capture, reader, hub, _ = _rig({AGENT: SCOUT}, store=store)
     capture.capture(PROJECT, HUB, [(_agent(), ("a", 1))])
-    reads = len(reader.unit_reads)
+    reads, calls = len(reader.unit_reads), store.calls
     hub.skill_files[AGENT] = b"---\nname: scout\n---\nEdited, same mark.\n"
 
     states = capture.capture(PROJECT, HUB, [(_agent(), ("a", 1))])
 
     assert states == {AGENT: UnitState.OK}
+    # A warm read touches neither the disk nor the store.
     assert len(reader.unit_reads) == reads
+    assert calls > 0
+    assert store.calls == calls
     assert _stored(store, AGENT) == [(1, file_hash(SCOUT), True)]
+
+
+class _InterleavedReader(FakeHubFileReader):
+    """On the first read: answer the content found, but first edit the file and start a second
+    capture of the new mark, giving it time to land before this read is recorded."""
+
+    def __init__(self, hub: FakeHub, edited: bytes) -> None:
+        super().__init__({HUB: hub})
+        self.hub = hub
+        self.edited = edited
+        self.capture: CaptureItemVersions | None = None
+        self.second: threading.Thread | None = None
+
+    def read_unit(
+        self, hub_path: str, unit_path: str, *, kind: UnitKind
+    ) -> UnitContent | UnreadUnit:
+        read = super().read_unit(hub_path, unit_path, kind=kind)
+        if self.second is None and self.capture is not None:
+            self.hub.skill_files[AGENT] = self.edited
+            capture = self.capture
+            self.second = threading.Thread(
+                target=lambda: capture.capture(PROJECT, HUB, [(_agent(), ("a", 2))]),
+                daemon=True,
+            )
+            self.second.start()
+            self.second.join(INTERLEAVE_SECONDS)
+        return read
+
+
+def test_keeps_disk_content_newest_when_newer_read_lands_first() -> None:
+    edited = b"---\nname: scout\n---\nEdited while the first read ran.\n"
+    hub = FakeHub(skill_files={AGENT: SCOUT})
+    reader = _InterleavedReader(hub, edited)
+    store = InMemoryItemVersionStore()
+    capture = CaptureItemVersions(store, reader, lambda: NOW)
+    reader.capture = capture
+
+    capture.capture(PROJECT, HUB, [(_agent(), ("a", 1))])
+    assert reader.second is not None
+    reader.second.join(WAIT_SECONDS)
+
+    assert not reader.second.is_alive()
+    assert _stored(store, AGENT) == [(1, file_hash(SCOUT), True), (2, file_hash(edited), False)]
 
 
 def test_records_change_when_mark_and_content_differ() -> None:
