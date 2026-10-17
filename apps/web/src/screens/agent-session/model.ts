@@ -759,7 +759,11 @@ function applyResult(state: TranscriptState, record: LogRecord): TranscriptState
   const entries = ended.entries.map((entry) =>
     entry.kind === "assistant" && entry.streaming ? { ...entry, streaming: false } : entry,
   );
-  const next = { ...ended, entries, meter, streaming: false, interrupted: false };
+  // The result record is the turn's end: with nothing queued the session is idle, even when the
+  // server's status frame is lost (a stream reconnect), so the bar never reads as a stalled turn.
+  const live = state.status === "running" || state.status === "waiting_permission";
+  const status = live && !ended.turnOpen ? "idle" : state.status;
+  const next = { ...ended, entries, meter, status, streaming: false, interrupted: false };
   const reason = str(body, "terminal_reason");
   if (state.interrupted || reason?.startsWith("aborted"))
     return notice(next, record.seq, "Turn interrupted", "warning");
@@ -879,8 +883,10 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
       const sending = withoutEcho(s.sending, record.seq, text);
       // Core refuses a send while an interrupt awaits its result, so a message after an
       // interrupt means that interrupt cut no turn short (it landed on an idle session).
+      // A message on an idle session starts a turn, as on the server.
+      const status = s.status === "idle" ? "running" : s.status;
       return push(
-        { ...s, sending, turnOpen: true, interrupted: false },
+        { ...s, sending, status, turnOpen: true, interrupted: false },
         {
           kind: "user",
           key: `u-${String(record.seq)}`,

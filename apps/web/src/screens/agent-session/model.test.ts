@@ -175,6 +175,26 @@ describe("reduceTranscript (transcript)", () => {
     });
   });
 
+  it("goes idle when the turn's result arrives without its status frame", () => {
+    const running = { type: "status", status: { status: "running", end_reason: null } } as const;
+    const ended = run([running, record("user.message", { seq: 1 }), record("result", { seq: 2 })]);
+
+    expect(ended.status).toBe("idle");
+    expect(run([record("user.message", { seq: 3 })], ended).status).toBe("running");
+  });
+
+  it("stays running when the result ends a turn with a message queued", () => {
+    const running = { type: "status", status: { status: "running", end_reason: null } } as const;
+    const state = run([
+      running,
+      record("user.message", { seq: 1 }),
+      record("user.message", { seq: 2 }),
+      record("result", { seq: 3 }),
+    ]);
+
+    expect(state.status).toBe("running");
+  });
+
   it("adds up cost and tokens when turn results arrive", () => {
     const state = run([record("result", { seq: 1 }), record("result", { seq: 2 })]);
 

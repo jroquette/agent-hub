@@ -223,8 +223,8 @@ function StallNotice({ activity, now }: { activity: LiveActivity; now: number })
   if (!stalled || quiet === null) return null;
   return (
     <p className="as-live-stall ah-small">
-      <Icon name="info" size="sm" /> No news from Claude for {elapsed(quiet)}. It may have stopped
-      responding: press Stop, then send your message again.
+      <Icon name="info" size="sm" /> Claude has been quiet for {elapsed(quiet)}. If it does not pick
+      up again, press Stop and send your message again.
     </p>
   );
 }
