@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from agent_hub.core.hub_config.doctor_rules import MAX_LINES_KEY_LENGTH, MAX_LINES_KEYS
+from agent_hub.core.hub_config.environments import MAX_NAME_CHARS
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_PATTERN
 from agent_hub.core.hub_config.schema import export_schema_text, read_shipped_schema
@@ -95,6 +96,14 @@ def test_lists_sandbox_workflow_as_rule_settings_when_schema_shipped() -> None:
     assert properties["sandbox.workflow"] == {"$ref": "#/$defs/RuleSettings"}
 
 
+# The name-keyed maps of environments.md, by schema path, and the object each name maps to.
+ENVIRONMENT_MAPS = {
+    "$.properties.environments": "#/$defs/Environment",
+    "$.$defs.Repo.properties.services": "#/$defs/Service",
+    "$.$defs.Service.properties.endpoints": "#/$defs/Endpoint",
+}
+
+
 def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
     schema = read_shipped_schema()
     maps: list[tuple[str, dict[str, Any]]] = []
@@ -106,6 +115,9 @@ def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
         else:
             maps.append((path, node))
 
+    # AGH-281: the name-keyed maps of docs/design/environments.md, pinned by
+    # test_describes_environment_maps_when_schema_exported.
+    maps = [(path, node) for path, node in maps if path not in ENVIRONMENT_MAPS]
     [(path, max_lines)] = maps
     assert path.endswith(".InstructionsSizeSettings.properties.max_lines")
     # E30: the model's bounds, pinned by number in test_doctor_rules.py.
@@ -298,3 +310,20 @@ def test_agrees_with_str_strip_when_check_pattern_read() -> None:
         if control.match(char) or 0xD800 <= code <= 0xDFFF:
             continue
         assert bool(re.fullmatch(pattern, char)) is not char.isspace(), hex(code)
+
+
+def test_describes_environment_maps_when_schema_exported() -> None:
+    maps = {
+        path: node
+        for path, node in object_nodes(read_shipped_schema())
+        if "properties" not in node and path in ENVIRONMENT_MAPS
+    }
+
+    assert set(maps) == set(ENVIRONMENT_MAPS)
+    for path, node in maps.items():
+        assert node["patternProperties"] == COMMENT_KEYS, path
+        assert node["additionalProperties"] == {"$ref": ENVIRONMENT_MAPS[path]}, path
+        assert node["propertyNames"] == {
+            "maxLength": MAX_NAME_CHARS,
+            "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+        }, path

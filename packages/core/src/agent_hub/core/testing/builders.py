@@ -116,6 +116,61 @@ def a_models_document() -> dict[str, Any]:
     return document
 
 
+def an_environments_document() -> dict[str, Any]:
+    """Build ``a_hub_document`` with the spec's ``W``: three environments, ``demo-api``'s
+    services and the blocked words and files; a fresh copy per call (docs/design/environments.md).
+
+    ``live`` is the production one; no behaviour comes from the names.
+    """
+    document = a_hub_document()
+    document["environments"] = {
+        "local": {"access": "write", "description": "docker compose stack on this machine"},
+        "staging": {"access": "ask", "credentials": {"aws_profile": "demo-staging"}},
+        "live": {
+            "access": "read",
+            "production": True,
+            "credentials": {"aws_profile": "demo-live-ro", "env": ["DEMO_LIVE_DB_URL"]},
+        },
+    }
+    document["repos"][0]["services"] = {
+        "api": {
+            "kind": "api",
+            "endpoints": {
+                "local": {"url": "http://localhost:8000"},
+                "staging": {"url": "https://api.staging.example.com"},
+                "live": {"url": "https://api.example.com"},
+            },
+        },
+        "orders": {
+            "kind": "dynamodb",
+            "endpoints": {"staging": {"resource": "demo-orders-staging"}},
+        },
+    }
+    document["guard"]["blocked_words"] = ["prod", "production"]
+    document["guard"]["blocked_words_files"] = ["config/*.json", "serverless.yml"]
+    return document
+
+
+def a_local_environments_document() -> dict[str, Any]:
+    """Build the spec's ``Lc``, a ``hub.local.json`` for ``an_environments_document``: a
+    developer's own environment, its endpoint and more blocked entries; a fresh copy per call."""
+    return {
+        "project": {"branch_prefix": "jane/"},
+        "environments": {
+            "jane-cloud": {"access": "write", "credentials": {"aws_profile": "jane-sandbox"}}
+        },
+        "repos": [
+            {
+                "dir": "demo-api",
+                "services": {
+                    "api": {"endpoints": {"jane-cloud": {"url": "https://api.jane.example.com"}}}
+                },
+            }
+        ],
+        "guard": {"blocked_words": ["demo-live"], "blocked_words_files": ["deploy/*.tfvars"]},
+    }
+
+
 def a_guard_infra() -> dict[str, list[str]]:
     r"""Build a synthetic ``guard.infra`` value as plain JSON data; a fresh copy per call.
 
