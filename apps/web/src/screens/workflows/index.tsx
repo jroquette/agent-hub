@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useParams } from "react-router";
 
 import {
@@ -14,7 +14,8 @@ import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { NodePanel, useNodeParam, WorkflowGraph } from "./WorkflowGraph";
-import { StartRun } from "../runs-list/StartRun";
+import { StartRun, startableFromWeb } from "../runs-list/StartRun";
+import { StepList } from "./StepList";
 import { useWorkflow, useWorkflows, type WorkflowDetail, type WorkflowSummary } from "./queries";
 import { countLabel, kindCounts, STEP_KINDS, type StepKind } from "./steps";
 
@@ -271,6 +272,8 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
         ? `It is defined in a pack under the hub's \`workflows/\` folder; find the file that declares it.${selected ? ` I am looking at its node \`${selected.id}\`.` : ""}`
         : "It is a built-in workflow shipped with agent-hub, not a file of this hub: to change it, propose a copy in the hub's `workflows/` folder.",
   });
+  const needs = workflow.inputs;
+  const [advanced, setAdvanced] = useState(selected !== null);
   return (
     <Page>
       <Breadcrumbs
@@ -283,61 +286,146 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
       <div className="ah-row ah-wrap" style={{ gap: 12 }}>
         <h1 className="ah-h1 ah-mono">{workflow.name}</h1>
         <SourceBadge source={workflow.source} />
-        <span className="ah-small ah-subtle">
-          r{workflow.revision} · {workflow.node_count} nodes · {workflow.layer_count} layers
-        </span>
         <span className="ah-grow" />
         <DiscussButton />
+        {startableFromWeb(workflow.name) ? (
+          <StartRun
+            project={workflow.project}
+            workflow={{ project: workflow.project, name: workflow.name }}
+            label="Run this workflow"
+          />
+        ) : (
+          <span className="ah-small ah-subtle">
+            Starts from <code className="ah-mono">hub run</code>
+          </span>
+        )}
       </div>
-      {workflow.description && (
-        <p className="ah-muted" style={{ margin: 0 }}>
-          {workflow.description}
-        </p>
-      )}
+      {workflow.description && <p style={{ margin: 0, fontSize: 16 }}>{workflow.description}</p>}
+      <StepChips types={workflow.step_types ?? {}} />
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: selected ? "minmax(0, 1fr) 320px" : "minmax(0, 1fr)",
-          gap: 16,
+          gridTemplateColumns: "minmax(0, 1fr) 320px",
+          gap: 24,
           alignItems: "start",
         }}
       >
-        <WorkflowGraph
-          layers={workflow.layers}
-          selected={selected?.id ?? null}
-          onSelect={node.open}
-        />
-        {selected && (
-          <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
-            <dl className="ah-small" style={{ margin: 0, display: "grid", gap: 6 }}>
-              <dt className="ah-subtle">Type</dt>
-              <dd style={{ margin: 0 }}>{selected.type}</dd>
-              <dt className="ah-subtle">Waits for</dt>
-              <dd style={{ margin: 0 }} className="ah-mono">
-                {selected.depends_on.join(", ") || "—"}
-              </dd>
-              {selected.description && (
-                <>
-                  <dt className="ah-subtle">Description</dt>
-                  <dd style={{ margin: 0 }}>{selected.description}</dd>
-                </>
-              )}
-            </dl>
-            {written && (
-              <div style={{ marginTop: 8 }}>
-                <JsonViewer value={written} maxHeight={240} />
-              </div>
+        <section
+          aria-label="Step by step"
+          className="ah-card ah-card-body ah-stack"
+          style={{ gap: 16 }}
+        >
+          <h2 className="ah-h3" style={{ margin: 0 }}>
+            Step by step
+          </h2>
+          <StepList layers={workflow.layers} document={workflow.document} />
+        </section>
+        <aside className="ah-stack" style={{ gap: 16 }}>
+          <section
+            aria-label="What you give it"
+            className="ah-card ah-card-body ah-stack"
+            style={{ gap: 10 }}
+          >
+            <h2 className="ah-h3" style={{ margin: 0 }}>
+              What you give it
+            </h2>
+            {needs.length === 0 ? (
+              <span className="ah-small ah-subtle">Nothing: it runs as is.</span>
+            ) : (
+              <dl className="ah-small" style={{ margin: 0, display: "grid", gap: 8 }}>
+                {needs.map((input) => (
+                  <div key={input.name}>
+                    <dt className="ah-mono" style={{ fontWeight: 600 }}>
+                      {input.name}
+                      {!input.required && <span className="ah-subtle"> (optional)</span>}
+                    </dt>
+                    <dd style={{ margin: 0 }} className="ah-subtle">
+                      {input.description ?? input.type}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             )}
-          </NodePanel>
-        )}
+          </section>
+          <section
+            aria-label="Where it lives"
+            className="ah-card ah-card-body ah-stack"
+            style={{ gap: 6 }}
+          >
+            <h2 className="ah-h3" style={{ margin: 0 }}>
+              Where it lives
+            </h2>
+            <span className="ah-small ah-subtle">
+              {workflow.source === "hub"
+                ? "A YAML file in this hub's workflows/ folder. Edit the file (or ask Claude with Discuss) and this page updates."
+                : "Built into agent-hub. To change it, copy it into the hub's workflows/ folder with the same name: the hub's copy wins."}
+            </span>
+            <span className="ah-small ah-subtle">
+              Revision {workflow.revision} · started from{" "}
+              <AppLink href={`/runs?workflow=${encodeURIComponent(workflow.name)}`}>
+                Workflow runs
+              </AppLink>
+            </span>
+          </section>
+        </aside>
       </div>
-      <section aria-label="Document" className="ah-stack" style={{ gap: 8 }}>
-        <h2 className="ah-h3" style={{ margin: 0 }}>
-          Document
-        </h2>
-        <span className="ah-small ah-subtle">The parsed document (JSON), read-only.</span>
-        <JsonViewer value={workflow.document} maxHeight={480} />
-      </section>
+      <details
+        className="ah-card ah-card-body"
+        open={advanced}
+        onToggle={(event) => {
+          setAdvanced(event.currentTarget.open);
+        }}
+      >
+        <summary className="ah-h3" style={{ cursor: "pointer" }}>
+          Advanced: graph and document
+        </summary>
+        <div className="ah-stack" style={{ gap: 16, marginTop: 12 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: selected ? "minmax(0, 1fr) 320px" : "minmax(0, 1fr)",
+              gap: 16,
+              alignItems: "start",
+            }}
+          >
+            <WorkflowGraph
+              layers={workflow.layers}
+              selected={selected?.id ?? null}
+              onSelect={node.open}
+            />
+            {selected && (
+              <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
+                <dl className="ah-small" style={{ margin: 0, display: "grid", gap: 6 }}>
+                  <dt className="ah-subtle">Type</dt>
+                  <dd style={{ margin: 0 }}>{selected.type}</dd>
+                  <dt className="ah-subtle">Waits for</dt>
+                  <dd style={{ margin: 0 }} className="ah-mono">
+                    {selected.depends_on.join(", ") || "—"}
+                  </dd>
+                  {selected.description && (
+                    <>
+                      <dt className="ah-subtle">Description</dt>
+                      <dd style={{ margin: 0 }}>{selected.description}</dd>
+                    </>
+                  )}
+                </dl>
+                {written && (
+                  <div style={{ marginTop: 8 }}>
+                    <JsonViewer value={written} maxHeight={240} />
+                  </div>
+                )}
+              </NodePanel>
+            )}
+          </div>
+          <section aria-label="Document" className="ah-stack" style={{ gap: 8 }}>
+            <h3 className="ah-h3" style={{ margin: 0 }}>
+              Document
+            </h3>
+            <span className="ah-small ah-subtle">The parsed document (JSON), read-only.</span>
+            <JsonViewer value={workflow.document} maxHeight={480} />
+          </section>
+        </div>
+      </details>
     </Page>
   );
 }

@@ -163,6 +163,24 @@ describe("WorkflowDetailScreen", () => {
     ]);
   });
 
+  it("lists the steps in run order in plain words, and what a run takes", async () => {
+    renderDetail();
+
+    const steps = await screen.findByRole("list", { name: "Steps" });
+    const items = within(steps).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringContaining("AI agentplan"),
+      expect.stringContaining("Commandbuild"),
+      expect.stringContaining("Commanddocs"),
+      expect.stringContaining("Approval by youreview"),
+    ]);
+    expect(items[0]).toHaveTextContent("Writes the plan.");
+    expect(items[2]).toHaveTextContent("after plan");
+    const inputs = screen.getByRole("region", { name: "What you give it" });
+    expect(inputs).toHaveTextContent("feature");
+    expect(inputs).toHaveTextContent("What to build.");
+  });
+
   it("shows the document read-only", async () => {
     renderDetail();
 
