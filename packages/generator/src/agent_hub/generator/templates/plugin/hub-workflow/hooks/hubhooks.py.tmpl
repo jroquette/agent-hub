@@ -21,6 +21,12 @@ the main checkout of the hub that holds these files, or the walked hub in plugin
 With $HUB_CONFIG and no such hub there is none, so neither hub.local.json nor git is read: a
 local file beside a $HUB_CONFIG file never counts. Git runs only when a value is asked for (the
 guard's deny hint), once per key, with a short timeout.
+The guard's blocked words, file globs and variable names (docs/design/environments.md) are the
+union of three layers, each entry once with the first layer listing it: the hook root's hub.json,
+the identity home's hub.local.json, then a hub.json named by $HUB_CONFIG; no layer removes an
+entry. An unusable list in any layer, or a hub.local.json that exists but cannot be used, sets
+blocked_problem, on which the guard asks. The environments are the config's, with a stricter
+access from hub.local.json, then hub.local.json's own.
 A hook never errors the session: run_hook turns any exception into exit 0 and one stderr line
 (the guard: one ask).
 """
@@ -31,6 +37,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable
 
@@ -42,9 +49,11 @@ from stdlib_reader import (  # noqa: E402
     HubFile,
     InfraSection,
     LocalFile,
+    LocalLayer,
     RepoEntry,
     load_hub_file,
     load_local_file,
+    load_local_layer,
 )
 
 HUB_FILE = "hub.json"
@@ -52,6 +61,10 @@ HUB_FILE = "hub.json"
 IDENTITY_GIT_TIMEOUT = 2
 # Variables that point git at another repo than its cwd: the identity read drops them, as the CLI.
 GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
+# The layer a hub.json named by $HUB_CONFIG is, beside the hook root's (blocked words).
+HUB_CONFIG_LAYER = "$HUB_CONFIG"
+# Higher is stricter: hub.local.json may only raise an environment's access.
+ACCESS_STRICTNESS = {"write": 0, "ask": 1, "read": 2}
 
 
 def read_input() -> dict:
@@ -179,6 +192,44 @@ def _infra_of(hub_file: HubFile, root_file: HubFile | None) -> InfraSection | No
     )
 
 
+@dataclass(frozen=True)
+class Environment:
+    """An effective environment; source is the file its access comes from."""
+
+    name: str
+    access: str
+    production: bool
+    source: str
+
+
+def _layered(layers: list, key: str) -> tuple[tuple[str, str], ...]:
+    """(entry, first layer listing it) for each entry of the layers' key, by exact text."""
+    first: dict[str, str] = {}
+    for label, section in layers:
+        for entry in getattr(section, key):
+            first.setdefault(entry, label)
+    return tuple(first.items())
+
+
+def _environments(hub_file: HubFile, local: LocalLayer) -> tuple[Environment, ...]:
+    """The config's environments, a stricter local access applied, then the local file's own
+    (new names, ignoring case, with an access)."""
+    own = {entry.name: entry for entry in local.environments}
+    merged = []
+    for entry in hub_file.environments:
+        access, source = entry.access, HUB_FILE
+        tighter = own.get(entry.name)
+        if tighter and tighter.access and ACCESS_STRICTNESS[tighter.access] > ACCESS_STRICTNESS[access]:
+            access, source = tighter.access, LOCAL_FILE
+        merged.append(Environment(entry.name, access, entry.production, source))
+    taken = {entry.name.lower() for entry in hub_file.environments}
+    for entry in local.environments:
+        if entry.access and entry.name.lower() not in taken:
+            taken.add(entry.name.lower())
+            merged.append(Environment(entry.name, entry.access, entry.production, LOCAL_FILE))
+    return tuple(merged)
+
+
 def _branches(hub_file: HubFile) -> tuple[str, ...]:
     """The project's default branch, then each repo's effective one."""
     return (hub_file.project.default_branch, *(r.default_branch for r in hub_file.repos))
@@ -197,6 +248,12 @@ class Config:
     plus the root file's when there is one. identity gives the developer's values from local_file
     (hub.local.json), else the config, else git config run in identity_home (none without it);
     branch_prefix, author_name and author_email read it lazily, so building a Config runs no git.
+    blocked_words, blocked_files and blocked_env are (entry, layer) pairs from the root's file
+    (or the config, labelled config_label, without one), local_layer (hub.local.json), then the
+    config when it is another file ($HUB_CONFIG). blocked_problem is local_layer's file_problem,
+    else the first layer's unusable location as "<layer> <location>", else "". environments merge
+    the config's with local_layer's; credential_env names every credentials.env variable of the
+    files, each once.
     """
 
     def __init__(
@@ -208,8 +265,11 @@ class Config:
         *,
         identity_home: Path | None = None,
         local_file: LocalFile | None = None,
+        local_layer: LocalLayer | None = None,
+        config_label: str = HUB_FILE,
     ):
         hub_file = hub_file if hub_file is not None else HubFile()
+        local_layer = local_layer if local_layer is not None else LocalLayer()
         root_guard = root_file.guard if root_file is not None else GuardSection()
         self.hub = hub
         self.workspace = hub.parent if hub else None
@@ -236,6 +296,20 @@ class Config:
         self.infra = _infra_of(hub_file, root_file)
         root_branches = _branches(root_file) if root_file is not None else ()
         self.protected_branches = tuple(sorted({"main", "master", *_branches(hub_file), *root_branches}))
+        if root_file is not None:
+            layers = [(HUB_FILE, root_file.guard), (LOCAL_FILE, local_layer), (HUB_CONFIG_LAYER, hub_file.guard)]
+        elif config_label == HUB_FILE:
+            layers = [(HUB_FILE, hub_file.guard), (LOCAL_FILE, local_layer)]
+        else:
+            layers = [(LOCAL_FILE, local_layer), (config_label, hub_file.guard)]
+        self.blocked_words = _layered(layers, "blocked_words")
+        self.blocked_files = _layered(layers, "blocked_words_files")
+        self.blocked_env = _layered(layers, "blocked_words_env")
+        problems = [f"{label} {section.problem}" for label, section in layers if section.problem]
+        self.blocked_problem = local_layer.file_problem or (problems[0] if problems else "")
+        self.environments = _environments(hub_file, local_layer)
+        files = (*(root_file.environments if root_file is not None else ()), *hub_file.environments, *local_layer.environments)
+        self.credential_env = _union((), tuple(name for entry in files for name in entry.credential_env))
 
     @property
     def branch_prefix(self) -> str:
@@ -304,8 +378,19 @@ def load_config(start: object = None) -> Config:
     root_file = load_hub_file(own) if own and found.resolve() != own.resolve() else None
     home = _identity_home(root, hub)
     local_file = load_local_file(home / LOCAL_FILE) if home else LocalFile()
+    local_layer = load_local_layer(home / LOCAL_FILE) if home else LocalLayer()
+    env = os.environ.get("HUB_CONFIG")
+    named = bool(env) and os.path.isfile(env) and found == Path(env).resolve()
     return Config(
-        hub, load_hub_file(found), root, root_file, identity_home=home, local_file=local_file
+        hub,
+        load_hub_file(found),
+        root,
+        root_file,
+        identity_home=home,
+        local_file=local_file,
+        local_layer=local_layer,
+        # Without a hook root, the found file is the only hub.json: $HUB_CONFIG's when it named it.
+        config_label=HUB_CONFIG_LAYER if root is None and named else HUB_FILE,
     )
 
 
