@@ -108,6 +108,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/review"
     },
+    ".claude/skills/summarize": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/summarize"
+    },
     ".claude/skills/triage": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/triage"
@@ -361,7 +365,7 @@
     "plugin/hub-workflow/skills/create-plan/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "ebf37bf3e98a742c2ac027e463c6c68c108ce16421582ba106e8f8d8c503e01c"
+      "sha256": "814d5128d587f7793da8cc674f93880b0fedfb6a92e19b3022a424d3bbe5717c"
     },
     "plugin/hub-workflow/skills/deliver/SKILL.md": {
       "executable": false,
@@ -371,7 +375,7 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "3675e64f0642bfae18acc524043bde117109cd25a36c7ceae59b0c88eb2e04b1"
+      "sha256": "bdbaa5d1defe07f3c10941824a728a9cf49b306024f3d2231680192fd34ab494"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
@@ -436,7 +440,7 @@
     "plugin/hub-workflow/skills/research/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "bc91d1ca2541992c0529d5cb9ced9df2e16899872cc2ff958a4c51b7a6cf1856"
+      "sha256": "bb56eda6eb18c2badea80890abcc23cad0551804536e25594dec15d17a474958"
     },
     "plugin/hub-workflow/skills/retro/SKILL.md": {
       "executable": false,
@@ -447,6 +451,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "820813009d14eb54bcb323c1263f84ad763d12adf9e1eefa5c2a3b478800d8d3"
+    },
+    "plugin/hub-workflow/skills/summarize/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "d54a4aca70e1601cb38661d9b4b97145100c4beabb8271addcd4b92b9ab48295"
     },
     "plugin/hub-workflow/skills/triage/SKILL.md": {
       "executable": false,
