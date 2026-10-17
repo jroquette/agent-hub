@@ -1164,7 +1164,7 @@ def _scanned_variables(cfg: Config, environ: dict) -> list[str]:
     return sorted(name for name in environ if name in exact or name.startswith(tuple(prefixes)))
 
 
-def check_blocked(tool: str, ti: dict, cfg: Config, environ: Optional[dict] = None) -> Verdict:
+def check_blocked(tool: str, ti: dict, cfg: Config, environ: dict | None = None) -> Verdict:
     """The blocked-word rule, before every other rule: a deny for a word in a Bash command (three
     views) or in a scanned session variable (Bash only); an ask when it cannot check (the command
     is too large, the budget is spent, or a layer's blocked list cannot be used); else None."""
@@ -1208,7 +1208,7 @@ REASON_CAP = 300  # characters of an extension's reason or of a failure's stderr
 STDERR_TAIL = 4096  # bytes of the runner's stderr that are read back
 
 
-def decide(data: dict, cfg: Config, environ: Optional[dict] = None) -> Verdict:
+def decide(data: dict, cfg: Config, environ: dict | None = None) -> Verdict:
     """The base verdict for one PreToolUse event: no output. The blocked-word rule runs first and
     its deny is final; environ holds the session variables it scans (None: none, as in tests)."""
     tool, ti = _str(data.get("tool_name")), data.get("tool_input")
