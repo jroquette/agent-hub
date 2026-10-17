@@ -20,6 +20,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   (`references/checklist.md`). The `ux-designer` agent writes one `ux-<new|change>-<screen>.md` design per screen a
   feature touches, for your approval before the plan; `models.agents` takes `ux-designer`. `./hub sync` adds them
   and links them into `.claude/`; a project skill or agent of the same name is a conflict, so rename yours first.
+- Discuss with Claude works on every screen: a screen that names no feature, workflow, skill, agent, hook or note is
+  itself the subject, and the first message takes along the screen's text and a screenshot of it (AGH-273).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
