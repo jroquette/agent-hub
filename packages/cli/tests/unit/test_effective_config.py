@@ -92,7 +92,7 @@ def test_exits_with_local_lines_when_local_file_invalid(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     hub = a_hub(tmp_path / "hub")
-    write_local(hub, {"guard": {}})
+    write_local(hub, {"modules": {}})
 
     with pytest.raises(typer.Exit) as caught:
         load_effective_config_or_exit(hub)
@@ -102,7 +102,7 @@ def test_exits_with_local_lines_when_local_file_invalid(
     assert captured.out == ""
     lines = captured.err.splitlines()
     assert len(lines) == 1, lines
-    assert lines[0].startswith("hub.local.json: guard: set only in hub.json"), lines
+    assert lines[0].startswith("hub.local.json: modules: set only in hub.json"), lines
 
 
 def test_reads_local_file_from_home_when_root_differs(tmp_path: Path) -> None:
