@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiProblem } from "../../lib/api";
 import { servedCheckout } from "../../lib/devCheckout";
 import { seriousViolations } from "../../testing/axe";
-import { aCapabilities, aWorkdir } from "../../testing/builders";
+import { aCapabilities, anAgentSession, aWorkdir } from "../../testing/builders";
 import {
   NewSessionDialog,
   withSkill,
@@ -34,7 +34,8 @@ function open(overrides: Partial<NewSessionDialogProps> = {}) {
     ...overrides,
   };
   const view = render(<NewSessionDialog {...props} />);
-  return { props, view, dialog: screen.getByRole("dialog", { name: "New session" }) };
+  const name = props.forkOf ? "Fork session" : "New session";
+  return { props, view, dialog: screen.getByRole("dialog", { name }) };
 }
 
 /** Opens the collapsed "Options" disclosure (Mode, Model). */
@@ -537,6 +538,108 @@ describe("NewSessionDialog (workdir-stale)", () => {
     } finally {
       read.mockRestore();
     }
+  });
+});
+
+describe("NewSessionDialog (resume: fork)", () => {
+  const ENDED = anAgentSession({
+    status: "ended",
+    end_reason: "closed",
+    title: "Fix the flaky test",
+    workdir_id: WORKTREE.workdir_id,
+    workdir_label: "agh-7-collector",
+    mode: "plan",
+    model: "opus",
+    ended_at: "2026-10-16T09:30:00Z",
+  });
+
+  function fork(overrides: Partial<NewSessionDialogProps> = {}) {
+    return open({ forkOf: ENDED, workdirs: undefined, ...overrides });
+  }
+
+  it("resume: a fork names the target (title, folder, when it ended), not the folder picker", () => {
+    const { dialog } = fork();
+
+    const target = within(dialog).getByRole("group", { name: "Fork" });
+    expect(target).toHaveTextContent("Fix the flaky test");
+    expect(target).toHaveTextContent("agent-hub › agh-7-collector");
+    expect(target).toHaveTextContent("keeps this one unchanged");
+    expect(within(target).getByText(/Ended/).querySelector("time")).toHaveAttribute(
+      "datetime",
+      "2026-10-16T09:30:00Z",
+    );
+    expect(within(dialog).queryByRole("combobox", { name: "Working folder" })).toBeNull();
+    expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
+  });
+
+  it("resume: a fork sends the target's folder and Claude session, its mode and model, and fork", async () => {
+    const { dialog, props } = fork();
+
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Prompt" }), "Go on");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith({
+      project: "agent-hub",
+      workdir_id: WORKTREE.workdir_id,
+      mode: "plan",
+      model: "opus",
+      prompt: "Go on",
+      resume_session_id: ENDED.claude_session_id,
+      fork: true,
+    });
+  });
+
+  it("resume: a fork keeps a model id the capabilities do not list", async () => {
+    const { dialog, props } = fork({ forkOf: { ...ENDED, model: "claude-sonnet-4-5" } });
+
+    await options(dialog);
+    expect(within(dialog).getByRole("textbox", { name: "Model id" })).toHaveValue(
+      "claude-sonnet-4-5",
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({
+      model: "claude-sonnet-4-5",
+    });
+  });
+
+  it("resume: forking an auto session in a built app starts in Ask before edits, the checked default", async () => {
+    // ADR 0036: a built app never offers auto, so the fork does not inherit it unseen.
+    vi.mocked(servedCheckout).mockReturnValue(null);
+    const { dialog, props } = fork({ forkOf: { ...ENDED, mode: "auto" } });
+
+    await options(dialog);
+    const modes = within(dialog).getByRole("group", { name: "Mode" });
+    expect(within(modes).queryByRole("radio", { name: /Auto/ })).toBeNull();
+    expect(within(modes).getByRole("radio", { name: /^Ask before edits/ })).toBeChecked();
+    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
+      /^Ask before edits ·/,
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({ mode: "default" });
+  });
+
+  it("resume: forking an auto session in the playground keeps Auto, checked", async () => {
+    vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
+    const { dialog, props } = fork({ forkOf: { ...ENDED, mode: "auto" } });
+
+    await options(dialog);
+    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({ mode: "auto" });
+    vi.mocked(servedCheckout).mockReturnValue(null);
+  });
+
+  it("resume: the Fork dialog, Options open, has no serious axe violations", async () => {
+    const { dialog } = fork();
+    await options(dialog);
+    expect(await seriousViolations(dialog)).toEqual([]);
+  });
+
+  it("resume: a plain New session shows no fork target", () => {
+    const { dialog } = open();
+
+    expect(within(dialog).queryByRole("group", { name: "Fork" })).toBeNull();
+    expect(within(dialog).queryByRole("checkbox", { name: /Fork/ })).toBeNull();
   });
 });
 

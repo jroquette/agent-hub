@@ -1,6 +1,8 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { seriousViolations } from "../../testing/axe";
 import {
   aCapabilities,
   aPage,
@@ -170,6 +172,54 @@ describe("SessionsListScreen grid", () => {
     await screen.findByText("/a");
     expect(heads(section(/^Live/))).toEqual([]);
     expect(tilesIn(section(/^Live/))).toHaveLength(3);
+  });
+
+  it("resume: an ended driven tile offers Resume, a link to its chat, where a message resumes it", async () => {
+    const driven = [
+      anAgentSession({ id: anId(12, "0192a5e5"), title: "Fix the build", status: "running" }),
+      anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" }),
+    ];
+    const { router, container } = renderWithApi(<SessionsListScreen />, {
+      routes: routes(aSessionsByStatus([]), driven),
+      path: "/sessions",
+    });
+
+    await screen.findByText("Broke");
+    expect(within(tileOf("Fix the build")).queryByRole("link", { name: /^Resume/ })).toBeNull();
+    const resume = within(tileOf("Broke")).getByRole("link", { name: "Resume Broke" });
+    expect(resume).toHaveAttribute("href", `/agent-sessions/${anId(16, "0192a5e5")}`);
+    // The link sits inside a focusable tile (article tabIndex=0).
+    expect(await seriousViolations(container)).toEqual([]);
+    resume.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(router.state.location.pathname).toBe(`/agent-sessions/${anId(16, "0192a5e5")}`);
+  });
+
+  it("resume: no Resume on a log-full tile, or where sessions cannot start", async () => {
+    const full = anAgentSession({
+      id: anId(17, "0192a5e5"),
+      title: "Full",
+      status: "ended",
+      end_reason: "log_full",
+    });
+    const broke = anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" });
+    const view = renderWithApi(<SessionsListScreen />, {
+      routes: routes(aSessionsByStatus([]), [full, broke]),
+      path: "/sessions",
+    });
+    await screen.findByText("Broke");
+    expect(within(tileOf("Full")).queryByRole("link", { name: /^Resume/ })).toBeNull();
+    view.unmount();
+
+    renderWithApi(<SessionsListScreen />, {
+      routes: {
+        ...routes(aSessionsByStatus([]), [broke]),
+        [`${AGENT}/capabilities`]: aCapabilities({ available: false }),
+      },
+      path: "/sessions",
+    });
+    await screen.findByText("Broke");
+    expect(within(tileOf("Broke")).queryByRole("link", { name: /^Resume/ })).toBeNull();
   });
 
   it("shows a driven session without a twin as a Chat tile, a twin by its prompt, and opens tiles where their rows open", async () => {
