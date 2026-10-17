@@ -234,6 +234,9 @@ class SkillSourcesContract:
         skill_tree.write(f"{SKILL_UNIT}/references/r.md", reference)
         skill_tree.write(f"{SKILL_UNIT}/scripts/s.sh", script)
         skill_tree.make_executable(f"{SKILL_UNIT}/scripts/s.sh")
+        # Hidden names are left out, as the listing leaves them out: never read, never refused.
+        skill_tree.link(f"{SKILL_UNIT}/.cache", "../beta")
+        skill_tree.fifo(f"{SKILL_UNIT}/.x")
         files = {AGENT: b"# Evaluator\n", HOOK_UNIT: b"{}\n", WORKFLOW_UNIT: b"name: review\n"}
         for path, content in files.items():
             skill_tree.write(path, content)
@@ -281,6 +284,45 @@ class SkillSourcesContract:
         ):
             read = skill_tree.reader.read_unit(skill_tree.hub_path, path, kind=kind)
             _check(_unit_kind(read) == "too_large", f"{path} is too_large: {read!r}")
+
+    def test_reads_whole_when_unit_at_bounds(self, skill_tree: SkillTree) -> None:
+        exact = "plugin/hub-workflow/skills/exact"
+        full = "plugin/hub-workflow/skills/full"
+        deep = "plugin/hub-workflow/skills/deep"
+        for folder in (exact, full, deep):
+            skill_tree.write(f"{folder}/SKILL.md", b"# Skill\n")
+        skill_tree.write(f"{exact}/references/r.md", b"x" * MAX_SKILL_FILE_BYTES)
+        for number in range(MAX_UNIT_FILES - 1):
+            skill_tree.write(f"{full}/references/r{number:03}.md", b"# R\n")
+        skill_tree.write(f"{deep}/a/b/c.md", b"# Deep\n")
+        skill_tree.write(HOOK_UNIT, b"{}" + b" " * (MAX_SKILL_FILE_BYTES - 2))
+
+        counts = {exact: 2, full: MAX_UNIT_FILES, deep: 2, HOOK_UNIT: 1}
+        for path, count in counts.items():
+            kind = UnitKind.HOOK if path == HOOK_UNIT else UnitKind.SKILL
+            read = skill_tree.reader.read_unit(skill_tree.hub_path, path, kind=kind)
+            whole = isinstance(read, UnitContent) and len(read.files) == count
+            _check(whole, f"{path} at its bounds reads whole: {_unit_kind(read)}")
+        exact_read = skill_tree.reader.read_unit(skill_tree.hub_path, exact, kind=UnitKind.SKILL)
+        sizes = [len(file.content) for file in getattr(exact_read, "files", ())]
+        _check(sizes == [8, MAX_SKILL_FILE_BYTES], f"a file of exactly the cap is read: {sizes}")
+
+    def test_reports_first_problem_in_path_order_when_unit_read(
+        self, skill_tree: SkillTree
+    ) -> None:
+        many = "plugin/hub-workflow/skills/many"
+        mixed = "plugin/hub-workflow/skills/mixed"
+        for number in range(MAX_UNIT_FILES + 1):
+            skill_tree.write(f"{many}/references/r{number:03}.md", b"# R\n")
+        skill_tree.write(f"{mixed}/SKILL.md", b"# Mixed\n")
+        skill_tree.write(f"{mixed}/a.md", b"x" * (300 * 1_024))
+        skill_tree.link(f"{mixed}/z", "a.md")
+
+        no_skill = skill_tree.reader.read_unit(skill_tree.hub_path, many, kind=UnitKind.SKILL)
+        first = _unit_in_thread(skill_tree, mixed, UnitKind.SKILL)
+
+        _check(_unit_kind(no_skill) == "missing", f"no SKILL.md wins: {no_skill!r}")
+        _check(_unit_kind(first) == "too_large", f"the first path's problem wins: {first!r}")
 
     def test_reports_unreadable_when_link_inside_unit(self, skill_tree: SkillTree) -> None:
         linked = "plugin/hub-workflow/skills/linked"
