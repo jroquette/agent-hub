@@ -797,8 +797,8 @@ NO_PREFIX_LINES = (
     "git config user.email in the hub (its local part plus /)",
 )
 HUB_ONLY = (
-    "hub.local.json: modules: set only in hub.json; hub.local.json holds project.branch_prefix,"
-    " author_name, author_email and tracker.transport"
+    "hub.local.json: modules: set only in hub.json (hub.local.json's keys:"
+    " docs/design/developer-identity.md)"
 )
 
 

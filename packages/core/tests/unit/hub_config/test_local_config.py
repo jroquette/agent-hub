@@ -15,13 +15,15 @@ from agent_hub.core.hub_config.local_config import (
 )
 from agent_hub.core.hub_config.model import Project, Tracker
 from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY, SECRET_PARTS
 
 RUNNING = "0.3.1"
 HUB_ONLY_MESSAGE = (
-    "set only in hub.json; hub.local.json holds project.branch_prefix, author_name,"
-    " author_email and tracker.transport"
+    "set only in hub.json (hub.local.json's keys:"
+    # The design doc names every local key, so the message does not list them.
+    " docs/design/developer-identity.md)"
 )
 EXTRA_MESSAGE = "Extra inputs are not permitted"
 ROOT_MESSAGE = "must be a JSON object"
@@ -101,9 +103,12 @@ def test_overrides_nothing_when_document_empty() -> None:
         ({"modules": {}}, ConfigProblem("modules", HUB_ONLY_MESSAGE)),
         (
             {"guard": {"infra": {"allow": ["--profile[= ]other\\b"]}}},
-            ConfigProblem("guard", HUB_ONLY_MESSAGE),
+            ConfigProblem("guard.infra", HUB_ONLY_MESSAGE),
         ),
-        ({"repos": []}, ConfigProblem("repos", HUB_ONLY_MESSAGE)),
+        (
+            {"repos": [{"dir": "demo-api", "github": "x/y"}]},
+            ConfigProblem("repos[0].github", HUB_ONLY_MESSAGE),
+        ),
         ({"tracker": {"team": "X"}}, ConfigProblem("tracker.team", HUB_ONLY_MESSAGE)),
         ({"tracker": {"teams": ["X"]}}, ConfigProblem("tracker.teams", HUB_ONLY_MESSAGE)),
         ({"tracker": {"kind": "linear"}}, ConfigProblem("tracker.kind", HUB_ONLY_MESSAGE)),
@@ -286,3 +291,94 @@ def test_returns_problem_when_identity_bytes_exceed_reader_limit() -> None:
     assert _name_bytes(LOCAL_FILE_MAX_BYTES + 1) == (
         ConfigProblem(ROOT_PATH, f"larger than {LOCAL_FILE_MAX_BYTES} bytes once written"),
     )
+
+
+def test_loads_local_environments_when_declared() -> None:
+    config = check_local_document(builders.a_local_environments_document())
+
+    assert isinstance(config, LocalConfig)
+    assert config.project.branch_prefix == "jane/"
+    jane = config.environments["jane-cloud"]
+    assert (jane.access, jane.production) == ("write", None)
+    assert jane.credentials is not None
+    assert jane.credentials.aws_profile == "jane-sandbox"
+    (repo,) = config.repos
+    assert repo.dir == "demo-api"
+    assert repo.services["api"].endpoints["jane-cloud"].url == "https://api.jane.example.com"
+
+
+def test_loads_tightened_access_when_local_names_committed_environment() -> None:
+    config = check_local_document({"environments": {"staging": {"access": "read"}}})
+
+    assert isinstance(config, LocalConfig)
+    assert config.environments["staging"].access == "read"
+
+
+def test_loads_local_guard_when_blocked_lists_given() -> None:
+    document = builders.a_local_environments_document()
+    document["guard"]["blocked_words_env"] = ["DEMO_TARGET", "DEMO_*"]
+
+    config = check_local_document(document)
+
+    assert isinstance(config, LocalConfig)
+    assert config.guard.blocked_words == ("demo-live",)
+    assert config.guard.blocked_words_files == ("deploy/*.tfvars",)
+    assert config.guard.blocked_words_env == ("DEMO_TARGET", "DEMO_*")
+
+
+def test_defaults_local_sections_when_file_sets_identity_only() -> None:
+    config = check_local_document({"project": {"branch_prefix": "me/"}})
+
+    assert isinstance(config, LocalConfig)
+    assert (config.environments, config.repos) == ({}, ())
+    assert config.guard.blocked_words == ()
+
+
+@pytest.mark.parametrize(
+    ("document", "path"),
+    [
+        ({"guard": {"deny_hosts": ["db.example.com"]}}, "guard.deny_hosts"),
+        ({"guard": {"infra": {}}}, "guard.infra"),
+        ({"guard": {"ask_before_edit": []}}, "guard.ask_before_edit"),
+    ],
+    ids=["deny-hosts", "infra", "ask-before-edit"],
+)
+def test_rejects_local_key_when_hub_only_in_guard(document: dict[str, Any], path: str) -> None:
+    (problem,) = problems_of(document)
+
+    assert problem.path == path
+    assert problem.message.startswith("set only in hub.json")
+
+
+@pytest.mark.parametrize(
+    ("repo", "path", "message"),
+    [
+        ({"dir": "demo-api", "github": "x/y"}, "repos[0].github", "set only in hub.json"),
+        ({"dir": "demo-api", "check": "make check"}, "repos[0].check", "set only in hub.json"),
+        ({"dir": "demo-api", "colour": 1}, "repos[0].colour", EXTRA_MESSAGE),
+        ({"services": {}}, "repos[0].dir", "Field required"),
+    ],
+    ids=["github", "check", "unknown", "no-dir"],
+)
+def test_rejects_local_repo_key_when_not_dir_or_services(
+    repo: dict[str, Any], path: str, message: str
+) -> None:
+    (problem,) = problems_of({"repos": [repo]})
+
+    assert problem.path == path
+    assert problem.message.startswith(message)
+
+
+@pytest.mark.parametrize(
+    ("change", "path"),
+    [
+        ({"guard": {"blocked_words": ["x"]}}, "guard.blocked_words[0]"),
+        ({"guard": {"blocked_words_env": ["lower"]}}, "guard.blocked_words_env[0]"),
+        ({"environments": {"jane-cloud": {"access": "admin"}}}, "environments.jane-cloud.access"),
+    ],
+    ids=["word", "env-name", "access"],
+)
+def test_rejects_local_value_when_hub_shape_fails(change: dict[str, Any], path: str) -> None:
+    (problem,) = problems_of({**builders.a_local_environments_document(), **change})
+
+    assert problem.path == path
