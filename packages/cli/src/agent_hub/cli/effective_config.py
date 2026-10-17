@@ -24,6 +24,7 @@ from agent_hub.cli.hub_config_reader import (
 )
 from agent_hub.cli.hub_root import local_home
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
+from agent_hub.core.hub_config.effective_environments import local_environment_problems
 from agent_hub.core.hub_config.effective_identity import (
     GitReader,
     IdentityKey,
@@ -48,10 +49,14 @@ class EffectiveConfig(NamedTuple):
 def effective_or_problems(
     config: HubConfig, *, home: Path
 ) -> EffectiveConfig | tuple[ConfigProblem, ...]:
-    """``config`` merged with ``home``'s ``hub.local.json``, or that file's problems."""
+    """``config`` merged with ``home``'s ``hub.local.json``, or that file's problems: its own,
+    else those against ``config`` (environments, repos and services across the two files)."""
     local = read_local_json(home / LOCAL_FILE)
     if not isinstance(local, LocalConfig):
         return local
+    across = local_environment_problems(config, local)
+    if across:
+        return across
     return EffectiveConfig(config=effective_config(config, local), local=local, home=home)
 
 
