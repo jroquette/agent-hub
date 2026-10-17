@@ -753,10 +753,10 @@ def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingest
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    # Eight pages, the Live bookmark redirect (AC-234.2; it replaced the Live sessions page and
-    # Live's red edge check, which the Sessions grid's covers), the long-session timing and six
-    # control-plane clarity checks, none skipped.
-    assert re.search(r"\b16 passed\b", result.stdout), result.stdout
+    # Seven pages (Approvals retired, AGH-273), the Live bookmark redirect (AC-234.2; it replaced
+    # the Live sessions page and Live's red edge check, which the Sessions grid's covers), the
+    # long-session timing and six control-plane clarity checks, none skipped.
+    assert re.search(r"\b15 passed\b", result.stdout), result.stdout
     assert "skipped" not in result.stdout, result.stdout
 
 

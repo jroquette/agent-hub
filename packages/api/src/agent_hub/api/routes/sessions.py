@@ -18,8 +18,9 @@ from agent_hub.api.schemas import (
 )
 from agent_hub.core.events.event import EventType
 from agent_hub.core.readmodels.filters import (
+    MAX_EVENTS_PAGE_LIMIT,
     MAX_PAGE_LIMIT,
-    PageRequest,
+    EventPageRequest,
     SessionFilter,
     SessionSort,
 )
@@ -109,10 +110,10 @@ def list_session_events(
     *,
     types: Annotated[list[EventType] | None, Query(max_length=MAX_TYPES)] = None,
     cursor: CursorParam = None,
-    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)] = MAX_PAGE_LIMIT,
+    limit: Annotated[int, Query(ge=1, le=MAX_EVENTS_PAGE_LIMIT)] = MAX_PAGE_LIMIT,
 ) -> Page[TimelineEvent]:
     """The session's events in timestamp order."""
-    page = parse_filter(PageRequest, cursor=cursor, limit=limit)
+    page = parse_filter(EventPageRequest, cursor=cursor, limit=limit)
     return models.session_events(session_id, types=frozenset(types or ()), page=page)
 
 

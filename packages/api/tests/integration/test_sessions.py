@@ -127,6 +127,22 @@ def test_lists_only_sessions_of_issue_when_issue_filter_given(
     assert [item["id"] for item in other] == ["session-2"]
 
 
+def test_reads_session_events_in_pages_of_up_to_1000_when_limit_given(composed: Any) -> None:
+    tools = tuple(("Bash", {"command": f"make test-{n}"}) for n in range(600))
+    composed.store.append(a_session_events("session-1", tools=tools))
+    url = "/api/v1/sessions/session-1/events"
+
+    whole = composed.client.get(url, params={"limit": 1000})
+    default = composed.client.get(url)
+    over = composed.client.get(url, params={"limit": 1001})
+
+    assert whole.status_code == 200
+    assert len(whole.json()["items"]) == 1000
+    assert whole.json()["next_cursor"] is not None
+    assert len(default.json()["items"]) == 200
+    assert over.status_code == 400
+
+
 def test_marks_agent_deprecated_when_label_served(composed: Any) -> None:
     schemas = composed.client.get("/api/v1/openapi.json").json()["components"]["schemas"]
 
