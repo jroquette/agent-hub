@@ -84,6 +84,15 @@ function tabOf(doc: string | null, phase: FeaturePhase | undefined): string {
   return phase ? PHASE_TAB[phase] : "acs";
 }
 
+/**
+ * The feature's ticket ids, bare and once each: a spec may note prose beside an id
+ * ("AGH-200 (provisional id: …)"), which is not part of the id.
+ */
+export function ticketIds(issues: readonly string[]): string[] {
+  const ids = issues.map((issue) => /^[A-Z][A-Z0-9]*-\d+/.exec(issue.trim())?.[0] ?? issue.trim());
+  return [...new Set(ids.filter(Boolean))];
+}
+
 /** An AC description as a sentence, so the callout's next sentence reads on. */
 function ownerLine(text: string | undefined): string {
   if (!text) return "";
@@ -278,7 +287,7 @@ function featureDiscussTarget(
       detail.acs
         ? `Acceptance criteria: ${String(detail.acs.passing)} of ${String(detail.acs.total)} passing.${open.length ? ` Not passing yet: ${open.map(describe).join("; ")}.` : ""}`
         : "",
-      detail.issues.length ? `Its Linear tickets: ${detail.issues.join(", ")}.` : "",
+      detail.issues.length ? `Its Linear tickets: ${ticketIds(detail.issues).join(", ")}.` : "",
       `I am looking at its ${TAB_LABEL[tab] ?? tab} tab.`,
       "When a change touches several records (spec, plan, criteria), keep them consistent with each other.",
     ]
@@ -366,6 +375,7 @@ export function FeatureDetailScreen() {
   const detail = feature.data;
   const owners = detail.ac_rows.filter((ac) => passOf(ac) === "owner");
   const waitReason = ownerWait(detail.golden_path.steps);
+  const issueIds = ticketIds(detail.issues);
   const setTab = (id: string) => {
     setParams(
       (current) => {
@@ -389,7 +399,7 @@ export function FeatureDetailScreen() {
     {
       id: "tickets",
       label: "Tickets",
-      count: tickets.data?.tickets.length ?? detail.issues.length,
+      count: tickets.data?.tickets.length ?? issueIds.length,
     },
   ];
   let body: ReactNode;
@@ -410,7 +420,7 @@ export function FeatureDetailScreen() {
       <EvalTab
         project={detail.project}
         slug={detail.slug}
-        tickets={detail.issues}
+        tickets={issueIds}
         epics={tickets.data?.planning.epics ?? []}
         evals={detail.evals}
         selected={selectedEval}
@@ -469,10 +479,12 @@ export function FeatureDetailScreen() {
           {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
-          <TicketChips ids={detail.issues} rows={tickets.data?.tickets ?? []} />
+          <TicketChips ids={issueIds} rows={tickets.data?.tickets ?? []} />
           {detail.acs && (
             <>
-              <span style={{ width: 1, height: 16, background: "var(--border)" }} />
+              {issueIds.length > 0 && (
+                <span style={{ width: 1, height: 16, background: "var(--border)" }} />
+              )}
               <AcBar acs={detail.acs} width={180} ownerIds={owners.map((ac) => ac.id)} />
             </>
           )}

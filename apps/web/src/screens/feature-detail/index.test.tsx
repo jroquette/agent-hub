@@ -18,7 +18,7 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
-import { FeatureDetailScreen } from "./index";
+import { FeatureDetailScreen, ticketIds } from "./index";
 import { FEATURE_REFRESH_MS, TICKETS_REFRESH_MS } from "./queries";
 
 const API = "/api/v1/features/agent-hub/layered-memory";
@@ -148,6 +148,19 @@ function open(
   );
   return renderWithApi(ui, { routes: { [API]: detail, [NOTE]: records, ...extra }, path, route });
 }
+
+describe("ticketIds", () => {
+  it("keeps the bare id once when the spec notes prose beside it", () => {
+    expect(
+      ticketIds(["AGH-200 (provisional id: renumber if Linear assigns another)", "AGH-200"]),
+    ).toEqual(["AGH-200"]);
+    expect(ticketIds(["AGH-48", " AGH-49 ", "not an id"])).toEqual([
+      "AGH-48",
+      "AGH-49",
+      "not an id",
+    ]);
+  });
+});
 
 describe("FeatureDetailScreen", () => {
   it("shows the header with verdict, issues and the AC bar", async () => {
