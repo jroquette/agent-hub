@@ -160,7 +160,7 @@ describe("SessionsListScreen grid", () => {
       "agent-hub › storefront · 1",
       "agent-hub › agent-hub · 2",
     ]);
-    expect(heads(section(/^Paused/))).toEqual(["agent-hub › agent-hub · 1"]);
+    expect(heads(section(/^In progress/))).toEqual(["agent-hub › agent-hub · 1"]);
     repo.unmount();
 
     const run = renderWithApi(<SessionsListScreen />, {

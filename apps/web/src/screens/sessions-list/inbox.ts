@@ -20,6 +20,8 @@ export interface RowView {
   timeTip: string;
   /** The always-visible button: only for what needs the owner. */
   action: "answer" | "review" | null;
+  /** The conversation so far, for a chat in Working or In progress: your last ask, Claude's last reply. */
+  conversation: { prompt: string | null; reply: string | null } | null;
   /** True when the row may offer Resume (finished, resumable chat). */
   resumable: boolean;
   /** No end signal arrived: the outcome is assumed. */
@@ -115,7 +117,15 @@ function tagsOf(row: SectionRow, ctx: ViewContext): string[] {
 export function rowView(row: SectionRow, ctx: ViewContext): RowView {
   const { group, drv } = ctx;
   const tags = tagsOf(row, ctx);
-  const base = { tags, resumable: false, inferred: false, action: null, lineTone: null } as const;
+  const summary = drv ? summaryOf(drv) : null;
+  const base = {
+    tags,
+    resumable: false,
+    inferred: false,
+    action: null,
+    lineTone: null,
+    conversation: null,
+  } as const;
   const ask = drv?.open_permission ?? null;
 
   if (group === "waiting") {
@@ -151,9 +161,14 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
   }
 
   if (group === "live") {
+    const talk =
+      summary && (summary.prompt || summary.reply)
+        ? { prompt: summary.prompt, reply: summary.reply }
+        : null;
     if (isDriven(row))
       return {
         ...base,
+        conversation: talk,
         lead: "pulse",
         line: "Working on your message",
         time: lastAt(row, drv),
@@ -170,6 +185,7 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
       };
     return {
       ...base,
+      conversation: talk,
       lead: "pulse",
       line: row.last_action ?? (drv ? "Working on your message" : "Starting"),
       time: lastAt(row, drv),
@@ -182,7 +198,18 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
     if (isDriven(row))
       line = [`${modeLabel(row.mode)} mode`, row.model].filter(Boolean).join(" · ");
     else line = row.last_action ?? "No tool used yet";
-    return { ...base, lead: null, line, time: lastAt(row, drv), timeTip: "Last activity" };
+    const talk =
+      summary && (summary.prompt || summary.reply)
+        ? { prompt: summary.prompt, reply: summary.reply }
+        : null;
+    return {
+      ...base,
+      conversation: talk,
+      lead: null,
+      line,
+      time: lastAt(row, drv),
+      timeTip: "Last activity",
+    };
   }
 
   // Finished
@@ -217,6 +244,33 @@ export function rowView(row: SectionRow, ctx: ViewContext): RowView {
     timeTip: "Ended",
     resumable: canResume,
     inferred: outcome.inferred,
+  };
+}
+
+/** What hub web keeps about a chat: its last ask and reply, and the files it changed. */
+export interface ChatSummary {
+  prompt: string | null;
+  reply: string | null;
+  files: { path: string; last_change_id: string }[];
+}
+
+/** What hub web keeps about a chat's last turn and edits. */
+export function summaryOf(session: AgentSession): ChatSummary {
+  return {
+    prompt: session.last_prompt ?? null,
+    reply: session.last_reply ?? null,
+    files: session.changed_files,
+  };
+}
+
+/** How many files a chat changed, and how many changed since you last marked them viewed. */
+export function filesToReview(
+  files: ChatSummary["files"],
+  reviewed: Record<string, string>,
+): { total: number; toReview: number } {
+  return {
+    total: files.length,
+    toReview: files.filter((file) => reviewed[file.path] !== file.last_change_id).length,
   };
 }
 

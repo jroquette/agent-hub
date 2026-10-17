@@ -7,7 +7,7 @@ export type SectionId = "waiting" | "live" | "idle" | "ended";
 export const SECTIONS: { id: SectionId; title: string }[] = [
   { id: "waiting", title: "Needs you" },
   { id: "live", title: "Working" },
-  { id: "idle", title: "Paused" },
+  { id: "idle", title: "In progress" },
   { id: "ended", title: "Finished" },
 ];
 

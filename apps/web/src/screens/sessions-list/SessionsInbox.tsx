@@ -1,11 +1,21 @@
-/* The list view as an inbox (v2 design): four plain groups, each row a title and one useful line. */
+/* The list view as an inbox: four plain groups; a chat row shows your last ask, Claude's reply and its files. */
 import { useState, type ReactNode } from "react";
 
 import { AppLink, Button, Icon, IssueLink, Money, ProblemError, Skeleton } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtClock, fmtInt } from "../../lib/format";
 import { rowHref } from "./drivenRows";
-import { rowTitle, rowView, type RowView, type Tone, type ViewContext } from "./inbox";
+import { readStored } from "../../lib/storage";
+import { reviewedKey } from "../agent-session/FilesPanel";
+import {
+  filesToReview,
+  rowTitle,
+  rowView,
+  summaryOf,
+  type RowView,
+  type Tone,
+  type ViewContext,
+} from "./inbox";
 import type { AgentSession } from "./queries";
 import { openHref } from "./rows";
 import { isDriven, type SectionId, type SectionRow } from "./sections";
@@ -17,8 +27,23 @@ type Tz = "local" | "utc";
 export const FINISHED_PREVIEW = 5;
 
 const HINT: Partial<Record<SectionId, string>> = {
-  idle: "The agent finished its turn and waits for your next message.",
+  idle: "Your turn: check what the agent did, or send your next message.",
 };
+
+const plural = (n: number, word: string) => `${String(n)} ${word}${n === 1 ? "" : "s"}`;
+
+/** The files you marked viewed in a chat's files panel, kept in this browser (FilesPanel). */
+function readReviewed(sessionId: string): Record<string, string> {
+  try {
+    const value: unknown = JSON.parse(readStored(reviewedKey(sessionId)) ?? "{}");
+    if (!value || typeof value !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(value).filter((pair): pair is [string, string] => typeof pair[1] === "string"),
+    );
+  } catch {
+    return {};
+  }
+}
 
 export interface InboxGroup {
   id: SectionId;
@@ -108,6 +133,10 @@ function Row({
   onOpen: (href: string) => void;
 }) {
   const view = rowView(row, { ...ctx, group });
+  const talk = view.conversation;
+  // While it works, what Claude does now says more than its previous reply.
+  const claudeSays = group === "live" ? view.line : (talk?.reply ?? view.line);
+  const files = ctx.drv ? filesToReview(summaryOf(ctx.drv).files, readReviewed(ctx.drv.id)) : null;
   const title = rowTitle(row);
   const named = isDriven(row) || Boolean(row.label?.title?.trim());
   const href = openHref(row);
@@ -203,21 +232,58 @@ function Row({
             </span>
           ))}
         </div>
-        <div
-          id={lineId}
-          className="sl-row-line"
-          style={view.lineTone ? { color: TONE[view.lineTone] } : undefined}
-          title={
-            view.inferred
-              ? `${view.line} · No end signal arrived. agent-hub assumes the session closed.`
-              : view.line
-          }
-        >
-          {view.line}
-        </div>
+        {talk ? (
+          <div id={lineId} className="sl-talk">
+            {talk.prompt && (
+              <div className="sl-talk-line" title={talk.prompt}>
+                <span className="sl-talk-who">You</span>
+                <span className="sl-talk-text">{talk.prompt}</span>
+              </div>
+            )}
+            <div
+              className="sl-talk-line"
+              title={claudeSays}
+              style={view.lineTone ? { color: TONE[view.lineTone] } : undefined}
+            >
+              <span className="sl-talk-who">Claude</span>
+              <span className="sl-talk-text sl-talk-reply">{claudeSays}</span>
+            </div>
+          </div>
+        ) : (
+          <div
+            id={lineId}
+            className="sl-row-line"
+            style={view.lineTone ? { color: TONE[view.lineTone] } : undefined}
+            title={
+              view.inferred
+                ? `${view.line} · No end signal arrived. agent-hub assumes the session closed.`
+                : view.line
+            }
+          >
+            {view.line}
+          </div>
+        )}
       </div>
       <div className="sl-row-meta">
         <span className="sl-row-issue">{issue && <IssueLink id={issue} />}</span>
+        <span className="sl-row-files">
+          {files && files.total > 0 && (
+            <span
+              className="sl-files"
+              data-due={files.toReview > 0 || undefined}
+              title={
+                files.toReview > 0
+                  ? `${plural(files.total, "file")} changed; ${String(files.toReview)} changed since you last viewed them in the chat`
+                  : `${plural(files.total, "file")} changed, all viewed`
+              }
+            >
+              <Icon name="file-pen" size="sm" />
+              {files.toReview > 0
+                ? `${plural(files.total, "file")} · ${String(files.toReview)} to review`
+                : plural(files.total, "file")}
+            </span>
+          )}
+        </span>
         <span className="sl-row-cost">
           {cost ? (
             <Money value={cost} />

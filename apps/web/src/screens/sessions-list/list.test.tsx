@@ -91,7 +91,7 @@ describe("SessionsListScreen inbox-groups", () => {
     expect(headers()).toEqual([
       "Needs you · 1",
       "Working · 1",
-      "Paused · 1The agent finished its turn and waits for your next message.",
+      "In progress · 1Your turn: check what the agent did, or send your next message.",
       "Finished · last 7 days · 1",
     ]);
     expect(screen.queryByRole("group", { name: "Status" })).toBeNull();
@@ -123,7 +123,7 @@ describe("SessionsListScreen inbox-groups", () => {
     await act(async () => {
       await router.navigate("/sessions?status=idle");
     });
-    expect(await screen.findByText("No paused session.")).toBeInTheDocument();
+    expect(await screen.findByText("No session in progress.")).toBeInTheDocument();
   });
 
   it("marks a count that has more pages as approximate", async () => {
@@ -156,7 +156,7 @@ describe("SessionsListScreen inbox-groups", () => {
         .getAllByRole("listitem")
         .map((row) => row.querySelector(".sl-row-title")?.textContent);
     expect(titles(/^Needs you/)).toEqual(["/old-ask", "/new-ask"]);
-    expect(titles(/^Paused/)).toEqual(["/just-rested", "/rested-long"]);
+    expect(titles(/^In progress/)).toEqual(["/just-rested", "/rested-long"]);
   });
 
   it("shows Finished's five latest, then the rest on Show more", async () => {
@@ -186,7 +186,7 @@ describe("SessionsListScreen attention-line", () => {
     await screen.findByText("/asker");
 
     expect(document.querySelector(".sl-attention")).toHaveTextContent(
-      "1 session needs you· 1 working · 1 paused",
+      "1 session needs you· 1 working · 1 in progress",
     );
     fireEvent.click(screen.getByRole("button", { name: "1 session needs you" }));
     await waitFor(() => {
@@ -249,7 +249,9 @@ describe("SessionsListScreen attention-line", () => {
 
   it("says nothing needs the owner, with how many work and pause", async () => {
     const calm = renderList(routes(aSessionsByStatus(SAMPLE.slice(1))));
-    expect(await screen.findByText("Nothing needs you. 1 working · 1 paused.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Nothing needs you. 1 working · 1 in progress."),
+    ).toBeInTheDocument();
     calm.unmount();
 
     renderList(routes(aSessionsByStatus([SAMPLE[3]])));

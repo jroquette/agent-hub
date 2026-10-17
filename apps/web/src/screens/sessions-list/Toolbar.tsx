@@ -35,7 +35,7 @@ export const MORE_KEYS = [
 const STATUS_LABEL: Record<string, string> = {
   waiting: "Needs you",
   live: "Working",
-  idle: "Paused",
+  idle: "In progress",
   ended: "Finished",
 };
 const MORE_LABEL: Record<(typeof MORE_KEYS)[number], string> = {

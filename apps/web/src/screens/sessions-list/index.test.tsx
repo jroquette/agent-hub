@@ -531,14 +531,14 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(lineOf("Approve me")).toBe("Asks to use Bash: git status");
     expect(within(group(/^Finished/)).getByText("Broke")).toBeInTheDocument();
     expect(lineOf("Broke")).toBe("Failed");
-    const idle = within(group(/^Paused/))
+    const idle = within(group(/^In progress/))
       .getAllByText(/idle$/)
       .map((node) => node.textContent);
     expect(idle).toEqual(["Newer idle", "Older idle"]);
     expect(groupToggles()).toEqual([
       "Needs you · 1",
       "Working · 3",
-      "Paused · 2",
+      "In progress · 2",
       "Finished · last 7 days · 2",
     ]);
 
@@ -689,7 +689,7 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(within(group(/^Working/)).getByText("Showing 2 of ~120")).toBeInTheDocument();
     expect(groupToggles()).toContain("Needs you · 2");
     expect(document.querySelector(".sl-attention")).toHaveTextContent(
-      "2 sessions need you· 120 working · 2 paused",
+      "2 sessions need you· 120 working · 2 in progress",
     );
   });
 
@@ -715,7 +715,7 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(groupToggles()).toEqual([
       "Needs you · 2",
       "Working · 2",
-      "Paused · 2",
+      "In progress · 2",
       "Finished · last 7 days · 2",
     ]);
   });

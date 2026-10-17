@@ -76,7 +76,7 @@ describe("SessionsListScreen status-sections", () => {
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.queryByRole("columnheader")).toBeNull();
     expect(headers()).toEqual(["Needs you · 1", "Working · ~4", "Finished · last 7 days · 1"]);
-    expect(screen.queryByRole("region", { name: /^Paused/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: /^In progress/ })).toBeNull();
     expect(within(group(/^Working/)).getByText("/runner")).toBeInTheDocument();
     expect(
       sessionRequests(requests)

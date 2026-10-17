@@ -8,7 +8,15 @@ import {
   anId,
   at,
 } from "../../testing/builders";
-import { commonRepoOf, orderRows, rowTitle, rowView, type ViewContext } from "./inbox";
+import {
+  commonRepoOf,
+  filesToReview,
+  orderRows,
+  rowTitle,
+  rowView,
+  summaryOf,
+  type ViewContext,
+} from "./inbox";
 import type { AgentSession, Session } from "./queries";
 import type { SectionId, SectionRow } from "./sections";
 
@@ -127,7 +135,7 @@ describe("rowView: Working", () => {
   });
 });
 
-describe("rowView: Paused", () => {
+describe("rowView: In progress", () => {
   it("says the last action of an observed session, or that no tool ran yet, with no lead", () => {
     expect(view(observed({ status: "idle", last_action: "Edited a.ts" }), "idle")).toMatchObject({
       lead: null,
@@ -301,7 +309,7 @@ describe("orderRows", () => {
     expect(ids(orderRows("waiting", rows, none))).toEqual([anId(2), anId(1), anId(3)]);
   });
 
-  it("puts the latest activity first in Working and Paused, without changing its input", () => {
+  it("puts the latest activity first in Working and In progress, without changing its input", () => {
     expect(ids(orderRows("live", rows, none))).toEqual([anId(3), anId(1), anId(2)]);
     expect(ids(orderRows("idle", rows, none))).toEqual([anId(3), anId(1), anId(2)]);
     expect(ids(rows)).toEqual([anId(1), anId(2), anId(3)]);
@@ -367,5 +375,47 @@ describe("rowTitle", () => {
     expect(
       rowTitle(observed({ label: aSessionLabel({ issue: "AGH-9", workflow: "/feature" }) })),
     ).toBe("AGH-9 · /feature");
+  });
+});
+
+describe("the conversation of a chat", () => {
+  const drv = anAgentSession({
+    status: "idle",
+    last_prompt: "Make the list less minimal",
+    last_reply: "Done: rows show your ask and my reply",
+    changed_files: [
+      { path: "/repo/a.ts", last_change_id: "toolu_2" },
+      { path: "/repo/b.ts", last_change_id: "toolu_1" },
+    ],
+  });
+
+  it("shows your last ask and Claude's last reply in Working and In progress", () => {
+    expect(view(drv, "idle", drv).conversation).toEqual({
+      prompt: "Make the list less minimal",
+      reply: "Done: rows show your ask and my reply",
+    });
+    const twin = observed({ status: "live", agent_session_id: drv.id, last_action: "Ran make" });
+    expect(view(twin, "live", drv)).toMatchObject({
+      conversation: { prompt: "Make the list less minimal" },
+      line: "Ran make",
+    });
+  });
+
+  it("keeps the one-line view when the chat has no ask or reply yet, and outside those groups", () => {
+    const bare = anAgentSession({ status: "idle", last_prompt: null, last_reply: null });
+    expect(view(bare, "idle", bare).conversation).toBeNull();
+    expect(view(observed({ status: "idle" }), "idle").conversation).toBeNull();
+    const ended = anAgentSession({ ...drv, status: "ended", ended_at: at(900) });
+    expect(view(ended, "ended", ended).conversation).toBeNull();
+  });
+
+  it("counts the files changed since you last viewed them in the chat", () => {
+    const { files } = summaryOf(drv);
+    expect(filesToReview(files, {})).toEqual({ total: 2, toReview: 2 });
+    expect(filesToReview(files, { "/repo/a.ts": "toolu_2", "/repo/b.ts": "toolu_0" })).toEqual({
+      total: 2,
+      toReview: 1,
+    });
+    expect(filesToReview([], {})).toEqual({ total: 0, toReview: 0 });
   });
 });

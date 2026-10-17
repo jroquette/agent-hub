@@ -18,7 +18,7 @@ describe("status sections (filters-both-views)", () => {
     expect(SECTIONS.map((section) => section.title)).toEqual([
       "Needs you",
       "Working",
-      "Paused",
+      "In progress",
       "Finished",
     ]);
   });

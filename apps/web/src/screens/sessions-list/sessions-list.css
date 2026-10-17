@@ -217,7 +217,7 @@
 }
 .sl-row-meta {
   display: grid;
-  grid-template-columns: minmax(0, 96px) 72px 96px 112px;
+  grid-template-columns: minmax(0, 96px) 168px 72px 96px 112px;
   align-items: center;
   column-gap: var(--space-3);
   font-size: 13px;
@@ -225,6 +225,55 @@
 .sl-row-issue {
   justify-self: end;
   overflow: hidden;
+}
+.sl-row-files {
+  justify-self: end;
+  min-width: 0;
+}
+.sl-files {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.sl-files[data-due] {
+  color: var(--waiting);
+  font-weight: 500;
+}
+/* A chat's conversation so far: your last ask over Claude's last reply. */
+.sl-talk {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.sl-talk-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.sl-talk-who {
+  flex: none;
+  width: 44px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-subtle);
+}
+.sl-talk-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sl-talk-reply {
+  color: var(--text);
 }
 .sl-row-cost {
   justify-self: end;
@@ -278,7 +327,7 @@
 }
 @media (max-width: 1100px) {
   .sl-row-meta {
-    grid-template-columns: 72px 88px 104px;
+    grid-template-columns: 148px 72px 88px 104px;
   }
   .sl-row-issue {
     display: none;
