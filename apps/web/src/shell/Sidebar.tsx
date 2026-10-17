@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import { NavLink, useMatch } from "react-router";
 
 import { Kbd, PhaseTag, type Phase } from "../components/core";
@@ -7,7 +6,6 @@ import { useScope } from "../lib/scope";
 
 /** Badge counts from the global stream's `counts` message. */
 export interface SidebarCounts {
-  approvals?: number | undefined;
   live?: number | undefined;
   learnings?: number | undefined;
   health?: number | undefined;
@@ -45,38 +43,35 @@ interface NavItem {
   id: string;
   label: string;
   to: string;
-  icon?: IconName;
+  icon: IconName;
   countKey?: CountKey;
   /** How the count reads in the accessible name, e.g. "waiting". */
   countNoun?: (n: number) => string;
   tone?: "waiting" | "live" | "failed";
   phase?: Phase;
-  children?: NavItem[];
+}
+
+interface NavGroup {
+  /** The caption over the group; the top group has none. */
+  group?: string;
+  /** `foot` pins the group to the bottom of the sidebar, above Shortcuts. */
+  placement?: "foot";
+  items: NavItem[];
 }
 
 /**
- * The sitemap (D20, AGH-201 D3): Metrics, Bench and Tracker queue are not shipped and not shown;
- * Workflows sits in Improve (AGH-226); Knowledge holds Learnings, the selected project's Brain
- * (`BRAIN_ID`, see `brainLink`) and its Skills (`SKILLS_ID`, see `skillsLink`).
+ * The sitemap (D20, AGH-201 D3), regrouped by what the developer comes to do: Portfolio on top, the
+ * agents' Work (Sessions carries the live badge, ADR 0033; runs sit next to the workflows that start
+ * them), the project's Knowledge as flat items (Brain and Skills follow the project in scope, see
+ * `brainLink` and `skillsLink`), and the hub's own Health and Settings in the footer. Metrics,
+ * Bench and Tracker queue are not shipped and not shown.
  */
-export const NAV: readonly { group: string; items: NavItem[] }[] = [
+export const NAV: readonly NavGroup[] = [
   {
-    group: "Overview",
-    items: [
-      { id: "portfolio", label: "Portfolio", to: "/", icon: "layout-dashboard" },
-      {
-        id: "approvals",
-        label: "Approvals",
-        to: "/approvals",
-        icon: "stamp",
-        countKey: "approvals",
-        countNoun: () => "waiting",
-        tone: "waiting",
-      },
-    ],
+    items: [{ id: "portfolio", label: "Portfolio", to: "/", icon: "layout-dashboard" }],
   },
   {
-    group: "Observe",
+    group: "Work",
     items: [
       // One Sessions entry; it carries the live badge of the retired Live sessions (ADR 0033 D8).
       {
@@ -89,37 +84,29 @@ export const NAV: readonly { group: string; items: NavItem[] }[] = [
         tone: "live",
       },
       { id: "runs", label: "Workflow runs", to: "/runs", icon: "route" },
-    ],
-  },
-  {
-    group: "Understand",
-    items: [
-      {
-        id: "knowledge",
-        label: "Knowledge",
-        to: "/knowledge/learnings",
-        icon: "library",
-        children: [
-          {
-            id: "learnings",
-            label: "Learnings",
-            to: "/knowledge/learnings",
-            countKey: "learnings",
-            countNoun: () => "to triage",
-          },
-          { id: BRAIN_ID, label: "Brain", to: BRAIN_PICKER },
-          { id: SKILLS_ID, label: "Toolkit", to: SKILLS_PICKER },
-        ],
-      },
+      { id: "workflows", label: "Workflows", to: "/workflows", icon: "workflow" },
       { id: "features", label: "Features", to: "/features", icon: "list-checks" },
     ],
   },
   {
-    group: "Improve",
-    items: [{ id: "workflows", label: "Workflows", to: "/workflows", icon: "workflow" }],
+    group: "Knowledge",
+    items: [
+      {
+        id: "learnings",
+        label: "Learnings",
+        to: "/knowledge/learnings",
+        icon: "lightbulb",
+        countKey: "learnings",
+        countNoun: () => "to triage",
+        tone: "waiting",
+      },
+      { id: BRAIN_ID, label: "Brain", to: BRAIN_PICKER, icon: "book-open" },
+      { id: SKILLS_ID, label: "Toolkit", to: SKILLS_PICKER, icon: "package" },
+    ],
   },
   {
     group: "Hub",
+    placement: "foot",
     items: [
       {
         id: "health",
@@ -155,8 +142,35 @@ export function Sidebar({ counts, onShortcuts }: SidebarProps) {
   const brainTo = brainLink(openBrain?.params.project ?? null, scope);
   const openSkills = useMatch("/projects/:project/skills/*");
   const skillsTo = skillsLink(openSkills?.params.project ?? null, scope);
-  const childTo = (child: NavItem): string =>
-    child.id === BRAIN_ID ? brainTo : child.id === SKILLS_ID ? skillsTo : child.to;
+  const itemTo = (item: NavItem): string =>
+    item.id === BRAIN_ID ? brainTo : item.id === SKILLS_ID ? skillsTo : item.to;
+
+  const renderItem = (item: NavItem) => {
+    const count = item.countKey ? counts[item.countKey] : undefined;
+    return (
+      <NavLink
+        key={item.id}
+        to={itemTo(item)}
+        end={item.to === "/"}
+        className="ah-nav-item"
+        title={item.label}
+        aria-label={accessibleName(item, count)}
+      >
+        <Icon name={item.icon} />
+        <span className="ah-nav-label">{item.label}</span>
+        {item.phase && <PhaseTag phase={item.phase} />}
+        {count ? (
+          <span className="ah-nav-count" data-tone={item.tone}>
+            {item.tone === "live" && (
+              <span className="ah-dot ah-pulse" style={{ width: 6, height: 6 }} />
+            )}
+            {badge(count)}
+          </span>
+        ) : null}
+      </NavLink>
+    );
+  };
+
   return (
     <nav className="ah-sidebar" aria-label="Main">
       <div className="ah-brand">
@@ -166,59 +180,17 @@ export function Sidebar({ counts, onShortcuts }: SidebarProps) {
         <span className="ah-brand-name">agent-hub</span>
       </div>
       <div className="ah-nav">
-        {NAV.map((group) => (
-          <div key={group.group}>
-            <div className="ah-nav-group-title">{group.group}</div>
-            {group.items.map((item) => {
-              const count = item.countKey ? counts[item.countKey] : undefined;
-              return (
-                <Fragment key={item.id}>
-                  <NavLink
-                    to={item.to}
-                    end={item.to === "/" || Boolean(item.children)}
-                    className="ah-nav-item"
-                    title={item.label}
-                    aria-label={accessibleName(item, count)}
-                    aria-current={
-                      // Knowledge is a group: its sub-item, not the group, is the page.
-                      item.children ? false : undefined
-                    }
-                  >
-                    {item.icon && <Icon name={item.icon} />}
-                    <span className="ah-nav-label">{item.label}</span>
-                    {item.phase && <PhaseTag phase={item.phase} />}
-                    {count ? (
-                      <span className="ah-nav-count" data-tone={item.tone}>
-                        {item.tone === "live" && (
-                          <span className="ah-dot ah-pulse" style={{ width: 6, height: 6 }} />
-                        )}
-                        {badge(count)}
-                      </span>
-                    ) : null}
-                  </NavLink>
-                  {item.children?.map((child) => {
-                    const childCount = child.countKey ? counts[child.countKey] : undefined;
-                    return (
-                      <NavLink
-                        key={child.id}
-                        to={childTo(child)}
-                        className="ah-nav-item ah-nav-sub"
-                        aria-label={accessibleName(child, childCount)}
-                      >
-                        <span className="ah-nav-label">{child.label}</span>
-                        {childCount ? (
-                          <span className="ah-nav-count">{badge(childCount)}</span>
-                        ) : null}
-                      </NavLink>
-                    );
-                  })}
-                </Fragment>
-              );
-            })}
+        {NAV.filter((group) => group.placement !== "foot").map((group, index) => (
+          <div key={group.group ?? index} className="ah-nav-group">
+            {group.group && <div className="ah-nav-group-title">{group.group}</div>}
+            {group.items.map(renderItem)}
           </div>
         ))}
       </div>
       <div className="ah-sidebar-foot">
+        {NAV.filter((group) => group.placement === "foot").flatMap((group) =>
+          group.items.map(renderItem),
+        )}
         <button type="button" className="ah-nav-item ah-nav-button" onClick={onShortcuts}>
           <Icon name="keyboard" />
           <span className="ah-nav-label">Shortcuts</span>

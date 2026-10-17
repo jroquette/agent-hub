@@ -102,6 +102,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The Skills catalog stays on the design system (neutral kind badges, type on the scale, no dashed outline on the
   managed tag and New link, full text on hover when truncated) and lays out at every width: tiles four across or two
   by two, hook rows aligned per event (AGH-271).
+- The sidebar is grouped by task: Portfolio, then Work (Sessions, Workflow runs, Workflows, Features), then
+  Knowledge (Learnings, Brain and Skills as items of their own), with Health and Settings pinned to the footer
+  (AGH-273).
+- The project overview is written for product people: what needs you and this week's numbers first, plain section
+  names, the agents' tickets as one list with their step progress instead of seven mostly empty columns, recent work
+  without turns and errors, and repositories, checks, doctor findings and hub configuration folded into a collapsed
+  "Setup and health" section (AGH-273).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to
@@ -127,6 +134,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   are radio or checkbox rows with Claude's descriptions in view, a Recommended tag, an Other field in place and a
   neutral Skip question; several questions go one page at a time with numbered steps; an answered question keeps
   each answer, and its outcome reads Answered, Skipped, Plan approved or Kept planning (AGH-264).
+
+### Removed
+
+- The Approvals screen and its sidebar entry and `g a` shortcut: a workflow gate is answered in its run's page, any
+  other approval in its session, and Needs you, activity and search hits link there (AGH-273).
 
 ### Fixed
 

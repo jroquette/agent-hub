@@ -320,7 +320,7 @@ export function NeedsYouList({
   items,
   more = 0,
   moreLabel,
-  moreHref = "/approvals",
+  moreHref,
   liveCount = 0,
   loading,
   since,
@@ -367,7 +367,7 @@ export function NeedsYouList({
           </AppLink>
         );
       })}
-      {more > 0 && (
+      {more > 0 && moreHref && (
         <AppLink
           className="ah-needs-item"
           href={moreHref}

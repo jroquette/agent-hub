@@ -55,8 +55,6 @@ describe("routes", () => {
   it.each([
     ["/", "Portfolio"],
     ["/projects/agent-hub", "Project not found"],
-    ["/approvals", "Approvals"],
-    ["/approvals/abc", "Approvals"],
     ["/sessions", "Sessions"],
     ["/sessions/abc", "Session detail"],
     ["/agent-sessions/abc", "Agent session"],
