@@ -341,7 +341,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                   resolved: resolvedThreads,
                   // A comment is a message to this session's Claude: it answers in the chat too.
                   onComment:
-                    cloud || (ended && !resumable)
+                    cloud || (ended && !canResume)
                       ? undefined
                       : (text) => transcript.send(text, (message) => commands.send(message)),
                 }}
