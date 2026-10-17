@@ -1428,7 +1428,7 @@
       },
       "EvalRecord": {
         "additionalProperties": false,
-        "description": "One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.\n\n``path`` is relative to the hub's ``brain/``. ``acs`` is the AC ids evaluated or ``\"all\"``;\n``evaluated_at`` is the frontmatter's text (an ISO date or time). ``problem`` says why the\nfile could not be read or parsed; its other fields are then empty.",
+        "description": "One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.\n\n``path`` is relative to the hub's ``brain/``. ``acs`` is the AC ids evaluated or ``\"all\"``;\n``evaluated_at`` is the frontmatter's text (an ISO date or time). ``provenance`` says who ran\nit (e.g. ``agent``, ``agent-evaluator``, ``owner``), None when the note does not say.\n``problem`` says why the file could not be read or parsed; its other fields are then empty.",
         "properties": {
           "acs": {
             "anyOf": [
@@ -1489,6 +1489,17 @@
               }
             ],
             "title": "Problem"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance"
           },
           "prs": {
             "items": {
@@ -8616,6 +8627,14 @@
             },
             "title": "Step Types",
             "type": "object"
+          },
+          "steps": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepView"
+            },
+            "title": "Steps",
+            "type": "array"
           }
         },
         "required": [
@@ -9067,6 +9086,56 @@
           }
         ]
       },
+      "WorkflowStepView": {
+        "additionalProperties": false,
+        "description": "A step as the catalog outlines it: declaration order, a repeat's body nested (its ids\nwithout the ``<group>__`` prefix) and its round cap.",
+        "properties": {
+          "body": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepView"
+            },
+            "title": "Body",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "max_iterations": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Iterations"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type"
+        ],
+        "title": "WorkflowStepView",
+        "type": "object"
+      },
       "WorkflowSummary": {
         "additionalProperties": false,
         "description": "A workflow of a project's hub, and where it comes from (``source``). ``step_types``\ncounts every step by type, a ``loop_group``'s body included; ``inputs`` is what a run takes.",
@@ -9119,6 +9188,14 @@
             },
             "title": "Step Types",
             "type": "object"
+          },
+          "steps": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepView"
+            },
+            "title": "Steps",
+            "type": "array"
           }
         },
         "required": [

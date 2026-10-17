@@ -50,6 +50,17 @@ class WorkflowInputView(ViewModel):
     description: str | None = None
 
 
+class WorkflowStepView(ViewModel):
+    """A step as the catalog outlines it: declaration order, a repeat's body nested (its ids
+    without the ``<group>__`` prefix) and its round cap."""
+
+    id: str
+    type: str
+    description: str | None = None
+    max_iterations: int | None = None
+    body: tuple[WorkflowStepView, ...] = ()
+
+
 class WorkflowSummary(ViewModel):
     """A workflow of a project's hub, and where it comes from (``source``). ``step_types``
     counts every step by type, a ``loop_group``'s body included; ``inputs`` is what a run takes."""
@@ -63,6 +74,7 @@ class WorkflowSummary(ViewModel):
     layer_count: int
     step_types: dict[str, int] = Field(default_factory=dict)
     inputs: tuple[WorkflowInputView, ...] = ()
+    steps: tuple[WorkflowStepView, ...] = ()
 
 
 class WorkflowDetail(WorkflowSummary):
@@ -222,7 +234,23 @@ def _summary(
             )
             for name, item in document.inputs.items()
         ),
+        steps=tuple(_outline(document.nodes)),
     )
+
+
+def _outline(nodes: Iterable[object], prefix: str = "") -> Iterator[WorkflowStepView]:
+    """Each step in declaration order, a ``loop_group``'s body nested under it."""
+    for node in nodes:
+        node_id = str(getattr(node, "id", ""))
+        body = getattr(node, "nodes", None)
+        cap = getattr(node, "max_iterations", None)
+        yield WorkflowStepView(
+            id=node_id.removeprefix(prefix),
+            type=str(getattr(node, "type", "unknown")),
+            description=getattr(node, "description", None),
+            max_iterations=cap if isinstance(cap, int) else None,
+            body=tuple(_outline(body, f"{node_id}__")) if isinstance(body, tuple) else (),
+        )
 
 
 def _step_types(nodes: Iterable[object]) -> Iterator[str]:

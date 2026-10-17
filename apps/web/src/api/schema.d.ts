@@ -1884,8 +1884,9 @@ export interface components {
      * @description One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.
      *
      *     ``path`` is relative to the hub's ``brain/``. ``acs`` is the AC ids evaluated or ``"all"``;
-     *     ``evaluated_at`` is the frontmatter's text (an ISO date or time). ``problem`` says why the
-     *     file could not be read or parsed; its other fields are then empty.
+     *     ``evaluated_at`` is the frontmatter's text (an ISO date or time). ``provenance`` says who ran
+     *     it (e.g. ``agent``, ``agent-evaluator``, ``owner``), None when the note does not say.
+     *     ``problem`` says why the file could not be read or parsed; its other fields are then empty.
      */
     EvalRecord: {
       /** Acs */
@@ -1902,6 +1903,8 @@ export interface components {
       path: string;
       /** Problem */
       problem: string | null;
+      /** Provenance */
+      provenance?: string | null;
       /** Prs */
       prs: string[];
       /** Tickets */
@@ -4399,6 +4402,11 @@ export interface components {
       step_types?: {
         [key: string]: number;
       };
+      /**
+       * Steps
+       * @default []
+       */
+      steps: components["schemas"]["WorkflowStepView"][];
     };
     /**
      * WorkflowGate
@@ -4534,6 +4542,26 @@ export interface components {
     };
     WorkflowRunStatus: "running" | components["schemas"]["RunStatus"];
     /**
+     * WorkflowStepView
+     * @description A step as the catalog outlines it: declaration order, a repeat's body nested (its ids
+     *     without the ``<group>__`` prefix) and its round cap.
+     */
+    WorkflowStepView: {
+      /**
+       * Body
+       * @default []
+       */
+      body: components["schemas"]["WorkflowStepView"][];
+      /** Description */
+      description?: string | null;
+      /** Id */
+      id: string;
+      /** Max Iterations */
+      max_iterations?: number | null;
+      /** Type */
+      type: string;
+    };
+    /**
      * WorkflowSummary
      * @description A workflow of a project's hub, and where it comes from (``source``). ``step_types``
      *     counts every step by type, a ``loop_group``'s body included; ``inputs`` is what a run takes.
@@ -4561,6 +4589,11 @@ export interface components {
       step_types?: {
         [key: string]: number;
       };
+      /**
+       * Steps
+       * @default []
+       */
+      steps: components["schemas"]["WorkflowStepView"][];
     };
     agent_hub__core__json_form__JsonValue:
       | {

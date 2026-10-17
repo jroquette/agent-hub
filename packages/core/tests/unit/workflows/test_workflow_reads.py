@@ -120,6 +120,8 @@ def test_counts_steps_by_type_and_lists_inputs_when_listed() -> None:
     assert catalog.problems == ()
     (item,) = catalog.items
     assert item.step_types == {"shell": 1, "loop_group": 1, "agent": 1, "approval": 1}
+    assert [(step.id, step.max_iterations) for step in item.steps] == [("prep", None), ("loop", 2)]
+    assert [step.id for step in item.steps[1].body] == ["work", "ok"]
     assert [(i.name, i.type, i.required, i.description) for i in item.inputs] == [
         ("issue", "string", True, "The issue"),
         ("tries", "integer", False, None),
