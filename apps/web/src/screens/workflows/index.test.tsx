@@ -28,36 +28,27 @@ function renderDetail(reply: ApiRoutes[string] = aWorkflowDetail(), query = "") 
 }
 
 describe("WorkflowsScreen", () => {
-  it("groups the hub's workflows apart from the built-ins, each with its inputs and flow", async () => {
-    renderList();
-
-    const yours = await screen.findByRole("list", { name: "Your workflows" });
-    const own = within(yours).getByRole("listitem");
-    expect(own).toHaveTextContent("feature-flow");
-    expect(own).toHaveTextContent("Starts with feature");
-    expect(within(own).getByRole("img", { name: /Steps: plan, then build/ })).toBeInTheDocument();
-    const builtins = screen.getByRole("list", { name: "Built into agent-hub" });
-    expect(within(builtins).getByText("issue-to-pr")).toBeInTheDocument();
-    expect(within(builtins).getByText(/via/)).toBeInTheDocument();
-  });
-
-  it("says there is no workflow of the hub's own yet", async () => {
+  it("lists the hub's workflows before the built-ins, each with its inputs and shape", async () => {
     renderList({
       "/api/v1/workflows": aWorkflowCatalog({
-        items: [aWorkflowSummary({ name: "review", source: "builtin" })],
-        problems: [],
+        items: [aWorkflowSummary({ name: "review", source: "builtin" }), aWorkflowSummary()],
       }),
     });
 
-    expect(await screen.findByText(/None yet/)).toBeInTheDocument();
+    const list = await screen.findByRole("list", { name: "Workflows" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows[0]).toHaveTextContent("feature-flow");
+    expect(rows[0]).toHaveTextContent("You give it: feature");
+    expect(rows[0]).toHaveTextContent("4 steps · Claude does 1 · stops to ask you");
+    expect(rows[1]).toHaveTextContent("reviewbuilt-in");
   });
 
-  it("explains what a workflow is on demand, with a legend of the step colours", async () => {
+  it("says in one sentence what a workflow is", async () => {
     renderList();
 
-    expect(await screen.findByText("What is a workflow?")).toBeInTheDocument();
-    expect(screen.getByText("AI agent (Claude)")).toBeInTheDocument();
-    expect(screen.getByText("Waits for you")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/A workflow is a job the hub does by itself/),
+    ).toBeInTheDocument();
   });
 
   it("lists the files that do not load with their line and key", async () => {
@@ -72,7 +63,7 @@ describe("WorkflowsScreen", () => {
   it("asks the API for the project in scope", async () => {
     const { requests } = renderList(undefined, "?scope=agent-hub");
 
-    await screen.findByRole("list", { name: "Your workflows" });
+    await screen.findByRole("list", { name: "Workflows" });
     expect(requests.some((r) => r.url.includes("project=agent-hub"))).toBe(true);
   });
 
@@ -80,7 +71,7 @@ describe("WorkflowsScreen", () => {
     const user = userEvent.setup();
     const { router } = renderList();
 
-    await user.click(await screen.findByRole("link", { name: "feature-flow" }));
+    await user.click(await screen.findByRole("link", { name: /^feature-flow/ }));
 
     expect(router.state.location.pathname).toBe("/workflows/agent-hub/feature-flow");
   });

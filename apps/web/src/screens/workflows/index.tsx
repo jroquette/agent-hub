@@ -15,11 +15,16 @@ import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { NodePanel, useNodeParam, WorkflowGraph } from "./WorkflowGraph";
 import { StartRun, startableFromWeb } from "../runs-list/StartRun";
-import { FlowStrip, flowInWords } from "./FlowStrip";
 import { StepList } from "./StepList";
 import "./workflows.css";
-import { useWorkflow, useWorkflows, type WorkflowDetail, type WorkflowSummary } from "./queries";
-import { countLabel, kindCounts, STEP_KINDS, type StepKind } from "./steps";
+import {
+  useWorkflow,
+  useWorkflows,
+  type WorkflowDetail,
+  type WorkflowStep,
+  type WorkflowSummary,
+} from "./queries";
+import { countLabel, kindCounts, STEP_KINDS, stepKind } from "./steps";
 
 /* Workflows (plan 6.3, AC-213.15): the catalog with the files that do not load, and one
  * workflow's layered graph and document, read-only. */
@@ -61,142 +66,60 @@ export function StepChips({ types }: { types: Record<string, number> }) {
   );
 }
 
-const LEGEND: readonly { kind: StepKind; label: string; color: string }[] = [
-  { kind: "agent", label: "AI agent (Claude)", color: "var(--accent)" },
-  { kind: "command", label: "Command or script", color: "var(--border-strong)" },
-  { kind: "approval", label: "Waits for you", color: "var(--waiting)" },
-];
-
-/** One line under the title: the colour of each kind of step, and the longer story on demand. */
-function Legend() {
-  return (
-    <div className="ah-stack" style={{ gap: 8 }}>
-      <div className="wf-legend ah-small ah-muted">
-        {LEGEND.map((item) => (
-          <span key={item.kind} className="ah-row" style={{ gap: 6 }}>
-            <span className="wf-dot" style={{ background: item.color }} />
-            {item.label}
-          </span>
-        ))}
-        <span className="ah-row" style={{ gap: 6 }}>
-          <Icon name="refresh-cw" size="sm" />
-          Steps in a dashed box repeat in rounds
-        </span>
-      </div>
-      <details className="ah-small">
-        <summary style={{ cursor: "pointer", color: "var(--accent)", width: "fit-content" }}>
-          What is a workflow?
-        </summary>
-        <p className="ah-muted" style={{ margin: "8px 0 0", maxWidth: 760 }}>
-          A workflow is a recipe the hub follows on its own, from start to finish, with no one at
-          the keyboard. You give it a few inputs (an issue, a repo), and it runs its steps in order:
-          AI agents write or review code, commands run the tests or git, and some steps stop to ask
-          you. An agent decides <i>how</i> to do its step; the workflow decides <i>which</i> steps
-          happen, in what order, and when to stop. Each start becomes a{" "}
-          <AppLink href="/runs">workflow run</AppLink> you can follow live.
-        </p>
-      </details>
-    </div>
-  );
+/** "8 steps · Claude does 3 · repeats up to 3 times": the shape of a workflow in words. */
+export function shapeInWords(steps: readonly WorkflowStep[]): string {
+  let total = 0;
+  let claude = 0;
+  let asks = 0;
+  let rounds = 0;
+  const walk = (list: readonly WorkflowStep[]) => {
+    for (const step of list) {
+      if (step.type === "loop_group") {
+        rounds = Math.max(rounds, step.max_iterations ?? 0);
+        walk(step.body);
+        continue;
+      }
+      total += 1;
+      const kind = stepKind(step.type);
+      if (kind === "agent") claude += 1;
+      if (kind === "approval" || kind === "wait") asks += 1;
+    }
+  };
+  walk(steps);
+  const parts = [`${String(total)} ${total === 1 ? "step" : "steps"}`];
+  if (claude > 0) parts.push(`Claude does ${String(claude)}`);
+  if (rounds > 0) parts.push(`retries up to ${String(rounds)} times`);
+  parts.push(asks > 0 ? "stops to ask you" : "runs without you");
+  return parts.join(" · ");
 }
 
 function WorkflowRow({ item, showProject }: { item: WorkflowSummary; showProject: boolean }) {
-  const href = workflowHref(item);
   const needs = item.inputs.filter((input) => input.required);
   return (
-    <li className="wf-row">
-      <div className="wf-about ah-stack" style={{ gap: 4, minWidth: 0 }}>
-        <span className="ah-row ah-wrap" style={{ gap: 8 }}>
-          <AppLink href={href} className="wf-name">
-            {item.name}
-          </AppLink>
-          {showProject && <span className="ah-small ah-subtle ah-mono">{item.project}</span>}
-        </span>
-        <span className="ah-muted">{item.description ?? "No description."}</span>
-        <span className="ah-small ah-subtle">
-          {needs.length > 0 ? (
-            <>
-              Starts with{" "}
-              {needs.map((input, index) => (
-                <span key={input.name}>
-                  {index > 0 && ", "}
-                  <span className="ah-mono" title={input.description ?? undefined}>
-                    {input.name}
-                  </span>
-                </span>
-              ))}
-            </>
-          ) : (
-            "Takes no input"
-          )}
-        </span>
-      </div>
-      <FlowStrip steps={item.steps} label={`Steps: ${flowInWords(item.steps)}`} />
-      <div className="wf-actions">
-        {startableFromWeb(item.name) ? (
-          <StartRun
-            project={item.project}
-            workflow={{ project: item.project, name: item.name }}
-            label="Run"
-            size="sm"
-            variant="default"
-          />
-        ) : (
-          <span
-            className="ah-small ah-subtle"
-            title="It writes to the tracker: start it with hub run"
-          >
-            via <code className="ah-mono">hub run</code>
+    <li>
+      <AppLink href={workflowHref(item)} className="wf-row">
+        <span className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
+          <span className="ah-row" style={{ gap: 8 }}>
+            <span className="wf-name">{item.name}</span>
+            {item.source === "builtin" && <span className="ah-small ah-subtle">built-in</span>}
+            {showProject && <span className="ah-small ah-subtle">· {item.project}</span>}
           </span>
-        )}
-        <AppLink className="ah-btn ah-btn-sm" href={href} aria-label={`Details of ${item.name}`}>
-          Details
-          <Icon name="arrow-right" size="sm" />
-        </AppLink>
-      </div>
+          <span className="ah-muted">{item.description ?? "No description."}</span>
+          <span className="ah-small ah-subtle">
+            {needs.length > 0
+              ? `You give it: ${needs.map((input) => input.name).join(", ")}`
+              : "Takes no input"}
+            {" · "}
+            {shapeInWords(item.steps)}
+          </span>
+        </span>
+        <Icon name="chevron-right" className="wf-chevron" />
+      </AppLink>
     </li>
   );
 }
 
-function Group({
-  title,
-  hint,
-  items,
-  showProject,
-  empty,
-}: {
-  title: string;
-  hint: string;
-  items: WorkflowSummary[];
-  showProject: boolean;
-  empty?: ReactNode;
-}) {
-  return (
-    <section aria-label={title} className="ah-stack" style={{ gap: 8, marginTop: 12 }}>
-      <div className="ah-row ah-wrap" style={{ gap: 8, alignItems: "baseline" }}>
-        <h2 className="ah-h3" style={{ margin: 0 }}>
-          {title}
-        </h2>
-        <span className="ah-small ah-subtle">{hint}</span>
-      </div>
-      {items.length === 0 ? (
-        empty
-      ) : (
-        <ul className="wf-list" aria-label={title}>
-          {items.map((item) => (
-            <WorkflowRow
-              key={`${item.project}/${item.name}`}
-              item={item}
-              showProject={showProject}
-            />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-/** The catalog: the hub's own workflows, then the built-ins, and the files that do not load. */
+/** The catalog: what a workflow is in one sentence, the workflows, and the files that do not load. */
 export function WorkflowsScreen() {
   const [scope] = useScope();
   const catalog = useWorkflows(scope);
@@ -222,33 +145,23 @@ export function WorkflowsScreen() {
       </div>
     );
   } else {
-    const { items, problems } = catalog.data;
+    const { problems } = catalog.data;
+    // The hub's own first, then the built-ins.
+    const items = [...catalog.data.items].sort(
+      (x, y) => Number(x.source === "builtin") - Number(y.source === "builtin"),
+    );
     const showProject = new Set(items.map((item) => item.project)).size > 1;
     content = (
       <>
-        <Group
-          title="Your workflows"
-          hint="Files in the hub's workflows/ folder."
-          items={items.filter((item) => item.source === "hub")}
-          showProject={showProject}
-          empty={
-            <div className="ah-card ah-card-body ah-row ah-wrap" style={{ gap: 12 }}>
-              <span className="ah-small ah-muted ah-grow">
-                None yet. Describe one and Claude writes it, or copy a built-in to change it.
-              </span>
-              <AppLink className="ah-btn ah-btn-sm" href="/workflows/new">
-                <Icon name="plus" size="sm" />
-                New workflow
-              </AppLink>
-            </div>
-          }
-        />
-        <Group
-          title="Built into agent-hub"
-          hint="Ready to use; a hub file with the same name replaces one."
-          items={items.filter((item) => item.source === "builtin")}
-          showProject={showProject}
-        />
+        <ul className="wf-list" aria-label="Workflows">
+          {items.map((item) => (
+            <WorkflowRow
+              key={`${item.project}/${item.name}`}
+              item={item}
+              showProject={showProject}
+            />
+          ))}
+        </ul>
         {problems.length > 0 && (
           <DataTable
             caption="Files that do not load"
@@ -284,20 +197,18 @@ export function WorkflowsScreen() {
   return (
     <Page>
       <div className="ah-row ah-wrap" style={{ gap: 12, alignItems: "flex-start" }}>
-        <div className="ah-stack ah-grow" style={{ gap: 4 }}>
-          <h1 className="ah-h1">Workflows</h1>
-          <p className="ah-muted" style={{ margin: 0 }}>
-            Automations the hub runs on its own, step by step: you give the inputs, it does the
-            rest.
-          </p>
-        </div>
+        <h1 className="ah-h1 ah-grow">Workflows</h1>
         <AppLink className="ah-btn" href="/workflows/new">
           <Icon name="plus" />
           New workflow
         </AppLink>
-        <StartRun project={scope} />
       </div>
-      <Legend />
+      <p className="ah-muted" style={{ margin: 0, maxWidth: 720 }}>
+        A workflow is a job the hub does by itself, from start to finish. You give it a task, such
+        as an issue; it runs a fixed list of steps (Claude writes or reviews code, commands run the
+        tests) and hands back a result, such as a pull request. You follow each one in{" "}
+        <AppLink href="/runs">Workflow runs</AppLink>.
+      </p>
       {content}
     </Page>
   );
