@@ -129,3 +129,38 @@ def test_refuses_change_when_version_frozen() -> None:
 
     with pytest.raises(ValidationError, match="frozen"):
         version.seq = 2  # type: ignore[misc]
+
+
+def test_keeps_draft_id_when_publish_from_draft() -> None:
+    author = VersionAuthor(name="Jane Doe", email="jane@example.com")
+
+    version = _new(origin=VersionOrigin.PUBLISH, author=author, draft_id="agent-a1b2c3")
+
+    assert version.draft_id == "agent-a1b2c3"
+    assert _new().draft_id is None
+
+
+@pytest.mark.parametrize("origin", [VersionOrigin.EXTERNAL, VersionOrigin.RESTORE])
+def test_refuses_draft_id_when_origin_not_publish(origin: VersionOrigin) -> None:
+    restore = origin is VersionOrigin.RESTORE
+    author = VersionAuthor(name="Jane Doe", email="jane@example.com") if restore else None
+    restored_from = "0199f0a0-0000-7000-8000-000000000001" if restore else None
+
+    with pytest.raises(ValidationError, match="draft_id"):
+        _new(
+            origin=origin,
+            seq=2 if restore else 1,
+            first=not restore,
+            author=author,
+            restored_from=restored_from,
+            draft_id="agent-a1b2c3",
+        )
+    with pytest.raises(ValidationError, match="draft_id"):
+        an_item_version(
+            origin=origin,
+            seq=2 if restore else 1,
+            first=not restore,
+            author=author,
+            restored_from=restored_from,
+            draft_id="agent-a1b2c3",
+        )
