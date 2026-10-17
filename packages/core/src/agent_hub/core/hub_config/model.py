@@ -30,7 +30,9 @@ from agent_hub.core.hub_config.environments import (
     MAX_BLOCKED_GLOBS,
     MAX_BLOCKED_WORDS,
     BlockedWord,
+    Environments,
     EnvVarPattern,
+    Services,
     WordFileGlob,
 )
 from agent_hub.core.hub_config.model_tiers import Models
@@ -368,6 +370,11 @@ class Repo(ConfigObject):
     conventions: Conventions | None = absent_by_default(
         description="Overrides project.conventions key by key."
     )
+    services: Services = Field(
+        default_factory=dict,
+        description="The services the repo runs, keyed by name, with their endpoints"
+        " (docs/design/environments.md).",
+    )
 
 
 def _python_regex(value: str) -> str:
@@ -528,6 +535,11 @@ class HubConfig(ConfigObject):
     doctor: Doctor = Field(default_factory=Doctor)
     # A factory, not an instance: the schema would export its unset keys as nulls.
     models: Models = Field(default_factory=Models)
+    environments: Environments = Field(
+        default_factory=dict,
+        description="The environments agents may reach, keyed by name, and what they may do"
+        " there (docs/design/environments.md).",
+    )
 
     def default_branch_for(self, repo_dir: str) -> str:
         """The effective default branch of the repo at ``repo_dir``: its own, else the project's.
@@ -566,14 +578,54 @@ class HubConfig(ConfigObject):
 
     def cross_field_problems(self) -> list[InitErrorDetails]:
         """Unique repo dirs, known guard roots and contract-sync repos, rules of chosen modules,
-        and an explicit ``pr_title`` that its repo's ``commit_title`` cannot fill."""
+        an explicit ``pr_title`` that its repo's ``commit_title`` cannot fill, and environment
+        names unique ignoring case with every endpoint on a declared one."""
         return [
             *self._duplicate_repo_dirs(),
             *self._unknown_guard_roots(),
             *self._contract_sync_repos(),
             *self._rules_of_unselected_modules(),
             *self._unfillable_pr_titles(),
+            *self._environment_problems(),
         ]
+
+    def _environment_problems(self) -> Iterator[InitErrorDetails]:
+        # Names unique ignoring case (a profile or a folder may be named after one), and each
+        # endpoint on a declared environment.
+        first_name: dict[str, str] = {}
+        for name in self.environments:
+            folded = name.lower()
+            if folded in first_name:
+                yield InitErrorDetails(
+                    type=PydanticCustomError(
+                        "duplicate_environment",
+                        "environment name {name} is already used by {first}, ignoring case",
+                        {"name": json.dumps(name), "first": json.dumps(first_name[folded])},
+                    ),
+                    loc=("environments", name),
+                    input=name,
+                )
+            first_name.setdefault(folded, name)
+        for index, repo in enumerate(self.repos):
+            for service_name, service in repo.services.items():
+                for environment in service.endpoints:
+                    if environment not in self.environments:
+                        yield InitErrorDetails(
+                            type=PydanticCustomError(
+                                "unknown_environment",
+                                "environment {name} is not in environments",
+                                {"name": json.dumps(environment)},
+                            ),
+                            loc=(
+                                "repos",
+                                index,
+                                "services",
+                                service_name,
+                                "endpoints",
+                                environment,
+                            ),
+                            input=environment,
+                        )
 
     def _unfillable_pr_titles(self) -> Iterator[InitErrorDetails]:
         # Per repo, on the effective patterns; an unset pr_title is the commit_title, so only an
