@@ -63,7 +63,7 @@ export type FeedItem =
       more: number;
       /** The whole output, for the expanded view. */
       output: string | null;
-      /** A subagent's latest calls, and how many it made in all. */
+      /** A subagent's calls, oldest first. */
       children: FeedItem[];
       childCount: number;
     };
@@ -113,6 +113,7 @@ function turnStart(state: TranscriptState): string | null {
 
 export const FEED_MAX = 40;
 export const PREVIEW_LINES = 4;
+/** A running subagent shows its latest calls, this many. */
 export const SUBAGENT_SHOWN = 3;
 
 function digest(tool: ToolView, text: string | null): string | null {
@@ -138,7 +139,7 @@ function toolItem(state: TranscriptState, tool: ToolView, live: boolean): FeedIt
   const preview = short !== null ? [short] : lines.slice(0, PREVIEW_LINES);
   const more = short !== null ? 0 : Math.max(0, lines.length - PREVIEW_LINES);
   const childIds = state.children[tool.id] ?? [];
-  const children = childIds.slice(-SUBAGENT_SHOWN).flatMap((id) => {
+  const children = childIds.flatMap((id) => {
     const child = state.tools[id];
     return child ? [toolItem(state, child, live)] : [];
   });
@@ -173,6 +174,51 @@ export function turnFeed(
     return tool ? [toolItem(state, tool, live)] : [];
   });
   return { feed: items.slice(-max), earlier: Math.max(0, items.length - max) };
+}
+
+export type TurnEnd = "running" | "finished" | "interrupted" | "ended" | "failed";
+
+export interface TurnSteps {
+  /** What runs now; null once the turn is over. */
+  activity: LiveActivity | null;
+  feed: FeedItem[];
+  earlier: number;
+  /** How the last turn stands; null before the first turn. */
+  end: TurnEnd | null;
+  /** How long the last turn took, once it is over (ms). */
+  tookMs: number | null;
+}
+
+/** Steps the drawer keeps, oldest dropped first. */
+export const STEPS_MAX = 200;
+
+/** The Steps drawer's content: the open turn, else the last one and how it ended. */
+export function turnSteps(state: TranscriptState): TurnSteps {
+  const activity = liveActivity(state);
+  const start = turnIndex(state, true);
+  const user = state.entries[start];
+  if (user?.kind !== "user") return { activity, feed: [], earlier: 0, end: null, tookMs: null };
+  const { feed, earlier } = turnFeed(state, { ended: true, max: STEPS_MAX });
+  if (activity) return { activity, feed, earlier, end: "running", tookMs: null };
+  const end: TurnEnd =
+    state.status === "failed"
+      ? "failed"
+      : state.status === "ended"
+        ? "ended"
+        : state.entries
+              .slice(start)
+              .some(
+                (entry) =>
+                  entry.kind === "notice" &&
+                  entry.tone === "warning" &&
+                  entry.text === "You interrupted the turn",
+              )
+          ? "interrupted"
+          : "finished";
+  const from = Date.parse(user.at);
+  const to = state.lastAt ? Date.parse(state.lastAt) : Number.NaN;
+  const tookMs = Number.isNaN(from) || Number.isNaN(to) ? null : Math.max(0, to - from);
+  return { activity, feed, earlier, end, tookMs };
 }
 
 /** What the session is doing now; null when no turn runs (idle, ended, failed). */

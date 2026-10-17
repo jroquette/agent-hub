@@ -9,9 +9,11 @@ import {
   elapsed,
   QUIET_MS,
   STALLED_MS,
+  SUBAGENT_SHOWN,
   type FeedItem,
   type LiveActivity,
   type LivePhase,
+  type TurnSteps,
 } from "./liveActivity";
 
 const PHASE: Record<LivePhase, { icon: IconName; text: string }> = {
@@ -68,9 +70,7 @@ function Output({ item }: { item: ToolItem }) {
   }
   return (
     <div className="as-feed-out">
-      <pre className={cx("as-feed-pre", item.state === "error" && "as-feed-error")}>
-        {item.preview.join("\n")}
-      </pre>
+      <pre className="as-feed-pre">{item.preview.join("\n")}</pre>
       {item.more > 0 && (
         <button
           type="button"
@@ -86,48 +86,107 @@ function Output({ item }: { item: ToolItem }) {
   );
 }
 
-function FeedRow({ item, now }: { item: FeedItem; now: number }) {
-  if (item.kind === "thinking") {
-    return (
-      <li className="as-feed-item as-feed-thinking">
-        <div className="as-feed-call">
-          <span className="as-feed-mark" aria-hidden>
-            ✻
-          </span>
-          <span className="ah-muted">
-            {item.seconds === null ? "Thought" : `Thought for ${String(item.seconds)} s`}
-          </span>
-        </div>
-      </li>
-    );
-  }
-  const ran = item.state === "running" ? since(item.tool.startedAt, now) : null;
-  const hidden = item.childCount - item.children.length;
+/** Scrolls the conversation to a request's card and puts the keyboard on it. */
+function showRequest(id: string) {
+  const card = Array.from(document.querySelectorAll<HTMLElement>("[data-request-id]")).find(
+    (element) => element.dataset.requestId === id,
+  );
+  if (!card) return;
+  card.scrollIntoView({ block: "center" });
+  (card.querySelector<HTMLElement>("button:not(:disabled)") ?? card).focus({ preventScroll: true });
+}
+
+function ThoughtRow({ seconds }: { seconds: number | null }) {
   return (
-    <li className={cx("as-feed-item", `as-feed-${item.state}`)}>
+    <li className="as-feed-item as-feed-thinking">
       <div className="as-feed-call">
         <span className="as-feed-mark" aria-hidden>
-          ●
+          ✻
         </span>
-        <b>{item.tool.name}</b>
-        {item.summary && (
-          <span className="as-feed-summary ah-mono" title={item.summary}>
-            ({item.summary})
-          </span>
-        )}
-        {ran !== null && <span className="ah-subtle ah-num">running {elapsed(ran)}</span>}
-        {item.state === "waiting" && <span className="as-live-quiet">waiting for you</span>}
-        {item.state === "denied" && <span className="ah-subtle">denied</span>}
+        <span className="ah-muted">
+          {seconds === null ? "Thought" : `Thought for ${String(seconds)} s`}
+        </span>
       </div>
-      <Output item={item} />
-      {item.children.length > 0 && (
+    </li>
+  );
+}
+
+function FeedRow({ item, now }: { item: FeedItem; now: number }) {
+  // A running subagent starts open on its latest calls; a finished one starts closed.
+  const [open, setOpen] = useState<boolean | null>(null);
+  const [all, setAll] = useState(false);
+  if (item.kind === "thinking") return <ThoughtRow seconds={item.seconds} />;
+  const ran = item.state === "running" ? since(item.tool.startedAt, now) : null;
+  const group = item.childCount > 0;
+  const expanded = open ?? item.state === "running";
+  const shown = all ? item.children : item.children.slice(-SUBAGENT_SHOWN);
+  const hidden = item.children.length - shown.length;
+  const uses = `${String(item.childCount)} tool ${item.childCount === 1 ? "use" : "uses"}`;
+  const call = (
+    <>
+      <span className="as-feed-mark" aria-hidden>
+        ●
+      </span>
+      <b>{item.tool.name}</b>
+      {item.summary && (
+        <span className="as-feed-summary ah-mono" title={item.summary}>
+          ({item.summary})
+        </span>
+      )}
+      {group && <span className="ah-subtle ah-num">· {uses}</span>}
+      {ran !== null && <span className="ah-subtle ah-num">running {elapsed(ran)}</span>}
+      {item.state === "error" && <span className="ah-subtle">didn't work, Claude moved on</span>}
+      {item.state === "denied" && <span className="ah-subtle">denied</span>}
+    </>
+  );
+  return (
+    <li className={cx("as-feed-item", `as-feed-${item.state}`)}>
+      {group ? (
+        <button
+          type="button"
+          className="as-feed-call as-feed-group"
+          aria-expanded={expanded}
+          onClick={() => {
+            setOpen(!expanded);
+          }}
+        >
+          <Icon name={expanded ? "chevron-down" : "chevron-right"} size="sm" />
+          {call}
+        </button>
+      ) : (
+        <div className="as-feed-call">{call}</div>
+      )}
+      {item.state === "waiting" && (
+        <div className="as-feed-out">
+          <span className="as-live-quiet">Waiting for you</span>{" "}
+          <button
+            type="button"
+            className="as-feed-more"
+            onClick={() => {
+              showRequest(item.tool.id);
+            }}
+          >
+            Show request
+          </button>
+        </div>
+      )}
+      {(!group || expanded) && <Output item={item} />}
+      {group && expanded && (
         <ul className="as-feed as-feed-nested">
           {hidden > 0 && (
-            <li className="as-feed-earlier ah-subtle">
-              +{hidden} more tool {hidden === 1 ? "use" : "uses"}
+            <li>
+              <button
+                type="button"
+                className="as-feed-more"
+                onClick={() => {
+                  setAll(true);
+                }}
+              >
+                +{hidden} more tool {hidden === 1 ? "use" : "uses"}
+              </button>
             </li>
           )}
-          {item.children.map((child) => (
+          {shown.map((child) => (
             <FeedRow key={child.key} item={child} now={now} />
           ))}
         </ul>
@@ -147,18 +206,14 @@ function quietness(activity: LiveActivity, now: number) {
 }
 
 function QuietLabel({ activity, now }: { activity: LiveActivity; now: number }) {
-  const { quiet, stalled, isQuiet, running } = quietness(activity, now);
-  if (quiet === null) return null;
+  const { quiet, stalled, isQuiet } = quietness(activity, now);
+  if (quiet === null || !isQuiet) return null;
   return (
     <span
-      className={cx("ah-num", stalled ? "as-live-stuck" : isQuiet ? "as-live-quiet" : "ah-subtle")}
+      className="ah-subtle ah-num"
       title="Time since the session's last record. A long command or subagent can be quiet for minutes."
     >
-      {stalled
-        ? `no event for ${elapsed(quiet)}`
-        : isQuiet
-          ? `quiet for ${elapsed(quiet)}${running ? ", a call is still running" : ""}`
-          : `last event ${elapsed(quiet)} ago`}
+      {stalled ? `no news for ${elapsed(quiet)}` : `quiet for ${elapsed(quiet)}`}
     </span>
   );
 }
@@ -168,15 +223,15 @@ function StallNotice({ activity, now }: { activity: LiveActivity; now: number })
   if (!stalled || quiet === null) return null;
   return (
     <p className="as-live-stall ah-small">
-      <Icon name="triangle-alert" size="sm" /> No record for {elapsed(quiet)} and nothing running:
-      Claude may be stuck. Stop ends the turn; your next message resumes the session.
+      <Icon name="info" size="sm" /> No news from Claude for {elapsed(quiet)}. It may have stopped
+      responding: press Stop, then send your message again.
     </p>
   );
 }
 
 export interface LiveActivityBarProps {
   activity: LiveActivity | null;
-  /** Whether the Live activity drawer is open. */
+  /** Whether the Steps drawer is open. */
   open: boolean;
   onToggle: () => void;
 }
@@ -184,8 +239,8 @@ export interface LiveActivityBarProps {
 /**
  * One line above the composer while a turn runs: what Claude does now (thinking, a tool,
  * subagents, waiting for you), how many steps so far, how long the turn has run and how long since
- * the last record, so a long quiet stretch never reads as a dead session. It opens the Live
- * activity drawer, where the steps and their output are.
+ * the last record, so a long quiet stretch never reads as a dead session. It opens the Steps
+ * drawer, where the calls and their output are.
  */
 export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarProps) {
   const now = useNow(1000);
@@ -199,8 +254,6 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
       : activity.phase === "tool"
         ? activity.calls[0]?.label
         : activity.todo;
-  const total = activity.feed.length + activity.earlier;
-
   return (
     <section
       className={cx("as-live", `as-live-${activity.phase}`, stalled && "as-live-stalled")}
@@ -212,24 +265,19 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
         className="as-live-bar ah-small"
         onClick={onToggle}
         aria-expanded={open}
-        aria-controls={open ? LIVE_PANEL_ID : undefined}
-        title={open ? "Close the Live activity panel" : "Open the turn's steps and their output"}
+        aria-controls={open ? STEPS_PANEL_ID : undefined}
+        aria-keyshortcuts={STEPS_KEYS}
+        title={
+          open
+            ? `Hide the turn's steps (${STEPS_KEY_LABEL})`
+            : `Show the turn's steps (${STEPS_KEY_LABEL})`
+        }
       >
         <span className="as-live-pulse" aria-hidden />
         <Icon name={PHASE[activity.phase].icon} size="sm" />
         <b>{headline(activity)}</b>
         {detail && <span className="as-live-detail ah-muted">{detail}</span>}
         <span className="ah-grow" />
-        {activity.todo && activity.phase !== "thinking" && activity.phase !== "planning" && (
-          <span className="as-live-todo ah-muted" title="Todo in progress">
-            <Icon name="list-todo" size="sm" /> {activity.todo}
-          </span>
-        )}
-        {total > 0 && (
-          <span className="ah-subtle ah-num">
-            {total} {total === 1 ? "step" : "steps"}
-          </span>
-        )}
         {turn !== null && (
           <span className="ah-muted ah-num" title="Time since your message started this turn">
             <Icon name="timer" size="sm" /> {elapsed(turn)}
@@ -237,36 +285,82 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
         )}
         <QuietLabel activity={activity} now={now} />
         <span className="as-live-open-label">
-          <Icon name="panel-left" size="sm" /> {open ? "Hide steps" : "Show steps"}
+          {open ? "Hide steps" : "Show steps"}
+          <Icon name={open ? "chevron-right" : "chevron-left"} size="sm" />
         </span>
       </button>
     </section>
   );
 }
 
-/** The DOM id of the Live activity drawer, for the bar's `aria-controls`. */
-export const LIVE_PANEL_ID = "as-live-panel";
+/** The DOM id of the Steps drawer, for its toggles' `aria-controls`. */
+export const STEPS_PANEL_ID = "as-live-panel";
+/** The chord that shows or hides the Steps drawer (Ctrl is Cmd on a Mac). */
+export const STEPS_KEYS = "Control+Alt+Period Meta+Alt+Period";
+export const STEPS_KEY_LABEL = "Ctrl Alt .";
 
-export interface LiveActivityPanelProps {
-  /** What runs now; null once the turn ended. */
-  activity: LiveActivity | null;
-  /** The steps shown: the open turn's, else the last turn's. */
-  feed: FeedItem[];
-  earlier: number;
+export interface StepsToggleProps {
+  steps: TurnSteps;
+  open: boolean;
+  onToggle: () => void;
+}
+
+/** The header's way to the Steps drawer, beside Review changes: a pulse while the turn runs. */
+export function StepsToggle({ steps, open, onToggle }: StepsToggleProps) {
+  if (steps.end === null) return null;
+  const total = steps.feed.length + steps.earlier;
+  const running = steps.activity !== null;
+  return (
+    <button
+      type="button"
+      className={cx("as-files-chip", open && "as-files-chip-open")}
+      aria-expanded={open}
+      aria-controls={open ? STEPS_PANEL_ID : undefined}
+      aria-keyshortcuts={STEPS_KEYS}
+      aria-label={`Steps, ${String(total)}${running ? ", turn running" : ""}`}
+      title={`${open ? "Hide" : "Show"} the turn's steps (${STEPS_KEY_LABEL})`}
+      onClick={onToggle}
+    >
+      {running ? <span className="as-live-pulse" aria-hidden /> : <Icon name="list" size="sm" />}
+      <span>Steps</span>
+      <span className="as-files-chip-count ah-num">{total}</span>
+    </button>
+  );
+}
+
+function stepsHeadline(steps: TurnSteps): string {
+  const took = steps.tookMs === null ? "" : ` in ${elapsed(steps.tookMs)}`;
+  switch (steps.end) {
+    case "interrupted":
+      return `Turn interrupted${steps.tookMs === null ? "" : ` after ${elapsed(steps.tookMs)}`}`;
+    case "ended":
+      return "Session ended";
+    case "failed":
+      return "Session failed";
+    default:
+      return `Turn finished${took}`;
+  }
+}
+
+export interface StepsPanelProps {
+  steps: TurnSteps;
   onClose: () => void;
 }
 
 /**
- * The turn's steps beside the conversation, as Claude Code prints them: each thought, each call and
- * the first lines of its output (all of it on demand), a subagent with its latest calls. It
- * follows new steps unless you scrolled up; Esc or Close shuts it.
+ * The turn's steps beside the conversation, as Claude Code prints them: what runs now pinned on
+ * top, then each thought and each call with the first lines of its output (all of it on demand), a
+ * subagent as a group of its own calls. It follows new steps unless you scrolled up; Esc or Close
+ * shuts it. Earlier turns stay in the conversation's activity lines.
  */
-export function LiveActivityPanel({ activity, feed, earlier, onClose }: LiveActivityPanelProps) {
+export function StepsPanel({ steps, onClose }: StepsPanelProps) {
   const now = useNow(1000);
   const heading = useRef<HTMLHeadingElement>(null);
   const list = useRef<HTMLOListElement | null>(null);
-  const pinned = useRef(true);
+  const [pinned, setPinned] = useState(true);
+  const [seen, setSeen] = useState(steps.feed.length);
   const drawer = useDrawerWidth();
+  const { activity, feed, earlier } = steps;
   const lastKey = feed.at(-1)?.key;
   useEffect(() => {
     heading.current?.focus({ preventScroll: true });
@@ -274,8 +368,10 @@ export function LiveActivityPanel({ activity, feed, earlier, onClose }: LiveActi
   // New steps keep the list at its end, unless the reader scrolled up in it.
   useEffect(() => {
     const element = list.current;
-    if (element && pinned.current) element.scrollTop = element.scrollHeight;
-  }, [feed.length, lastKey]);
+    if (element && pinned) element.scrollTop = element.scrollHeight;
+  }, [feed.length, lastKey, pinned]);
+  if (pinned && seen !== feed.length) setSeen(feed.length);
+  const unseen = pinned ? 0 : Math.max(0, feed.length - seen);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "Escape" || event.shiftKey) return;
     event.preventDefault();
@@ -289,51 +385,76 @@ export function LiveActivityPanel({ activity, feed, earlier, onClose }: LiveActi
     // Esc closes it from anywhere inside.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <aside
-      id={LIVE_PANEL_ID}
+      id={STEPS_PANEL_ID}
       className="as-drawer as-live-panel"
       style={drawer.style}
-      aria-labelledby={`${LIVE_PANEL_ID}-title`}
+      aria-labelledby={`${STEPS_PANEL_ID}-title`}
       onKeyDown={onKeyDown}
     >
       <div {...drawer.handle} />
       <div className="as-activity-panel-head">
-        <Icon name="activity" size="sm" />
+        <Icon name="list" size="sm" />
         <h2
           ref={heading}
-          id={`${LIVE_PANEL_ID}-title`}
+          id={`${STEPS_PANEL_ID}-title`}
           tabIndex={-1}
           className="ah-h3"
           style={{ margin: 0 }}
         >
-          Live activity
+          Steps
         </h2>
-        <span className="ah-small ah-muted">
-          {activity ? "This turn" : "Last turn"} · {total} {total === 1 ? "step" : "steps"}
+        <span className="ah-small ah-muted ah-num">
+          {total} {total === 1 ? "step" : "steps"}
         </span>
         <span className="ah-grow" />
+        <Button
+          size="sm"
+          variant="ghost"
+          icon="maximize-2"
+          aria-pressed={drawer.wide}
+          onClick={drawer.toggleWide}
+        >
+          {drawer.wide ? "Narrow" : "Widen"}
+        </Button>
         <Button size="sm" variant="ghost" icon="x" onClick={onClose}>
           Close
         </Button>
       </div>
-      {activity && (
-        <div className="as-live-panel-now ah-small" role="status">
-          <span className="as-live-pulse" aria-hidden />
-          <b>{headline(activity)}</b>
-          <span className="ah-grow" />
-          {turn !== null && (
-            <span className="ah-muted ah-num">
-              <Icon name="timer" size="sm" /> {elapsed(turn)}
-            </span>
-          )}
-          <QuietLabel activity={activity} now={now} />
-        </div>
-      )}
+      <div className="as-live-panel-now ah-small">
+        {activity ? (
+          <>
+            <span className="as-live-pulse" aria-hidden />
+            <b>{headline(activity)}</b>
+            <span className="ah-grow" />
+            {turn !== null && (
+              <span className="ah-muted ah-num">
+                <Icon name="timer" size="sm" /> {elapsed(turn)}
+              </span>
+            )}
+            <QuietLabel activity={activity} now={now} />
+          </>
+        ) : (
+          <>
+            <Icon
+              name={
+                steps.end === "failed"
+                  ? "circle-x"
+                  : steps.end === "interrupted"
+                    ? "circle-stop"
+                    : "circle-check"
+              }
+              size="sm"
+            />
+            <b>{stepsHeadline(steps)}</b>
+          </>
+        )}
+      </div>
       {activity && <StallNotice activity={activity} now={now} />}
       {total === 0 ? (
         <p className="ah-muted as-files-empty">
           {activity
-            ? "No step yet: Claude is reading your message."
-            : "No turn yet. Send a message and its steps show here."}
+            ? "No steps yet. Claude's calls and thoughts show here as they happen."
+            : "No steps in the last turn: Claude answered without a call."}
         </p>
       ) : (
         <ol
@@ -342,7 +463,7 @@ export function LiveActivityPanel({ activity, feed, earlier, onClose }: LiveActi
           aria-label="Steps"
           onScroll={(event) => {
             const element = event.currentTarget;
-            pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+            setPinned(element.scrollHeight - element.scrollTop - element.clientHeight < 24);
           }}
         >
           {earlier > 0 && (
@@ -354,6 +475,23 @@ export function LiveActivityPanel({ activity, feed, earlier, onClose }: LiveActi
             <FeedRow key={item.key} item={item} now={now} />
           ))}
         </ol>
+      )}
+      {!pinned && (
+        <button
+          type="button"
+          className="as-steps-jump ah-small"
+          aria-label={unseen > 0 ? `Jump to latest, ${String(unseen)} new` : "Jump to latest"}
+          onClick={() => {
+            const element = list.current;
+            if (element) element.scrollTop = element.scrollHeight;
+            setPinned(true);
+          }}
+        >
+          <Icon name="arrow-down" size="sm" />
+          <span aria-hidden="true">
+            {unseen > 0 ? `Jump to latest · ${String(unseen)} new` : "Jump to latest"}
+          </span>
+        </button>
       )}
     </aside>
   );

@@ -39,6 +39,7 @@ describe("ShortcutSheet (chat-shortcuts)", () => {
       "Deny oldest: Ctrl Alt ⌫",
       "Allow / deny focused: a d",
       "Focus message: Shift Esc",
+      "Show / hide steps: Ctrl Alt .",
       "Recall last prompt: ↑",
       "Stop (empty box): Esc",
     ]);

@@ -2253,14 +2253,41 @@ body.as-resizing .as-drawer {
 .as-live-quiet {
   color: var(--waiting);
 }
-.as-live-stalled {
-  border-color: var(--failed);
+.as-feed-group {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 24px;
 }
+.as-feed-group:hover b {
+  color: var(--accent);
+}
+.as-steps-jump {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-overlay);
+  color: var(--text);
+  font: inherit;
+  box-shadow: var(--shadow-popover);
+  cursor: pointer;
+}
+/* No news for a while: calm, not an alarm. The pulse stops and greys out. */
 .as-live-stalled .as-live-pulse {
-  background: var(--failed);
-}
-.as-live-stuck {
-  color: var(--failed);
+  background: var(--idle);
+  animation: none;
 }
 .as-live-stall {
   display: flex;
@@ -2269,8 +2296,8 @@ body.as-resizing .as-drawer {
   margin: 0;
   padding: 6px var(--space-3);
   border-bottom: 1px solid var(--border);
-  background: var(--failed-soft);
-  color: var(--failed);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
 }
 
 /* The turn's steps, as Claude Code prints them: `● Tool(input)`, then `⎿` and its output. */
@@ -2337,7 +2364,7 @@ body.as-resizing .as-drawer {
 }
 .as-feed-error > .as-feed-call .as-feed-mark,
 .as-feed-denied > .as-feed-call .as-feed-mark {
-  color: var(--failed);
+  color: var(--text-subtle);
 }
 .as-feed-thinking .as-feed-mark {
   color: var(--ev-reasoning);
@@ -2370,9 +2397,6 @@ body.as-resizing .as-drawer {
   color: var(--text-muted);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-.as-feed-pre.as-feed-error {
-  color: var(--failed);
 }
 .as-feed-pre.as-feed-full {
   max-height: 320px;

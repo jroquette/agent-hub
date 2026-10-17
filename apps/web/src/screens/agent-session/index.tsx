@@ -19,8 +19,9 @@ import { sessionControlUnavailable } from "../sessions-list/control";
 import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
-import { liveActivity, turnFeed } from "./liveActivity";
-import { LiveActivityBar, LiveActivityPanel } from "./LiveActivityBar";
+import { liveActivity, turnSteps } from "./liveActivity";
+import { LiveActivityBar, StepsPanel, StepsToggle } from "./LiveActivityBar";
+import { readStored, writeStored } from "../../lib/storage";
 import { CostMeter } from "./CostMeter";
 import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
 import { useResolvedThreads } from "./ReviewDiff";
@@ -110,6 +111,26 @@ function useChatKeys(pending: readonly string[], composer: { current: HTMLElemen
   }, [composer]);
 }
 
+/** Whether the Steps drawer was left open, in this browser. */
+const STEPS_OPEN_KEY = "ah.chat.steps";
+
+/** Ctrl/Cmd+Alt+. shows or hides the Steps drawer, from anywhere on the page (the key's code:
+ * Option+. types "≥" on a Mac). */
+function useStepsKey(toggle: () => void) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.repeat || event.isComposing || event.defaultPrevented || modalOpen()) return;
+      if (!event.altKey || !(event.ctrlKey || event.metaKey) || event.code !== "Period") return;
+      event.preventDefault();
+      toggle();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [toggle]);
+}
+
 /**
  * The chat view of a session `hub web` drives (D10, `/agent-sessions/:id`): the snapshot and the
  * log, then the live stream; the transcript, todos, cost meter, status, permission cards and the
@@ -135,7 +156,9 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
-  const [liveOpen, setLiveOpen] = useState(false);
+  // The Steps drawer opens as it was last left, in this browser.
+  const [liveOpen, setLiveOpen] = useState(() => readStored(STEPS_OPEN_KEY) === "open");
+  const stepsTrigger = useRef<HTMLElement | null>(null);
   // The file a card in the conversation asked for; the nonce re-opens it in an open drawer.
   const [filePick, setFilePick] = useState<{ path: string | null; nonce: number }>({
     path: null,
@@ -151,9 +174,25 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
     setFilesOpen(false);
     setLiveOpen(false);
   }, []);
-  const closeLive = useCallback(() => {
-    setLiveOpen(false);
+  const setSteps = useCallback((open: boolean) => {
+    writeStored(STEPS_OPEN_KEY, open ? "open" : "closed");
+    setLiveOpen(open);
+    if (open) {
+      stepsTrigger.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setFilesOpen(false);
+    } else {
+      // Focus goes back to what opened it.
+      stepsTrigger.current?.focus({ preventScroll: true });
+    }
   }, []);
+  const closeLive = useCallback(() => {
+    setSteps(false);
+  }, [setSteps]);
+  const toggleSteps = useCallback(() => {
+    setSteps(!liveOpen);
+  }, [liveOpen, setSteps]);
+  useStepsKey(toggleSteps);
   const openFile = useCallback((path: string | null) => {
     setFilePick((before) => ({ path, nonce: before.nonce + 1 }));
     setLiveOpen(false);
@@ -231,6 +270,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
 
   const status = state.status ?? session.status;
   const activity = liveActivity(state);
+  const steps = turnSteps(state);
   const ended = isTerminal(status);
   const mode = state.mode ?? session.mode;
   const model = state.model ?? session.model ?? null;
@@ -268,6 +308,13 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             </h1>
             <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
             <span className="ah-grow" />
+            <StepsToggle
+              steps={steps}
+              open={liveOpen}
+              onToggle={() => {
+                setSteps(!liveOpen);
+              }}
+            />
             {files.length > 0 && (
               <ChangedFilesChip
                 files={files}
@@ -360,11 +407,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           onOpenFile={openFile}
           sidePanel={
             liveOpen ? (
-              <LiveActivityPanel
-                activity={activity}
-                {...turnFeed(state, { ended: true, max: 300 })}
-                onClose={closeLive}
-              />
+              <StepsPanel steps={steps} onClose={closeLive} />
             ) : filesOpen ? (
               <FilesPanel
                 files={files}
@@ -393,8 +436,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             activity={activity}
             open={liveOpen}
             onToggle={() => {
-              setFilesOpen(false);
-              setLiveOpen(!liveOpen);
+              setSteps(!liveOpen);
             }}
           />
           <Composer

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { aLogRecord } from "../../testing/builders";
-import { elapsed, liveActivity } from "./liveActivity";
+import { elapsed, liveActivity, turnSteps } from "./liveActivity";
 import {
   initialTranscript,
   reduceTranscript,
@@ -92,7 +92,7 @@ describe("turn feed", () => {
     expect(read?.kind === "tool" && read.preview).toEqual(["Read 3 lines"]);
   });
 
-  it("nests a subagent's latest calls under it and counts the rest", () => {
+  it("nests a subagent's calls under it", () => {
     const state = run([
       message,
       running,
@@ -100,7 +100,7 @@ describe("turn feed", () => {
       ...[3, 4, 5, 6].map((seq) => call(seq, `c${String(seq)}`, "Grep", { pattern: "p" }, "a")),
     ]);
     const agent = liveActivity(state)?.feed[0];
-    expect(agent?.kind === "tool" && [agent.children.length, agent.childCount]).toEqual([3, 4]);
+    expect(agent?.kind === "tool" && [agent.children.length, agent.childCount]).toEqual([4, 4]);
   });
 
   it("starts at the turn's message, not at an earlier turn's", () => {
@@ -115,6 +115,26 @@ describe("turn feed", () => {
     ]);
     const feed = liveActivity(state)?.feed ?? [];
     expect(feed.map((item) => item.key)).toEqual(["new"]);
+  });
+});
+
+describe("turnSteps", () => {
+  it("keeps the last turn's steps once it finished, and how long it took", () => {
+    const state = run([
+      message,
+      running,
+      call(2, "b", "Bash", { command: "ls" }),
+      record("tool.result", { seq: 3, body: { tool_use_id: "b", content: "ok" } }),
+      record("result", { seq: 4, body: {} }),
+      { type: "status", status: { status: "idle" } },
+    ]);
+    const steps = turnSteps(state);
+    expect([steps.activity, steps.end, steps.feed.length]).toEqual([null, "finished", 1]);
+    expect(steps.tookMs).not.toBeNull();
+  });
+
+  it("has no turn before the first message", () => {
+    expect(turnSteps(run([])).end).toBeNull();
   });
 });
 
