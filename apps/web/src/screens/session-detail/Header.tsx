@@ -17,6 +17,7 @@ import { fmtAgo, fmtClock, fmtDuration, fmtInt, fmtMoney } from "../../lib/forma
 import { usePreferences } from "../../lib/preferences";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { agentSessionHref } from "../sessions-list/control";
+import { ContinueInChat } from "./ContinueInChat";
 import type { Session } from "./queries";
 import { durationOf, isOpen, statusOf, tokensText } from "./session-status";
 
@@ -119,6 +120,7 @@ export function Header({ session, now, staleSince }: HeaderProps) {
             Open chat
           </AppLink>
         )}
+        {!session.agent_session_id && !subagent && <ContinueInChat session={session} />}
         {runHref && (
           <AppLink className="ah-row ah-small" href={runHref} style={{ gap: 4 }}>
             <Icon name="route" size="sm" />
