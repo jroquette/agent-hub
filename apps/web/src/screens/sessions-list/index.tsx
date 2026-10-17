@@ -3,7 +3,7 @@ import "./sessions-list.css";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
-import { AsOfStamp, Button, EmptyState, Icon, SegmentedControl, Skeleton } from "../../components";
+import { AsOfStamp, Button, EmptyState, SegmentedControl, Skeleton } from "../../components";
 import { fmtClock, fmtInt } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
@@ -41,6 +41,7 @@ import {
 } from "./sections";
 import { SessionSection, useCollapsed } from "./SessionSection";
 import { SessionsInbox, type InboxGroup } from "./SessionsInbox";
+import { SessionsSummary } from "./SessionsSummary";
 import { Toolbar, periodLabel } from "./Toolbar";
 import { useScrollAnchor } from "./useScrollAnchor";
 
@@ -321,10 +322,6 @@ export function SessionsListScreen() {
 
   const counted = (section: (typeof asked)[number]) =>
     section.pages.isPending || (section.pages.error && !section.pages.data) ? null : section.count;
-  const countOf = (id: SectionId) => {
-    const section = asked.find((s) => s.id === id);
-    return section ? counted(section) : 0;
-  };
   const repos = [
     ...new Set(
       (projects.data?.items ?? [])
@@ -336,13 +333,9 @@ export function SessionsListScreen() {
     ...new Set(loadedAll.flatMap((row) => (isDriven(row) ? [] : (row.label?.workflows ?? [])))),
   ].sort();
 
-  // What needs the owner: the Needs you group (waits and open sessions with a problem only they can fix).
-  const needCount = countOf("waiting") ?? 0;
-  const workingCount = countOf("live") ?? 0;
-  const pausedCount = countOf("idle") ?? 0;
+  // Needs you shown alone: its first row takes the focus, so Enter answers it.
   const focusNeeds = () => {
     if (collapsed.has("waiting")) toggleCollapsed("waiting");
-    if (tab !== null && tab !== "waiting") update({ status: null });
     requestAnimationFrame(() => {
       const target = screenRef.current?.querySelector<HTMLElement>(
         '[data-group="waiting"] [data-nav-row]',
@@ -351,27 +344,37 @@ export function SessionsListScreen() {
       target?.scrollIntoView({ block: "nearest" });
     });
   };
-  const others = [
-    workingCount ? `${fmtInt(workingCount)} working` : "",
-    pausedCount ? `${fmtInt(pausedCount)} your turn` : "",
-  ].filter(Boolean);
-  const attention = pending ? (
-    <Skeleton width={320} />
-  ) : needCount > 0 ? (
-    <span className="sl-attention-parts">
-      <button type="button" className="sl-attention-link" onClick={focusNeeds}>
-        <Icon name="hand" size="sm" />
-        {needCount === 1 ? "1 session needs you" : `${fmtInt(needCount)} sessions need you`}
-      </button>
-      {others.length > 0 && <span className="ah-muted">{`· ${others.join(" · ")}`}</span>}
-    </span>
-  ) : (
-    <span className="sl-attention-calm">
-      <Icon name="circle-check" size="sm" />
-      {others.length > 0
-        ? `Nothing needs you. ${others.join(" · ")}.`
-        : "Nothing needs you. No session is working."}
-    </span>
+  // The day's estimated cost: the last day of each in-scope project's daily costs (Portfolio's source).
+  const scoped = (projects.data?.items ?? []).filter((project) => !scope || project.name === scope);
+  const dayCosts = scoped.flatMap((project) => project.cost_daily.slice(-1));
+  const cost = projects.isPending
+    ? null
+    : {
+        usd:
+          dayCosts.length === 0
+            ? null
+            : dayCosts.reduce((sum, value) => sum + Number(value), 0).toFixed(4),
+      };
+  const summary = (
+    <SessionsSummary
+      tiles={SECTIONS.map((section) => {
+        const found = asked.find((s) => s.id === section.id);
+        return {
+          id: section.id,
+          label: section.title,
+          count: found ? counted(found) : 0,
+          error: Boolean(found?.pages.error && !found.pages.data),
+          scope:
+            section.id === "ended" && period !== "All" ? periodLabel(period).toLowerCase() : null,
+        };
+      })}
+      pressed={tab}
+      cost={cost}
+      onPick={(id) => {
+        update({ status: id });
+        if (id === "waiting") focusNeeds();
+      }}
+    />
   );
 
   const emptyFor = (id: SectionId | null) => {
@@ -578,9 +581,7 @@ export function SessionsListScreen() {
         />
         <NewSessionControl driving={driving} />
       </div>
-      <div className="sl-attention ah-small" aria-live="off">
-        {attention}
-      </div>
+      {!neverAny && summary}
       <DrivenBanner driving={driving} />
       {!neverAny && (
         <>

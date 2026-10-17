@@ -203,19 +203,32 @@ describe("SessionsListScreen inbox-groups", () => {
   });
 });
 
-describe("SessionsListScreen attention-line", () => {
-  it("says one session needs the owner, then how many work and pause; its button focuses that row", async () => {
-    renderList();
+const tileValue = (id: string) =>
+  document.querySelector(`[data-tile="${id}"] .sl-summary-value`)?.textContent;
+const needsTile = () => screen.getByRole("button", { name: /^Needs you, / });
+
+describe("SessionsListScreen summary strip", () => {
+  it("counts each group in a tile; Needs you shows only that group and focuses its first row", async () => {
+    const { router } = renderList();
     await screen.findByText("/asker");
 
-    expect(document.querySelector(".sl-attention")).toHaveTextContent(
-      "1 session needs you· 1 working · 1 your turn",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "1 session needs you" }));
+    expect(screen.getByRole("group", { name: "Sessions summary" })).toBeInTheDocument();
+    expect([tileValue("waiting"), tileValue("live"), tileValue("idle")]).toEqual(["1", "1", "1"]);
+    expect(needsTile()).toHaveAccessibleName("Needs you, 1 session. Show only these.");
+    expect(needsTile()).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(needsTile());
     await waitFor(() => {
       expect(document.activeElement).toBe(rowOf("/asker"));
     });
     expect(scrolls).toHaveBeenCalledWith({ block: "nearest" });
+    expect(router.state.location.search).toBe("?status=waiting");
+    expect(needsTile()).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("/runner")).toBeNull();
+
+    // Pressed again, every group shows.
+    fireEvent.click(needsTile());
+    expect(router.state.location.search).toBe("");
+    expect(await screen.findByText("/runner")).toBeInTheDocument();
   });
 
   it("moves an open session with a problem that needs the owner into Needs you, with Review problem", async () => {
@@ -232,10 +245,7 @@ describe("SessionsListScreen attention-line", () => {
     expect(screen.getByRole("button", { name: "Working · 1" })).toBeInTheDocument();
     // A finished session stays in Finished, its line in the failed tone.
     expect(within(group(/^Finished/)).getByText("/broken")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "1 session needs you" }));
-    await waitFor(() => {
-      expect(document.activeElement).toBe(rowOf("/stuck"));
-    });
+    expect(tileValue("waiting")).toBe("1");
     expect(rowOf("/stuck")).toHaveAttribute("data-trouble", "true");
     expect(rowOf("/broken")).toHaveAttribute("data-trouble", "true");
     expect(rowOf("/runner")).not.toHaveAttribute("data-trouble");
@@ -243,18 +253,26 @@ describe("SessionsListScreen attention-line", () => {
     expect(badgeOf("/stuck")).toBe("Problem");
     expect(badgeOf("/broken")).toBe("Failed");
     expect(lineOf("/broken")).toBe("1 problem needs you · Ran 10 min");
+    fireEvent.click(needsTile());
+    await waitFor(() => {
+      expect(document.activeElement).toBe(rowOf("/stuck"));
+    });
     expect(
       within(rowOf("/stuck")).getByRole("link", { name: "Review problem in /stuck" }),
     ).toHaveAttribute("href", `/sessions/${anId(5, "dddd0005")}`);
   });
 
-  it("leaves a status link that hides the Needs you group for every group, then focuses its first row", async () => {
+  it("moves from another status link to Needs you alone, then focuses its first row", async () => {
     const sessions = [...SAMPLE, one(5, "waiting", "asker-2", { last_activity_at: at(900) })];
     const { router } = renderList(routes(aSessionsByStatus(sessions)), "/sessions?status=ended");
     await screen.findByText("/done");
+    expect(screen.getByRole("button", { name: /^Finished, / })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: "2 sessions need you" }));
-    expect(router.state.location.search).toBe("");
+    fireEvent.click(needsTile());
+    expect(router.state.location.search).toBe("?status=waiting");
     await waitFor(() => {
       expect(document.activeElement).toBe(rowOf("/asker"));
     });
@@ -266,23 +284,22 @@ describe("SessionsListScreen attention-line", () => {
     await screen.findByText("/runner");
     expect(screen.queryByText("/asker")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "1 session needs you" }));
+    fireEvent.click(needsTile());
     await waitFor(() => {
       expect(document.activeElement).toBe(rowOf("/asker"));
     });
   });
 
-  it("says nothing needs the owner, with how many work and pause", async () => {
+  it("says calmly when nothing needs the owner or works", async () => {
     const calm = renderList(routes(aSessionsByStatus(SAMPLE.slice(1))));
-    expect(
-      await screen.findByText("Nothing needs you. 1 working · 1 your turn."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Nothing needs you")).toBeInTheDocument();
+    expect(tileValue("waiting")).toBe("0");
+    expect(screen.getByText("Claude is on it")).toBeInTheDocument();
     calm.unmount();
 
     renderList(routes(aSessionsByStatus([SAMPLE[3]])));
-    expect(
-      await screen.findByText("Nothing needs you. No session is working."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("No session is working")).toBeInTheDocument();
+    expect(screen.getByText("last 7 days")).toBeInTheDocument();
   });
 });
 

@@ -697,7 +697,7 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(placeOf("/evaluator")).toBe("agent-hub · dev/agh-48-live-tiles");
   });
 
-  it("adds placed rows and drops moved ones once in the paged footer, the group counts and the attention line", async () => {
+  it("adds placed rows and drops moved ones once in the paged footer, the group counts and the summary strip", async () => {
     const twin = aSession({
       id: anId(3, "aaaa0003"),
       label: named("twin"),
@@ -717,9 +717,9 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(groupToggles()).toContain("Working · ~120");
     expect(within(group(/^Working/)).getByText("Showing 2 of ~120")).toBeInTheDocument();
     expect(groupToggles()).toContain("Needs you · 2");
-    expect(document.querySelector(".sl-attention")).toHaveTextContent(
-      "2 sessions need you· 120 working · 2 your turn",
-    );
+    const tile = (id: string) =>
+      document.querySelector(`[data-tile="${id}"] .sl-summary-value`)?.textContent;
+    expect([tile("waiting"), tile("live"), tile("idle")]).toEqual(["2", "120", "2"]);
   });
 
   it("opens a twinless driven session's chat from its row", async () => {
