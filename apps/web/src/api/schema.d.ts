@@ -4377,6 +4377,11 @@ export interface components {
       document: {
         [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
       };
+      /**
+       * Inputs
+       * @default []
+       */
+      inputs: components["schemas"]["WorkflowInputView"][];
       /** Layer Count */
       layer_count: number;
       /** Layers */
@@ -4390,6 +4395,10 @@ export interface components {
       /** Revision */
       revision: number;
       source: components["schemas"]["WorkflowOrigin"];
+      /** Step Types */
+      step_types?: {
+        [key: string]: number;
+      };
     };
     /**
      * WorkflowGate
@@ -4412,6 +4421,20 @@ export interface components {
       text: components["schemas"]["TextUse"];
       /** Workflow */
       workflow: string;
+    };
+    /**
+     * WorkflowInputView
+     * @description An input a run of the workflow takes: what to pass to ``hub workflow run``.
+     */
+    WorkflowInputView: {
+      /** Description */
+      description?: string | null;
+      /** Name */
+      name: string;
+      /** Required */
+      required: boolean;
+      /** Type */
+      type: string;
     };
     /**
      * WorkflowNodeView
@@ -4512,11 +4535,17 @@ export interface components {
     WorkflowRunStatus: "running" | components["schemas"]["RunStatus"];
     /**
      * WorkflowSummary
-     * @description A workflow of a project's hub, and where it comes from (``source``).
+     * @description A workflow of a project's hub, and where it comes from (``source``). ``step_types``
+     *     counts every step by type, a ``loop_group``'s body included; ``inputs`` is what a run takes.
      */
     WorkflowSummary: {
       /** Description */
       description: string | null;
+      /**
+       * Inputs
+       * @default []
+       */
+      inputs: components["schemas"]["WorkflowInputView"][];
       /** Layer Count */
       layer_count: number;
       /** Name */
@@ -4528,6 +4557,10 @@ export interface components {
       /** Revision */
       revision: number;
       source: components["schemas"]["WorkflowOrigin"];
+      /** Step Types */
+      step_types?: {
+        [key: string]: number;
+      };
     };
     agent_hub__core__json_form__JsonValue:
       | {

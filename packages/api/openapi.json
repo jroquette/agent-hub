@@ -8569,6 +8569,14 @@
             "title": "Document",
             "type": "object"
           },
+          "inputs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/WorkflowInputView"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
           "layer_count": {
             "title": "Layer Count",
             "type": "integer"
@@ -8601,6 +8609,13 @@
           },
           "source": {
             "$ref": "#/components/schemas/WorkflowOrigin"
+          },
+          "step_types": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Step Types",
+            "type": "object"
           }
         },
         "required": [
@@ -8671,6 +8686,42 @@
           "text"
         ],
         "title": "WorkflowGate",
+        "type": "object"
+      },
+      "WorkflowInputView": {
+        "additionalProperties": false,
+        "description": "An input a run of the workflow takes: what to pass to ``hub workflow run``.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "required"
+        ],
+        "title": "WorkflowInputView",
         "type": "object"
       },
       "WorkflowNodeView": {
@@ -9018,7 +9069,7 @@
       },
       "WorkflowSummary": {
         "additionalProperties": false,
-        "description": "A workflow of a project's hub, and where it comes from (``source``).",
+        "description": "A workflow of a project's hub, and where it comes from (``source``). ``step_types``\ncounts every step by type, a ``loop_group``'s body included; ``inputs`` is what a run takes.",
         "properties": {
           "description": {
             "anyOf": [
@@ -9030,6 +9081,14 @@
               }
             ],
             "title": "Description"
+          },
+          "inputs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/WorkflowInputView"
+            },
+            "title": "Inputs",
+            "type": "array"
           },
           "layer_count": {
             "title": "Layer Count",
@@ -9053,6 +9112,13 @@
           },
           "source": {
             "$ref": "#/components/schemas/WorkflowOrigin"
+          },
+          "step_types": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Step Types",
+            "type": "object"
           }
         },
         "required": [

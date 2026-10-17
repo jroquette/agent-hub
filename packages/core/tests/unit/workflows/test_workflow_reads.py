@@ -88,6 +88,44 @@ def test_lists_each_project_workflow_and_problem_when_hubs_registered() -> None:
     ]
 
 
+def test_counts_steps_by_type_and_lists_inputs_when_listed() -> None:
+    rounds = {
+        "version": 1,
+        "name": "rounds",
+        "revision": 1,
+        "inputs": {
+            "issue": {"required": True, "description": "The issue"},
+            "tries": {"type": "integer", "default": 2},
+        },
+        "nodes": [
+            {"id": "prep", "type": "shell", "command": ["true"]},
+            {
+                "id": "loop",
+                "type": "loop_group",
+                "max_iterations": 2,
+                "until_bash": ["true"],
+                "depends_on": ["prep"],
+                "nodes": [
+                    {"id": "work", "type": "agent", "prompt": "Work"},
+                    {"id": "ok", "type": "approval", "message": "OK?", "depends_on": ["work"]},
+                ],
+            },
+        ],
+    }
+    catalog = ReadWorkflows(
+        Hubs(("demo", "/hubs/demo")),
+        lambda _: Files((WorkflowFile("workflows/demo/rounds.yaml", "rounds", rounds),)),
+    ).list_workflows(Scope())
+
+    assert catalog.problems == ()
+    (item,) = catalog.items
+    assert item.step_types == {"shell": 1, "loop_group": 1, "agent": 1, "approval": 1}
+    assert [(i.name, i.type, i.required, i.description) for i in item.inputs] == [
+        ("issue", "string", True, "The issue"),
+        ("tries", "integer", False, None),
+    ]
+
+
 def test_lists_one_project_when_scope_names_it() -> None:
     catalog = reads().list_workflows(Scope(project="other"))
 
