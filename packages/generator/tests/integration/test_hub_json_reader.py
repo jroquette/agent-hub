@@ -2003,3 +2003,176 @@ def test_keeps_linear_time_when_prefix_hostile(
     assert loaded["effective"]["project.branch_prefix"] == ""
     assert loaded["effective"]["project.author_email"] == "_" * 40 + "%@example.com"
     assert loaded["effective"]["prefix_source"] == ""
+
+
+# argv: hub.local.json path. Prints ``dataclasses.asdict`` of the local layer the reader gives,
+# and of the local file (the identity keys), to show the layer leaves that one unchanged.
+LAYER_READ = """
+import dataclasses, json
+import stdlib_reader as reader
+local_json = sys.argv[1]
+print(json.dumps({
+    "layer": dataclasses.asdict(reader.load_local_layer(local_json)),
+    "local_file": dataclasses.asdict(reader.load_local_file(local_json)),
+}))
+"""
+
+NO_LOCAL_LAYER: dict[str, Any] = {
+    "environments": [],
+    "blocked_words": [],
+    "blocked_words_files": [],
+    "blocked_words_env": [],
+    "problem": "",
+    "file_problem": "",
+}
+
+
+@pytest.fixture
+def layer_read(reader_file: Path, run_python: Callable[..., Any]) -> Callable[..., Any]:
+    """Run ``LAYER_READ`` on an interpreter: the local layer of a ``hub.local.json`` path."""
+
+    def run(python: str, local_json: Path) -> Any:
+        return run_python(
+            python, LAYER_READ, path=reader_file.parent, args=[str(local_json)], timeout=10
+        )
+
+    return run
+
+
+def test_reads_local_layer_when_local_declares_environments(
+    tmp_path: Path, hook_python: str, layer_read: Callable[..., Any]
+) -> None:
+    document = builders.a_local_environments_document()
+    document["environments"]["staging"] = {"access": "read"}
+    document["environments"]["_note"] = "mine"
+    document["guard"]["blocked_words_env"] = ["DEMO_STAGE", "DEMO_*"]
+    local_json = write_local_file(tmp_path, document)
+
+    layer = layer_read(hook_python, local_json)["layer"]
+
+    assert layer == {
+        "environments": [
+            {"name": "jane-cloud", "access": "write", "production": False, "credential_env": []},
+            {"name": "staging", "access": "read", "production": False, "credential_env": []},
+        ],
+        "blocked_words": ["demo-live"],
+        "blocked_words_files": ["deploy/*.tfvars"],
+        "blocked_words_env": ["DEMO_STAGE", "DEMO_*"],
+        "problem": "",
+        "file_problem": "",
+    }
+
+
+def test_keeps_entry_without_access_when_local_layer_read(
+    tmp_path: Path, hook_python: str, layer_read: Callable[..., Any]
+) -> None:
+    local_json = write_local_file(
+        tmp_path,
+        {"environments": {"staging": {"credentials": {"env": ["DEMO_TOKEN"]}}, "x": {"access": 7}}},
+    )
+
+    layer = layer_read(hook_python, local_json)["layer"]
+
+    assert layer["environments"] == [
+        {"name": "staging", "access": "", "production": False, "credential_env": ["DEMO_TOKEN"]}
+    ]
+
+
+def test_keeps_local_file_when_layer_added(
+    tmp_path: Path, hook_python: str, layer_read: Callable[..., Any]
+) -> None:
+    local_json = write_local_file(tmp_path, builders.a_local_environments_document())
+
+    local_file = layer_read(hook_python, local_json)["local_file"]
+
+    assert local_file == NO_LOCAL_FILE | {"branch_prefix": "jane/"}
+
+
+def test_names_no_problem_when_local_file_absent(
+    tmp_path: Path, hook_python: str, layer_read: Callable[..., Any]
+) -> None:
+    layer = layer_read(hook_python, tmp_path / LOCAL_FILE)["layer"]
+
+    assert layer == NO_LOCAL_LAYER
+
+
+def unusable_local_file(path: Path, kind: str) -> None:
+    """Make ``path`` a ``hub.local.json`` that exists but cannot be used, of the given kind."""
+    if kind == "fifo":
+        os.mkfifo(path)
+    elif kind == "directory":
+        path.mkdir()
+    elif kind == "dangling-link":
+        path.symlink_to(path.parent / "missing.json")
+    else:
+        texts = {
+            "not-json": "{",
+            "list": "[]",
+            "empty": "",
+            "not-utf8": None,
+            "over-cap": padded_local_text(LOCAL_FILE_MAX_BYTES + 1),
+        }
+        text = texts[kind]
+        if text is None:
+            path.write_bytes(b'{"guard": "\xff"}')
+        else:
+            path.write_text(text, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["not-json", "list", "empty", "not-utf8", "over-cap", "fifo", "directory", "dangling-link"],
+)
+def test_names_file_problem_when_local_file_unusable(
+    tmp_path: Path, *, hook_python: str, layer_read: Callable[..., Any], kind: str
+) -> None:
+    local_json = tmp_path / LOCAL_FILE
+    unusable_local_file(local_json, kind)
+
+    # A FIFO with no writer would block an open: the child's timeout shows the reader returned.
+    layer = layer_read(hook_python, local_json)["layer"]
+
+    assert layer == NO_LOCAL_LAYER | {"file_problem": LOCAL_FILE}
+
+
+def test_reads_local_layer_when_size_at_cap(
+    tmp_path: Path, hook_python: str, layer_read: Callable[..., Any]
+) -> None:
+    local_json = tmp_path / LOCAL_FILE
+    local_json.write_text(padded_local_text(LOCAL_FILE_MAX_BYTES), encoding="utf-8")
+
+    layer = layer_read(hook_python, local_json)["layer"]
+
+    assert layer == NO_LOCAL_LAYER
+
+
+# A local ``guard`` value the CLI rejects, and the first location the guard cannot use: only the
+# three blocked lists (and comment keys) are local, so any other ``guard`` key is unusable too.
+MALFORMED_LOCAL_GUARD: tuple[tuple[str, object, str], ...] = (
+    ("words-string", {"blocked_words": "prod"}, "guard.blocked_words"),
+    ("words-empty-item", {"blocked_words": ["ok", ""]}, "guard.blocked_words[1]"),
+    ("files-number", {"blocked_words_files": [3]}, "guard.blocked_words_files[0]"),
+    ("env-lower", {"blocked_words_env": ["lower"]}, "guard.blocked_words_env[0]"),
+    ("hub-only-key", {"_c": 1, "deny_hosts": ["x.example.com"]}, "guard.deny_hosts"),
+    ("unknown-key", {"blocked_word": ["prod"]}, "guard.blocked_word"),
+)
+
+
+@pytest.mark.parametrize(
+    ("guard", "problem"),
+    [(guard, problem) for _, guard, problem in MALFORMED_LOCAL_GUARD],
+    ids=[name for name, _, _ in MALFORMED_LOCAL_GUARD],
+)
+def test_names_problem_when_local_blocked_list_unusable(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    layer_read: Callable[..., Any],
+    guard: object,
+    problem: str,
+) -> None:
+    local_json = write_local_file(tmp_path, {"guard": guard})
+
+    layer = layer_read(hook_python, local_json)["layer"]
+
+    assert layer == NO_LOCAL_LAYER | {"problem": problem}

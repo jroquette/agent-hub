@@ -53,6 +53,12 @@ this reader falls back instead.
   (asked lazily, once per key); with no prefix in a file, the prefix is the effective email's
   local part plus ``/`` when that is a valid prefix (docs/design/developer-identity.md).
 
+- ``load_local_layer`` reads ``hub.local.json``'s ``environments`` (as above, but an entry
+  without ``access`` is kept with ``""``: it may tighten a committed one) and its three blocked
+  lists (as above; any other key under ``guard`` is unusable, since only those are local). A file
+  that exists but is not a regular file of at most ``LOCAL_FILE_MAX_BYTES`` holding a JSON object
+  sets ``file_problem``; an absent one sets nothing.
+
 A hook that loads this file by path must register the module before running it, or the frozen
 dataclasses fail to build (``AttributeError`` on ``NoneType.__dict__``)::
 
@@ -327,6 +333,40 @@ def load_local_file(path: str | os.PathLike[str]) -> LocalFile:
     )
 
 
+@dataclass(frozen=True)
+class LocalLayer:
+    """``hub.local.json``'s environments and blocked lists, as the hooks add them to hub.json's.
+
+    ``problem`` names the first blocked list (or ``guard`` key) the guard cannot use;
+    ``file_problem`` is ``hub.local.json`` when the file exists but cannot be used as a whole,
+    ``""`` when it is absent or usable.
+    """
+
+    environments: tuple[EnvironmentEntry, ...] = ()
+    blocked_words: tuple[str, ...] = ()
+    blocked_words_files: tuple[str, ...] = ()
+    blocked_words_env: tuple[str, ...] = ()
+    problem: str = ""
+    file_problem: str = ""
+
+
+def load_local_layer(path: str | os.PathLike[str]) -> LocalLayer:
+    """Read ``hub.local.json``'s layer at ``path``; never raises (see the module docstring)."""
+    if not os.path.lexists(path):
+        return LocalLayer()
+    document = _read_object(path, max_bytes=LOCAL_FILE_MAX_BYTES)
+    if document is None:
+        return LocalLayer(file_problem=LOCAL_FILE)
+    lists, problem = _blocked(_object(document.get("guard")), BLOCKED_LISTS)
+    return LocalLayer(
+        environments=_environments(document.get("environments"), needs_access=False),
+        blocked_words=lists.get("blocked_words", ()),
+        blocked_words_files=lists.get("blocked_words_files", ()),
+        blocked_words_env=lists.get("blocked_words_env", ()),
+        problem=problem,
+    )
+
+
 class EffectiveValues:
     """One developer's identity and transport: ``hub.local.json``, else ``hub.json``, else git.
 
@@ -385,28 +425,38 @@ def _read_document(
 ) -> dict[str, object]:
     """The file's top-level object; ``{}`` when it cannot be read, is larger than ``max_bytes``
     or is not a JSON object."""
+    document = _read_object(path, max_bytes)
+    return {} if document is None else document
+
+
+def _read_object(
+    path: str | os.PathLike[str], max_bytes: int | None = None
+) -> dict[str, object] | None:
+    """The file's top-level object; ``None`` when it cannot be read, is larger than ``max_bytes``
+    or is not a JSON object."""
     # Only a regular file (a symlink to one included): opening a FIFO blocks and a device such as
     # /dev/zero never ends, so a hook would hang. The check by path skips the open; what was
     # opened (without blocking) is checked again, so a FIFO swapped in after it is not read.
     if not os.path.isfile(path):
-        return {}
+        return None
     try:
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
         with open(descriptor, "rb") as file:
             if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
-                return {}
+                return None
             if max_bytes is None:
                 content = file.read()
             else:
                 # One byte more than allowed tells a file that grew after any size check.
                 content = file.read(max_bytes + 1)
                 if len(content) > max_bytes:
-                    return {}
-        return _object(json.loads(content.decode("utf-8")))
+                    return None
+        document = json.loads(content.decode("utf-8"))
     # OSError: missing, a directory, unreadable. ValueError: bad UTF-8 or JSON (and a NUL in the
     # path). RecursionError: nesting deeper than the parser's stack.
     except (OSError, ValueError, RecursionError):
-        return {}
+        return None
+    return _object(document) if isinstance(document, dict) else None
 
 
 def _directory_name(path: str | os.PathLike[str]) -> str:
