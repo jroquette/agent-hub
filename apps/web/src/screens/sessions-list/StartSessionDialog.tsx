@@ -80,8 +80,9 @@ export function StartSessionDialog({
       onSubmit={(body) => {
         create.mutate(body, {
           onSuccess: (created) => {
-            if (body.screenshot && screenshot && "dataUrl" in screenshot)
-              rememberScreenshot(created.id, screenshot.dataUrl);
+            // The image sent, marked up or not, is the one the chat view shows.
+            if (body.screenshot)
+              rememberScreenshot(created.id, `data:image/png;base64,${body.screenshot.data}`);
             onClose();
             void navigate(agentSessionHref(created.id));
           },

@@ -174,8 +174,9 @@ class MessageAccepted(ViewModel):
 
 
 class Screenshot(ViewModel):
-    """A PNG of the screen sent with the first prompt, base64-encoded; its decoded size and
-    signature are checked by ``decode_screenshot`` (413, 422)."""
+    """A PNG image sent with a message (a screenshot, or an image pasted in the chat),
+    base64-encoded; its decoded size and signature are checked by ``decode_screenshot`` (413,
+    422)."""
 
     media_type: Literal["image/png"]
     data: str = Field(min_length=1)
@@ -216,10 +217,18 @@ class CreateAgentSession(ViewModel):
         return self
 
 
+# The most images one message carries: each is a PNG of at most ``MAX_SCREENSHOT_BYTES``.
+MAX_MESSAGE_SCREENSHOTS: Final = 10
+
+
 class SendMessage(ViewModel):
-    """``POST /{id}/messages``: one user message (byte limit checked, 413)."""
+    """``POST /{id}/messages``: one user message (byte limit checked, 413), with the images
+    pasted in it, sent to Claude before the text."""
 
     text: str = Field(min_length=1)
+    screenshots: tuple[Screenshot, ...] | None = Field(
+        default=None, min_length=1, max_length=MAX_MESSAGE_SCREENSHOTS
+    )
 
 
 AnswerKey = Annotated[str, StringConstraints(min_length=1, max_length=200)]
