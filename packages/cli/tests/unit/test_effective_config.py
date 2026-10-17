@@ -20,6 +20,7 @@ from agent_hub.cli.effective_config import (
 from agent_hub.cli.git_defaults import GitDefaults
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_hub_document
 
 NO_PREFIX = [
@@ -264,3 +265,36 @@ def test_hides_tokens_and_git_location_when_git_read(
     hidden = {"LINEAR_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "GIT_DIR", "GIT_WORK_TREE"}
     assert hidden.isdisjoint(spy.envs[0])
     assert spy.envs[0]["GIT_OPTIONAL_LOCKS"] == "0"
+
+
+def test_exits_with_local_lines_when_local_environments_conflict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    document = builders.an_environments_document()
+    document["platform"]["version"] = version("agent-hub-cli")
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    local = builders.a_local_environments_document()
+    local["environments"]["live"] = {"access": "write"}
+    write_local(hub, local)
+
+    with pytest.raises(typer.Exit) as caught:
+        load_effective_config_or_exit(hub)
+
+    assert caught.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.splitlines() == [
+        "hub.local.json: environments.live.access: may only tighten hub.json's read"
+    ]
+
+
+def test_returns_local_environments_when_local_file_adds_them(tmp_path: Path) -> None:
+    config = HubConfig.model_validate(builders.an_environments_document())
+    write_local(tmp_path, builders.a_local_environments_document())
+
+    loaded = effective_or_problems(config, home=tmp_path)
+
+    assert isinstance(loaded, EffectiveConfig)
+    assert list(loaded.local.environments) == ["jane-cloud"]
