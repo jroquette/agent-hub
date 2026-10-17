@@ -42,6 +42,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   short explanation of each, kind tiles with 30-day use, a sort, and hooks grouped by lifecycle event (AGH-262).
 - A message to an ended local session (hub web stopped, idle timeout, closed, failed) reopens the same session on its
   Claude conversation and plays it (AGH-262).
+- `make playground-export [SINCE=<ref>]`: the playground's commits since the last export (a local
+  `playground-export/*` tag), as a delivery's input in `.playground/exports/<stamp>/` (ignored by git). Each request
+  the owner made is one delivery in `brief.md` and `export.json`: their turns in their own words, the commits, files,
+  screens, hub files and uncommitted files it made, with its own patch; the touched screens are captured by
+  Playwright from the `HEAD` build on synthetic data. Each export also commits the checkout as it is to a local
+  `<prefix>/playground-snapshot/<stamp>` branch, never pushed (AGH-263).
 
 ### Changed
 
@@ -55,6 +61,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - `hub web` highlights completed code blocks in the chat, notes and plans (about a dozen languages, lazily loaded,
   design-token colours in both themes) with `lowlight`; a block still streaming or over 2,000 lines or 64 KiB stays
   plain, and agent output stays inert (ADR 0034, AGH-252, AC-234.31).
+- At the live-sessions limit, a new session no longer gets a 429 while some are only idle: the one idle the longest
+  ends `idle_timeout` and a message reopens it in place. Only busy sessions (running, or waiting on an answer) fill
+  the limit now (AGH-263).
 - The shake is lighter (3 reversals of 25 px within 700 ms) and captures only the visible screen, so a long page
   such as a chat opens New session at once. Under `make dev` or `make live` it starts in the project and folder of
   the served checkout, whatever the scope (AGH-262).
