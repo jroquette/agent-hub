@@ -99,14 +99,14 @@ export function problemsLine(
 /**
  * Where a waiting tile sends the owner: a session hub web drives to its chat, where the
  * permission card answers it (AC-165.25); any other wait, a hook-observed permission prompt
- * included, to the approvals.
+ * included, to the session itself (AC-273.21).
  */
-export function waitingLink(tile: Pick<TileSource, "agent_session_id">): {
+export function waitingLink(tile: Pick<TileSource, "id" | "agent_session_id">): {
   href: string;
   label: string;
 } {
   if (tile.agent_session_id) return { href: chatHref(tile.agent_session_id), label: "Open chat" };
-  return { href: "/approvals", label: "Open approval" };
+  return { href: `/sessions/${encodeURIComponent(tile.id)}`, label: "Open session" };
 }
 
 /** The tile of an observed session's fields, with its `tokens` total and whether it is a subagent. */

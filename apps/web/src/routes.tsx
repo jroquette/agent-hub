@@ -3,7 +3,6 @@ import type { RouteObject } from "react-router";
 
 import { useApi } from "./lib/api";
 import { AgentSessionScreen } from "./screens/agent-session";
-import { ApprovalsScreen } from "./screens/approvals";
 import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
@@ -65,8 +64,6 @@ export const appRoutes: RouteObject[] = [
             path: "projects/:project/skills/:kind/:source/:name/edit",
             element: <EditDraftScreen />,
           },
-          { path: "approvals", element: <ApprovalsScreen /> },
-          { path: "approvals/:approvalId", element: <ApprovalsScreen /> },
           { path: "live", element: <LiveRedirect /> },
           { path: "sessions", element: <SessionsListScreen /> },
           { path: "sessions/:sessionId", element: <SessionDetailScreen /> },

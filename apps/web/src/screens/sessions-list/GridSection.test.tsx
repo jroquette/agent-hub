@@ -84,7 +84,7 @@ describe("SessionsListScreen grid", () => {
     expect(waiter).toHaveAttribute("data-trouble", "true");
     expect(within(waiter).getByText("Waiting · Guard ask")).toBeInTheDocument();
     expect(within(waiter).getByText("Needs you: guard_ask_open in docs/adr")).toBeInTheDocument();
-    expect(within(waiter).getByRole("link", { name: "Open approval" })).toBeInTheDocument();
+    expect(within(waiter).getByRole("link", { name: "Open session" })).toBeInTheDocument();
     const runner = tileOf("/runner");
     expect(runner).not.toHaveAttribute("data-trouble");
     expect(within(runner).getByText("make check-fast")).toBeInTheDocument();
