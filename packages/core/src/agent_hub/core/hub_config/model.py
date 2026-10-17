@@ -25,6 +25,14 @@ from agent_hub.core.hub_config.conventions import (
     title_pattern_problem,
 )
 from agent_hub.core.hub_config.doctor_rules import RULE_MODULES, DoctorRules
+from agent_hub.core.hub_config.environments import (
+    MAX_BLOCKED_ENV,
+    MAX_BLOCKED_GLOBS,
+    MAX_BLOCKED_WORDS,
+    BlockedWord,
+    EnvVarPattern,
+    WordFileGlob,
+)
 from agent_hub.core.hub_config.model_tiers import Models
 from agent_hub.core.hub_config.platform_repository import (
     DEFAULT_PLATFORM_REPOSITORY,
@@ -403,6 +411,25 @@ class Guard(ConfigObject):
     infra: GuardInfra | None = absent_by_default(
         description="Turns on the guard's infra classification: Python re patterns, searched with"
         " no flags. Absent: the fixed infra rule."
+    )
+    blocked_words: Annotated[tuple[BlockedWord, ...], Field(max_length=MAX_BLOCKED_WORDS)] = Field(
+        default=(),
+        description="Words the guard denies in commands, the session, paths and listed files;"
+        " matched ignoring ASCII case, bounded by any character that is not a letter.",
+    )
+    blocked_words_files: Annotated[
+        tuple[WordFileGlob, ...], Field(max_length=MAX_BLOCKED_GLOBS)
+    ] = Field(
+        default=(),
+        description="Globs of files whose contents the guard checks for blocked words, on top"
+        " of .env* files.",
+    )
+    blocked_words_env: Annotated[tuple[EnvVarPattern, ...], Field(max_length=MAX_BLOCKED_ENV)] = (
+        Field(
+            default=(),
+            description="Names of variables whose values the guard checks for blocked words; a"
+            " trailing * matches a prefix.",
+        )
     )
 
     def cross_field_problems(self) -> list[InitErrorDetails]:
