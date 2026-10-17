@@ -13,10 +13,15 @@ import {
 } from "./filters";
 
 const ROWS = [
-  aLearning({ id: "a", project: "demo", provenance: "agent-from-code", text: "Stripe clients" }),
+  aLearning({
+    id: "a",
+    project: "storefront",
+    provenance: "agent-from-code",
+    text: "Stripe clients",
+  }),
   aLearning({
     id: "b",
-    project: "demo",
+    project: "storefront",
     provenance: "agent",
     text: "Guard env files",
     actions_unavailable: "Note not in the hub checkout",
@@ -28,12 +33,12 @@ const ids = (rows: readonly { id: string }[]) => rows.map((l) => l.id);
 describe("filtersFromParams url_query", () => {
   it("reads search, project and comma lists when the query holds them", () => {
     const filters = filtersFromParams(
-      new URLSearchParams("q=stripe&project=demo&provenance=agent,human&readiness=blocked"),
+      new URLSearchParams("q=stripe&project=storefront&provenance=agent,human&readiness=blocked"),
     );
 
     expect(filters).toEqual({
       q: "stripe",
-      project: "demo",
+      project: "storefront",
       provenance: ["human", "agent"],
       readiness: ["blocked"],
       claude: [],
@@ -54,10 +59,10 @@ describe("filtersFromParams url_query", () => {
   });
 
   it("round-trips through withFilters and keeps other parameters", () => {
-    const filters = { ...NO_FILTERS, project: "demo", readiness: ["ready" as const] };
+    const filters = { ...NO_FILTERS, project: "storefront", readiness: ["ready" as const] };
     const params = withFilters(new URLSearchParams("status=accepted&q=old"), filters);
 
-    expect(params.toString()).toBe("status=accepted&project=demo&readiness=ready");
+    expect(params.toString()).toBe("status=accepted&project=storefront&readiness=ready");
     expect(filtersFromParams(params)).toEqual(filters);
     expect(hasFilters(NO_FILTERS)).toBe(false);
     expect(hasFilters(filters)).toBe(true);
@@ -66,7 +71,10 @@ describe("filtersFromParams url_query", () => {
 
 describe("filterLearnings facets", () => {
   it("keeps one project's learnings when a project is picked", () => {
-    expect(ids(filterLearnings(ROWS, { ...NO_FILTERS, project: "demo" }))).toEqual(["a", "b"]);
+    expect(ids(filterLearnings(ROWS, { ...NO_FILTERS, project: "storefront" }))).toEqual([
+      "a",
+      "b",
+    ]);
   });
 
   it("matches search against title, summary and project", () => {
@@ -84,7 +92,7 @@ describe("filterLearnings facets", () => {
 
     expect(counts.project).toEqual([
       ["agent-hub", 1],
-      ["demo", 1],
+      ["storefront", 1],
     ]);
     expect(counts.provenance).toEqual({
       human: 0,

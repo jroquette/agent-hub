@@ -63,7 +63,7 @@ end; where a spec file says otherwise, this list wins.
 AGH-201 (control-plane clarity) changes the design further
 ([event-derivations.md](../event-derivations.md), [API.md](../../API.md), ADRs 0023 and 0024):
 
-- **Session identity.** Lists, tiles and the header show the session's `label` (`DEMO-1511 · /feature`, then `repo ·
+- **Session identity.** Lists, tiles and the header show the session's `label` (`ACME-1511 · /feature`, then `repo ·
   branch`, then the short id), never the stored agent `main`; the Agent column is gone and `agent` is deprecated.
 - **Problems, not error counts.** `GET /sessions/{session_id}/problems` and the "What went wrong" panel; problem
   kinds add `guard_ask_open` (an unanswered guard ask) and `guard_ask_declined` resolves "You declined" (E4);

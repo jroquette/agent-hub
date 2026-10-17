@@ -1,8 +1,8 @@
 /**
- * What a session is about (S1, AC-201.4, AC-201.5): its name over `DEMO-1511 · /feature · repo · branch`.
+ * What a session is about (S1, AC-201.4, AC-201.5): its name over `ACME-1511 · /feature · repo · branch`.
  *
  * The name is the session's title (the user's `/rename`, else the one Claude Code wrote, ADR 0035).
- * Without one, the title is `DEMO-1511 · /feature` over `repo · branch`, as before.
+ * Without one, the title is `ACME-1511 · /feature` over `repo · branch`, as before.
  *
  * The deprecated `agent` field is never shown: the main agent's stored value "main" read as a branch
  * and said nothing about the session. Without an issue or a workflow the title falls back to
@@ -20,7 +20,7 @@ export interface LabelledSession {
 }
 
 export interface SessionIdentity {
-  /** The session's name, else `DEMO-1511 · /feature`, else `repo · branch`, else the short id. */
+  /** The session's name, else `ACME-1511 · /feature`, else `repo · branch`, else the short id. */
   title: string;
   /** What the title leaves out: issue, workflow, repo and branch under a name, else the short id. */
   detail: string | null;
@@ -45,7 +45,7 @@ export function sessionIdentity(session: LabelledSession): SessionIdentity {
   return { title: short, detail: null, named: false };
 }
 
-/** One line of text for aria labels and announcements: "DEMO-1511 · /feature, demo · main". */
+/** One line of text for aria labels and announcements: "ACME-1511 · /feature, storefront · main". */
 export function sessionLabelText(session: LabelledSession): string {
   const { title, detail } = sessionIdentity(session);
   return detail ? `${title}, ${detail}` : title;

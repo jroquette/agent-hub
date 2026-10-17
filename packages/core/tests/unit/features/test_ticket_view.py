@@ -28,22 +28,22 @@ _EMPTY_PLAN = TicketPlan(
 
 def _row(**overrides: object) -> TicketRow:
     fields: dict[str, object] = {
-        "ref": "DEMO-1521",
+        "ref": "ACME-1521",
         "key": "T2",
-        "id": "DEMO-1521",
+        "id": "ACME-1521",
         "title": "Read the summaries",
         "state": IssueState(name="Todo", type="unstarted"),
         "assignee": None,
-        "url": "https://linear.app/demo/issue/DEMO-1521",
+        "url": "https://linear.app/demo/issue/ACME-1521",
         "priority": 2,
         "estimate": None,
         "repo": "demo-api",
         "order": 2,
         "acs": ("AC-7.2",),
-        "blocked_by": (TicketEdge(ref="DEMO-1520", source="both"),),
+        "blocked_by": (TicketEdge(ref="ACME-1520", source="both"),),
         "blocks": (),
         "readiness": "waiting",
-        "waiting_on": ("DEMO-1520",),
+        "waiting_on": ("ACME-1520",),
         "reviewed": False,
     }
     return TicketRow.model_validate(fields | overrides)
@@ -87,11 +87,11 @@ def test_serializes_tickets_when_planning_empty() -> None:
 def test_serializes_rows_and_planning_when_linear_answered() -> None:
     plan = _EMPTY_PLAN.model_copy(
         update={
-            "layers": (("DEMO-1520",), ("DEMO-1521",)),
+            "layers": (("ACME-1520",), ("ACME-1521",)),
             "cycles": (("T5", "T6"),),
             "external_blockers": (
                 ExternalBlocker(
-                    id="TIP-9",
+                    id="ACME-9",
                     title="Other team's work",
                     state=IssueState(name="Done", type="completed"),
                     url=None,
@@ -116,8 +116,8 @@ def test_serializes_rows_and_planning_when_linear_answered() -> None:
     document = tickets.model_dump(mode="json")
 
     assert document["as_of"] == "2026-10-13T09:00:00.000Z"
-    assert document["tickets"][0]["blocked_by"] == [{"ref": "DEMO-1520", "source": "both"}]
-    assert document["planning"]["layers"] == [["DEMO-1520"], ["DEMO-1521"]]
+    assert document["tickets"][0]["blocked_by"] == [{"ref": "ACME-1520", "source": "both"}]
+    assert document["planning"]["layers"] == [["ACME-1520"], ["ACME-1521"]]
     assert document["planning"]["external_blockers"][0]["done"] is True
 
 

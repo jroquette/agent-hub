@@ -149,7 +149,7 @@ def test_names_archive_when_note_rejected() -> None:
     ("note", "slug"),
     [
         ("_inbox/testing-x.md", "testing-x"),
-        ("_inbox/Onboard Proposal: Demo!.md", "onboard-proposal-demo"),
+        ("_inbox/Onboard Proposal: Storefront!.md", "onboard-proposal-storefront"),
         ("_inbox/2026-10-12_a__b.md", "2026-10-12-a-b"),
         ("_inbox/___.md", "note"),
     ],

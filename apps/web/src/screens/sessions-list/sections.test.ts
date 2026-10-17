@@ -40,16 +40,16 @@ describe("status sections (filters-both-views)", () => {
   });
 
   it("asks each section by its status with the same filters and the period on Ended only", () => {
-    const all = queries("period=24 h&repo=demo&sort=-cost");
+    const all = queries("period=24 h&repo=storefront&sort=-cost");
 
     expect(all).toEqual({
-      waiting: { sort: "-cost", project: "agent-hub", repo: "demo", status: "waiting" },
-      live: { sort: "-cost", project: "agent-hub", repo: "demo", status: "live" },
-      idle: { sort: "-cost", project: "agent-hub", repo: "demo", status: "idle" },
+      waiting: { sort: "-cost", project: "agent-hub", repo: "storefront", status: "waiting" },
+      live: { sort: "-cost", project: "agent-hub", repo: "storefront", status: "live" },
+      idle: { sort: "-cost", project: "agent-hub", repo: "storefront", status: "idle" },
       ended: {
         sort: "-cost",
         project: "agent-hub",
-        repo: "demo",
+        repo: "storefront",
         status: "ended",
         from: "2026-10-10T14:00:00.000Z",
       },
