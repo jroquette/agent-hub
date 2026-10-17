@@ -34,6 +34,15 @@ this reader falls back instead.
   character or is not valid UTF-8 (a lone surrogate). A key under it other than ``allow``,
   ``prod_markers`` and comment keys is unusable (``guard.infra.<key>``): a misspelled key must not
   drop a list silently. "First" is in document order. Patterns are compiled by the guard, not here.
+- ``guard.blocked_words``, ``blocked_words_files`` and ``blocked_words_env`` keep a list only when
+  every item has the model's shape and the list is within the model's length; else that list is
+  ``()`` and ``GuardSection.problem`` names the first unusable location (``guard.<key>`` or
+  ``guard.<key>[<i>]``), or a key under ``guard`` the model does not know (``guard.<key>``), in
+  document order. The guard asks while it is set (docs/design/environments.md § Fail closed).
+- ``environments`` keeps each entry whose name is a safe segment of at most 40 characters, whose
+  ``access`` is ``read``, ``write`` or ``ask`` and whose ``production`` (default ``false``) is a
+  boolean; any other entry is dropped. ``credential_env`` keeps the ``credentials.env`` items with
+  the model's variable-name shape. Endpoints and services are not read.
 - Elsewhere, unknown keys and comment keys (``_`` first) are ignored. ``modules`` and
   ``doctor.rules`` keep each entry's settings, minus comment keys, without checking them.
 - ``hub.local.json`` (one developer's ``project.branch_prefix``, ``author_name``,
@@ -97,6 +106,38 @@ CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 INFRA_LISTS = ("allow", "prod_markers")
 # The git config key each git-read identity key comes from.
 GIT_KEYS = {"author_name": "user.name", "author_email": "user.email"}
+# The model's ``Guard`` keys (core/hub_config/model.py), in its order: any other key under
+# ``guard`` is unusable for the blocked lists.
+GUARD_KEYS = (
+    "ask_before_edit",
+    "deny_hosts",
+    "deny_paths",
+    "readable_env_files",
+    "secret_env_files",
+    "infra",
+    "blocked_words",
+    "blocked_words_files",
+    "blocked_words_env",
+)
+BLOCKED_LISTS = ("blocked_words", "blocked_words_files", "blocked_words_env")
+# The model's ``BlockedWord``, ``WordFileGlob`` and ``EnvVarPattern`` shapes and bounds
+# (core/hub_config/environments.py), for ``fullmatch``. No separator character is also a segment
+# character, so ``re`` matches in linear time.
+BLOCKED_WORD = re.compile(r"[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*")
+BLOCKED_WORD_MIN_CHARS = 2
+BLOCKED_WORD_MAX_CHARS = 64
+MAX_BLOCKED_WORDS = 200
+BLOCKED_GLOB = re.compile(r"[!-.0-~][!-~]*")
+BLOCKED_GLOB_MAX_CHARS = 200
+MAX_BLOCKED_GLOBS = 100
+BLOCKED_ENV = re.compile(r"[A-Z_][A-Z0-9_]{0,63}\*?")
+MAX_BLOCKED_ENV = 50
+# The model's ``EnvironmentName`` (a safe segment of at most 40 characters), ``Access`` and
+# ``EnvVarName`` (core/hub_config/environments.py), for ``fullmatch``.
+ENVIRONMENT_NAME = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*")
+ENVIRONMENT_NAME_MAX_CHARS = 40
+ACCESS_LEVELS = ("read", "write", "ask")
+ENV_VAR_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
 
 
 @dataclass(frozen=True)
@@ -163,7 +204,8 @@ class InfraSection:
 
 @dataclass(frozen=True)
 class GuardSection:
-    """``guard``; ``infra`` is ``None`` when ``guard.infra`` is absent."""
+    """``guard``; ``infra`` is ``None`` when ``guard.infra`` is absent. ``problem`` names the first
+    blocked list (or ``guard`` key) the guard cannot use, ``""`` when none."""
 
     ask_before_edit: tuple[str, ...] = ()
     deny_hosts: tuple[str, ...] = ()
@@ -171,6 +213,21 @@ class GuardSection:
     readable_env_files: tuple[str, ...] = ()
     secret_env_files: tuple[str, ...] = ()
     infra: InfraSection | None = None
+    blocked_words: tuple[str, ...] = ()
+    blocked_words_files: tuple[str, ...] = ()
+    blocked_words_env: tuple[str, ...] = ()
+    problem: str = ""
+
+
+@dataclass(frozen=True)
+class EnvironmentEntry:
+    """One ``environments`` entry: its name, ``access`` (``""`` for a local entry without one),
+    whether it is production, and the variable names of its ``credentials.env``."""
+
+    name: str
+    access: str
+    production: bool = False
+    credential_env: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -190,6 +247,7 @@ class HubFile:
     tracker: TrackerSection = field(default_factory=TrackerSection)
     repos: tuple[RepoEntry, ...] = ()
     guard: GuardSection = field(default_factory=GuardSection)
+    environments: tuple[EnvironmentEntry, ...] = ()
     modules: dict[str, dict[str, object]] = field(default_factory=dict)
     doctor: DoctorSection = field(default_factory=DoctorSection)
 
@@ -202,6 +260,7 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
     guard = _object(document.get("guard"))
     schema_version = document.get("schema_version")
     project_branch = _text(project, "default_branch", ProjectSection.default_branch)
+    blocked, blocked_problem = _blocked(guard, GUARD_KEYS)
     return HubFile(
         # ``bool`` is an ``int``; only a JSON integer is a schema version.
         schema_version=schema_version if type(schema_version) is int else None,
@@ -234,7 +293,12 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
             ),
             secret_env_files=_texts(guard, "secret_env_files"),
             infra=_infra(guard),
+            blocked_words=blocked.get("blocked_words", ()),
+            blocked_words_files=blocked.get("blocked_words_files", ()),
+            blocked_words_env=blocked.get("blocked_words_env", ()),
+            problem=blocked_problem,
         ),
+        environments=_environments(document.get("environments")),
         modules=_settings_by_id(document.get("modules")),
         doctor=DoctorSection(rules=_settings_by_id(_object(document.get("doctor")).get("rules"))),
     )
@@ -446,6 +510,86 @@ def _usable_pattern(item: object) -> bool:
     except UnicodeEncodeError:
         return False
     return True
+
+
+def _blocked(
+    guard: dict[str, object], known: tuple[str, ...]
+) -> tuple[dict[str, tuple[str, ...]], str]:
+    """The blocked lists under ``guard`` and the first unusable location, in document order: a
+    list that is not a list or is too long, a bad item, or a key not in ``known`` (a misspelled
+    list must not drop its words silently). An unusable list is ``()``."""
+    lists: dict[str, tuple[str, ...]] = {}
+    first_problem = ""
+    for key, value in guard.items():
+        if key in BLOCKED_LISTS:
+            lists[key], problem = _blocked_list(key, value)
+        else:
+            problem = "" if key in known else "guard." + key
+        first_problem = first_problem or problem
+    return lists, first_problem
+
+
+def _blocked_list(key: str, value: object) -> tuple[tuple[str, ...], str]:
+    """``value`` as a tuple and ``""``; ``()`` and the location of the first unusable value."""
+    location = "guard." + key
+    usable, limit = BLOCKED_SHAPES[key]
+    if not isinstance(value, list) or len(value) > limit:
+        return (), location
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not usable(item):
+            return (), f"{location}[{index}]"
+    return tuple(value), ""
+
+
+def _is_blocked_word(item: str) -> bool:
+    return BLOCKED_WORD_MIN_CHARS <= len(item) <= BLOCKED_WORD_MAX_CHARS and bool(
+        BLOCKED_WORD.fullmatch(item)
+    )
+
+
+def _is_blocked_glob(item: str) -> bool:
+    return (
+        len(item) <= BLOCKED_GLOB_MAX_CHARS
+        and bool(BLOCKED_GLOB.fullmatch(item))
+        and ".." not in item.split("/")
+    )
+
+
+def _is_blocked_env(item: str) -> bool:
+    return bool(BLOCKED_ENV.fullmatch(item))
+
+
+# Each blocked list's item check and its most items.
+BLOCKED_SHAPES: dict[str, tuple[Callable[[str], bool], int]] = {
+    "blocked_words": (_is_blocked_word, MAX_BLOCKED_WORDS),
+    "blocked_words_files": (_is_blocked_glob, MAX_BLOCKED_GLOBS),
+    "blocked_words_env": (_is_blocked_env, MAX_BLOCKED_ENV),
+}
+
+
+def _environments(value: object, *, needs_access: bool = True) -> tuple[EnvironmentEntry, ...]:
+    """Each entry with a usable name, ``access`` and ``production``; the others are dropped. With
+    ``needs_access`` false (``hub.local.json``), an entry without ``access`` is kept with ``""``."""
+    entries = []
+    for name, item in _object(value).items():
+        if len(name) > ENVIRONMENT_NAME_MAX_CHARS or not ENVIRONMENT_NAME.fullmatch(name):
+            continue
+        if not isinstance(item, dict):
+            continue
+        environment = _object(item)
+        access = environment.get("access", None if needs_access else "")
+        production = environment.get("production", False)
+        usable = ACCESS_LEVELS if needs_access else ACCESS_LEVELS + ("",)
+        if not isinstance(access, str) or access not in usable or not isinstance(production, bool):
+            continue
+        names = _object(environment.get("credentials")).get("env")
+        credential_env = tuple(
+            text
+            for text in (names if isinstance(names, list) else [])
+            if isinstance(text, str) and ENV_VAR_NAME.fullmatch(text)
+        )
+        entries.append(EnvironmentEntry(name, access, production, credential_env))
+    return tuple(entries)
 
 
 def _team_keys(tracker: dict[str, object]) -> tuple[str, ...]:

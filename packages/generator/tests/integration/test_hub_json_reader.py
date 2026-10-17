@@ -505,6 +505,272 @@ def test_keeps_other_guard_lists_when_infra_malformed(
     assert guard["deny_hosts"] == ["prod.example.com"]
 
 
+# The guard's blocked lists as the model accepts them (``None`` leaves the key out).
+VALID_BLOCKED: tuple[tuple[str, dict[str, object] | None], ...] = (
+    ("absent", None),
+    ("empty", {"blocked_words": [], "blocked_words_files": [], "blocked_words_env": []}),
+    (
+        "lists",
+        {
+            "blocked_words": ["prod", "production", "demo-live", "eu.prod_2"],
+            "blocked_words_files": ["config/*.json", "serverless.yml", "deploy/*.tfvars"],
+            "blocked_words_env": ["DEMO_STAGE", "DEMO_*", "_X"],
+        },
+    ),
+)
+
+
+def with_blocked(lists: Mapping[str, object] | None) -> dict[str, Any]:
+    """``a_hub_document()`` whose ``guard`` also holds ``lists`` as written."""
+    document = a_hub_document()
+    document["guard"].update(lists or {})
+    return document
+
+
+BLOCKED_KEYS = ("blocked_words", "blocked_words_files", "blocked_words_env")
+
+
+@pytest.mark.parametrize(
+    "lists", [lists for _, lists in VALID_BLOCKED], ids=[i for i, _ in VALID_BLOCKED]
+)
+def test_reads_blocked_words_as_model_when_document_valid(
+    tmp_path: Path, *, hook_python: str, read: Reader, lists: dict[str, object] | None
+) -> None:
+    document = with_blocked(lists)
+    path = write_hub_file(tmp_path, document)
+
+    model = HubConfig.model_validate(document).guard.model_dump(mode="json")
+    guard = read(hook_python, path)["hub_file"]["guard"]
+
+    assert {key: guard[key] for key in BLOCKED_KEYS} == {key: model[key] for key in BLOCKED_KEYS}
+    assert guard["problem"] == ""
+
+
+# A blocked list or ``guard`` key the model rejects, and the first location the guard cannot use
+# (keys in document order). That key's tuple is ``()``; the other lists are read as usual.
+MALFORMED_BLOCKED: tuple[tuple[str, dict[str, object], str], ...] = (
+    ("words-string", {"blocked_words": "prod"}, "guard.blocked_words"),
+    ("words-null", {"blocked_words": None}, "guard.blocked_words"),
+    ("words-empty-item", {"blocked_words": ["ok", ""]}, "guard.blocked_words[1]"),
+    ("words-space", {"blocked_words": ["p rod"]}, "guard.blocked_words[0]"),
+    ("words-short", {"blocked_words": ["x"]}, "guard.blocked_words[0]"),
+    ("words-long", {"blocked_words": ["a" * 65]}, "guard.blocked_words[0]"),
+    ("words-number", {"blocked_words": [7]}, "guard.blocked_words[0]"),
+    ("words-too-many", {"blocked_words": [f"w{i}" for i in range(201)]}, "guard.blocked_words"),
+    ("files-number", {"blocked_words_files": [3]}, "guard.blocked_words_files[0]"),
+    ("files-root", {"blocked_words_files": ["/etc/*"]}, "guard.blocked_words_files[0]"),
+    ("files-parent", {"blocked_words_files": ["a/../x"]}, "guard.blocked_words_files[0]"),
+    ("files-space", {"blocked_words_files": ["a b"]}, "guard.blocked_words_files[0]"),
+    ("files-long", {"blocked_words_files": ["a" * 201]}, "guard.blocked_words_files[0]"),
+    (
+        "files-too-many",
+        {"blocked_words_files": [f"f{i}.json" for i in range(101)]},
+        "guard.blocked_words_files",
+    ),
+    ("env-lower", {"blocked_words_env": ["lower"]}, "guard.blocked_words_env[0]"),
+    ("env-inner-star", {"blocked_words_env": ["A*B"]}, "guard.blocked_words_env[0]"),
+    (
+        "env-too-many",
+        {"blocked_words_env": [f"V{i}" for i in range(51)]},
+        "guard.blocked_words_env",
+    ),
+    ("unknown-key", {"blocked_word": ["prod"]}, "guard.blocked_word"),
+    # After the two lists ``with_blocked`` starts from: the unknown key comes first.
+    (
+        "first-in-order",
+        {"blocked_wordz": ["prod"], "blocked_words_files": [3]},
+        "guard.blocked_wordz",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("lists", "problem"),
+    [(lists, problem) for _, lists, problem in MALFORMED_BLOCKED],
+    ids=[name for name, _, _ in MALFORMED_BLOCKED],
+)
+def test_names_problem_when_blocked_list_unusable(
+    tmp_path: Path, *, hook_python: str, read: Reader, lists: dict[str, object], problem: str
+) -> None:
+    document = with_blocked({"blocked_words": ["prod"], "blocked_words_env": ["DEMO_*"]} | lists)
+    path = write_hub_file(tmp_path, document)
+
+    with pytest.raises(ValidationError):
+        HubConfig.model_validate(document)
+    # ``read`` fails the test when the child exits non-zero: the read never raises.
+    guard = read(hook_python, path)["hub_file"]["guard"]
+
+    unusable = problem.removeprefix("guard.").split("[")[0]
+    usable = {"blocked_words": ["prod"], "blocked_words_files": [], "blocked_words_env": ["DEMO_*"]}
+    assert guard["problem"] == problem
+    assert {key: guard[key] for key in BLOCKED_KEYS} == {
+        key: [] if key == unusable else usable[key] for key in BLOCKED_KEYS
+    }
+    assert guard["ask_before_edit"] == ["demo-api/docs/adr"]
+
+
+def environments_of_model(document: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The hooks' view of the model's environments: name, access, production, credential names."""
+    return [
+        {
+            "name": name,
+            "access": environment.access,
+            "production": environment.production,
+            "credential_env": list(environment.credentials.env if environment.credentials else ()),
+        }
+        for name, environment in HubConfig.model_validate(document).environments.items()
+    ]
+
+
+def with_environments(environments: object) -> dict[str, Any]:
+    """``W`` with ``environments`` as written and no services (whose endpoints name them)."""
+    document = builders.an_environments_document()
+    document["environments"] = environments
+    del document["repos"][0]["services"]
+    return document
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        a_hub_document(),
+        builders.an_environments_document(),
+        with_environments(
+            {
+                "_note": "x",
+                "Demo.qa-2": {"_c": 1, "access": "ask", "production": False},
+                "live": {"access": "read", "credentials": {"_c": 1, "env": ["A", "_B9"]}},
+            }
+        ),
+    ],
+    ids=["absent", "w", "noted"],
+)
+def test_reads_environments_as_model_when_document_valid(
+    tmp_path: Path, *, hook_python: str, read: Reader, document: dict[str, Any]
+) -> None:
+    path = write_hub_file(tmp_path, document)
+
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert hub_file["environments"] == environments_of_model(document)
+
+
+def an_entry(name: str, access: str, credential_env: tuple[str, ...] = ()) -> dict[str, Any]:
+    """One environment as the reader gives it (not production)."""
+    return {
+        "name": name,
+        "access": access,
+        "production": False,
+        "credential_env": list(credential_env),
+    }
+
+
+# Entries the model rejects beside a valid ``local``: the reader drops each one, keeps ``local``.
+UNUSABLE_ENVIRONMENTS: tuple[tuple[str, object], ...] = (
+    ("access-admin", {"access": "admin"}),
+    ("access-missing", {"production": True}),
+    ("access-number", {"access": 7}),
+    ("production-string", {"access": "read", "production": "yes"}),
+    ("not-object", ["read"]),
+)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [entry for _, entry in UNUSABLE_ENVIRONMENTS],
+    ids=[i for i, _ in UNUSABLE_ENVIRONMENTS],
+)
+def test_drops_environments_entry_when_access_unusable(
+    tmp_path: Path, *, hook_python: str, read: Reader, entry: object
+) -> None:
+    document = with_environments({"bad": entry, "local": {"access": "write"}})
+    path = write_hub_file(tmp_path, document)
+
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert hub_file["environments"] == [an_entry("local", "write")]
+
+
+# ``environments`` values the model rejects, and what the reader keeps of them.
+MALFORMED_ENVIRONMENTS: tuple[tuple[str, object, list[dict[str, Any]]], ...] = (
+    ("string", "x", []),
+    ("null", None, []),
+    (
+        "bad-name",
+        {"my env": {"access": "read"}, "local": {"access": "write"}},
+        [an_entry("local", "write")],
+    ),
+    (
+        "long-name",
+        {"a" * 41: {"access": "read"}, "b" * 40: {"access": "ask"}},
+        [an_entry("b" * 40, "ask")],
+    ),
+    (
+        "bad-env-items",
+        {"local": {"access": "write", "credentials": {"env": ["lower", "OK_1", 7]}}},
+        [an_entry("local", "write", ("OK_1",))],
+    ),
+    (
+        "env-string",
+        {"local": {"access": "write", "credentials": {"env": "OK_1"}}},
+        [an_entry("local", "write")],
+    ),
+    (
+        "credentials-list",
+        {"local": {"access": "write", "credentials": ["OK_1"]}},
+        [an_entry("local", "write")],
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("environments", "expected"),
+    [(environments, expected) for _, environments, expected in MALFORMED_ENVIRONMENTS],
+    ids=[name for name, _, _ in MALFORMED_ENVIRONMENTS],
+)
+def test_keeps_usable_environments_when_others_malformed(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    read: Reader,
+    environments: object,
+    expected: list[dict[str, Any]],
+) -> None:
+    document = with_environments(environments)
+    path = write_hub_file(tmp_path, document)
+
+    with pytest.raises(ValidationError):
+        HubConfig.model_validate(document)
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert hub_file["environments"] == expected
+
+
+def test_uses_model_blocked_shapes_when_source_checked(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    properties = Guard.model_json_schema()["properties"]
+    words, files, env = (properties[key] for key in BLOCKED_KEYS)
+    expected = {
+        "BLOCKED_WORD.pattern": words["items"]["pattern"][1:-1],
+        "BLOCKED_WORD_MIN_CHARS": words["items"]["minLength"],
+        "BLOCKED_WORD_MAX_CHARS": words["items"]["maxLength"],
+        "MAX_BLOCKED_WORDS": words["maxItems"],
+        "BLOCKED_GLOB.pattern": files["items"]["pattern"][1:-1],
+        "BLOCKED_GLOB_MAX_CHARS": files["items"]["maxLength"],
+        "MAX_BLOCKED_GLOBS": files["maxItems"],
+        "BLOCKED_ENV.pattern": env["items"]["pattern"][1:-1],
+        "MAX_BLOCKED_ENV": env["maxItems"],
+        "GUARD_KEYS": tuple(Guard.model_fields),
+    }
+    path = write_hub_file(tmp_path, a_hub_document())
+
+    checks = {name: (name, repr(value)) for name, value in expected.items()}
+    loaded = read(hook_python, path, checks=checks)
+
+    assert loaded["equal"] == dict.fromkeys(expected, True)
+
+
 def test_reads_gate_defaults_when_check_keys_absent(
     tmp_path: Path, hook_python: str, read: Reader
 ) -> None:
