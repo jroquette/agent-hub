@@ -23,11 +23,13 @@ from agent_hub.core.item_versions.version_store import (
     ItemVersionStore,
 )
 
-T0 = datetime(2026, 10, 17, 9, 0, tzinfo=UTC)
+# Microseconds, so a store that truncates ``recorded_at`` fails the round trip.
+T0 = datetime(2026, 10, 17, 9, 0, 0, 123456, tzinfo=UTC)
 AGENT: Final = "plugin/demo/agents/reviewer.md"
 OTHER_AGENT: Final = "plugin/demo/agents/planner.md"
 AUTHOR = VersionAuthor(name="Jane Doe", email="jane@example.com")
 _RACERS: Final = 8
+_RACE_SECONDS: Final = 10.0
 _WRITE_VERBS: Final = ("update", "delete", "remove", "purge", "replace", "set", "clear", "drop")
 
 
@@ -36,21 +38,33 @@ def _check(condition: bool, message: str) -> None:  # noqa: FBT001 -- an asserti
         raise AssertionError(message)
 
 
-def _new(seq: int, *, project: str = "demo", unit_path: str = AGENT) -> NewItemVersion:
+def _new(
+    seq: int,
+    *,
+    project: str = "demo",
+    unit_path: str = AGENT,
+    restored_from: str | None = None,
+) -> NewItemVersion:
+    """Seq ``seq``: a ``restore`` of ``restored_from`` when given, else odd seqs ``external``
+    and even ones a ``publish`` from a draft."""
     content = f"---\nname: reviewer\n---\nVersion {seq} of {unit_path}.\n".encode()
-    published = seq % 2 == 0
+    if restored_from is not None:
+        origin = VersionOrigin.RESTORE
+    else:
+        origin = VersionOrigin.PUBLISH if seq % 2 == 0 else VersionOrigin.EXTERNAL
     return NewItemVersion(
         project=project,
         unit_path=unit_path,
         kind=UnitKind.AGENT,
         seq=seq,
-        origin=VersionOrigin.PUBLISH if published else VersionOrigin.EXTERNAL,
+        origin=origin,
         first=seq == 1,
-        author=AUTHOR if published else None,
+        author=None if origin is VersionOrigin.EXTERNAL else AUTHOR,
         recorded_at=T0 + timedelta(minutes=seq),
         content_hash=file_hash(content),
         size=len(content),
-        draft_id="agent-a1b2c3" if published else None,
+        restored_from=restored_from,
+        draft_id="agent-a1b2c3" if origin is VersionOrigin.PUBLISH else None,
         content=content,
     )
 
@@ -67,26 +81,41 @@ def _refused(store: ItemVersionStore, version: NewItemVersion) -> ItemVersionSeq
     return None
 
 
+def _outcome(store: ItemVersionStore, version: NewItemVersion) -> object:
+    """``"stored"``, the ``ItemVersionSequenceError``, or whatever else ``append`` raised."""
+    try:
+        store.append(version)
+    except Exception as error:  # noqa: BLE001 -- every outcome is recorded, then checked
+        return error
+    return "stored"
+
+
 class ItemVersionStoreContract:
     """Append gap-free, last, newest-first pages with a cursor, scoped get, append-only."""
 
     def test_appends_and_reads_last_when_versions_appended(
         self, item_version_store: ItemVersionStore
     ) -> None:
-        _check(item_version_store.last("demo", AGENT) is None, "a unit with no version: None")
-        new = _new(1)
+        store = item_version_store
+        _check(store.last("demo", AGENT) is None, "a unit with no version: None")
+        external = _new(1)
+        stored = store.append(external)
+        published = _new(2)
+        news = [external, published, _new(3, restored_from=stored.id)]
 
-        stored = item_version_store.append(new)
-        second = item_version_store.append(_new(2))
+        answers = [stored, *(store.append(new) for new in news[1:])]
 
-        _check(uuid.UUID(stored.id).version == 7, f"the store mints a UUIDv7: {stored.id}")
-        _check(stored.id != second.id, "every version has its own id")
-        _check(
-            stored.model_dump(exclude={"id"}) == new.model_dump(),
-            "the appended version keeps every field given",
-        )
-        _check(item_version_store.last("demo", AGENT) == second.meta(), "last is the newest")
-        _check(second.draft_id == "agent-a1b2c3", "a publish keeps its draft id")
+        _check(all(uuid.UUID(a.id).version == 7 for a in answers), "the store mints UUIDv7 ids")
+        _check(len({answer.id for answer in answers}) == 3, "every version has its own id")
+        for new, answer in zip(news, answers, strict=True):
+            read = store.get("demo", AGENT, answer.id)
+            _check(read == answer, f"seq {new.seq} reads back as appended: {read}")
+            _check(
+                answer.model_dump(exclude={"id"}) == new.model_dump(),
+                f"the {new.origin} version keeps every field given: {answer}",
+            )
+        _check(published.draft_id == "agent-a1b2c3", "the publish carries its draft id")
+        _check(store.last("demo", AGENT) == answers[-1].meta(), "last is the newest")
         _check(item_version_store.last("demo", OTHER_AGENT) is None, "last is per unit")
         _check(item_version_store.last("other", AGENT) is None, "last is per project")
 
@@ -142,20 +171,32 @@ class ItemVersionStoreContract:
         _check(len(item_version_store.page("demo", AGENT)) == 2, "a refused append writes nothing")
         _check(item_version_store.last("demo", OTHER_AGENT) is None, "nor in the other unit")
 
-        # Writers that all read "no version yet" race for seq 1: exactly one wins.
-        outcomes: list[bool] = []
-        start = threading.Barrier(_RACERS)
+        # Writers that all read "no version yet" race for seq 1: exactly one wins, and every
+        # other one is refused as seq 1 where 2 is expected.
+        outcomes: list[object] = []
+        start = threading.Barrier(_RACERS, timeout=_RACE_SECONDS)
 
         def race() -> None:
             start.wait()
-            outcomes.append(_refused(item_version_store, _new(1, project="race")) is None)
+            outcomes.append(_outcome(item_version_store, _new(1, project="race")))
 
-        racers = [threading.Thread(target=race) for _ in range(_RACERS)]
+        racers = [threading.Thread(target=race, daemon=True) for _ in range(_RACERS)]
         for racer in racers:
             racer.start()
         for racer in racers:
-            racer.join()
-        _check(outcomes.count(True) == 1, f"one racer stores seq 1: {outcomes}")
+            racer.join(_RACE_SECONDS)
+        _check(not any(racer.is_alive() for racer in racers), "a racing append blocked")
+        _check(len(outcomes) == _RACERS, f"every racer finished: {outcomes}")
+        _check(outcomes.count("stored") == 1, f"one racer stores seq 1: {outcomes}")
+        losers = [outcome for outcome in outcomes if outcome != "stored"]
+        _check(
+            all(
+                isinstance(loser, ItemVersionSequenceError)
+                and (loser.expected, loser.got) == (2, 1)
+                for loser in losers
+            ),
+            f"every loser is refused as seq 1 where 2 is expected: {losers}",
+        )
         _check(len(item_version_store.page("race", AGENT)) == 1, "one version was stored")
 
     def test_has_no_update_or_delete_when_port_inspected(

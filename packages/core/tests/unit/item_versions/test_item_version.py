@@ -164,3 +164,11 @@ def test_refuses_draft_id_when_origin_not_publish(origin: VersionOrigin) -> None
             restored_from=restored_from,
             draft_id="agent-a1b2c3",
         )
+
+
+@pytest.mark.parametrize("draft_id", ["workflow-abc123", "agent-ABC123", "agent-abc12"])
+def test_refuses_draft_id_when_malformed(draft_id: str) -> None:
+    author = VersionAuthor(name="Jane Doe", email="jane@example.com")
+
+    with pytest.raises(ValidationError, match="draft_id"):
+        _new(origin=VersionOrigin.PUBLISH, author=author, draft_id=draft_id)
