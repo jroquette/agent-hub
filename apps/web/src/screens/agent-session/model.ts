@@ -85,6 +85,8 @@ export interface ToolView {
   /** A unified diff the server attached to the call, when it did. */
   diff: string | null;
   result: ToolResultView | null;
+  /** When its call record was written, for how long it has run. */
+  startedAt?: string | null;
 }
 
 export interface PermissionDecisionView {
@@ -627,6 +629,7 @@ function applyToolCall(state: TranscriptState, body: JsonObject): TranscriptStat
     parentId,
     diff: str(body, "diff"),
     result: state.tools[id]?.result ?? null,
+    startedAt: state.tools[id]?.startedAt ?? state.lastAt,
   };
   const known = id in state.tools;
   const next = { ...state, tools: { ...state.tools, [id]: tool } };

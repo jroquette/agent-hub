@@ -242,7 +242,8 @@
   .as-caret,
   .as-working::before,
   .as-spin,
-  .as-drawer {
+  .as-drawer,
+  .as-live-pulse {
     animation: none;
   }
   .as-drawer-handle::after {
@@ -2179,4 +2180,114 @@ body.as-resizing .as-drawer {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* The live activity bar: what a running turn does now, pinned above the composer. */
+.as-live {
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.as-live-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  padding: 6px var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.as-live-bar:disabled {
+  cursor: default;
+}
+.as-live-bar:not(:disabled):hover {
+  background: var(--surface-hover);
+}
+.as-live-bar > * {
+  flex: none;
+}
+.as-live-bar > .as-live-detail,
+.as-live-bar > .as-live-todo {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-live-bar > .ah-grow {
+  flex: 1 1 0;
+}
+.as-live-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+  animation: as-live-pulse 1.4s ease-in-out infinite;
+}
+.as-live-waiting .as-live-pulse {
+  background: var(--waiting);
+}
+.as-live-waiting {
+  border-color: var(--waiting);
+  background: var(--waiting-soft);
+}
+@keyframes as-live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+.as-live-quiet {
+  color: var(--waiting);
+}
+.as-live-calls {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 40vh;
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm, 13px);
+}
+.as-live-calls.as-live-nested {
+  max-height: none;
+  padding: 4px 0 0 var(--space-5, 20px);
+  border: 0;
+  border-left: 1px solid var(--border);
+  margin-left: 7px;
+}
+.as-live-call-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.as-live-call-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+@media (max-width: 720px) {
+  .as-live-bar > .as-live-todo,
+  .as-live-bar > .as-live-detail {
+    display: none;
+  }
 }

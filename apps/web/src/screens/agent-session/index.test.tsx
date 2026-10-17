@@ -1248,7 +1248,13 @@ describe("AgentSessionScreen (axe)", () => {
     const animated = [...css.matchAll(/([^{}]+)\{[^{}]*\banimation:(?!\s*none)[^;]+;/g)].map(
       (match) => match[1]?.trim(),
     );
-    expect(animated).toEqual([".as-caret", ".as-working::before", ".as-spin", ".as-drawer"]);
+    expect(animated).toEqual([
+      ".as-caret",
+      ".as-working::before",
+      ".as-spin",
+      ".as-drawer",
+      ".as-live-pulse",
+    ]);
     const reduced =
       /@media \(prefers-reduced-motion: reduce\) \{\s*([^{]+)\{\s*animation: none;/.exec(css);
     expect(reduced?.[1]?.split(",").map((selector) => selector.trim())).toEqual(animated);

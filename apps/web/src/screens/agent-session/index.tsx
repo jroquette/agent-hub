@@ -19,6 +19,8 @@ import { sessionControlUnavailable } from "../sessions-list/control";
 import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
+import { liveActivity } from "./liveActivity";
+import { LiveActivityBar } from "./LiveActivityBar";
 import { CostMeter } from "./CostMeter";
 import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
 import { useResolvedThreads } from "./ReviewDiff";
@@ -370,6 +372,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
       </OldestPendingContext.Provider>
       <footer className="as-footer">
         <div className="as-column">
+          <LiveActivityBar activity={liveActivity(state)} />
           <Composer
             status={status}
             mode={mode}
