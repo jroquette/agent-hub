@@ -207,6 +207,18 @@ describe("reduceTranscript (transcript)", () => {
     expect(state.entries[0]).toMatchObject({ kind: "assistant", redacted: true });
   });
 
+  it("takes a switch back to auto mode as a mode change", () => {
+    const state = run([
+      record("settings", { seq: 1, body: { mode: "acceptEdits" } }),
+      record("settings", { seq: 2, body: { mode: "auto" } }),
+    ]);
+
+    expect(state.mode).toBe("auto");
+    expect(
+      state.entries.map((entry) => (entry.kind === "notice" ? entry.text : entry.kind)),
+    ).toEqual(["Mode set to Accept edits", "Mode set to Auto"]);
+  });
+
   it("turns audit and driver records into notices when they are not chat content", () => {
     const state = run([
       record("init", { seq: 1 }),

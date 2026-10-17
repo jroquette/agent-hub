@@ -746,7 +746,7 @@ function applySettings(state: TranscriptState, record: LogRecord): TranscriptSta
   const model = str(record.body, "model");
   const parts: string[] = [];
   let next = state;
-  if (mode === "default" || mode === "acceptEdits" || mode === "plan") {
+  if (mode === "default" || mode === "acceptEdits" || mode === "plan" || mode === "auto") {
     parts.push(`Mode set to ${modeLabel(mode)}`);
     next = { ...next, mode };
   }
