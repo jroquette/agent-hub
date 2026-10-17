@@ -590,8 +590,11 @@ class HubConfig(ConfigObject):
         ]
 
     def _environment_problems(self) -> Iterator[InitErrorDetails]:
-        # Names unique ignoring case (a profile or a folder may be named after one), and each
-        # endpoint on a declared environment.
+        yield from self._duplicate_environment_names()
+        yield from self._undeclared_endpoint_environments()
+
+    def _duplicate_environment_names(self) -> Iterator[InitErrorDetails]:
+        # Ignoring case, as repo dirs: ``live`` and ``Live`` would read as one environment.
         first_name: dict[str, str] = {}
         for name in self.environments:
             folded = name.lower()
@@ -606,26 +609,22 @@ class HubConfig(ConfigObject):
                     input=name,
                 )
             first_name.setdefault(folded, name)
+
+    def _undeclared_endpoint_environments(self) -> Iterator[InitErrorDetails]:
         for index, repo in enumerate(self.repos):
             for service_name, service in repo.services.items():
-                for environment in service.endpoints:
-                    if environment not in self.environments:
-                        yield InitErrorDetails(
-                            type=PydanticCustomError(
-                                "unknown_environment",
-                                "environment {name} is not in environments",
-                                {"name": json.dumps(environment)},
-                            ),
-                            loc=(
-                                "repos",
-                                index,
-                                "services",
-                                service_name,
-                                "endpoints",
-                                environment,
-                            ),
-                            input=environment,
-                        )
+                for name in service.endpoints:
+                    if name in self.environments:
+                        continue
+                    yield InitErrorDetails(
+                        type=PydanticCustomError(
+                            "unknown_environment",
+                            "environment {name} is not in environments",
+                            {"name": json.dumps(name)},
+                        ),
+                        loc=("repos", index, "services", service_name, "endpoints", name),
+                        input=name,
+                    )
 
     def _unfillable_pr_titles(self) -> Iterator[InitErrorDetails]:
         # Per repo, on the effective patterns; an unset pr_title is the commit_title, so only an
