@@ -33,6 +33,19 @@ describe("SkillCard card", () => {
     expect(article).toHaveTextContent("1 diagnostic");
   });
 
+  it("shows the full description and invocation on hover when they are truncated", () => {
+    card();
+
+    const article = screen.getByRole("article", { name: "feature" });
+    expect(within(article).getByText("/feature <idea or tracker issue id>")).toHaveAttribute(
+      "title",
+      "/feature <idea or tracker issue id>",
+    );
+    expect(
+      within(article).getByText("Takes an idea or a tracker issue from spec to delivery."),
+    ).toHaveAttribute("title", "Takes an idea or a tracker issue from spec to delivery.");
+  });
+
   it("writes exactly the invocation to the clipboard when Copy is pressed", () => {
     const writeText = vi.fn(() => Promise.resolve());
     vi.stubGlobal("navigator", { clipboard: { writeText } });

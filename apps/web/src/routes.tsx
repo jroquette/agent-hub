@@ -20,7 +20,7 @@ import { SessionsListScreen } from "./screens/sessions-list";
 import { liveRedirectTarget } from "./screens/sessions-list/liveRedirect";
 import { SettingsScreen } from "./screens/settings";
 import { SkillDetailScreen, SkillsPickerScreen, SkillsScreen } from "./screens/skills";
-import { NewDraftScreen, StudioScreen } from "./screens/skills/Studio";
+import { EditDraftScreen, NewDraftScreen, StudioScreen } from "./screens/skills/Studio";
 import { WelcomeScreen } from "./screens/welcome";
 import { WorkflowDetailScreen, WorkflowsScreen } from "./screens/workflows";
 import { AppShell } from "./shell/AppShell";
@@ -61,6 +61,10 @@ export const appRoutes: RouteObject[] = [
           { path: "projects/:project/skills/new/:kind", element: <NewDraftScreen /> },
           { path: "projects/:project/skills/drafts/:draftId", element: <StudioScreen /> },
           { path: "projects/:project/skills/:kind/:source/:name", element: <SkillDetailScreen /> },
+          {
+            path: "projects/:project/skills/:kind/:source/:name/edit",
+            element: <EditDraftScreen />,
+          },
           { path: "approvals", element: <ApprovalsScreen /> },
           { path: "approvals/:approvalId", element: <ApprovalsScreen /> },
           { path: "live", element: <LiveRedirect /> },
