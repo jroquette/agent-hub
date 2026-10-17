@@ -78,8 +78,17 @@ class Rig:
                 await asyncio.sleep(0.002)
 
     async def until_status(self, agent_session_id: str, *statuses: str) -> AgentSession:
-        await self.until(lambda: self.store.get(agent_session_id).status in statuses)
-        return self.store.get(agent_session_id)
+        """Waits until the store and the control's view both show one of ``statuses``: the
+        control stores a status from a worker thread and takes the stored row back after it, so
+        the store can show a status a moment before ``snapshot`` does."""
+        async with asyncio.timeout(WAIT_SECONDS):
+            while True:
+                stored = self.store.get(agent_session_id)
+                if stored.status in statuses:
+                    shown = await self.control.snapshot(agent_session_id)
+                    if shown.status in statuses:
+                        return stored
+                await asyncio.sleep(0.002)
 
 
 def build_rig(
