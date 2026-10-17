@@ -1,5 +1,9 @@
 # Approvals
 
+> **Retired (AGH-273).** The app has no Approvals screen: a workflow gate is answered in its run's page (Open
+> gates), anything else in its session, and Needs you, activity and search link there. The rest of this file is
+> the original design, kept for reference.
+
 **Phase:** P2 read-only (decisions P4 tagged inline) · **Route:** `/approvals`, `/approvals/{approval_id}` · **Answers:** "What is waiting for me to decide, and what happens if I say yes?"
 
 ## Purpose and primary user

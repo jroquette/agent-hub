@@ -849,6 +849,48 @@ export const ICONS = {
       },
     ],
   ],
+  pencil: [
+    [
+      "path",
+      {
+        d: "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z",
+      },
+    ],
+    ["path", { d: "m15 5 4 4" }],
+  ],
+  type: [
+    ["path", { d: "M12 4v16" }],
+    ["path", { d: "M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" }],
+    ["path", { d: "M9 20h6" }],
+  ],
+  circle: [["circle", { cx: "12", cy: "12", r: "10" }]],
+  "maximize-2": [
+    ["path", { d: "M15 3h6v6" }],
+    ["path", { d: "m21 3-7 7" }],
+    ["path", { d: "m3 21 7-7" }],
+    ["path", { d: "M9 21H3v-6" }],
+  ],
+  "undo-2": [
+    ["path", { d: "M9 14 4 9l5-5" }],
+    ["path", { d: "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" }],
+  ],
+  download: [
+    ["path", { d: "M12 15V3" }],
+    ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }],
+    ["path", { d: "m7 10 5 5 5-5" }],
+  ],
+  "move-up-right": [
+    ["path", { d: "M13 5H19V11" }],
+    ["path", { d: "M19 5L5 19" }],
+  ],
+  highlighter: [
+    ["path", { d: "m9 11-6 6v3h9l3-3" }],
+    ["path", { d: "m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" }],
+  ],
+  crop: [
+    ["path", { d: "M6 2v14a2 2 0 0 0 2 2h14" }],
+    ["path", { d: "M18 22V8a2 2 0 0 0-2-2H2" }],
+  ],
 } as const satisfies Record<string, IconNode>;
 
 /** A Lucide icon name the app bundles. */

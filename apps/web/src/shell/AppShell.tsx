@@ -12,10 +12,12 @@ import { Outlet, useNavigate } from "react-router";
 
 import { usePreferences } from "../lib/preferences";
 import { useScope } from "../lib/scope";
+import { usePageScope } from "./pageScope";
 import { CommandPalette } from "./CommandPalette";
 import { DiscussProvider, useDiscuss } from "./discuss";
 import { DiscussPanel } from "./DiscussPanel";
 import { DiscussSelection } from "./DiscussSelection";
+import { ScreenDiscussFallback } from "./screenContext";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
 import { armGoSequence, clearGoSequence, goSequencePending, typingIn } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
@@ -42,7 +44,6 @@ export function useShell(): ShellActions {
 /** `g` then a key goes to a destination (spec 01 keyboard map). */
 const GO: Record<string, string> = {
   p: "/",
-  a: "/approvals",
   // Kept from the retired Live sessions (O-6).
   l: "/sessions?view=grid",
   s: "/sessions",
@@ -119,7 +120,7 @@ function useGlobalKeys(actions: {
 
 function ShellLayout({ children }: { children?: ReactNode }) {
   const preferences = usePreferences();
-  const [scope, setScope] = useScope();
+  const [scope, setScope] = usePageScope();
   const { health, counts } = useGlobalStream();
   const [palette, setPalette] = useState<{ query: string } | null>(null);
   const [sheet, setSheet] = useState(false);
@@ -163,7 +164,6 @@ function ShellLayout({ children }: { children?: ReactNode }) {
       >
         <Sidebar
           counts={{
-            approvals: counts?.approvals_open,
             live: counts?.live_sessions,
             learnings: counts?.learnings_proposed,
             health: counts?.doctor_errors ?? undefined,
@@ -190,6 +190,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
         </main>
         <DiscussPanel />
         <DiscussSelection />
+        {discuss.open && <ScreenDiscussFallback />}
       </div>
       {palette && (
         <CommandPalette onClose={closeAll} initialQuery={palette.query} project={scope} />

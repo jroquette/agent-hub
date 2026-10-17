@@ -1,7 +1,9 @@
 import type { components } from "../../api/schema";
 import { Banner, Button } from "../../components";
-import { fmtClock } from "../../lib/format";
+import { useNow } from "../../lib/clock";
+import { fmtAgo, fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
+import { TICKETS_REFRESH_MS } from "./queries";
 
 type FeatureTickets = components["schemas"]["FeatureTickets"];
 
@@ -17,6 +19,18 @@ function AsOf({ value }: { value: string }) {
   return (
     <time dateTime={value} title={value}>
       {fmtClock(value, tz)}
+    </time>
+  );
+}
+
+/** "12 s ago", ticking, with the clock time on hover. */
+function Ago({ value }: { value: string }) {
+  const { tz } = usePreferences();
+  const now = useNow(1000);
+  const seconds = Math.max(0, (now - new Date(value).getTime()) / 1000);
+  return (
+    <time dateTime={value} title={fmtClock(value, tz, true)}>
+      {fmtAgo(seconds)}
     </time>
   );
 }
@@ -40,8 +54,16 @@ export function TicketNotice({ tickets, onRefresh, refreshing }: TicketNoticePro
   if (!fromPlan && !tickets.stale) {
     return (
       <div className="ah-row ah-small ah-muted" style={{ gap: 8 }}>
+        <span
+          className="ah-live-dot"
+          data-busy={refreshing ? true : undefined}
+          aria-hidden="true"
+          title={refreshing ? "Reading Linear" : "Live"}
+        />
         <span>
-          From Linear · read at {tickets.as_of ? <AsOf value={tickets.as_of} /> : "an unknown time"}
+          Live from Linear · read{" "}
+          {tickets.as_of ? <Ago value={tickets.as_of} /> : "at an unknown time"} · updates every{" "}
+          {String(TICKETS_REFRESH_MS / 1000)} s while this tab is open
         </span>
         <span className="ah-grow" />
         {refresh}

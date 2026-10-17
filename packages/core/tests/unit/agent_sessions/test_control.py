@@ -18,7 +18,11 @@ from agent_hub.core.agent_sessions.agent_session import (
     SendMessage,
     SessionSettings,
 )
-from agent_hub.core.agent_sessions.control import AgentSessionCommands, AgentSessionControl
+from agent_hub.core.agent_sessions.control import (
+    TITLE_POLL,
+    AgentSessionCommands,
+    AgentSessionControl,
+)
 from agent_hub.core.agent_sessions.diff import OFF_LOOP_BYTES, edit_diff
 from agent_hub.core.agent_sessions.driver import (
     Allow,
@@ -143,6 +147,75 @@ async def test_keeps_prompt_title_when_claude_title_missing_or_failing(make_rig:
     assert (await broken.until_status(second.id, "idle")).title == "Say hello."
 
 
+async def test_takes_claude_title_while_first_turn_runs_when_swept(make_rig: MakeRig) -> None:
+    asked: list[str] = []
+
+    def session_title(_cwd: str, claude_session_id: str) -> str | None:
+        asked.append(claude_session_id)
+        return "Greeting the user"
+
+    rig = make_rig(
+        replies={"Work.": (TextBlock(block=0, text="working"), Hold())},
+        session_title=session_title,
+    )
+    working = await rig.create("Work.")
+    await rig.until(lambda: "text" in rig.kinds(working.id))
+
+    await rig.control.sweep(rig.clock(), purge=False)
+    await rig.control.sweep(rig.clock.advance(1), purge=False)
+
+    named = rig.store.get(working.id)
+    assert (named.status, named.title) == (AgentSessionStatus.RUNNING, "Greeting the user")
+    assert asked == [named.claude_session_id]
+
+
+async def test_checks_unnamed_live_session_once_per_poll_when_swept(make_rig: MakeRig) -> None:
+    asked: list[str] = []
+
+    def session_title(_cwd: str, claude_session_id: str) -> str | None:
+        asked.append(claude_session_id)
+        return None
+
+    rig = make_rig(session_title=session_title)
+    idle = await rig.create()
+
+    await rig.control.sweep(rig.clock(), purge=False)
+    await rig.control.sweep(rig.clock.advance(1), purge=False)
+    await rig.control.sweep(rig.clock.advance(TITLE_POLL.total_seconds()), purge=False)
+
+    assert len(asked) == 2
+    assert rig.store.get(idle.id).title is None
+
+
+async def test_takes_claude_title_when_stopped_during_first_turn(make_rig: MakeRig) -> None:
+    rig = make_rig(
+        replies={"Work.": (TextBlock(block=0, text="working"), Hold())},
+        session_title=lambda _cwd, _claude_session_id: "Greeting the user",
+    )
+    working = await rig.create("Work.")
+    await rig.until(lambda: "text" in rig.kinds(working.id))
+
+    await rig.control.shutdown()
+
+    stopped = rig.store.get(working.id)
+    assert (stopped.end_reason, stopped.title) == (EndReason.SERVER_STOPPED, "Greeting the user")
+
+
+async def test_names_stored_sessions_ended_unnamed_when_first_swept(make_rig: MakeRig) -> None:
+    before = make_rig(replies={"Work.": (TextBlock(block=0, text="working"), Hold())})
+    working = await before.create("Work.")
+    await before.until(lambda: "text" in before.kinds(working.id))
+    await before.control.shutdown()
+    assert before.store.get(working.id).title == "Work."
+    rig = make_rig(
+        store=before.store, session_title=lambda _cwd, _claude_session_id: "Greeting the user"
+    )
+
+    await rig.control.sweep(rig.clock(), purge=False)
+
+    assert rig.store.get(working.id).title == "Greeting the user"
+
+
 async def test_starts_idle_without_init_when_created_without_prompt(make_rig: MakeRig) -> None:
     rig = make_rig()
 
@@ -153,10 +226,10 @@ async def test_starts_idle_without_init_when_created_without_prompt(make_rig: Ma
     assert [call.method for call in rig.driver.calls] == ["capabilities", "start"]
 
 
-async def test_refuses_third_when_limit_two(make_rig: MakeRig) -> None:
-    rig = make_rig(limits=SessionLimits(sessions_max=2))
-    first = await rig.create()
-    await rig.create()
+async def test_refuses_third_when_limit_two_and_both_running(make_rig: MakeRig) -> None:
+    rig = make_rig(limits=SessionLimits(sessions_max=2), replies={"Work.": (Hold(),)})
+    first = await rig.create("Work.")
+    await rig.create("Work.")
 
     with pytest.raises(LiveLimitError) as refused:
         await rig.create()
@@ -165,6 +238,37 @@ async def test_refuses_third_when_limit_two(make_rig: MakeRig) -> None:
 
     assert refused.value.limit == 2
     assert third.status == AgentSessionStatus.IDLE
+
+
+async def test_ends_longest_idle_when_limit_reached(make_rig: MakeRig) -> None:
+    rig = make_rig(limits=SessionLimits(sessions_max=2), replies={"Work.": (Hold(),)})
+    oldest = await rig.create()
+    rig.clock.advance(1)
+    newer = await rig.create()
+    rig.clock.advance(1)
+
+    third = await rig.create()
+    ended = await rig.until_status(oldest.id, "ended")
+
+    assert third.status == AgentSessionStatus.IDLE
+    assert ended.end_reason == EndReason.IDLE_TIMEOUT
+    close = next(r for r in rig.records(oldest.id) if r.kind == "close")
+    assert (close.by, close.body) == ("server", {"reason": "idle_timeout"})
+    assert (await rig.control.snapshot(newer.id)).status == AgentSessionStatus.IDLE
+
+
+async def test_reopens_session_ended_for_a_slot_when_message_sent(make_rig: MakeRig) -> None:
+    rig = make_rig(limits=SessionLimits(sessions_max=1), past_sessions=(PAST,))
+    first = await rig.create("Say hello.", resume_session_id=PAST.session_id)
+    await rig.until_status(first.id, "idle")
+    second = await rig.create()
+    await rig.until_status(first.id, "ended")
+
+    await rig.control.send(first.id, SendMessage(text="Go on."))
+    reopened = await rig.until_status(first.id, "idle")
+
+    assert (reopened.end_reason, reopened.ended_at) == (None, None)
+    assert (await rig.control.snapshot(second.id)).status == AgentSessionStatus.ENDED
 
 
 async def test_refuses_create_when_workdir_not_listed(make_rig: MakeRig) -> None:
@@ -414,6 +518,24 @@ async def test_truncates_tool_result_when_over_limit(make_rig: MakeRig) -> None:
 
     assert stored.body["truncated"] is True
     assert stored.body["original_bytes"] == 70 * KIB
+
+
+async def test_keeps_engine_diff_on_result_record_when_reported(make_rig: MakeRig) -> None:
+    patched = "--- a/x.py\n+++ b/x.py\n@@ -7,1 +7,1 @@\n-a\n+b\n"
+    turn = (
+        ToolCall(tool_use_id="toolu_1", name="Edit", input={"file_path": "x.py"}),
+        ToolResult(tool_use_id="toolu_1", content="updated", diff=patched),
+        ToolCall(tool_use_id="toolu_2", name="Read", input={"file_path": "y.py"}),
+        ToolResult(tool_use_id="toolu_2", content="text"),
+    )
+    rig = make_rig(replies={"Edit it.": turn})
+    created = await rig.create("Edit it.")
+    await rig.until_status(created.id, "idle")
+
+    results = [r.body for r in rig.records(created.id) if r.kind == "tool.result"]
+
+    assert results[0]["diff"] == patched
+    assert "diff" not in results[1]
 
 
 async def test_adds_diff_when_edit_called(make_rig: MakeRig) -> None:
@@ -1186,3 +1308,41 @@ async def test_logs_marker_without_bytes_when_screenshot_sent(make_rig: MakeRig)
     for text in stored + streamed:
         assert PNG_BASE64 not in text
         assert "iVBORw0KGgo" not in text
+
+
+async def test_sends_message_with_images_when_screenshots_sent(make_rig: MakeRig) -> None:
+    rig = make_rig()
+    created = await rig.create("Say hello.")
+    await rig.until_status(created.id, "idle")
+
+    accepted = await rig.control.send(
+        created.id,
+        SendMessage.model_validate({"text": "Look.", "screenshots": [_screenshot()] * 2}),
+    )
+    await rig.until_status(created.id, "idle")
+
+    sends = [call.args for call in rig.driver.calls if call.method == "send"]
+    image = DriverImage(media_type="image/png", data=PNG)
+    assert sends[-1] == ("Look.", (image, image))
+    message = next(record for record in rig.records(created.id) if record.seq == accepted.seq)
+    assert message.body == {"text": "Look.", "attachments": [SCREENSHOT_MARKER] * 2}
+    assert PNG_BASE64 not in message.model_dump_json()
+
+
+async def test_refuses_message_image_before_logging_when_not_png(make_rig: MakeRig) -> None:
+    rig = make_rig()
+    created = await rig.create("Say hello.")
+    await rig.until_status(created.id, "idle")
+    before = rig.kinds(created.id)
+
+    with pytest.raises(InvalidScreenshotError) as refused:
+        await rig.control.send(
+            created.id,
+            SendMessage.model_validate(
+                {"text": "Look.", "screenshots": [_screenshot(), _screenshot(b"GIF89a")]}
+            ),
+        )
+
+    assert refused.value.pointer == "/screenshots/1/data"
+    assert rig.kinds(created.id) == before
+    assert [call.method for call in rig.driver.calls].count("send") == 1

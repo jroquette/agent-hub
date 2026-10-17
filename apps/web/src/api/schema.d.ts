@@ -630,7 +630,8 @@ export interface paths {
     put?: never;
     /**
      * Accept Learning
-     * @description Open a hub PR that moves the note into the brain; nothing changes until it is merged.
+     * @description Open a hub PR that moves the note into the brain, with the edited body when one is sent;
+     *     nothing changes until it is merged.
      */
     post: operations["accept_learning_api_v1_learnings__learning_id__accept_post"];
     delete?: never;
@@ -1305,9 +1306,12 @@ export interface components {
     /**
      * AcceptLearningBody
      * @description ``POST /learnings/{learning_id}/accept``: the brain folder (or ``.md`` path) to move the
-     *     note to, relative to ``brain/``.
+     *     note to, relative to ``brain/``, and optionally the note's edited text after its frontmatter
+     *     (the frontmatter itself is kept; ``status`` and ``last_verified`` are set as for any accept).
      */
     AcceptLearningBody: {
+      /** Note Body */
+      note_body?: string | null;
       /** Target */
       target: string;
     };
@@ -1510,6 +1514,8 @@ export interface components {
       path: string;
       /** Project */
       project: string;
+      /** Sha256 */
+      sha256?: string | null;
       /** Size */
       size: number;
     };
@@ -3125,7 +3131,15 @@ export interface components {
       url: string;
     };
     /** @enum {string} */
-    Readiness: "can_start" | "waiting" | "done" | "canceled" | "in_cycle" | "unknown";
+    Readiness:
+      | "can_start"
+      | "in_progress"
+      | "waiting"
+      | "done"
+      | "canceled"
+      | "in_cycle"
+      | "epic"
+      | "unknown";
     /** @enum {string} */
     RecordBy: "web" | "timeout" | "closed" | "driver" | "server";
     /** @enum {string} */
@@ -3311,8 +3325,9 @@ export interface components {
     };
     /**
      * Screenshot
-     * @description A PNG of the screen sent with the first prompt, base64-encoded; its decoded size and
-     *     signature are checked by ``decode_screenshot`` (413, 422).
+     * @description A PNG image sent with a message (a screenshot, or an image pasted in the chat),
+     *     base64-encoded; its decoded size and signature are checked by ``decode_screenshot`` (413,
+     *     422).
      */
     Screenshot: {
       /** Data */
@@ -3344,9 +3359,12 @@ export interface components {
       "session" | "run" | "approval" | "learning" | "feature" | "file" | "command" | "tool";
     /**
      * SendMessage
-     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413).
+     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413), with the images
+     *     pasted in it, sent to Claude before the text.
      */
     SendMessage: {
+      /** Screenshots */
+      screenshots?: components["schemas"]["Screenshot"][] | null;
       /** Text */
       text: string;
     };
@@ -3884,6 +3902,9 @@ export interface components {
     /**
      * Step
      * @description One top-level ordered list item of a body (S6); ``index`` is 1-based, as ``#step-<n>``.
+     *
+     *     ``declared_type`` is the type the step states itself, when it starts with one; ``summary`` is
+     *     the rest of its first line as plain text (Markdown marks dropped), empty when there is none.
      */
     Step: {
       /**
@@ -3896,6 +3917,7 @@ export interface components {
        * @default []
        */
       commands: string[];
+      declared_type?: components["schemas"]["StepType"] | null;
       /** Index */
       index: number;
       /**
@@ -3908,6 +3930,11 @@ export interface components {
        * @default []
        */
       skills: string[];
+      /**
+       * Summary
+       * @default
+       */
+      summary: string;
       /**
        * Tags
        * @default []
@@ -3935,6 +3962,8 @@ export interface components {
     StepStatus: "running" | "ok" | "failed" | "skipped";
     /** @enum {string} */
     StepTag: "gate" | "agent" | "command" | "script" | "human";
+    /** @enum {string} */
+    StepType: "agent" | "script" | "gate" | "human";
     /**
      * SummaryLine
      * @description One line of a session summary and the event it comes from.
@@ -3960,9 +3989,11 @@ export interface components {
      * @description The planning of the feature's tickets, every ticket named by its row's ``ref``.
      *
      *     ``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);
-     *     ``can_start`` the first layer's tickets that wait on nothing; ``order`` the recommended
-     *     order; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle
-     *     (left out of the layers); ``critical_path`` the longest chain of tickets not done.
+     *     ``can_start`` the first layer's tickets that wait on nothing and are not started yet;
+     *     ``order`` the recommended order; ``waiting`` the tickets with a blocker not done;
+     *     ``cycles`` each dependency cycle (left out of the layers); ``critical_path`` the longest
+     *     chain of tickets not done; ``epics`` the rows that are a parent of other rows: they track
+     *     the work, are left out of the layers and never block.
      */
     TicketPlan: {
       /** Can Start */
@@ -3971,6 +4002,11 @@ export interface components {
       critical_path: string[];
       /** Cycles */
       cycles: string[][];
+      /**
+       * Epics
+       * @default []
+       */
+      epics: string[];
       /** External Blockers */
       external_blockers: components["schemas"]["ExternalBlocker"][];
       /** Layers */
@@ -3991,6 +4027,8 @@ export interface components {
      *     come from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the
      *     AC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of
      *     its blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).
+     *     ``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent
+     *     issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
      */
     TicketRow: {
       /** Acs */
@@ -4001,6 +4039,11 @@ export interface components {
       blocked_by: components["schemas"]["TicketEdge"][];
       /** Blocks */
       blocks: string[];
+      /**
+       * Children
+       * @default []
+       */
+      children: string[];
       /** Estimate */
       estimate: number | null;
       /** Id */
@@ -4009,6 +4052,8 @@ export interface components {
       key: string | null;
       /** Order */
       order: number | null;
+      /** Parent */
+      parent?: string | null;
       /** Priority */
       priority: number | null;
       readiness: components["schemas"]["Readiness"];
@@ -6514,6 +6559,7 @@ export interface operations {
         outcome?: components["schemas"]["Outcome"] | null;
         workflow?: string | null;
         run_id?: string | null;
+        issue?: string | null;
         from?: string | null;
         to?: string | null;
         cost_min?: number | string | null;

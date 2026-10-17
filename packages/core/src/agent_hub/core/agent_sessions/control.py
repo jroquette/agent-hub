@@ -20,9 +20,12 @@ and the subscribers (S4, E8).
   it too (``failed`` with an ``error`` record when its code is not 0).
 - No wall clock in here (P9): ``sweep(now)`` applies permission deadlines, idle timeouts and
   retention; the clock is injected.
-- At the end of each turn the session's title becomes the one Claude Code gave it (its
-  ``ai-title``, or the user's ``/rename``), read through ``session_title``; until then it stays
-  the first prompt.
+- The session's title becomes the one Claude Code gave it (its ``ai-title``, or the user's
+  ``/rename``), read through ``session_title``; until then it stays the first prompt. It is read
+  at the end of each turn, when the session ends, and by ``sweep`` every ``TITLE_POLL`` while a
+  live session has none yet (Claude Code names a session during its first turn, which can be
+  long or cut short). The first sweep also names the stored sessions that ended before they
+  were named.
 - ``shutdown`` ends every live session ``server_stopped``, interrupting a running turn before
   the driver disconnects (P12), all in parallel and bounded.
 
@@ -34,8 +37,9 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
+from functools import partial
 from typing import Final, Protocol
 
 from pydantic import JsonValue
@@ -69,6 +73,7 @@ from agent_hub.core.agent_sessions.driver import (
     StartSpec,
     TextDelta,
     ToolCall,
+    ToolResult,
     TurnResult,
 )
 from agent_hub.core.agent_sessions.errors import (
@@ -143,6 +148,8 @@ _RESERVED_KINDS: Final = frozenset({"result", "exited"})
 # How many records a reopened session's log is read in at a time, to count its budget.
 _BUDGET_PAGE: Final = 1000
 _STOPPING: Final = "hub web is stopping"
+# How often a live session Claude Code has not named yet is checked for its title.
+TITLE_POLL: Final = timedelta(seconds=5)
 
 
 def _uuid7() -> str:
@@ -174,7 +181,19 @@ def _sum_cost(total: Decimal | None, more: Decimal | None) -> Decimal | None:
 
 def _event_body(event: DriverEvent) -> dict[str, JsonValue]:
     body: dict[str, JsonValue] = event.model_dump(mode="json", exclude={"kind"})
+    # A tool result without the engine's diff keeps the record's body as it always was.
+    if isinstance(event, ToolResult) and event.diff is None:
+        del body["diff"]
     return body
+
+
+def _user_message_body(text: str, images: tuple[DriverImage, ...]) -> UserMessageBody:
+    """A user message's record: its text and a marker per image, never the image's bytes."""
+    attachments = tuple(
+        Attachment(kind="screenshot", media_type=image.media_type, bytes=len(image.data))
+        for image in images
+    )
+    return UserMessageBody(text=text, attachments=attachments or None)
 
 
 def _tool_call_body(call: ToolCall) -> dict[str, JsonValue]:
@@ -326,6 +345,7 @@ class AgentSessionControl:
         self._pumps: set[asyncio.Task[None]] = set()
         self._admission = asyncio.Lock()
         self._stopping = False
+        self._ended_named = False
 
     # Reads
 
@@ -447,11 +467,7 @@ class AgentSessionControl:
         """Log the first prompt (a marker per image, never its bytes), start the pump, then send
         the prompt with its images."""
         if prompt is not None:
-            attachments = tuple(
-                Attachment(kind="screenshot", media_type=image.media_type, bytes=len(image.data))
-                for image in images
-            )
-            body = UserMessageBody(text=prompt, attachments=attachments or None)
+            body = _user_message_body(prompt, images)
             await self._emit(live, "user.message", body.as_body(), by="web")
         pump = asyncio.create_task(self._pump(live), name=f"agent-session-{live.id}")
         live.pump = pump
@@ -490,17 +506,20 @@ class AgentSessionControl:
         """Log a user message, then pass it on: it plays after the running turn. A message to a
         local session that ended (not ``log_full``) resumes it in place first (``_reopen``)."""
         self._check_size(message.text)
+        images = tuple(
+            decode_screenshot(screenshot, pointer=f"/screenshots/{index}/data")
+            for index, screenshot in enumerate(message.screenshots or ())
+        )
         live = await self._commandable(agent_session_id, reopen=True)
         async with live.commands:
             self._refuse(live, Send())
-            seq = await self._emit(
-                live, "user.message", UserMessageBody(text=message.text).as_body(), by="web"
-            )
+            body = _user_message_body(message.text, images)
+            seq = await self._emit(live, "user.message", body.as_body(), by="web")
             if seq is None:
                 raise await self._log_full(live)
             live.state = apply(live.state, Send())
             await self._sync(live)
-            await self._driver.send(live.handle, message.text)
+            await self._driver.send(live.handle, message.text, images=images)
         return MessageAccepted(seq=seq)
 
     async def interrupt(self, agent_session_id: str) -> AgentSession:
@@ -594,6 +613,7 @@ class AgentSessionControl:
         idle past the idle timeout (``idle_timeout``) and, with ``purge``, remove sessions that
         ended more than the retention ago (AC-165.53)."""
         now = now or self._clock()
+        await self._name(now)
         for live in list(self._live.values()):
             if live.pump is not None and live.pump.done() and not live.ended:
                 # The pump died without ending the session (cancelled): reclaim it.
@@ -641,7 +661,25 @@ class AgentSessionControl:
         if not capabilities.available:
             raise SessionsUnavailableError(capabilities.reason or "sessions cannot start here")
         if len(self._live) >= self._limits.sessions_max:
+            await self._free_slot()
+
+    async def _free_slot(self) -> None:
+        """At the live limit, end the local session idle the longest ``idle_timeout``, as the
+        sweep later would: a message reopens it in place. The limit refuses only when every live
+        session is busy (running, a request open) or a cloud one, which cannot be reopened."""
+        waiting = [
+            (live.idle_since, live)
+            for live in self._live.values()
+            if not live.ended
+            and live.session.kind == "local"
+            and live.state.status == AgentSessionStatus.IDLE
+            and not live.requests
+            and live.idle_since is not None
+        ]
+        if not waiting:
             raise LiveLimitError(limit=self._limits.sessions_max)
+        _, oldest = min(waiting, key=lambda pair: pair[0])
+        await asyncio.shield(self._ending(oldest, EndReason.IDLE_TIMEOUT, by="server"))
 
     async def _resumed(self, request: CreateAgentSession, cwd: str) -> PastSession | None:
         wanted = request.resume_session_id
@@ -923,7 +961,7 @@ class AgentSessionControl:
                 await _bounded(self._driver.interrupt(live.handle), INTERRUPT_SECONDS)
             if not exited:
                 await self._emit(live, "close", {"reason": reason.value}, by=by)
-            await self._sync(live)
+            await self._sync(live, await self._title_fields(live))
         finally:
             # A store that fails while the session ends never keeps the CLI running.
             await _bounded(self._driver.close(live.handle), CLOSE_SECONDS)
@@ -1030,9 +1068,7 @@ class AgentSessionControl:
             "cost_usd": _sum_cost(session.cost_usd, result.cost_usd),
             "usage": _sum_usage(session.usage, result.usage),
         }
-        title = await self._claude_title(live)
-        if title is not None and title != session.title:
-            fields["title"] = title
+        fields |= await self._title_fields(live)
         if live.ended:
             async with live.sync_lock:
                 live.session = await asyncio.to_thread(
@@ -1042,13 +1078,58 @@ class AgentSessionControl:
         live.state = apply(live.state, result)
         await self._sync(live, fields)
 
-    async def _claude_title(self, live: LiveSession) -> str | None:
+    # Naming
+
+    async def _title_fields(self, live: LiveSession) -> AgentSessionFields:
+        """``title`` when Claude Code has given the session a new one, else nothing."""
+        title = await self._claude_title(live.cwd, live.session.claude_session_id)
+        if title is None:
+            return {}
+        live.named = True
+        return {"title": title} if title != live.session.title else {}
+
+    async def _name(self, now: datetime) -> None:
+        """The sweep's naming: the stored sessions ended unnamed (once), then the live ones."""
+        if not self._ended_named:
+            self._ended_named = True
+            await self._name_ended()
+        for live in list(self._live.values()):
+            if not live.named and not live.ended:
+                await self._name_live(live, now)
+
+    async def _name_live(self, live: LiveSession, now: datetime) -> None:
+        """Take the title of a live session not named yet, at most once per ``TITLE_POLL``."""
+        if live.title_checked_at is not None and now - live.title_checked_at < TITLE_POLL:
+            return
+        live.title_checked_at = now
+        fields = await self._title_fields(live)
+        if fields and not live.ended:
+            await self._sync(live, fields)
+
+    async def _name_ended(self) -> None:
+        """Give the stored sessions that ended before Claude Code's title was read (a server
+        stopped during the first turn) that title; a session whose workdir is gone keeps its own."""
+        stored = await asyncio.to_thread(lambda: self._store.list(kind="local"))
+        for session in stored:
+            if session.id in self._live or session.ended_at is None:
+                continue
+            cwd = await self._workdir_path(session)
+            title = await self._claude_title(cwd, session.claude_session_id)
+            if title is not None and title != session.title:
+                await asyncio.to_thread(partial(self._store.update, session.id, title=title))
+
+    async def _workdir_path(self, session: AgentSession) -> str | None:
+        """Where ``session`` ran, or None when its project or workdir is gone."""
+        try:
+            return (await self._listing(session.project)).resolve(session.workdir_id).path
+        except Exception:  # noqa: BLE001 -- an unknown project or workdir keeps its title
+            return None
+
+    async def _claude_title(self, cwd: str | None, session_id: str | None) -> str | None:
         """The title Claude Code gave the session so far, or None (none yet, or no reader)."""
         read = self._session_title
-        session_id = live.session.claude_session_id
-        if read is None or live.cwd is None or session_id is None:
+        if read is None or cwd is None or session_id is None:
             return None
-        cwd = live.cwd
         try:
             return await asyncio.to_thread(read, cwd, session_id)
         except Exception:  # noqa: BLE001 -- a name is never worth failing the turn's record

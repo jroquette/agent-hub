@@ -18,8 +18,9 @@ from agent_hub.api.schemas import (
 )
 from agent_hub.core.events.event import EventType
 from agent_hub.core.readmodels.filters import (
+    MAX_EVENTS_PAGE_LIMIT,
     MAX_PAGE_LIMIT,
-    PageRequest,
+    EventPageRequest,
     SessionFilter,
     SessionSort,
 )
@@ -53,6 +54,7 @@ def list_sessions(  # noqa: PLR0913 -- one keyword per documented filter of the 
     outcome: Outcome | None = None,
     workflow: TextParam = None,
     run_id: TextParam = None,
+    issue: TextParam = None,
     started_from: Annotated[datetime | None, Query(alias="from")] = None,
     started_to: Annotated[datetime | None, Query(alias="to")] = None,
     cost_min: CostParam = None,
@@ -74,6 +76,7 @@ def list_sessions(  # noqa: PLR0913 -- one keyword per documented filter of the 
         outcome=outcome,
         workflow=workflow,
         run_id=run_id,
+        issue=issue,
         started_from=started_from,
         started_to=started_to,
         cost_min=cost_min,
@@ -107,10 +110,10 @@ def list_session_events(
     *,
     types: Annotated[list[EventType] | None, Query(max_length=MAX_TYPES)] = None,
     cursor: CursorParam = None,
-    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)] = MAX_PAGE_LIMIT,
+    limit: Annotated[int, Query(ge=1, le=MAX_EVENTS_PAGE_LIMIT)] = MAX_PAGE_LIMIT,
 ) -> Page[TimelineEvent]:
     """The session's events in timestamp order."""
-    page = parse_filter(PageRequest, cursor=cursor, limit=limit)
+    page = parse_filter(EventPageRequest, cursor=cursor, limit=limit)
     return models.session_events(session_id, types=frozenset(types or ()), page=page)
 
 

@@ -12,8 +12,12 @@ from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView, View
 from agent_hub.core.tracker.tracker_reader import IssueState
 
 # Whether a ticket can start now: all blockers done (``can_start``), some not (``waiting``),
-# itself done or canceled, part of a dependency cycle, or its state unknown (no snapshot).
-type Readiness = Literal["can_start", "waiting", "done", "canceled", "in_cycle", "unknown"]
+# already started in Linear (``in_progress``: In Progress, In Review…, whatever its blockers),
+# itself done or canceled, part of a dependency cycle, an epic (a parent that tracks other
+# tickets and is never worked on itself), or its state unknown (no snapshot).
+type Readiness = Literal[
+    "can_start", "in_progress", "waiting", "done", "canceled", "in_cycle", "epic", "unknown"
+]
 # Where a "blocked by" edge comes from: the plan's ``blocked_by``, Linear's relations, or both.
 type EdgeSource = Literal["plan", "linear", "both"]
 
@@ -33,6 +37,8 @@ class TicketRow(ViewModel):
     come from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the
     AC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of
     its blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).
+    ``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent
+    issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
     """
 
     ref: str
@@ -52,6 +58,8 @@ class TicketRow(ViewModel):
     readiness: Readiness
     waiting_on: tuple[str, ...]
     reviewed: bool | None
+    parent: str | None = None
+    children: tuple[str, ...] = ()
 
 
 class ExternalBlocker(ViewModel):
@@ -68,9 +76,11 @@ class TicketPlan(ViewModel):
     """The planning of the feature's tickets, every ticket named by its row's ``ref``.
 
     ``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);
-    ``can_start`` the first layer's tickets that wait on nothing; ``order`` the recommended
-    order; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle
-    (left out of the layers); ``critical_path`` the longest chain of tickets not done.
+    ``can_start`` the first layer's tickets that wait on nothing and are not started yet;
+    ``order`` the recommended order; ``waiting`` the tickets with a blocker not done;
+    ``cycles`` each dependency cycle (left out of the layers); ``critical_path`` the longest
+    chain of tickets not done; ``epics`` the rows that are a parent of other rows: they track
+    the work, are left out of the layers and never block.
     """
 
     layers: tuple[tuple[str, ...], ...]
@@ -81,6 +91,7 @@ class TicketPlan(ViewModel):
     external_blockers: tuple[ExternalBlocker, ...]
     critical_path: tuple[str, ...]
     warnings: tuple[str, ...]
+    epics: tuple[str, ...] = ()
 
 
 class TrackerProblem(ViewModel):

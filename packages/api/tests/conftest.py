@@ -388,9 +388,13 @@ class FakeLearningDecisions:
     """``LearningDecisions`` that answers a fixed PR; records ``(action, id, target or reason)``."""
 
     calls: list[tuple[str, str, str]] = field(default_factory=list)
+    note_bodies: list[str | None] = field(default_factory=list)
     failure: Exception | None = None
 
-    def accept(self, learning_id: str, *, target: str) -> LearningActionResult:
+    def accept(
+        self, learning_id: str, *, target: str, note_body: str | None = None
+    ) -> LearningActionResult:
+        self.note_bodies.append(note_body)
         return self._decide("accept", learning_id, target, state=LearningState.ACCEPTED_PR_OPEN)
 
     def reject(self, learning_id: str, *, reason: str) -> LearningActionResult:

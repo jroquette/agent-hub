@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
-import { ToolCallCard, resultText } from "./ToolCallCard";
+import { DiffText, ToolCallCard, diffLines, resultText } from "./ToolCallCard";
 import type { PermissionView, ToolResultView, ToolView } from "./model";
 
 function aTool(overrides: Partial<ToolView> = {}): ToolView {
@@ -214,5 +214,65 @@ describe("resultText", () => {
     ).toBe("a\nb");
     expect(resultText([{ type: "image" }])).toBeNull();
     expect(resultText(3)).toBeNull();
+  });
+});
+
+describe("DiffText (line-numbers)", () => {
+  const REPORTED = "--- a/x.py\n+++ b/x.py\n@@ -12,3 +12,4 @@\n a\n-b\n+c\n+d\n e\n";
+
+  it("numbers each line in the old and the new file from its hunk header (AC-265.15)", () => {
+    expect(diffLines(REPORTED).map((line) => [line.kind, line.oldNo, line.newNo])).toEqual([
+      ["head", null, null],
+      ["head", null, null],
+      ["hunk", null, null],
+      ["ctx", 12, 12],
+      ["del", 13, null],
+      ["add", null, 13],
+      ["add", null, 14],
+      ["ctx", 14, 15],
+    ]);
+  });
+
+  it("shows git's two gutters and no file headers when numbered (AC-265.15)", () => {
+    const { container } = render(<DiffText diff={REPORTED} label="Change" numbered />);
+
+    const rows = Array.from(container.querySelectorAll(".as-diff-line"), (row) =>
+      Array.from(row.children, (cell) => cell.textContent.trimEnd()),
+    );
+    expect(rows).toEqual([
+      ["", "", "@@ -12,3 +12,4 @@"],
+      ["12", "12", " a"],
+      ["13", "", "-b"],
+      ["", "13", "+c"],
+      ["", "14", "+d"],
+      ["14", "15", " e"],
+    ]);
+    expect(screen.getByLabelText("Change")).not.toHaveTextContent("+++ b/x.py");
+  });
+
+  it("uses Claude's reported diff, with line numbers, once the edit ran (AC-265.15)", async () => {
+    render(
+      <ToolCallCard
+        tool={aTool({
+          name: "Edit",
+          input: { file_path: "x.py", old_string: "b", new_string: "c\nd" },
+          result: {
+            content: "ok",
+            isError: false,
+            truncated: false,
+            originalBytes: null,
+            diff: REPORTED,
+          },
+        })}
+        tools={{}}
+        calls={{}}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /Edit/ }));
+
+    const diff = screen.getByLabelText("Diff of x.py");
+    expect(diff).toHaveClass("as-diff-numbered");
+    expect(diff).toHaveTextContent("@@ -12,3 +12,4 @@");
   });
 });

@@ -6,10 +6,11 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 
 import type { components } from "../../api/schema";
-import { Button, Icon, Markdown } from "../../components";
+import { Button, Icon, Markdown, type IconName } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import { goSequencePending } from "../../shell/goSequence";
@@ -84,12 +85,74 @@ function questionsOf(input: JsonObject | null): Question[] {
   });
 }
 
-function outcomeText(decision: PermissionDecisionView): string {
-  if (decision.decision === "allow") return "Allowed once";
-  if (decision.decision === "always") return "Always allowed";
-  if (decision.by === "timeout") return "Denied: no answer before the deadline";
-  if (decision.by === "closed") return "Denied: the session closed";
-  return decision.message ? `Denied: ${decision.message}` : "Denied";
+type OutcomeTone = "allow" | "deny" | "answered" | "skipped";
+
+/** How an answered card reads: a question is answered or skipped, never "allowed". */
+function outcomeOf(
+  kind: PermissionView["requestKind"],
+  decision: PermissionDecisionView,
+): { text: string; tone: OutcomeTone } {
+  if (decision.by === "timeout")
+    return { text: "Denied: no answer before the deadline", tone: "deny" };
+  if (decision.by === "closed") return { text: "Denied: the session closed", tone: "deny" };
+  const said = decision.message ? `: ${decision.message}` : "";
+  if (kind === "ask_user_question")
+    return decision.decision === "deny"
+      ? { text: `Skipped${said}`, tone: "skipped" }
+      : { text: "Answered", tone: "answered" };
+  if (kind === "plan_approval")
+    return decision.decision === "deny"
+      ? { text: `Kept planning${said}`, tone: "skipped" }
+      : {
+          text: decision.mode ? `Plan approved · ${modeLabel(decision.mode)}` : "Plan approved",
+          tone: "answered",
+        };
+  if (decision.decision === "allow") return { text: "Allowed once", tone: "allow" };
+  if (decision.decision === "always") return { text: "Always allowed", tone: "allow" };
+  return { text: `Denied${said}`, tone: "deny" };
+}
+
+function OutcomeLine({
+  kind,
+  decision,
+}: {
+  kind: PermissionView["requestKind"];
+  decision: PermissionDecisionView;
+}) {
+  const { text, tone } = outcomeOf(kind, decision);
+  return (
+    <p className={cx("as-perm-outcome", `as-perm-outcome-${tone}`)} role="status">
+      {text}
+    </p>
+  );
+}
+
+/** An answered `AskUserQuestion`, kept readable: each question with what you chose. */
+function AnswerRecap({
+  questions,
+  answers,
+}: {
+  questions: Question[];
+  answers: Record<string, string> | null | undefined;
+}) {
+  return (
+    <dl className="as-recap" aria-label="Your answers">
+      {questions.map((question) => {
+        const answer = answers?.[question.question];
+        return (
+          <div key={question.question} className="as-recap-item">
+            <dt>
+              {question.header && <span className="as-question-header">{question.header}</span>}{" "}
+              {question.question}
+            </dt>
+            <dd className={cx(!answer && "ah-subtle")}>
+              {answer ? answer.replace(RECOMMENDED, "") : "Not answered"}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
 }
 
 const HEADING: Record<PermissionView["requestKind"], (tool: string) => string> = {
@@ -98,80 +161,164 @@ const HEADING: Record<PermissionView["requestKind"], (tool: string) => string> =
   plan_approval: () => "Claude finished a plan",
 };
 
+/** The icon of a pending card: a terminal for a shell command, else what is being asked. */
+function headIcon(request: PermissionView): IconName {
+  if (request.requestKind === "plan_approval") return "clipboard-list";
+  if (request.requestKind === "ask_user_question") return "list-checks";
+  return request.tool === "Bash" ? "terminal" : "hand";
+}
+
 function problemText(error: unknown): string {
   if (error instanceof ApiProblem)
     return error.detail ? `${error.title}: ${error.detail}` : error.title;
   return "Could not send the answer. Try again.";
 }
 
-/** One question of an `AskUserQuestion`: option buttons plus "Other" with free text. */
+/** The card's own key for a button, shown only while the card itself has focus (CSS). */
+function KeyHint({ letter }: { letter: string }) {
+  return (
+    <kbd className="ah-kbd as-perm-kbd" aria-hidden="true">
+      {letter}
+    </kbd>
+  );
+}
+
+/** Claude marks its preferred option with a trailing "(Recommended)" in the label. */
+const RECOMMENDED = /\s*\(recommended\)\s*$/i;
+
+/** One choice of a question: a radio or checkbox row with its label and, below it, its description. */
+function OptionRow({
+  type,
+  name,
+  label,
+  description,
+  checked,
+  onToggle,
+  children,
+}: {
+  type: "radio" | "checkbox";
+  name: string;
+  label: string;
+  description: string | null;
+  checked: boolean;
+  onToggle: () => void;
+  children?: ReactNode;
+}) {
+  const labelId = useId();
+  const descriptionId = useId();
+  const recommended = RECOMMENDED.test(label);
+  return (
+    <label className={cx("as-option", checked && "as-option-checked")}>
+      <input
+        type={type}
+        name={name}
+        className="ah-check"
+        checked={checked}
+        aria-labelledby={labelId}
+        aria-describedby={description ? descriptionId : undefined}
+        onChange={onToggle}
+      />
+      <span className="as-option-body">
+        <span className="as-option-label">
+          <span id={labelId}>{label.replace(RECOMMENDED, "")}</span>
+          {recommended && <span className="as-option-tag">Recommended</span>}
+        </span>
+        {description && (
+          <span id={descriptionId} className="ah-small ah-muted">
+            {description}
+          </span>
+        )}
+        {children}
+      </span>
+    </label>
+  );
+}
+
+/**
+ * One question of an `AskUserQuestion`: its options as radio rows (checkboxes when several may be
+ * chosen), each with its description in view, plus "Other" with free text.
+ */
 function QuestionField({
   question,
-  value,
   disabled,
   onChange,
+  onPicked,
 }: {
   question: Question;
-  value: string[];
   disabled: boolean;
   onChange: (value: string[]) => void;
+  /** A single-choice option was picked: the answer is complete, the card may move on. */
+  onPicked?: (() => void) | undefined;
 }) {
+  const [picked, setPicked] = useState<string[]>([]);
   const [other, setOther] = useState<string | null>(null);
-  const otherId = useId();
+  const otherInput = useRef<HTMLInputElement>(null);
+  const name = useId();
+  const type = question.multiSelect ? "checkbox" : "radio";
+  const emit = (nextPicked: string[], nextOther: string | null) => {
+    setPicked(nextPicked);
+    setOther(nextOther);
+    const text = nextOther?.trim();
+    onChange(text ? [...nextPicked, text] : nextPicked);
+  };
   const pick = (label: string) => {
-    setOther(null);
-    if (!question.multiSelect) onChange([label]);
-    else onChange(value.includes(label) ? value.filter((v) => v !== label) : [...value, label]);
+    if (!question.multiSelect) {
+      emit([label], null);
+      onPicked?.();
+    } else
+      emit(picked.includes(label) ? picked.filter((v) => v !== label) : [...picked, label], other);
+  };
+  const toggleOther = () => {
+    if (other !== null && question.multiSelect) emit(picked, null);
+    else {
+      emit(question.multiSelect ? picked : [], other ?? "");
+      requestAnimationFrame(() => otherInput.current?.focus());
+    }
   };
   return (
     <fieldset className="as-question" disabled={disabled}>
       <legend>
         {question.header && <span className="as-question-header">{question.header}</span>}{" "}
-        {question.question}
+        <span className="as-question-text">{question.question}</span>
       </legend>
-      <div className="ah-row ah-wrap" style={{ gap: 6 }}>
+      {question.multiSelect && <p className="ah-small ah-muted as-question-hint">Choose any</p>}
+      <div className="as-options">
         {question.options.map((option) => (
-          <Button
+          <OptionRow
             key={option.label}
-            size="sm"
-            aria-pressed={other === null && value.includes(option.label)}
-            title={option.description ?? undefined}
-            onClick={() => {
+            type={type}
+            name={name}
+            label={option.label}
+            description={option.description}
+            checked={picked.includes(option.label)}
+            onToggle={() => {
               pick(option.label);
             }}
-          >
-            {option.label}
-          </Button>
-        ))}
-        <Button
-          size="sm"
-          aria-pressed={other !== null}
-          onClick={() => {
-            setOther("");
-            onChange([]);
-          }}
-        >
-          Other
-        </Button>
-      </div>
-      {other !== null && (
-        <div className="ah-stack" style={{ gap: 4 }}>
-          <label htmlFor={otherId} className="ah-small">
-            Your answer
-          </label>
-          <input
-            id={otherId}
-            className="ah-input"
-            value={other}
-            maxLength={1024}
-            onChange={(event) => {
-              setOther(event.target.value);
-              const text = event.target.value.trim();
-              onChange(text ? [text] : []);
-            }}
           />
-        </div>
-      )}
+        ))}
+        <OptionRow
+          type={type}
+          name={name}
+          label="Other"
+          description={other === null ? "Write your own answer" : null}
+          checked={other !== null}
+          onToggle={toggleOther}
+        >
+          {other !== null && (
+            <input
+              ref={otherInput}
+              className="ah-input"
+              aria-label="Your answer"
+              placeholder="Your answer"
+              value={other}
+              maxLength={1024}
+              onChange={(event) => {
+                emit(picked, event.target.value);
+              }}
+            />
+          )}
+        </OptionRow>
+      </div>
     </fieldset>
   );
 }
@@ -191,6 +338,8 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   const [message, setMessage] = useState("");
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [planMode, setPlanMode] = useState<"default" | "acceptEdits">("default");
+  // Several questions are answered one page at a time, like Claude's own apps.
+  const [step, setStep] = useState(0);
   const titleId = useId();
   const messageId = useId();
   const modeId = useId();
@@ -231,7 +380,7 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget || disabled || !keyed) return;
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-    // The second key of a `g` sequence is the shell's: `g a` goes to Approvals, never allows.
+    // The second key of a `g` sequence is the shell's: `g a` never allows.
     if (goSequencePending()) return;
     if (event.key === "a") submit({ decision: "allow" });
     else if (event.key === "d") deny();
@@ -240,12 +389,22 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
   };
 
   const questions = request.requestKind === "ask_user_question" ? questionsOf(request.input) : [];
-  const allAnswered = questions.every((q) => (answers[q.question] ?? []).length > 0);
+  const answeredCount = questions.filter((q) => (answers[q.question] ?? []).length > 0).length;
+  const allAnswered = answeredCount === questions.length;
+  // A question card is answered by its options and "Other": no deny message, no red refusal.
+  const asking = request.requestKind === "ask_user_question" && questions.length > 0;
+  const paged = questions.length > 1;
+  const lastStep = !paged || step === questions.length - 1;
   const plan =
     request.requestKind === "plan_approval" && typeof request.input?.plan === "string"
       ? request.input.plan
       : null;
   const always = request.suggestions.filter((s) => s.destination === ALWAYS_DESTINATION);
+  // What Claude says the call is for (Bash's `description`), shown above the raw command.
+  const purpose =
+    request.requestKind === "tool" && typeof request.input?.description === "string"
+      ? request.input.description.trim() || null
+      : null;
 
   return (
     // The card takes focus (tabIndex -1) and then answers to `a` / `d` (AC-234.29).
@@ -259,16 +418,40 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
       onKeyDown={onKeyDown}
     >
       <header className="as-perm-head">
-        <Icon name={pending ? "hand" : "shield-check"} />
-        <h3 id={titleId} className="as-perm-title">
-          {HEADING[request.requestKind](request.tool)}
-        </h3>
+        <span className={cx("as-perm-icon", `as-perm-icon-${request.requestKind}`)}>
+          <Icon
+            name={
+              pending
+                ? headIcon(request)
+                : request.requestKind === "tool"
+                  ? "shield-check"
+                  : "check"
+            }
+          />
+        </span>
+        <div className="as-perm-heading">
+          <h3 id={titleId} className="as-perm-title">
+            {HEADING[request.requestKind](request.tool)}
+          </h3>
+          {purpose && <p className="as-perm-purpose">{purpose}</p>}
+        </div>
         {request.redacted && <StoredCopyLabel />}
+        {pending && (
+          <span className="as-perm-badge">
+            <span className="as-perm-dot" aria-hidden="true" />
+            Waiting for you
+          </span>
+        )}
       </header>
 
       {request.requestKind === "tool" && (
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        <pre className="as-pre" tabIndex={0} aria-label="What it will run">
+        <pre
+          className="as-pre as-perm-command"
+          data-tool={request.tool}
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+          tabIndex={0}
+          aria-label="What it will run"
+        >
           {request.summary}
         </pre>
       )}
@@ -278,23 +461,59 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
       )}
 
       {!pending && request.decision && (
-        <p className="as-perm-outcome" role="status">
-          {outcomeText(request.decision)}
-        </p>
+        <>
+          {questions.length > 0 && (
+            <AnswerRecap questions={questions} answers={request.decision.answers} />
+          )}
+          <OutcomeLine kind={request.requestKind} decision={request.decision} />
+        </>
       )}
 
       {pending && (
         <div className="ah-stack" style={{ gap: 8 }}>
-          {questions.map((question) => (
-            <QuestionField
-              key={question.question}
-              question={question}
-              value={answers[question.question] ?? []}
-              disabled={disabled}
-              onChange={(value) => {
-                setAnswers((before) => ({ ...before, [question.question]: value }));
-              }}
-            />
+          {paged && (
+            <nav className="as-steps" aria-label="Questions">
+              {questions.map((question, index) => {
+                const done = (answers[question.question] ?? []).length > 0;
+                const label = question.header ?? `Question ${String(index + 1)}`;
+                return (
+                  <button
+                    key={question.question}
+                    type="button"
+                    className={cx(
+                      "as-step",
+                      index === step && "as-step-current",
+                      done && "as-step-done",
+                    )}
+                    aria-current={index === step ? "step" : undefined}
+                    aria-label={done ? `${label} (answered)` : label}
+                    disabled={disabled}
+                    onClick={() => {
+                      setStep(index);
+                    }}
+                  >
+                    <span className="as-step-num" aria-hidden="true">
+                      {done ? <Icon name="check" size="sm" /> : index + 1}
+                    </span>
+                    <span className="as-step-label">{label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          )}
+          {questions.map((question, index) => (
+            <div key={question.question} hidden={paged && index !== step}>
+              <QuestionField
+                question={question}
+                disabled={disabled}
+                onChange={(value) => {
+                  setAnswers((before) => ({ ...before, [question.question]: value }));
+                }}
+                onPicked={() => {
+                  if (index === step && !lastStep) setStep(index + 1);
+                }}
+              />
+            </div>
           ))}
           {plan !== null && (
             <label htmlFor={modeId} className="ah-row ah-small" style={{ gap: 6 }}>
@@ -313,32 +532,12 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
               </select>
             </label>
           )}
-          <div className="ah-stack" style={{ gap: 4 }}>
-            <label htmlFor={messageId} className="ah-small ah-muted">
-              Message to Claude if you deny (optional)
-            </label>
-            <input
-              id={messageId}
-              className="ah-input"
-              value={message}
-              maxLength={MAX_DENY_MESSAGE}
-              disabled={disabled}
-              onChange={(event) => {
-                setMessage(event.target.value);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && message.trim()) {
-                  event.preventDefault();
-                  deny();
-                }
-              }}
-            />
-          </div>
           <div className="ah-row ah-wrap as-perm-actions">
             {request.requestKind === "tool" && (
               <>
                 <Button
                   variant="primary"
+                  icon="check"
                   disabled={disabled}
                   data-shortcut="allow"
                   aria-keyshortcuts={chords ? ALLOW_KEYS : undefined}
@@ -347,21 +546,50 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
                   }}
                 >
                   Allow once
+                  <KeyHint letter="A" />
                 </Button>
-                {always.map((suggestion) => (
-                  <Button
-                    key={suggestion.index}
-                    disabled={disabled}
-                    onClick={() => {
-                      submit({ decision: "always", suggestion: suggestion.index });
-                    }}
-                  >
-                    Always allow {ruleLabel(suggestion.rule)}
-                  </Button>
-                ))}
+                {always.map((suggestion) => {
+                  const rule = ruleLabel(suggestion.rule);
+                  return (
+                    <Button
+                      key={suggestion.index}
+                      className="as-perm-always"
+                      disabled={disabled}
+                      title={`Always allow ${rule} in this project's local settings`}
+                      onClick={() => {
+                        submit({ decision: "always", suggestion: suggestion.index });
+                      }}
+                    >
+                      Always allow <code className="as-perm-rule">{rule}</code>
+                    </Button>
+                  );
+                })}
               </>
             )}
-            {request.requestKind === "ask_user_question" && questions.length > 0 && (
+            {paged && step > 0 && (
+              <Button
+                icon="chevron-left"
+                disabled={disabled}
+                onClick={() => {
+                  setStep(step - 1);
+                }}
+              >
+                Back
+              </Button>
+            )}
+            {paged && !lastStep && (
+              <Button
+                variant="primary"
+                iconRight="chevron-right"
+                disabled={disabled}
+                onClick={() => {
+                  setStep(step + 1);
+                }}
+              >
+                Next
+              </Button>
+            )}
+            {asking && lastStep && (
               <Button
                 variant="primary"
                 disabled={disabled || !allAnswered}
@@ -380,6 +608,7 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
             {request.requestKind === "plan_approval" && (
               <Button
                 variant="primary"
+                icon="check"
                 disabled={disabled}
                 onClick={() => {
                   submit({ decision: "allow", mode: planMode });
@@ -388,16 +617,53 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
                 Approve plan
               </Button>
             )}
-            <Button
-              variant="danger"
-              disabled={disabled}
-              data-shortcut={keyed ? "deny" : undefined}
-              aria-keyshortcuts={chords ? DENY_KEYS : undefined}
-              onClick={deny}
-            >
-              {request.requestKind === "plan_approval" ? "Keep planning" : "Deny"}
-            </Button>
+            {asking && (
+              <Button variant="ghost" className="as-perm-skip" disabled={disabled} onClick={deny}>
+                {questions.length > 1 ? "Skip questions" : "Skip question"}
+              </Button>
+            )}
+            {asking && questions.length > 1 && (
+              <span className="ah-small ah-muted" aria-live="polite">
+                {answeredCount} of {questions.length} answered
+              </span>
+            )}
           </div>
+          {!asking && (
+            <div className="as-perm-deny">
+              <input
+                id={messageId}
+                className="ah-input"
+                aria-label="Message to Claude if you deny (optional)"
+                placeholder={
+                  request.requestKind === "plan_approval"
+                    ? "What should change in the plan? (optional)"
+                    : "Tell Claude what to do instead (optional)"
+                }
+                value={message}
+                maxLength={MAX_DENY_MESSAGE}
+                disabled={disabled}
+                onChange={(event) => {
+                  setMessage(event.target.value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && message.trim()) {
+                    event.preventDefault();
+                    deny();
+                  }
+                }}
+              />
+              <Button
+                variant="danger"
+                disabled={disabled}
+                data-shortcut={keyed ? "deny" : undefined}
+                aria-keyshortcuts={chords ? DENY_KEYS : undefined}
+                onClick={deny}
+              >
+                {request.requestKind === "plan_approval" ? "Keep planning" : "Deny"}
+                {keyed && <KeyHint letter="D" />}
+              </Button>
+            </div>
+          )}
           {request.deadlineAt && (
             <p className="ah-small ah-subtle">
               Denied automatically at {fmtClock(request.deadlineAt, "local")} if unanswered.

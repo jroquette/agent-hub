@@ -14,7 +14,7 @@ function renderSidebar(path = "/", props: Partial<Parameters<typeof Sidebar>[0]>
 }
 
 describe("Sidebar", () => {
-  it("lists the Phase 2 destinations in the design's groups", () => {
+  it("AC-273.20: lists the destinations in Work, Knowledge and the Hub footer", () => {
     renderSidebar();
 
     const nav = screen.getByRole("navigation", { name: "Main" });
@@ -23,21 +23,20 @@ describe("Sidebar", () => {
       .map((link) => link.textContent);
     expect(names).toEqual([
       "Portfolio",
-      "Approvals",
       "Sessions",
       "Workflow runs",
-      "Knowledge",
+      "Workflows",
+      "Features",
       "Learnings",
       "Brain",
-      "Skills",
-      "Features",
-      "Workflows",
+      "Toolkit",
       "Health",
       "Settings",
     ]);
-    for (const group of ["Overview", "Observe", "Understand", "Improve", "Hub"]) {
+    for (const group of ["Work", "Knowledge"]) {
       expect(within(nav).getByText(group)).toBeInTheDocument();
     }
+    expect(within(nav).queryByText("Live sessions")).not.toBeInTheDocument();
   });
 
   it("has no P3 tag and hides Metrics, Bench and Tracker queue", () => {
@@ -80,8 +79,8 @@ describe("Sidebar", () => {
     const names = within(nav)
       .getAllByRole("link")
       .map((link) => link.textContent);
-    expect(names.indexOf("Skills")).toBe(names.indexOf("Brain") + 1);
-    expect(screen.getByRole("link", { name: "Skills" })).toHaveAttribute(
+    expect(names.indexOf("Toolkit")).toBe(names.indexOf("Brain") + 1);
+    expect(screen.getByRole("link", { name: "Toolkit" })).toHaveAttribute(
       "href",
       "/projects/agent-hub/skills",
     );
@@ -90,7 +89,7 @@ describe("Sidebar", () => {
   it("points Skills to the project picker when All projects is in scope (nav)", () => {
     renderSidebar("/sessions");
 
-    expect(screen.getByRole("link", { name: "Skills" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Toolkit" })).toHaveAttribute(
       "href",
       "/knowledge/skills",
     );
@@ -99,7 +98,7 @@ describe("Sidebar", () => {
   it("marks Skills as the page when a project's skill detail is open (nav)", () => {
     renderSidebar("/projects/other%20hub/skills/skill/hub-workflow/feature?scope=agent-hub");
 
-    const skills = screen.getByRole("link", { name: "Skills" });
+    const skills = screen.getByRole("link", { name: "Toolkit" });
     expect(skills).toHaveAttribute("href", "/projects/other%20hub/skills");
     expect(skills).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Brain" })).toHaveAttribute(
@@ -116,9 +115,8 @@ describe("Sidebar", () => {
   });
 
   it("shows badge counts and names them when the stream has counts", () => {
-    renderSidebar("/", { counts: { approvals: 2, live: 3, learnings: 4, health: 1 } });
+    renderSidebar("/", { counts: { live: 3, learnings: 4, health: 1 } });
 
-    expect(screen.getByRole("link", { name: "Approvals, 2 waiting" })).toHaveTextContent("2");
     expect(screen.getByRole("link", { name: "Sessions, 3 live" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Learnings, 4 to triage" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Health, 1 doctor error" })).toBeInTheDocument();
@@ -148,9 +146,20 @@ describe("Sidebar", () => {
   });
 
   it("caps a badge at 99+ when the count is larger", () => {
-    renderSidebar("/", { counts: { approvals: 120 } });
+    renderSidebar("/", { counts: { live: 120 } });
 
-    expect(screen.getByRole("link", { name: "Approvals, 120 waiting" })).toHaveTextContent("99+");
+    expect(screen.getByRole("link", { name: "Sessions, 120 live" })).toHaveTextContent("99+");
+  });
+
+  it("pins Health and Settings to the footer, next to Shortcuts", () => {
+    const { container } = renderSidebar();
+
+    const foot = container.querySelector(".ah-sidebar-foot");
+    expect(foot).not.toBeNull();
+    const names = within(foot as HTMLElement)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(names).toEqual(["Health", "Settings"]);
   });
 
   it("opens the shortcut sheet from its footer button", () => {
@@ -163,7 +172,7 @@ describe("Sidebar", () => {
   });
 
   it("has no serious or critical a11y violation", async () => {
-    const { container } = renderSidebar("/", { counts: { approvals: 2, live: 1 } });
+    const { container } = renderSidebar("/", { counts: { live: 1 } });
 
     expect(await seriousViolations(container)).toEqual([]);
   });

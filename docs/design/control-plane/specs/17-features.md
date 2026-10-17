@@ -35,6 +35,128 @@ README's "Sources not connected": Linear is read for a feature's tickets; GitHub
   run. No step names an approver, a date range, sessions or a PR; "GitHub not connected" no longer appears. The
   Features list draws the same steps in its phase bar, and its `phase` equals the detail's.
 
+## Departures (AGH-269, acceptance criteria, evals and records)
+
+Built after the owner validated these in the playground; where this file says otherwise, this list wins.
+
+**Eval tab**
+
+- **AC-269.1** Given a project whose hub folder this machine can drive, when the owner picks a scope (Whole feature,
+  or one of the feature's tickets) and presses "Evaluate <scope>", then a session starts in the hub folder in
+  `acceptEdits` mode, asking the hub-workflow evaluator for that scope only, to write the next free
+  `evals/<delivery>.md` and never to edit an existing eval, merge, push or change tickets.
+- **AC-269.2** Given a run started from the tab, when the tab shows, then a strip gives its status as icon and label
+  in a polite live region (Evaluating, Waiting for you, Finished, Finished without a new eval, Ended, Failed), its
+  scope, its start time as relative time (absolute on hover) and an "Open chat" link; while it runs, Evaluate is off
+  with "An evaluation is already running. Open its chat to follow it." and the scope control is disabled. The run is
+  kept in the browser per feature.
+- **AC-269.3** Given a run waiting for the owner's answer, then its action is the primary "Answer in chat" with the
+  hand icon and the note "Claude asks before running a command. Answer in the chat."
+- **AC-269.4** Given `?doc=eval&eval=<delivery>`, then that eval is read in place below the list (verdict, tickets,
+  ACs, date, commit as `IdChip`, path as `PathText`, "Discuss this eval", "Open in Brain"); a row press selects
+  another and keeps it in `?eval=` (replace). Without `?eval=`, the newest eval by `evaluated_at` is selected, else
+  the last by name. The Discuss panel's target follows the selected eval.
+- **AC-269.5** Given a run that went idle, then it reads "Finished" with a "Show <delivery>" button for each eval it
+  wrote, or "Finished without a new eval" (not done) with a note to open the chat when it wrote none; a run no longer
+  in flight can be cleared ("Clear this run"); a run whose session was deleted is forgotten.
+- **AC-269.6** Given the machine cannot drive Claude or the project has no hub folder, then Evaluate is off with the
+  reason in its tooltip and accessible name, and the capability problem shows as a warning banner.
+- **AC-269.7** `SegmentedControl` takes `disabled`: every segment is off for pointer, keyboard and screen readers,
+  and the value still shows.
+- **AC-269.8** Given no eval yet, then the empty state says "No evals yet." and points to Evaluate.
+
+**Acceptance criteria tab** (replaces "AC table" below where they differ)
+
+- **AC-269.9** The tab reads "Acceptance criteria" with the `list-checks` icon and the count (`?doc=acs` unchanged).
+- **AC-269.10** Each row shows: the status as icon and word ("Passes", "Owner step", "Not passing"); the criterion
+  (id, repo chip, the whole description wrapped, Given/When/Then kept as text); the evidence in plain words, read
+  from the evidence text ("4 tests passed" in `done`, "2 of 12 tests failed" in `failed`, "Command succeeded",
+  "Superseded", "Recorded note", "No evidence yet"), with the commit (a GitHub link when the repo's `github` is
+  known) and the date below it and a tooltip that explains each number; the documents citing it ("2 docs · 3×");
+  and a labelled "Discuss" button (accessible name "Discuss AC-n with Claude", "In next message" while attached).
+  A hint line under the filters says what Discuss does. The verification command leaves the row.
+- **AC-269.11** An expanded row is a card in four labelled regions: *What must be true* (Given / When / Then on
+  three lines); *How it was proven* (result in plain words and as recorded, commit, pull request, date, the
+  `NAME=VALUE` settings it ran with, "Failed before" for a red-on-base clause, the eval records it names or the
+  latest eval naming the AC as links to `?doc=eval&eval=`, an open owner check, and the recorded text, kept whole);
+  *Check it yourself* (the command in a `CodeBlock` with "Copy command", or "Manual owner step:" with the steps);
+  *Where it is cited* (each record of `brain/features/<slug>/` naming the id, in document order, with its first
+  section, mention count and snippet, linking to the record tab, the eval, or the Brain note at the section).
+  Facts read from the evidence text are marked derived; the recorded text is the source.
+- **AC-269.12** Every criterion is listed at once: no fold, no "Show all".
+
+**Record tabs: human summaries** (replaces "Rendered documents" below for Spec, Research and Plan)
+
+- **AC-269.13** Given `brain/features/<slug>/summaries/<record>.md`, when a Spec, Research or Plan tab opens, then
+  it shows that summary ("For humans", with when it was written and from which record); the "Agent markdown"
+  segment shows the record itself as before, kept in `?view=agent`.
+- **AC-269.14** A summary point linking to the record's section (`../plan.md#approach`) opens Agent markdown at that
+  heading, in the same tab.
+- **AC-269.15** Given the record's `sha256` (brain note route) differs from the summary's `source_sha256`, then a
+  warning says the record changed after the summary was written, with "Ask Claude to update it" and "Read the full
+  <record>.md".
+- **AC-269.16** Given no summary yet, then the tab says so with "Ask Claude to write it" (opens Discuss, whose
+  one-click starter "Write the human summary of <record>" asks for `/summarize <slug> <record>`) and "Read the full
+  <record>.md". A Discuss target can carry such starters: one click sends the starter's message as the first one.
+- **AC-269.17** `GET /projects/{project}/brain/note` returns `sha256`, the hex SHA-256 of the file's bytes.
+- **AC-269.18** hub-workflow ships `/summarize` (records: [feature-records.md](../../feature-records.md)), and
+  `/feature`, `/research` and `/create-plan` run it each time they write or amend a record.
+## Departures (AGH-268, ticket flow)
+
+Built with the changes below, validated by the owner in the playground; where this file or the AGH-136 list says
+otherwise, this list wins. Each item is an acceptance criterion.
+
+- **AC-268.1 In progress.** Given a ticket started in Linear (a `started` state such as In Progress or In Review),
+  when the tickets are planned, then its readiness is `in_progress` ("In progress"): it wins over waiting on a
+  blocker and is never listed in `can_start`.
+- **AC-268.2 Flow.** Given the Tickets tab, when it opens, then it leads with a flow: the parallel groups as steps
+  left to right, then the settled tickets; each card shows the ticket's Linear status, readiness, AC progress,
+  review and whether it is on the critical path.
+- **AC-268.3 Folded ACs.** Given a ticket with many ACs, when the table shows it, then its ACs fold into how many
+  pass.
+- **AC-268.4 Live.** Given the Tickets tab is open, then it rereads Linear every 30 s (the server still caches it for
+  60 s) and the record every 15 s, and the source line says how long ago Linear was read.
+- **AC-268.5 Implement counts work under way.** Given tickets in progress, when the golden path is built, then
+  Implement's meta counts them ("0/3 tickets delivered · 2 in progress · 17/18 ACs") and a started ticket marks the
+  step as started.
+- **AC-268.6 Features list refresh.** Given the Features list is open, then it rereads the records every 30 s.
+- **AC-268.7 Epics.** Given a ticket that is the parent of another row (the plan's optional `parent`, else Linear's
+  parent issue), when the tickets are planned, then it is an epic: readiness `epic`, listed under `planning.epics`,
+  never in a layer, on the critical path or in a blocker's place; the golden path counts it under Tickets only.
+- **AC-268.8 Epic card.** Given an epic, when the Tickets tab opens, then an epic card heads the flow (its Linear
+  status and link, a bar of its children done and in progress, their AC count), and the table lists the epic
+  first, tagged, with its children under it.
+- **AC-268.9 Plan parent.** Given a plan whose `parent` names no ticket of the plan or the ticket itself, when
+  `hub doctor` runs, then it reports it; the planner writes `parent` on each child of an epic.
+- **AC-268.10 Implement ends at review.** Given every ticket In Review or Done in Linear (or with an approved review
+  record), when the golden path is built, then Implement is done; with tickets, a failing AC no longer holds
+  Implement (Evaluate reports it) and is only counted in Implement's meta.
+- **AC-268.11 Graph.** Given the ticket flow, then its steps share the width and an edge is drawn from each blocker
+  to the ticket it holds back, the critical path, plan-only and started-early edges styled apart (the node
+  measuring is the workflow graph's, as a shared hook).
+- **AC-268.12 Cards.** Given a card of the flow, then it leads with the id and the title (a conventional-commit prefix
+  as a chip), with readiness and an AC meter below a divider; the legend folds beside the flow's title.
+- **AC-268.13 Table.** Given the Tickets table, then ids stay on one line, an epic is tagged in its title and its
+  children are marked with a branch.
+- **AC-268.14 Done stays put.** Given a ticket that is done, when the flow is drawn, then it stays in its step, so the
+  steps after it do not move.
+- **AC-268.15 Opening tab.** Given a feature without `?doc=`, when it opens, then it opens where its work is: the
+  record being written (Spec, Research, Plan), Tickets while it is built and reviewed, Criteria once it is evaluated
+  or shipped.
+- **AC-268.16 Steps open tabs.** Given the golden path, when a step is chosen, then the tab holding its evidence opens
+  (Evaluate opens Eval).
+- **AC-268.17 Header chips.** Given the feature's tickets, then each header chip shows the id with its Linear status
+  and the title on hover; the "PR —" placeholder is gone while GitHub is not connected.
+- **AC-268.18 Sessions by issue.** Given `GET /sessions?issue=<id>` (any case), then it lists the sessions about that
+  issue: the issue their run names, else the one their branch or worktree names for the hub's tracker teams.
+- **AC-268.19 Ticket sessions.** Given the Tickets table, then each ticket lists its sessions (asked by its issue), each
+  linked to its detail (or its chat when driven), with its status (as the Sessions list shows it) and start time.
+- **AC-268.20 Scope column.** Given ticket titles with a conventional-commit scope, then the scope has its own column,
+  so the chips and the titles line up across rows.
+- **AC-268.21 Start a ticket.** Given a created ticket that can start now, then its card and row offer Start, which
+  starts a Claude session in the hub folder that works that one ticket with `/feature` from its workspace step and
+  opens its chat; disabled, with the reason, when this machine cannot drive Claude or the hub has no folder.
+
 ---
 
 ## Screen 1: Features list
@@ -116,6 +238,24 @@ Features without `eval.md` show "--" in Verdict.
 | Error | `ProblemError` | e.g. "Could not load features" / "status 503 · The hub at ~/code/agent-hub-hub is not readable." [Retry] |
 | Live | A file change in `brain/features/` refreshes the row (fade, `dur-base`) | (none) |
 | Stale | `AsOfStamp` | "As of 14:02 · collector offline" |
+
+### Departures (AGH-268, the list at a glance)
+
+Validated by the owner in the playground; where Screen 1 says otherwise, this list wins.
+
+- **AC-268.22 Who acts.** Given a feature held at Evaluate by owner steps only, then its row shows "Waiting for you"
+  and the summary line counts it ("2 features · 1 waiting for you · 1 in progress · 0 shipped · furthest along
+  first").
+- **AC-268.23 Step position.** Given the golden path bar, then it names the phase with its position ("Implement · step
+  5 of 8") and only the step's own progress (the ACs column counts the ACs); the bar takes focus for its tooltip.
+- **AC-268.24 Column hints.** Given the table, then the Golden path, ACs and Verdict headers carry a hint (an info icon
+  with a tooltip) instead of a footnote, and the columns have fixed widths.
+- **AC-268.25 Issues.** Given a feature with several issues, then the first shows and "+N" opens all of them in a
+  popover.
+- **AC-268.26 Verdict scope.** Given a verdict while Evaluate is not done, then the Evaluate step's meta (its scope)
+  shows under the badge.
+- **AC-268.27 Shipped last.** Given shipped features, then they sort after every feature in progress.
+- **AC-268.28 Tooltips.** Given a tooltip in a table, then it wraps and opens downward where the table would cut it.
 
 ---
 

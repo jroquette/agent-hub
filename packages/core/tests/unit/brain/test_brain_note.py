@@ -49,6 +49,7 @@ def test_serializes_note_when_note_read() -> None:
         "frontmatter_problem": None,
         "markdown": "# Now\n",
         "size": 30,
+        "sha256": None,
     }
 
 

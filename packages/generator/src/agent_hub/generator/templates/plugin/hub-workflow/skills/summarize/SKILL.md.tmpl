@@ -1,0 +1,37 @@
+---
+name: summarize
+description: Write the short human summary of a feature record (spec.md, research.md or plan.md) to brain/features/<slug>/summaries/<record>.md, the version hub web shows people by default. The record stays the agents' reference and is never changed. Use right after a record is written or amended, or when hub web says a summary is missing or out of date.
+argument-hint: "<feature slug> [spec|research|plan]"
+---
+
+# /summarize <slug> [record]
+
+Paths are relative to the hub (the directory with `hub.json`). Without a record name, summarize each of `spec.md`,
+`research.md` and `plan.md` that exists in `brain/features/<slug>/`.
+
+The record is the agents' reference: complete, cited, long. People skim it instead of reading it, so hub web shows them
+this summary first and the record one click away. The summary replaces the reading, not the record: everything a
+reader needs to decide must be in it, and nothing the record does not say.
+
+1. Read the whole record. Read nothing else: the summary says only what the record says.
+2. Take its hash: `shasum -a 256 brain/features/<slug>/<record>.md` (the first field).
+3. Write `brain/features/<slug>/summaries/<record>.md`, replacing any earlier one:
+   - frontmatter: `type: summary`, `of: <record>.md`, `source_sha256: <hash>`, `written_at: <ISO 8601 date>`,
+     `provenance: agent`;
+   - a `# ` title in plain words (what the feature does, not the record's file name);
+   - **Bottom line** first: one or two sentences with what this is, what it decides or recommends, and its status;
+   - then, only those that have content, these `## ` sections in this order: **Decisions**, **Risks**,
+     **Open questions**, **Next step**. A spec may add **Scope** (in / out) after the bottom line; a research note
+     may use **Findings** in place of Decisions;
+   - bullets of one or two lines, the meaning in their first words;
+   - each bullet ends with a link to the record's section it comes from: `([Goals](../<record>.md#goals))`
+     (the heading in lower case, spaces as `-`, punctuation dropped).
+4. Rules:
+   - **150 to 300 words, never over 350**, links and frontmatter not counted.
+   - Plain language for a mixed audience: no `path:line` citations, file paths, AC lists or code; the domain words
+     the team already uses are fine.
+   - Keep the record's hedges and scope ("phase 1 only", "not verified", "MEDUSA webshops only"); never make a
+     claim broader than the record makes it.
+   - Name every open question and every owner decision still pending: a missing one is the failure readers cannot see.
+   - Write in the language of the record.
+5. Show the summary and its path. Stop.

@@ -18,8 +18,8 @@ describe("CreateMenu", () => {
 
     const items = screen.getAllByRole("menuitem");
     expect(items.map((item) => item.textContent)).toEqual([
-      "New skillPackaged instructions, run as /commands",
       "New agentSpecialists the session delegates to",
+      "New skillPackaged instructions, run as /commands",
       "New hookCommands run at lifecycle events",
     ]);
     expect(items[0]).toHaveFocus();

@@ -16,6 +16,8 @@ from agent_hub.core.workflows.failures import FailureKind
 
 DEFAULT_PAGE_LIMIT = 50
 MAX_PAGE_LIMIT = 200
+# A session's events are read whole by its detail page: larger pages mean fewer round trips.
+MAX_EVENTS_PAGE_LIMIT = 1_000
 
 type SessionSort = Literal[
     "started_at", "-started_at", "last_activity_at", "-last_activity_at", "cost", "-cost"
@@ -37,6 +39,12 @@ class PageRequest(Scope):
     limit: int = Field(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT)
 
 
+class EventPageRequest(PageRequest):
+    """A page of one session's events: up to ``MAX_EVENTS_PAGE_LIMIT`` of them."""
+
+    limit: int = Field(default=MAX_PAGE_LIMIT, ge=1, le=MAX_EVENTS_PAGE_LIMIT)
+
+
 class SessionFilter(PageRequest):
     """Filters of ``GET /sessions``."""
 
@@ -46,6 +54,7 @@ class SessionFilter(PageRequest):
     outcome: Outcome | None = None
     workflow: str | None = None
     run_id: str | None = None
+    issue: str | None = None
     started_from: UtcTimestamp | None = None
     started_to: UtcTimestamp | None = None
     cost_min: Decimal | None = Field(default=None, ge=0)

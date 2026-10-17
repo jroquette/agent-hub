@@ -2,11 +2,13 @@ import pytest
 from pydantic import ValidationError
 
 from agent_hub.core.agent_sessions.agent_session import (
+    MAX_MESSAGE_SCREENSHOTS,
     TERMINAL_STATUSES,
     AgentSessionStatus,
     CreateAgentSession,
     PermissionDecision,
     Screenshot,
+    SendMessage,
     SessionSettings,
     StartCloud,
 )
@@ -127,3 +129,17 @@ def test_shows_only_media_type_and_length_when_screenshot_repr_printed() -> None
     for shown in (repr(request), str(request)):
         assert data not in shown
         assert "SECRET" not in shown
+
+
+def test_takes_up_to_max_images_when_message_parsed() -> None:
+    shot = {"media_type": "image/png", "data": PNG_DATA}
+    at_cap = SendMessage.model_validate(
+        {"text": "Look.", "screenshots": [shot] * MAX_MESSAGE_SCREENSHOTS}
+    )
+
+    assert at_cap.screenshots is not None
+    assert len(at_cap.screenshots) == MAX_MESSAGE_SCREENSHOTS
+    assert SendMessage(text="Look.").screenshots is None
+    for refused in ([shot] * (MAX_MESSAGE_SCREENSHOTS + 1), []):
+        with pytest.raises(ValidationError):
+            SendMessage.model_validate({"text": "Look.", "screenshots": refused})

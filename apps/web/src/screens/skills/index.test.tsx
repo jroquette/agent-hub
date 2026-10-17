@@ -69,7 +69,7 @@ describe("SkillsPickerScreen nav", () => {
   it("lists the projects to pick a catalog when All projects is in scope (AC-164.13)", async () => {
     pick();
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Skills" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Toolkit" })).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "demo" })).toHaveAttribute(
       "href",
       "/projects/demo/skills",
@@ -104,6 +104,32 @@ describe("SkillsPickerScreen states", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Boom");
   });
+
+  it("counts each project's skills, agents, hooks, usage and problems", async () => {
+    pick("/knowledge/skills", { [CATALOG]: aSkillCatalog() });
+
+    const row = (await screen.findByRole("link", { name: "demo" })).closest("tr");
+    if (row === null) throw new Error("no row");
+    await within(row).findByText("1 with problems");
+    const cells = within(row)
+      .getAllByRole("cell")
+      .map((cell) => cell.textContent);
+    expect(cells.slice(2)).toEqual(["1", "2", "1", "1", "1 with problems"]);
+    expect(within(row).getByRole("link", { name: "1 item with problems in demo" })).toHaveAttribute(
+      "href",
+      "/projects/demo/skills?diag=1",
+    );
+  });
+
+  it("shows a dash with the reason when one project's catalog cannot be read", async () => {
+    pick("/knowledge/skills", { [CATALOG]: aProblem({ status: 500, title: "Boom" }) });
+
+    const row = (await screen.findByRole("link", { name: "demo" })).closest("tr");
+    if (row === null) throw new Error("no row");
+    expect(
+      (await within(row).findAllByText("Could not read this catalog: Boom")).length,
+    ).toBeGreaterThan(0);
+  });
 });
 
 describe("SkillsScreen nav", () => {
@@ -119,10 +145,23 @@ describe("SkillsScreen nav", () => {
 });
 
 describe("SkillsScreen states", () => {
+  it("names the project in the breadcrumb and the purpose line", async () => {
+    openCatalog();
+
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "demo" })).toHaveAttribute(
+      "href",
+      "/projects/demo",
+    );
+    expect(
+      await screen.findByText(/The agents, skills and hooks demo's agents work with/),
+    ).toBeInTheDocument();
+  });
+
   it("shows the catalog of the project in the URL", async () => {
     const { requests } = openCatalog();
 
-    expect(screen.getByRole("heading", { level: 1, name: "Skills" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Toolkit" })).toBeInTheDocument();
     expect(await screen.findByRole("article", { name: "feature" })).toBeInTheDocument();
     expect(paths(requests)).toEqual([CATALOG]);
   });
@@ -177,7 +216,7 @@ describe("SkillDetailScreen nav", () => {
 
     await screen.findByRole("heading", { level: 1, name: "feature" });
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
-    expect(within(crumbs).getByRole("link", { name: "Skills" })).toHaveAttribute(
+    expect(within(crumbs).getByRole("link", { name: "Toolkit" })).toHaveAttribute(
       "href",
       "/projects/demo/skills",
     );
@@ -190,7 +229,7 @@ describe("SkillDetailScreen nav", () => {
   it("links uses to their detail routes", async () => {
     openDetail();
 
-    const relations = await screen.findByRole("region", { name: "Relations" });
+    const relations = await screen.findByRole("list", { name: "Uses" });
     expect(within(relations).getByRole("link", { name: /requirements-analyst/ })).toHaveAttribute(
       "href",
       "/projects/demo/skills/agent/hub-workflow/requirements-analyst",
@@ -204,10 +243,10 @@ describe("SkillDetailScreen states", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "feature" })).toBeInTheDocument();
     expect(paths(requests)).toEqual([DETAIL]);
-    for (const name of ["Text", "Structure", "Relations", "Bundled files", "Diagnostics"]) {
+    for (const name of ["Text", "Steps", "Uses", "Bundled files", "Diagnostics"]) {
       expect(screen.getByRole("region", { name: new RegExp(`^${name}`) })).toBeInTheDocument();
     }
-    expect(screen.queryByRole("region", { name: "Hook" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Command" })).not.toBeInTheDocument();
   });
 
   it("shows the hook card and no text or files when a hook is open", async () => {
@@ -216,9 +255,17 @@ describe("SkillDetailScreen states", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "settings-pretooluse-1" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Hook" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Command" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /^Text/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /^Bundled files/ })).not.toBeInTheDocument();
+  });
+
+  it("offers to edit the item with Claude beside Discuss", async () => {
+    openDetail();
+
+    await screen.findByRole("heading", { level: 1, name: "feature" });
+    expect(screen.getByRole("button", { name: "Edit with Claude" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Discuss with Claude" })).toBeInTheDocument();
   });
 
   it("shows no bundled files when an agent is open", async () => {

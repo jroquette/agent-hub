@@ -1,0 +1,136 @@
+/* A screenshot shown large, and its markup editor. */
+.ah-lightbox-scrim {
+  padding: var(--space-4);
+}
+.ah-lightbox {
+  display: flex;
+  flex-direction: column;
+  width: min(1600px, 100%);
+  max-height: 100%;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+}
+.ah-lightbox:focus {
+  outline: none;
+}
+.ah-lightbox-bar,
+.ah-lightbox-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+.ah-lightbox-bar {
+  border-bottom: 1px solid var(--border);
+}
+.ah-lightbox-foot {
+  border-top: 1px solid var(--border);
+}
+.ah-lightbox-title {
+  margin: 0 var(--space-2) 0 0;
+  font-weight: 600;
+}
+.ah-lightbox-spacer {
+  flex: 1;
+}
+.ah-lightbox-on {
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.ah-lightbox-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+.ah-lightbox-swatch.ah-lightbox-on {
+  box-shadow:
+    0 0 0 2px var(--surface-overlay),
+    0 0 0 4px var(--accent);
+}
+.ah-lightbox-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: var(--space-3);
+  background: var(--surface-sunken);
+}
+.ah-lightbox-frame {
+  position: relative;
+  line-height: 0;
+}
+.ah-lightbox-frame img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 170px);
+  width: auto;
+  height: auto;
+  user-select: none;
+  border-radius: var(--radius-sm);
+}
+.ah-lightbox-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+.ah-lightbox-overlay.ah-lightbox-typing {
+  cursor: text;
+}
+.ah-lightbox-text {
+  position: absolute;
+  min-width: 160px;
+  padding: 2px 4px;
+  font:
+    600 16px/1.2 system-ui,
+    -apple-system,
+    sans-serif;
+  background: rgb(0 0 0 / 55%);
+  border: 1px dashed currentColor;
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+/* A thumbnail that opens the lightbox. */
+.ah-shot-button {
+  position: relative;
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  line-height: 0;
+  border-radius: var(--radius-md);
+}
+.ah-shot-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ah-shot-button .ah-shot-hint {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: rgb(0 0 0 / 60%);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.ah-shot-button:hover .ah-shot-hint,
+.ah-shot-button:focus-visible .ah-shot-hint {
+  opacity: 1;
+}

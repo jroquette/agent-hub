@@ -541,6 +541,112 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(screen.getByRole("button", { name: "Ended or failed · 3" })).toBeInTheDocument();
   });
 
+  it("resume: ended or failed driven rows and twins offer Resume, a link to the chat that resumes them", async () => {
+    const twin = aSession({
+      id: anId(3, "aaaa0003"),
+      label: named("twin"),
+      status: "ended",
+      agent_session_id: anId(11, "0192a5e5"),
+    });
+    const fixture = drivenFixture();
+    const view = renderList({
+      ...fixture,
+      [SESSIONS]: aSessionsByStatus([...sessions(), twin]),
+      [AGENT]: {
+        items: [
+          anAgentSession({
+            id: anId(11, "0192a5e5"),
+            title: "Twin chat",
+            status: "ended",
+            observed_session_id: twin.id,
+          }),
+          anAgentSession({ id: anId(12, "0192a5e5"), title: "Fix the build", status: "running" }),
+          anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" }),
+          anAgentSession({
+            id: anId(18, "0192a5e5"),
+            title: "In the cloud",
+            status: "ended",
+            kind: "cloud",
+          }),
+        ],
+      },
+    });
+
+    await screen.findByText("Broke");
+    const resumes = within(table("Ended or failed")).getAllByRole("link", { name: /^Resume/ });
+    expect(
+      resumes.map((link) => [link.getAttribute("aria-label"), link.getAttribute("href")]),
+    ).toEqual([
+      ["Resume Broke", `/agent-sessions/${anId(16, "0192a5e5")}`],
+      ["Resume Twin chat", `/agent-sessions/${anId(11, "0192a5e5")}`],
+    ]);
+    expect(
+      within(rowOf("Fix the build") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
+    ).toBeNull();
+    expect(
+      within(rowOf("In the cloud") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
+    ).toBeNull();
+    expect(
+      within(rowOf("/evaluator") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
+    ).toBeNull();
+
+    expect(await seriousViolations(view.container)).toEqual([]);
+
+    await userEvent.click(screen.getByRole("link", { name: "Resume Twin chat" }));
+    expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(11, "0192a5e5")}`);
+  });
+
+  it("resume: no Resume on a log-full row, or on any row where sessions cannot start", async () => {
+    const broke = anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" });
+    const full = anAgentSession({
+      id: anId(17, "0192a5e5"),
+      title: "Full",
+      status: "ended",
+      end_reason: "log_full",
+    });
+    const view = renderList({ ...drivenFixture(), [AGENT]: { items: [broke, full] } });
+    await screen.findByText("Full");
+    expect(
+      within(rowOf("Broke") as HTMLElement).getByRole("link", { name: "Resume Broke" }),
+    ).toBeInTheDocument();
+    expect(
+      within(rowOf("Full") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
+    ).toBeNull();
+    view.unmount();
+
+    renderList({
+      ...drivenFixture(),
+      [AGENT]: { items: [broke] },
+      [`${AGENT}/capabilities`]: aCapabilities({ available: false }),
+    });
+    await screen.findByText("Broke");
+    expect(
+      within(rowOf("Broke") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
+    ).toBeNull();
+  });
+
+  it("resume: an ended twin whose driven session is not listed shows its row without Resume", async () => {
+    const twin = aSession({
+      id: anId(3, "aaaa0003"),
+      label: named("orphan"),
+      status: "ended",
+      agent_session_id: anId(19, "0192a5e5"),
+    });
+    const broke = anAgentSession({ id: anId(16, "0192a5e5"), title: "Broke", status: "failed" });
+    renderList({
+      ...drivenFixture(),
+      [SESSIONS]: aSessionsByStatus([...sessions(), twin]),
+      [AGENT]: { items: [broke] },
+    });
+
+    await screen.findByText("Broke");
+    expect(
+      within(rowOf("Broke") as HTMLElement).getByRole("link", { name: "Resume Broke" }),
+    ).toBeInTheDocument();
+    const orphan = rowOf("/orphan") as HTMLElement;
+    expect(within(orphan).queryByRole("link", { name: /^Resume/ })).toBeNull();
+  });
+
   it("shows a twinless row's folder, mode, model and cost", async () => {
     renderList(drivenFixture());
 

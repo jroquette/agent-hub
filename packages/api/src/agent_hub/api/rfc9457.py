@@ -487,12 +487,12 @@ def _screenshot_too_large_problem(error: ScreenshotTooLargeError) -> Problem:
     )
 
 
-def _invalid_screenshot_problem(_: InvalidScreenshotError) -> Problem:
+def _invalid_screenshot_problem(error: InvalidScreenshotError) -> Problem:
     # A fixed detail: the reason never quotes the data, but the client needs no more than this.
     return _body_field_problem(
         "invalid-screenshot",
         "Invalid screenshot",
-        pointer="/screenshot/data",
+        pointer=error.pointer,
         detail="The screenshot must be a base64-encoded PNG.",
     )
 

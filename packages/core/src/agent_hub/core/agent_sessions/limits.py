@@ -22,7 +22,7 @@ class SessionLimits(ViewModel):
     permission_timeout_seconds: int = Field(default=600, ge=1, le=86_400)
     log_records: int = Field(default=50_000, ge=100, le=1_000_000)
     log_bytes: int = Field(default=32 * MIB, ge=64 * KIB, le=1024 * MIB)
-    message_max_bytes: int = Field(default=64 * KIB, ge=KIB, le=512 * KIB)
+    message_max_bytes: int = Field(default=1 * MIB, ge=KIB, le=4 * MIB)
     cloud_timeout_seconds: int = Field(default=60, ge=5, le=600)
     retention_days: int = Field(default=30, ge=1, le=3650)
     delta_ring: int = Field(default=2000, ge=1)

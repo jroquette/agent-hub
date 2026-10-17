@@ -45,6 +45,9 @@ class BrainNote(ViewModel):
     frontmatter_problem: str | None = None
     markdown: str
     size: int = Field(ge=0)
+    sha256: str | None = None
+    """The hex SHA-256 of the file's bytes, so a note written from another (a record's human
+    summary keeps it as ``source_sha256``) tells whether that one changed since."""
 
 
 class BrainNoteNotFoundError(AgentHubError):

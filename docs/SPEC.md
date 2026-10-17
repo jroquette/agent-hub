@@ -345,7 +345,7 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 **Actions, not just reading (after v1).** Start a workflow on an issue, approve a gate, pause or cancel a session, accept a learning (built early, through a hub PR: AGH-201 below).
 
 **Phase 2 (built).** `hub web` serves the views above that Phase 2 covers: Portfolio, Project overview,
-Approvals (read-only), Live sessions, Sessions and Session detail (Timeline, Files, Cost, Raw events), Workflow runs and
+Approvals (read-only, since retired: AGH-273 answers an approval in its run or its session), Live sessions, Sessions and Session detail (Timeline, Files, Cost, Raw events), Workflow runs and
 Run detail, Features and Feature detail, Health (the doctor rules run in process per hub, cached 15 min), Knowledge ›
 Learnings, Knowledge › Brain and Knowledge › Skills, Workflows (AGH-226, below), Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
 recomputed on read and memoized in process by the store's high-water mark ([event-derivations.md](design/event-derivations.md)).
@@ -353,15 +353,16 @@ Cost is estimated from transcript usage times a dated price table and always lab
 are not connected in this version and their cells say so, and Linear is read only for a feature's tickets (AGH-136
 below). Actions (approving, starting, retrying, snoozing a learning) appear only as disabled, phase-tagged buttons;
 accepting and rejecting a learning are the exception below.
-The server is local only: loopback bind, `Host` and `Origin` checks, 1 MiB request bodies (8 MiB for
-`POST /agent-sessions`, which may carry a screenshot), no CORS, and a CSP that keeps the app on its own origin.
+The server is local only: loopback bind, `Host` and `Origin` checks, 1 MiB request bodies (16 MiB for
+`POST /agent-sessions`, which may carry a screenshot, and 64 MiB for `POST /agent-sessions/{id}/messages`, which may
+carry up to ten images pasted in the chat), no CORS, and a CSP that keeps the app on its own origin.
 It reaches the network in two documented cases only: the learning decisions' explicit
 pull request ([ADR 0024](adr/0024-learning-actions-from-the-app.md)), and a read-only, server-side read of Linear's
 GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hub web` runs
 ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)). The browser never contacts Linear. Agent sessions (AGH-165,
 below) add no outbound call of the server: the `claude` processes it starts reach Anthropic as when the user runs
 them. The approved UI design and the departures from it are in
-[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025, 0031 and 0033 to 0036.
+[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025, 0031 and 0033 to 0037.
 
 **Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
 
@@ -415,7 +416,8 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
 - **Golden path.** Computed once in core and served on the list and the detail: Spec, Research, Plan, Tickets,
   Implement, Review, Evaluate, Shipped, each `done`, `current`, `partial`, `pending`, `skipped`, `blocked` or
   `unknown`, with progress and a reason. A step is done only when the whole feature satisfies it (every ticket
-  created; every ticket Done and every AC passing; every ticket reviewed, that is Done in Linear or with an approved
+  created; every ticket delivered, that is In Review or Done in Linear or with an approved review record (with no
+  tickets, every AC passing); every ticket reviewed, that is Done in Linear or with an approved
   review record; the latest eval of every AC a SHIP, none waiting on owner steps; every ticket Done), and never while an earlier step is not. Without
   Linear, the ticket-based steps are `unknown`, never done.
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
@@ -445,7 +447,9 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
   [ADR 0036](adr/0036-live-playground-and-auto-mode.md); never `bypassPermissions` or `dontAsk`) and model, close,
   resume or fork a past session of that workdir, delete an ended one. A message to an ended local session (not
   `log_full`) whose Claude conversation is still listed reopens it in place, same id and log (AGH-262). At most 4 live
-  sessions; an idle one ends after 30 minutes; every limit is a `hub web` option with an `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
+  sessions; at the limit a new one ends the one idle the longest (a message reopens it in place), so only busy
+  sessions refuse one (AGH-263); an idle one ends after 30 minutes; every limit is a `hub web` option with an
+  `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
   session left open by a crash is marked ended at the next start, and Resume picks it up.
 - **Log and stream.** Each session's log (gap-free `seq`) is streamed over SSE with `Last-Event-ID` replay; text
   deltas live only in memory. A session `hub web` drives links to the hook-observed Session by Claude's session id
@@ -492,15 +496,22 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   the web app on 5173, whose proxy sends the agent-session routes to the conductor, so a change never ends a session.
   One address (`/__playground/session?token=`) signs the browser in. The dev app's shake and New session start in
   the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps never offer it.
+- **Export.** `make playground-export` turns the playground's validated commits into a delivery's input, in the
+  ignored `.playground/exports/<stamp>/`: the changes grouped by screen or package, the owner's requests, the
+  reference patch and each touched screen captured on synthetic data, the delivery's visual baseline (AGH-263,
+  [design/playground-export.md](design/playground-export.md)).
 - **Discuss.** A right-hand panel holds one driven session per feature, workflow, skill, agent, hook or note on
   screen, started in the hub folder with that artifact as context; a feature opens it on arrival, and an acceptance
-  criterion or a selected passage can be pointed at.
+  criterion or a selected passage can be pointed at. A screen with no artifact is itself the subject: the first
+  message carries its text and a screenshot (AGH-273).
 - **Studio.** Create a skill, an agent or a hook with Claude: the session writes a draft under `.hub-drafts/<id>/`
   in the hub and the preview renders it as the catalog card it will be. The Skills catalog has a tab per kind.
+  An existing item opens the same way from its detail (Edit with Claude, AGH-271): Claude edits a copy in the draft
+  folder, the preview shows the change as a diff against the current version, and Publish writes it over the item.
 - **Session names.** A session's name is the title Claude Code writes in its transcript, or the user's `/rename`,
   stored as `session.title` ([ADR 0035](adr/0035-session-titles.md), below).
 
-**Skills tab (AGH-164, built).** Knowledge › Skills shows what a hub's agents can do, read from its files on request
+**Skills tab (AGH-164, built; named Toolkit since AGH-271).** Knowledge › Toolkit shows what a hub's agents can do, read from its files on request
 and never stored:
 
 - **Catalog.** `GET /api/v1/projects/{project}/skills` lists the hub's skills, agents and hooks: the base plugin
@@ -520,6 +531,9 @@ and never stored:
   role (text served inert by a server-issued id), an approximate context cost (characters / 4), and diagnostics
   (`name_invalid`, `description_missing`, `reference_not_found`, `not_linked`, `modified_since_sync`, …). A hook shows
   its event, matcher, command, source file and active / not-synced state. Nothing is run.
+  A step that states its type (a leading `` `agent` ``, `` `script` ``, `` `gate` `` or `` `human` ``) carries it as
+  `declared_type`, which wins over the word guesses (only declared gates show as gates when a step declares one), and
+  `summary`, the plain rest of its first line (AGH-271).
 - **Bounds.** The tree is listed stat-only through `HubFileReader.skill_sources` and read through
   `read_skill_file`, never through a link (a link that leaves the hub is `link_outside_hub`); at most 500 items per
   kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog

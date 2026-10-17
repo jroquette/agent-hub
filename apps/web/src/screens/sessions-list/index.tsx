@@ -25,7 +25,6 @@ import {
   VIRTUAL_THRESHOLD,
   type DataTableColumn,
   type Facet,
-  type Status,
 } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtClock, fmtDuration, fmtInt, fmtMoney, fmtTokens } from "../../lib/format";
@@ -50,8 +49,15 @@ import {
   type Period,
   type View,
 } from "./filters";
-import { CloudSessions, DrivenBanner, NewSessionControl, useDriving } from "./DrivenControls";
+import {
+  CloudSessions,
+  DrivenBanner,
+  NewSessionControl,
+  useDriving,
+  useResumeLink,
+} from "./DrivenControls";
 import { LiveDigest } from "./LiveDigest";
+import { badgeOf } from "./badge";
 import { rowHref, withDriven } from "./drivenRows";
 import { GridSection } from "./GridSection";
 import {
@@ -82,21 +88,6 @@ const VIEWS: { name: string; params: Record<string, string> }[] = [
   { name: "Guard denials", params: { guard_denial: "1", period: "30 d" } },
   { name: "Expensive sessions", params: { sort: "-cost", period: "30 d" } },
 ];
-
-const OUTCOME_BADGE: Record<NonNullable<Session["outcome"]>, [Status, string]> = {
-  done: ["done", "Done"],
-  stopped: ["stopped", "Stopped"],
-  blocked: ["blocked", "Blocked"],
-  error: ["error", "Error"],
-};
-
-function badgeOf(session: Session): [Status, string] {
-  if (session.status === "live") return ["live", "Live"];
-  if (session.status === "waiting") return ["waiting", "Waiting"];
-  if (session.status === "idle") return ["idle", "Idle"];
-  if (session.outcome) return OUTCOME_BADGE[session.outcome];
-  return ["ended", session.end_inferred ? "Ended · no end event" : "Ended"];
-}
 
 function tokensTotal(session: Session): number | null {
   const tokens = session.tokens;
@@ -690,6 +681,7 @@ export function SessionsListScreen() {
     scope,
     (projects.data?.items ?? []).map((project) => project.name),
   );
+  const resumeLink = useResumeLink(driving);
   const [selected, setSelected] = useState<string[]>([]);
   const [columns, setColumns] = useState(storedColumns);
   const [density, setDensity] = useState(() =>
@@ -764,8 +756,8 @@ export function SessionsListScreen() {
     [density, columns, scope],
   );
   const tableColumns = useMemo(
-    () => visible.map((def) => withDriven(def.column({ tz }), tz)),
-    [visible, tz],
+    () => visible.map((def) => withDriven(def.column({ tz }), tz, resumeLink)),
+    [visible, tz, resumeLink],
   );
   const sortColumn = visible.find((def) => def.sort === sort.replace("-", ""));
   const projectCount = new Set(rows.map((s) => s.project)).size;
@@ -1025,6 +1017,7 @@ export function SessionsListScreen() {
           count={count}
           within={within}
           pages={pages}
+          action={resumeLink}
           onOpen={(row) => {
             void navigate(rowHref(row));
           }}

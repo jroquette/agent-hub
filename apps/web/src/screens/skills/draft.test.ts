@@ -13,9 +13,14 @@ import {
   discardPrompt,
   draftKind,
   draftWrites,
+  editDestination,
+  editMainFile,
+  editPrompt,
+  hookFileText,
   insideDraft,
   newDraftId,
   projectPluginDir,
+  publishEditPrompt,
   publishPrompt,
   readDocument,
   readHooks,
@@ -328,6 +333,7 @@ describe("confirmedReply", () => {
     redacted: false,
     queued: false,
     screenshot: false,
+    screenshotCount: 0,
   });
   const reply = (seq: number, text: string): TranscriptEntry => ({
     kind: "assistant",
@@ -350,5 +356,108 @@ describe("confirmedReply", () => {
     expect(
       confirmedReply([user(3, "Publish"), reply(4, "Not PUBLISHED.")], "Publish", 0, "PUBLISHED"),
     ).toBe(false);
+  });
+});
+
+describe("an edit draft", () => {
+  const file = (path: string, content: string) => ({
+    path,
+    content,
+    partial: false,
+    pending: false,
+  });
+  const baseline = { name: "changelog", original: SKILL, managed: false };
+
+  it("is not publishable while the draft is the current version", () => {
+    const summary = summarize("skill", [file("SKILL.md", SKILL)], new Set(["changelog"]), baseline);
+    expect(summary.checks.find((c) => c.id === "changed")?.state).toBe("todo");
+    expect(summary.checks.find((c) => c.id === "name")?.label).toBe('Name "changelog" unchanged');
+    expect(summary.publishable).toBe(false);
+  });
+
+  it("counts the changed lines once the draft differs", () => {
+    const changed = SKILL.replace(
+      "1. Read the merged PRs.",
+      "1. Read the merged PRs since the tag.",
+    );
+    const summary = summarize(
+      "skill",
+      [file("SKILL.md", changed)],
+      new Set(["changelog"]),
+      baseline,
+    );
+    expect(summary.checks.find((c) => c.id === "changed")).toMatchObject({
+      state: "ok",
+      label: "+1 −1 lines",
+    });
+    expect(summary.publishable).toBe(true);
+  });
+
+  it("warns on a rename and on a managed item", () => {
+    const renamed = SKILL.replace("name: changelog", "name: release-notes");
+    const summary = summarize("skill", [file("SKILL.md", renamed)], new Set(["changelog"]), {
+      ...baseline,
+      managed: true,
+    });
+    expect(summary.checks.find((c) => c.id === "name")?.label).toContain(
+      'Renamed from "changelog"',
+    );
+    expect(summary.checks.find((c) => c.id === "managed")?.state).toBe("warn");
+  });
+
+  it("lands on the item's own folder or file", () => {
+    expect(editDestination("skill", "plugin/demo/skills/changelog/SKILL.md")).toBe(
+      "plugin/demo/skills/changelog/",
+    );
+    expect(editDestination("agent", "plugin/demo/agents/reviewer.md")).toBe(
+      "plugin/demo/agents/reviewer.md",
+    );
+    expect(editMainFile("agent", "plugin/demo/agents/reviewer.md")).toBe("reviewer.md");
+    expect(editMainFile("hook", ".claude/settings.json")).toBe("hooks.json");
+  });
+
+  it("starts a hook from a hooks.json of that hook alone", () => {
+    const text = hookFileText({
+      event: "PreToolUse",
+      matcher: "Bash",
+      type: "command",
+      command: "./guard.sh",
+      timeout: null,
+    });
+    expect(readHooks(text).hooks).toEqual([
+      {
+        event: "PreToolUse",
+        matcher: "Bash",
+        type: "command",
+        command: "./guard.sh",
+        timeout: null,
+      },
+    ]);
+  });
+
+  it("tells Claude to copy the item first and to leave the original alone", () => {
+    const prompt = editPrompt(
+      {
+        project: "demo",
+        kind: "skill",
+        draftId: DRAFT,
+        name: "changelog",
+        sourcePath: "plugin/demo/skills/changelog/SKILL.md",
+        managed: false,
+        hookText: null,
+      },
+      "Shorten it",
+    );
+    expect(prompt).toContain(`writing it unchanged, whole, to .hub-drafts/${DRAFT}/SKILL.md`);
+    expect(prompt).toContain("Do not touch the original");
+    expect(prompt.endsWith("What I want to change:\nShorten it")).toBe(true);
+  });
+
+  it("publishes the draft's files over the item's", () => {
+    const prompt = publishEditPrompt("skill", DRAFT, "plugin/demo/skills/changelog/SKILL.md", null);
+    expect(prompt).toContain(
+      `Copy every file of .hub-drafts/${DRAFT}/ over its counterpart in plugin/demo/skills/changelog/`,
+    );
+    expect(prompt).toContain(`Then delete .hub-drafts/${DRAFT}/`);
   });
 });

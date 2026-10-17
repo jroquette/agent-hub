@@ -48,7 +48,8 @@ Sessions                    [Grid | Table]  [Views ▾] [Columns] [24 h|7 d|30 d
 - **Driven sessions.** A driven session with an observed twin shows once, as the twin, with a "Chat" badge, and opens
   the chat. One without a twin (`observed_session_id` null) shows in its section with the fields it has. "New session"
   sits in the page header; the 401, 404 `agent-sessions-off` and 503 banners stay. There is no separate "Driven from
-  hub web" list. Cloud guidance is a collapsed "Cloud sessions" details below the sections.
+  hub web" list. Cloud guidance is a collapsed "Cloud sessions" details below the sections. An ended or failed local
+  driven session (or its twin) has a "Resume" link to its chat, where a message resumes it in place (ADR 0036).
 - **Open.** Every tile and row has a visible primary button: "Open" (observed), "Open chat" (driven), "Answer" when
   waiting (the chat or Approvals). The title is a real `<a href>`. No "…" button.
 - **Keys.** `j` / `k` move across tiles and rows of every section with a visible focus ring; `Enter` or `o` opens;
