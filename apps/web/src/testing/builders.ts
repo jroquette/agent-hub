@@ -1479,6 +1479,12 @@ export function aWorkflowSummary(overrides: Partial<WorkflowSummary> = {}): Work
     revision: 3,
     source: "hub",
     step_types: { agent: 1, shell: 1, script: 1, approval: 1 },
+    steps: [
+      { id: "plan", type: "agent", description: "Writes the plan.", body: [] },
+      { id: "build", type: "shell", body: [] },
+      { id: "docs", type: "script", body: [] },
+      { id: "review", type: "approval", body: [] },
+    ],
     ...overrides,
   };
 }

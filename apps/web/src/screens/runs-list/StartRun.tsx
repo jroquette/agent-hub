@@ -399,16 +399,21 @@ export function StartRun({
   project,
   workflow,
   label = "Start run",
+  size,
+  variant = "primary",
 }: {
   project: string | null;
   workflow?: Chosen;
   label?: string;
+  size?: "sm";
+  variant?: "primary" | "default";
 }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button
-        variant="primary"
+        variant={variant}
+        size={size}
         icon="play"
         onClick={() => {
           setOpen(true);
