@@ -56,6 +56,12 @@ def test_stores_raw_bytes_when_file_encoded() -> None:
     assert decode(blob, folder=False, name="hooks.json") == content
 
 
+@pytest.mark.parametrize("name", [None, ""])
+def test_refuses_file_decode_when_name_missing(name: str | None) -> None:
+    with pytest.raises(ValueError, match="name"):
+        decode(b"{}\n", folder=False, name=name)
+
+
 def test_refuses_file_unit_when_not_one_file() -> None:
     with pytest.raises(ValueError, match="one file"):
         encode(_folder(), folder=False)

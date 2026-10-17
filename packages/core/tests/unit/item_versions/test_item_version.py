@@ -64,11 +64,24 @@ def test_refuses_publish_when_author_missing() -> None:
         _new(origin=VersionOrigin.PUBLISH, first=False)
 
 
-def test_refuses_first_when_origin_not_external() -> None:
+def test_refuses_first_when_origin_is_restore() -> None:
     author = VersionAuthor(name="Jane Doe", email="jane@example.com")
 
     with pytest.raises(ValidationError, match="first"):
-        _new(origin=VersionOrigin.PUBLISH, author=author)
+        _new(
+            origin=VersionOrigin.RESTORE,
+            author=author,
+            restored_from="0199f0a0-0000-7000-8000-000000000001",
+        )
+
+
+def test_accepts_first_when_new_item_published() -> None:
+    author = VersionAuthor(name="Jane Doe", email="jane@example.com")
+
+    version = _new(origin=VersionOrigin.PUBLISH, author=author)
+
+    assert version.first
+    assert version.origin is VersionOrigin.PUBLISH
 
 
 def test_refuses_restored_from_when_origin_not_restore() -> None:

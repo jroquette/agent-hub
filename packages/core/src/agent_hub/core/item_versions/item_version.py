@@ -2,9 +2,10 @@
 
 A unit is keyed by ``(project, unit_path)``, ``unit_path`` hub-relative with ``/`` separators and
 no trailing slash. ``seq`` counts a unit's versions from 1 without gaps. An ``external`` version
-was seen on disk and has no author (D11), and only it can be a unit's ``first`` (D20); a
-``publish`` or ``restore`` carries the hub's effective identity, and a ``restore`` names the
-version it restored. ``recorded_at`` must carry an offset and is kept in UTC.
+was seen on disk and has no author (D11); a ``publish`` or ``restore`` carries the hub's
+effective identity, and a ``restore`` names the version it restored. A unit's ``first`` version
+is ``external`` (D20) or, for a new item, ``publish`` (AC-295.12), never a ``restore``.
+``recorded_at`` must carry an offset and is kept in UTC.
 """
 
 from enum import StrEnum
@@ -69,8 +70,8 @@ class _VersionFacts(_Frozen):
         if external != (self.author is None):
             msg = "author is set exactly when the origin is publish or restore"
             raise ValueError(msg)
-        if self.first and not external:
-            msg = "first is only an external version"
+        if self.first and self.origin is VersionOrigin.RESTORE:
+            msg = "first is never a restore version"
             raise ValueError(msg)
         if (self.origin is VersionOrigin.RESTORE) != (self.restored_from is not None):
             msg = "restored_from is set exactly when the origin is restore"
