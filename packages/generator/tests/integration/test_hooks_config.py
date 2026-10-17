@@ -1294,3 +1294,215 @@ def test_denies_env_files_when_hub_config_lists_them(
     verdicts = [verdict_of(run_hook("guard", event, env=env)) for event in calls]
 
     assert [verdict and verdict[0] for verdict in verdicts] == ["deny", "deny"]
+
+
+# AGH-277 D-layers (P-8): the blocked words, globs and variable names are the union of the hook
+# root's hub.json, the identity home's hub.local.json and a hub.json named by $HUB_CONFIG, in that
+# order, each entry once with the first layer that lists it.
+BLOCKED_CODE = (
+    "import dataclasses, json\nfrom hubhooks import load_config\ncfg = load_config(None)\n"
+    "print(json.dumps({'words': cfg.blocked_words, 'files': cfg.blocked_files,"
+    " 'env': cfg.blocked_env, 'problem': cfg.blocked_problem,"
+    " 'environments': [dataclasses.asdict(e) for e in cfg.environments],"
+    " 'credential_env': cfg.credential_env}))\n"
+)
+EDGE_CONFIG: dict[str, Any] = {
+    "project": {"name": "demo"},
+    "guard": {
+        "blocked_words": ["edge", "prod"],
+        "blocked_words_files": ["edge/*.yml"],
+        "blocked_words_env": ["EDGE_*"],
+    },
+}
+
+
+def blocked_config(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    cwd: Path,
+    env: Mapping[str, str] | None = None,
+) -> Any:
+    return run_python(hook_python, BLOCKED_CODE, path=hub / HOOKS, cwd=cwd, env=env)
+
+
+def test_unions_blocked_words_when_three_layers_set(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    write_hub_json(hub, builders.an_environments_document())
+    local = builders.a_local_environments_document()
+    local["guard"]["blocked_words_env"] = ["DEMO_STAGE"]
+    write_local_json(hub, local)
+    edge = elsewhere / "edge.json"
+    edge.write_text(json.dumps(EDGE_CONFIG), encoding="utf-8")
+
+    found = blocked_config(
+        hub,
+        hook_python=hook_python,
+        run_python=run_python,
+        cwd=elsewhere,
+        env={"HUB_CONFIG": str(edge)},
+    )
+
+    assert found["words"] == [
+        ["prod", "hub.json"],
+        ["production", "hub.json"],
+        ["demo-live", "hub.local.json"],
+        ["edge", "$HUB_CONFIG"],
+    ]
+    assert found["files"] == [
+        ["config/*.json", "hub.json"],
+        ["serverless.yml", "hub.json"],
+        ["deploy/*.tfvars", "hub.local.json"],
+        ["edge/*.yml", "$HUB_CONFIG"],
+    ]
+    assert found["env"] == [["DEMO_STAGE", "hub.local.json"], ["EDGE_*", "$HUB_CONFIG"]]
+    assert found["problem"] == ""
+
+
+@pytest.mark.parametrize(
+    "local_guard",
+    [
+        {"blocked_words": [], "blocked_words_files": [], "blocked_words_env": []},
+        {},
+        None,
+    ],
+    ids=["empty-lists", "no-guard", "no-file"],
+)
+def test_keeps_hub_words_when_local_list_empty(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    elsewhere: Path,
+    local_guard: dict[str, Any] | None,
+) -> None:
+    write_hub_json(hub, builders.an_environments_document())
+    if local_guard is not None:
+        write_local_json(hub, {"project": {"branch_prefix": "jane/"}, "guard": local_guard})
+
+    found = blocked_config(hub, hook_python=hook_python, run_python=run_python, cwd=elsewhere)
+
+    assert found["words"] == [["prod", "hub.json"], ["production", "hub.json"]]
+    assert found["files"] == [["config/*.json", "hub.json"], ["serverless.yml", "hub.json"]]
+    assert (found["env"], found["problem"]) == ([], "")
+
+
+def an_environment(
+    name: str, access: str, source: str, *, production: bool = False
+) -> dict[str, Any]:
+    return {"name": name, "access": access, "production": production, "source": source}
+
+
+def test_merges_environments_with_source_when_local_tightens(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    write_hub_json(hub, builders.an_environments_document())
+    local = builders.a_local_environments_document()
+    local["environments"] |= {
+        "staging": {"access": "read"},
+        "local": {"access": "write"},
+        "LIVE": {"access": "write"},
+        "jane-qa": {"production": True},
+    }
+    local["environments"]["jane-cloud"]["credentials"]["env"] = ["JANE_DB_URL", "DEMO_LIVE_DB_URL"]
+    write_local_json(hub, local)
+
+    found = blocked_config(hub, hook_python=hook_python, run_python=run_python, cwd=elsewhere)
+
+    # staging tightens (ask → read); local's equal access and LIVE's name (live, ignoring case)
+    # change nothing; jane-qa has no access: not an environment of its own.
+    assert found["environments"] == [
+        an_environment("local", "write", "hub.json"),
+        an_environment("staging", "read", "hub.local.json"),
+        an_environment("live", "read", "hub.json", production=True),
+        an_environment("jane-cloud", "write", "hub.local.json"),
+    ]
+    assert found["credential_env"] == ["DEMO_LIVE_DB_URL", "JANE_DB_URL"]
+
+
+@pytest.mark.parametrize(
+    ("hub_guard", "local_text", "config_guard", "problem"),
+    [
+        ({"blocked_words": ["ok", ""]}, None, None, "hub.json guard.blocked_words[1]"),
+        ({"blocked_words_files": [3]}, None, None, "hub.json guard.blocked_words_files[0]"),
+        ({}, '{"guard": {"blocked_words": "prod"}}', None, "hub.local.json guard.blocked_words"),
+        ({}, "{", None, "hub.local.json"),
+        ({"blocked_words": "prod"}, "[]", None, "hub.local.json"),
+        ({}, None, {"blocked_words_env": ["lower"]}, "$HUB_CONFIG guard.blocked_words_env[0]"),
+        (
+            {"blocked_word": []},
+            None,
+            {"blocked_words_env": ["lower"]},
+            "hub.json guard.blocked_word",
+        ),
+    ],
+    ids=[
+        "hub-item",
+        "hub-glob",
+        "local-list",
+        "local-not-json",
+        "local-file-first",
+        "config-item",
+        "hub-before-config",
+    ],
+)
+def test_names_blocked_problem_when_layer_unusable(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    elsewhere: Path,
+    hub_guard: dict[str, Any],
+    local_text: str | None,
+    config_guard: dict[str, Any] | None,
+    problem: str,
+) -> None:
+    document = a_hub_document()
+    document["guard"] |= hub_guard
+    write_hub_json(hub, document)
+    if local_text is not None:
+        (hub / LOCAL_FILE_NAME).write_text(local_text, encoding="utf-8")
+    env = {}
+    if config_guard is not None:
+        config = elsewhere / "config.json"
+        config.write_text(json.dumps({"project": {"name": "demo"}, "guard": config_guard}))
+        env = {"HUB_CONFIG": str(config)}
+
+    found = blocked_config(
+        hub, hook_python=hook_python, run_python=run_python, cwd=elsewhere, env=env
+    )
+
+    assert found["problem"] == problem
+
+
+def test_labels_found_file_when_cached_hooks_load(
+    cached_hooks: Path,
+    sibling_workspace: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    tmp_path: Path,
+) -> None:
+    other = sibling_workspace / "other-hub"
+    write_hub_json(other, SIBLING_HUB_JSON | {"guard": {"blocked_words": ["prod"]}})
+    write_local_json(other, {"guard": {"blocked_words": ["demo-live"]}})
+    folder = tmp_path / "conf"
+    folder.mkdir()
+    write_hub_json(folder, EDGE_CONFIG)
+    write_local_json(folder, {"guard": {"blocked_words": ["beside"]}})
+
+    walked = run_python(hook_python, BLOCKED_CODE, path=cached_hooks, cwd=other / "brain")
+    named = run_python(
+        hook_python,
+        BLOCKED_CODE,
+        path=cached_hooks,
+        cwd=folder,
+        env={"HUB_CONFIG": str(folder / HUB_JSON_NAME)},
+    )
+
+    # The walked hub is hub.json with its own local file; a $HUB_CONFIG file has no identity
+    # home, so the local file beside it never counts.
+    assert walked["words"] == [["prod", "hub.json"], ["demo-live", "hub.local.json"]]
+    assert named["words"] == [["edge", "$HUB_CONFIG"], ["prod", "$HUB_CONFIG"]]
