@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   aPage,
@@ -14,9 +14,9 @@ import {
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
 
-// These tests read the tables; the grid is the default view (AC-234.3).
+// These tests read the list (the default view): one table, a row group per section.
 beforeEach(() => {
-  window.localStorage.setItem("ah.sessions.view", "table");
+  window.localStorage.setItem("ah.sessions.view", "list");
 });
 
 const SESSIONS = "/api/v1/sessions";
@@ -41,18 +41,22 @@ function routes(sessions: ApiRoutes[string] = aSessionsByStatus(SAMPLE)): ApiRou
 
 const sessionRequests = (requests: Request[]) =>
   requests.filter((r) => new URL(r.url).pathname === SESSIONS).map((r) => new URL(r.url));
-/** The section header buttons, in page order, with whether each is expanded. */
+/** The row-group header buttons of the list, in page order (the status tabs are not among them). */
 const toggles = () =>
-  screen
-    .queryAllByRole("button")
-    .filter(
-      (button) => button.hasAttribute("aria-controls") && button.id.startsWith("sl-section-"),
-    );
+  screen.queryByRole("table")
+    ? within(screen.getByRole("table"))
+        .queryAllByRole("button")
+        .filter((button) => button.hasAttribute("aria-expanded"))
+    : [];
 const headers = () => toggles().map((button) => button.textContent);
 const collapsedHeaders = () =>
   toggles()
     .filter((button) => button.getAttribute("aria-expanded") === "false")
     .map((button) => button.textContent);
+/** A section's row group, by its header. */
+const group = (name: RegExp) => screen.getByRole("rowgroup", { name });
+/** A section's header button, inside the table (a status tab can read the same). */
+const toggle = (name: string) => within(screen.getByRole("table")).getByRole("button", { name });
 
 afterEach(() => {
   window.localStorage.clear();
@@ -71,8 +75,12 @@ describe("SessionsListScreen status-sections", () => {
     });
 
     await screen.findByText("/runner");
-    expect(headers()).toEqual(["Waiting · 1", "Live · ~4", "Ended or failed · 1"]);
-    expect(screen.queryByRole("region", { name: /^Idle/ })).toBeNull();
+    // One table, one header row, the sections as its row groups.
+    expect(screen.getAllByRole("table")).toHaveLength(1);
+    expect(screen.getAllByRole("columnheader", { name: "Status" })).toHaveLength(1);
+    expect(headers()).toEqual(["Waiting for you · 1", "Live · ~4", "Ended · last 7 days · 1"]);
+    expect(screen.queryByRole("rowgroup", { name: /^Idle/ })).toBeNull();
+    expect(within(group(/^Live/)).getByText("/runner")).toBeInTheDocument();
     expect(
       sessionRequests(requests)
         .map((url) => url.searchParams.get("status"))
@@ -84,7 +92,7 @@ describe("SessionsListScreen status-sections", () => {
     const first = renderWithApi(<SessionsListScreen />, { routes: routes(), path: "/sessions" });
     await screen.findByText("/runner");
 
-    const live = screen.getByRole("button", { name: "Live · 1" });
+    const live = toggle("Live · 1");
     fireEvent.click(live);
     expect(live).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("/runner")).toBeNull();
@@ -94,21 +102,26 @@ describe("SessionsListScreen status-sections", () => {
 
     renderWithApi(<SessionsListScreen />, { routes: routes(), path: "/sessions" });
     await screen.findByText("/asker");
-    expect(screen.getByRole("button", { name: "Live · 1" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Live · 1" }));
+    expect(toggle("Live · 1")).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle("Live · 1"));
     expect(screen.getByText("/runner")).toBeInTheDocument();
     expect(window.localStorage.getItem(COLLAPSED)).toBe("[]");
   });
 
   it("shows one empty state and no section when every section is empty", async () => {
-    renderWithApi(<SessionsListScreen />, { routes: routes(aPage([])), path: "/sessions" });
+    const { router } = renderWithApi(<SessionsListScreen />, {
+      routes: routes(aPage([])),
+      path: "/sessions",
+    });
 
     expect(await screen.findByText("No sessions yet.")).toBeInTheDocument();
     expect(headers()).toEqual([]);
     expect(screen.queryByRole("table")).toBeNull();
+    // The first run replaces the tabs and the toolbar.
+    expect(screen.queryByRole("group", { name: "Status" })).toBeNull();
+    expect(screen.queryByRole("searchbox", { name: "Find sessions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show all time" }));
+    expect(router.state.location.search).toBe("?period=All");
   });
 });
 
@@ -123,7 +136,7 @@ describe("SessionsListScreen collapsed-bad-json", () => {
     renderWithApi(<SessionsListScreen />, { routes: routes(), path: "/sessions" });
     await screen.findByText("/asker");
 
-    expect(headers()).toEqual(["Waiting · 1", "Live · 1", "Ended or failed · 1"]);
+    expect(headers()).toEqual(["Waiting for you · 1", "Live · 1", "Ended · last 7 days · 1"]);
     expect(collapsedHeaders()).toEqual(collapsed);
   });
 
@@ -132,7 +145,7 @@ describe("SessionsListScreen collapsed-bad-json", () => {
     renderWithApi(<SessionsListScreen />, { routes: routes(), path: "/sessions" });
     await screen.findByText("/asker");
 
-    fireEvent.click(screen.getByRole("button", { name: "Waiting · 1" }));
+    fireEvent.click(toggle("Waiting for you · 1"));
     expect(window.localStorage.getItem(COLLAPSED)).toBe('["live","waiting"]');
   });
 });
@@ -149,17 +162,17 @@ describe("SessionsListScreen section-error", () => {
       path: "/sessions",
     });
 
-    const ended = await screen.findByRole("region", { name: /^Ended or failed/ });
-    expect(await within(ended).findByText("Could not load ended or failed sessions")).toBeVisible();
+    const ended = await screen.findByRole("rowgroup", { name: /^Ended/ });
+    expect(await within(ended).findByText("Could not load ended sessions")).toBeVisible();
     // No query returned a count: the header shows the ellipsis, not 0.
-    expect(headers()).toEqual(["Waiting · 1", "Live · 1", "Ended or failed · …"]);
+    expect(headers()).toEqual(["Waiting for you · 1", "Live · 1", "Ended · last 7 days · …"]);
     expect(screen.getByText("/asker")).toBeInTheDocument();
     expect(screen.getByText("/runner")).toBeInTheDocument();
 
     failing = false;
     fireEvent.click(within(ended).getByRole("button", { name: "Try again" }));
     expect(await within(ended).findByText("/done")).toBeInTheDocument();
-    expect(headers()).toEqual(["Waiting · 1", "Live · 1", "Ended or failed · 1"]);
+    expect(headers()).toEqual(["Waiting for you · 1", "Live · 1", "Ended · last 7 days · 1"]);
     await waitFor(() => {
       expect(sessionRequests(requests).map((url) => url.searchParams.get("status"))).toHaveLength(
         5,
@@ -172,16 +185,24 @@ describe("SessionsListScreen section-error", () => {
 });
 
 describe("SessionsListScreen filters-both-views", () => {
-  it("asks and shows only the faceted section, with the period on Ended only", async () => {
+  it("shows only the tab's section but asks every one, with the period on Ended only", async () => {
     const faceted = renderWithApi(<SessionsListScreen />, {
       routes: routes(),
       path: "/sessions?status=waiting",
     });
     await screen.findByText("/asker");
-    expect(headers()).toEqual(["Waiting · 1"]);
-    expect(sessionRequests(faceted.requests).map((url) => url.searchParams.get("status"))).toEqual([
+    // A tab's group cannot collapse: its header is a title, not a button.
+    expect(headers()).toEqual([]);
+    expect(screen.getAllByRole("rowgroup", { name: /·/ }).map((g) => g.dataset.group)).toEqual([
       "waiting",
     ]);
+    expect(screen.getByRole("rowgroup", { name: "Waiting for you · 1" })).toBeInTheDocument();
+    expect(screen.queryByText("/runner")).toBeNull();
+    expect(
+      sessionRequests(faceted.requests)
+        .map((url) => url.searchParams.get("status"))
+        .sort(),
+    ).toEqual(["ended", "idle", "live", "waiting"]);
     faceted.unmount();
 
     const all = renderWithApi(<SessionsListScreen />, {
@@ -196,39 +217,6 @@ describe("SessionsListScreen filters-both-views", () => {
         .filter((url) => url.searchParams.has("from"))
         .map((url) => url.searchParams.get("status")),
     ).toEqual(["ended"]);
-  });
-});
-
-describe("SessionsListScreen select-all-section", () => {
-  it("selects and clears only its own section's rows", async () => {
-    const rows = [...SAMPLE, one(4, "live", "runner-2")];
-    renderWithApi(<SessionsListScreen />, {
-      routes: routes(aSessionsByStatus(rows)),
-      path: "/sessions",
-    });
-    await screen.findByText("/runner-2");
-
-    const waiting = screen.getByRole("table", { name: "Waiting sessions" });
-    const live = screen.getByRole("table", { name: "Live sessions" });
-    fireEvent.click(within(waiting).getByRole("checkbox", { name: "Select row" }));
-    fireEvent.click(within(live).getByRole("checkbox", { name: "Select all" }));
-    expect(screen.getByText("Selected", { exact: false })).toHaveTextContent("Selected 3");
-    expect(within(live).getByRole("checkbox", { name: "Select all" })).toBeChecked();
-    expect(
-      within(screen.getByRole("table", { name: "Ended or failed sessions" })).getByRole(
-        "checkbox",
-        { name: "Select all" },
-      ),
-    ).not.toBeChecked();
-
-    fireEvent.click(within(live).getByRole("checkbox", { name: "Select all" }));
-    expect(screen.getByText("Selected", { exact: false })).toHaveTextContent("Selected 1");
-    expect(within(waiting).getByRole("checkbox", { name: "Select row" })).toBeChecked();
-    expect(
-      within(live)
-        .getAllByRole("checkbox", { name: "Select row" })
-        .map((box) => (box as HTMLInputElement).checked),
-    ).toEqual([false, false]);
   });
 });
 
@@ -251,16 +239,16 @@ describe("SessionsListScreen filter-requests", () => {
     const first = await settled(requests, 4);
     expect(first).toHaveLength(4);
 
-    fireEvent.click(screen.getByRole("button", { name: "24 h" }));
+    fireEvent.click(screen.getByRole("button", { name: "Period: Last 7 days" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
     const afterPeriod = (await settled(requests, 5)).slice(4);
     expect(afterPeriod.map((url) => url.searchParams.get("status"))).toEqual(["ended"]);
     expect(afterPeriod[0]?.searchParams.has("from")).toBe(true);
-    // The period filters Ended only, and the count line says so.
-    expect(await screen.findByText(/· Ended: last 24 h ·/)).toBeInTheDocument();
+    // The period filters Ended only, and its header says so.
+    expect(await screen.findByRole("button", { name: "Ended · last 24 hours · 1" })).toBeVisible();
 
-    const repo = screen.getByRole("textbox", { name: "Repo" });
-    fireEvent.change(repo, { target: { value: "storefront" } });
-    fireEvent.blur(repo);
+    fireEvent.click(screen.getByRole("button", { name: "Repo: All" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "agent-hub" }));
     const afterRepo = (await settled(requests, 9)).slice(5);
     expect(afterRepo.map((url) => url.searchParams.get("status")).sort()).toEqual([
       "ended",
@@ -268,7 +256,7 @@ describe("SessionsListScreen filter-requests", () => {
       "live",
       "waiting",
     ]);
-    expect(afterRepo.every((url) => url.searchParams.get("repo") === "storefront")).toBe(true);
+    expect(afterRepo.every((url) => url.searchParams.get("repo") === "agent-hub")).toBe(true);
   });
 });
 
@@ -284,17 +272,16 @@ describe("SessionsListScreen keep-previous", () => {
       path: "/sessions",
     });
     await screen.findByText("/asker");
-    expect(headers()).toEqual(["Waiting · 1", "Live · 1", "Ended or failed · 1"]);
+    expect(headers()).toEqual(["Waiting for you · 1", "Live · 1", "Ended · last 7 days · 1"]);
 
-    const live = screen.getByRole("table", { name: "Live sessions" });
-    fireEvent.click(within(live).getByRole("button", { name: /^Cost/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
     await waitFor(() => {
       expect(
         sessionRequests(requests).filter((url) => url.searchParams.get("sort") === "-cost"),
       ).toHaveLength(4);
     });
     // Mid-refetch: the same sections and rows, no Idle placeholder, no skeleton.
-    expect(headers()).toEqual(["Waiting · 1", "Live · 1", "Ended or failed · 1"]);
+    expect(headers()).toEqual(["Waiting for you · 1", "Live · 1", "Ended · last 7 days · 1"]);
     expect(screen.getByText("/runner")).toBeInTheDocument();
   });
 
@@ -308,58 +295,37 @@ describe("SessionsListScreen keep-previous", () => {
       path: "/sessions",
     });
     await screen.findByText("/runner");
-    const section = screen.getByRole("region", { name: /^Live/ });
-    expect(section).not.toHaveAttribute("aria-busy");
-    expect(within(section).getByRole("button", { name: "Load more" })).toBeInTheDocument();
+    const live = group(/^Live/);
+    expect(live).not.toHaveAttribute("aria-busy");
+    expect(within(live).getByRole("button", { name: "Load more" })).toBeInTheDocument();
 
-    fireEvent.click(within(section).getByRole("button", { name: /^Cost/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
     await waitFor(() => {
-      expect(section).toHaveAttribute("aria-busy", "true");
+      expect(live).toHaveAttribute("aria-busy", "true");
     });
-    expect(within(section).getByText("Updating…")).toBeInTheDocument();
+    expect(within(live).getByText("Updating…")).toBeInTheDocument();
     // A Load more on placeholder pages would refetch page 1 instead of the next one.
-    expect(within(section).queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(within(live).queryByRole("button", { name: "Load more" })).toBeNull();
   });
 });
 
-/**
- * A browser-like layout: a scroll element is as tall as its table's rows (40 px each), capped by its
- * own max-height, so an unbounded section measures its full content and a bounded one its window.
- */
-function layOutTables() {
-  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    const table = this.style.overflow === "auto" ? this.querySelector("table") : null;
-    if (!table) return 0;
-    const rows = Number(table.getAttribute("aria-rowcount") ?? table.querySelectorAll("tr").length);
-    const cap = this.style.maxHeight ? Number.parseFloat(this.style.maxHeight) : Infinity;
-    return Math.min(rows * 40, cap);
-  });
-}
-
-describe("SessionsListScreen table-sections", () => {
-  it("gives each section its own table with the chosen columns, density and sort", async () => {
+describe("SessionsListScreen list-groups", () => {
+  it("sorts every section from the one header and marks the sorted column", async () => {
     const { router, requests } = renderWithApi(<SessionsListScreen />, {
       routes: routes(),
       path: "/sessions",
     });
     await screen.findByText("/asker");
 
-    const tables = screen
-      .getAllByRole("table")
-      .map(
-        (table) => table.getAttribute("aria-label") ?? table.querySelector("caption")?.textContent,
-      );
-    expect(tables).toEqual(["Waiting sessions", "Live sessions", "Ended or failed sessions"]);
-    fireEvent.click(screen.getByRole("button", { name: "Columns" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Model" }));
-    expect(screen.getAllByRole("columnheader", { name: "Model" })).toHaveLength(3);
-    expect(document.querySelectorAll('[data-density="compact"]')).toHaveLength(3);
-
-    const live = screen.getByRole("table", { name: "Live sessions" });
-    fireEvent.click(within(live).getByRole("button", { name: /^Cost/ }));
+    const started = screen.getByRole("columnheader", { name: /^Started/ });
+    expect(started).toHaveAttribute("aria-sort", "descending");
+    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
     expect(router.state.location.search).toBe("?sort=-cost");
+    expect(screen.getByRole("columnheader", { name: /^Cost/ })).toHaveAttribute(
+      "aria-sort",
+      "descending",
+    );
+    expect(started).not.toHaveAttribute("aria-sort");
     await waitFor(() => {
       expect(
         sessionRequests(requests)
@@ -368,35 +334,33 @@ describe("SessionsListScreen table-sections", () => {
           .sort(),
       ).toEqual(["ended", "idle", "live", "waiting"]);
     });
+    // A second click flips it; back to the default sort, the URL drops it.
+    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
+    expect(router.state.location.search).toBe("?sort=cost");
+    fireEvent.click(screen.getByRole("button", { name: /^Started/ }));
+    expect(router.state.location.search).toBe("");
   });
 
-  it("pages one section with Load more and virtualises a section past 100 rows only", async () => {
-    const rows = [...many(100, "live", 1000), ...many(150, "ended", 2000)];
+  it("pages one section with Load more in its group, the others untouched", async () => {
+    const rows = [...many(3, "live", 1000), ...many(50, "ended", 2000)];
     const { requests } = renderWithApi(<SessionsListScreen />, {
       routes: routes((request: Request) => {
         const url = new URL(request.url);
         if (url.searchParams.get("cursor") === "e2") return aPage([one(9, "ended", "older")]);
-        return aSessionsByStatus(rows, {
-          next_cursor: url.searchParams.get("status") === "ended" ? "e2" : null,
+        const status = url.searchParams.get("status");
+        const page = aSessionsByStatus(rows, {
+          next_cursor: status === "ended" ? "e2" : null,
         })(request);
+        return status === "ended" ? { ...page, total_estimate: 51 } : page;
       }),
       path: "/sessions",
     });
     await screen.findByText("/live-0");
 
-    const live = screen.getByRole("table", { name: "Live sessions" });
-    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
-    // 100 rows render whole (plus the header row); 150 render a window.
-    expect(within(live).getAllByRole("row")).toHaveLength(101);
-    expect(ended.querySelectorAll("tbody tr[data-index]").length).toBeLessThan(150);
-
-    const endedRegion = screen.getByRole("region", { name: /^Ended or failed/ });
-    expect(
-      within(screen.getByRole("region", { name: /^Live/ })).queryByRole("button", {
-        name: "Load more",
-      }),
-    ).toBeNull();
-    fireEvent.click(within(endedRegion).getByRole("button", { name: "Load more" }));
+    const ended = group(/^Ended/);
+    expect(within(group(/^Live/)).queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(within(ended).getByText("Showing 50 of ~51 ended sessions")).toBeInTheDocument();
+    fireEvent.click(within(ended).getByRole("button", { name: "Load more" }));
     await waitFor(() => {
       expect(
         sessionRequests(requests)
@@ -404,35 +368,8 @@ describe("SessionsListScreen table-sections", () => {
           .map((url) => url.searchParams.get("status")),
       ).toEqual(["ended"]);
     });
-    expect(await within(endedRegion).findByText("Showing all 151")).toBeInTheDocument();
-    // 250 rendered rows: slow under a loaded CPU, not a budget.
-  }, 20_000);
-
-  describe("virtual-bounded", () => {
-    afterEach(() => {
-      vi.restoreAllMocks();
-    });
-
-    it("bounds and virtualises a section past 100 rows only, in a measured layout", async () => {
-      layOutTables();
-      const rows = [...many(100, "live", 1000), ...many(101, "ended", 3000)];
-      renderWithApi(<SessionsListScreen />, {
-        routes: routes(aSessionsByStatus(rows)),
-        path: "/sessions",
-      });
-      await screen.findByText("/live-0");
-
-      const live = screen.getByRole("table", { name: "Live sessions" });
-      const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
-      // 100 rows stay in the page flow, whole; 101 get a bounded, focusable scroll region.
-      expect(within(live).getAllByRole("row")).toHaveLength(101);
-      expect(screen.queryByRole("region", { name: "Scrollable live sessions" })).toBeNull();
-      const scroller = screen.getByRole("region", { name: "Scrollable ended or failed sessions" });
-      expect(scroller).toHaveAttribute("tabindex", "0");
-      expect(scroller.style.maxHeight).toBe("640px");
-      expect(scroller).toContainElement(ended);
-      // 640 px of 40 px rows plus overscan, not all 101.
-      expect(ended.querySelectorAll("tbody tr[data-index]").length).toBeLessThan(50);
-    }, 20_000);
+    expect(await within(ended).findByText("/older")).toBeInTheDocument();
+    expect(within(ended).queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(within(group(/^Live/)).getAllByRole("row")).toHaveLength(4);
   });
 });

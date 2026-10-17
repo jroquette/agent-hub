@@ -26,9 +26,9 @@ function scrollerOf(element: Element): Element {
   return document.scrollingElement ?? document.documentElement;
 }
 
-/** An element's section, by the id of the section's header button. */
+/** An element's section (a grid section or a list row group), by the id of its header button. */
 const sectionOf = (element: Element) =>
-  element.closest("section")?.getAttribute("aria-labelledby") ?? undefined;
+  element.closest("section, tbody[aria-labelledby]")?.getAttribute("aria-labelledby") ?? undefined;
 const keyOf = (element: HTMLElement) => element.dataset.key ?? `region:${sectionOf(element) ?? ""}`;
 const topOf = (scroller: Element) =>
   scroller === document.scrollingElement ? 0 : scroller.getBoundingClientRect().top;

@@ -13,9 +13,14 @@ import {
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
 
-// These tests read the tables; the grid is the default view (AC-234.3).
+// These tests read the list (the default view), wide enough to show its Duration column.
+const width = window.innerWidth;
 beforeEach(() => {
-  window.localStorage.setItem("ah.sessions.view", "table");
+  window.localStorage.setItem("ah.sessions.view", "list");
+  window.innerWidth = 1440;
+});
+afterEach(() => {
+  window.innerWidth = width;
 });
 
 const durations = vi.hoisted(() => ({ calls: 0, money: 0 }));

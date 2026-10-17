@@ -311,7 +311,8 @@ export function SessionsListScreen() {
     FILTER_KEYS.some((key) => key !== "period" && key !== "status" && params.get(key));
   const allEmpty =
     !pending && asked.every((section) => !section.pages.error && section.all.length === 0);
-  const neverAny = !filtered && allEmpty && period === "All";
+  // No session in any section and no filter: the first-run state, with Show all time when bounded (spec 22).
+  const neverAny = !filtered && allEmpty;
 
   const counted = (section: (typeof asked)[number]) =>
     section.pages.isPending || (section.pages.error && !section.pages.data) ? null : section.count;
@@ -420,6 +421,18 @@ export function SessionsListScreen() {
           icon="square-terminal"
           title="No sessions yet."
           command="cd ~/agent-hub-hub && claude"
+          action={
+            period === "All" ? undefined : (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  update({ period: "All" });
+                }}
+              >
+                Show all time
+              </Button>
+            )
+          }
         >
           Each Claude Code session in a registered hub is listed here after its first event. Start
           one in the hub directory:

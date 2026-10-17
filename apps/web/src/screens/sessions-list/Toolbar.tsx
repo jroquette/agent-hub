@@ -81,12 +81,20 @@ function MoreFilters({ params, update }: { params: URLSearchParams; update: Upda
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLSpanElement>(null);
   const button = useRef<HTMLButtonElement>(null);
-  const [draft, setDraft] = useState({
+  const fromUrl = () => ({
     agent: params.get("agent") ?? "",
     file: params.get("file") ?? "",
     cost_min: params.get("cost_min") ?? "",
     cost_max: params.get("cost_max") ?? "",
   });
+  const [draft, setDraft] = useState(fromUrl);
+  // A chip or Clear all changes the URL: the fields follow it, and the panel stays as it is.
+  const urlKey = MORE_KEYS.map((key) => params.get(key) ?? "").join("\n");
+  const [seenKey, setSeenKey] = useState(urlKey);
+  if (seenKey !== urlKey) {
+    setSeenKey(urlKey);
+    setDraft(fromUrl());
+  }
   useEffect(() => {
     if (!open) return;
     const close = (event: PointerEvent) => {
@@ -352,7 +360,7 @@ export function Toolbar({
           }}
         />
       )}
-      <MoreFilters key={more.join(",")} params={params} update={update} />
+      <MoreFilters params={params} update={update} />
       {more.map((key) => (
         <FilterChip
           key={key}

@@ -238,12 +238,14 @@ export function SessionsTable({
               data-group={group.id}
             >
               <tr className="sl-group-row">
-                <th scope="rowgroup" colSpan={span} id={headId}>
+                <th scope="rowgroup" colSpan={span}>
+                  {/* The header names the group and takes focus when a focused row leaves it. */}
                   {group.fixed ? (
-                    <span className="sl-group-title">{`${title} · ${shown}`}</span>
+                    <span className="sl-group-title" id={headId}>{`${title} · ${shown}`}</span>
                   ) : (
                     <button
                       type="button"
+                      id={headId}
                       className="sl-group-toggle"
                       aria-expanded={open}
                       onClick={group.onToggle}

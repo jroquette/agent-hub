@@ -14,9 +14,9 @@ import {
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
 
-// These tests read the tables; the grid is the default view (AC-234.3).
+// These tests read the list, the default view.
 beforeEach(() => {
-  window.localStorage.setItem("ah.sessions.view", "table");
+  window.localStorage.setItem("ah.sessions.view", "list");
 });
 
 const SESSIONS = "/api/v1/sessions";
@@ -75,13 +75,19 @@ function render(data: Data) {
 
 const REGION = ".ah-table-wrap > div[tabindex]";
 
+/** A section's header button: the list's row-group toggle (a status tab can read the same). */
+const head = (name: RegExp) => within(screen.getByRole("table")).getByRole("button", { name });
+/** A section's row group in the list. */
+const group = (name: RegExp) => screen.getByRole("rowgroup", { name });
+
 /**
  * Each row or tile (or bounded region, or with `headers` each section header) sits ROW px below the previous
  * one in page order, minus the scroller's offset; a row inside a bounded region sits by its index
  * below the region's top, minus the region's own offset.
  */
 function layOutRows(headers = false) {
-  const page = `${headers ? "section h2 button, " : ""}tr[data-key], article[data-key], ${REGION}`;
+  const heads = headers ? "section h2 button, tbody th button, " : "";
+  const page = `${heads}tr[data-key], article[data-key], ${REGION}`;
   const topOf = (element: Element): number => {
     const scroller = screen.getByTestId("scroller");
     if (element === scroller) return 0;
@@ -181,7 +187,7 @@ describe("SessionsListScreen no-jump", () => {
 
     // A section that missed a change while collapsed catches up once when opened.
     const opened = requests.length;
-    fireEvent.click(screen.getByRole("button", { name: /^Ended or failed/ }));
+    fireEvent.click(head(/^Ended/));
     await waitFor(() => {
       expect(statusesAsked(requests, opened)).toEqual(["ended"]);
     });
@@ -326,46 +332,6 @@ describe("SessionsListScreen no-jump", () => {
     expect(scroller.scrollTop).toBe(2 * ROW + 10); // /s3 kept its offset; /s2 moved
   });
 
-  it("anchors on a section's bounded region, not on the rows scrolling inside it", async () => {
-    const ended = Array.from({ length: 101 }, (_, i) => one(100 + i, "ended"));
-    const data = { current: [one(1, "live"), ...ended] };
-    const { stream } = render(data);
-    await screen.findByText("/s100");
-    layOutRows();
-    const scroller = screen.getByTestId("scroller");
-    scroller.scrollTop = ROW + 10; // the Ended region is the first visible thing
-    fireEvent.scroll(scroller);
-    await nextFrame();
-
-    data.current = [one(2, "live"), one(1, "live"), one(9, "ended"), one(8, "ended"), ...ended];
-    await change(stream(STREAM), "tile.upsert", { id: anId(9), group: "ended_recently" });
-    await screen.findByText("/s9");
-
-    expect(scroller.scrollTop).toBe(2 * ROW + 10); // one row above the region, none for those inside
-  });
-
-  it("keeps the first visible row inside a bounded region when rows are inserted above it", async () => {
-    const ended = Array.from({ length: 101 }, (_, i) => one(100 + i, "ended"));
-    const data = { current: [one(1, "live"), ...ended] };
-    const { stream } = render(data);
-    await screen.findByText("/s100");
-    layOutRows();
-    const scroller = screen.getByTestId("scroller");
-    const region = screen.getByRole("region", { name: /^Scrollable ended/ });
-    scroller.scrollTop = ROW + 10; // the region's top is 10 px above the page's
-    region.scrollTop = 5 * ROW + 10; // /s105 is the first row showing in it
-    fireEvent.scroll(region);
-    fireEvent.scroll(scroller);
-    await nextFrame();
-
-    data.current = [one(1, "live"), one(9, "ended"), one(8, "ended"), one(7, "ended"), ...ended];
-    await change(stream(STREAM), "tile.upsert", { id: anId(9), group: "ended_recently" });
-    await screen.findByText("/s9");
-
-    expect(region.scrollTop).toBe(8 * ROW + 10);
-    expect(scroller.scrollTop).toBe(ROW + 10);
-  });
-
   it("does not correct the scroll for a sort or a collapse the reader made", async () => {
     const ended = [3, 4, 5, 6, 7, 8].map((n) => one(n, "ended"));
     const data = { current: [one(1, "live"), one(2, "live"), ...ended], sorted: [] as number[] };
@@ -383,15 +349,14 @@ describe("SessionsListScreen no-jump", () => {
       one(2, "live"),
       ...[3, 5, 6, 7, 8, 4].map((n) => one(n, "ended")),
     ];
-    const table = screen.getByRole("table", { name: "Ended or failed sessions" });
-    fireEvent.click(within(table).getByRole("button", { name: /^Cost/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
     await waitFor(() => {
       expect(screen.getAllByText(/^\/s[3-8]$/).at(-1)).toHaveTextContent("/s4");
     });
     expect(scroller.scrollTop).toBe(3 * ROW + 10);
 
-    fireEvent.click(screen.getByRole("button", { name: /^Live/ }));
-    expect(screen.getByRole("button", { name: /^Live/ })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(head(/^Live/));
+    expect(head(/^Live/)).toHaveAttribute("aria-expanded", "false");
     expect(scroller.scrollTop).toBe(3 * ROW + 10);
   });
 
@@ -422,8 +387,7 @@ describe("SessionsListScreen no-jump", () => {
       one(10, "ended"),
       ...ended,
     ];
-    const live = screen.getByRole("table", { name: "Live sessions" });
-    fireEvent.click(within(live).getByRole("button", { name: /^Cost/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
     await screen.findByText("/s10");
     await screen.findByText("/s8");
     expect(scroller.scrollTop).toBe(3 * ROW + 10);
@@ -468,10 +432,10 @@ describe("SessionsListScreen no-jump", () => {
     await waitFor(() => {
       expect(screen.queryByText("/s1")).toBeNull(); // Live answered; Ended has not yet
     });
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Live/ }));
+    expect(document.activeElement).toBe(head(/^Live/));
 
     release();
-    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
+    const ended = group(/^Ended/);
     await waitFor(() => {
       expect(document.activeElement).toBe(within(ended).getByText("/s1").closest("tr"));
     });
@@ -519,9 +483,8 @@ describe("SessionsListScreen no-jump", () => {
 
     data.current = [one(2, "live"), one(4, "live"), one(3, "ended"), one(1, "ended")];
     await change(stream(STREAM), "tile.upsert", { id: anId(1), group: "ended_recently" });
-    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
     await waitFor(() => {
-      expect(screen.getByText("/s1").closest("table")).toBe(ended);
+      expect(screen.getByText("/s1").closest("tbody")).toBe(group(/^Ended/));
     });
     expect(document.activeElement).toBe(screen.getByText("/s1").closest("tr"));
 
@@ -531,13 +494,13 @@ describe("SessionsListScreen no-jump", () => {
     await waitFor(() => {
       expect(screen.queryByText("/s2")).toBeNull();
     });
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Live/ }));
+    expect(document.activeElement).toBe(head(/^Live/));
     const sent = requests.length;
 
     // Focus on a control inside a row stays on it.
-    const check = within(screen.getByText("/s4").closest("tr") as HTMLElement).getByRole(
-      "checkbox",
-    );
+    const check = within(screen.getByText("/s4").closest("tr") as HTMLElement).getByRole("link", {
+      name: "Open /s4",
+    });
     check.focus();
     data.current = [one(4, "live"), one(5, "live"), one(3, "ended"), one(1, "ended")];
     await change(stream(STREAM), "tile.upsert", { id: anId(5), group: "live" });
@@ -629,7 +592,10 @@ describe("SessionsListScreen no-jump (grid)", () => {
   });
   const tile = (title: string) =>
     screen.getByRole("article", { name: new RegExp(`^${title} in `) });
-  const sectionOf = (name: RegExp) => screen.getByRole("button", { name }).closest("section");
+  /** A grid section's header button (a status tab can read the same). */
+  const sectionHead = (name: RegExp) =>
+    within(screen.getByRole("heading", { level: 2, name })).getByRole("button");
+  const sectionOf = (name: RegExp) => sectionHead(name).closest("section");
 
   it("keeps the first visible tile in place when tiles are inserted above it", async () => {
     const data = { current: [one(1, "live"), one(2, "ended"), one(3, "ended"), one(4, "ended")] };
@@ -666,7 +632,7 @@ describe("SessionsListScreen no-jump (grid)", () => {
     data.current = [one(2, "live"), one(4, "live"), one(3, "ended"), one(1, "ended")];
     await change(stream(STREAM), "tile.upsert", { id: anId(1), group: "ended_recently" });
     await waitFor(() => {
-      expect(tile("/s1").closest("section")).toBe(sectionOf(/^Ended or failed/));
+      expect(tile("/s1").closest("section")).toBe(sectionOf(/^Ended · last 7 days/));
     });
     expect(document.activeElement).toBe(tile("/s1"));
 
@@ -676,6 +642,6 @@ describe("SessionsListScreen no-jump (grid)", () => {
     await waitFor(() => {
       expect(screen.queryByText("/s2")).toBeNull();
     });
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Live/ }));
+    expect(document.activeElement).toBe(sectionHead(/^Live/));
   });
 });

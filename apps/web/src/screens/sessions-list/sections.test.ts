@@ -16,10 +16,10 @@ const queries = (search: string) => sectionQueries(new URLSearchParams(search), 
 describe("status sections (filters-both-views)", () => {
   it("orders the sections needs-me first", () => {
     expect(SECTIONS.map((section) => section.title)).toEqual([
-      "Waiting",
+      "Waiting for you",
       "Live",
       "Idle",
-      "Ended or failed",
+      "Ended",
     ]);
   });
 
@@ -56,19 +56,14 @@ describe("status sections (filters-both-views)", () => {
     });
   });
 
-  it("asks only the faceted section when a status is chosen, and Live for Live now", () => {
-    expect(queries("status=waiting")).toEqual({
+  it("asks every section whatever status tab is chosen, so each tab keeps its count", () => {
+    const every = queries("");
+    expect(queries("status=waiting")).toEqual(every);
+    expect(queries("status=live&period=All")).toEqual({
       waiting: { sort: "-started_at", project: "agent-hub", status: "waiting" },
-      live: null,
-      idle: null,
-      ended: null,
-    });
-    // The built-in "Live now" view is status=live with period=All.
-    expect(queries("status=live&period=All")).toMatchObject({
-      waiting: null,
-      live: { status: "live" },
-      idle: null,
-      ended: null,
+      live: { sort: "-started_at", project: "agent-hub", status: "live" },
+      idle: { sort: "-started_at", project: "agent-hub", status: "idle" },
+      ended: { sort: "-started_at", project: "agent-hub", status: "ended" },
     });
   });
 

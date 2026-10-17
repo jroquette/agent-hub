@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -43,6 +43,10 @@ function tileOf(text: string): HTMLElement {
   return tile;
 }
 
+// The list is the default view: these tests read the grid.
+beforeEach(() => {
+  window.localStorage.setItem("ah.sessions.view", "grid");
+});
 afterEach(() => {
   window.localStorage.clear();
 });
@@ -94,7 +98,7 @@ describe("SessionsListScreen grid", () => {
     const done = tileOf("/done");
     expect(within(done).getByText("Ended · done")).toBeInTheDocument();
     expect(within(done).queryByRole("img", { name: /Events per 5 s/ })).toBeNull();
-    expect(tilesIn(section(/^Ended or failed/))).toEqual([done]);
+    expect(tilesIn(section(/^Ended · last 7 days/))).toEqual([done]);
   });
 
   it("shows 50 tiles in a section, then Load more fetches the next cursor page", async () => {
