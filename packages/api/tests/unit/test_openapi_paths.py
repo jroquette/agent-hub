@@ -5,6 +5,7 @@ from agent_hub.api.openapi_paths import (
     GATE_PATHS,
     LINEAR_PATHS,
     OWNER_SIGNOFF_PATHS,
+    PLATFORM_SYNC_PATHS,
     P2_PATHS,
     RUN_COMMAND_PATHS,
     SERVED_PATHS,
@@ -127,6 +128,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | GATE_PATHS
         | LINEAR_PATHS
         | OWNER_SIGNOFF_PATHS
+        | PLATFORM_SYNC_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -145,6 +147,7 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | GATE_PATHS
         | LINEAR_PATHS
         | OWNER_SIGNOFF_PATHS
+        | PLATFORM_SYNC_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 

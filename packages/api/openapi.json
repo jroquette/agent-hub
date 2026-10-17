@@ -4972,6 +4972,64 @@
         "title": "PermissionSuggestion",
         "type": "object"
       },
+      "PlatformSyncResult": {
+        "additionalProperties": false,
+        "description": "What one platform sync did: the pin before and after, and ``hub sync``'s report.",
+        "properties": {
+          "changed_files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Files",
+            "type": "array"
+          },
+          "exit_code": {
+            "title": "Exit Code",
+            "type": "integer"
+          },
+          "hub_id": {
+            "title": "Hub Id",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "output": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Output",
+            "type": "array"
+          },
+          "previous_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Version"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub_id",
+          "previous_version",
+          "version",
+          "ok",
+          "exit_code",
+          "output",
+          "changed_files"
+        ],
+        "title": "PlatformSyncResult",
+        "type": "object"
+      },
       "Problem": {
         "additionalProperties": false,
         "description": "One problem of a session and the event it comes from.\n\n``where`` is the command head, path, pattern, URL, MCP tool or skill of the paired tool\ncall (derived on read, at most 120 characters); ``message`` is the stored ``error_message``,\nelse ``error_line``, else the rule or the gate's command and exit code.",
@@ -11363,6 +11421,61 @@
           }
         },
         "summary": "Remove Hub",
+        "tags": [
+          "hubs"
+        ]
+      }
+    },
+    "/api/v1/hubs/{hub_id}/platform-sync": {
+      "post": {
+        "description": "Pin the hub to the running release and run ``hub sync`` in it; nothing is committed.",
+        "operationId": "sync_hub_platform_api_v1_hubs__hub_id__platform_sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hub_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Hub Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformSyncResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Sync Hub Platform",
         "tags": [
           "hubs"
         ]

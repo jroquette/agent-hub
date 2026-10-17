@@ -19,6 +19,7 @@ BODIES: dict[tuple[str, str], object] = {
         "hook": {"hook_event_name": "Stop"},
     },
     ("post", "/api/v1/hubs"): {"path": "/home/demo/demo-hub"},
+    ("post", "/api/v1/hubs/{hub_id}/platform-sync"): {},
     ("post", "/api/v1/learnings/{learning_id}/accept"): {"target": "learnings/"},
     ("post", "/api/v1/learnings/{learning_id}/reject"): {"reason": "Duplicate of another note"},
     ("post", "/api/v1/approvals/{approval_id}/decision"): {"decision": "approve"},

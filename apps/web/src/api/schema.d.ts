@@ -600,6 +600,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/hubs/{hub_id}/platform-sync": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Sync Hub Platform
+     * @description Pin the hub to the running release and run ``hub sync`` in it; nothing is committed.
+     */
+    post: operations["sync_hub_platform_api_v1_hubs__hub_id__platform_sync_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/learnings": {
     parameters: {
       query?: never;
@@ -3046,6 +3066,26 @@ export interface components {
       /** Index */
       index: number;
       rule: components["schemas"]["pydantic__types__JsonValue"];
+    };
+    /**
+     * PlatformSyncResult
+     * @description What one platform sync did: the pin before and after, and ``hub sync``'s report.
+     */
+    PlatformSyncResult: {
+      /** Changed Files */
+      changed_files: string[];
+      /** Exit Code */
+      exit_code: number;
+      /** Hub Id */
+      hub_id: string;
+      /** Ok */
+      ok: boolean;
+      /** Output */
+      output: string[];
+      /** Previous Version */
+      previous_version: string | null;
+      /** Version */
+      version: string;
     };
     /**
      * Problem
@@ -5977,6 +6017,46 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  sync_hub_platform_api_v1_hubs__hub_id__platform_sync_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        hub_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlatformSyncResult"];
+        };
       };
       /** @description A client error, as an RFC 9457 problem */
       "4XX": {

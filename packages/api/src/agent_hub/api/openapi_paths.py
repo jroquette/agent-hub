@@ -136,6 +136,11 @@ OWNER_SIGNOFF_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/owner-signoff")}
 )
 
+# Syncing a hub to the running release from Settings (playground): pin, then hub sync.
+PLATFORM_SYNC_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/hubs/{{hub_id}}/platform-sync")}
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
     P2_PATHS
@@ -148,6 +153,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | GATE_PATHS
     | LINEAR_PATHS
     | OWNER_SIGNOFF_PATHS
+    | PLATFORM_SYNC_PATHS
 )
 
 
