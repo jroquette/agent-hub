@@ -335,7 +335,7 @@ test("Agent session started from Sessions survives a reload while waiting and af
 // test_shows_skills_catalog_and_detail_when_skills_opened.
 test("Skills catalog and a skill detail load from the hub's files", async ({ page, baseURL }) => {
   await visit(page, baseURL, "/projects/demo/skills", async () => {
-    await expect(page.getByRole("heading", { level: 1, name: "Skills" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Toolkit" })).toBeVisible();
     await expect(page.getByRole("article", { name: "demo-check", exact: true })).toBeVisible();
     const feature = page.getByRole("article", { name: "feature", exact: true });
     await expect(feature).toBeVisible();
