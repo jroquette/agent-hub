@@ -112,25 +112,25 @@ describe("TicketsTab", () => {
       aFeatureTickets({
         tickets: [
           aTicketRow({
-            ref: "DEMO-1520",
-            id: "DEMO-1520",
+            ref: "ACME-1520",
+            id: "ACME-1520",
             blocked_by: [
-              { ref: "DEMO-1521", source: "linear" },
-              { ref: "DEMO-1522", source: "plan" },
+              { ref: "ACME-1521", source: "linear" },
+              { ref: "ACME-1522", source: "plan" },
             ],
             readiness: "waiting",
-            waiting_on: ["DEMO-1521", "DEMO-1522"],
+            waiting_on: ["ACME-1521", "ACME-1522"],
           }),
           aTicketRow({
-            ref: "DEMO-1521",
-            id: "DEMO-1521",
+            ref: "ACME-1521",
+            id: "ACME-1521",
             blocked_by: [],
             state: { name: "Canceled", type: "canceled" },
             readiness: "canceled",
           }),
           aTicketRow({
-            ref: "DEMO-1522",
-            id: "DEMO-1522",
+            ref: "ACME-1522",
+            id: "ACME-1522",
             blocked_by: [],
             state: { name: "Done", type: "completed" },
             readiness: "done",
@@ -140,13 +140,13 @@ describe("TicketsTab", () => {
       }),
     );
 
-    expect(within(rowOf("DEMO-1520")).getByText(/Waiting on/)).toHaveTextContent(
-      "Waiting on DEMO-1521, DEMO-1522",
+    expect(within(rowOf("ACME-1520")).getByText(/Waiting on/)).toHaveTextContent(
+      "Waiting on ACME-1521, ACME-1522",
     );
-    expect(within(rowOf("DEMO-1521")).getByText("Canceled", { selector: "b" })).toBeInTheDocument();
-    expect(within(rowOf("DEMO-1522")).getByText("Done", { selector: "b" })).toBeInTheDocument();
+    expect(within(rowOf("ACME-1521")).getByText("Canceled", { selector: "b" })).toBeInTheDocument();
+    expect(within(rowOf("ACME-1522")).getByText("Done", { selector: "b" })).toBeInTheDocument();
     expect(
-      within(rowOf("DEMO-1520")).getByRole("link", { name: "Blocked by DEMO-1522" }),
+      within(rowOf("ACME-1520")).getByRole("link", { name: "Blocked by ACME-1522" }),
     ).toHaveAttribute("title", "From the plan only");
   });
 
@@ -185,7 +185,7 @@ describe("TicketsTab", () => {
 
   it("links only https://linear.app/ urls, in a new tab (linear-link)", () => {
     const urls = [
-      "https://linear.app/acme/issue/TIP-1",
+      "https://linear.app/acme/issue/ACME-1",
       "https://evil.example/x",
       "javascript:x",
       "http://linear.app/x",
@@ -194,8 +194,8 @@ describe("TicketsTab", () => {
       aFeatureTickets({
         tickets: urls.map((url, i) =>
           aTicketRow({
-            ref: `TIP-${String(i + 1)}`,
-            id: `TIP-${String(i + 1)}`,
+            ref: `ACME-${String(i + 1)}`,
+            id: `ACME-${String(i + 1)}`,
             url,
             blocked_by: [],
           }),
@@ -203,11 +203,11 @@ describe("TicketsTab", () => {
       }),
     );
 
-    const link = within(rowOf("TIP-1")).getByRole("link", { name: /TIP-1/ });
+    const link = within(rowOf("ACME-1")).getByRole("link", { name: /ACME-1/ });
     expect(link).toHaveAttribute("href", urls[0]);
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
-    for (const ref of ["TIP-2", "TIP-3", "TIP-4"]) {
+    for (const ref of ["ACME-2", "ACME-3", "ACME-4"]) {
       expect(within(rowOf(ref)).queryByRole("link", { name: new RegExp(ref) })).toBeNull();
       expect(within(rowOf(ref)).getByText(ref)).toBeInTheDocument();
     }

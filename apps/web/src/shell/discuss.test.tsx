@@ -11,15 +11,15 @@ import {
 } from "./discuss";
 
 const feature: DiscussTarget = {
-  key: "feature:demo:virtual-iban",
-  project: "demo",
+  key: "feature:storefront:virtual-iban",
+  project: "storefront",
   kind: "Feature spec",
   title: "virtual-iban",
   openOnArrive: true,
 };
 const skill: DiscussTarget = {
-  key: "skill:demo:x",
-  project: "demo",
+  key: "skill:storefront:x",
+  project: "storefront",
   kind: "Skill",
   title: "x",
 };

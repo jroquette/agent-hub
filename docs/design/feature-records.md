@@ -21,7 +21,7 @@ in [API.md](../API.md) "Feature tickets"; the screens are in
 - `tickets` (optional, at most 200): the planner's ticket plan, each
   `{"key", "id", "title", "repo", "blocked_by", "order", "parent"}`.
   - `key`: a draft key (`T1`…), `^[A-Za-z][A-Za-z0-9_-]{0,31}$`, unique in the record.
-  - `id`: `null` until `/feature` creates the issue, then the tracker id (`DEMO-1520`).
+  - `id`: `null` until `/feature` creates the issue, then the tracker id (`ACME-1520`).
   - `title` (≤ 200 characters), `repo`, `order` (a whole number ≥ 0, the plan's order): optional.
   - `blocked_by`: at most 50 keys or ids of other tickets of the plan, never the ticket itself.
   - `parent` (optional): the key or id of the plan's epic the ticket belongs to (the tracking ticket that groups
@@ -33,7 +33,7 @@ in [API.md](../API.md) "Feature tickets"; the screens are in
 ### `evals/<delivery>.md`
 
 One new file per evaluation, written by the evaluator and never overwritten. `<delivery>` is
-`^[a-z0-9][a-z0-9-]{0,62}$`: the lower-case ticket id (`demo-1520`), `pr-<repo>-<n>`, or `feature` for a whole-feature
+`^[a-z0-9][a-z0-9-]{0,62}$`: the lower-case ticket id (`acme-1520`), `pr-<repo>-<n>`, or `feature` for a whole-feature
 run; a re-run adds `-r2`, `-r3`. The frontmatter holds:
 
 | Key | Value |

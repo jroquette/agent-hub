@@ -30,7 +30,7 @@ MAX_RECORD_BYTES: Final = 1_048_576
 MAX_TICKETS: Final = 200
 MAX_BLOCKED_BY: Final = 50
 MAX_TITLE_CHARS: Final = 200
-# A draft key or a tracker id (``T1``, ``DEMO-1520``).
+# A draft key or a tracker id (``T1``, ``ACME-1520``).
 KEY_PATTERN: Final = r"^[A-Za-z][A-Za-z0-9_-]{0,31}$"
 
 type TicketKey = Annotated[StrictStr, Field(pattern=KEY_PATTERN)]

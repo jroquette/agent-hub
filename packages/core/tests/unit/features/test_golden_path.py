@@ -31,9 +31,9 @@ _CANCELED = IssueState(name="Canceled", type="canceled")
 
 def _ticket(number: int, **fields: object) -> TicketRow:
     values: dict[str, object] = {
-        "ref": f"TIP-{1519 + number}",
+        "ref": f"ACME-{1519 + number}",
         "key": f"T{number}",
-        "id": f"TIP-{1519 + number}",
+        "id": f"ACME-{1519 + number}",
         "state": _STARTED,
         "order": number,
         "blocked_by": (),
@@ -148,18 +148,18 @@ def test_counts_reviewed_when_done_or_approved_record() -> None:
 
 
 def test_makes_review_current_when_in_review_without_approved_record() -> None:
-    planned = (PlannedTicket(key="T1", id="DEMO-1520", order=1),)
+    planned = (PlannedTicket(key="T1", id="ACME-1520", order=1),)
     summary = an_issue_summary(
-        id="DEMO-1520",
+        id="ACME-1520",
         state=_IN_REVIEW,
-        url="https://linear.app/demo/issue/DEMO-1520",
+        url="https://linear.app/demo/issue/ACME-1520",
         blocks=(),
         blocked_by=(),
     )
     snapshot = a_ticket_snapshot(summaries=(summary,), missing=(), external=())
     acs = _acs(1, passing=1)
 
-    board = ticket_board(planned, acs, snapshot, approved=("DEMO-1519", "T9"))
+    board = ticket_board(planned, acs, snapshot, approved=("ACME-1519", "T9"))
     path = golden_path(_inputs(rows=board.rows, acs=acs, approved_reviews=0))
 
     (row,) = board.rows
@@ -303,8 +303,8 @@ def _feature_inputs(draw: st.DrawFn) -> GoldenInputs:
         rows.append(
             _ticket(
                 number,
-                ref=f"TIP-{1519 + number}" if has_id else f"T{number}",
-                id=f"TIP-{1519 + number}" if has_id else None,
+                ref=f"ACME-{1519 + number}" if has_id else f"T{number}",
+                id=f"ACME-{1519 + number}" if has_id else None,
                 state=None if kind is None else IssueState(name=kind, type=kind),
                 reviewed=draw(st.sampled_from((None, False, True))),
             )
@@ -378,10 +378,10 @@ def test_counts_epic_only_under_tickets_when_it_has_children() -> None:
             1,
             state=IssueState(name="Backlog", type="backlog"),
             readiness="epic",
-            children=("DEMO-1521", "DEMO-1522"),
+            children=("ACME-1521", "ACME-1522"),
         ),
-        _ticket(2, state=_IN_REVIEW, readiness="in_progress", reviewed=True, parent="DEMO-1520"),
-        _ticket(3, state=_IN_REVIEW, readiness="in_progress", reviewed=True, parent="DEMO-1520"),
+        _ticket(2, state=_IN_REVIEW, readiness="in_progress", reviewed=True, parent="ACME-1520"),
+        _ticket(3, state=_IN_REVIEW, readiness="in_progress", reviewed=True, parent="ACME-1520"),
     )
 
     path = golden_path(_inputs(rows=rows, acs=_acs(18, passing=17)))

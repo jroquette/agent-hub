@@ -279,7 +279,7 @@ describe("ShakeToSession (shake to start a session)", () => {
     async (path) => {
       const view = mount(path, {
         "/api/v1/projects": aPage([
-          aProjectSummary({ name: "demo" }),
+          aProjectSummary({ name: "storefront" }),
           aProjectSummary({ name: "agent-hub" }),
         ]),
       });
@@ -289,7 +289,7 @@ describe("ShakeToSession (shake to start a session)", () => {
 
       await screen.findByRole("dialog", { name: "New session" });
       const workdirs = view.requests.find((r) => new URL(r.url).pathname === `${AGENT}/workdirs`);
-      expect(new URL(workdirs?.url ?? "").searchParams.get("project")).toBe("demo");
+      expect(new URL(workdirs?.url ?? "").searchParams.get("project")).toBe("storefront");
     },
   );
 
@@ -344,9 +344,9 @@ describe("ShakeToSession (shake to start a session)", () => {
 
   it("live-edit: the project that lists the served checkout wins over the scope", async () => {
     vi.mocked(servedCheckout).mockReturnValue(ROOT);
-    const view = mount("/sessions?scope=demo", {
+    const view = mount("/sessions?scope=storefront", {
       "/api/v1/projects": aPage([
-        aProjectSummary({ name: "demo" }),
+        aProjectSummary({ name: "storefront" }),
         aProjectSummary({ name: "agent-hub" }),
       ]),
       [`${AGENT}/workdirs`]: (request: Request) =>

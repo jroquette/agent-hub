@@ -4,7 +4,7 @@ import { BRAIN_NOTE_STARTERS, learningDiscussTarget } from "./discussLearning";
 
 const base = {
   id: "l-1",
-  project: "demo",
+  project: "storefront",
   text: "Two Stripe clients",
   path: "brain/_inbox/two-stripe.md",
   recordedPath: "brain/_inbox/two-stripe.md",
@@ -16,7 +16,7 @@ describe("learningDiscussTarget", () => {
   it("opens on a proposal with its note, the /learn bar and a verdict starter", () => {
     const target = learningDiscussTarget(base);
 
-    expect(target.key).toBe("learning:demo:l-1");
+    expect(target.key).toBe("learning:storefront:l-1");
     expect(target.path).toBe("brain/_inbox/two-stripe.md");
     expect(target.openOnArrive).toBe(true);
     expect(target.brief).toContain("non-obvious");

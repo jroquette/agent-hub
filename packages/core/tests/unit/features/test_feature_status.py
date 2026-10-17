@@ -221,7 +221,7 @@ def test_reads_verdict_when_eval_names_one(line: bytes, verdict: str) -> None:
 
 
 def test_keeps_eval_and_review_heads_when_folder_built() -> None:
-    head = RecordHead(name="demo-1520.md", head=b"---\ntype: eval\n---\n", problem=None)
+    head = RecordHead(name="acme-1520.md", head=b"---\ntype: eval\n---\n", problem=None)
     folder = FeatureFolder(slug="demo", files=(), evals=(head,), evals_skipped=2)
 
     assert (folder.evals, folder.reviews, folder.evals_skipped, folder.reviews_skipped) == (
@@ -385,8 +385,8 @@ def test_says_not_loaded_when_cache_cold_with_tickets() -> None:
 
 def test_lists_every_eval_when_detail_read() -> None:
     head = RecordHead(
-        name="demo-1520.md",
-        head=b"---\ntype: eval\ndelivery: demo-1520\nverdict: SHIP\nacs: [AC-7.1]\n---\n",
+        name="acme-1520.md",
+        head=b"---\ntype: eval\ndelivery: acme-1520\nverdict: SHIP\nacs: [AC-7.1]\n---\n",
         problem=None,
     )
     folder = FeatureFolder(
@@ -401,14 +401,14 @@ def test_lists_every_eval_when_detail_read() -> None:
 
     assert [(record.delivery, record.legacy) for record in detail.evals] == [
         ("legacy", True),
-        ("demo-1520", False),
+        ("acme-1520", False),
     ]
     assert "evals" not in feature_view(folder, project="demo").model_dump()
 
 
 def _owner_record() -> bytes:
     tickets = [
-        {"key": f"T{number}", "id": f"TIP-{1519 + number}", "order": number}
+        {"key": f"T{number}", "id": f"ACME-{1519 + number}", "order": number}
         for number in range(1, 18)
     ]
     acs = [
@@ -426,13 +426,13 @@ def _owner_record() -> bytes:
 def test_never_marks_evaluate_done_when_ship_covers_part() -> None:
     """AGH-136 owner report: a SHIP over 3 of 36 ACs showed the feature as Evaluate done.
 
-    17 tickets, 1 Done in Linear, 3/36 ACs passing, one ``evals/demo-1520.md`` SHIP covering
+    17 tickets, 1 Done in Linear, 3/36 ACs passing, one ``evals/acme-1520.md`` SHIP covering
     three ACs and no review records: the feature is still implementing.
     """
     ship = RecordHead(
-        name="demo-1520.md",
+        name="acme-1520.md",
         head=(
-            b"---\ntype: eval\ndelivery: demo-1520\nverdict: SHIP\ntickets: [DEMO-1520]\n"
+            b"---\ntype: eval\ndelivery: acme-1520\nverdict: SHIP\ntickets: [ACME-1520]\n"
             b"acs: [AC-9.1, AC-9.2, AC-9.3]\nevaluated_at: 2026-10-09\n---\n# Eval\n"
         ),
         problem=None,
@@ -445,8 +445,8 @@ def test_never_marks_evaluate_done_when_ship_covers_part() -> None:
         evals=(ship,),
     )
     summaries = (
-        a_summary("DEMO-1520", state_type="completed"),
-        *(a_summary(f"TIP-{1519 + number}") for number in range(2, 18)),
+        a_summary("ACME-1520", state_type="completed"),
+        *(a_summary(f"ACME-{1519 + number}") for number in range(2, 18)),
     )
 
     detail = feature_detail(folder, project="demo", read=a_linear_read(*summaries))
@@ -466,7 +466,7 @@ def test_never_marks_evaluate_done_when_ship_covers_part() -> None:
     assert _meta(path, "implement") == "1/17 tickets delivered · 16 in progress · 3/36 ACs"
     assert _meta(path, "review") == "1/17 reviewed"
     assert _meta(path, "evaluate") == "partial: covers 3 of 36 ACs"
-    assert [record.delivery for record in detail.evals] == ["demo-1520"]
+    assert [record.delivery for record in detail.evals] == ["acme-1520"]
     assert feature_view(folder, project="demo", read=a_linear_read(*summaries)).golden_path == path
 
 

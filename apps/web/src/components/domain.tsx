@@ -28,7 +28,7 @@ export interface LiveSession {
   outcomeLabel?: string | undefined;
   reason?: string | undefined;
   reasonIcon?: IconName | undefined;
-  /** What the session is about: "DEMO-1511 · /feature" (never the agent; see SessionLabel). */
+  /** What the session is about: "ACME-1511 · /feature" (never the agent; see SessionLabel). */
   title: string;
   /** "repo · branch" or the short id, under the title. */
   detail?: string | null | undefined;

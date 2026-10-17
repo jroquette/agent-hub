@@ -10,16 +10,16 @@ describe("sessionIdentity", () => {
   it("reads issue and workflow over repo and branch when the label has them (AC-201.4)", () => {
     const session = aSession({
       label: aSessionLabel({
-        issue: "DEMO-1511",
+        issue: "ACME-1511",
         workflow: "/feature",
-        repo: "demo",
+        repo: "storefront",
         branch: "main",
       }),
     });
 
     expect(sessionIdentity(session)).toEqual({
-      title: "DEMO-1511 · /feature",
-      detail: "demo · main",
+      title: "ACME-1511 · /feature",
+      detail: "storefront · main",
       named: false,
     });
   });
@@ -57,16 +57,16 @@ describe("sessionIdentity", () => {
     const session = aSession({
       label: aSessionLabel({
         title: "Orders export as CSV",
-        issue: "DEMO-1511",
+        issue: "ACME-1511",
         workflow: "/feature",
-        repo: "demo",
+        repo: "storefront",
         branch: "main",
       }),
     });
 
     expect(sessionIdentity(session)).toEqual({
       title: "Orders export as CSV",
-      detail: "DEMO-1511 · /feature · demo · main",
+      detail: "ACME-1511 · /feature · storefront · main",
       named: true,
     });
   });
@@ -98,16 +98,16 @@ describe("SessionLabel", () => {
         session={aSession({
           agent: "main",
           label: aSessionLabel({
-            issue: "DEMO-1511",
-            repo: "demo",
-            branch: "roquettejh/demo-1511-x",
+            issue: "ACME-1511",
+            repo: "storefront",
+            branch: "roquettejh/acme-1511-x",
           }),
         })}
       />,
     );
 
-    expect(screen.getByText("DEMO-1511 · /feature")).toBeInTheDocument();
-    expect(screen.getByText("demo · roquettejh/demo-1511-x")).toBeInTheDocument();
+    expect(screen.getByText("ACME-1511 · /feature")).toBeInTheDocument();
+    expect(screen.getByText("storefront · roquettejh/acme-1511-x")).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/\bmain\b/);
   });
 

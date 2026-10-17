@@ -186,11 +186,11 @@ describe("SessionsListScreen filters-both-views", () => {
 
     const all = renderWithApi(<SessionsListScreen />, {
       routes: routes(),
-      path: "/sessions?period=24 h&repo=demo",
+      path: "/sessions?period=24 h&repo=storefront",
     });
     await screen.findByText("/asker");
     const asked = sessionRequests(all.requests);
-    expect(asked.every((url) => url.searchParams.get("repo") === "demo")).toBe(true);
+    expect(asked.every((url) => url.searchParams.get("repo") === "storefront")).toBe(true);
     expect(
       asked
         .filter((url) => url.searchParams.has("from"))
@@ -259,7 +259,7 @@ describe("SessionsListScreen filter-requests", () => {
     expect(await screen.findByText(/· Ended: last 24 h ·/)).toBeInTheDocument();
 
     const repo = screen.getByRole("textbox", { name: "Repo" });
-    fireEvent.change(repo, { target: { value: "demo" } });
+    fireEvent.change(repo, { target: { value: "storefront" } });
     fireEvent.blur(repo);
     const afterRepo = (await settled(requests, 9)).slice(5);
     expect(afterRepo.map((url) => url.searchParams.get("status")).sort()).toEqual([
@@ -268,7 +268,7 @@ describe("SessionsListScreen filter-requests", () => {
       "live",
       "waiting",
     ]);
-    expect(afterRepo.every((url) => url.searchParams.get("repo") === "demo")).toBe(true);
+    expect(afterRepo.every((url) => url.searchParams.get("repo") === "storefront")).toBe(true);
   });
 });
 
