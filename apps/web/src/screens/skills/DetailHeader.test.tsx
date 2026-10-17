@@ -9,7 +9,7 @@ import {
   anAgentDetail,
   renderWithApi,
 } from "../../testing/builders";
-import { DetailHeader } from "./DetailHeader";
+import { DetailHeader, argumentLine, hookSentence } from "./DetailHeader";
 
 const NOW = Date.parse(T0);
 
@@ -17,59 +17,38 @@ function header(detail = aSkillDetail()) {
   return renderWithApi(<DetailHeader detail={detail} now={NOW} usageDays={30} />);
 }
 
-const fact = (term: string) => {
-  const dt = screen.getByText(term, { selector: "dt" });
-  return dt.nextElementSibling as HTMLElement;
-};
-
 describe("DetailHeader detail_header_raw", () => {
-  it("shows the D4 fields a skill has when its detail is rendered (AC-164.17)", () => {
-    header(
-      aSkillDetail({
-        when_to_use: "When an idea needs a spec.",
-        allowed_tools: ["Read", "Grep"],
-        model: "opus",
-        frontmatter: [
-          ...aSkillDetail().frontmatter,
-          { key: "effort", known: true, value: "high" },
-          { key: "metadata", known: true, value: { owner: "platform" } },
-        ],
-      }),
-    );
+  it("says what a skill is, how to call it and its state (AC-164.17)", () => {
+    header(aSkillDetail({ when_to_use: "When an idea needs a spec." }));
 
     expect(screen.getByRole("heading", { level: 1, name: "feature" })).toBeInTheDocument();
     expect(
       screen.getByText("Takes an idea or a tracker issue from spec to delivery."),
     ).toBeInTheDocument();
-    expect(fact("When to use")).toHaveTextContent("When an idea needs a spec.");
+    expect(screen.getByText("When an idea needs a spec.", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("/feature <idea or tracker issue id>").tagName).toBe("CODE");
     expect(
       screen.getByRole("button", { name: "Copy /feature <idea or tracker issue id>" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Pass the idea or tracker issue id.")).toBeInTheDocument();
     expect(screen.getByText("User and model")).toBeInTheDocument();
     expect(screen.getByText("Managed")).toBeInTheDocument();
-    expect(fact("Source")).toHaveTextContent("plugin/hub-workflow/skills/feature/SKILL.md");
-    expect(fact("Linked from")).toHaveTextContent(".claude/skills/feature");
-    expect(fact("hub.lock")).toHaveTextContent("managed · sha256 aaaaaaaaaaaa");
-    expect(fact("Argument hint")).toHaveTextContent("<idea or tracker issue id>");
-    expect(fact("Allowed tools")).toHaveTextContent("Read, Grep");
-    expect(fact("Model")).toHaveTextContent("opus");
-    expect(fact("effort")).toHaveTextContent("high");
-    expect(fact("metadata")).toHaveTextContent("owner: platform");
-    expect(screen.queryByText("Tools", { selector: "dt" })).toBeNull();
     expect(screen.getByText(/3 uses in 30 days/)).toBeInTheDocument();
+    expect(screen.queryByText("Source", { selector: "dt" })).toBeNull();
   });
 
-  it("leaves out the fields a skill does not set", () => {
-    header(
-      aSkillDetail({ argument_hint: null, linked_from: [], lock: null, invocation: "/feature" }),
-    );
+  it("links the diagnostics count to the Diagnostics card, or says there are none", () => {
+    const { unmount } = header();
 
-    expect(screen.queryByText("Argument hint", { selector: "dt" })).toBeNull();
-    expect(screen.queryByText("Linked from", { selector: "dt" })).toBeNull();
-    expect(screen.queryByText("hub.lock", { selector: "dt" })).toBeNull();
-    expect(screen.queryByText("When to use", { selector: "dt" })).toBeNull();
-    expect(screen.queryByText("Model", { selector: "dt" })).toBeNull();
+    expect(screen.getByRole("link", { name: "1 diagnostic" })).toHaveAttribute(
+      "href",
+      "#skill-diagnostics",
+    );
+    unmount();
+    header(aSkillDetail({ diagnostics: [] }));
+
+    expect(screen.getByText("No diagnostics")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /diagnostic/ })).toBeNull();
   });
 
   it("copies exactly the invocation when Copy is pressed", () => {
@@ -83,26 +62,45 @@ describe("DetailHeader detail_header_raw", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows an agent's tools, model and subagent line and no Copy", () => {
+  it("says how an agent is called and has no Copy", () => {
     header(anAgentDetail());
 
     expect(screen.getByRole("heading", { level: 1, name: "evaluator" })).toBeInTheDocument();
-    expect(screen.getByText(/^subagent/)).toHaveTextContent("subagent evaluator");
-    expect(fact("Tools")).toHaveTextContent("Read, Grep");
-    expect(fact("Model")).toHaveTextContent("sonnet");
+    expect(screen.getByText(/delegates to it as subagent/)).toHaveTextContent(
+      "The main session delegates to it as subagent evaluator.",
+    );
     expect(screen.queryByRole("button", { name: /^Copy/ })).toBeNull();
   });
 
-  it("shows a hook's source and state, not a description", () => {
+  it("says when a hook runs in a sentence, with its state", () => {
     header(aHookDetail({ active: false }));
 
     const banner = screen.getByRole("banner");
     expect(within(banner).getByRole("heading", { level: 1 })).toHaveTextContent(
       "settings-pretooluse-1",
     );
-    expect(fact("Source")).toHaveTextContent(".claude/settings.json");
+    expect(banner).toHaveTextContent("Runs before every Bash tool call.");
     expect(banner).toHaveTextContent("Inactive");
     expect(banner).not.toHaveTextContent("uses in");
+  });
+});
+
+describe("hookSentence", () => {
+  it.each([
+    [{ event: "PreToolUse", matcher: "Bash" }, "Runs before every Bash tool call."],
+    [{ event: "PostToolUse", matcher: "Edit|Write" }, "Runs after every Edit or Write tool call."],
+    [{ event: "PostToolUseFailure", matcher: null }, "Runs after every failed tool call."],
+    [{ event: "SessionStart", matcher: null }, "Runs when a session starts."],
+    [{ event: "Custom", matcher: null }, "Runs on Custom."],
+  ])("words %o as a sentence", (hook, sentence) => {
+    expect(hookSentence(hook)).toBe(sentence);
+  });
+});
+
+describe("argumentLine", () => {
+  it("reads one placeholder as what to pass, anything else as it is", () => {
+    expect(argumentLine("<tracker issue id>")).toBe("Pass the tracker issue id.");
+    expect(argumentLine("[screen | path]")).toBe("Arguments: [screen | path]");
   });
 });
 

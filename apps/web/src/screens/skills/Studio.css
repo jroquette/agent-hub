@@ -33,18 +33,11 @@
   place-items: center;
   width: 40px;
   height: 40px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
   flex: none;
-}
-.ah-studio-kind[data-kind="agent"] {
-  background: var(--done-soft);
-  color: var(--done);
-}
-.ah-studio-kind[data-kind="hook"] {
-  background: var(--waiting-soft);
-  color: var(--waiting);
 }
 .ah-studio-chip {
   display: inline-flex;

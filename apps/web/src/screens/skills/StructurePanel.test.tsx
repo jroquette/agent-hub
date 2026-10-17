@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { aHookDetail, aSkillDetail, anAgentDetail } from "../../testing/builders";
-import { StructurePanel } from "./StructurePanel";
+import { StructurePanel, stepsHeadline } from "./StructurePanel";
 
 const STRUCTURE = aSkillDetail().structure ?? null;
 const EMPTY = {
@@ -21,7 +21,8 @@ describe("StructurePanel structure", () => {
     const onStep = vi.fn();
     render(<StructurePanel structure={STRUCTURE} onStep={onStep} />);
 
-    const panel = screen.getByRole("region", { name: "Structure" });
+    const panel = screen.getByRole("region", { name: "Steps" });
+    expect(within(panel).getByText("5 steps")).toBeInTheDocument();
     expect(within(panel).getByText("Derived from the text")).toBeInTheDocument();
     const steps = within(panel).getAllByRole("link");
     expect(steps.map((step) => step.getAttribute("href"))).toEqual([
@@ -31,7 +32,8 @@ describe("StructurePanel structure", () => {
       "#step-4",
       "#step-5",
     ]);
-    expect(steps[1]).toHaveTextContent("2. Gate: user approves the spec");
+    expect(steps[1]).toHaveAccessibleName("2. Gate: user approves the spec");
+    expect(within(panel).getByText("Stop until they do.")).toBeInTheDocument();
     const [, second] = steps;
     if (second) fireEvent.click(second);
     expect(onStep).toHaveBeenCalledWith("step-2");
@@ -47,16 +49,31 @@ describe("StructurePanel structure", () => {
     expect(items[1]).toHaveTextContent("Needs you");
     expect(items[2]).toHaveTextContent("/create-plan");
     expect(items[3]).toHaveTextContent("make check");
-    const summary = screen.getByRole("region", { name: "Structure" });
-    expect(summary).toHaveTextContent("Gate: user approves the spec");
-    expect(summary).toHaveTextContent("./hub doctor");
   });
 
-  it("reads No numbered steps found when the body has no ordered list", () => {
-    render(<StructurePanel structure={anAgentDetail().structure ?? null} />);
+  it("shows a declared type instead of the guessed tags and counts the gates", () => {
+    const steps = STRUCTURE?.steps ?? [];
+    const [first, second] = steps;
+    if (!first || !second) throw new Error("fixture has steps");
+    const declared = [
+      { ...first, declared_type: "agent" as const, tags: [] },
+      { ...second, declared_type: "gate" as const, tags: ["gate" as const] },
+    ];
+    render(<StructurePanel structure={{ ...(STRUCTURE ?? EMPTY), steps: declared }} />);
 
-    expect(screen.getByText("No numbered steps found")).toBeInTheDocument();
-    expect(screen.queryByRole("list", { name: "Steps" })).toBeNull();
+    const [agent, gate] = within(screen.getByRole("list", { name: "Steps" })).getAllByRole(
+      "listitem",
+    );
+    expect(agent).toHaveTextContent("Agent works");
+    expect(agent).not.toHaveTextContent("Gate");
+    expect(gate).toHaveTextContent("You approve");
+    expect(screen.getByText("2 steps · you approve step 2")).toBeInTheDocument();
+  });
+
+  it("renders nothing when the body has no ordered list", () => {
+    const { container } = render(<StructurePanel structure={anAgentDetail().structure ?? null} />);
+
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("says dynamic context runs at invocation and steps were cut when the structure says so", () => {
@@ -88,6 +105,27 @@ describe("StructurePanel structure", () => {
     const { container } = render(<StructurePanel structure={aHookDetail().structure ?? null} />);
 
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("stepsHeadline", () => {
+  it("names the steps you approve and act in", () => {
+    const step = (index: number, declared_type: "gate" | "human" | null) => ({
+      agents: [],
+      commands: [],
+      declared_type,
+      index,
+      scripts: [],
+      skills: [],
+      summary: "",
+      tags: [],
+      title: "t",
+    });
+
+    expect(stepsHeadline([step(1, null)])).toBe("1 step");
+    expect(stepsHeadline([step(1, "gate"), step(2, "human"), step(3, "gate")])).toBe(
+      "3 steps · you approve steps 1 and 3 · you act in step 2",
+    );
   });
 });
 

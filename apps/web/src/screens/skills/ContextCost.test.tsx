@@ -13,10 +13,9 @@ describe("ContextCost context_cost", () => {
     const always = screen.getByText("Always loaded").closest("div");
     const invoke = screen.getByText("On invoke").closest("div");
     expect(always).toHaveTextContent("≈ 100 tokens");
-    expect(always).toHaveTextContent("approximate");
+    expect(screen.getByRole("region", { name: "Context cost" })).toHaveTextContent("Approximate");
     expect(always).toHaveTextContent("from the description");
     expect(invoke).toHaveTextContent("≈ 1,000 tokens");
-    expect(invoke).toHaveTextContent("approximate");
     expect(invoke).toHaveTextContent("from the body");
   });
 

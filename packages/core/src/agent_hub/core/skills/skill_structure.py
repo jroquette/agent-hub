@@ -13,10 +13,18 @@ from dataclasses import dataclass, field
 from typing import Final
 
 from agent_hub.core.redaction.redact import clip
-from agent_hub.core.skills.skill_view import SkillStructure, Step, StepTag, TocEntry, bare_name
+from agent_hub.core.skills.skill_view import (
+    SkillStructure,
+    Step,
+    StepTag,
+    StepType,
+    TocEntry,
+    bare_name,
+)
 
 MAX_STEPS: Final = 200
 MAX_STEP_TITLE_CHARS: Final = 80
+MAX_STEP_SUMMARY_CHARS: Final = 160
 MAX_REFERENCES: Final = 200
 MAX_TOC_ENTRIES: Final = 200
 # A longer line is not a heading (here and in the web's renderer), so a TOC entry stays bounded.
@@ -83,6 +91,10 @@ _HEADING: Final = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*))?$")
 _DYNAMIC_SPAN: Final = re.compile(r"!`[^`]*`")
 _STEP_PREFIX: Final = re.compile(r"^\d{1,9}[.)]\s+")
 _BOLD_TITLE: Final = re.compile(r"^\*\*(.+?)\*\*")
+# A step's own type, as a leading backticked token ("`gate` **Plan**: ...").
+_DECLARED_TYPE: Final = re.compile(r"^`(agent|script|gate|human)`[ \t]*")
+_SUMMARY_LEAD: Final = re.compile(r"^[\s:.,;\u2014-]+")
+_MARKS: Final = re.compile(r"\*\*|__|`")
 _SKILL_REF: Final = re.compile(
     r"(?<![^\s`(])/([A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)?)(?![\w/-]|\.\w)"
 )
@@ -255,10 +267,37 @@ def step_count(body: str) -> int:
     return len(_step_texts(body))
 
 
-def _title(first_line: str) -> str:
+@dataclass(frozen=True, slots=True)
+class _StepHead:
+    title: str
+    declared_type: StepType | None
+    summary: str
+
+
+def _plain(text: str) -> str:
+    return " ".join(_MARKS.sub("", text).split())
+
+
+def _step_head(first_line: str) -> _StepHead:
+    """A step's first line split into its declared type, its title (the leading ``**bold**``
+    run, else the whole line) and the plain rest as its summary."""
     item = _STEP_PREFIX.sub("", first_line, count=1).strip()
+    declared = _DECLARED_TYPE.match(item)
+    step_type: StepType | None = None
+    if declared is not None:
+        match declared.group(1):
+            case "agent" | "script" | "gate" | "human" as found:
+                step_type = found
+        item = item[declared.end() :]
     bold = _BOLD_TITLE.match(item)
-    return clip((bold.group(1) if bold else item).strip(), MAX_STEP_TITLE_CHARS)
+    if bold is None:
+        return _StepHead(clip(item.strip(), MAX_STEP_TITLE_CHARS), step_type, "")
+    rest = _SUMMARY_LEAD.sub("", item[bold.end() :])
+    return _StepHead(
+        title=clip(bold.group(1).strip(), MAX_STEP_TITLE_CHARS),
+        declared_type=step_type,
+        summary=clip(_plain(rest), MAX_STEP_SUMMARY_CHARS),
+    )
 
 
 def _step(index: int, text: _StepText, *, agents: frozenset[str], skills: frozenset[str]) -> Step:
@@ -266,8 +305,12 @@ def _step(index: int, text: _StepText, *, agents: frozenset[str], skills: frozen
     named_agents = _named_agents(prose, agents)
     commands = _commands(prose)
     scripts = _scripts(prose)
+    head = _step_head(text.lines[0].text)
+    declared = head.declared_type
+    # A declared type wins over the word guesses for who acts: a step that says it is `agent`
+    # is not a gate because its text mentions one.
     tags: list[StepTag] = []
-    if STEP_PATTERNS["gate"].search(prose):
+    if declared == "gate" or (declared is None and STEP_PATTERNS["gate"].search(prose)):
         tags.append("gate")
     if named_agents:
         tags.append("agent")
@@ -275,11 +318,13 @@ def _step(index: int, text: _StepText, *, agents: frozenset[str], skills: frozen
         tags.append("command")
     if scripts:
         tags.append("script")
-    if STEP_PATTERNS["human"].search(prose):
+    if declared == "human" or (declared is None and STEP_PATTERNS["human"].search(prose)):
         tags.append("human")
     return Step(
         index=index,
-        title=_title(text.lines[0].text),
+        title=head.title,
+        declared_type=declared,
+        summary=head.summary,
         tags=tuple(tags),
         agents=named_agents,
         skills=_named_skills(prose, skills),

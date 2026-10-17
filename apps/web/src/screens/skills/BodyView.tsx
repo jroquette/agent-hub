@@ -22,17 +22,21 @@ export function AnchorLink({
   anchor,
   children,
   className,
+  label,
   onGo,
 }: {
   anchor: string;
   children: ReactNode;
   className?: string | undefined;
+  /** The accessible name, when the visible text alone does not say enough. */
+  label?: string | undefined;
   onGo?: ((anchor: string) => void) | undefined;
 }) {
   return (
     <a
       href={`#${anchor}`}
       className={className}
+      aria-label={label}
       onClick={(event: MouseEvent<HTMLAnchorElement>) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
         event.preventDefault();

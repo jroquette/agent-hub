@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { seriousViolations } from "../../testing/axe";
 import { T0, aCatalogItem, aSkillCatalog, renderWithApi } from "../../testing/builders";
 import { Catalog } from "./Catalog";
+import { saveDraft } from "./studioDrafts";
 
 type SkillCatalog = ReturnType<typeof aSkillCatalog>;
 
@@ -26,12 +27,12 @@ const tab = (name: RegExp) => screen.getByRole("tab", { name });
 describe("Catalog search_facets", () => {
   it("filters on name or description, ignoring case, and restores all when cleared (AC-164.14)", () => {
     open();
-    expect(shown()).toEqual(["feature", "plan", "evaluator", "settings-pretooluse-1"]);
+    expect(shown()).toEqual(["evaluator", "feature", "plan", "settings-pretooluse-1"]);
 
     fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
       target: { value: "SPEC" },
     });
-    expect(shown()).toEqual(["feature", "evaluator"]);
+    expect(shown()).toEqual(["evaluator", "feature"]);
     expect(screen.getByRole("status")).toHaveTextContent("Showing 2 of 4");
 
     fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
@@ -113,7 +114,7 @@ describe("Catalog url_query", () => {
     open("/projects/demo/skills?kind=skill,agent");
 
     expect(tab(/^All/)).toHaveAttribute("aria-selected", "true");
-    expect(shown()).toEqual(["feature", "plan", "evaluator"]);
+    expect(shown()).toEqual(["evaluator", "feature", "plan"]);
   });
 
   it("ignores unknown values when the query is hand-written", () => {
@@ -209,5 +210,21 @@ describe("Catalog a11y", () => {
 
     expect(await seriousViolations(container)).toEqual([]);
     expect(screen.getByRole("status")).toHaveTextContent("Showing 1 of 4");
+  });
+});
+
+describe("Catalog drafts in progress", () => {
+  it("marks an edit draft of an existing item as editing", () => {
+    window.localStorage.clear();
+    saveDraft(
+      "skill-aaa111",
+      { project: "demo", kind: "skill" },
+      { name: "feature", target: { kind: "skill", source: "hub-workflow", name: "feature" } },
+    );
+    open();
+
+    const drafts = screen.getByRole("region", { name: "Drafts in progress" });
+    expect(within(drafts).getByRole("link")).toHaveTextContent("editingfeature");
+    window.localStorage.clear();
   });
 });

@@ -63,6 +63,18 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   to Claude before the text; the record keeps a marker per image, never its bytes. A message's text may be up to
   1 MiB by default (`--message-max-bytes` up to 4 MiB). The composer's mode and model are compact pills (AGH-266).
 
+- Knowledge › Brain and Knowledge › Skills, with All projects in scope, list the projects in a table that says what
+  each holds before you open it: Brain shows the current focus and counts notes, features, decisions, learnings and
+  the inbox to triage; Skills counts skills, agents and hooks, those used in 30 days and those with problems. A
+  project's Brain and Skills pages get a breadcrumb and a purpose line, the scope switcher shows the page's project,
+  and the Brain tree groups Start here, Folders (with note counts) and the unreviewed inbox, with a note filter (`/`)
+  (AGH-270).
+
+- Edit an existing skill, agent or hook with Claude: its detail page has Edit with Claude beside Discuss, which opens
+  the Studio on an edit draft (the open one when there is one). Claude changes a copy in `.hub-drafts/<id>/`, the
+  preview shows the diff against the current version, and Publish writes it over the item; nothing is committed
+  (AGH-271).
+
 ### Changed
 
 - The chat folds what Claude does between two messages, its calls and the thoughts between them, into one line
@@ -83,6 +95,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   the log and comes back after a reload. Each thread shows under its line with Claude's answers and your replies,
   waits for Claude, and can be resolved; in the chat a review comment reads as one, linking back to its file
   (AGH-265).
+- Knowledge › Skills is now Toolkit (its tabs stay Skills, Agents and Hooks), and agents come first. A skill, agent or
+  hook detail reads at a glance: a lean header (how to use it, state, health), Steps and Text first, an About rail
+  (source, `hub.lock`, tools, context cost, relations), diagnostics only when there are findings. Steps carry the
+  type they declare and a plain summary, and only declared gates show as gates (AGH-271).
+- The Skills catalog stays on the design system (neutral kind badges, type on the scale, no dashed outline on the
+  managed tag and New link, full text on hover when truncated) and lays out at every width: tiles four across or two
+  by two, hook rows aligned per event (AGH-271).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to
