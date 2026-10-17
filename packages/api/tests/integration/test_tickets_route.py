@@ -216,8 +216,8 @@ def test_leaves_key_never_exposed_when_linear_echoes_it(
     logged = caplog.text + "".join(repr(record.args) for record in caplog.records)
     assert sentinel not in logged
     # The key goes to Linear only as the Authorization header, read from the environment: the
-    # two reads above and the route sweep's.
-    assert world.linear.count == 3
+    # two reads above, the route sweep's tickets read and its Settings connection check.
+    assert world.linear.count == 4
     for _url, headers, document in world.linear.requests:
         assert headers["Authorization"] == sentinel
         assert sentinel not in json.dumps(document)

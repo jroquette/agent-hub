@@ -3,6 +3,7 @@ from agent_hub.api.openapi_paths import (
     AGENT_SESSION_PATHS,
     CLARITY_PATHS,
     GATE_PATHS,
+    LINEAR_PATHS,
     P2_PATHS,
     RUN_COMMAND_PATHS,
     SERVED_PATHS,
@@ -123,6 +124,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | WORKFLOW_PATHS
         | RUN_COMMAND_PATHS
         | GATE_PATHS
+        | LINEAR_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -139,6 +141,7 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | WORKFLOW_PATHS
         | RUN_COMMAND_PATHS
         | GATE_PATHS
+        | LINEAR_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 

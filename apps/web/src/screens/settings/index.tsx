@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -28,15 +28,26 @@ import { usePreferences, type ThemeChoice } from "../../lib/preferences";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { NotFoundBody } from "../not-found";
 import { RegisterHubForm } from "./RegisterHubForm";
-import { useCollectorStatus, useHubs, useRemoveHub, useSettings } from "./queries";
+import {
+  useCheckLinear,
+  useCollectorStatus,
+  useConnectLinear,
+  useDisconnectLinear,
+  useHubs,
+  useLinearConnection,
+  useRemoveHub,
+  useSettings,
+} from "./queries";
 
 type HubView = components["schemas"]["HubView"];
 type EventSource = components["schemas"]["EventSource"];
 type LockState = components["schemas"]["LockState"];
+type LinearConnectionView = components["schemas"]["LinearConnectionView"];
 
 const SECTIONS: readonly { id: string; label: string; icon: IconName }[] = [
   { id: "hubs", label: "Hubs", icon: "warehouse" },
   { id: "collector", label: "Collector", icon: "server" },
+  { id: "linear", label: "Linear", icon: "plug" },
   { id: "privacy", label: "Privacy", icon: "lock" },
   { id: "appearance", label: "Appearance", icon: "monitor" },
   { id: "about", label: "About", icon: "info" },
@@ -301,8 +312,16 @@ function Stat({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/** The Linear row of the Collector's sources: hub web reads Linear, rather than receive events. */
+function linearHealth(view: LinearConnectionView | undefined): [Status, string] {
+  if (view?.connected) return ["done", "connected"];
+  if (view?.source) return ["failed", "key refused"];
+  return SOURCE_HEALTH.none;
+}
+
 function Collector() {
   const status = useCollectorStatus();
+  const linear = useLinearConnection();
   const settings = useSettings();
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
@@ -402,6 +421,14 @@ function Collector() {
             id: "health",
             label: "Health",
             render: (row) => {
+              if (row.source === "linear") {
+                const [tone, label] = linearHealth(linear.data);
+                return (
+                  <Link to="/settings/linear" aria-label={`Linear: ${label}. Open Linear settings`}>
+                    <StatusBadge status={tone} label={label} />
+                  </Link>
+                );
+              }
               const [tone, label] = SOURCE_HEALTH[row.state];
               return <StatusBadge status={tone} label={label} />;
             },
@@ -421,11 +448,193 @@ function Collector() {
         ]}
         footer={
           <span>
-            ok = events arrive as expected · delayed = no recent event · OpenTelemetry, GitHub and
-            Linear are not connected in this version.
+            ok = events arrive as expected · delayed = no recent event · OpenTelemetry and GitHub
+            are not connected in this version · Linear is read on demand:{" "}
+            <Link to="/settings/linear">connect it in Settings › Linear</Link>.
           </span>
         }
       />
+    </Section>
+  );
+}
+
+/* ---------- Linear: the key hub web reads the tracker with ---------- */
+
+const KEY_SOURCE: Record<"environment" | "settings", string> = {
+  environment: "LINEAR_API_KEY in hub web's environment",
+  settings: "Saved on this machine",
+};
+
+function LinearKeyForm({ replacing }: { replacing: boolean }) {
+  const [key, setKey] = useState("");
+  const connect = useConnectLinear();
+  const inputId = useId();
+  const messageId = useId();
+  const problem = connect.error;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const value = key.trim();
+    if (value === "") return;
+    connect.mutate(value, {
+      onSuccess: () => {
+        setKey("");
+      },
+    });
+  };
+  return (
+    <form className="ah-stack" style={{ gap: 4 }} onSubmit={submit}>
+      <label htmlFor={inputId} style={{ fontWeight: 500 }}>
+        {replacing ? "Replace the API key" : "Linear API key"}
+      </label>
+      <span className="ah-row" style={{ gap: 8, maxWidth: 640 }}>
+        <input
+          id={inputId}
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          className="ah-input ah-mono ah-grow"
+          placeholder="lin_api_…"
+          value={key}
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={messageId}
+          style={problem ? { borderColor: "var(--failed)" } : undefined}
+          onChange={(event) => {
+            setKey(event.target.value);
+            if (connect.isError) connect.reset();
+          }}
+        />
+        <Button
+          type="submit"
+          variant="primary"
+          icon="plug"
+          disabled={connect.isPending || key.trim() === ""}
+        >
+          {connect.isPending ? "Checking…" : "Connect"}
+        </Button>
+      </span>
+      <span id={messageId} className="ah-small" role={problem ? "alert" : undefined}>
+        {problem ? (
+          <span style={{ color: "var(--failed)" }}>
+            <Icon name="circle-x" size="sm" style={{ verticalAlign: "-3px", marginRight: 4 }} />
+            {problem.detail ?? problem.title}
+          </span>
+        ) : (
+          <span className="ah-muted">
+            Create a personal API key in Linear › Settings › Security &amp; access. hub web checks
+            it with Linear, keeps it on this machine only and sends it to api.linear.app alone.
+          </span>
+        )}
+      </span>
+    </form>
+  );
+}
+
+function Linear() {
+  const linear = useLinearConnection();
+  const check = useCheckLinear();
+  const disconnect = useDisconnectLinear();
+  const view = linear.data;
+  const badge = !view ? null : view.connected ? (
+    <StatusBadge status="done" label="Connected" />
+  ) : view.source ? (
+    <StatusBadge status="failed" label="Not working" />
+  ) : (
+    <StatusBadge status="idle" label="Not connected" />
+  );
+  return (
+    <Section
+      title="Linear"
+      sub="hub web reads a feature's tickets from Linear (title, status, assignee, blockers), read-only."
+      action={badge}
+    >
+      {linear.isError ? (
+        <ProblemError
+          title={linear.error.title}
+          detail={linear.error.detail}
+          status={linear.error.status}
+          onRetry={() => void linear.refetch()}
+        />
+      ) : !view ? (
+        <div className="ah-card ah-pad">
+          <Skeleton lines={2} height={16} />
+        </div>
+      ) : (
+        <div className="ah-card ah-pad ah-stack" style={{ gap: 16 }}>
+          {view.source && (
+            <div
+              style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 16 }}
+            >
+              <Stat label="Account">
+                {view.account ? (
+                  <div className="ah-small">
+                    <div>{view.account.name}</div>
+                    <div className="ah-muted">{view.account.email}</div>
+                  </div>
+                ) : (
+                  <span className="ah-subtle">—</span>
+                )}
+              </Stat>
+              <Stat label="Workspace">
+                {view.account ? (
+                  <a href={view.account.url} target="_blank" rel="noreferrer" className="ah-small">
+                    {view.account.workspace}{" "}
+                    <Icon name="external-link" size="sm" style={{ verticalAlign: "-2px" }} />
+                  </a>
+                ) : (
+                  <span className="ah-subtle">—</span>
+                )}
+              </Stat>
+              <Stat label="Key">
+                <div className="ah-small">{KEY_SOURCE[view.source]}</div>
+                {view.source === "settings" && <PathText path={view.key_path} max={30} />}
+              </Stat>
+              <Stat label="Checked">
+                <span className="ah-small">
+                  {view.checked_at ? <Time iso={view.checked_at} absolute /> : "—"}
+                </span>
+              </Stat>
+            </div>
+          )}
+          {view.problem && (
+            <div className="ah-small" role="alert" style={{ color: "var(--failed)" }}>
+              <Icon name="circle-x" size="sm" style={{ verticalAlign: "-3px", marginRight: 4 }} />
+              {view.problem}
+            </div>
+          )}
+          {view.source && (
+            <div className="ah-row" style={{ gap: 8 }}>
+              <Button
+                icon="refresh-cw"
+                disabled={check.isPending}
+                onClick={() => {
+                  check.mutate(undefined);
+                }}
+              >
+                {check.isPending ? "Checking…" : "Check connection"}
+              </Button>
+              {view.source === "settings" && (
+                <Button
+                  icon="x"
+                  disabled={disconnect.isPending}
+                  onClick={() => {
+                    disconnect.mutate(undefined);
+                  }}
+                >
+                  Disconnect
+                </Button>
+              )}
+            </div>
+          )}
+          {view.source === "environment" ? (
+            <p className="ah-small ah-muted" style={{ margin: 0 }}>
+              The key comes from LINEAR_API_KEY where hub web runs and wins over a saved one; change
+              it there and restart hub web.
+            </p>
+          ) : (
+            <LinearKeyForm replacing={view.source === "settings"} />
+          )}
+        </div>
+      )}
     </Section>
   );
 }
@@ -631,12 +840,13 @@ function About() {
 const BODIES: Readonly<Record<string, () => ReactNode>> = {
   hubs: () => <Hubs />,
   collector: () => <Collector />,
+  linear: () => <Linear />,
   privacy: () => <Privacy />,
   appearance: () => <Appearance />,
   about: () => <About />,
 };
 
-/** Settings (spec 01, D20): Hubs, Collector, Privacy, Appearance, About. */
+/** Settings (spec 01, D20): Hubs, Collector, Linear, Privacy, Appearance, About. */
 export function SettingsScreen() {
   const { section = "hubs" } = useParams();
   const { state, asOf } = useCollectorState();

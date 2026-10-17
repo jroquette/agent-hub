@@ -8,7 +8,7 @@ import type { components, paths } from "../api/schema";
 
 export type ProblemDetails = components["schemas"]["ProblemDetails"];
 
-type Operation<P extends keyof paths, M extends "get" | "post" | "delete"> = NonNullable<
+type Operation<P extends keyof paths, M extends "get" | "post" | "put" | "delete"> = NonNullable<
   paths[P][M]
 >;
 
@@ -18,6 +18,9 @@ export type GetPath = {
 }[keyof paths];
 export type PostPath = {
   [P in keyof paths]: [NonNullable<paths[P]["post"]>] extends [never] ? never : P;
+}[keyof paths];
+export type PutPath = {
+  [P in keyof paths]: [NonNullable<paths[P]["put"]>] extends [never] ? never : P;
 }[keyof paths];
 export type DeletePath = {
   [P in keyof paths]: [NonNullable<paths[P]["delete"]>] extends [never] ? never : P;
@@ -153,6 +156,7 @@ async function send(
 
 const GET = client.GET as unknown as LooseMethod;
 const POST = client.POST as unknown as LooseMethod;
+const PUT = client.PUT as unknown as LooseMethod;
 const DELETE = client.DELETE as unknown as LooseMethod;
 
 /** GETs `path`; resolves with its body or rejects with an ApiProblem. */
@@ -171,6 +175,14 @@ export async function apiPost<P extends PostPath>(
   params?: ParamsOf<Operation<P, "post">>,
 ): Promise<SuccessOf<Operation<P, "post">>> {
   return (await send(POST, path, { params, body })) as SuccessOf<Operation<P, "post">>;
+}
+
+/** PUTs `body` to `path`; resolves with the answer or rejects with an ApiProblem. */
+export async function apiPut<P extends PutPath>(
+  path: P,
+  body: BodyOf<Operation<P, "put">>,
+): Promise<SuccessOf<Operation<P, "put">>> {
+  return (await send(PUT, path, { body })) as SuccessOf<Operation<P, "put">>;
 }
 
 /** POSTs an empty JSON object to a command route that takes no body (a run's cancel, resume or

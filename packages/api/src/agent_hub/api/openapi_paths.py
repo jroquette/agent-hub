@@ -126,6 +126,11 @@ RUN_COMMAND_PATHS: frozenset[tuple[str, str]] = frozenset(
     )
 )
 
+# Connecting hub web to Linear from Settings (playground): its check, the key's save and removal.
+LINEAR_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}/tracker/linear") for method in ("get", "put", "delete")
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
     P2_PATHS
@@ -136,6 +141,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | WORKFLOW_PATHS
     | RUN_COMMAND_PATHS
     | GATE_PATHS
+    | LINEAR_PATHS
 )
 
 

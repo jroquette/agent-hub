@@ -1100,6 +1100,34 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/tracker/linear": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Linear Connection
+     * @description Whether hub web reads Linear, as whom, or why not (checked against Linear).
+     */
+    get: operations["get_linear_connection_api_v1_tracker_linear_get"];
+    /**
+     * Connect Linear
+     * @description Check a Linear API key and save it on this machine when Linear accepts it.
+     */
+    put: operations["connect_linear_api_v1_tracker_linear_put"];
+    post?: never;
+    /**
+     * Disconnect Linear
+     * @description Forget the key saved from Settings.
+     */
+    delete: operations["disconnect_linear_api_v1_tracker_linear_delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/workflow-runs": {
     parameters: {
       query?: never;
@@ -2356,6 +2384,8 @@ export interface components {
      */
     ItemKind: "skill" | "agent" | "hook";
     "JsonValue-Input": unknown;
+    /** @enum {string} */
+    KeySource: "environment" | "settings";
     /**
      * Learning
      * @description A learning; ``text`` is its title (120 characters at most, redacted).
@@ -2515,6 +2545,46 @@ export interface components {
       kind: ("team" | "repo" | "personal") | null;
       /** Path */
       path: string | null;
+    };
+    /**
+     * LinearAccountView
+     * @description The key's user and workspace.
+     */
+    LinearAccountView: {
+      /** Email */
+      email: string;
+      /** Name */
+      name: string;
+      /** Url */
+      url: string;
+      /** Workspace */
+      workspace: string;
+    };
+    /**
+     * LinearConnectionView
+     * @description ``GET /tracker/linear``: whether hub web reads Linear, as whom, or why not.
+     */
+    LinearConnectionView: {
+      account: components["schemas"]["LinearAccountView"] | null;
+      /** Checked At */
+      checked_at: string | null;
+      /** Connected */
+      connected: boolean;
+      /** Key Path */
+      key_path: string;
+      /** Problem */
+      problem: string | null;
+      /** Problem Kind */
+      problem_kind: string | null;
+      source: components["schemas"]["KeySource"] | null;
+    };
+    /**
+     * LinearKeyBody
+     * @description ``PUT /tracker/linear``: a Linear personal API key.
+     */
+    LinearKeyBody: {
+      /** Api Key */
+      api_key: string;
     };
     /**
      * LiveTile
@@ -6914,6 +6984,126 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SettingsView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_linear_connection_api_v1_tracker_linear_get: {
+    parameters: {
+      query?: {
+        fresh?: boolean;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LinearConnectionView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  connect_linear_api_v1_tracker_linear_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LinearKeyBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LinearConnectionView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  disconnect_linear_api_v1_tracker_linear_delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LinearConnectionView"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

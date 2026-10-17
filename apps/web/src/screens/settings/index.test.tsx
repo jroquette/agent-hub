@@ -31,7 +31,33 @@ const routes: ApiRoutes = {
   ]),
   "/api/v1/collector/status": aCollectorStatus(),
   "/api/v1/settings": aSettings(),
+  "/api/v1/tracker/linear": aLinearConnection(),
 };
+
+function aLinearConnection(overrides: Record<string, unknown> = {}) {
+  return {
+    connected: false,
+    source: null,
+    account: null,
+    problem: null,
+    problem_kind: null,
+    checked_at: null,
+    key_path: "/home/dev/.config/agent-hub/linear-api-key",
+    ...overrides,
+  };
+}
+
+const CONNECTED = aLinearConnection({
+  connected: true,
+  source: "settings",
+  account: {
+    name: "Ada Example",
+    email: "ada@example.com",
+    workspace: "Example",
+    url: "https://linear.app/example",
+  },
+  checked_at: "2026-10-17T12:00:00Z",
+});
 
 function open(section: string, extra: ApiRoutes = {}, connected = true) {
   const ui = connected ? (
@@ -49,7 +75,7 @@ function open(section: string, extra: ApiRoutes = {}, connected = true) {
 }
 
 describe("SettingsScreen", () => {
-  it("lists the five sections and marks the open one", () => {
+  it("lists the six sections and marks the open one", () => {
     open("hubs");
 
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
@@ -57,7 +83,7 @@ describe("SettingsScreen", () => {
       within(nav)
         .getAllByRole("link")
         .map((l) => l.textContent),
-    ).toEqual(["Hubs", "Collector", "Privacy", "Appearance", "About"]);
+    ).toEqual(["Hubs", "Collector", "Linear", "Privacy", "Appearance", "About"]);
     expect(within(nav).getByRole("link", { name: "Hubs" })).toHaveAttribute("aria-current", "page");
   });
 
@@ -183,6 +209,79 @@ describe("SettingsScreen", () => {
     }
     expect(within(sources).getAllByText("not connected")).toHaveLength(3);
     expect(screen.getByText(/Connected/)).toBeInTheDocument();
+  });
+
+  it("shows Linear as connected in the collector's sources once a key works", async () => {
+    open("collector", { "/api/v1/tracker/linear": CONNECTED });
+
+    const sources = screen.getByRole("table");
+    expect(await within(sources).findByRole("link", { name: /Linear: connected/ })).toHaveAttribute(
+      "href",
+      "/settings/linear",
+    );
+  });
+
+  it("connects Linear with a key the server accepts", async () => {
+    const { requests } = open("linear", { "PUT /api/v1/tracker/linear": CONNECTED });
+
+    expect(await screen.findByText("Not connected")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Linear API key"), "lin_api_synthetic");
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    expect(await screen.findByText("Ada Example")).toBeInTheDocument();
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Example/ })).toHaveAttribute(
+      "href",
+      "https://linear.app/example",
+    );
+    expect(await requests.find((r) => r.method === "PUT")?.json()).toEqual({
+      api_key: "lin_api_synthetic",
+    });
+  });
+
+  it("shows why Linear refused a key and keeps it out of the connection", async () => {
+    open("linear", {
+      "PUT /api/v1/tracker/linear": aLinearConnection({
+        source: "settings",
+        problem: "Linear refused the key (HTTP 401).",
+        problem_kind: "unauthorized",
+      }),
+    });
+
+    await userEvent.type(await screen.findByLabelText("Linear API key"), "lin_api_wrong");
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Linear refused the key (HTTP 401).",
+    );
+    expect(screen.getByText("Not connected")).toBeInTheDocument();
+  });
+
+  it("checks and disconnects a saved Linear key", async () => {
+    let saved = true;
+    const { requests } = open("linear", {
+      "/api/v1/tracker/linear": () => (saved ? CONNECTED : aLinearConnection()),
+      "DELETE /api/v1/tracker/linear": () => {
+        saved = false;
+        return aLinearConnection();
+      },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Check connection" }));
+    await waitFor(() => {
+      expect(requests.some((r) => r.url.includes("fresh=true"))).toBe(true);
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+
+    expect(await screen.findByText("Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("Linear API key")).toBeInTheDocument();
+  });
+
+  it("has no serious a11y violations in Linear (a11y)", async () => {
+    const { container } = open("linear", { "/api/v1/tracker/linear": CONNECTED });
+    await screen.findByText("Ada Example");
+
+    expect(await seriousViolations(container)).toEqual([]);
   });
 
   it("shows the redaction ruleset and kinds in Privacy", async () => {

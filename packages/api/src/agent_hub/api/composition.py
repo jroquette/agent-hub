@@ -44,6 +44,12 @@ from agent_hub.api.agent_session_runtime import (
 from agent_hub.api.app import create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
 from agent_hub.api.dependencies import ApiPorts
+from agent_hub.api.linear_connection import (
+    KEY_FILE_NAME,
+    LinearConnection,
+    LinearEnviron,
+    LinearKeyFile,
+)
 from agent_hub.api.rfc9457 import (
     ProblemFactory,
     busy_problem,
@@ -586,9 +592,11 @@ def build_app(
         sessions=sessions,
     )
     observed.events = events
+    key_file = LinearKeyFile(settings.registry_path.parent / KEY_FILE_NAME)
+    linear_environ = LinearEnviron(os.environ if environ is None else environ, key_file)
     snapshots = ticket_snapshots(
         facts,
-        environ=environ,
+        environ=linear_environ,
         linear_post=linear_post,
         tracker_reader=tracker_reader,
         clock=settings.clock,
@@ -637,6 +645,12 @@ def build_app(
         run_control=None if guard is None else ControlWorkflowRun(hubs, guard),
         workflow_gates=gates,
         gate_decisions=None if guard is None else DecideWorkflowGate(gates, guard),
+        linear=LinearConnection(
+            linear_environ,
+            key_file,
+            clock=settings.clock,
+            post=linear_post,
+        ),
     )
     return create_app(
         settings,

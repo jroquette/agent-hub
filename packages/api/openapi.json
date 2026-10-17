@@ -2903,6 +2903,13 @@
         "type": "string"
       },
       "JsonValue-Input": {},
+      "KeySource": {
+        "enum": [
+          "environment",
+          "settings"
+        ],
+        "type": "string"
+      },
       "Learning": {
         "additionalProperties": false,
         "description": "A learning; ``text`` is its title (120 characters at most, redacted).\n\n``target`` is deprecated (it names the inbox note); ``note_path`` says so explicitly (L12).\n``state`` is ``None`` until read with the hub. ``summary`` is the note's first paragraph,\nread on request; ``note_unavailable`` and ``actions_unavailable`` give the reason the note\ncannot be read or the learning cannot be accepted or rejected here.",
@@ -3491,6 +3498,130 @@
           "path"
         ],
         "title": "LearningTarget",
+        "type": "object"
+      },
+      "LinearAccountView": {
+        "description": "The key's user and workspace.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "workspace": {
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "workspace",
+          "url"
+        ],
+        "title": "LinearAccountView",
+        "type": "object"
+      },
+      "LinearConnectionView": {
+        "description": "``GET /tracker/linear``: whether hub web reads Linear, as whom, or why not.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LinearAccountView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "key_path": {
+            "title": "Key Path",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "problem_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem Kind"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KeySource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "connected",
+          "source",
+          "account",
+          "problem",
+          "problem_kind",
+          "checked_at",
+          "key_path"
+        ],
+        "title": "LinearConnectionView",
+        "type": "object"
+      },
+      "LinearKeyBody": {
+        "additionalProperties": false,
+        "description": "``PUT /tracker/linear``: a Linear personal API key.",
+        "properties": {
+          "api_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Api Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_key"
+        ],
+        "title": "LinearKeyBody",
         "type": "object"
       },
       "LiveTile": {
@@ -13043,6 +13174,150 @@
         "summary": "Get Settings",
         "tags": [
           "settings"
+        ]
+      }
+    },
+    "/api/v1/tracker/linear": {
+      "delete": {
+        "description": "Forget the key saved from Settings.",
+        "operationId": "disconnect_linear_api_v1_tracker_linear_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinearConnectionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Disconnect Linear",
+        "tags": [
+          "tracker"
+        ]
+      },
+      "get": {
+        "description": "Whether hub web reads Linear, as whom, or why not (checked against Linear).",
+        "operationId": "get_linear_connection_api_v1_tracker_linear_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "fresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Fresh",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinearConnectionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Linear Connection",
+        "tags": [
+          "tracker"
+        ]
+      },
+      "put": {
+        "description": "Check a Linear API key and save it on this machine when Linear accepts it.",
+        "operationId": "connect_linear_api_v1_tracker_linear_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinearKeyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinearConnectionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Connect Linear",
+        "tags": [
+          "tracker"
         ]
       }
     },
