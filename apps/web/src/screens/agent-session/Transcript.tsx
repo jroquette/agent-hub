@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 
 import { Icon, Markdown, ScreenshotThumb, type IconName } from "../../components";
@@ -17,10 +18,14 @@ import { cx } from "../../lib/cx";
 import { JumpToLatest } from "./JumpToLatest";
 import { MessageMeta } from "./MessageMeta";
 import { RequestCard, type PermissionAnswer } from "./PermissionCard";
+import { OpenReviewFileContext, ReviewBubble } from "./ReviewDiff";
+import { parseReview } from "./review";
+import { runFilesOf } from "./RunFilesCard";
 import { StoredCopyLabel } from "./SessionStatus";
-import { ToolGroup, type GroupItem } from "./ToolGroup";
+import { ActivityPanel, ActivityRun, ThinkingBlock, type ActivityStep } from "./ActivityRun";
 import {
   pendingPermissions,
+  type ChangedFile,
   type NoticeTone,
   type PermissionView,
   type TranscriptEntry,
@@ -41,6 +46,16 @@ export interface TranscriptProps {
   screenshotUrl?: string | undefined;
   /** The images this browser sent with later messages, by the message's seq. */
   messageScreenshots?: Readonly<Record<number, readonly string[]>> | undefined;
+  /** The files the session changed: each run that changed some shows them as a card. */
+  files?: readonly ChangedFile[] | undefined;
+  /** The change each file was marked viewed at, by path. */
+  reviewed?: Readonly<Record<string, string>> | undefined;
+  /** Opens the Changed files drawer on a file (null: on its list). */
+  onOpenFile?: ((path: string | null) => void) | undefined;
+  /** Another drawer the page opened (Changed files): it takes the side panel's place. */
+  sidePanel?: ReactNode;
+  /** A run line opened the activity drawer: the page closes its own. */
+  onActivityOpen?: (() => void) | undefined;
 }
 
 /** The first render shows the latest entries only, from the oldest pending card at the latest;
@@ -57,26 +72,33 @@ function attachedRequests(entries: readonly TranscriptEntry[]): Set<string> {
   );
 }
 
-type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
+type RunEntry = Extract<TranscriptEntry, { kind: "tool" | "thinking" }>;
 type Row =
-  { kind: "entry"; entry: TranscriptEntry } | { kind: "run"; key: string; entries: ToolEntry[] };
+  { kind: "entry"; entry: TranscriptEntry } | { kind: "run"; key: string; entries: RunEntry[] };
 
-/** What the log shows from `start` on: attached cards leave their place, and consecutive tool
- * calls with no text between them become one run. A run is keyed by its first call in the whole
- * list, so it keeps its node as it grows or as earlier calls join it a frame later (AC-234.24). */
+/** What the log shows from `start` on: attached cards leave their place, and what Claude does
+ * between two messages (its calls and the thoughts between them) becomes one run. A run is keyed
+ * by its first entry in the whole list, so it keeps its node as it grows or as earlier entries
+ * join it a frame later (AC-234.24). Thoughts with no call among them stay plain entries. */
 function rowsOf(entries: readonly TranscriptEntry[], attached: Set<string>, start: number): Row[] {
   const rows: Row[] = [];
   let key: string | null = null;
-  let run: ToolEntry[] = [];
+  let run: RunEntry[] = [];
+  let hasCall = false;
   const flush = () => {
-    if (key !== null && run.length > 0) rows.push({ kind: "run", key, entries: run });
+    if (key !== null && run.length > 0) {
+      if (hasCall) rows.push({ kind: "run", key, entries: run });
+      else rows.push(...run.map((entry): Row => ({ kind: "entry", entry })));
+    }
     key = null;
     run = [];
+    hasCall = false;
   };
   entries.forEach((entry, index) => {
     if (entry.kind === "permission" && attached.has(entry.requestId)) return;
-    if (entry.kind === "tool") {
+    if (entry.kind === "tool" || entry.kind === "thinking") {
       key ??= entry.key;
+      if (entry.kind === "tool") hasCall = true;
       if (index >= start) run.push(entry);
       return;
     }
@@ -192,7 +214,7 @@ function UserMessage({
           </span>
         )
       )}
-      <div className="as-bubble">{text}</div>
+      {parseReview(text) ? <ReviewBubble text={text} /> : <div className="as-bubble">{text}</div>}
       {note && <span className="ah-small ah-muted">{note}</span>}
       {redacted && <StoredCopyLabel />}
       {at !== undefined && <MessageMeta at={at} text={text} />}
@@ -216,18 +238,9 @@ function EntryBody({ entry, request, onAnswerPermission, screenshotUrls }: Entry
     case "assistant":
       return <AssistantText entry={entry} />;
     case "thinking":
-      return (
-        <details className="as-thinking">
-          <summary>
-            <Icon name="lightbulb" size="sm" />{" "}
-            {entry.seconds === null ? "Thinking" : `Thought for ${String(entry.seconds)} s`}
-            {entry.redacted && <StoredCopyLabel />}
-          </summary>
-          <div className="as-thinking-text">{entry.text}</div>
-        </details>
-      );
+      return <ThinkingBlock entry={entry} />;
     case "tool":
-      // A call shows in its run (ToolGroup).
+      // A call shows in its run (ActivityRun).
       return null;
     case "permission":
       return request ? (
@@ -266,6 +279,11 @@ export function Transcript({
   follow,
   screenshotUrl,
   messageScreenshots,
+  files,
+  reviewed,
+  onOpenFile,
+  sidePanel,
+  onActivityOpen,
 }: TranscriptProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const opened = useRef(false);
@@ -290,6 +308,30 @@ export function Transcript({
   );
   const shotsOf = (seq: number) =>
     messageScreenshots?.[seq] ?? (seq === firstUserSeq ? sessionShots : undefined);
+
+  // The run the side panel shows; closing gives focus back to its line.
+  const [panelRun, setPanelRun] = useState<string | null>(null);
+  // Kept stable for the memoised run lines: the latest callback is read when a line is pressed.
+  const sideOpen = Boolean(sidePanel);
+  const activityOpened = useRef(onActivityOpen);
+  useEffect(() => {
+    activityOpened.current = onActivityOpen;
+  });
+  const toggleRun = useCallback(
+    (runKey: string) => {
+      activityOpened.current?.();
+      setPanelRun((current) => (current === runKey && !sideOpen ? null : runKey));
+    },
+    [sideOpen],
+  );
+  const closePanel = useCallback(() => {
+    const key = panelRun;
+    setPanelRun(null);
+    const line = Array.from(
+      scroller.current?.querySelectorAll<HTMLElement>("[data-run-key]") ?? [],
+    ).find((element) => element.dataset.runKey === key);
+    line?.focus({ preventScroll: true });
+  }, [panelRun]);
 
   // Opens once, on the loaded transcript (AC-234.17): at the oldest pending permission card,
   // else at the latest entry (the stick-to-bottom hook starts pinned).
@@ -345,92 +387,131 @@ export function Transcript({
     follow.pin("smooth");
   };
 
+  const stepsOf = (runEntries: readonly RunEntry[]): ActivityStep[] =>
+    runEntries.flatMap((entry): ActivityStep[] => {
+      if (entry.kind === "thinking") return [{ kind: "thinking", key: entry.key, entry }];
+      const tool = state.tools[entry.toolId];
+      return tool
+        ? [{ kind: "tool", key: entry.key, tool, request: attachedTo(entry.toolId) }]
+        : [];
+    });
+  const rows = rowsOf(state.entries, attached, start);
+  // A run's calls and, under a subagent's call, the calls it made, at any depth.
+  const runToolIds = (runEntries: readonly RunEntry[]): Set<string> => {
+    const ids = new Set<string>();
+    const add = (id: string) => {
+      if (ids.has(id)) return;
+      ids.add(id);
+      for (const child of state.children[id] ?? []) add(child);
+    };
+    for (const entry of runEntries) if (entry.kind === "tool") add(entry.toolId);
+    return ids;
+  };
+  const shownRun =
+    panelRun === null ? undefined : rows.find((row) => row.kind === "run" && row.key === panelRun);
+  const panelSteps = shownRun?.kind === "run" && !sidePanel ? stepsOf(shownRun.entries) : null;
+
   return (
-    <div className="as-body">
-      {/* A scroll container takes focus so the keyboard can scroll it and press End. */}
-      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-static-element-interactions */}
-      <div className="as-scroll" ref={attach} tabIndex={0} onKeyDown={onKeyDown}>
-        {/* Screen-reader users reach the log by heading (AC-234.30). */}
-        <h2 id={headingId} className="ah-sr">
-          Conversation
-        </h2>
-        <div
-          className="as-transcript as-column"
-          role="log"
-          aria-live="polite"
-          aria-relevant="additions text"
-          aria-busy={state.streaming || start > 0}
-          aria-labelledby={headingId}
-        >
-          {state.entries.length === 0 && (
-            <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
-          )}
-          {rowsOf(state.entries, attached, start).map((row) => {
-            if (row.kind === "run") {
-              const items = row.entries.flatMap(({ toolId }): GroupItem[] => {
-                const tool = state.tools[toolId];
-                return tool ? [{ tool, request: attachedTo(toolId) }] : [];
-              });
-              return (
-                <div key={row.key} className="as-entry as-settled">
-                  <ToolGroup
-                    items={items}
-                    tools={state.tools}
-                    calls={state.children}
-                    requests={state.permissions}
-                    onAnswerPermission={onAnswerPermission}
-                  />
-                </div>
-              );
-            }
-            const { entry } = row;
-            return (
-              <Entry
-                key={entry.key}
-                entry={entry}
-                {...(entry.kind === "permission" && {
-                  request: state.permissions[entry.requestId],
-                })}
-                {...(entry.kind === "user" &&
-                  entry.screenshot && { screenshotUrls: shotsOf(entry.seq) })}
-                onAnswerPermission={onAnswerPermission}
-              />
-            );
-          })}
-        </div>
-        {/* Outside the live log: only the echoed record is announced, not its Sending… copy too. */}
-        <div className="as-pending as-column">
-          {state.sending.map((send) => (
-            <div key={send.key} className="as-entry">
-              <UserMessage
-                text={send.text}
-                note="Sending…"
-                screenshotCount={send.screenshots?.length ?? 0}
-                screenshotUrls={send.screenshots}
-              />
-            </div>
-          ))}
-        </div>
-        {/* One live region stays mounted while the session lives, so its text changes are announced. */}
-        {state.status !== "ended" && state.status !== "failed" && (
-          <p
-            className={cx("as-working as-column ah-small ah-muted", !working && "as-working-idle")}
-            role="status"
+    <OpenReviewFileContext.Provider value={onOpenFile ?? null}>
+      <div className={cx("as-body", (panelSteps !== null || sideOpen) && "as-body-panel")}>
+        {/* A scroll container takes focus so the keyboard can scroll it and press End. */}
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-static-element-interactions */}
+        <div className="as-scroll" ref={attach} tabIndex={0} onKeyDown={onKeyDown}>
+          {/* Screen-reader users reach the log by heading (AC-234.30). */}
+          <h2 id={headingId} className="ah-sr">
+            Conversation
+          </h2>
+          <div
+            className="as-transcript as-column"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions text"
+            aria-busy={state.streaming || start > 0}
+            aria-labelledby={headingId}
           >
-            {working ? ["Claude is working", activeTool(state)].filter(Boolean).join(" · ") : ""}
-          </p>
+            {state.entries.length === 0 && (
+              <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
+            )}
+            {rows.map((row) => {
+              if (row.kind === "run") {
+                return (
+                  <div key={row.key} className="as-entry as-settled">
+                    <ActivityRun
+                      runKey={row.key}
+                      steps={stepsOf(row.entries)}
+                      selected={row.key === panelRun && !sidePanel}
+                      live={state.status === "running"}
+                      onToggle={toggleRun}
+                      onAnswerPermission={onAnswerPermission}
+                      files={files && runFilesOf(files, runToolIds(row.entries))}
+                      reviewed={reviewed}
+                      onOpenFile={onOpenFile}
+                    />
+                  </div>
+                );
+              }
+              const { entry } = row;
+              return (
+                <Entry
+                  key={entry.key}
+                  entry={entry}
+                  {...(entry.kind === "permission" && {
+                    request: state.permissions[entry.requestId],
+                  })}
+                  {...(entry.kind === "user" &&
+                    entry.screenshot && { screenshotUrls: shotsOf(entry.seq) })}
+                  onAnswerPermission={onAnswerPermission}
+                />
+              );
+            })}
+          </div>
+          {/* Outside the live log: only the echoed record is announced, not its Sending… copy too. */}
+          <div className="as-pending as-column">
+            {state.sending.map((send) => (
+              <div key={send.key} className="as-entry">
+                <UserMessage
+                  text={send.text}
+                  note="Sending…"
+                  screenshotCount={send.screenshots?.length ?? 0}
+                  screenshotUrls={send.screenshots}
+                />
+              </div>
+            ))}
+          </div>
+          {/* One live region stays mounted while the session lives, so its text changes are announced. */}
+          {state.status !== "ended" && state.status !== "failed" && (
+            <p
+              className={cx(
+                "as-working as-column ah-small ah-muted",
+                !working && "as-working-idle",
+              )}
+              role="status"
+            >
+              {working ? ["Claude is working", activeTool(state)].filter(Boolean).join(" · ") : ""}
+            </p>
+          )}
+        </div>
+        {sidePanel}
+        {panelSteps && (
+          <ActivityPanel
+            steps={panelSteps}
+            tools={state.tools}
+            calls={state.children}
+            requests={state.permissions}
+            onClose={closePanel}
+          />
+        )}
+        {follow && !atBottom && (
+          <JumpToLatest
+            unseen={unseen}
+            onJump={() => {
+              // The button goes away once pinned: keep keyboard focus in the chat, not on <body>.
+              scroller.current?.focus({ preventScroll: true });
+              follow.pin("smooth");
+            }}
+          />
         )}
       </div>
-      {follow && !atBottom && (
-        <JumpToLatest
-          unseen={unseen}
-          onJump={() => {
-            // The button goes away once pinned: keep keyboard focus in the chat, not on <body>.
-            scroller.current?.focus({ preventScroll: true });
-            follow.pin("smooth");
-          }}
-        />
-      )}
-    </div>
+    </OpenReviewFileContext.Provider>
   );
 }

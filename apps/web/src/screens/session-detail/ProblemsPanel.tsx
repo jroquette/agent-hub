@@ -1,7 +1,7 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 
 import type { components } from "../../api/schema";
-import { RedactionChip, StatusBadge, type Status } from "../../components";
+import { Button, Icon, RedactionChip, StatusBadge, type Status } from "../../components";
 import { renderParts, rowActorOf } from "./timeline";
 
 export type SessionProblems = components["schemas"]["SessionProblems"];
@@ -127,18 +127,109 @@ function MomentLink({
   );
 }
 
-/** "What went wrong": the summary lines, then each problem with who must act (AC-201.15). */
-export function ProblemsPanel({ problems, timeOf, onOpen }: ProblemsPanelProps) {
-  if (problems.items.length === 0) return null;
+/** Resolutions the owner may still have to act on; the rest were dealt with. */
+const ATTENTION: ReadonlySet<Problem["resolution"]> = new Set(["needs_you", "open"]);
+/** Resolutions where the agent fixed it alone: the row needs no badge to say so again. */
+const BY_AGENT: ReadonlySet<Problem["resolution"]> = new Set(["recovered", "agent_continued"]);
+
+/** "28 command failed · 4 guard blocked": what the handled problems were, most frequent first. */
+export function kindCounts(items: readonly Pick<Problem, "kind">[]): string {
+  const counts = new Map<ProblemKind, number>();
+  for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
+  return [...counts]
+    .sort((a, b) => b[1] - a[1])
+    .map(([kind, n]) => `${String(n)} ${KIND_LABEL[kind].toLowerCase()}`)
+    .join(" · ");
+}
+
+function ProblemRow({
+  problem,
+  timeOf,
+  onOpen,
+}: {
+  problem: Problem;
+  timeOf: (at: string) => string;
+  onOpen: (eventId: string) => void;
+}) {
+  const kind = KIND_LABEL[problem.kind];
+  const time = timeOf(problem.at);
   return (
-    <section className="sd-problems" aria-labelledby="sd-problems-title">
-      <div className="ah-row ah-wrap" style={{ gap: 10, marginBottom: 6 }}>
+    <li className="sd-problem">
+      <div className="ah-row ah-wrap" style={{ gap: 8 }}>
+        {!BY_AGENT.has(problem.resolution) && <ProblemBadge problem={problem} />}
+        <b className="ah-small">{kind}</b>
+        {problem.tool && <span className="ah-tool">{problem.tool}</span>}
+        <span className="ah-grow" />
+        <span className="ah-small ah-muted">{rowActorOf(problem.actor).label}</span>
+        <time className="ah-mono ah-small ah-subtle" dateTime={problem.at}>
+          {time}
+        </time>
+        <MomentLink
+          eventId={problem.event_id}
+          label={`Open moment: ${kind} at ${time}`}
+          onOpen={onOpen}
+        />
+      </div>
+      {problem.where && (
+        <code className="ah-mono ah-small sd-problem-where" title={problem.where}>
+          <Redacted text={problem.where} />
+        </code>
+      )}
+      {problem.message && (
+        <div className="ah-small sd-problem-message" title={problem.message}>
+          <Redacted text={problem.message} />
+        </div>
+      )}
+    </li>
+  );
+}
+
+/**
+ * "What went wrong" (AC-201.15): what still needs the owner stays open; what the agent or the
+ * owner already dealt with folds into one line, so the timeline below stays in view.
+ */
+export function ProblemsPanel({ problems, timeOf, onOpen }: ProblemsPanelProps) {
+  const [showHandled, setShowHandled] = useState(false);
+  if (problems.items.length === 0) return null;
+  const attention = problems.items.filter((problem) => ATTENTION.has(problem.resolution));
+  const handled = problems.items.filter((problem) => !ATTENTION.has(problem.resolution));
+  const calm = attention.length === 0;
+  return (
+    <section
+      className={`sd-problems${calm ? " sd-problems-calm" : ""}`}
+      aria-labelledby="sd-problems-title"
+    >
+      <div className="ah-row ah-wrap" style={{ gap: 10 }}>
+        <Icon
+          name={calm ? "circle-check" : "triangle-alert"}
+          size="sm"
+          style={{ color: calm ? "var(--done)" : "var(--failed)" }}
+        />
         <h2 id="sd-problems-title" className="sd-problems-title">
           What went wrong
         </h2>
-        <span className="ah-small ah-muted">{problemCounts(problems.items)}</span>
+        <span className="ah-small ah-muted">
+          {calm
+            ? `Nothing needs you · the agent dealt with ${String(handled.length)} ${handled.length === 1 ? "problem" : "problems"}: ${kindCounts(handled)}`
+            : problemCounts(problems.items)}
+        </span>
+        <span className="ah-grow" />
+        {handled.length > 0 && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={showHandled ? "chevron-up" : "chevron-down"}
+            aria-expanded={showHandled}
+            aria-controls="sd-problems-handled"
+            onClick={() => {
+              setShowHandled(!showHandled);
+            }}
+          >
+            {showHandled ? "Hide handled" : `Show ${String(handled.length)} handled`}
+          </Button>
+        )}
       </div>
-      {problems.summary.length > 0 && (
+      {problems.summary.length > 0 && (!calm || showHandled) && (
         <ol className="sd-problems-summary" aria-label="Summary">
           {problems.summary.map((line) => (
             <li key={`${line.event_id}-${line.text}`} className="ah-small">
@@ -147,41 +238,20 @@ export function ProblemsPanel({ problems, timeOf, onOpen }: ProblemsPanelProps) 
           ))}
         </ol>
       )}
-      <ul className="sd-problems-list" aria-label="Problems">
-        {problems.items.map((problem) => {
-          const kind = KIND_LABEL[problem.kind];
-          const time = timeOf(problem.at);
-          return (
-            <li key={problem.event_id} className="sd-problem">
-              <div className="ah-row ah-wrap" style={{ gap: 8 }}>
-                <ProblemBadge problem={problem} />
-                <b className="ah-small">{kind}</b>
-                {problem.tool && <span className="ah-tool">{problem.tool}</span>}
-                {problem.where && (
-                  <code className="ah-mono ah-small sd-problem-where">
-                    <Redacted text={problem.where} />
-                  </code>
-                )}
-                <span className="ah-grow" />
-                <span className="ah-small ah-muted">{rowActorOf(problem.actor).label}</span>
-                <time className="ah-mono ah-small ah-subtle" dateTime={problem.at}>
-                  {time}
-                </time>
-                <MomentLink
-                  eventId={problem.event_id}
-                  label={`Open moment: ${kind} at ${time}`}
-                  onOpen={onOpen}
-                />
-              </div>
-              {problem.message && (
-                <div className="ah-small sd-problem-message">
-                  <Redacted text={problem.message} />
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      {attention.length > 0 && (
+        <ul className="sd-problems-list" aria-label="Needs attention">
+          {attention.map((problem) => (
+            <ProblemRow key={problem.event_id} problem={problem} timeOf={timeOf} onOpen={onOpen} />
+          ))}
+        </ul>
+      )}
+      {showHandled && handled.length > 0 && (
+        <ul id="sd-problems-handled" className="sd-problems-list" aria-label="Handled">
+          {handled.map((problem) => (
+            <ProblemRow key={problem.event_id} problem={problem} timeOf={timeOf} onOpen={onOpen} />
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

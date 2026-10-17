@@ -177,6 +177,8 @@ test("Session detail names the actors, says what they did and what went wrong", 
     const panel = page.getByRole("region", { name: "What went wrong" });
     await expect(panel.getByText(/2 problems/).first()).toBeVisible();
     await expect(panel.getByText("Handled by the agent").first()).toBeVisible();
+    // What the agent already handled folds behind one button (AC-265.6).
+    await panel.getByRole("button", { name: /^Show \d+ handled$/ }).click();
     await expect(panel.getByText(/test_csv_header/).first()).toBeVisible();
   });
 });

@@ -65,6 +65,24 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The chat folds what Claude does between two messages, its calls and the thoughts between them, into one line
+  ("Ran 3 commands, read 2 files, thought 12 s", or the call it is on while it works, and how many failed). The line
+  opens the steps in an Activity drawer over the right of the page; a permission card stays under the line. The
+  session page's "What went wrong" folds the problems the agent or you already dealt with into one line, "Nothing
+  needs you · …", behind "Show N handled" (AGH-265).
+- The chat's header shows the files Claude changed as a chip (files, lines added and removed, how many wait for
+  review); it opens a Changed files drawer listing them by folder, like source control, each opening alone with
+  every change to it as a diff and a Viewed mark kept per session in the browser. Each turn that edited files shows
+  them in a card under its activity line. Both drawers resize from their left edge, by mouse or keyboard, or widen
+  to the page (AGH-265).
+- A file change in the chat's review and activity panel shows the file's real line numbers (git's two gutters,
+  kept in view while the code scrolls sideways) once Claude reports the change: the driver stores it as the
+  `tool.result` record's `diff`. A long file's changes keep their height and scroll whole (AGH-265).
+- In the chat's review, + beside a changed line (Shift+click for a range) comments on it, like on a pull request:
+  the comment is a message to the session's own Claude, anchored to the file and lines with the code, so it stays in
+  the log and comes back after a reload. Each thread shows under its line with Claude's answers and your replies,
+  waits for Claude, and can be resolved; in the chat a review comment reads as one, linking back to its file
+  (AGH-265).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to
