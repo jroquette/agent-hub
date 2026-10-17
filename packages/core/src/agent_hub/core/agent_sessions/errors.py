@@ -159,10 +159,11 @@ class StoreSequenceError(AgentHubError):
 
 class InvalidScreenshotError(AgentHubError):
     """The screenshot is not valid base64 or not a PNG (422); ``reason`` is fixed text, never
-    the data."""
+    the data. ``pointer`` is the JSON pointer of its ``data`` in the request body."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, *, pointer: str = "/screenshot/data") -> None:
         self.reason = reason
+        self.pointer = pointer
         super().__init__(f"invalid screenshot: {reason}")
 
 

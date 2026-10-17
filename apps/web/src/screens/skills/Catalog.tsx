@@ -192,6 +192,7 @@ function DraftsInProgress({ project, now }: { project: string; now: number }) {
               <span className="ah-kind-badge" data-kind={draft.kind} aria-hidden="true">
                 <Icon name={KIND_ICON[draft.kind]} size="sm" />
               </span>
+              {draft.target && <span className="ah-muted">editing</span>}
               <span className="ah-mono">{draft.name ?? `untitled ${draft.kind}`}</span>
               <span className="ah-muted">
                 <Time

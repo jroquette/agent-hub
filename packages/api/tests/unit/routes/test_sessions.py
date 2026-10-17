@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Any
 
 from agent_hub.core.events.event import EventType
-from agent_hub.core.readmodels.filters import PageRequest, SessionFilter
+from agent_hub.core.readmodels.filters import EventPageRequest, SessionFilter
 from agent_hub.core.sessions.session import (
     SessionCost,
     SessionFileChange,
@@ -101,7 +101,7 @@ def test_maps_types_and_page_when_session_events_listed(wired: Any) -> None:
             (
                 "session-1",
                 frozenset({EventType.TOOL_CALL, EventType.TOOL_RESULT}),
-                PageRequest(cursor="abc", limit=200),
+                EventPageRequest(cursor="abc", limit=200),
             ),
         )
     ]

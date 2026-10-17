@@ -3,7 +3,6 @@ import type { RouteObject } from "react-router";
 
 import { useApi } from "./lib/api";
 import { AgentSessionScreen } from "./screens/agent-session";
-import { ApprovalsScreen } from "./screens/approvals";
 import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
@@ -20,7 +19,7 @@ import { SessionsListScreen } from "./screens/sessions-list";
 import { liveRedirectTarget } from "./screens/sessions-list/liveRedirect";
 import { SettingsScreen } from "./screens/settings";
 import { SkillDetailScreen, SkillsPickerScreen, SkillsScreen } from "./screens/skills";
-import { NewDraftScreen, StudioScreen } from "./screens/skills/Studio";
+import { EditDraftScreen, NewDraftScreen, StudioScreen } from "./screens/skills/Studio";
 import { WelcomeScreen } from "./screens/welcome";
 import { WorkflowDetailScreen, WorkflowsScreen } from "./screens/workflows";
 import { AppShell } from "./shell/AppShell";
@@ -61,8 +60,10 @@ export const appRoutes: RouteObject[] = [
           { path: "projects/:project/skills/new/:kind", element: <NewDraftScreen /> },
           { path: "projects/:project/skills/drafts/:draftId", element: <StudioScreen /> },
           { path: "projects/:project/skills/:kind/:source/:name", element: <SkillDetailScreen /> },
-          { path: "approvals", element: <ApprovalsScreen /> },
-          { path: "approvals/:approvalId", element: <ApprovalsScreen /> },
+          {
+            path: "projects/:project/skills/:kind/:source/:name/edit",
+            element: <EditDraftScreen />,
+          },
           { path: "live", element: <LiveRedirect /> },
           { path: "sessions", element: <SessionsListScreen /> },
           { path: "sessions/:sessionId", element: <SessionDetailScreen /> },

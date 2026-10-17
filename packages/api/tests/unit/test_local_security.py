@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 from agent_hub.api.app import create_app
 from agent_hub.api.local_security import (
     AGENT_SESSION_CREATE_BODY_BYTES,
+    AGENT_SESSION_MESSAGE_BODY_BYTES,
     CONTENT_SECURITY_POLICY,
     WEBSOCKET_POLICY_VIOLATION,
     LocalSecurityMiddleware,
@@ -334,7 +335,7 @@ def test_accepts_large_body_when_create_session_under_create_body_cap() -> None:
         "/api/v1/agent-sessions", content=_streamed(AGENT_SESSION_CREATE_BODY_BYTES)
     )
 
-    assert AGENT_SESSION_CREATE_BODY_BYTES == 8 * 1024 * 1024
+    assert AGENT_SESSION_CREATE_BODY_BYTES == 16 * 1024 * 1024
     assert (sized.status_code, sized.json()) == (200, {"length": len(body)})
     assert (streamed.status_code, streamed.json()) == (200, {"length": len(body)})
 
@@ -357,8 +358,9 @@ def test_refuses_body_when_create_session_over_create_body_cap() -> None:
 @pytest.mark.parametrize(
     ("method", "path"),
     [
-        ("POST", "/api/v1/agent-sessions/0123/messages"),
         ("PUT", "/api/v1/agent-sessions"),
+        ("POST", "/api/v1/agent-sessions/0123/messages/extra"),
+        ("PUT", "/api/v1/agent-sessions/0123/messages"),
         ("POST", "/api/v1/agent-sessions/"),
         ("PATCH", "/api/v1/agent-sessions"),
     ],
@@ -375,3 +377,18 @@ def test_keeps_default_body_cap_when_other_route_or_method(method: str, path: st
         assert response.json()["detail"] == (
             f"Request bodies are limited to {MAX_BODY_BYTES} bytes."
         )
+
+
+def test_caps_message_body_at_message_cap_when_images_may_be_pasted() -> None:
+    path = "/api/v1/agent-sessions/0123/messages"
+
+    client = _capped_client()
+    at_cap = client.post(path, content=_streamed(AGENT_SESSION_MESSAGE_BODY_BYTES))
+    over = client.post(path, content=_streamed(AGENT_SESSION_MESSAGE_BODY_BYTES + 1))
+
+    assert AGENT_SESSION_MESSAGE_BODY_BYTES == 64 * 1024 * 1024
+    assert at_cap.status_code == 200
+    assert over.status_code == 413
+    assert over.json()["detail"] == (
+        f"Request bodies are limited to {AGENT_SESSION_MESSAGE_BODY_BYTES} bytes."
+    )

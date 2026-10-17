@@ -13,6 +13,55 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub-workflow` ships two read-only review skills and a design agent (AGH-274). `/overengineering-review` reads a
+  diff, branch, PR or module for abstractions, options, layers and tests with no real consumer today, proves each
+  finding with a search and names the smaller shape (`references/patterns.md`). `/ux-review` holds a screen or a UI
+  diff to the design system the repo's `AGENTS.md` names, and to standard heuristics and WCAG 2.2
+  (`references/checklist.md`). The `ux-designer` agent writes one `ux-<new|change>-<screen>.md` design per screen a
+  feature touches, for your approval before the plan; `models.agents` takes `ux-designer`. `./hub sync` adds them
+  and links them into `.claude/`; a project skill or agent of the same name is a conflict, so rename yours first.
+- Discuss with Claude works on every screen: a screen that names no feature, workflow, skill, agent, hook or note is
+  itself the subject, and the first message takes along the screen's text and a screenshot of it (AGH-273).
+- A feature's Spec, Research and Plan tabs open on a short human summary of the record (For humans), with the
+  record itself one click away (Agent markdown); a summary point opens the record at its section, and the tab says
+  when the record changed after its summary was written. The new hub-workflow `/summarize` skill writes
+  `brain/features/<slug>/summaries/<record>.md`, and `/feature`, `/research` and `/create-plan` run it whenever a
+  record is written or amended (run `hub sync` to get it). The brain note route returns the file's `sha256`
+  (AGH-269).
+- A feature's acceptance criteria read as sentences: the tab is "Acceptance criteria", every criterion is listed at
+  once with its status in words, the evidence in plain words ("4 tests passed", with the commit and date), how many
+  of the feature's records cite it and a labelled Discuss button; opening one shows what must be true, how it was
+  proven (commit, pull request, result, failed before the change, its eval), the command to check it, and every
+  record and section that cites it (AGH-269).
+- A feature's Eval tab runs the hub-workflow evaluator: pick the whole feature or one ticket and press Evaluate; a
+  session starts in the project's hub folder and the tab follows it (Evaluating, Waiting for you with Answer in chat,
+  Finished with a Show link to the new eval, Finished without a new eval) with a link to its chat. The selected eval
+  is read in place below the list, kept in `?eval=` (default: the newest), and Discuss follows it (AGH-269).
+- Learnings has a search, quick views (All, Ready to decide, Blocked) and compact Project, Claude and Source menus with
+  counts, all in the URL. Triage with Claude reviews up to 15 proposals of one project in one session, each the way a
+  single review does; a progress strip follows it live and each row and detail shows Claude's recommendation (AGH-272).
+- Review a learning with Claude: a session in the hub folder checks the note against `/learn`'s bar and writes its
+  verdict, checks, a suggested target and, when needed, a revised body into a draft folder; the learning shows
+  them as Claude's recommendation, with Use Claude's revision (it becomes your edit) and Use target. Nothing is
+  decided by the agent (AGH-272).
+- Discuss offers one-click starters: "Is this worth keeping?" on a proposed learning (Discuss opens on arrival),
+  "Is this still true?", "Improve the note" and "Duplicate or overlap?" on a learning or a Brain note (AGH-272).
+- Edit a learning's note before accepting it: Edit note opens a Write / Preview editor of the body in place, the edit
+  is a draft kept in this browser (it survives a reload; Discard edits asks first; a warning shows when the hub's
+  note changed since), and Accept sends it as `note_body`, so the hub PR's one commit moves the note and writes the
+  edited body under its kept frontmatter (ADR 0037, AGH-272).
+- Feature detail's Tickets tab opens on a live flow of the tickets: the parallel groups left to right, then the
+  settled tickets, each card with its Linear status, readiness, AC progress, review and critical path, and the
+  feature's epic (a ticket that parents others: the plan's new `parent`, else Linear's parent issue) above it with its
+  children's progress. A started ticket reads "In progress", never "Can start now"; Implement counts the tickets in
+  progress and ends once every ticket is In Review or Done. The tab rereads Linear every 30 s and the Features list
+  its records every 30 s; `hub doctor` checks the plan's `parent` (AGH-268).
+- The ticket flow is a graph: an edge from each blocker to the ticket it holds back, cards that lead with id and
+  title, and done tickets kept in their step. A feature opens on the tab of its phase, each golden path step opens
+  the tab holding its evidence, and the header's ticket chips show their Linear status (AGH-268).
+- `GET /api/v1/sessions` takes `issue` (any case). The Tickets table lists each ticket's sessions, the title's scope in
+  its own column, and a ticket that can start now has Start: a Claude session in the hub folder that works it with
+  `/feature` (AGH-268).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
@@ -42,9 +91,74 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   short explanation of each, kind tiles with 30-day use, a sort, and hooks grouped by lifecycle event (AGH-262).
 - A message to an ended local session (hub web stopped, idle timeout, closed, failed) reopens the same session on its
   Claude conversation and plays it (AGH-262).
+- `make playground-export [SINCE=<ref>]`: the playground's commits since the last export (a local
+  `playground-export/*` tag), as a delivery's input in `.playground/exports/<stamp>/` (ignored by git). Each request
+  the owner made is one delivery in `brief.md` and `export.json`: their turns in their own words, the commits, files,
+  screens, hub files and uncommitted files it made, with its own patch; the touched screens are captured by
+  Playwright from the `HEAD` build on synthetic data. Each export also commits the checkout as it is to a local
+  `<prefix>/playground-snapshot/<stamp>` branch, never pushed (AGH-263).
+- The chat shows a session's first screenshot again after a reload (the browser keeps the latest 20 in IndexedDB; the
+  server still stores no image bytes). A screenshot thumbnail opens it large, and in New session it opens a markup
+  editor (arrow, box, ellipse, pen, highlighter, text, crop, colours, undo) whose marks go into the PNG that is sent
+  (AGH-266).
+- A chat message can carry up to ten images: paste, drop or pick them into the composer, mark them up, and they go
+  to Claude before the text; the record keeps a marker per image, never its bytes. A message's text may be up to
+  1 MiB by default (`--message-max-bytes` up to 4 MiB). The composer's mode and model are compact pills (AGH-266).
+- Knowledge › Brain and Knowledge › Skills, with All projects in scope, list the projects in a table that says what
+  each holds before you open it: Brain shows the current focus and counts notes, features, decisions, learnings and
+  the inbox to triage; Skills counts skills, agents and hooks, those used in 30 days and those with problems. A
+  project's Brain and Skills pages get a breadcrumb and a purpose line, the scope switcher shows the page's project,
+  and the Brain tree groups Start here, Folders (with note counts) and the unreviewed inbox, with a note filter (`/`)
+  (AGH-270).
+- Edit an existing skill, agent or hook with Claude: its detail page has Edit with Claude beside Discuss, which opens
+  the Studio on an edit draft (the open one when there is one). Claude changes a copy in `.hub-drafts/<id>/`, the
+  preview shows the diff against the current version, and Publish writes it over the item; nothing is committed
+  (AGH-271).
 
 ### Changed
 
+- Session detail reads a session's events 1,000 at a time (`GET /sessions/{id}/events` takes `limit` up to 1,000;
+  the default stays 200) and starts reading them alongside the session, so a 5,000-event session is complete in
+  about half the time (AGH-275).
+- The chat folds what Claude does between two messages, its calls and the thoughts between them, into one line
+  ("Ran 3 commands, read 2 files, thought 12 s", or the call it is on while it works, and how many failed). The line
+  opens the steps in an Activity drawer over the right of the page; a permission card stays under the line. The
+  session page's "What went wrong" folds the problems the agent or you already dealt with into one line, "Nothing
+  needs you · …", behind "Show N handled" (AGH-265).
+- The chat's header shows the files Claude changed as a chip (files, lines added and removed, how many wait for
+  review); it opens a Changed files drawer listing them by folder, like source control, each opening alone with
+  every change to it as a diff and a Viewed mark kept per session in the browser. Each turn that edited files shows
+  them in a card under its activity line. Both drawers resize from their left edge, by mouse or keyboard, or widen
+  to the page (AGH-265).
+- A file change in the chat's review and activity panel shows the file's real line numbers (git's two gutters,
+  kept in view while the code scrolls sideways) once Claude reports the change: the driver stores it as the
+  `tool.result` record's `diff`. A long file's changes keep their height and scroll whole (AGH-265).
+- In the chat's review, + beside a changed line (Shift+click for a range) comments on it, like on a pull request:
+  the comment is a message to the session's own Claude, anchored to the file and lines with the code, so it stays in
+  the log and comes back after a reload. Each thread shows under its line with Claude's answers and your replies,
+  waits for Claude, and can be resolved; in the chat a review comment reads as one, linking back to its file
+  (AGH-265).
+- Knowledge › Skills is now Toolkit (its tabs stay Skills, Agents and Hooks), and agents come first. A skill, agent or
+  hook detail reads at a glance: a lean header (how to use it, state, health), Steps and Text first, an About rail
+  (source, `hub.lock`, tools, context cost, relations), diagnostics only when there are findings. Steps carry the
+  type they declare and a plain summary, and only declared gates show as gates (AGH-271).
+- The Skills catalog stays on the design system (neutral kind badges, type on the scale, no dashed outline on the
+  managed tag and New link, full text on hover when truncated) and lays out at every width: tiles four across or two
+  by two, hook rows aligned per event (AGH-271).
+- The sidebar is grouped by task: Portfolio, then Work (Sessions, Workflow runs, Workflows, Features), then
+  Knowledge (Learnings, Brain and Skills as items of their own), with Health and Settings pinned to the footer
+  (AGH-273).
+- The project overview is written for product people: what needs you and this week's numbers first, plain section
+  names, the agents' tickets as one list with their step progress instead of seven mostly empty columns, recent work
+  without turns and errors, and repositories, checks, doctor findings and hub configuration folded into a collapsed
+  "Setup and health" section (AGH-273).
+- Learnings lists the proposals that can be decided first and the blocked ones after them, each naming why
+  ("{r} ready · {b} blocked"); a missing note explains itself and the detail says "Cannot be decided here" in a
+  banner. Titles drop an agent's "Proposal:" prefix and wrap to two lines, the detail shows the note's frontmatter
+  (type, repos, last verified, provenance), and the status is in the URL (`?status=`), so Back undoes it (AGH-272).
+- The Features list reads at a glance: who needs to act ("Waiting for you"), the step position and only the step's own
+  progress in the golden path, header hints instead of a footnote, fixed column widths, the extra issues in a
+  popover, the verdict's scope under its badge, and shipped features last (AGH-268).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to
@@ -55,6 +169,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - `hub web` highlights completed code blocks in the chat, notes and plans (about a dozen languages, lazily loaded,
   design-token colours in both themes) with `lowlight`; a block still streaming or over 2,000 lines or 64 KiB stays
   plain, and agent output stays inert (ADR 0034, AGH-252, AC-234.31).
+- At the live-sessions limit, a new session no longer gets a 429 while some are only idle: the one idle the longest
+  ends `idle_timeout` and a message reopens it in place. Only busy sessions (running, or waiting on an answer) fill
+  the limit now (AGH-263).
 - The shake is lighter (3 reversals of 25 px within 700 ms) and captures only the visible screen, so a long page
   such as a chat opens New session at once. Under `make dev` or `make live` it starts in the project and folder of
   the served checkout, whatever the scope (AGH-262).
@@ -62,15 +179,36 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A shake opens New session on every screen, Settings and "All projects" included: with no project in the route
   or the scope, it starts in the first registered project, as Sessions' New session does. It still does nothing
   when no project is registered (AGH-262).
+- The chat's permission card is easier to read and answer: it says what the call is for, wraps the command as a
+  terminal line, names the Always allow rule on one line and shows the A / D keys only while it has focus. Questions
+  are radio or checkbox rows with Claude's descriptions in view, a Recommended tag, an Other field in place and a
+  neutral Skip question; several questions go one page at a time with numbered steps; an answered question keeps
+  each answer, and its outcome reads Answered, Skipped, Plan approved or Kept planning (AGH-264).
+
+### Removed
+
+- The Approvals screen and its sidebar entry and `g a` shortcut: a workflow gate is answered in its run's page, any
+  other approval in its session, and Needs you, activity and search hits link there (AGH-273).
 
 ### Fixed
 
+- A session started from hub web takes Claude Code's title during its first turn (checked every 5 s until it has
+  one) and when it ends, so a session stopped during its first turn (a hub web restart) no longer keeps its first
+  prompt as its name for good; the first sweep after a restart names the sessions that ended unnamed (AGH-267).
+- Accept and Reject on a learning work for a note `/learn` wrote in the hub checkout and nobody pushed: the pull
+  request adds it from the checkout, which is only read (ADR 0037, AGH-272).
+- A hub whose `origin` is an ssh host alias `github.com-<account>` counts as on GitHub, so its learning actions are
+  on (ADR 0037, AGH-272).
 - `make dev` on macOS no longer shows a blank page: the chat's model module `transcript.ts` is now `model.ts`, so
   `./Transcript` no longer resolves to it on a case-insensitive file system (AGH-262).
 - New session is short: Where (the project, then the working folder last used for it) and the Prompt, which has
   focus; Mode and Model wait under Options with a one-line summary, Ctrl+Enter or Cmd+Enter starts, and a disabled
   Start says why. The "Start sessions in" select left the Sessions header, and the dialog's "Start from" picker of
   past sessions is gone; fork returns with AGH-249 (AGH-248).
+- Resume and fork are back: an ended or failed driven session's row and tile in Sessions carry a Resume link to its
+  chat, where a message resumes it in place, and Fork… in the chat opens New session on its folder, mode and model
+  (Ask before edits for an auto session outside the playground) to start a new conversation from it (AGH-249,
+  AC-234.15).
 
 ## [0.15.0] - 2026-10-16
 

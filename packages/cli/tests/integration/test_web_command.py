@@ -464,7 +464,7 @@ def test_reads_limit_option_when_option_given(served: ServedApp, tmp_path: Path)
         ["--permission-timeout-seconds", "0"],
         ["--session-log-records", "99"],
         ["--session-log-bytes", "65535"],
-        ["--message-max-bytes", "524289"],
+        ["--message-max-bytes", "4194305"],
         ["--cloud-timeout-seconds", "4"],
         ["--session-retention-days", "3651"],
     ],

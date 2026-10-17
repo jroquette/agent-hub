@@ -15,7 +15,7 @@ Each direction reads at most ``MAX_RELATIONS``; more marks the summary ``relatio
 (E10).
 
 Linear rejects a query over 10,000 complexity points (a property 0.1, an object 1, a connection
-multiplying its nodes by ``first``). ``BATCH_SIZE`` and ``MAX_RELATIONS`` keep this one at 4,652
+multiplying its nodes by ``first``). ``BATCH_SIZE`` and ``MAX_RELATIONS`` keep this one at 4,679
 (half the cap, with a margin), checked by the tests from the query text itself.
 
 Each request waits at most ``timeout_s`` per blocking step; between requests, a read that has
@@ -53,13 +53,15 @@ READ_OPERATION: Final = "issue_summaries"
 DEFAULT_TIMEOUT_S: Final = 10.0
 DEFAULT_DEADLINE_S: Final = 20.0
 # Issue numbers per request (one team), and the page size asked for. With MAX_RELATIONS = 25
-# the query scores 4,652 of Linear's 10,000 complexity points (see READ_ISSUE_SUMMARIES).
+# the query scores 4,679 of Linear's 10,000 complexity points (see READ_ISSUE_SUMMARIES).
 BATCH_SIZE: Final = 25
 # The relation type that orders work: the relation's issue blocks its related issue.
 BLOCKS: Final = "blocks"
 
+# ``parent`` is the issue this one is a sub-issue of: it marks the feature's epic.
 _SUMMARY_FIELDS = (
     "identifier title url priority estimate state { name type } assignee { displayName }"
+    " parent { identifier }"
 )
 # A related issue is read only for what an external blocker shows.
 _RELATED_FIELDS = "identifier title url state { name type }"
@@ -72,9 +74,9 @@ _INVERSE_RELATIONS = (
     " pageInfo { hasNextPage } }"
 )
 # Linear's complexity, with first = BATCH_SIZE = 25 and MAX_RELATIONS = 25: an issue node is
-# 3.8 points (1 + 5 properties + state 1.2 + assignee 1.1), a relation node 3.6 (1 + type +
-# related issue 1 + 3 properties + state 1.2), each direction 25 x 3.6 + pageInfo 1.1, so
-# 25 x (3.8 + 2 x 91.1) + pageInfo 1.2 = 4,651.2, rounded up to 4,652 (the cap is 10,000).
+# 4.9 points (1 + 5 properties + state 1.2 + assignee 1.1 + parent 1.1), a relation node 3.6
+# (1 + type + related issue 1 + 3 properties + state 1.2), each direction 25 x 3.6 + pageInfo
+# 1.1, so 25 x (4.9 + 2 x 91.1) + pageInfo 1.2 = 4,678.7, rounded up to 4,679 (cap 10,000).
 READ_ISSUE_SUMMARIES: Final = (
     "query ReadIssueSummaries($filter: IssueFilter!, $first: Int!, $after: String) {"
     " issues(filter: $filter, first: $first, after: $after) {"
@@ -98,6 +100,7 @@ _SUMMARY_SHAPE: dict[str, Shape] = {
     "estimate": (int, float, type(None)),
     "state": _STATE_SHAPE,
     "assignee": Nullable({"displayName": str}),
+    "parent": Nullable({"identifier": str}),
 }
 
 
@@ -258,8 +261,10 @@ def _truncated(node: Any, direction: str) -> bool:
 def _summary(node: Any) -> IssueSummary:
     blocks = [issue["identifier"] for issue in _related(node, "relations", "relatedIssue")]
     blocked_by = [issue["identifier"] for issue in _related(node, "inverseRelations", "issue")]
+    parent = node["parent"]
     return _bare_summary(node).model_copy(
         update={
+            "parent": None if parent is None else _check_identifier(parent["identifier"]),
             "blocks": tuple(dict.fromkeys(blocks)),
             "blocked_by": tuple(dict.fromkeys(blocked_by)),
             "relations_truncated": _truncated(node, "relations")

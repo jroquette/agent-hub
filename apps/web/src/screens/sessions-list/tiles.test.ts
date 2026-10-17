@@ -39,7 +39,7 @@ describe("tileOf (grid tiles from sessions)", () => {
       lastAction: "Waiting 1 min · a guard ask has no timeout",
       lastIcon: "file-pen",
       notice: "make check failed 2 times",
-      link: { href: "/approvals", label: "Open approval" },
+      link: { href: `/sessions/${encodeURIComponent(tile.id)}`, label: "Open session" },
       problems: "Needs you: command_exit in make check",
       needsYou: true,
       elapsed: 660,
@@ -159,12 +159,22 @@ describe("waitingLink", () => {
     });
   });
 
-  it("links a hook-observed permission prompt and any other wait to the approvals", () => {
-    const prompt = aSession({ status: "waiting", waiting_reason: "Permission prompt" });
+  it("AC-273.21: links a hook-observed permission prompt and any other wait to its session", () => {
+    const prompt = aSession({
+      id: anId(1, "5091b986"),
+      status: "waiting",
+      waiting_reason: "Permission prompt",
+    });
     const plan = aSession({ status: "waiting", waiting_reason: "Plan approval" });
 
-    expect(waitingLink(prompt)).toEqual({ href: "/approvals", label: "Open approval" });
-    expect(waitingLink(plan)).toEqual({ href: "/approvals", label: "Open approval" });
+    expect(waitingLink(prompt)).toEqual({
+      href: `/sessions/${anId(1, "5091b986")}`,
+      label: "Open session",
+    });
+    expect(waitingLink(plan)).toEqual({
+      href: `/sessions/${encodeURIComponent(plan.id)}`,
+      label: "Open session",
+    });
   });
 });
 

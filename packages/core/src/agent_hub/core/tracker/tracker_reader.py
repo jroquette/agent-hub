@@ -37,7 +37,8 @@ class IssueSummary(BaseModel):
     ``priority`` is Linear's 0 (none) to 4 (low), 1 being urgent; ``estimate`` is None when not
     estimated. ``blocks`` names the issues this one blocks and ``blocked_by`` its blockers, in no
     defined order; ``relations_truncated`` is True when a direction had more than
-    ``MAX_RELATIONS`` (the first ``MAX_RELATIONS`` the tracker returned are kept).
+    ``MAX_RELATIONS`` (the first ``MAX_RELATIONS`` the tracker returned are kept). ``parent`` is
+    the identifier of the issue this one is a sub-issue of (an epic), None when it has none.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -52,6 +53,7 @@ class IssueSummary(BaseModel):
     blocks: tuple[str, ...]
     blocked_by: tuple[str, ...]
     relations_truncated: bool = False
+    parent: str | None = None
 
 
 class TicketSnapshot(BaseModel):
@@ -61,8 +63,8 @@ class TicketSnapshot(BaseModel):
     does not know, in the same order; ``external`` the blockers of those issues that were not
     asked for, sorted by id, read from the same relations (so they carry no relations of their
     own: ``blocks`` and ``blocked_by`` are empty). An external blocker carries only its id,
-    title, state and url: its ``assignee``, ``priority`` and ``estimate`` are None, so the read
-    stays within the tracker's query cost limit.
+    title, state and url: its ``assignee``, ``priority``, ``estimate`` and ``parent`` are None, so
+    the read stays within the tracker's query cost limit.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

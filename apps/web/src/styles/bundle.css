@@ -306,10 +306,18 @@ pre {
   line-height: 16px;
   padding: 6px 8px;
   border-radius: var(--radius-md);
-  white-space: nowrap;
+  white-space: normal;
+  width: max-content;
   max-width: 320px;
   box-shadow: var(--shadow-popover);
   pointer-events: none;
+}
+/* A table scrolls, so a tooltip opening upward from its header or first rows would be cut off:
+   those open downward instead. */
+.ah-table thead .ah-tip,
+.ah-table tbody tr:nth-child(-n + 3) .ah-tip {
+  bottom: auto;
+  top: calc(100% + 6px);
 }
 .ah-tip-wrap:not(:hover):not(:focus-within) > .ah-tip:not(.ah-tip-open) {
   display: none;
@@ -417,6 +425,10 @@ pre {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+}
+.ah-seg button[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .ah-seg button[aria-pressed="true"] {
   background: var(--surface);
@@ -2385,6 +2397,25 @@ pre {
   font-weight: 500;
   padding-right: var(--space-2);
 }
+.ah-golden-select {
+  all: unset;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  align-self: flex-start;
+  margin-right: var(--space-2);
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+.ah-golden-select:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.ah-golden-select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 .ah-golden-meta {
   font-size: 12px;
   color: var(--text-subtle);
@@ -2866,6 +2897,19 @@ button.ah-tree-item {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
+}
+.ah-facet-btn {
+  height: 28px;
+  font-size: 12px;
+}
+.ah-facet-btn[data-active="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ah-facet-btn[data-active="true"] .ah-subtle {
+  color: inherit;
+  opacity: 0.8;
 }
 .ah-chip-part,
 .ah-th-sort {

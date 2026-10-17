@@ -78,7 +78,6 @@ const PAGES: SmokePage[] = [
     heading: `Run ${short(RUN)}`,
     shows: /Failed at Verifying · attempt 2 of 2/,
   },
-  { name: "Approvals", path: "/approvals", heading: "Approvals", shows: "How to decide" },
   { name: "Features", path: "/features", heading: "Features", shows: "export-button" },
   { name: "Health", path: "/health", heading: "Health", shows: /Checked on request/ },
 ];
@@ -177,6 +176,8 @@ test("Session detail names the actors, says what they did and what went wrong", 
     const panel = page.getByRole("region", { name: "What went wrong" });
     await expect(panel.getByText(/2 problems/).first()).toBeVisible();
     await expect(panel.getByText("Handled by the agent").first()).toBeVisible();
+    // What the agent already handled folds behind one button (AC-265.6).
+    await panel.getByRole("button", { name: /^Show \d+ handled$/ }).click();
     await expect(panel.getByText(/test_csv_header/).first()).toBeVisible();
   });
 });
@@ -214,9 +215,13 @@ test("Knowledge opens a proposal, shows its note and accepts it into a pull requ
 test("Feature detail renders its Spec and Plan tabs", async ({ page, baseURL }) => {
   await visit(page, baseURL, "/features/demo/export-button", async () => {
     await expect(page.getByRole("heading", { level: 1, name: "export-button" })).toBeVisible();
+    // A record tab opens on its human summary; the record itself is one click away (AC-269.13).
+    const agentMarkdown = page.getByRole("button", { name: /Agent markdown/ });
     await page.getByRole("tab", { name: "Spec" }).click();
+    await agentMarkdown.click();
     await expect(page.getByRole("heading", { name: "Export button" })).toBeVisible();
     await page.getByRole("tab", { name: "Plan" }).click();
+    if ((await agentMarkdown.getAttribute("aria-pressed")) !== "true") await agentMarkdown.click();
     await expect(page.getByText("Add the export route.")).toBeVisible();
   });
 });
@@ -225,7 +230,7 @@ test("Brain shows the tree and a note, and follows an in-app link", async ({ pag
   await visit(page, baseURL, "/projects/demo/brain/index.md", async () => {
     await expect(page.getByRole("heading", { level: 1, name: "Brain", exact: true })).toBeVisible();
     const tree = page.getByRole("navigation", { name: "Brain notes" });
-    await expect(tree.getByText("now.md")).toBeVisible();
+    await expect(tree.getByRole("link", { name: "Now" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Demo brain" })).toBeVisible();
     await page.getByRole("link", { name: "what we focus on now" }).click();
     await expect(page).toHaveURL(/\/projects\/demo\/brain\/now\.md$/);
@@ -234,7 +239,7 @@ test("Brain shows the tree and a note, and follows an in-app link", async ({ pag
 });
 
 // AGH-136 (AC-136.35, E4): `hub web` runs without LINEAR_API_KEY, so the Tickets tab shows the
-// plan's tickets (T1 is DEM-7; T2, not created yet, waits on it), the planning view and the
+// plan's tickets (T1 is DEM-7; T2, not created yet, waits on it), the ticket flow and the
 // "not connected" notice. Run alone by test_shows_plan_notice_when_feature_tickets_opened.
 test("Feature detail Tickets tab shows the plan's tickets, planning and the not-connected notice", async ({
   page,
@@ -242,14 +247,11 @@ test("Feature detail Tickets tab shows the plan's tickets, planning and the not-
 }) => {
   await visit(page, baseURL, `/features/demo/export-button`, async () => {
     await expect(page.getByRole("heading", { level: 1, name: "export-button" })).toBeVisible();
-    const answered = page.waitForResponse((response) =>
-      response.url().endsWith("/api/v1/features/demo/export-button/tickets"),
+    // The demo feature is at its Tickets step, so it opens on the Tickets tab (AC-268.15).
+    await expect(page.getByRole("tab", { name: /Tickets/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
     );
-    await page.getByRole("tab", { name: /Tickets/ }).click();
-    const response = await answered;
-    expect(response.status()).toBe(200);
-    expect(response.headers()["content-security-policy"]).toContain("connect-src 'self'");
-    await expect(page).toHaveURL(/[?&]doc=tickets\b/);
     await expect(
       page.getByText(/^From the plan \(features\.json\); Linear is not connected/),
     ).toBeVisible();
@@ -260,10 +262,10 @@ test("Feature detail Tickets tab shows the plan's tickets, planning and the not-
     await expect(table.getByText("Add the button")).toBeVisible();
     await expect(table.getByText("not created")).toBeVisible();
     await expect(page.getByText(/2 tickets · from the plan \(features\.json\)/)).toBeVisible();
-    const planning = page.getByRole("region", { name: "Planning" });
-    await expect(planning.getByRole("heading", { name: "Parallel groups" })).toBeVisible();
-    await expect(planning.getByText("Layer 2")).toBeVisible();
-    await expect(planning.getByRole("heading", { name: "Recommended order" })).toBeVisible();
+    const flow = page.getByRole("region", { name: "Ticket flow" });
+    await expect(flow.getByRole("heading", { name: "Ticket flow" })).toBeVisible();
+    await expect(flow.getByRole("listitem", { name: /^Step 1 · / })).toBeVisible();
+    await expect(flow.getByRole("listitem", { name: /^Step 2 · / })).toBeVisible();
   });
 });
 
@@ -335,7 +337,7 @@ test("Agent session started from Sessions survives a reload while waiting and af
 // test_shows_skills_catalog_and_detail_when_skills_opened.
 test("Skills catalog and a skill detail load from the hub's files", async ({ page, baseURL }) => {
   await visit(page, baseURL, "/projects/demo/skills", async () => {
-    await expect(page.getByRole("heading", { level: 1, name: "Skills" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Toolkit" })).toBeVisible();
     await expect(page.getByRole("article", { name: "demo-check", exact: true })).toBeVisible();
     const feature = page.getByRole("article", { name: "feature", exact: true });
     await expect(feature).toBeVisible();

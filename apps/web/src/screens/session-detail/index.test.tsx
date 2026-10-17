@@ -232,7 +232,7 @@ describe("SessionDetailScreen", () => {
         [`${BASE}/events`]: aProblem({ status: 503, title: "Busy", detail: "Store busy" }),
       }),
     );
-    expect(await screen.findByText("Could not load events 1–200.")).toBeInTheDocument();
+    expect(await screen.findByText("Could not load events 1–1000.")).toBeInTheDocument();
   });
 
   it("follows live events and shows the new events pill when follow is off", async () => {

@@ -8,7 +8,8 @@
   .ah-skills-layout {
     flex-direction: column;
   }
-  .ah-skills-layout .ah-rail {
+  .ah-skills-layout .ah-rail,
+  .ah-skills-layout .ah-skills-main {
     width: 100%;
   }
 }
@@ -18,6 +19,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  container-type: inline-size;
 }
 .ah-skills-search {
   max-width: 480px;
@@ -27,7 +29,7 @@
   padding-top: var(--space-6);
   border-top: 1px solid var(--border);
 }
-.ah-skills-group > h2 {
+.ah-skills-group h2 {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -109,9 +111,6 @@
   font-weight: 500;
   white-space: nowrap;
 }
-.ah-skill-tag[data-origin="managed"] {
-  border-style: dashed;
-}
 .ah-skill-desc {
   margin: 0;
   color: var(--text-muted);
@@ -128,7 +127,7 @@
   color: var(--text-muted);
 }
 .ah-skill-command {
-  font: 400 12.5px/18px var(--font-mono);
+  font: 400 12px/18px var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -147,7 +146,7 @@
   min-width: 0;
   padding: 0;
   background: none;
-  font: 400 12.5px/18px var(--font-mono);
+  font: 400 12px/18px var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -180,21 +179,6 @@
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
   font-size: 13px;
-}
-
-/* Knowledge › Skills picker: one row per project. */
-.ah-skills-pick {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 13px;
-}
-.ah-skills-pick:hover {
-  background: var(--surface-hover);
-  color: var(--text);
 }
 
 /* Page head: title and the Create button. */
@@ -254,8 +238,18 @@
 /* Kind tiles: the tabs of the catalog, with what each kind is and how much it is used. */
 .ah-kind-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
+}
+@container (min-width: 880px) {
+  .ah-kind-tiles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@container (max-width: 420px) {
+  .ah-kind-tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .ah-kind-tile {
   display: flex;
@@ -301,7 +295,7 @@
 }
 .ah-kind-tile-used {
   color: var(--text-subtle);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 16px;
 }
 .ah-kind-badge {
@@ -310,19 +304,8 @@
   flex: none;
   width: 28px;
   height: 28px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.ah-kind-badge[data-kind="agent"] {
-  background: var(--done-soft);
-  color: var(--done);
-}
-.ah-kind-badge[data-kind="hook"] {
-  background: var(--waiting-soft);
-  color: var(--waiting);
-}
-.ah-kind-badge[data-kind="all"] {
   background: var(--surface-sunken);
   color: var(--text-muted);
 }
@@ -343,10 +326,10 @@
   flex: none;
   height: var(--control-sm);
   padding: 0 var(--space-2);
-  border: 1px dashed var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-md);
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .ah-skills-new:hover {
@@ -359,11 +342,12 @@
 .ah-skill-title {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 .ah-skill-title .ah-skill-kind {
-  font-size: 11.5px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 /* Hooks: compact rows grouped by lifecycle event. */
@@ -377,28 +361,38 @@
   align-items: center;
   gap: var(--space-2);
   margin: 0 0 var(--space-1);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
 }
 .ah-hook-rows {
   list-style: none;
   margin: 0;
   padding: 0;
+  /* One column grid per event, shared by its rows (subgrid), so matcher, command, name and
+     tags line up from row to row whatever the width of each row's tags. */
+  display: grid;
+  grid-template-columns: minmax(48px, 160px) minmax(160px, 1fr) minmax(0, 260px) max-content;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
   overflow: hidden;
+}
+.ah-hook-row-item {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
 }
 .ah-hook-row-item + .ah-hook-row-item {
   border-top: 1px solid var(--border);
 }
 .ah-hook-row {
   display: grid;
-  grid-template-columns: minmax(80px, 160px) minmax(0, 1fr) minmax(0, 220px) auto;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
   gap: var(--space-3);
   padding: 6px var(--space-3);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 .ah-hook-row:hover {
   background: var(--surface-hover);
@@ -429,13 +423,28 @@
   gap: var(--space-2);
   justify-self: end;
 }
-@media (max-width: 1200px) {
+/* A narrow column: the name (the link to the hook) and its tags first, the command under them. */
+@container (max-width: 760px) {
+  .ah-hook-rows,
+  .ah-hook-row-item {
+    display: block;
+  }
   .ah-hook-row {
     grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
   }
-  .ah-hook-matcher,
-  .ah-hook-name {
+  .ah-hook-matcher {
     display: none;
+  }
+  .ah-hook-name {
+    grid-area: 1 / 1;
+  }
+  .ah-hook-tags {
+    grid-area: 1 / 2;
+  }
+  .ah-hook-command {
+    grid-area: 2 / 1 / 3 / 3;
+    color: var(--text-muted);
   }
 }
 
@@ -462,7 +471,7 @@
   border-radius: var(--radius-full);
   background: var(--surface);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 .ah-draft-pill .ah-kind-badge {
   width: 22px;

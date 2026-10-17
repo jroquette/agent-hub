@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { aSessionProblem, aSessionProblems, anActor, anId, at } from "../../testing/builders";
-import { ProblemBadge, ProblemsPanel, problemCounts } from "./ProblemsPanel";
+import { ProblemBadge, ProblemsPanel, kindCounts, problemCounts } from "./ProblemsPanel";
 
 const FAILED = anId(7, "0192aaaa");
 const DENIED = anId(9, "0192aaaa");
@@ -52,10 +52,9 @@ describe("ProblemsPanel what-went-wrong", () => {
       expect.stringContaining("The guard blocked git push; the agent continued"),
     ]);
 
-    const [failed, denied] = within(
-      within(panel).getByRole("list", { name: "Problems" }),
-    ).getAllByRole("listitem");
-    if (!failed || !denied) throw new Error("two problems expected");
+    const attention = within(panel).getByRole("list", { name: "Needs attention" });
+    const [failed] = within(attention).getAllByRole("listitem");
+    if (!failed) throw new Error("one problem needing the owner expected");
     for (const text of [
       "Command failed",
       "Bash",
@@ -67,20 +66,61 @@ describe("ProblemsPanel what-went-wrong", () => {
     ]) {
       expect(within(failed).getByText(text)).toBeInTheDocument();
     }
+    expect(within(panel).queryByRole("list", { name: "Handled" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Show 1 handled" }));
+    const [denied] = within(within(panel).getByRole("list", { name: "Handled" })).getAllByRole(
+      "listitem",
+    );
+    if (!denied) throw new Error("one handled problem expected");
     for (const text of [
       "Guard blocked",
       "git push origin main",
       "rule no-push-main",
       "Subagent · Explore",
-      "Handled by the agent",
     ]) {
       expect(within(denied).getByText(text)).toBeInTheDocument();
     }
+    expect(within(denied).queryByText("Handled by the agent")).not.toBeInTheDocument();
+  });
+
+  it("folds into one line saying nothing needs the owner when the agent dealt with every problem (AC-265.6)", () => {
+    render(
+      <ProblemsPanel
+        problems={aSessionProblems({
+          summary: [{ event_id: DENIED, text: "The guard blocked git push; the agent continued" }],
+          items: [
+            aSessionProblem({ event_id: FAILED, resolution: "recovered" }),
+            aSessionProblem({
+              event_id: DENIED,
+              kind: "guard_denied",
+              resolution: "agent_continued",
+            }),
+          ],
+        })}
+        timeOf={(at) => at.slice(11, 19)}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    const panel = screen.getByRole("region", { name: "What went wrong" });
+    expect(
+      within(panel).getByText(
+        "Nothing needs you · the agent dealt with 2 problems: 1 command failed · 1 guard blocked",
+      ),
+    ).toBeInTheDocument();
+    expect(within(panel).queryByRole("list")).not.toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: "Show 2 handled" }));
+    expect(within(panel).getByRole("list", { name: "Summary" })).toBeInTheDocument();
+    expect(
+      within(within(panel).getByRole("list", { name: "Handled" })).getAllByRole("listitem"),
+    ).toHaveLength(2);
   });
 
   it("opens the moment of a problem or of a summary line when its link is pressed", () => {
     const onOpen = vi.fn();
     renderPanel(onOpen);
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 handled" }));
 
     fireEvent.click(screen.getByRole("link", { name: "Open moment: Guard blocked at 14:08:00" }));
     expect(onOpen).toHaveBeenCalledWith(DENIED);
@@ -123,6 +163,16 @@ describe("ProblemsPanel what-went-wrong", () => {
         aSessionProblem({ resolution: "by_you" }),
       ]),
     ).toBe("1 needs you · 1 agent is on it · 1 handled by the agent · 1 by you");
+  });
+
+  it("counts the kinds of problems, most frequent first (AC-265.6)", () => {
+    expect(
+      kindCounts([
+        aSessionProblem({ kind: "guard_denied" }),
+        aSessionProblem({ kind: "command_exit" }),
+        aSessionProblem({ kind: "command_exit" }),
+      ]),
+    ).toBe("2 command failed · 1 guard blocked");
   });
 
   it("renders nothing when the session has no problem", () => {

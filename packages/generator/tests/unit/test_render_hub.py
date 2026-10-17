@@ -96,6 +96,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/agents/requirements-analyst.md",
     "plugin/hub-workflow/agents/researcher.md",
     "plugin/hub-workflow/agents/spec-reviewer.md",
+    "plugin/hub-workflow/agents/ux-designer.md",
     "plugin/hub-workflow/hooks/event_sensor.py",
     "plugin/hub-workflow/hooks/guard.py",
     "plugin/hub-workflow/hooks/hooks.json",
@@ -122,14 +123,19 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/learn/SKILL.md",
     "plugin/hub-workflow/skills/onboard/SKILL.md",
     "plugin/hub-workflow/skills/onboard/reference.md",
+    "plugin/hub-workflow/skills/overengineering-review/SKILL.md",
+    "plugin/hub-workflow/skills/overengineering-review/references/patterns.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
     "plugin/hub-workflow/skills/refactor/SKILL.md",
     "plugin/hub-workflow/skills/release/SKILL.md",
     "plugin/hub-workflow/skills/research/SKILL.md",
     "plugin/hub-workflow/skills/retro/SKILL.md",
     "plugin/hub-workflow/skills/review/SKILL.md",
+    "plugin/hub-workflow/skills/summarize/SKILL.md",
     "plugin/hub-workflow/skills/triage/SKILL.md",
     "plugin/hub-workflow/skills/upgrade/SKILL.md",
+    "plugin/hub-workflow/skills/ux-review/SKILL.md",
+    "plugin/hub-workflow/skills/ux-review/references/checklist.md",
     "scripts/cloud-setup.sh",
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
@@ -176,6 +182,7 @@ BASE_AGENTS = (
     "requirements-analyst",
     "researcher",
     "spec-reviewer",
+    "ux-designer",
 )
 BASE_SKILLS = (
     "adr",
@@ -188,14 +195,17 @@ BASE_SKILLS = (
     "kickoff",
     "learn",
     "onboard",
+    "overengineering-review",
     "recall",
     "refactor",
     "release",
     "research",
     "retro",
     "review",
+    "summarize",
     "triage",
     "upgrade",
+    "ux-review",
 )
 
 GENERATOR_PACKAGE = "agent_hub.generator"
@@ -301,13 +311,13 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered, RenderedHub)
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
-    # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix and the ten AGH-99
-    # skills: 25, sorted by path.
+    # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix, the ten AGH-99
+    # skills, AGH-274's two review skills and ux-designer agent, and /summarize: 29, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 25
+    assert len(rendered.links) == 29
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -1651,6 +1661,22 @@ def test_renders_brief_step_before_size_when_feature_skill_rendered(
     assert "@@" not in text
 
 
+@pytest.mark.parametrize(
+    ("skill", "call"),
+    [
+        ("feature", "/summarize <slug> <record>"),
+        ("research", "/summarize <slug> research"),
+        ("create-plan", "/summarize <slug> plan"),
+    ],
+)
+def test_runs_summarize_when_record_skill_rendered(
+    demo_render: dict[str, RenderedFile], skill: str, call: str
+) -> None:
+    """AC-269.18: the skills that write a record ask for its human summary."""
+    assert call in skill_text(demo_render, skill)
+    assert "summaries/<record>.md" in skill_text(demo_render, "summarize")
+
+
 def test_keeps_brief_step_for_spike_when_feature_skill_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
@@ -1995,14 +2021,17 @@ SKILL_FRONTMATTER_KEYS = {
     "kickoff": ["name", "description", "disable-model-invocation"],
     "learn": ["name", "description", "disable-model-invocation", "argument-hint"],
     "onboard": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "overengineering-review": ["name", "description", "disable-model-invocation", "argument-hint"],
     "recall": ["name", "description", "argument-hint"],
     "refactor": ["name", "description", "disable-model-invocation", "argument-hint"],
     "release": ["name", "description", "disable-model-invocation", "argument-hint"],
     "research": ["name", "description", "argument-hint"],
     "retro": ["name", "description", "disable-model-invocation", "argument-hint"],
     "review": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "summarize": ["name", "description", "argument-hint"],
     "triage": ["name", "description", "disable-model-invocation", "argument-hint"],
     "upgrade": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "ux-review": ["name", "description", "disable-model-invocation", "argument-hint"],
 }
 
 
@@ -4784,7 +4813,7 @@ AGENT_FILES_SHA256 = {
         "efc8f4c7e5f7865f1b8c7f8a57ba0d59155492015e0f86529fd0780eb92865f5"
     ),
     f"{AGENTS_FOLDER}/planner.md": (
-        "703db29e7407541e9895e66b1868f7615335c0599db68d57a5dfb7916811c00e"
+        "9c80e0c912359f9b59b78482f444f475be8756b648c83d91b32f3a352eb45c12"
     ),
     f"{AGENTS_FOLDER}/quality-reviewer.md": (
         "06346ed2d9948f63b1a2b5ac850ef73e698326316e8cabe95de39dba9f1fb2ae"
@@ -4808,6 +4837,7 @@ TEMPLATE_TIERS = {
     "requirements-analyst": "large",
     "researcher": "medium",
     "spec-reviewer": "large",
+    "ux-designer": "large",
 }
 TIER_LINE = re.compile(r"^model: @@\{model_(small|medium|large)\}$")
 
@@ -4911,6 +4941,7 @@ def test_overrides_agent_tier_when_models_agents_set() -> None:
         "requirements-analyst": "model: claude-opus-4-1",
         "researcher": "model: claude-opus-4-1",
         "spec-reviewer": "model: claude-opus-4-1",
+        "ux-designer": "model: claude-opus-4-1",
     }
     # Only the overridden or retiered model lines differ from the default render.
     default_lines = agent_model_lines(HubConfig.model_validate(a_hub_document()))

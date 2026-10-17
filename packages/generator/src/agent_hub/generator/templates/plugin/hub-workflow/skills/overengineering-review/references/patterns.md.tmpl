@@ -1,0 +1,32 @@
+---
+name: overengineering-review-patterns
+description: The catalogue of over-engineering patterns /overengineering-review hunts with - signal, proof and smaller shape of each. Read by /overengineering-review, not a command of its own.
+---
+
+# Over-engineering patterns
+
+The catalogue `/overengineering-review` hunts with. Each pattern has a **signal** (what to look for), a **proof** (the
+search that turns a suspect into a finding) and the **smaller shape**. A suspect is a finding only when its proof holds today.
+
+| id | pattern | signal | proof | smaller shape |
+|----|---------|--------|-------|---------------|
+| P1 | Single-consumer abstraction | A base class, interface, protocol, port or "generic" module | `rg` its name: one implementation and one caller | Inline it into the one place that uses it |
+| P2 | Speculative option | A parameter, flag, kwarg, config key or env var | Every caller passes the default, or none passes it | Drop it; hard-code the value used |
+| P3 | Premature constant / registry | A constant, enum, mapping or plugin registry | One value, one entry, or one reader | Use the literal where it is read |
+| P4 | Layer that only forwards | A wrapper, service, manager or adapter whose methods call one other method | Each method body is a single delegating call | Call the target directly |
+| P5 | Defensive branch for no input | `try/except`, `if x is None`, fallbacks, retries, validation | No caller or boundary can send that input (typed, already validated upstream) | Delete the branch and its test |
+| P6 | Unasked generality | Pluggable strategies, templates, multiple formats or backends | The ticket or spec asks for one; only one is wired | Keep the one in use |
+| P7 | Tests for code nothing uses | Tests of a P1–P6 suspect, or of private helpers in isolation | The tested symbol has no production caller | Delete both, or test through the real caller |
+| P8 | Configuration over code | A YAML/JSON/schema file, DSL or feature flag driving one fixed behaviour | One value set, never changed per environment | Plain code |
+| P9 | Machinery to do something safely that need not be done | Redaction, caching, batching, queues, locking, metrics | The plain alternative (not logging it, not caching it) meets the need | Do not do it at all |
+| P10 | Copy of something that exists | A new helper, util or component | `rg` finds one already in the repo or a shared package | Reuse the existing one; delete the new |
+| P11 | Split too early | A new file, package or module for a handful of lines | One importer, under ~50 lines | Move it next to its only user |
+
+## Not over-engineering
+
+- A shape the repo requires: a port or layer its `AGENTS.md`, an ADR or `brain/decisions/` names (cite it).
+- A bound on untrusted or unbounded input at a boundary (the hostile-input rule in `quality-reviewer`).
+- A second consumer that exists **now** — in this diff, in the repo, or in an approved plan's next task (name it; severity `watch`).
+- Tests that pin behaviour a caller depends on.
+
+"We might need it later" is not a consumer. A ticket in the backlog is a `watch` at most, never a reason to keep code that has no caller today.

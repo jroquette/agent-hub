@@ -4,6 +4,8 @@ import { useCallback, useState } from "react";
 
 import { AppLink, Banner, Button, EmptyState, Icon, IconButton } from "../components";
 import { ApiProblem } from "../lib/api";
+import { captureScreen } from "../lib/screenCapture";
+import { rememberScreenshot } from "../lib/screenshotCopy";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../screens/agent-session/Composer";
 import { DiscussChat } from "../screens/agent-session/DiscussChat";
 import type { PermissionMode } from "../screens/agent-session/model";
@@ -20,6 +22,7 @@ import {
   type DiscussReference,
   type DiscussTarget,
 } from "./discuss";
+import { readScreenText } from "./screenContext";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
 const storageKey = (target: DiscussTarget) => `ah.discuss.session.${target.key}`;
@@ -72,8 +75,8 @@ export function DiscussPanel() {
         <DiscussBody key={target.key} target={target} />
       ) : (
         <EmptyState icon="message-square" title="Open something to discuss">
-          A feature's spec, research, plan, criteria or tickets, a workflow, a skill, an agent or a
-          hook. The conversation follows what is on screen.
+          Register a project to talk with Claude about any screen. The conversation follows what is
+          on screen.
         </EmptyState>
       )}
     </aside>
@@ -158,6 +161,38 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
   );
 }
 
+interface ScreenRead {
+  text: string;
+  screenshot: { dataUrl: string; body: { media_type: "image/png"; data: string } } | null;
+}
+
+/** What the screen shows when the conversation starts: its main column's text and a screenshot. */
+async function readScreen(): Promise<ScreenRead> {
+  const main = document.getElementById("main");
+  const text = readScreenText(main);
+  // A capture that fails or times out still sends the text: the screenshot is a bonus.
+  const shot = main ? await captureScreen(main) : null;
+  return {
+    text,
+    screenshot: shot?.ok
+      ? {
+          dataUrl: shot.dataUrl,
+          body: {
+            media_type: "image/png",
+            data: shot.dataUrl.slice(shot.dataUrl.indexOf(",") + 1),
+          },
+        }
+      : null,
+  };
+}
+
+function withScreenText(brief: string | undefined, text: string): string {
+  const shown = text === "" ? "(the screen shows no text)" : text;
+  return [brief, "What the screen shows, as text:", "<screen>", shown, "</screen>"]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function StartDiscussion({
   target,
   references,
@@ -193,14 +228,61 @@ function StartDiscussion({
         ? `Project ${target.project} has no hub folder to work in.`
         : null;
 
+  const start = async (text: string) => {
+    if (!hub) return;
+    const screen = target.screen ? await readScreen() : null;
+    const session = await create.mutateAsync({
+      project: target.project,
+      workdir_id: hub.workdir_id,
+      mode,
+      fork: false,
+      ...(model && model !== "default" ? { model } : {}),
+      ...(screen?.screenshot ? { screenshot: screen.screenshot.body } : {}),
+      prompt: discussPrompt(
+        screen ? { ...target, brief: withScreenText(target.brief, screen.text) } : target,
+        referencedMessage(references, text),
+      ),
+    });
+    if (screen?.screenshot) rememberScreenshot(session.id, screen.screenshot.dataUrl);
+    onStarted(session.id);
+  };
+
   return (
     <div className="as-page">
       <div className="ah-discuss-note ah-small ah-muted">
-        Ask about this {target.kind.toLowerCase()}, challenge it, or ask Claude to change it. Point
-        at one part with its Discuss button, or select text on the page and press Discuss selection.
+        {target.screen ? (
+          <>
+            Ask about what this screen shows. Your first message takes its text and a screenshot
+            along; select text on the page and press Discuss selection to point at one part.
+          </>
+        ) : (
+          <>
+            Ask about this {target.kind.toLowerCase()}, challenge it, or ask Claude to change it.
+            Point at one part with its Discuss button, or select text on the page and press Discuss
+            selection.
+          </>
+        )}{" "}
         Claude works in the hub folder of <b>{target.project}</b>; every file edit asks you first
         unless you switch the mode to accept edits.
       </div>
+      {target.starters && target.starters.length > 0 && (
+        <div className="ah-discuss-starters" role="group" aria-label="Start with">
+          {target.starters.map((starter) => (
+            <Button
+              key={starter.label}
+              size="sm"
+              icon="message-square"
+              disabled={reason !== null || create.isPending}
+              onClick={() => {
+                // A failure shows below the composer (create.error); nothing else to do here.
+                start(starter.message).catch(() => undefined);
+              }}
+            >
+              {starter.label}
+            </Button>
+          ))}
+        </div>
+      )}
       <div className="ah-grow" />
       <footer className="as-footer">
         <div className="as-column">
@@ -209,18 +291,7 @@ function StartDiscussion({
             mode={mode}
             model={model}
             models={capabilities.data?.models ?? DEFAULT_MODELS}
-            onSend={async (text) => {
-              if (!hub) return;
-              const session = await create.mutateAsync({
-                project: target.project,
-                workdir_id: hub.workdir_id,
-                mode,
-                fork: false,
-                ...(model && model !== "default" ? { model } : {}),
-                prompt: discussPrompt(target, referencedMessage(references, text)),
-              });
-              onStarted(session.id);
-            }}
+            onSend={start}
             onInterrupt={() => undefined}
             onSettings={(change) => {
               if (change.mode) setMode(change.mode);

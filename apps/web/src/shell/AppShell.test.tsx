@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -6,7 +6,13 @@ import { Dialog } from "../components/Dialog";
 import { ConfirmDialog } from "../components/feedback";
 
 import { seriousViolations } from "../testing/axe";
-import { aPage, aProjectSummary, aStreamCounts, renderWithApi } from "../testing/builders";
+import {
+  aCapabilities,
+  aPage,
+  aProjectSummary,
+  aStreamCounts,
+  renderWithApi,
+} from "../testing/builders";
 import { AppShell, useShell } from "./AppShell";
 
 const routes = { "/api/v1/projects": aPage([aProjectSummary()]) };
@@ -42,10 +48,10 @@ describe("AppShell", () => {
 
     act(() => {
       stream("/api/v1/events/stream").open();
-      stream("/api/v1/events/stream").emit("counts", aStreamCounts({ approvals_open: 2 }));
+      stream("/api/v1/events/stream").emit("counts", aStreamCounts({ live_sessions: 2 }));
     });
 
-    expect(screen.getByRole("link", { name: "Approvals, 2 waiting" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sessions, 2 live" })).toBeInTheDocument();
     expect(within(screen.getByRole("banner")).getByRole("status")).toHaveAttribute(
       "data-state",
       "connected",
@@ -240,9 +246,80 @@ describe("AppShell", () => {
     window.localStorage.clear();
   });
 
+  it("AC-273.7: asks for the screen as a Discuss target only while the panel is open", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    const { requests } = renderWithApi(<AppShell />, {
+      path: "/health",
+      routes: { ...routes, "/api/v1/agent-sessions/capabilities": aCapabilities() },
+    });
+    const asked = () =>
+      requests.filter((r) => new URL(r.url).pathname === "/api/v1/agent-sessions/capabilities");
+    expect(asked()).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole("button", { name: "Discuss" }));
+
+    expect(
+      await screen.findByRole("complementary", { name: "Discuss with Claude" }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(asked().length).toBeGreaterThan(0);
+    });
+    window.localStorage.removeItem("ah.discuss.open");
+  });
+
   it("has no serious or critical a11y violation", async () => {
     const { container } = renderWithApi(<AppShell />, { routes });
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("AppShell scope on a project's Brain or Skills", () => {
+  const scoped = {
+    "/api/v1/projects": aPage([
+      aProjectSummary({ name: "tipple" }),
+      aProjectSummary({ name: "agent-hub" }),
+    ]),
+  };
+  const switcher = () =>
+    within(screen.getByRole("banner")).getByRole("button", {
+      expanded: false,
+      name: /tipple|agent-hub|All projects/,
+    });
+
+  it("shows the project in the route, not the stored scope", () => {
+    renderWithApi(<AppShell />, {
+      routes: scoped,
+      path: "/projects/tipple/skills?scope=agent-hub",
+      route: "*",
+    });
+
+    expect(switcher()).toHaveTextContent("tipple");
+  });
+
+  it("opens the same section of the project picked in the switcher", async () => {
+    const { router } = renderWithApi(<AppShell />, {
+      routes: scoped,
+      path: "/projects/tipple/brain/now.md",
+      route: "*",
+    });
+
+    fireEvent.click(switcher());
+    fireEvent.click(await screen.findByRole("button", { name: /^agent-hub ·/ }));
+
+    expect(router.state.location.pathname).toBe("/projects/agent-hub/brain");
+  });
+
+  it("opens the section's project index when All projects is picked", async () => {
+    const { router } = renderWithApi(<AppShell />, {
+      routes: scoped,
+      path: "/projects/tipple/skills",
+      route: "*",
+    });
+
+    fireEvent.click(switcher());
+    fireEvent.click(await screen.findByRole("button", { name: /^All projects/ }));
+
+    expect(router.state.location.pathname).toBe("/knowledge/skills");
   });
 });

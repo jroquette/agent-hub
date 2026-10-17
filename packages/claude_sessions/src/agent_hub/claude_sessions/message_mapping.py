@@ -34,6 +34,7 @@ from claude_agent_sdk import (
 from pydantic import JsonValue, ValidationError
 
 from agent_hub.core.agent_sessions import driver
+from agent_hub.core.agent_sessions.diff import patch_diff, write_diff
 from agent_hub.core.agent_sessions.driver import (
     ABORTED_TERMINAL_REASON,
     DriverError,
@@ -71,9 +72,10 @@ class EventMapper:
             case AssistantMessage():
                 return self._assistant(message)
             case UserMessage(content=list() as blocks):
-                return [
-                    _tool_result(block) for block in blocks if isinstance(block, ToolResultBlock)
-                ]
+                results = [block for block in blocks if isinstance(block, ToolResultBlock)]
+                # The engine's report of a file tool's change goes with its (one) result.
+                diff = _result_diff(message.tool_use_result) if len(results) == 1 else None
+                return [_tool_result(block, diff) for block in results]
             case ResultMessage():
                 self._block, self._delta = 0, 0
                 return [_turn_result(message)]
@@ -156,9 +158,28 @@ def _todos(data: dict[str, Any]) -> Todos | None:
     return Todos(items=items)
 
 
-def _tool_result(block: ToolResultBlock) -> DriverEvent:
+def _tool_result(block: ToolResultBlock, diff: str | None = None) -> DriverEvent:
     content: JsonValue = "" if block.content is None else cast("JsonValue", block.content)
-    return ToolResult(tool_use_id=block.tool_use_id, content=content, is_error=bool(block.is_error))
+    return ToolResult(
+        tool_use_id=block.tool_use_id,
+        content=content,
+        is_error=bool(block.is_error),
+        diff=None if block.is_error else diff,
+    )
+
+
+def _result_diff(report: object) -> str | None:
+    """The change a file tool made, from the engine's report of it (``tool_use_result``): its
+    ``structuredPatch`` with the file's line numbers, or a new file's whole content."""
+    if not isinstance(report, dict):
+        return None
+    path = report.get("filePath")
+    if not isinstance(path, str):
+        return None
+    content = report.get("content")
+    if report.get("type") == "create" and isinstance(content, str):
+        return write_diff(path, content)
+    return patch_diff(path, report.get("structuredPatch"))
 
 
 def _turn_result(message: ResultMessage) -> TurnResult:

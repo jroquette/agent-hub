@@ -163,6 +163,7 @@ _BASE_AGENTS: Final = (
     "requirements-analyst",
     "researcher",
     "spec-reviewer",
+    "ux-designer",
 )
 # The base plugin's skills, one folder each (sorted).
 _BASE_SKILLS: Final = (
@@ -176,18 +177,28 @@ _BASE_SKILLS: Final = (
     "kickoff",
     "learn",
     "onboard",
+    "overengineering-review",
     "recall",
     "refactor",
     "release",
     "research",
     "retro",
     "review",
+    "summarize",
     "triage",
     "upgrade",
+    "ux-review",
 )
 # A skill's files besides `SKILL.md`, read by the skill; its folder link covers them (sorted).
-# `/onboard`'s rules (AGH-108, spec D-split).
-_SKILL_SUPPORT_FILES: Final = MappingProxyType({"onboard": ("reference.md",)})
+# `/onboard`'s rules (AGH-108, spec D-split); the review catalogues of `/overengineering-review`
+# and `/ux-review` (AGH-274).
+_SKILL_SUPPORT_FILES: Final = MappingProxyType(
+    {
+        "onboard": ("reference.md",),
+        "overengineering-review": ("references/patterns.md",),
+        "ux-review": ("references/checklist.md",),
+    }
+)
 # The upstream license files the base plugin's NOTICE names (sorted).
 _LICENSE_TEXTS: Final = ("Apache-2.0.txt", "MIT-compound-engineering-plugin.txt")
 

@@ -13,7 +13,13 @@ import { CostTab } from "./CostTab";
 import { FilesTab } from "./FilesTab";
 import { Header } from "./Header";
 import { ProblemsPanel } from "./ProblemsPanel";
-import { useSession, useSessionEvents, useSessionProblems, type Session } from "./queries";
+import {
+  usePrefetchSessionEvents,
+  useSession,
+  useSessionEvents,
+  useSessionProblems,
+  type Session,
+} from "./queries";
 import { RawTab } from "./RawTab";
 import { SummaryCard } from "./SummaryCard";
 import { buildTrace } from "./timeline";
@@ -48,6 +54,7 @@ function LoadingBody() {
 export function SessionDetailScreen() {
   const { sessionId = "" } = useParams();
   const session = useSession(sessionId);
+  usePrefetchSessionEvents(sessionId);
   const { openPalette } = useShell();
   if (session.isPending) return <LoadingBody />;
   if (session.error) {
@@ -207,18 +214,9 @@ function SessionDetailBody({ session }: { session: Session }) {
       <Header session={session} now={now} staleSince={staleSince} />
       <div className="sd-body ah-stack">
         {session.status === "waiting" && (
-          <Banner
-            tone="warning"
-            icon="hand"
-            boxed
-            action={
-              <AppLink className="ah-btn ah-btn-sm" href="/approvals">
-                Open Approvals
-              </AppLink>
-            }
-          >
+          <Banner tone="warning" icon="hand" boxed>
             Waiting for approval{session.issue ? ` · ${session.issue}` : ""} ·{" "}
-            {fmtDuration(waitingFor * 60)} · Approve in the terminal session or open Approvals
+            {fmtDuration(waitingFor * 60)} · Approve in the terminal session
           </Banner>
         )}
         {session.status === "idle" && (
