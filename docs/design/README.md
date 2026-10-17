@@ -55,3 +55,4 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0036](../adr/0036-live-playground-and-auto-mode.md): `make playground`, a live loop for agent-hub's own web app whose sessions run in Claude Code's `auto` mode.
 - [ADR 0037](../adr/0037-learning-decisions-unpushed-notes-and-edits.md): a learning decision reads an unpushed inbox note from the hub checkout.
 - [ADR 0038](../adr/0038-declared-environments-and-blocked-words.md): environments and services in `hub.json` and `hub.local.json`; the guard enforces blocked words, `access` is an instruction (proposed).
+- [ADR 0039](../adr/0039-item-versions-and-server-writes-to-the-hub.md): item versions stored in agent-hub's database, recorded on read and before a write; the server writes a hub's items on Publish and Restore (proposed).

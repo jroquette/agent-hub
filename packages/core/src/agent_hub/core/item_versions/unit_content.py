@@ -79,9 +79,12 @@ def encode(content: UnitContent, *, folder: bool) -> bytes:
     return b"".join(frames)
 
 
-def decode(blob: bytes, *, folder: bool, name: str = "") -> UnitContent:
-    """``encode``'s inverse; a file unit's one file is named ``name``."""
+def decode(blob: bytes, *, folder: bool, name: str | None = None) -> UnitContent:
+    """``encode``'s inverse; a file unit's one file is named ``name``, which it needs."""
     if not folder:
+        if not name:
+            msg = "a file unit needs its file's name"
+            raise ValueError(msg)
         _check_size(len(blob))
         return UnitContent(files=(UnitFile(path=name, content=blob),))
     files = tuple(_frames(blob))
