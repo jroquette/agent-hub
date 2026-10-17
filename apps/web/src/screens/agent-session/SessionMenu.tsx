@@ -3,8 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { IconButton, MenuItem, Popover } from "../../components";
 
 export interface SessionMenuProps {
-  /** Opens the observed session, when this chat has one. */
-  onOpenObserved?: (() => void) | undefined;
   onFork?: (() => void) | undefined;
   onClose?: (() => void) | undefined;
   onDelete?: (() => void) | undefined;
@@ -12,10 +10,10 @@ export interface SessionMenuProps {
 }
 
 /**
- * The session's lifecycle actions (close, fork, delete) and its observed record, behind one "⋯" button
- * at the end of the header, so the header's only visible action is reviewing what Claude changed.
+ * The session's lifecycle actions (close, fork, delete), behind one "⋯" button
+ * at the end of the header, so the header's visible actions are reviewing what Claude changed and its events.
  */
-export function SessionMenu({ onOpenObserved, onFork, onClose, onDelete, busy }: SessionMenuProps) {
+export function SessionMenu({ onFork, onClose, onDelete, busy }: SessionMenuProps) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLSpanElement>(null);
 
@@ -37,7 +35,7 @@ export function SessionMenu({ onOpenObserved, onFork, onClose, onDelete, busy }:
     };
   }, [open]);
 
-  if (!onOpenObserved && !onFork && !onClose && !onDelete) return null;
+  if (!onFork && !onClose && !onDelete) return null;
   const run = (action: () => void) => () => {
     setOpen(false);
     action();
@@ -56,11 +54,6 @@ export function SessionMenu({ onOpenObserved, onFork, onClose, onDelete, busy }:
         }}
       />
       <Popover open={open} label="Session actions" style={{ top: 34, right: 0, minWidth: 220 }}>
-        {onOpenObserved && (
-          <MenuItem icon="activity" onClick={run(onOpenObserved)}>
-            Open observed session
-          </MenuItem>
-        )}
         {onFork && (
           <MenuItem icon="git-branch" onClick={run(onFork)}>
             Fork…

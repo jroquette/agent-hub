@@ -266,17 +266,19 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 }}
               />
             )}
+            {session.claude_session_id && (
+              <AppLink
+                className="ah-row ah-small"
+                href={`/sessions/${encodeURIComponent(session.claude_session_id)}`}
+                style={{ gap: 4, fontWeight: 500 }}
+                title="Timeline, tools, errors and raw events of this session"
+              >
+                <Icon name="activity" size="sm" />
+                Events
+              </AppLink>
+            )}
             <SessionMenu
               busy={busy}
-              onOpenObserved={
-                session.claude_session_id
-                  ? () => {
-                      void navigate(
-                        `/sessions/${encodeURIComponent(session.claude_session_id ?? "")}`,
-                      );
-                    }
-                  : undefined
-              }
               onFork={
                 canFork
                   ? () => {

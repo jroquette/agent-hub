@@ -361,8 +361,7 @@ describe("AgentSessionScreen (transcript)", () => {
   it("links the agent session to its observed session", async () => {
     const view = renderChat();
 
-    await openSessionMenu();
-    await userEvent.click(screen.getByRole("button", { name: "Open observed session" }));
+    await userEvent.click(await screen.findByRole("link", { name: "Events" }));
     await waitFor(() => {
       expect(view.router.state.location.pathname).toBe(`/sessions/${anId(1, "5091b986")}`);
     });
