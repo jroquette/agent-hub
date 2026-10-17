@@ -270,7 +270,7 @@ transcript under `~/.claude/projects/`, and `./hub collect --runs .agent-runs` f
 is stored (sizes, tools, repo-relative paths, short commands with secrets redacted, and for a failed tool its error
 text, redacted and cut at 300 characters), never prompt, output or file text.
 
-Each session is shown by its issue and workflow (`TIP-1511 · /feature`), read from its branch or task worktree name and
+Each session is shown by its issue and workflow (`ACME-1511 · /feature`), read from its branch or task worktree name and
 the hub's tracker team; each failure says what failed, where, which agent, and whether the agent handled it or it needs
 you. To read the brain, open Knowledge › Brain (or a project's Brain): it lists the hub's `brain/` notes (never
 `brain/auto/`) and renders any one, with links between notes; a feature's Spec, Research, Plan, Eval and Criteria tabs

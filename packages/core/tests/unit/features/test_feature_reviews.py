@@ -19,25 +19,25 @@ def a_review(name: str, text: str) -> RecordHead:
 def test_counts_approved_when_outcome_approved() -> None:
     heads = (
         a_review(
-            "tip-1520.md",
-            "---\ntype: review\nticket: TIP-1520\noutcome: approved\npr: demo-api#12\n"
+            "acme-1520.md",
+            "---\ntype: review\nticket: ACME-1520\noutcome: approved\npr: demo-api#12\n"
             "reviewed_at: 2026-10-12\n---\n# Review\n",
         ),
-        a_review("tip-1521.md", "---\nticket: TIP-1521\noutcome: changes-requested\n---\n"),
+        a_review("acme-1521.md", "---\nticket: ACME-1521\noutcome: changes-requested\n---\n"),
         a_review("t3.md", "---\noutcome: approved\n---\n"),
     )
 
     records = review_records(heads, slug=SLUG)
 
     assert records[0] == ReviewRecord(
-        ticket="TIP-1520",
-        path="features/demo-feature/reviews/tip-1520.md",
+        ticket="ACME-1520",
+        path="features/demo-feature/reviews/acme-1520.md",
         outcome="approved",
         pr="demo-api#12",
         reviewed_at="2026-10-12",
         problem=None,
     )
-    assert approved_tickets(records) == frozenset({"TIP-1520", "T3"})
+    assert approved_tickets(records) == frozenset({"ACME-1520", "T3"})
 
 
 @pytest.mark.parametrize(
@@ -53,7 +53,7 @@ def test_counts_approved_when_outcome_approved() -> None:
     ids=["absent", "unclosed", "outcome", "type", "list-ticket", "date"],
 )
 def test_reports_problem_when_review_malformed(head: str, problem: str) -> None:
-    [record] = review_records((a_review("tip-1520.md", head),), slug=SLUG)
+    [record] = review_records((a_review("acme-1520.md", head),), slug=SLUG)
 
     assert record.problem is not None
     assert problem in record.problem
@@ -62,12 +62,12 @@ def test_reports_problem_when_review_malformed(head: str, problem: str) -> None:
 
 
 def test_reports_problem_when_head_unreadable() -> None:
-    head = RecordHead(name="tip-1520.md", head=None, problem="not a regular file")
+    head = RecordHead(name="acme-1520.md", head=None, problem="not a regular file")
 
     [record] = review_records((head,), slug=SLUG)
 
     assert (record.ticket, record.problem, record.outcome) == (
-        "tip-1520",
+        "acme-1520",
         "not a regular file",
         None,
     )

@@ -126,7 +126,12 @@ describe("SessionsListScreen grid", () => {
 
   it("groups the tiles of each section within repo, run or workflow, ungrouped ones last", async () => {
     const sessions: Session[] = [
-      aSession({ id: anId(1), label: named("a", "tipple"), repo: "tipple", status: "live" }),
+      aSession({
+        id: anId(1),
+        label: named("a", "storefront"),
+        repo: "storefront",
+        status: "live",
+      }),
       aSession({
         id: anId(2),
         label: named("b"),
@@ -148,7 +153,7 @@ describe("SessionsListScreen grid", () => {
     });
     await screen.findByText("/a");
     expect(heads(section(/^Live/))).toEqual([
-      "agent-hub › tipple · 1",
+      "agent-hub › storefront · 1",
       "agent-hub › agent-hub · 2",
     ]);
     expect(heads(section(/^Idle/))).toEqual(["agent-hub › agent-hub · 1"]);
