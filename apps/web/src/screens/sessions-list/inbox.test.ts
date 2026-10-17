@@ -418,4 +418,10 @@ describe("the conversation of a chat", () => {
     });
     expect(filesToReview([], {})).toEqual({ total: 0, toReview: 0 });
   });
+
+  it("reads no files when an older hub web sends no changed_files", () => {
+    const older: Partial<AgentSession> = anAgentSession({ status: "idle" });
+    delete older.changed_files;
+    expect(summaryOf(older as AgentSession)).toEqual({ prompt: null, reply: null, files: [] });
+  });
 });

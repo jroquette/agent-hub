@@ -259,7 +259,8 @@ export function summaryOf(session: AgentSession): ChatSummary {
   return {
     prompt: session.last_prompt ?? null,
     reply: session.last_reply ?? null,
-    files: session.changed_files,
+    // A hub web older than the digest (the playground's conductor) sends no changed_files.
+    files: (session as Partial<AgentSession>).changed_files ?? [],
   };
 }
 
