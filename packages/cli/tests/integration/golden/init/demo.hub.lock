@@ -305,7 +305,7 @@
     "plugin/hub-workflow/hooks/hubhooks.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "c05a6ab7ea116eb63c7a5d927d4ffd6dd57657fe3b70456c5b3dd7836e9d9130"
+      "sha256": "c2799b99a756c7dfa4821e99e208d374f8969fe18ef9d66cd027ba8fada306e2"
     },
     "plugin/hub-workflow/hooks/post_edit.py": {
       "executable": true,
@@ -340,7 +340,7 @@
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "072a6e245f71da1830b32f4d8eea832a9ca225478fe74e687a7101537cb9eedc"
+      "sha256": "f4ce10b151e6118984d1be2381158cc8456ff9aef6e0b34e5aebb70c78d14f76"
     },
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,
