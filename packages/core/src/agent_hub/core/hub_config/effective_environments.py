@@ -5,8 +5,8 @@ Neither model alone sees both files, so these rules live here: ``hub.local.json`
 environments (never a ``hub.json`` name, names unique ignoring case across both files), adds
 endpoints on local environments to ``hub.json``'s repos and services, and on a committed name
 holds only ``access``, stricter than the team's (``write`` → ``ask`` → ``read``). Nothing in it
-loosens or removes what ``hub.json`` declares. The CLI and doctor's ``config.schema`` report the
-problems at the local file's paths.
+loosens or removes what ``hub.json`` declares. The CLI reports the problems at the local file's
+paths.
 """
 
 import json
@@ -230,7 +230,11 @@ def _tightening_problems(
     for key in sorted(environment.model_fields_set - {"access"}):
         yield (*loc, key), f"hub.json declares {name}; hub.local.json may only tighten its access"
     access = environment.access
-    if access is not None and STRICTNESS[access] <= STRICTNESS[committed]:
+    # An entry with no key tightens nothing; one with other keys is refused for them above.
+    is_empty = not environment.model_fields_set
+    if (access is None and is_empty) or (
+        access is not None and STRICTNESS[access] <= STRICTNESS[committed]
+    ):
         yield (*loc, "access"), f"may only tighten hub.json's {committed}"
 
 
