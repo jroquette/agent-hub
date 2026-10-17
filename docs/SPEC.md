@@ -501,7 +501,8 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   [design/playground-export.md](design/playground-export.md)).
 - **Discuss.** A right-hand panel holds one driven session per feature, workflow, skill, agent, hook or note on
   screen, started in the hub folder with that artifact as context; a feature opens it on arrival, and an acceptance
-  criterion or a selected passage can be pointed at.
+  criterion or a selected passage can be pointed at. A screen with no artifact is itself the subject: the first
+  message carries its text and a screenshot (AGH-273).
 - **Studio.** Create a skill, an agent or a hook with Claude: the session writes a draft under `.hub-drafts/<id>/`
   in the hub and the preview renders it as the catalog card it will be. The Skills catalog has a tab per kind.
   An existing item opens the same way from its detail (Edit with Claude, AGH-271): Claude edits a copy in the draft
