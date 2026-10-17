@@ -215,9 +215,13 @@ test("Knowledge opens a proposal, shows its note and accepts it into a pull requ
 test("Feature detail renders its Spec and Plan tabs", async ({ page, baseURL }) => {
   await visit(page, baseURL, "/features/demo/export-button", async () => {
     await expect(page.getByRole("heading", { level: 1, name: "export-button" })).toBeVisible();
+    // A record tab opens on its human summary; the record itself is one click away (AC-269.13).
+    const agentMarkdown = page.getByRole("button", { name: /Agent markdown/ });
     await page.getByRole("tab", { name: "Spec" }).click();
+    await agentMarkdown.click();
     await expect(page.getByRole("heading", { name: "Export button" })).toBeVisible();
     await page.getByRole("tab", { name: "Plan" }).click();
+    if ((await agentMarkdown.getAttribute("aria-pressed")) !== "true") await agentMarkdown.click();
     await expect(page.getByText("Add the export route.")).toBeVisible();
   });
 });

@@ -11,7 +11,7 @@ import type { components } from "../../api/schema";
 import { Banner, Button, EmptyState, Markdown, ProblemError, Skeleton } from "../../components";
 import type { LocalLink } from "../../components";
 import { useDiscuss } from "../../shell/discuss";
-import { useBrainNote } from "../brain/queries";
+import { useBrainNote, useBrainTree } from "../brain/queries";
 
 type Note = components["schemas"]["BrainNote"];
 
@@ -54,7 +54,12 @@ export interface RecordSummaryProps {
 /** The summary, how fresh it is, and the way to the full record or to a new summary. */
 export function RecordSummary({ project, record, recordPath, onReadRecord }: RecordSummaryProps) {
   const path = summaryPath(recordPath);
-  const summary = useBrainNote(project, path);
+  // The brain's listing says whether a summary exists, so a record without one asks for nothing
+  // that is not there (no 404 in the console); an unreadable listing falls back to asking.
+  const tree = useBrainTree(project);
+  const listed = tree.isError ? true : tree.data?.entries.some((entry) => entry.path === path);
+  const summary = useBrainNote(project, path, listed === true);
+  const missing = listed === false || (summary.isError && summary.error.status === 404);
   const source = useBrainNote(project, recordPath);
   const navigate = useNavigate();
   const { setOpen } = useDiscuss();
@@ -68,7 +73,7 @@ export function RecordSummary({ project, record, recordPath, onReadRecord }: Rec
         setOpen(true);
       }}
     >
-      Ask Claude to {summary.isError ? "write" : "update"} it
+      Ask Claude to {missing ? "write" : "update"} it
     </Button>
   );
   const readRecord = (
@@ -84,7 +89,7 @@ export function RecordSummary({ project, record, recordPath, onReadRecord }: Rec
     </Button>
   );
 
-  if (summary.isPending) {
+  if (!missing && (listed === undefined || summary.isPending)) {
     return (
       <div aria-busy="true" className="ah-stack">
         <Skeleton width={280} height={22} />
@@ -92,8 +97,8 @@ export function RecordSummary({ project, record, recordPath, onReadRecord }: Rec
       </div>
     );
   }
-  if (summary.isError) {
-    if (summary.error.status !== 404) {
+  if (missing || summary.isError) {
+    if (!missing && summary.isError) {
       return (
         <ProblemError
           title={summary.error.title}
@@ -121,6 +126,8 @@ export function RecordSummary({ project, record, recordPath, onReadRecord }: Rec
   }
 
   const note = summary.data;
+  // Narrowed above: listed, fetched and not an error.
+  if (!note) return null;
   const state = summaryState(note, source.data);
   const written = fieldText(note, "written_at");
   // `../spec.md#goals` opens the record itself at that heading, in this tab.
