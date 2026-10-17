@@ -744,7 +744,7 @@ class TestRepoProblems:
 LOCAL_PREFIX = "me/"
 LOCAL_BRANCH = f"me/{NAME}"
 HUB_ONLY = (
-    "hub.local.json: guard: set only in hub.json; hub.local.json holds project.branch_prefix,"
+    "hub.local.json: modules: set only in hub.json; hub.local.json holds project.branch_prefix,"
     " author_name, author_email and tracker.transport"
 )
 
@@ -831,7 +831,7 @@ class TestIdentity:
 
     @pytest.mark.parametrize(
         ("document", "line"),
-        [("[]", "hub.local.json: $: must be a JSON object"), ('{"guard": {}}', HUB_ONLY)],
+        [("[]", "hub.local.json: $: must be a JSON object"), ('{"modules": {}}', HUB_ONLY)],
         ids=["array", "hub-only-key"],
     )
     @pytest.mark.parametrize("remove", [False, True], ids=["create", "remove"])

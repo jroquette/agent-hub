@@ -98,7 +98,7 @@ def test_overrides_nothing_when_document_empty() -> None:
             {"project": {"conventions": {}}},
             ConfigProblem("project.conventions", HUB_ONLY_MESSAGE),
         ),
-        ({"guard": {}}, ConfigProblem("guard", HUB_ONLY_MESSAGE)),
+        ({"modules": {}}, ConfigProblem("modules", HUB_ONLY_MESSAGE)),
         (
             {"guard": {"infra": {"allow": ["--profile[= ]other\\b"]}}},
             ConfigProblem("guard", HUB_ONLY_MESSAGE),

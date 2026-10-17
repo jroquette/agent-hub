@@ -797,7 +797,7 @@ NO_PREFIX_LINES = (
     "git config user.email in the hub (its local part plus /)",
 )
 HUB_ONLY = (
-    "hub.local.json: guard: set only in hub.json; hub.local.json holds project.branch_prefix,"
+    "hub.local.json: modules: set only in hub.json; hub.local.json holds project.branch_prefix,"
     " author_name, author_email and tracker.transport"
 )
 
@@ -830,7 +830,7 @@ class TestIdentity:
 
     @pytest.mark.parametrize(
         ("document", "line"),
-        [("[]", "hub.local.json: $: must be a JSON object"), ('{"guard": {}}', HUB_ONLY)],
+        [("[]", "hub.local.json: $: must be a JSON object"), ('{"modules": {}}', HUB_ONLY)],
         ids=["array", "hub-only-key"],
     )
     def test_refuses_with_local_lines_when_local_file_invalid(
