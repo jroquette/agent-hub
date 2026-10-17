@@ -71,6 +71,9 @@ export interface ToolResultView {
   /** The server stored a clipped copy (over 64 KiB); `originalBytes` is the full size. */
   truncated: boolean;
   originalBytes: number | null;
+  /** The change a file tool made, as Claude reported it once it ran: a unified diff with the
+   * file's real line numbers. */
+  diff?: string | null;
 }
 
 export interface ToolView {
@@ -425,6 +428,101 @@ export function toolDiff(tool: ToolView): string | null {
   }
 }
 
+/* ---------- Changed files ---------- */
+
+/** One call that changed a file: its diff and where the call stands. */
+export interface FileChange {
+  tool: ToolView;
+  diff: string;
+  /** The diff carries the file's real line numbers (Claude reported it), so they can show. */
+  numbered: boolean;
+  state: ToolState;
+  added: number;
+  removed: number;
+}
+
+/** A file Claude changed in the session, with every change to it in order. */
+export interface ChangedFile {
+  path: string;
+  /** The first change wrote the whole file (Write): a new file, as far as the chat knows. */
+  created: boolean;
+  changes: FileChange[];
+  /** Lines added and removed by the changes that were applied (not denied or failed). */
+  added: number;
+  removed: number;
+  /** The id of the latest change: a review marked before it is out of date. */
+  lastChangeId: string;
+}
+
+/** Lines added and removed in a unified diff, headers left out. */
+export function diffStats(diff: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
+}
+
+const FILE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+
+function fileChangeDiff(tool: ToolView, path: string): string | null {
+  const reported = tool.result?.diff;
+  if (reported) return reported;
+  if (tool.name !== "NotebookEdit") return toolDiff(tool);
+  if (tool.diff !== null) return tool.diff;
+  return addedFileDiff(path, str(tool.input, "new_source") ?? "");
+}
+
+/** Every file the session's calls changed (subagents' included), first changed first. A change
+ * that was denied or failed stays listed, but counts no lines. */
+export function changedFiles(state: Pick<TranscriptState, "tools" | "permissions">): ChangedFile[] {
+  const files = new Map<string, ChangedFile>();
+  for (const tool of Object.values(state.tools)) {
+    if (!FILE_TOOLS.has(tool.name)) continue;
+    const path = str(tool.input, "file_path") ?? str(tool.input, "notebook_path");
+    if (path === null) continue;
+    const diff = fileChangeDiff(tool, path);
+    if (diff === null) continue;
+    const toolStateNow = toolState(tool, state.permissions[tool.id]);
+    const applied = toolStateNow !== "error" && toolStateNow !== "denied";
+    const stats = diffStats(diff);
+    const numbered = Boolean(tool.result?.diff);
+    const change: FileChange = { tool, diff, numbered, state: toolStateNow, ...stats };
+    const known = files.get(path);
+    const file = known ?? {
+      path,
+      created: tool.name === "Write",
+      changes: [],
+      added: 0,
+      removed: 0,
+      lastChangeId: tool.id,
+    };
+    file.changes.push(change);
+    file.lastChangeId = tool.id;
+    if (applied) {
+      file.added += stats.added;
+      file.removed += stats.removed;
+    }
+    if (!known) files.set(path, file);
+  }
+  return [...files.values()];
+}
+
+/** The directory every path shares (ending in "/"), or "" when they share none. */
+export function commonDir(paths: readonly string[]): string {
+  const first = paths[0];
+  if (first === undefined) return "";
+  let dir = first.slice(0, first.lastIndexOf("/") + 1);
+  for (const path of paths) {
+    while (dir && !path.startsWith(dir))
+      dir = dir.slice(0, dir.lastIndexOf("/", dir.length - 2) + 1);
+  }
+  return dir;
+}
+
 /* ---------- The reducer ---------- */
 
 function push(state: TranscriptState, entry: TranscriptEntry): TranscriptState {
@@ -525,6 +623,8 @@ function applyToolResult(state: TranscriptState, body: JsonObject): TranscriptSt
     truncated: body.truncated === true,
     originalBytes: num(body, "original_bytes"),
   };
+  const diff = str(body, "diff");
+  if (diff) result.diff = diff;
   const known = state.tools[id];
   if (known) return { ...state, tools: { ...state.tools, [id]: { ...known, result } } };
   const orphan: ToolView = { id, name: "Tool", input: {}, parentId: null, diff: null, result };

@@ -263,3 +263,70 @@ IMAGE_BLOCK: Any = {
 )
 def test_maps_nothing_when_user_echo_has_image_block(content: list[Any]) -> None:
     assert EventMapper().to_events(UserMessage(content=content)) == []
+
+
+def test_attaches_engine_patch_with_line_numbers_when_file_tool_result_reported() -> None:
+    patch = [{"oldStart": 7, "oldLines": 1, "newStart": 7, "newLines": 1, "lines": ["-a", "+b"]}]
+    message = UserMessage(
+        content=[ToolResultBlock(tool_use_id="toolu_1", content="updated", is_error=False)],
+        tool_use_result={"filePath": "/r/app.py", "structuredPatch": patch, "originalFile": "x"},
+    )
+
+    assert EventMapper().to_events(message) == [
+        ToolResult(
+            tool_use_id="toolu_1",
+            content="updated",
+            diff="--- a//r/app.py\n+++ b//r/app.py\n@@ -7,1 +7,1 @@\n-a\n+b\n",
+        )
+    ]
+
+
+def test_attaches_whole_content_when_file_created() -> None:
+    message = UserMessage(
+        content=[ToolResultBlock(tool_use_id="toolu_1", content="created", is_error=False)],
+        tool_use_result={"type": "create", "filePath": "new.py", "content": "a\nb\n"},
+    )
+
+    [result] = EventMapper().to_events(message)
+
+    assert isinstance(result, ToolResult)
+    assert result.diff == "--- /dev/null\n+++ b/new.py\n@@ -0,0 +1,2 @@\n+a\n+b\n"
+
+
+@pytest.mark.parametrize(
+    "report",
+    [None, "text", {"structuredPatch": []}, {"filePath": "a.py", "structuredPatch": "bad"}],
+)
+def test_attaches_no_diff_when_report_has_no_patch(report: object) -> None:
+    message = UserMessage(
+        content=[ToolResultBlock(tool_use_id="toolu_1", content="ok", is_error=False)],
+        tool_use_result=report,  # type: ignore[arg-type]
+    )
+
+    assert EventMapper().to_events(message) == [ToolResult(tool_use_id="toolu_1", content="ok")]
+
+
+def test_attaches_no_diff_when_result_failed_or_several() -> None:
+    report = {
+        "filePath": "a.py",
+        "structuredPatch": [
+            {"oldStart": 1, "oldLines": 1, "newStart": 1, "newLines": 1, "lines": ["-a", "+b"]}
+        ],
+    }
+    failed = UserMessage(
+        content=[ToolResultBlock(tool_use_id="t1", content="no", is_error=True)],
+        tool_use_result=report,
+    )
+    several = UserMessage(
+        content=[
+            ToolResultBlock(tool_use_id="t1", content="a", is_error=False),
+            ToolResultBlock(tool_use_id="t2", content="b", is_error=False),
+        ],
+        tool_use_result=report,
+    )
+
+    for message in (failed, several):
+        assert all(
+            isinstance(event, ToolResult) and event.diff is None
+            for event in EventMapper().to_events(message)
+        )

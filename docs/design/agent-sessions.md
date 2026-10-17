@@ -126,10 +126,10 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   ([ADR 0034](../adr/0034-syntax-highlighting-in-the-chat.md)); one still streaming stays plain until its fence
   closes or the reply ends, and one over 2,000 lines or 64 KiB stays plain.
 - **Tool calls.** Each card shows an icon and text: running, waiting for you, done, error or denied; a call with an
-  open permission reads "Waiting for you" with its permission card under it. Output over 10,000 characters is cut
-  with "Show all (N characters)". Consecutive calls with no text between them group as one "Explored · 3 Read,
-  2 Grep" row, open when one is pending or failed. Thinking reads "Thought for N s" (from the previous record's `at`),
-  else "Thinking".
+  open permission reads "Waiting for you". Output over 10,000 characters is cut with "Show all (N characters)". What
+  Claude does between two messages (its calls and the thoughts between them) folds into one activity line that
+  opens the Activity side panel (below). Thinking reads "Thought for N s" (from the previous record's `at`), else
+  "Thinking"; thoughts with no call among them stay in the conversation.
 - **Permission and question cards** (AGH-264). A pending card is raised, with a warning-tone halo, an icon tile and a
   "Waiting for you" badge; once answered it is flat and its outcome reads as a pill.
   - AC-264.1 A tool card shows what the call is for (the tool input's `description`) under its title, and the
@@ -199,6 +199,70 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **Accessibility.** No serious or critical axe violation in any state (empty, streaming, waiting, detached, menu
   open, ended). The log keeps `role="log"` and `aria-busy` and has a visually hidden h2; under
   `prefers-reduced-motion` no caret, shimmer or smooth scroll animates.
+
+### Activity and changed files (AGH-265)
+
+- **AC-265.1** Given Claude made calls (and thought between them) between two messages, when the chat renders, then
+  they read as one line counting the calls by kind, first seen first, then the time spent thinking ("Ran 3
+  commands, read 2 files, thought 12 s"); Grep and Glob count together as searches, an unknown tool by its name.
+- **AC-265.2** Given the session runs and the run has a call without a result, when the line renders, then it reads
+  that call (name and summary) with a spinner instead of the summary; failed or denied calls add "N failed".
+- **AC-265.3** Given an activity line, when it is pressed, then the Activity side panel opens with the run's steps in
+  order (each thought and each call, expandable to its input and result); the line again, Close or Esc closes it
+  and gives the focus back to the line. A step joining the run keeps the panel and an expanded call in place.
+- **AC-265.4** Given a call of the run asks for a permission, when the run renders, then its card stays in the
+  conversation under the line, answerable without opening the panel, and the call reads "Waiting for you".
+- **AC-265.5** Given the panel opens, then it is a full-height drawer over the right of the page that never moves
+  the chat: the free margin beside the centred column (400 to 520 px), the whole width when the chat is narrow;
+  it slides in, not under `prefers-reduced-motion`.
+- **AC-265.6** Given a session page's "What went wrong" panel, when every problem was dealt with, then it folds into
+  one line, "Nothing needs you · the agent dealt with N problems: <count per kind, most frequent first>", with
+  "Show N handled"; otherwise the problems that need the owner stay listed ("Needs attention") and the handled ones
+  sit behind the same button. A row the agent recovered or continued past shows no badge.
+
+- **AC-265.7** Given the session's calls changed files (Edit, MultiEdit, Write, NotebookEdit, subagents' included),
+  when the header's Changed files chip is pressed, then a drawer lists every such file once, by folder like a
+  source-control view, with its status (added or modified), lines added and removed and a Viewed mark; a change
+  that was denied or failed stays listed but counts no lines.
+- **AC-265.8** Given the list, when a file is opened, then it shows alone with every change to it as a diff in order,
+  with previous and next file to step through; All files or Esc goes back to the list, and Esc on the list closes
+  the drawer. On a wide page the list stays beside the open file.
+- **AC-265.9** Given a file marked Viewed, when a later change touches it, then the mark goes; marks are kept per
+  session in this browser (`ah.chat.reviewed.<id>`).
+- **AC-265.10** Given the session changed files, then the header shows a chip with the file count and the lines added
+  and removed in the diff colours, and how many files still wait for review (tinted); once all are viewed it is
+  quiet with a check. Its accessible name says all of it.
+- **AC-265.11** Given a turn whose calls edited files, then a card under its activity line reads "Edited N files +a
+  −r" with a row per file (status, lines, viewed, the first few then "+N more"); a row opens that file in the
+  drawer, Review opens the list.
+- **AC-265.12** Given a drawer (Activity or Changed files), then its left edge resizes it by mouse, or by ←/→ when
+  focused (Home resets, a double click goes back to the default), between 320 px and leaving the chat 280 px, and a
+  button widens it to the page and back; the width is kept in this browser (`ah.chat.drawer.width`).
+- **AC-265.13** Given one drawer is open, when the other is asked for (a run line, the chip), then it takes its place:
+  one drawer at a time.
+
+- **AC-265.14** Given a file tool ran and Claude reported its change (`tool_use_result.structuredPatch`, or a new
+  file's content), when the driver maps its result, then the `tool.result` record carries that change as a unified
+  `diff` with the file's real line numbers (capped like the call's diff, redacted like every stored string); a
+  failed result, a message with several results or a report of another shape carries none, and a result without
+  one keeps its body as before.
+- **AC-265.15** Given a change with that reported diff, when the review or the activity panel shows it, then it shows
+  git's two gutters (old and new line numbers) that stay in view while the code scrolls sideways; a change without
+  one keeps the call's snippet diff, without numbers. A file's changes keep their height and its body scrolls
+  through all of them.
+
+- **AC-265.16** Given a change open in the review, when + beside a line is pressed (Shift+click another line takes
+  the lines between) and a comment is written, then it is sent as a message to the session's own Claude: its first
+  line anchors it ("Review comment on `<path>`, change N, lines a-b:"), then the code as a fenced diff, then the
+  comment. It is kept in the session's log, reaches Claude and comes back after a reload. Without a way to send
+  (an ended session that cannot resume) the review is read-only.
+- **AC-265.17** Given a comment, then its thread shows under its last line with the comment, Claude's answers (its text
+  after each message, up to your next one) and your replies ("Reply to review comment on …"); it reads as waiting
+  for Claude while there is no answer, and Resolve folds it (kept per session in this browser,
+  `ah.chat.resolved.<id>`). A thread whose lines left the diff is kept. The file list shows each file's open
+  threads.
+- **AC-265.18** Given a review comment in the chat, then it reads as one (file, lines, the comment) with a link that
+  opens its file in the review.
 
 ## Invariants
 

@@ -187,7 +187,9 @@ describe("AgentSessionScreen (transcript)", () => {
 
     expect(screen.getAllByRole("article", { name: "Claude" })).toHaveLength(2);
     expect(screen.getByText("Hello there.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Edit src\/app\.py/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Edit src\/app\.py|Edited 1 file/ }),
+    ).toBeInTheDocument();
   });
 
   it("reads every log page when the log is longer than one page", async () => {
@@ -412,7 +414,7 @@ describe("AgentSessionScreen (streaming-batch)", () => {
 
     const bubble = screen.getAllByRole("article", { name: "Claude" })[1];
     expect(bubble).toHaveTextContent("Hello");
-    const card = screen.getByRole("button", { name: /Edit src\/app\.py/ });
+    const card = screen.getByRole("button", { name: /Edit src\/app\.py|Edited 1 file/ });
     expect(bubble?.compareDocumentPosition(card)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 });
@@ -1200,6 +1202,23 @@ describe("AgentSessionScreen (axe)", () => {
     await accessible(view.container, false);
   });
 
+  it("opens the activity and changed-files panels as drawers over the chat that never move it (AC-265.5)", () => {
+    const css = readFileSync(
+      join(process.cwd(), "src/screens/agent-session/agent-session.css"),
+      "utf8",
+    );
+    const rule = (selector: string) =>
+      new RegExp(`(?:^|\\n)${selector.replace(/[.()>:]/g, "\\$&")} \\{([^}]*)\\}`).exec(css)?.[1] ??
+      "";
+    expect(rule(".as-page:has(> .as-body-panel)")).toContain(
+      "grid-template-columns: minmax(0, 1fr);",
+    );
+    const panel = rule(".as-drawer");
+    expect(panel).toContain("grid-area: 1 / 1 / -1 / -1;");
+    expect(panel).toContain("justify-self: end;");
+    expect(panel).toContain("width: var(--as-panel-w);");
+  });
+
   it("animates no caret or working dot under reduced motion", () => {
     const css = readFileSync(
       join(process.cwd(), "src/screens/agent-session/agent-session.css"),
@@ -1208,7 +1227,7 @@ describe("AgentSessionScreen (axe)", () => {
     const animated = [...css.matchAll(/([^{}]+)\{[^{}]*\banimation:(?!\s*none)[^;]+;/g)].map(
       (match) => match[1]?.trim(),
     );
-    expect(animated).toEqual([".as-caret", ".as-working::before"]);
+    expect(animated).toEqual([".as-caret", ".as-working::before", ".as-spin", ".as-drawer"]);
     const reduced =
       /@media \(prefers-reduced-motion: reduce\) \{\s*([^{]+)\{\s*animation: none;/.exec(css);
     expect(reduced?.[1]?.split(",").map((selector) => selector.trim())).toEqual(animated);
@@ -1309,5 +1328,120 @@ describe("AgentSessionScreen (unavailable)", () => {
     renderChat(routes({ [SESSION]: missing, [EVENTS]: missing }));
 
     expect(await screen.findByText("Agent session not found")).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (changed-files)", () => {
+  it("opens the files Claude changed in a drawer, which a run line swaps for its activity (AC-265.7, AC-265.13)", async () => {
+    renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+
+    const button = await screen.findByRole("button", { name: /^Changed files/ });
+    expect(button).toHaveAccessibleName(
+      "Changed files: 1 file, 1 lines added, 1 removed, 1 to review",
+    );
+    expect(button).toHaveTextContent("1 file+1−11 to review");
+    await userEvent.click(button);
+
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    await userEvent.click(within(panel).getByRole("button", { name: /app\.py/ }));
+    expect(within(panel).getByRole("region", { name: "src/app.py" })).toBeInTheDocument();
+    expect(button).toHaveAttribute("aria-expanded", "true");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Edit/ }));
+    expect(screen.queryByRole("complementary", { name: "Changed files" })).toBeNull();
+    expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (run-files-card)", () => {
+  it("shows the files a turn edited under its line, each opening the review on that file (AC-265.11)", async () => {
+    renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+
+    const card = await screen.findByRole("region", { name: "Files edited in this turn" });
+    expect(within(card).getByText("Edited 1 file")).toBeInTheDocument();
+
+    await userEvent.click(
+      within(card).getByRole("button", { name: "Open src/app.py, modified, +1 −1, not viewed" }),
+    );
+
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    const file = within(panel).getByRole("region", { name: "src/app.py" });
+    expect(file).toHaveFocus();
+
+    await userEvent.click(within(file).getByRole("checkbox", { name: "Viewed" }));
+    expect(
+      within(card).getByRole("button", { name: "Open src/app.py, modified, +1 −1, viewed" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Changed files/ })).toHaveAccessibleName(
+      "Changed files: 1 file, 1 lines added, 1 removed, all reviewed",
+    );
+  });
+});
+
+describe("AgentSessionScreen (review-comments)", () => {
+  it("sends a comment on a changed line to the session's Claude, as a message of the chat (AC-265.16)", async () => {
+    const user = userEvent.setup();
+    const view = renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+        [`POST ${SESSION}/messages`]: { seq: 5 },
+      }),
+    );
+
+    const card = await screen.findByRole("region", { name: "Files edited in this turn" });
+    await user.click(within(card).getByRole("button", { name: /^Open src\/app\.py/ }));
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    await user.click(within(panel).getByRole("button", { name: "Comment on diff line 3" }));
+    await user.type(
+      within(panel).getByRole("textbox", { name: "Comment on Diff line 3" }),
+      "Why 2?{Control>}{Enter}{/Control}",
+    );
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({
+      text: "Review comment on `src/app.py`, change 1, diff lines 3:\n\n```diff\n+a = 2\n```\n\nWhy 2?",
+    });
+    const sending = await within(panel).findByRole("region", {
+      name: "Review thread on Diff line 3",
+    });
+    expect(within(sending).getByText("Why 2?")).toBeInTheDocument();
+  });
+
+  it("keeps the review read-only once the session ended and cannot resume (AC-265.16)", async () => {
+    const user = userEvent.setup();
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "ended", end_reason: "log_full" }),
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+
+    const card = await screen.findByRole("region", { name: "Files edited in this turn" });
+    await user.click(within(card).getByRole("button", { name: /^Open src\/app\.py/ }));
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    expect(within(panel).getByText("+a = 2", { exact: false })).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: /^Comment on/ })).toBeNull();
   });
 });
