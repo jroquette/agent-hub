@@ -19,8 +19,9 @@ PHASE_ZERO_INSERT = (
     "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
     "'2026-09-27 08:00:00.000000', '{}')"
 )
-HEAD = "0004"
+HEAD = "0005"
 AGENT_SESSION_TABLES = {"agent_sessions", "agent_session_records"}
+ITEM_VERSION_TABLES = {"item_versions"}
 AGENT_SESSION_INDEXES = {
     "ix_agent_sessions_project_claude_session_id": ["project", "claude_session_id"],
     "ix_agent_sessions_status": ["status"],
@@ -68,7 +69,12 @@ def test_creates_and_drops_events_table_when_upgraded_and_downgraded(tmp_path: P
 
     upgrade(config, "head")
     assert _current_revision(db_path) == HEAD
-    assert _table_names(db_path) == {"alembic_version", "events", *AGENT_SESSION_TABLES}
+    assert _table_names(db_path) == {
+        "alembic_version",
+        "events",
+        *AGENT_SESSION_TABLES,
+        *ITEM_VERSION_TABLES,
+    }
     columns, unique_constraints = _events_schema(db_path)
     filtered = {"project", "session", "type", "timestamp", "source", "source_id"}
     assert filtered <= set(columns)
@@ -315,3 +321,72 @@ def test_keeps_events_unchanged_when_agent_session_tables_added(tmp_path: Path) 
     assert rows_at_head == rows_before
     assert _schema(db_path, "events") == events_before
     assert _rows(db_path) == rows_before
+
+
+def _unique_constraints(db_path: Path, table: str) -> list[tuple[str, list[str]]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        return [
+            (str(item["name"]), [str(column) for column in item["column_names"]])
+            for item in inspect(engine).get_unique_constraints(table)
+        ]
+    finally:
+        engine.dispose()
+
+
+def _session_rows(db_path: Path) -> list[tuple[Any, ...]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            query = "SELECT id, project, last_seq FROM agent_sessions ORDER BY id"
+            return [tuple(row) for row in connection.exec_driver_sql(query)]
+    finally:
+        engine.dispose()
+
+
+def _insert_agent_session(db_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO agent_sessions (id, kind, project, workdir_id, workdir_label, "
+                "status, mode, created_at, updated_at, last_seq, stored_bytes) VALUES "
+                "('01929a4e-7a11-7c00-8a00-00000000e001', 'local', 'demo', 'w1', 'main', "
+                "'running', 'default', '2026-10-13 09:00:00.000000', "
+                "'2026-10-13 09:00:00.000000', 0, 0)"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_keeps_events_and_sessions_when_upgraded_from_0004(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0002")
+    _insert_phase_zero_rows(db_path, 2)
+    upgrade(config, "0004")
+    _insert_agent_session(db_path)
+    tables = ("events", "agent_sessions", "agent_session_records")
+    before = {table: _schema(db_path, table) for table in tables}
+    rows_before = (_rows(db_path), _session_rows(db_path))
+
+    upgrade(config, "0005")
+
+    assert _current_revision(db_path) == "0005"
+    assert {table: _schema(db_path, table) for table in tables} == before
+    assert (_rows(db_path), _session_rows(db_path)) == rows_before
+    versions = _schema(db_path, "item_versions")
+    assert versions["primary_key"] == ["id"]
+    nullable = {name for name, _, is_nullable in versions["columns"] if is_nullable}
+    assert nullable == {"author_name", "author_email", "restored_from", "draft_id"}
+    assert "draft_id" in [name for name, _, _ in versions["columns"]]
+    assert _unique_constraints(db_path, "item_versions") == [
+        ("uq_item_versions_project_unit_path_seq", ["project", "unit_path", "seq"])
+    ]
+
+    downgrade(config, "0004")
+
+    assert _current_revision(db_path) == "0004"
+    assert _table_names(db_path) == {"alembic_version", "events", *AGENT_SESSION_TABLES}
+    assert {table: _schema(db_path, table) for table in tables} == before
+    assert (_rows(db_path), _session_rows(db_path)) == rows_before
