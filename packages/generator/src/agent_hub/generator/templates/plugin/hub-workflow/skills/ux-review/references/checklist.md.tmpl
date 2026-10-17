@@ -1,0 +1,112 @@
+---
+name: ux-review-checklist
+description: The checklist /ux-review hunts with - principles, copy, status, layout, states, keyboard, accessibility, responsive and reuse checks. Read by /ux-review and the ux-designer agent, not a command of its own.
+---
+
+# UX checklist
+
+The checklist `/ux-review` hunts with. Each check has a **signal** (what to look for in the code or the screen), the
+**rule** it rests on and the **better shape**. The rule is the repo's design system first (the files its `AGENTS.md`
+names, and the screen's spec); the heuristic ids (H1–H10, Nielsen's ten usability heuristics) and WCAG 2.2 criteria
+back a finding where the design system is silent, never against it. Component names below (`StatusBadge`,
+`DerivedLabel`, …) are examples of the kind of shared component to look for: use the ones the design system names.
+A suspect is a finding only when its evidence (`path:line`, a search, a failing check) holds today.
+
+## Principles (P)
+
+Check each product principle the design system states; these are the usual ones.
+
+| id | check | signal | rule | better shape |
+|----|-------|--------|------|--------------|
+| P1 | Human acts not the most visible | A gate, approval or waiting item rendered below the fold, unsorted or without its waiting status and icon | The principle on what needs a person | Waiting items first, waiting status, top of the list |
+| P2 | Derived shown as fact | A summary, inferred value or computed figure not marked as derived | The principle on derived values | The design system's derived marker (e.g. a `DerivedLabel`) |
+| P3 | No provenance | A record, learning, decision or summary line that does not link back to where it came from | The principle on provenance | The provenance component or link the system names |
+| P4 | Privacy leak | A secret shown partially, a reveal button, personal content, stored content the design says is not kept | The principle on privacy; any departure on what is stored | Redaction, "present, private", an expired-content state |
+| P5 | Metric about a person | A chart, ranking, filter or column grouped by person | The principle on measuring work, not people | Group by step, gate, repo, issue size or run |
+| P6 | Unshipped action looks live | An action from a later phase enabled, or without its phase tag | The principle on phases; departures | Disabled, tagged, the read-only tooltip |
+| P7 | Against a stated principle | A feature the principles rule out (e.g. a free-text box on a screen the system keeps observe-only) | The principle it contradicts | Remove it, or raise it as a question |
+
+## Copy (C)
+
+| id | check | signal | rule | better shape |
+|----|-------|--------|------|--------------|
+| C1 | Glossary drift | A word the glossary replaces with another (a synonym for a defined term) | Content rules › Glossary | The glossary word, exactly |
+| C2 | Vague button verb | "OK", "Submit", "Confirm", "Go" | Content rules › Voice; H2 | Verb + object: "Approve plan" |
+| C3 | Vague link text | "See more", "Click here", "Details" | Content rules › Voice; WCAG 2.4.4 | Say where it goes: "3 failed runs in verify" |
+| C4 | Tone | Exclamation marks, emoji, Title Case, "smart", "magic", sparkles (unless the system asks for them) | Content rules › Voice | Calm, sentence case, plain |
+| C5 | Format drift | Absolute time where relative is due (or the reverse), money with the wrong decimals, non-tabular numbers, untruncated paths | Content rules › Formatting | The id, path and number formats the system gives |
+| C6 | Error that does not help | A raw status code, stack text, or no next step | The system's error rules; H9 | What happened, why, and the one command or action that fixes it |
+| C7 | External content as fact | Issue text, PR comments, web content not marked as external | Content rules › Formatting | The external-content marker |
+
+## Status and color (S)
+
+| id | check | signal | rule | better shape |
+|----|-------|--------|------|--------------|
+| S1 | Color alone | A status by color with no icon or label | Visual foundations › Status; WCAG 1.4.1 | The status component (icon + label) |
+| S2 | Hard-coded color | A hex, `rgb()` or named color in a component or CSS | Tokens: never hard-code a color | The token |
+| S3 | Accent overuse | The accent on more than the view's primary action, links, selected nav and focus | Visual foundations › Color | Neutral; one accent per view |
+| S4 | Alarm fatigue | A toast for something the user did not do, flashing, a looping animation, a red edge without a problem that needs the user | Visual foundations › Status | Quiet status; toasts only for the user's own actions |
+| S5 | Decoration | Gradients, 3D, colored left-border cards, mascot imagery, emoji icons (unless the system uses them) | Visual foundations › Personality, Shape; Iconography | Borders, the icon set, neutral grounds |
+
+## Layout and density (L)
+
+| id | check | signal | rule | better shape |
+|----|-------|--------|------|--------------|
+| L1 | Five-second test fails | The screen's question has no answer above the fold, or the primary action is not findable at a glance | The screen spec's layout; H8 | Lead with the answer; one primary action |
+| L2 | Off the grid | Spacing, radius, row height or type size outside the scale | Visual foundations › Space, Type, Shape | The scale value |
+| L3 | Misaligned figures | Numbers left-aligned, text right-aligned, charts not starting at zero, legends where direct labels fit | Visual foundations › Type, Charts | Right-align numbers; direct labels; zero baseline |
+| L4 | Too much at once | Everything expanded, no progressive disclosure, collapsible items not collapsed | Responsive rules; H8 | Column priority, collapse, details on demand |
+
+## States (T)
+
+| id | check | signal | rule | better shape |
+|----|-------|--------|------|--------------|
+| T1 | Missing state | A screen or panel without its loading, empty, error, stale or offline state | The screen spec › States; first-run and error rules | The state and copy the spec gives |
+| T2 | Layout shift | A spinner where a skeleton is due, content jumping on load | Loading rules | Skeleton of the final shape |
+| T3 | Invisible source gap | A field from a source that is not connected shown blank or zero | The rule on missing sources | "—" with a tooltip naming the missing source |
+| T4 | No system status | A long action or a live region with no feedback on progress or freshness | H1; stale-data rules | Progress, "as of" time, a live indicator |
+
+## Interaction and keyboard (K)
+
+| id | check | signal | rule | better shape |
+|----|-------|--------|------|--------------|
+| K1 | Shortcut drift | A list or timeline without the mapped keys, or a new shortcut that clashes with the keyboard map | The keyboard map | The mapped keys |
+| K2 | Lost context | Navigation that drops filters, scroll or selection; a panel that replaces instead of overlaying | Responsive and navigation rules; H3, H6 | Overlay; keep state in the URL |
+| K3 | Unstable deep link | A URL that breaks on reload or does not encode the view | Route rules | Route params for the view state |
+| K4 | No way back | A destructive or irreversible action with no confirm, or a modal with no `Esc` | H3, H5 | Confirm with the verb; `Esc` closes |
+| K5 | Inconsistent pattern | The same thing done two ways across screens (two filters, two empty states, two date formats) | H4 | The pattern the other screens use |
+
+## Accessibility (A)
+
+| id | check | signal | rule | better shape |
+|----|-------|--------|------|--------------|
+| A1 | Focus not visible | `outline: none` without the focus ring, focus lost after a dialog closes | Visual foundations › Focus; WCAG 2.4.7, 2.4.11 | The focus ring, focus returned to the trigger |
+| A2 | Not by keyboard | A `div` or `span` with `onClick` and no role, tab stop or key handler | WCAG 2.1.1, 4.1.2 | A `button` or link |
+| A3 | No name | An icon-only control or input without an accessible name | WCAG 1.1.1, 4.1.2 | `aria-label` or visible label |
+| A4 | Contrast | Text below 4.5:1, controls and marks below 3:1, in any theme | Visual foundations › Color; WCAG 1.4.3, 1.4.11 | The text and border tokens |
+| A5 | Target too small | A control under 24px | Visual foundations › Space; WCAG 2.5.8 | The smallest control size or larger |
+| A6 | Noisy live region | A streaming region not `aria-live="polite"`, or announcing every event | Visual foundations › Focus | Polite, rate-limited |
+| A7 | Motion ignored | Animation not off under `prefers-reduced-motion` | Visual foundations › Motion; WCAG 2.3.3 | The motion tokens, guarded |
+| A8 | Untested | A screen with no accessibility test, or one that axe fails at serious or critical | The repo's testing rules | The screen's accessibility test |
+
+## Responsive (R)
+
+| id | check | signal | rule | better shape |
+|----|-------|--------|------|--------------|
+| R1 | Horizontal scroll | The page scrolls sideways at the smallest desktop size the system supports | Responsive rules; WCAG 1.4.10 | Hide columns by priority, overlay panels |
+| R2 | Ad-hoc truncation | Columns cut or hidden in an order the spec does not give | Responsive rules › column priority | The priority list |
+| R3 | Mobile beyond glance | A full screen squeezed to phone width that the spec keeps desktop-only | Responsive rules › mobile views | The mobile view the spec gives, or none |
+
+## Reuse (U)
+
+| id | check | signal | rule | better shape |
+|----|-------|--------|------|--------------|
+| U1 | Rolled-own component | Markup that re-implements a shared component (status, ids, paths, empty and error states) | The components index; `rg` finds it | Use the shared component |
+| U2 | Rolled-own icon | An inline SVG, emoji or second icon set | Iconography | The system's icon set |
+
+## Not a finding
+
+- A choice the screen's spec, a design decision or an ADR made on purpose (cite it). If it now looks wrong, raise it as a question, not a finding.
+- A difference the design system's departures allow: they win over the spec files.
+- Taste: "I would use a card here" with no rule, heuristic or user impact behind it.
+- A later-phase screen or action that is hidden or tagged as the design says.
