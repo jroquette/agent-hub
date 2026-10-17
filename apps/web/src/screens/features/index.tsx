@@ -328,32 +328,38 @@ function FeatureRow({
   );
 }
 
-function ColumnHeads() {
+/** The column titles at the top of each group's card; the first card also explains them. */
+function ColumnHeads({ withHints }: { withHints: boolean }) {
   const head = (label: string, hint: string, className?: string) => (
     <span className={className}>
-      <span className="ah-row" style={{ gap: 4 }}>
+      <span className="ah-row" style={{ gap: 4, flexWrap: "nowrap" }}>
         {label}
-        <Tooltip label={hint}>
-          <span
-            role="img"
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-            tabIndex={0}
-            aria-label={`${label}: ${hint}`}
-            style={{ display: "inline-flex" }}
-          >
-            <Icon name="info" size="sm" />
-          </span>
-        </Tooltip>
+        {withHints && (
+          <Tooltip label={hint}>
+            <span
+              role="img"
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+              tabIndex={0}
+              aria-label={`${label}: ${hint}`}
+              style={{ display: "inline-flex" }}
+            >
+              <Icon name="info" size="sm" />
+            </span>
+          </Tooltip>
+        )}
       </span>
     </span>
   );
   return (
     <div className="ft-cols">
       <span aria-hidden="true" />
-      <span aria-hidden="true" />
+      <span>Feature</span>
       <div className="ft-cols-meta">
         {head("Issues", "The tracker issues of the feature.", "ft-col-issues")}
-        {head("Golden path", `One segment per step: ${GOLDEN_PATH_ORDER}.`)}
+        {head(
+          "Golden path",
+          `One segment per step: ${GOLDEN_PATH_ORDER}. Derived from the record files, the tickets' status read from Linear, and the review and eval records.`,
+        )}
         {head(
           "ACs",
           "Acceptance criteria passing, of the total. Owner steps are counted and hatched in amber.",
@@ -372,7 +378,9 @@ function Group({
   showProject,
   onOpen,
   filtered,
+  withHints,
 }: {
+  withHints: boolean;
   id: GroupId;
   rows: Feature[] | null;
   collapsed: boolean;
@@ -409,7 +417,7 @@ function Group({
       </div>
       {open &&
         (shown === null ? (
-          <ul className="ft-rows" aria-hidden="true">
+          <ul className="ft-rows ft-card" aria-hidden="true">
             {Array.from({ length: 3 }, (_, i) => (
               <li key={i} className="ft-row" style={{ cursor: "default" }}>
                 <span className="ft-row-lead" />
@@ -424,17 +432,20 @@ function Group({
           <div className="ft-empty">{meta.empty}</div>
         ) : (
           <>
-            <ul className="ft-rows" aria-labelledby={headId}>
-              {shown.map((f) => (
-                <FeatureRow
-                  key={`${f.project}/${f.slug}`}
-                  f={f}
-                  reason={reasonOf(f)}
-                  showProject={showProject}
-                  onOpen={onOpen}
-                />
-              ))}
-            </ul>
+            <div className="ft-card">
+              <ColumnHeads withHints={withHints} />
+              <ul className="ft-rows" aria-labelledby={headId}>
+                {shown.map((f) => (
+                  <FeatureRow
+                    key={`${f.project}/${f.slug}`}
+                    f={f}
+                    reason={reasonOf(f)}
+                    showProject={showProject}
+                    onOpen={onOpen}
+                  />
+                ))}
+              </ul>
+            </div>
             {hidden > 0 && (
               <button
                 type="button"
@@ -518,11 +529,30 @@ export function FeaturesScreen() {
   const projects = new Set(all.map((f) => f.project));
   const verdicts = listOf(params.get("verdict"));
   const onOpen = (href: string) => void navigate(href);
+  // The first open card with rows explains the columns; the others only name them.
+  const firstCard = GROUPS.find(
+    (g) => !collapsed.has(g.id) && (byGroup.get(g.id)?.length ?? 0) > 0,
+  )?.id;
 
   return (
     <div ref={screenRef} style={{ padding: "16px 32px 40px" }} className="ah-stack">
-      <div className="ah-row ah-wrap">
+      <div className="ft-head">
         <h1 className="ah-h1">Features</h1>
+        {features.isSuccess && all.length > 0 && (
+          <p className="ft-summary">
+            {GROUPS.map((g) => {
+              const n = all.filter((f) => reasonOf(f).group === g.id).length;
+              return (
+                <span key={g.id} data-group={g.id}>
+                  <b>{n}</b> {g.summary}
+                </span>
+              );
+            })}
+            <DerivedLabel how="Grouped from the golden path, derived from the record files, the tickets' status read from Linear, and the review and eval records.">
+              derived
+            </DerivedLabel>
+          </p>
+        )}
         {state === "offline" ? (
           <AsOfStamp stale time={fmtClock(asOf, tz)} />
         ) : (
@@ -613,17 +643,12 @@ export function FeaturesScreen() {
                 Clear filters
               </Button>
             )}
-            <span className="ah-grow" />
             {filtered && features.isSuccess && (
               <span className="ah-small ah-muted" role="status">
                 {rows.length} of {all.length} feature{all.length === 1 ? "" : "s"}
               </span>
             )}
-            <DerivedLabel how="Grouped from the golden path, derived from the record files, the tickets' status read from Linear, and the review and eval records.">
-              derived
-            </DerivedLabel>
           </div>
-          <ColumnHeads />
           {features.isSuccess && filtered && rows.length === 0 ? (
             <div className="ft-empty">
               No features match these filters.{" "}
@@ -636,6 +661,7 @@ export function FeaturesScreen() {
               {GROUPS.map((g) => {
                 const list = features.isSuccess ? (byGroup.get(g.id) ?? []) : null;
                 if (filtered && list?.length === 0) return null;
+                const withHints = g.id === firstCard;
                 return (
                   <Group
                     key={g.id}
@@ -648,6 +674,7 @@ export function FeaturesScreen() {
                     showProject={projects.size > 1}
                     onOpen={onOpen}
                     filtered={filtered}
+                    withHints={withHints}
                   />
                 );
               })}

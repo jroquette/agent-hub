@@ -8,10 +8,18 @@ type Feature = components["schemas"]["FeatureView"];
 
 export type GroupId = "needs" | "progress" | "shipped";
 
-export const GROUPS: readonly { id: GroupId; title: string; hint: string; empty: string }[] = [
+export const GROUPS: readonly {
+  id: GroupId;
+  title: string;
+  /** The words after the count in the page's summary line. */
+  summary: string;
+  hint: string;
+  empty: string;
+}[] = [
   {
     id: "needs",
     title: "Needs you",
+    summary: "need you",
     hint: "Owner steps to do, a NO-SHIP verdict or a record that cannot be read",
     empty:
       "Nothing needs you. Features show here when they wait on your owner steps, get a NO-SHIP verdict or have a record that cannot be read.",
@@ -19,10 +27,17 @@ export const GROUPS: readonly { id: GroupId; title: string; hint: string; empty:
   {
     id: "progress",
     title: "In progress",
+    summary: "in progress",
     hint: "Furthest along first, then most ACs passing",
     empty: "No feature in progress.",
   },
-  { id: "shipped", title: "Shipped", hint: "", empty: "No feature shipped yet." },
+  {
+    id: "shipped",
+    title: "Shipped",
+    summary: "shipped",
+    hint: "",
+    empty: "No feature shipped yet.",
+  },
 ];
 
 export type Tone = "blocked" | "failed" | "waiting" | "done";
