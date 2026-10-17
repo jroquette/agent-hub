@@ -227,7 +227,7 @@ test("Brain shows the tree and a note, and follows an in-app link", async ({ pag
   await visit(page, baseURL, "/projects/demo/brain/index.md", async () => {
     await expect(page.getByRole("heading", { level: 1, name: "Brain", exact: true })).toBeVisible();
     const tree = page.getByRole("navigation", { name: "Brain notes" });
-    await expect(tree.getByText("now.md")).toBeVisible();
+    await expect(tree.getByRole("link", { name: "Now" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Demo brain" })).toBeVisible();
     await page.getByRole("link", { name: "what we focus on now" }).click();
     await expect(page).toHaveURL(/\/projects\/demo\/brain\/now\.md$/);
@@ -337,7 +337,7 @@ test("Agent session started from Sessions survives a reload while waiting and af
 // test_shows_skills_catalog_and_detail_when_skills_opened.
 test("Skills catalog and a skill detail load from the hub's files", async ({ page, baseURL }) => {
   await visit(page, baseURL, "/projects/demo/skills", async () => {
-    await expect(page.getByRole("heading", { level: 1, name: "Skills" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Toolkit" })).toBeVisible();
     await expect(page.getByRole("article", { name: "demo-check", exact: true })).toBeVisible();
     const feature = page.getByRole("article", { name: "feature", exact: true });
     await expect(feature).toBeVisible();

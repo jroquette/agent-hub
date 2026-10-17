@@ -35,3 +35,25 @@ export function buildTree(entries: readonly BrainEntry[]): BrainFolder {
 export function noteName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
+
+/** How many notes a folder holds, its subfolders included. */
+export function countNotes(folder: BrainFolder): number {
+  return folder.notes.length + folder.folders.reduce((sum, child) => sum + countNotes(child), 0);
+}
+
+/** The root notes every brain starts from, by the name the tree shows them under. */
+export const START_NOTES: Readonly<Record<string, string>> = {
+  "index.md": "Index",
+  "now.md": "Now",
+};
+
+/** The folder of unreviewed proposals: listed apart, since nothing there is authoritative. */
+export const INBOX_FOLDER = "_inbox";
+
+/** The notes whose path contains the query, case-insensitive. */
+export function matchNotes<T extends { path: string }>(entries: readonly T[], query: string): T[] {
+  const needle = query.trim().toLowerCase();
+  return needle === ""
+    ? [...entries]
+    : entries.filter((entry) => entry.path.toLowerCase().includes(needle));
+}

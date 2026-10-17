@@ -1,11 +1,12 @@
-/* The About card of an item's detail (D4, AC-164.17): what it is, how to invoke it, where it lives. */
+/* The header card of an item's detail (D4, AC-164.17): what it is, how to use it, and its state at
+ * a glance. Where it lives and its other facts are in the About rail beside the text. */
 import "./SkillDetail.css";
 
 import type { ReactNode } from "react";
 
 import { Icon } from "../../components";
 import type { components } from "../../api/schema";
-import { frontmatterText } from "./FrontmatterTable";
+import { AnchorLink } from "./BodyView";
 import {
   HookStateTags,
   Invocation,
@@ -17,26 +18,73 @@ import {
 } from "./SkillCard";
 
 type SkillDetail = components["schemas"]["SkillDetail"];
+type HookFacts = components["schemas"]["HookFacts"];
 
-/** Keys the header shows by name; any other known key is listed under its own key. */
-const SHOWN_KEYS = new Set([
-  "name",
-  "description",
-  "when_to_use",
-  "argument-hint",
-  "allowed-tools",
-  "tools",
-  "model",
-  "disable-model-invocation",
-  "user-invocable",
-]);
+/** When each Claude Code hook event fires, worded to follow "Runs …". */
+const HOOK_WHEN: Readonly<Record<string, string>> = {
+  SessionStart: "when a session starts",
+  SessionEnd: "when a session ends",
+  UserPromptSubmit: "when you send a prompt",
+  Notification: "when Claude Code sends a notification",
+  Stop: "when the main agent ends its turn",
+  SubagentStart: "when a subagent starts",
+  SubagentStop: "when a subagent ends",
+  PreCompact: "before the context is compacted",
+};
+/** The tool events, worded to take the matcher: "before every Bash tool call". */
+const HOOK_TOOL_WHEN: Readonly<Record<string, string>> = {
+  PreToolUse: "before",
+  PostToolUse: "after",
+  PostToolUseFailure: "after a failed",
+};
 
-function Fact({ term, children, mono }: { term: string; children: ReactNode; mono?: boolean }) {
+function toolList(matcher: string): string {
+  const tools = matcher.split("|").map((tool) => tool.trim());
+  if (tools.length === 1) return tools[0] ?? matcher;
+  return `${tools.slice(0, -1).join(", ")} or ${tools.at(-1) ?? ""}`;
+}
+
+/** A hook in a plain sentence: "Runs before every Bash tool call.". */
+export function hookSentence(hook: Pick<HookFacts, "event" | "matcher">): string {
+  const tool = HOOK_TOOL_WHEN[hook.event];
+  if (tool !== undefined) {
+    const which = hook.matcher ? `${toolList(hook.matcher)} tool call` : "tool call";
+    return tool === "after a failed"
+      ? `Runs after every failed ${which}.`
+      : `Runs ${tool} every ${which}.`;
+  }
+  const when = HOOK_WHEN[hook.event];
+  return when ? `Runs ${when}.` : `Runs on ${hook.event}.`;
+}
+
+/** "Pass the tracker issue id." for a single `<…>` placeholder, else "Arguments: …". */
+export function argumentLine(hint: string): string {
+  const single = /^<([^<>]+)>$/.exec(hint.trim());
+  return single?.[1] ? `Pass the ${single[1]}.` : `Arguments: ${hint}`;
+}
+
+function HealthChip({ count, warnings }: { count: number; warnings: number }) {
+  if (count === 0) {
+    return (
+      <span className="ah-skill-tag">
+        <Icon name="circle-check" size="sm" />
+        No diagnostics
+      </span>
+    );
+  }
   return (
-    <div className="ah-skill-fact">
-      <dt>{term}</dt>
-      <dd className={mono ? "ah-mono" : undefined}>{children}</dd>
-    </div>
+    <AnchorLink
+      anchor="skill-diagnostics"
+      className="ah-skill-tag ah-skill-health"
+      onGo={(anchor) => {
+        const heading = document.getElementById(anchor);
+        heading?.scrollIntoView({ block: "start" });
+        heading?.focus();
+      }}
+    >
+      <Icon name={warnings > 0 ? "triangle-alert" : "info"} size="sm" />
+      {count} {count === 1 ? "diagnostic" : "diagnostics"}
+    </AnchorLink>
   );
 }
 
@@ -45,36 +93,52 @@ export interface DetailHeaderProps {
   /** The current time in ms, for "last used … ago". */
   now: number;
   usageDays: number;
-  /** An action at the end of the card's foot, such as the Discuss button. */
+  /** The view's actions, at the top right (Discuss, Edit with Claude). */
   action?: ReactNode;
 }
 
 /** The header card; it holds the page's `<h1>` (the item's name). */
 export function DetailHeader({ detail, now, usageDays, action }: DetailHeaderProps) {
-  const others = detail.frontmatter.filter((pair) => pair.known && !SHOWN_KEYS.has(pair.key));
   const description = detail.description_full ?? detail.description;
-  const sha = detail.lock?.sha256;
+  const warnings = detail.diagnostics.filter((d) => d.severity === "warning").length;
   return (
     <header className="ah-card ah-skill-header">
       <div className="ah-skill-header-top">
-        <span className="ah-skill-kind">
-          <Icon name={KIND_ICON[detail.kind]} size="sm" />
-          {KIND_NAME[detail.kind]}
-        </span>
-        <h1 className="ah-h1 ah-skill-title">{detail.name}</h1>
+        <div className="ah-skill-header-name">
+          <span className="ah-skill-kind">
+            <Icon name={KIND_ICON[detail.kind]} size="sm" />
+            {KIND_NAME[detail.kind]}
+          </span>
+          <h1 className="ah-h1 ah-skill-title">{detail.name}</h1>
+        </div>
+        {action && <div className="ah-skill-header-actions">{action}</div>}
       </div>
-      {detail.kind !== "hook" && (
+      {detail.hook ? (
+        <p className="ah-skill-lede">{hookSentence(detail.hook)}</p>
+      ) : (
         <p className="ah-skill-lede">{description ?? "No description."}</p>
       )}
-      {detail.invocation && <Invocation text={detail.invocation} />}
+      {detail.when_to_use && (
+        <p className="ah-skill-when">
+          <span className="ah-caption">When to use</span> {detail.when_to_use}
+        </p>
+      )}
+      {detail.invocation && (
+        <div className="ah-skill-howto">
+          <Invocation text={detail.invocation} />
+          {detail.argument_hint && (
+            <span className="ah-small ah-muted">{argumentLine(detail.argument_hint)}</span>
+          )}
+        </div>
+      )}
       {detail.kind === "agent" && (
         <p className="ah-skill-subagent">
-          subagent <code>{detail.name}</code>
+          The main session delegates to it as subagent <code>{detail.name}</code>.
         </p>
       )}
       <div className="ah-skill-card-foot">
-        <OriginBadge origin={detail.origin} />
         {detail.mode && <ModeTag mode={detail.mode} />}
+        <OriginBadge origin={detail.origin} />
         {detail.kind === "hook" && <HookStateTags active={detail.active} state={detail.state} />}
         {detail.usage && (
           <span className="ah-skill-meta">
@@ -82,62 +146,8 @@ export function DetailHeader({ detail, now, usageDays, action }: DetailHeaderPro
             <UsageLine usage={detail.usage} days={usageDays} now={now} />
           </span>
         )}
-        {action && (
-          <>
-            <span className="ah-grow" />
-            {action}
-          </>
-        )}
+        <HealthChip count={detail.diagnostics.length} warnings={warnings} />
       </div>
-      <dl className="ah-skill-facts">
-        {detail.when_to_use && <Fact term="When to use">{detail.when_to_use}</Fact>}
-        <Fact term="Source" mono>
-          {detail.source_path}
-        </Fact>
-        {detail.linked_from.length > 0 && (
-          <Fact term="Linked from" mono>
-            {detail.linked_from.join(", ")}
-          </Fact>
-        )}
-        {detail.lock && (
-          <Fact term="hub.lock">
-            <span title={sha ?? undefined}>
-              {detail.lock.ownership}
-              {sha && (
-                <>
-                  {" "}
-                  · sha256 <span className="ah-mono">{sha.slice(0, 12)}</span>
-                </>
-              )}
-            </span>
-          </Fact>
-        )}
-        {detail.argument_hint && (
-          <Fact term="Argument hint" mono>
-            {detail.argument_hint}
-          </Fact>
-        )}
-        {detail.allowed_tools.length > 0 && (
-          <Fact term="Allowed tools" mono>
-            {detail.allowed_tools.join(", ")}
-          </Fact>
-        )}
-        {detail.tools.length > 0 && (
-          <Fact term="Tools" mono>
-            {detail.tools.join(", ")}
-          </Fact>
-        )}
-        {detail.model && (
-          <Fact term="Model" mono>
-            {detail.model}
-          </Fact>
-        )}
-        {others.map((pair) => (
-          <Fact key={pair.key} term={pair.key} mono>
-            {frontmatterText(pair.value)}
-          </Fact>
-        ))}
-      </dl>
     </header>
   );
 }

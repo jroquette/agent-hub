@@ -7,7 +7,7 @@ export type ItemKind = Schemas["ItemKind"];
 export type Origin = Schemas["Origin"];
 export type Mode = Schemas["Mode"];
 
-export const KINDS: readonly ItemKind[] = ["skill", "agent", "hook"];
+export const KINDS: readonly ItemKind[] = ["agent", "skill", "hook"];
 export const ORIGINS: readonly Origin[] = ["managed", "project-owned", "local"];
 export const MODES: readonly Mode[] = ["user-only", "model-only", "both", "neither"];
 /** The longest search kept from the URL; longer text is cut. */
