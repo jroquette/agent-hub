@@ -130,6 +130,7 @@ def sync_platform(
     except OSError as error:
         raise PlatformSyncError("hub.json cannot be read") from error
     previous, updated = pinned_text(original, running_version)
+    dirty_before = set(_changed_files(hub, run))
     if updated != original:
         _write(path, updated)
     argv = (*(program or own_hub_program()), "sync")
@@ -150,5 +151,8 @@ def sync_platform(
         ok=ok,
         exit_code=exit_code,
         output=output,
-        changed_files=_changed_files(hub, run) if ok else (),
+        # Files already changed before the sync are the owner's, not this sync's.
+        changed_files=(
+            tuple(p for p in _changed_files(hub, run) if p not in dirty_before) if ok else ()
+        ),
     )

@@ -13,7 +13,8 @@ HUB_JSON = (
 
 
 class FakeRunner:
-    """Answers ``hub sync`` with ``sync_exit`` and ``git status`` with one changed file."""
+    """Answers ``hub sync`` with ``sync_exit``; ``git status`` lists ``notes.md`` (the owner's
+    own edit) before the sync, and the pin and lock beside it after."""
 
     def __init__(self, *, sync_exit: int = 0) -> None:
         self.sync_exit = sync_exit
@@ -25,7 +26,9 @@ class FakeRunner:
         if argv[-1] == "sync":
             self.pin_seen = json.loads((cwd / "hub.json").read_text())["platform"]["version"]
             return subprocess.CompletedProcess(argv, self.sync_exit, "updated hub.lock\n", "")
-        return subprocess.CompletedProcess(argv, 0, " M hub.json\n M hub.lock\n", "")
+        synced = any(call[-1] == "sync" for call in self.calls)
+        status = " M notes.md\n" + (" M hub.json\n M hub.lock\n" if synced else "")
+        return subprocess.CompletedProcess(argv, 0, status, "")
 
 
 def test_pinned_text_changes_only_the_pin() -> None:
@@ -49,7 +52,7 @@ def test_sync_platform_pins_then_syncs_and_lists_the_changes(tmp_path: Path) -> 
     )
 
     assert runner.pin_seen == "0.16.0"
-    assert runner.calls[0] == ("hub", "sync")
+    assert ("hub", "sync") in runner.calls
     assert result.ok
     assert (result.previous_version, result.version) == ("0.14.0", "0.16.0")
     assert result.output == ("updated hub.lock",)
