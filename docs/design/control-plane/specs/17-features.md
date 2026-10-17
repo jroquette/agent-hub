@@ -239,6 +239,24 @@ Features without `eval.md` show "--" in Verdict.
 | Live | A file change in `brain/features/` refreshes the row (fade, `dur-base`) | (none) |
 | Stale | `AsOfStamp` | "As of 14:02 · collector offline" |
 
+### Departures (AGH-268, the list at a glance)
+
+Validated by the owner in the playground; where Screen 1 says otherwise, this list wins.
+
+- **AC-268.22 Who acts.** Given a feature held at Evaluate by owner steps only, then its row shows "Waiting for you"
+  and the summary line counts it ("2 features · 1 waiting for you · 1 in progress · 0 shipped · furthest along
+  first").
+- **AC-268.23 Step position.** Given the golden path bar, then it names the phase with its position ("Implement · step
+  5 of 8") and only the step's own progress (the ACs column counts the ACs); the bar takes focus for its tooltip.
+- **AC-268.24 Column hints.** Given the table, then the Golden path, ACs and Verdict headers carry a hint (an info icon
+  with a tooltip) instead of a footnote, and the columns have fixed widths.
+- **AC-268.25 Issues.** Given a feature with several issues, then the first shows and "+N" opens all of them in a
+  popover.
+- **AC-268.26 Verdict scope.** Given a verdict while Evaluate is not done, then the Evaluate step's meta (its scope)
+  shows under the badge.
+- **AC-268.27 Shipped last.** Given shipped features, then they sort after every feature in progress.
+- **AC-268.28 Tooltips.** Given a tooltip in a table, then it wraps and opens downward where the table would cut it.
+
 ---
 
 ## Screen 2: Feature detail
