@@ -428,3 +428,19 @@ def test_keeps_first_verdict_when_no_final_line_legacy() -> None:
     [record] = eval_records((), b"Verdict: NO-SHIP\n\nLater: Verdict: SHIP\n", slug=SLUG)
 
     assert record.verdict == "NO-SHIP"
+
+
+@pytest.mark.parametrize(
+    ("provenance", "expected"),
+    [("agent-evaluator", "agent-evaluator"), ("owner", "owner"), ("[a, b]", None), (None, None)],
+)
+def test_reads_who_ran_eval_when_provenance_given(
+    provenance: str | None, expected: str | None
+) -> None:
+    fields = {"type": "eval", "verdict": "SHIP", "acs": "[AC-7.1]"}
+    if provenance is not None:
+        fields["provenance"] = provenance
+
+    (record,) = eval_records((an_eval("acme-1520.md", **fields),), None, slug=SLUG)
+
+    assert (record.provenance, record.problem) == (expected, None)

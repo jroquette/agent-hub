@@ -215,6 +215,7 @@ def _parsed(stem: str, path: str, fields: dict[str, FrontmatterValue]) -> EvalRe
         evaluated_at=text_field(fields, "evaluated_at", ISO_TIME),
         legacy=False,
         problem=None,
+        provenance=_provenance(fields),
     )
 
 
@@ -223,9 +224,10 @@ def _legacy(head: bytes, *, slug: str) -> EvalRecord:
     tickets: tuple[str, ...] = ()
     acs: tuple[str, ...] | Literal["all"] = ()
     prs: tuple[str, ...] = ()
-    commit = evaluated_at = None
+    commit = evaluated_at = provenance = None
     try:
         fields = record_fields(head)
+        provenance = _provenance(fields)
         tickets, acs = _items(fields, "tickets", _TICKET), _acs(fields)
         prs, commit = _items(fields, "prs", _PR), text_field(fields, "commit", COMMIT_PATTERN)
         evaluated_at = text_field(fields, "evaluated_at", ISO_TIME)
@@ -242,6 +244,7 @@ def _legacy(head: bytes, *, slug: str) -> EvalRecord:
         evaluated_at=evaluated_at,
         legacy=True,
         problem=None,
+        provenance=provenance,
     )
 
 
@@ -262,6 +265,15 @@ def legacy_verdict_line(head: bytes) -> tuple[Verdict, str] | None:
             if found is not None:
                 return cast("Verdict", found.group(1).upper()), line
     return None
+
+
+def _provenance(fields: dict[str, FrontmatterValue]) -> str | None:
+    """Who ran the eval, from its ``provenance`` field; None when absent or not one short value
+    (it only labels the eval, so a bad one never makes the eval unreadable)."""
+    value = fields.get("provenance")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return one_line(value.strip())[:64]
 
 
 def _broken(stem: str, path: str, problem: str) -> EvalRecord:

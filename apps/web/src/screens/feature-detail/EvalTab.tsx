@@ -48,6 +48,48 @@ function deliveryLabel(record: EvalRecord): string {
   return record.legacy ? fileName(record.path) : record.delivery;
 }
 
+/** Who ran an eval, from its `provenance`, in words; null when the note does not say. */
+export function ranBy(provenance: string | null | undefined): string | null {
+  if (!provenance) return null;
+  const known: Record<string, string> = {
+    agent: "Agent",
+    "agent-evaluator": "Evaluator agent",
+    owner: "You (owner sign-off)",
+  };
+  return known[provenance] ?? provenance;
+}
+
+/**
+ * What an eval evaluated: the whole feature (all ACs, no ticket, or only the feature's epics,
+ * since evaluating the epic is evaluating the feature), else its tickets.
+ */
+export function evalScope(record: EvalRecord, epics: readonly string[]): string {
+  const own = record.tickets.filter((t) => !epics.includes(t));
+  if (record.acs === "all" || own.length === 0) return FEATURE_SCOPE;
+  return own.join(", ");
+}
+
+/** The evals grouped by scope, the whole feature first, then the tickets in plan order; newest first. */
+export function evalHistory(
+  evals: readonly EvalRecord[],
+  tickets: readonly string[],
+  epics: readonly string[],
+): { scope: string; evals: EvalRecord[] }[] {
+  const groups = new Map<string, EvalRecord[]>();
+  for (const e of evals) {
+    const scope = evalScope(e, epics);
+    groups.set(scope, [...(groups.get(scope) ?? []), e]);
+  }
+  const rank = (scope: string) => {
+    if (scope === FEATURE_SCOPE) return -1;
+    const at = tickets.indexOf(scope.split(", ")[0] ?? scope);
+    return at === -1 ? tickets.length : at;
+  };
+  return [...groups.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([scope, list]) => ({ scope, evals: [...list].reverse() }));
+}
+
 function fileName(path: string): string {
   return path.split("/").pop() ?? path;
 }
@@ -122,6 +164,10 @@ function writeRun(key: string, run: StoredRun | null) {
 
 const scopeLabel = (scope: string) => (scope === FEATURE_SCOPE ? "whole feature" : scope);
 
+/** The whole feature's name, with its epic when it has one: evaluating the epic is evaluating it. */
+const featureName = (epics: readonly string[]) =>
+  epics.length > 0 ? `Whole feature · ${epics.join(", ")} epic` : "Whole feature";
+
 /** The first message of an evaluator run: the hub-workflow evaluator, one scope, nothing else. */
 export function evalPrompt(project: string, slug: string, scope: string): string {
   const what = scope === FEATURE_SCOPE ? "the whole feature" : `ticket ${scope}`;
@@ -160,6 +206,7 @@ function EvalRunStrip({
   evals,
   onShow,
   primary,
+  epics,
 }: {
   project: string;
   slug: string;
@@ -168,6 +215,8 @@ function EvalRunStrip({
   onShow: (delivery: string) => void;
   /** The tab's main action (no eval yet); otherwise re-running is secondary to reading. */
   primary: boolean;
+  /** The feature's epics: not a scope of their own, they are the whole feature. */
+  epics: readonly string[];
 }) {
   const key = runKey(project, slug);
   const { tz } = usePreferences();
@@ -233,22 +282,25 @@ function EvalRunStrip({
   };
 
   const action = `Evaluate ${scopeLabel(shownScope)}`;
+  const scopes = tickets.filter((t) => !epics.includes(t));
   const variant = primary ? "primary" : "default";
   return (
     <section className="ah-stack" style={{ gap: 8 }} aria-label="Evaluate">
       <div className="ah-row ah-wrap" style={{ gap: 10 }}>
         <span className="ah-grow" />
-        {tickets.length > 0 && (
+        {scopes.length > 0 ? (
           <SegmentedControl
             label="Evaluation scope"
             value={shownScope}
             disabled={inFlight}
             onChange={setScope}
             options={[
-              { id: FEATURE_SCOPE, label: "Whole feature" },
-              ...tickets.map((t) => ({ id: t, label: t })),
+              { id: FEATURE_SCOPE, label: featureName(epics) },
+              ...scopes.map((t) => ({ id: t, label: t })),
             ]}
           />
+        ) : (
+          epics.length > 0 && <span className="ah-small ah-muted">{featureName(epics)}</span>
         )}
         {blocked ? (
           <Tooltip label={blocked}>
@@ -460,6 +512,7 @@ function EvalCard({
         <span className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 6 }}>
           {[
             record.evaluated_at ? `Evaluated ${evaluatedText(record.evaluated_at, tz)}` : null,
+            ranBy(record.provenance) ? `by ${String(ranBy(record.provenance))}` : null,
             record.tickets.length > 0 ? record.tickets.join(", ") : null,
             record.acs === "all" || record.acs.length > 0 ? <Scope acs={record.acs} /> : null,
             record.prs.length > 0 ? record.prs.join(", ") : null,
@@ -516,6 +569,8 @@ export interface EvalTabProps {
   slug: string;
   /** The feature's tickets: the scopes a run can take besides the whole feature. */
   tickets: readonly string[];
+  /** The feature's epics (`planning.epics`): evaluating one is evaluating the whole feature. */
+  epics?: readonly string[];
   /** `FeatureDetail.evals`: one per delivery, as the server orders them. */
   evals: readonly EvalRecord[];
   /** The delivery shown below the list (`pickEval`). */
@@ -533,6 +588,7 @@ export function EvalTab({
   project,
   slug,
   tickets,
+  epics = [],
   evals,
   selected,
   onSelect,
@@ -551,6 +607,7 @@ export function EvalTab({
         evals={evals}
         onShow={onSelect}
         primary={evals.length === 0 && !ownerWait}
+        epics={epics}
       />
     </>
   );
@@ -568,6 +625,7 @@ export function EvalTab({
       </div>
     );
   }
+  const history = evalHistory(evals, tickets, epics);
   const columns: { label: string; width?: number; cell: (e: EvalRecord) => ReactNode }[] = [
     {
       label: "Eval",
@@ -601,7 +659,21 @@ export function EvalTab({
           <span className="ah-subtle">—</span>
         ),
     },
-    { label: "Scope", width: 110, cell: (e) => <Scope acs={e.acs} /> },
+    { label: "ACs", width: 90, cell: (e) => <Scope acs={e.acs} /> },
+    {
+      label: "Ran by",
+      width: 170,
+      cell: (e) => {
+        const who = ranBy(e.provenance);
+        return who ? (
+          <span className="ah-small" title={e.provenance ?? undefined}>
+            {who}
+          </span>
+        ) : (
+          <span className="ah-subtle">—</span>
+        );
+      },
+    },
     {
       label: "Evaluated",
       width: 170,
@@ -616,20 +688,30 @@ export function EvalTab({
   return (
     <div className="ah-stack" style={{ gap: 12 }}>
       {strip}
-      {evals.length > 1 && (
-        <div className="ah-table-wrap">
-          <table className="ah-table" aria-label="Evals">
-            <thead>
-              <tr>
-                {columns.map((c) => (
-                  <th key={c.label} scope="col" style={c.width ? { width: c.width } : undefined}>
-                    {c.label}
-                  </th>
-                ))}
+      <div className="ah-table-wrap">
+        <table className="ah-table" aria-label="Evals">
+          <thead>
+            <tr>
+              {columns.map((c) => (
+                <th key={c.label} scope="col" style={c.width ? { width: c.width } : undefined}>
+                  {c.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+
+          {history.map((group) => (
+            <tbody key={group.scope}>
+              <tr className="ah-eval-group">
+                <th scope="colgroup" colSpan={columns.length}>
+                  {group.scope === FEATURE_SCOPE ? featureName(epics) : group.scope}
+                  <span className="ah-subtle">
+                    {" "}
+                    · {group.evals.length} eval{group.evals.length === 1 ? "" : "s"}
+                  </span>
+                </th>
               </tr>
-            </thead>
-            <tbody>
-              {evals.map((e) => (
+              {group.evals.map((e) => (
                 <tr
                   key={e.path}
                   aria-selected={selected?.path === e.path}
@@ -645,13 +727,16 @@ export function EvalTab({
                 </tr>
               ))}
             </tbody>
-          </table>
-          <div className="ah-table-foot">
-            <span>{evals.length} evals · the latest one that names an AC decides it</span>
-          </div>
+          ))}
+        </table>
+        <div className="ah-table-foot">
+          <span>
+            {evals.length} eval{evals.length === 1 ? "" : "s"}, newest first per scope · the latest
+            one that names an AC decides it
+          </span>
         </div>
-      )}
-      {selected && <EvalCard project={project} record={selected} named={evals.length > 1} />}
+      </div>
+      {selected && <EvalCard project={project} record={selected} named />}
     </div>
   );
 }

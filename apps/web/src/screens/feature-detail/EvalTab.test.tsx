@@ -13,7 +13,7 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
-import { EvalTab, evalPrompt, pickEval, type EvalTabProps } from "./EvalTab";
+import { EvalTab, evalHistory, evalPrompt, pickEval, ranBy, type EvalTabProps } from "./EvalTab";
 
 const AGENT = "/api/v1/agent-sessions";
 
@@ -98,6 +98,32 @@ describe("pickEval", () => {
       "d",
     );
     expect(pickEval([], null)).toBeUndefined();
+  });
+});
+
+describe("evalHistory", () => {
+  it("groups by scope, the whole feature first then plan order, newest first", () => {
+    const a = anEvalRecord({ delivery: "a", path: "a.md", tickets: ["T2"], acs: ["AC-1"] });
+    const b = anEvalRecord({ delivery: "b", path: "b.md", tickets: ["T1"], acs: ["AC-2"] });
+    const c = anEvalRecord({ delivery: "c", path: "c.md", tickets: ["T2"], acs: ["AC-3"] });
+    const epic = anEvalRecord({ delivery: "e", path: "e.md", tickets: ["EP"], acs: ["AC-4"] });
+
+    const groups = evalHistory([a, b, c, epic], ["EP", "T1", "T2"], ["EP"]);
+
+    expect(groups.map((g) => [g.scope, g.evals.map((e) => e.delivery)])).toEqual([
+      ["feature", ["e"]],
+      ["T1", ["b"]],
+      ["T2", ["c", "a"]],
+    ]);
+  });
+
+  it("names who ran an eval in words", () => {
+    expect([ranBy("owner"), ranBy("agent"), ranBy("ci"), ranBy(null)]).toEqual([
+      "You (owner sign-off)",
+      "Agent",
+      "ci",
+      null,
+    ]);
   });
 });
 
@@ -191,7 +217,8 @@ describe("EvalTab", () => {
     renderWithApi(tab({ evals }));
 
     const table = screen.getByRole("table", { name: "Evals" });
-    expect(within(table).getAllByRole("row")).toHaveLength(5);
+    // The header, a row per scope (whole feature, AGH-201, AGH-202) and the four evals.
+    expect(within(table).getAllByRole("row")).toHaveLength(8);
 
     const first = within(rowOf("agh-201"));
     expect(first.getByText("SHIP")).toBeInTheDocument();
@@ -205,16 +232,18 @@ describe("EvalTab", () => {
     expect(within(rowOf("agh-203")).getByText(/no verdict/)).toBeInTheDocument();
   });
 
-  it("reads a single eval in place, its details folded, with no list (golden)", async () => {
-    renderWithApi(tab({ evals: [anEvalRecord()], selected: anEvalRecord() }), {
+  it("reads the selected eval in place with who ran it, its details folded (golden)", async () => {
+    const one = anEvalRecord({ provenance: "agent-evaluator" });
+    renderWithApi(tab({ evals: [one], selected: one }), {
       routes: { "/api/v1/projects/agent-hub/brain/note": aBrainNote() },
     });
 
-    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+    expect(within(rowOf("agh-201")).getByText("Evaluator agent")).toBeInTheDocument();
     const card = within(screen.getByRole("article", { name: "Eval agh-201" }));
     expect(card.getByText("SHIP")).toBeInTheDocument();
     expect(card.getByText("3 ACs")).toHaveAttribute("title", "AC-200.1, AC-200.2, AC-200.3");
     expect(card.getByText("Evaluated 2026-10-11")).toBeInTheDocument();
+    expect(card.getByText(/by Evaluator agent/)).toBeInTheDocument();
     expect(card.getByText(/AGH-201/)).toBeInTheDocument();
     expect(card.getByText(/agent-hub#80/)).toBeInTheDocument();
     expect(card.getByText("0a1b2c3")).toBeInTheDocument();
@@ -224,6 +253,22 @@ describe("EvalTab", () => {
     );
     const details = (await card.findByText("Details")).closest("details");
     expect(details).not.toHaveAttribute("open");
+  });
+
+  it("treats the epic as the whole feature, not as a scope of its own", () => {
+    const epicEval = anEvalRecord({ delivery: "agh-200", tickets: ["AGH-200"] });
+    renderWithApi(tab({ tickets: ["AGH-200", "AGH-201"], epics: ["AGH-200"], evals: [epicEval] }), {
+      routes: driving,
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Whole feature · AGH-200 epic" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "AGH-200" })).toBeNull();
+    expect(screen.getByRole("button", { name: "AGH-201" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: /Whole feature · AGH-200 epic/ }),
+    ).toBeInTheDocument();
   });
 
   it("leaves out an empty AC list instead of saying 0 ACs", () => {

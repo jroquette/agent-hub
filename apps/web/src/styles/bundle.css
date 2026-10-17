@@ -2251,6 +2251,14 @@ pre {
   margin: 0;
   overflow-wrap: anywhere;
 }
+.ah-table .ah-eval-group th {
+  padding-top: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface-sunken);
+}
 .ah-note-details summary {
   cursor: pointer;
   width: max-content;

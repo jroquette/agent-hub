@@ -302,7 +302,11 @@ export function FeatureDetailScreen() {
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
   const tab = tabOf(params.get("doc"), feature.data?.phase);
-  const tickets = useFeatureTickets(project, slug, tab === "tickets" && feature.isSuccess);
+  const tickets = useFeatureTickets(
+    project,
+    slug,
+    (tab === "tickets" || tab === "eval") && feature.isSuccess,
+  );
   const selectedEval = pickEval(feature.data?.evals ?? [], params.get("eval"));
   useDiscussTarget(featureDiscussTarget(feature.data, tab, selectedEval?.path));
 
@@ -373,6 +377,7 @@ export function FeatureDetailScreen() {
         project={detail.project}
         slug={detail.slug}
         tickets={detail.issues}
+        epics={tickets.data?.planning.epics ?? []}
         evals={detail.evals}
         ownerWait={ownerWait(detail.golden_path.steps)}
         selected={selectedEval}
