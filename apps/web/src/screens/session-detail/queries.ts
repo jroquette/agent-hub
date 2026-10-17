@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { infiniteQueryOptions, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
 import type { components } from "../../api/schema";
@@ -8,8 +8,8 @@ import type { ApiEvent } from "./timeline";
 
 export type Session = components["schemas"]["Session"];
 
-/** The API's largest events page; a 5,000-event session loads in 25 pages. */
-export const EVENTS_PAGE = 200;
+/** The API's largest events page; a 5,000-event session loads in 5 pages. */
+export const EVENTS_PAGE = 1000;
 
 const sessionPath = (id: string) => ({ path: { session_id: id } });
 
@@ -34,26 +34,10 @@ export function useSessionProblems(id: string, enabled: boolean) {
   return useApi("/api/v1/sessions/{session_id}/problems", sessionPath(id), { enabled });
 }
 
-export interface SessionEvents {
-  events: ApiEvent[];
-  /** True until every page has arrived. */
-  loading: boolean;
-  /** The failed page, its first row number, and a retry. */
-  error: { problem: ApiProblem; from: number; retry: () => void } | null;
-  /** Events that arrived over the stream after the pages. */
-  liveCount: number;
-}
-
-/**
- * Every event of the session, paged in 200s (each page loads as the previous one lands), then
- * kept current by the session stream while `live`. Stream events are deduplicated by id.
- */
-export function useSessionEvents(
-  id: string,
-  live: boolean,
-): SessionEvents & { health: StreamHealth } {
-  const queryClient = useQueryClient();
-  const pages = useInfiniteQuery<
+/** Every page of a session's events, as one cached query: the screen starts it as soon as it
+ * knows the id, alongside the session itself, and the timeline reads it when the session lands. */
+function eventsQuery(id: string) {
+  return infiniteQueryOptions<
     components["schemas"]["Page_TimelineEvent_"],
     ApiProblem,
     { pages: components["schemas"]["Page_TimelineEvent_"][] },
@@ -71,6 +55,37 @@ export function useSessionEvents(
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     staleTime: Infinity,
   });
+}
+
+/** Starts reading the session's first events page while the session itself is read. */
+export function usePrefetchSessionEvents(id: string): void {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    // Its failure shows where the timeline reads it; nothing to do here.
+    queryClient.infiniteQuery(eventsQuery(id)).catch(() => undefined);
+  }, [queryClient, id]);
+}
+
+export interface SessionEvents {
+  events: ApiEvent[];
+  /** True until every page has arrived. */
+  loading: boolean;
+  /** The failed page, its first row number, and a retry. */
+  error: { problem: ApiProblem; from: number; retry: () => void } | null;
+  /** Events that arrived over the stream after the pages. */
+  liveCount: number;
+}
+
+/**
+ * Every event of the session, paged in 1,000s (each page loads as the previous one lands), then
+ * kept current by the session stream while `live`. Stream events are deduplicated by id.
+ */
+export function useSessionEvents(
+  id: string,
+  live: boolean,
+): SessionEvents & { health: StreamHealth } {
+  const queryClient = useQueryClient();
+  const pages = useInfiniteQuery(eventsQuery(id));
   const { hasNextPage, isFetchingNextPage, fetchNextPage, isError } = pages;
   useEffect(() => {
     if (hasNextPage && !isFetchingNextPage && !isError) void fetchNextPage();

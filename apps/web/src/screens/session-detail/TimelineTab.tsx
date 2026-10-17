@@ -19,6 +19,7 @@ import { usePreferences } from "../../lib/preferences";
 import type { ApiProblem } from "../../lib/api";
 import { Legend } from "./Legend";
 import type { Problem } from "./ProblemsPanel";
+import { EVENTS_PAGE } from "./queries";
 import {
   LONG_SESSION_EVENTS,
   flattenTrace,
@@ -560,7 +561,7 @@ export function TimelineTab(props: TimelineTabProps) {
           <div style={{ marginBottom: 12 }}>
             <ProblemError
               compact
-              title={`Could not load events ${String(props.error.from + 1)}–${String(props.error.from + 200)}.`}
+              title={`Could not load events ${String(props.error.from + 1)}–${String(props.error.from + EVENTS_PAGE)}.`}
               detail={props.error.problem.detail ?? props.error.problem.title}
               onRetry={props.error.retry}
             />

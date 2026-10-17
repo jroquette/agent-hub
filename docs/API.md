@@ -100,7 +100,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
 Lists use cursor pagination: the client pages through a collection with an opaque cursor, never an offset (offsets skip
 or repeat items while sessions are being written). `GET /api/v1/sessions?limit=50&cursor=<opaque>` returns
 `{"items": [...], "next_cursor": "<opaque>", "total_estimate": N}`; `next_cursor` is `null` on the last page. `limit` is
-1 to 200 (default 50), a cursor at most 512 characters, `q` at most 200. A cursor carries the store's high-water mark of
+1 to 200 (default 50), and for a session's events (`GET /api/v1/sessions/{session_id}/events`) 1 to 1,000 (default
+200), which its detail page reads whole; a cursor is at most 512 characters, `q` at most 200. A cursor carries the store's high-water mark of
 its first page, so later pages fold only the events up to it and an append between pages never repeats or skips an
 item.
 
