@@ -4,17 +4,20 @@ A file unit (an agent, a hook file, a workflow file) is one ``UnitFile`` named a
 is stored as its raw bytes. A folder unit (a skill) holds every file below the folder by its
 relative path, each with its executable bit, and is stored as one frame per file in path order:
 ``<path> NUL <x|-> NUL <length> NUL <bytes>``. ``decode`` holds a stored row to the bounds the
-reader holds the disk to (256 KiB per file, ``SKILL.md`` and 200 bundled files) and refuses any
-other shape with ``CorruptVersionError``, whose message never quotes the content.
+reader holds the disk to (256 KiB per file, ``SKILL.md`` and 200 bundled files, a folder always
+holding ``SKILL.md``) and refuses any other shape with ``CorruptVersionError``, whose message
+never quotes the content. The path rule (relative, in order, each once) belongs to the models,
+so ``encode`` and ``decode`` share it.
 """
 
+import itertools
 from collections.abc import Iterator
-from typing import Final
+from typing import Final, Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from agent_hub.core.errors import AgentHubError
-from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, MAX_SKILL_FILE_BYTES
+from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, MAX_SKILL_FILE_BYTES, SKILL_FILE
 
 # ``SKILL.md`` and the bundled files a skill folder may hold.
 MAX_UNIT_FILES: Final = DEFAULT_LIMITS.files_per_skill + 1
@@ -25,6 +28,7 @@ _PLAIN: Final = b"-"
 _MARKS: Final = {_EXECUTABLE: True, _PLAIN: False}
 # The longest decimal length a bounded file can have.
 _LENGTH_DIGITS: Final = len(str(MAX_SKILL_FILE_BYTES))
+_BAD_SEGMENTS: Final = frozenset({"", ".", ".."})
 
 
 class CorruptVersionError(AgentHubError):
@@ -36,7 +40,8 @@ class CorruptVersionError(AgentHubError):
 
 
 class UnitFile(BaseModel):
-    """One file of a unit: ``path`` is relative to the folder (a file unit: the file's name)."""
+    """One file of a unit: ``path`` is relative to the folder (a file unit: the file's name),
+    with no empty, ``.`` or ``..`` segment, no leading ``/`` and no NUL."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -44,13 +49,29 @@ class UnitFile(BaseModel):
     content: bytes
     executable: bool = False
 
+    @field_validator("path")
+    @classmethod
+    def _relative(cls, path: str) -> str:
+        if "\0" in path or any(segment in _BAD_SEGMENTS for segment in path.split("/")):
+            msg = "path must be relative, without an empty, . or .. segment or a NUL"
+            raise ValueError(msg)
+        return path
+
 
 class UnitContent(BaseModel):
-    """Every file of a unit."""
+    """Every file of a unit, in path order, each path once."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     files: tuple[UnitFile, ...]
+
+    @model_validator(mode="after")
+    def _ordered(self) -> Self:
+        paths = [file.path for file in self.files]
+        if any(earlier >= later for earlier, later in itertools.pairwise(paths)):
+            msg = "files must be in path order, each path once"
+            raise ValueError(msg)
+        return self
 
 
 def size_of(content: UnitContent) -> int:
@@ -74,7 +95,7 @@ def encode(content: UnitContent, *, folder: bool) -> bytes:
                 file.content,
             )
         )
-        for file in sorted(content.files, key=lambda file: file.path)
+        for file in content.files
     )
     return b"".join(frames)
 
@@ -87,12 +108,16 @@ def decode(blob: bytes, *, folder: bool, name: str | None = None) -> UnitContent
             raise ValueError(msg)
         _check_size(len(blob))
         return UnitContent(files=(UnitFile(path=name, content=blob),))
-    files = tuple(_frames(blob))
-    paths = [file.path for file in files]
-    if paths != sorted(set(paths)):
-        msg = "paths are not sorted and unique"
+    try:
+        content = UnitContent(files=tuple(_frames(blob)))
+    except ValidationError as error:
+        # The validation message would quote the stored path.
+        msg = "a path is not relative, or the paths are not in order and unique"
+        raise CorruptVersionError(msg) from error
+    if SKILL_FILE not in {file.path for file in content.files}:
+        msg = f"the folder holds no {SKILL_FILE}"
         raise CorruptVersionError(msg)
-    return UnitContent(files=files)
+    return content
 
 
 def _check_size(size: int) -> None:
@@ -143,11 +168,7 @@ def _frame(blob: bytes, start: int) -> tuple[UnitFile, int]:
 
 def _path(raw: bytes) -> str:
     try:
-        path = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        path = ""
-    segments = path.split("/")
-    if not path or any(segment in {"", ".", ".."} for segment in segments):
-        msg = "a frame has no valid relative path"
-        raise CorruptVersionError(msg)
-    return path
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        msg = "a frame's path is not UTF-8"
+        raise CorruptVersionError(msg) from error

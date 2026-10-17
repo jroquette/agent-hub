@@ -4,7 +4,8 @@ A unit is keyed by ``(project, unit_path)``, ``unit_path`` hub-relative with ``/
 no trailing slash. ``seq`` counts a unit's versions from 1 without gaps. An ``external`` version
 was seen on disk and has no author (D11); a ``publish`` or ``restore`` carries the hub's
 effective identity, and a ``restore`` names the version it restored. A unit's ``first`` version
-is ``external`` (D20) or, for a new item, ``publish`` (AC-295.12), never a ``restore``.
+(``first``, exactly ``seq`` 1) is ``external`` (D20) or, for a new item, ``publish``
+(AC-295.12), never a ``restore``.
 ``recorded_at`` must carry an offset and is kept in UTC.
 """
 
@@ -75,6 +76,9 @@ class _VersionFacts(_Frozen):
             raise ValueError(msg)
         if (self.origin is VersionOrigin.RESTORE) != (self.restored_from is not None):
             msg = "restored_from is set exactly when the origin is restore"
+            raise ValueError(msg)
+        if self.first != (self.seq == 1):
+            msg = "first is set exactly on a unit's seq 1"
             raise ValueError(msg)
         return self
 

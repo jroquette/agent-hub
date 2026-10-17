@@ -8,6 +8,7 @@ unit. A unit is managed when ``hub.lock`` holds a managed entry for its main pat
 ``SKILL.md``, otherwise the file itself.
 """
 
+import bisect
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,7 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from agent_hub.core.doctor.snapshot import LockState
 from agent_hub.core.hub_files.hub_lock import HubLock, ManagedFileEntry, ManagedLinkEntry
 from agent_hub.core.item_versions.item_version import UnitKind
-from agent_hub.core.skills.skill_sources import LOCAL_SETTINGS_PATH, SKILL_FILE, SkillSources
+from agent_hub.core.skills.skill_sources import (
+    LOCAL_SETTINGS_PATH,
+    SKILL_FILE,
+    SkillSources,
+    SourceFile,
+)
 from agent_hub.core.skills.skill_view import CatalogItem, ItemKind
 
 _UNIT_KINDS: Final = {
@@ -39,13 +45,43 @@ class ItemUnit(BaseModel):
     kind: UnitKind
 
 
-def unit_of_item(item: CatalogItem, sources: SkillSources, *, project: str) -> ItemUnit | None:
+class SourceIndex:
+    """One listing, indexed once for every unit of a read: by path, and in path order for the
+    range below a folder. ``SkillSources.files`` is already in path order (the port's contract),
+    so nothing is sorted again and no entry is visited twice to index it."""
+
+    def __init__(self, sources: SkillSources) -> None:
+        self._files = sources.files
+        paths: list[str] = []
+        self._by_path: dict[str, SourceFile] = {}
+        for entry in self._files:
+            paths.append(entry.path)
+            self._by_path.setdefault(entry.path, entry)
+        # Aligned with ``_files`` index for index, so a range of paths is a slice of entries.
+        self._paths = tuple(paths)
+
+    def entry(self, path: str) -> SourceFile | None:
+        """The entry at ``path``, or None when the listing does not hold it."""
+        return self._by_path.get(path)
+
+    def at_or_under(self, path: str) -> tuple[SourceFile, ...]:
+        """The entry at ``path`` and every entry below it as a folder, in path order."""
+        # Every path starting ``<path>/`` sorts at or after it and before ``<path>0``
+        # (``0`` is the character after ``/``).
+        low = bisect.bisect_left(self._paths, f"{path}/")
+        high = bisect.bisect_left(self._paths, f"{path}0", lo=low)
+        exact = self._by_path.get(path)
+        below = self._files[low:high] if high > low else ()
+        return below if exact is None else (exact, *below)
+
+
+def unit_of_item(item: CatalogItem, index: SourceIndex, *, project: str) -> ItemUnit | None:
     """The unit ``item`` of ``project`` is versioned in, or None (a link, local settings, an
     entry the listing does not hold)."""
     path = item.source_path
     if path == LOCAL_SETTINGS_PATH:
         return None
-    entry = next((found for found in sources.files if found.path == path), None)
+    entry = index.entry(path)
     if entry is None or entry.link_target is not None:
         return None
     kind = _UNIT_KINDS[item.kind]
@@ -54,14 +90,12 @@ def unit_of_item(item: CatalogItem, sources: SkillSources, *, project: str) -> I
     return ItemUnit(project=project, unit_path=path, kind=kind)
 
 
-def unit_fingerprint(sources: SkillSources, unit: ItemUnit) -> tuple[FingerprintEntry, ...]:
+def unit_fingerprint(index: SourceIndex, unit: ItemUnit) -> tuple[FingerprintEntry, ...]:
     """The listing's entries at or under ``unit``, in path order: what changes when its content
     may have changed (D17: an edit keeping size and mtime is noticed at the next real change)."""
-    below = f"{unit.unit_path}/"
     return tuple(
         (entry.path, entry.size, entry.mtime_ns, entry.regular, entry.link_target)
-        for entry in sorted(sources.files, key=lambda found: found.path)
-        if entry.path == unit.unit_path or entry.path.startswith(below)
+        for entry in index.at_or_under(unit.unit_path)
     )
 
 
