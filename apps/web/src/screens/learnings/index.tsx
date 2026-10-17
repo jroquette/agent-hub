@@ -175,7 +175,14 @@ export function LearningsScreen() {
     );
   } else {
     body = (
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 520px) minmax(0, 1fr)" }}>
+      // The queue takes at most 45% of the width, so the detail stays readable when Discuss opens
+      // beside it (a proposal opens Discuss on arrival).
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, min(520px, 45%)) minmax(0, 1fr)",
+        }}
+      >
         <div
           style={{
             display: "flex",
