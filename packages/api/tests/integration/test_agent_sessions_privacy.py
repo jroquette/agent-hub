@@ -373,3 +373,43 @@ def test_keeps_no_image_when_screenshot_sent(
     assert first["body"]["attachments"] == [
         {"kind": "screenshot", "media_type": "image/png", "bytes": len(png)}
     ]
+
+
+# The list's glimpse (last prompt, last reply, files changed) comes from the redacted log: a
+# secret in the prompt or the reply never reaches the list or the session, live or ended.
+
+PROMPT_SECRET = "sk-ant-api03-SYNTHETICwebSessionPROMPT0123456789"  # noqa: S105 -- synthetic
+
+
+def test_keeps_secrets_out_of_list_when_prompt_and_reply_hold_them_redaction(
+    open_agent_session_app: Any, log_lines: _Lines
+) -> None:
+    prompt = f"Use key {PROMPT_SECRET} please."
+    turn = (
+        TextBlock(block=0, text=f"Found **{TEXT_SECRET}** in the config."),
+        ToolCall(tool_use_id="toolu_1", name="Write", input={"file_path": "/repo/.env"}),
+        Hold(),
+    )
+    app = open_agent_session_app(replies={prompt: turn})
+    created = app.client.post(BASE, json=CREATE | {"prompt": prompt})
+    session_id = created.json()["id"]
+    app.until_status(session_id, "running")
+    deadline = time.monotonic() + 5
+    while "tool.call" not in [record.kind for record in app.rig.records(session_id)]:
+        assert time.monotonic() < deadline, "the tool call never came"
+        time.sleep(0.005)
+    live_list = app.client.get(BASE)
+    app.run(app.driver.release, app.rig.handle())
+    app.until_status(session_id, "idle")
+    app.client.post(f"{BASE}/{session_id}/close", json={})
+    ended_list = app.client.get(BASE)
+    detail = app.client.get(f"{BASE}/{session_id}")
+
+    shown = live_list.json()["items"][0]
+    assert shown["last_prompt"] == "Use key [redacted: anthropic key] please."
+    assert shown["last_reply"] == "Found [redacted: github token] in the config."
+    assert shown["changed_files"] == [{"path": "/repo/.env", "last_change_id": "toolu_1"}]
+    assert detail.json()["last_reply"] == shown["last_reply"]
+    for copy in (created.text, live_list.text, ended_list.text, detail.text, log_lines.text()):
+        assert PROMPT_SECRET not in copy
+        assert TEXT_SECRET not in copy

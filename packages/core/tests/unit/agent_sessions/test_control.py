@@ -13,6 +13,7 @@ from agent_hub.core.agent_sessions import control as control_module
 from agent_hub.core.agent_sessions.agent_session import (
     AgentSession,
     AgentSessionStatus,
+    ChangedFile,
     EndReason,
     PermissionDecision,
     SendMessage,
@@ -1346,3 +1347,88 @@ async def test_refuses_message_image_before_logging_when_not_png(make_rig: MakeR
     assert refused.value.pointer == "/screenshots/1/data"
     assert rig.kinds(created.id) == before
     assert [call.method for call in rig.driver.calls].count("send") == 1
+
+
+# The list's glimpse (digest): the last prompt, the last reply and the files changed.
+
+EDIT_TURN = (
+    TextBlock(block=0, text="## Editing **now**"),
+    ToolCall(
+        tool_use_id="toolu_edit",
+        name="Edit",
+        input={"file_path": "/repo/a.py", "old_string": "a", "new_string": "b"},
+    ),
+    Hold(),
+    ToolCall(tool_use_id="toolu_write", name="Write", input={"file_path": "/repo/b.py"}),
+    TextBlock(block=1, text="Done."),
+)
+
+
+async def test_shows_digest_live_then_stores_it_when_turn_ends(make_rig: MakeRig) -> None:
+    rig = make_rig(replies={f"Edit {GITHUB_TOKEN}.": EDIT_TURN})
+    created = await rig.create(f"Edit {GITHUB_TOKEN}.")
+    await rig.until(lambda: "tool.call" in rig.kinds(created.id))
+
+    listed = (await rig.control.list_sessions(project=None, status=None)).items[0]
+    stored_mid_turn = rig.store.get(created.id)
+    rig.driver.release(rig.handle())
+    ended_turn = await rig.until_status(created.id, "idle")
+
+    assert created.last_prompt == "Edit [redacted: github token]."
+    assert (listed.last_prompt, listed.last_reply) == (created.last_prompt, "Editing now")
+    assert listed.changed_files == (ChangedFile(path="/repo/a.py", last_change_id="toolu_edit"),)
+    assert (stored_mid_turn.last_reply, stored_mid_turn.changed_files) == (None, ())
+    assert ended_turn.last_reply == "Done."
+    assert ended_turn.changed_files == (
+        ChangedFile(path="/repo/b.py", last_change_id="toolu_write"),
+        ChangedFile(path="/repo/a.py", last_change_id="toolu_edit"),
+    )
+
+
+async def test_stores_prompt_when_message_sent(make_rig: MakeRig) -> None:
+    rig = make_rig()
+    created = await rig.create()
+
+    await rig.control.send(created.id, SendMessage(text="Say\n  hello."))
+
+    assert rig.store.get(created.id).last_prompt == "Say hello."
+
+
+async def test_folds_stored_logs_without_digest_when_first_swept(make_rig: MakeRig) -> None:
+    before = make_rig(replies={"Edit.": EDIT_TURN})
+    created = await before.create("Edit.")
+    await before.until(lambda: "tool.call" in before.kinds(created.id))
+    before.driver.release(before.handle())
+    await before.until_status(created.id, "idle")
+    untouched = await before.create()
+    await before.control.shutdown()
+    folded = before.store.get(created.id)
+    before.store.update(created.id, last_prompt=None, last_reply=None, changed_files=())
+    rig = make_rig(store=before.store)
+
+    await rig.control.sweep(rig.clock(), purge=False)
+    await rig.control.sweep(rig.clock.advance(1), purge=False)
+
+    again = rig.store.get(created.id)
+    assert (again.last_prompt, again.last_reply) == ("Edit.", "Done.")
+    assert again.changed_files == folded.changed_files
+    assert rig.store.get(untouched.id).last_prompt is None
+
+
+async def test_folds_log_again_when_reopened(make_rig: MakeRig) -> None:
+    rig = make_rig(replies={"Edit.": EDIT_TURN}, past_sessions=(PAST,))
+    created = await rig.create("Edit.", resume_session_id=PAST.session_id)
+    await rig.until(lambda: "tool.call" in rig.kinds(created.id))
+    rig.driver.release(rig.handle())
+    await rig.until_status(created.id, "idle")
+    await rig.control.close(created.id)
+    rig.store.update(created.id, last_prompt=None, last_reply=None, changed_files=())
+
+    await rig.control.send(created.id, SendMessage(text="Go on."))
+    reopened = await rig.until_status(created.id, "idle")
+
+    assert reopened.last_prompt == "Go on."
+    assert [item.last_change_id for item in reopened.changed_files] == [
+        "toolu_write",
+        "toolu_edit",
+    ]

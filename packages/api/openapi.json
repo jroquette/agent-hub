@@ -249,8 +249,17 @@
       },
       "AgentSession": {
         "additionalProperties": false,
-        "description": "One session ``hub web`` started (or one cloud start, ``kind=\"cloud\"``).\n\n``claude_session_id`` links it to the hook-observed Session once ``init`` arrives (or at\nstart when the id is given, P13); ``observed_session_id`` is that Session's id once it has\nbeen observed, else ``null`` (a twin may never arrive, D2). ``last_seq`` is the last\npersisted record's ``seq``. ``cost_usd`` and ``usage`` add up the turns' results (an estimate).",
+        "description": "One session ``hub web`` started (or one cloud start, ``kind=\"cloud\"``).\n\n``claude_session_id`` links it to the hook-observed Session once ``init`` arrives (or at\nstart when the id is given, P13); ``observed_session_id`` is that Session's id once it has\nbeen observed, else ``null`` (a twin may never arrive, D2). ``last_seq`` is the last\npersisted record's ``seq``. ``cost_usd`` and ``usage`` add up the turns' results (an estimate).\n``last_prompt`` and ``last_reply`` are the latest ``user.message`` and assistant ``text`` of\nthe stored (redacted) log as one line of at most 280 characters, the reply's markdown\nmarks dropped; ``changed_files`` the files changed, latest change first, at most 200\n(``digest``).",
         "properties": {
+          "changed_files": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChangedFile"
+            },
+            "maxItems": 200,
+            "title": "Changed Files",
+            "type": "array"
+          },
           "claude_session_id": {
             "anyOf": [
               {
@@ -313,6 +322,30 @@
           "kind": {
             "$ref": "#/components/schemas/AgentSessionKind",
             "default": "local"
+          },
+          "last_prompt": {
+            "anyOf": [
+              {
+                "maxLength": 280,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Prompt"
+          },
+          "last_reply": {
+            "anyOf": [
+              {
+                "maxLength": 280,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reply"
           },
           "last_seq": {
             "default": 0,
@@ -981,6 +1014,26 @@
           "usage"
         ],
         "title": "CatalogItem",
+        "type": "object"
+      },
+      "ChangedFile": {
+        "additionalProperties": false,
+        "description": "A file the session's tool calls changed (``Edit``, ``MultiEdit``, ``Write``,\n``NotebookEdit``, subagents' included); ``last_change_id`` is the ``tool_use_id`` of the\nlatest change to it, the id the chat's review marks compare with.",
+        "properties": {
+          "last_change_id": {
+            "title": "Last Change Id",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "last_change_id"
+        ],
+        "title": "ChangedFile",
         "type": "object"
       },
       "CloudMessage": {

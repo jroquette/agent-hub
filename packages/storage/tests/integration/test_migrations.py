@@ -19,7 +19,7 @@ PHASE_ZERO_INSERT = (
     "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
     "'2026-09-27 08:00:00.000000', '{}')"
 )
-HEAD = "0004"
+HEAD = "0005"
 AGENT_SESSION_TABLES = {"agent_sessions", "agent_session_records"}
 AGENT_SESSION_INDEXES = {
     "ix_agent_sessions_project_claude_session_id": ["project", "claude_session_id"],
@@ -275,6 +275,8 @@ def test_creates_and_drops_agent_session_tables_when_upgraded_and_downgraded(
         "end_reason",
         "cost_usd",
         "usage",
+        "last_prompt",
+        "last_reply",
     }
     records = _schema(db_path, "agent_session_records")
     assert [name for name, _, _ in records["columns"]] == [
@@ -315,3 +317,44 @@ def test_keeps_events_unchanged_when_agent_session_tables_added(tmp_path: Path) 
     assert rows_at_head == rows_before
     assert _schema(db_path, "events") == events_before
     assert _rows(db_path) == rows_before
+
+
+SESSION_INSERT = (
+    "INSERT INTO agent_sessions (id, kind, project, workdir_id, workdir_label, status, mode, "
+    "created_at, updated_at, last_seq, stored_bytes) VALUES ('s-1', 'local', 'demo', "
+    "'0123456789abcdef', 'demo-hub', 'ended', 'default', '2026-10-13 09:00:00.000000', "
+    "'2026-10-13 09:00:00.000000', 3, 42)"
+)
+
+
+def _session_rows(db_path: Path) -> list[tuple[Any, ...]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            return [
+                tuple(row) for row in connection.exec_driver_sql("SELECT * FROM agent_sessions")
+            ]
+    finally:
+        engine.dispose()
+
+
+def test_keeps_sessions_when_digest_columns_added_and_dropped(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0004")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(SESSION_INSERT)
+    finally:
+        engine.dispose()
+    before = _session_rows(db_path)
+
+    upgrade(config, "0005")
+    at_head = _session_rows(db_path)
+    columns = [name for name, _, _ in _schema(db_path, "agent_sessions")["columns"]]
+    downgrade(config, "0004")
+
+    assert columns[-3:] == ["last_prompt", "last_reply", "changed_files"]
+    assert at_head == [(*before[0], None, None, "[]")]
+    assert _session_rows(db_path) == before

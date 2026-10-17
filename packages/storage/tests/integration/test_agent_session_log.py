@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from alembic.command import upgrade
 
 from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, EndReason
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, StoreSequenceError
@@ -17,6 +18,7 @@ from agent_hub.core.sessions.session import TokenUsage
 from agent_hub.core.testing.read_model_builders import a_log_record, an_agent_session
 from agent_hub.storage.agent_session_store import open_agent_session_store
 from agent_hub.storage.errors import DatabaseAccessError
+from agent_hub.storage.migration import alembic_config
 
 T0 = datetime(2026, 10, 13, 9, 0, tzinfo=UTC)
 FIRST = "01929a4e-7a11-7c00-8a00-00000000e001"
@@ -178,3 +180,24 @@ def test_raises_access_error_when_directory_cannot_be_made(tmp_path: Path) -> No
 
     with pytest.raises(DatabaseAccessError, match="cannot create the directory"):
         open_agent_session_store(blocker / "events.db")
+
+
+def test_reads_empty_digest_when_database_from_before_it_upgraded(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    upgrade(alembic_config(f"sqlite:///{path}"), "0004")
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO agent_sessions (id, kind, project, workdir_id, workdir_label, status, "
+            "mode, created_at, updated_at, last_seq, stored_bytes) VALUES (?, 'local', 'demo', "
+            "'0123456789abcdef', 'demo-hub', 'ended', 'default', '2026-10-13 09:00:00.000000', "
+            "'2026-10-13 09:00:00.000000', 0, 0)",
+            (FIRST,),
+        )
+
+    store = open_agent_session_store(path)
+    old = store.get(FIRST)
+    store.append(FIRST, _records(5))
+    kept = store.records(FIRST, kinds={"user.message", "tool.call"})
+
+    assert (old.last_prompt, old.last_reply, old.changed_files) == (None, None, ())
+    assert [record.kind for record in kept] == ["user.message", "tool.call"]

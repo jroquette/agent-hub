@@ -82,10 +82,13 @@ def test_declares_agent_session_tables_when_metadata_loaded() -> None:
         "end_reason",
         "cost_usd",
         "usage",
+        "last_prompt",
+        "last_reply",
     }
     assert {column.name for column in agent_sessions.columns if column.nullable} == optional
     assert [column.name for column in agent_sessions.primary_key] == ["id"]
     assert isinstance(agent_sessions.c.usage.type, JSON)
+    assert isinstance(agent_sessions.c.changed_files.type, JSON)
     assert isinstance(agent_sessions.c.created_at.type, UtcDateTime)
     assert {
         index.name: [column.name for column in index.columns] for index in agent_sessions.indexes

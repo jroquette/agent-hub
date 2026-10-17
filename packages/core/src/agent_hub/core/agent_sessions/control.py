@@ -26,6 +26,12 @@ and the subscribers (S4, E8).
   live session has none yet (Claude Code names a session during its first turn, which can be
   long or cut short). The first sweep also names the stored sessions that ended before they
   were named.
+- The list's glimpse of a session (last prompt, last reply, files changed, ``digest``) is
+  folded from each stored record as it is appended, kept in memory (the live view shows it at
+  once) and stored with the session's next status write (a turn's result, a permission
+  request, a message, the end), never one write per record. Reopening a session folds its log
+  again; the first sweep folds the logs of the stored sessions that have none yet (they predate
+  the glimpse), reading only the kinds it needs.
 - ``shutdown`` ends every live session ``server_stopped``, interrupting a running turn before
   the driver disconnects (P12), all in parallel and bounded.
 
@@ -60,6 +66,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     WorkdirList,
 )
 from agent_hub.core.agent_sessions.diff import OFF_LOOP_BYTES, edit_diff, write_diff
+from agent_hub.core.agent_sessions.digest import DIGEST_KINDS, SessionDigest, prompt_snippet
 from agent_hub.core.agent_sessions.driver import (
     DriverCapabilities,
     DriverError,
@@ -346,6 +353,7 @@ class AgentSessionControl:
         self._admission = asyncio.Lock()
         self._stopping = False
         self._ended_named = False
+        self._digested = False
 
     # Reads
 
@@ -440,6 +448,7 @@ class AgentSessionControl:
                 mode=request.mode,
                 model=request.model,
                 title=record_text.title(prompt) if prompt else (past.title if past else None),
+                last_prompt=prompt_snippet(prompt) if prompt else None,
                 created_at=now,
                 updated_at=now,
             )
@@ -614,6 +623,9 @@ class AgentSessionControl:
         ended more than the retention ago (AC-165.53)."""
         now = now or self._clock()
         await self._name(now)
+        if not self._digested:
+            self._digested = True
+            await self._digest_stored()
         for live in list(self._live.values()):
             if live.pump is not None and live.pump.done() and not live.ended:
                 # The pump died without ending the session (cancelled): reclaim it.
@@ -777,17 +789,16 @@ class AgentSessionControl:
                 return None
             # Counted before the CLI starts: once ``_start`` registers the session, nothing
             # awaits until its budget is set, so no record is admitted by a fresh one.
-            budget = await asyncio.to_thread(self._budget_of, session.id)
+            budget, digest = await asyncio.to_thread(self._log_of, session.id)
             now = self._clock()
-            reopened = await asyncio.to_thread(
-                lambda: self._store.update(
-                    session.id,
-                    status=AgentSessionStatus.IDLE,
-                    end_reason=None,
-                    ended_at=None,
-                    updated_at=now,
-                )
-            )
+            fields: AgentSessionFields = {
+                "status": AgentSessionStatus.IDLE,
+                "end_reason": None,
+                "ended_at": None,
+                "updated_at": now,
+                **digest.fields(),
+            }
+            reopened = await asyncio.to_thread(lambda: self._store.update(session.id, **fields))
             spec = StartSpec(
                 cwd=resolved.path,
                 mode=reopened.mode,
@@ -807,16 +818,49 @@ class AgentSessionControl:
                 raise
             return live
 
-    def _budget_of(self, agent_session_id: str) -> LogBudget:
-        """The log budget of a session that already holds records (it goes on, not anew)."""
+    def _log_of(self, agent_session_id: str) -> tuple[LogBudget, SessionDigest]:
+        """The log budget of a session that already holds records (it goes on, not anew), and
+        the digest its log folds to."""
         records = 0
         stored_bytes = 0
         after = 0
+        digest = SessionDigest()
         while page := self._store.records(agent_session_id, after=after, limit=_BUDGET_PAGE):
             records += len(page)
             stored_bytes += sum(record.text_bytes for record in page)
+            for record in page:
+                digest.add(record)
             after = page[-1].seq
-        return LogBudget(self._limits, records=records, stored_bytes=stored_bytes)
+        return LogBudget(self._limits, records=records, stored_bytes=stored_bytes), digest
+
+    def _digest_of(self, agent_session_id: str) -> SessionDigest:
+        """The digest of a stored log, reading only the kinds it folds."""
+        digest = SessionDigest()
+        after = 0
+        while page := self._store.records(
+            agent_session_id, after=after, limit=_BUDGET_PAGE, kinds=DIGEST_KINDS
+        ):
+            for record in page:
+                digest.add(record)
+            after = page[-1].seq
+        return digest
+
+    async def _digest_stored(self) -> None:
+        """Give the stored sessions whose log holds records but whose digest is empty (they
+        predate it) the digest their log folds to; a live session keeps its own."""
+        stored = await asyncio.to_thread(lambda: self._store.list(kind="local"))
+        for session in stored:
+            if session.id in self._live or session.last_seq == 0:
+                continue
+            if not SessionDigest.of(session).empty:
+                continue
+            try:
+                digest = await asyncio.to_thread(self._digest_of, session.id)
+                if not digest.empty:
+                    fields = digest.fields()
+                    await asyncio.to_thread(partial(self._store.update, session.id, **fields))
+            except AgentSessionNotFoundError:
+                continue  # deleted meanwhile
 
     def _refuse(self, live: LiveSession, command: SessionCommand) -> None:
         if live.state.terminal and live.state.end_reason == EndReason.LOG_FULL:
@@ -857,6 +901,7 @@ class AgentSessionControl:
                         return None
                     raise
                 live.last_seq = raw.seq
+                live.digest.add(admission.record)
                 await live.publish(self._live_copy(raw, admission.record, admission))
                 return raw.seq
         if not live.ended:
@@ -894,12 +939,15 @@ class AgentSessionControl:
             update: AgentSessionFields = {"status": state.status, "updated_at": now}
             if state.terminal:
                 update |= {"end_reason": state.end_reason, "ended_at": now}
+            digest, version = live.digest.pending()
+            update |= digest
             update |= fields or {}
             if state.status != AgentSessionStatus.IDLE:
                 live.idle_since = None
             elif changed or live.idle_since is None:
                 live.idle_since = now
             live.session = await asyncio.to_thread(lambda: self._store.update(live.id, **update))
+            live.digest.saved(version)
             if changed:
                 await live.publish(StatusFrame(status=state.status, end_reason=state.end_reason))
 
@@ -1071,9 +1119,11 @@ class AgentSessionControl:
         fields |= await self._title_fields(live)
         if live.ended:
             async with live.sync_lock:
+                digest, version = live.digest.pending()
                 live.session = await asyncio.to_thread(
-                    lambda: self._store.update(live.id, **fields)
+                    lambda: self._store.update(live.id, **(digest | fields))
                 )
+                live.digest.saved(version)
             return
         live.state = apply(live.state, result)
         await self._sync(live, fields)

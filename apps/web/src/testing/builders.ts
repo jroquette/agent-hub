@@ -951,6 +951,7 @@ export function aSuggestions(): PermissionSuggestion[] {
 /** An idle local agent session in the hub's workdir, linked to Claude session `anId(1, "5091b986")`. */
 export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSession {
   return {
+    changed_files: [],
     claude_session_id: anId(1, "5091b986"),
     cloud_id: null,
     cost_usd: "0.0012",
@@ -959,6 +960,8 @@ export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSess
     ended_at: null,
     id: anId(1, "0192a5e5"),
     kind: "local",
+    last_prompt: null,
+    last_reply: null,
     last_seq: 4,
     mode: "default",
     model: "sonnet",

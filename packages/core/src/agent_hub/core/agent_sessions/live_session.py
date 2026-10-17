@@ -22,6 +22,7 @@ from typing import Final
 
 from agent_hub.core.agent_sessions.agent_session import AgentSession, OpenPermission
 from agent_hub.core.agent_sessions.delta_ring import DeltaRing
+from agent_hub.core.agent_sessions.digest import SessionDigest
 from agent_hub.core.agent_sessions.driver import DriverHandle, PermissionRequest
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.agent_sessions.log_caps import LogBudget
@@ -61,6 +62,9 @@ class LiveSession:
     cwd: str | None = None
     ring: DeltaRing = field(init=False)
     budget: LogBudget = field(init=False)
+    # The list's glimpse (last prompt, reply, files changed), ahead of the store: ``view``
+    # shows it now, the next status write stores it.
+    digest: SessionDigest = field(init=False)
     # ``emit_lock`` keeps seq order equal to emit order (``last_seq`` moves only under it);
     # ``commands`` runs one command at a time; ``sync_lock`` serializes the session's store
     # writes, so the last write and the last status frame show the state current at that write;
@@ -90,6 +94,7 @@ class LiveSession:
     def __post_init__(self) -> None:
         self.ring = DeltaRing(self.limits.delta_ring)
         self.budget = LogBudget(self.limits)
+        self.digest = SessionDigest.of(self.session)
         self.last_seq = self.session.last_seq
 
     @property
@@ -108,12 +113,13 @@ class LiveSession:
         return self._finished
 
     def view(self) -> AgentSession:
-        """The session as ``GET /{id}`` shows it: its last ``seq`` and the oldest open request
-        (raw, E10)."""
+        """The session as ``GET /{id}`` shows it: its last ``seq``, its digest so far and the
+        oldest open request (raw, E10)."""
         oldest = next(iter(self.requests.values()), None)
         return self.session.model_copy(
             update={
                 "last_seq": self.last_seq,
+                **self.digest.fields(),
                 "open_permission": None if oldest is None else oldest.view,
             }
         )

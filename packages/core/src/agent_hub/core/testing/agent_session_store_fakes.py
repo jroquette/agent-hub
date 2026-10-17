@@ -1,6 +1,6 @@
 """``InMemoryAgentSessionStore``: the ``AgentSessionStore`` port over dictionaries."""
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Unpack
 
@@ -12,7 +12,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     EndReason,
 )
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, StoreSequenceError
-from agent_hub.core.agent_sessions.records import LogRecord
+from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.agent_sessions.store import AgentSessionFields
 
 
@@ -78,11 +78,20 @@ class InMemoryAgentSessionStore:
         return tuple(matching[:limit])
 
     def records(
-        self, agent_session_id: str, *, after: int = 0, limit: int = 200
+        self,
+        agent_session_id: str,
+        *,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Collection[RecordKind] | None = None,
     ) -> tuple[LogRecord, ...]:
-        """Records after ``after``, in ``seq`` order."""
+        """Records after ``after``, in ``seq`` order (of ``kinds`` only, when given)."""
         self.get(agent_session_id)
-        later = [record for record in self._records[agent_session_id] if record.seq > after]
+        later = [
+            record
+            for record in self._records[agent_session_id]
+            if record.seq > after and (kinds is None or record.kind in kinds)
+        ]
         return tuple(later[:limit])
 
     def link_of(self, project: str, claude_session_id: str) -> str | None:

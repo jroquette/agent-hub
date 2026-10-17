@@ -5,7 +5,8 @@ the event loop. ``AgentSessionStoreContract`` checks every implementation:
 
 - ``append`` keeps ``seq`` gap-free: the first record of a batch is ``last_seq + 1`` and each
   next one adds 1, else ``StoreSequenceError`` and nothing is written. It moves ``last_seq``.
-- ``records`` and ``list`` keep order (``seq``; newest ``created_at`` first).
+- ``records`` and ``list`` keep order (``seq``; newest ``created_at`` first); ``records`` may
+  keep only some kinds (the page then holds at most ``limit`` records of those kinds).
 - ``open_permission`` is never stored: ``get`` and ``list`` answer it as None.
 - ``end_unfinished`` ends every non-terminal session (a crash left it so); ``purge_ended_before``
   removes terminal sessions that ended before the cutoff, with their records, and never a live
@@ -13,7 +14,7 @@ the event loop. ``AgentSessionStoreContract`` checks every implementation:
 - An unknown id raises ``AgentSessionNotFoundError``.
 """
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Protocol, TypedDict, Unpack
 
@@ -21,10 +22,11 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSession,
     AgentSessionKind,
     AgentSessionStatus,
+    ChangedFile,
     EndReason,
 )
 from agent_hub.core.agent_sessions.driver import PermissionMode
-from agent_hub.core.agent_sessions.records import LogRecord
+from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.readmodels.view_types import Money
 from agent_hub.core.sessions.session import TokenUsage
 
@@ -44,6 +46,9 @@ class AgentSessionFields(TypedDict, total=False):
     end_reason: EndReason | None
     cost_usd: Money | None
     usage: TokenUsage | None
+    last_prompt: str | None
+    last_reply: str | None
+    changed_files: tuple[ChangedFile, ...]
 
 
 class AgentSessionStore(Protocol):
@@ -77,9 +82,15 @@ class AgentSessionStore(Protocol):
         ...
 
     def records(
-        self, agent_session_id: str, *, after: int = 0, limit: int = 200
+        self,
+        agent_session_id: str,
+        *,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Collection[RecordKind] | None = None,
     ) -> tuple[LogRecord, ...]:
-        """The session's records with ``seq`` above ``after``, in order, at most ``limit``."""
+        """The session's records with ``seq`` above ``after``, in order, at most ``limit``;
+        with ``kinds``, only the records of those kinds."""
         ...
 
     def link_of(self, project: str, claude_session_id: str) -> str | None:

@@ -21,6 +21,7 @@ from sqlalchemy import (
     Table,
     TypeDecorator,
     UniqueConstraint,
+    text,
 )
 
 
@@ -86,7 +87,8 @@ events = Table(
 # One row per agent session (AGH-165, P3): a Claude Code session hub web started, or a cloud
 # start (``kind = "cloud"``). ``last_seq`` is its log's last record; ``stored_bytes`` the text the
 # log holds (the caps count it). ``cost_usd`` is the estimate as exact decimal text; ``usage``
-# the token counts. Indexed for the Session link, the live list and retention.
+# the token counts. ``last_prompt``, ``last_reply`` and ``changed_files`` are the list's glimpse
+# of the redacted log (0005). Indexed for the Session link, the live list and retention.
 agent_sessions = Table(
     "agent_sessions",
     metadata,
@@ -110,6 +112,9 @@ agent_sessions = Table(
     Column("usage", JSON, nullable=True),
     Column("last_seq", Integer, nullable=False),
     Column("stored_bytes", Integer, nullable=False),
+    Column("last_prompt", String, nullable=True),
+    Column("last_reply", String, nullable=True),
+    Column("changed_files", JSON, nullable=False, server_default=text("'[]'")),
     Index("ix_agent_sessions_project_claude_session_id", "project", "claude_session_id"),
     Index("ix_agent_sessions_status", "status"),
     Index("ix_agent_sessions_ended_at", "ended_at"),

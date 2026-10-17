@@ -1,11 +1,12 @@
 """The SQLite ``AgentSessionStore`` adapter (P3, P10) and the entry point that opens it.
 
 Agent sessions and their logs live in the ``agent_sessions`` and ``agent_session_records``
-tables of the hub web database (migration 0004). Every write runs in one ``BEGIN IMMEDIATE``
-transaction, so an append reads ``last_seq`` and writes its records with no other writer in
-between: the log stays gap-free. SQLite's foreign key enforcement is off on these connections,
-so the store deletes a session's records itself (``delete``, ``purge_ended_before``) instead of
-relying on the ``ON DELETE CASCADE`` the schema declares.
+tables of the hub web database (migration 0004; the list's glimpse columns, 0005). Every write
+runs in one ``BEGIN IMMEDIATE`` transaction, so an append reads ``last_seq`` and writes its
+records with no other writer in between: the log stays gap-free. SQLite's foreign key
+enforcement is off on these connections, so the store deletes a session's records itself
+(``delete``, ``purge_ended_before``) instead of relying on the ``ON DELETE CASCADE`` the schema
+declares.
 
 Database errors leave as ``DatabaseAccessError`` (``DatabaseBusyError`` past the busy
 timeout); their messages carry no record text (the engine hides bound parameters).
@@ -13,7 +14,7 @@ timeout); their messages carry no record text (the engine hides bound parameters
 
 import json
 import sqlite3
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal
@@ -31,7 +32,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     EndReason,
 )
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, StoreSequenceError
-from agent_hub.core.agent_sessions.records import LogRecord
+from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.agent_sessions.store import AgentSessionFields
 from agent_hub.storage.db import agent_session_records, agent_sessions
 from agent_hub.storage.engine import create_sqlite_engine
@@ -122,16 +123,22 @@ class SqliteAgentSessionStore:
         return tuple(_to_session(row) for row in rows)
 
     def records(
-        self, agent_session_id: str, *, after: int = 0, limit: int = 200
+        self,
+        agent_session_id: str,
+        *,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Collection[RecordKind] | None = None,
     ) -> tuple[LogRecord, ...]:
-        """The records with ``seq`` above ``after``, in order, at most ``limit``."""
+        """The records with ``seq`` above ``after``, in order, at most ``limit`` (of ``kinds``
+        only, when given)."""
         table = agent_session_records
-        statement = (
-            select(table)
-            .where(table.c.agent_session_id == agent_session_id, table.c.seq > after)
-            .order_by(table.c.seq)
-            .limit(limit)
+        statement = select(table).where(
+            table.c.agent_session_id == agent_session_id, table.c.seq > after
         )
+        if kinds is not None:
+            statement = statement.where(table.c.kind.in_(sorted(kinds)))
+        statement = statement.order_by(table.c.seq).limit(limit)
         with self._reading() as connection:
             _session_row(connection, agent_session_id)
             rows = connection.execute(statement).mappings().all()
@@ -262,6 +269,9 @@ def _to_row(session: AgentSession) -> dict[str, Any]:
         "cost_usd": None if session.cost_usd is None else str(session.cost_usd),
         "usage": None if session.usage is None else session.usage.model_dump(mode="json"),
         "last_seq": session.last_seq,
+        "last_prompt": session.last_prompt,
+        "last_reply": session.last_reply,
+        "changed_files": [item.model_dump(mode="json") for item in session.changed_files],
     }
 
 

@@ -1408,8 +1408,17 @@ export interface components {
      *     start when the id is given, P13); ``observed_session_id`` is that Session's id once it has
      *     been observed, else ``null`` (a twin may never arrive, D2). ``last_seq`` is the last
      *     persisted record's ``seq``. ``cost_usd`` and ``usage`` add up the turns' results (an estimate).
+     *     ``last_prompt`` and ``last_reply`` are the latest ``user.message`` and assistant ``text`` of
+     *     the stored (redacted) log as one line of at most 280 characters, the reply's markdown
+     *     marks dropped; ``changed_files`` the files changed, latest change first, at most 200
+     *     (``digest``).
      */
     AgentSession: {
+      /**
+       * Changed Files
+       * @default []
+       */
+      changed_files: components["schemas"]["ChangedFile"][];
       /** Claude Session Id */
       claude_session_id?: string | null;
       /** Cloud Id */
@@ -1422,6 +1431,10 @@ export interface components {
       id: string;
       /** @default local */
       kind: components["schemas"]["AgentSessionKind"];
+      /** Last Prompt */
+      last_prompt?: string | null;
+      /** Last Reply */
+      last_reply?: string | null;
       /**
        * Last Seq
        * @default 0
@@ -1676,6 +1689,18 @@ export interface components {
       source_path: string;
       state?: components["schemas"]["HookState"] | null;
       usage: components["schemas"]["Usage"] | null;
+    };
+    /**
+     * ChangedFile
+     * @description A file the session's tool calls changed (``Edit``, ``MultiEdit``, ``Write``,
+     *     ``NotebookEdit``, subagents' included); ``last_change_id`` is the ``tool_use_id`` of the
+     *     latest change to it, the id the chat's review marks compare with.
+     */
+    ChangedFile: {
+      /** Last Change Id */
+      last_change_id: string;
+      /** Path */
+      path: string;
     };
     /**
      * CloudMessage
