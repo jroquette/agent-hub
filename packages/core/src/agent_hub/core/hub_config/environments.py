@@ -6,7 +6,7 @@ unique ignoring case, endpoints on declared environments). Credentials are refer
 only. No behaviour comes from a name: ``production`` is a flag.
 """
 
-from typing import Annotated, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, StrictBool
 from pydantic_core import PydanticCustomError
@@ -118,7 +118,7 @@ class Environment(ConfigObject):
 
 
 class Endpoint(ConfigObject):
-    """How a service is reached in one environment: a ``url`` or a ``resource`` name, or both."""
+    """How a service is reached in one environment: a url, a resource name, or both."""
 
     model_config = ConfigDict(
         # A subclass's json_schema_extra replaces the base's, so the comment keys are repeated.
@@ -142,12 +142,22 @@ class Endpoint(ConfigObject):
     )
 
 
+def _comment_keyed_map(schema: dict[str, Any]) -> None:
+    """Move the key pattern pydantic exports as ``patternProperties`` to ``propertyNames`` and
+    give the values ``additionalProperties``, so ``patternProperties`` holds only the comment
+    keys, which may hold anything (a ``_`` key matches the name pattern too)."""
+    ((key_pattern, value_schema),) = schema.pop("patternProperties").items()
+    schema["propertyNames"] = {**schema.get("propertyNames", {}), "pattern": key_pattern}
+    schema["additionalProperties"] = value_schema
+    schema.update(COMMENT_KEYS_SCHEMA)
+
+
 # A map keyed by name whose ``_`` keys are comments, as in every fixed-key object; the schema
 # says so too (a plain alias, as in model.py). ``dict`` keeps the file's order; frozen is shallow.
 Endpoints = Annotated[
     dict[EnvironmentName, Endpoint],
     BeforeValidator(drop_map_comment_keys),
-    Field(json_schema_extra=COMMENT_KEYS_SCHEMA),
+    Field(json_schema_extra=_comment_keyed_map),
 ]
 
 
@@ -166,10 +176,10 @@ class Service(ConfigObject):
 Services = Annotated[
     dict[ServiceName, Service],
     BeforeValidator(drop_map_comment_keys),
-    Field(json_schema_extra=COMMENT_KEYS_SCHEMA),
+    Field(json_schema_extra=_comment_keyed_map),
 ]
 Environments = Annotated[
     dict[EnvironmentName, Environment],
     BeforeValidator(drop_map_comment_keys),
-    Field(json_schema_extra=COMMENT_KEYS_SCHEMA),
+    Field(json_schema_extra=_comment_keyed_map),
 ]
