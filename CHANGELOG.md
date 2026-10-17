@@ -37,6 +37,19 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   session starts in the project's hub folder and the tab follows it (Evaluating, Waiting for you with Answer in chat,
   Finished with a Show link to the new eval, Finished without a new eval) with a link to its chat. The selected eval
   is read in place below the list, kept in `?eval=` (default: the newest), and Discuss follows it (AGH-269).
+- Learnings has a search, quick views (All, Ready to decide, Blocked) and compact Project, Claude and Source menus with
+  counts, all in the URL. Triage with Claude reviews up to 15 proposals of one project in one session, each the way a
+  single review does; a progress strip follows it live and each row and detail shows Claude's recommendation (AGH-272).
+- Review a learning with Claude: a session in the hub folder checks the note against `/learn`'s bar and writes its
+  verdict, checks, a suggested target and, when needed, a revised body into a draft folder; the learning shows
+  them as Claude's recommendation, with Use Claude's revision (it becomes your edit) and Use target. Nothing is
+  decided by the agent (AGH-272).
+- Discuss offers one-click starters: "Is this worth keeping?" on a proposed learning (Discuss opens on arrival),
+  "Is this still true?", "Improve the note" and "Duplicate or overlap?" on a learning or a Brain note (AGH-272).
+- Edit a learning's note before accepting it: Edit note opens a Write / Preview editor of the body in place, the edit
+  is a draft kept in this browser (it survives a reload; Discard edits asks first; a warning shows when the hub's
+  note changed since), and Accept sends it as `note_body`, so the hub PR's one commit moves the note and writes the
+  edited body under its kept frontmatter (ADR 0037, AGH-272).
 - Sessions has a grid view, the default: each status section shows its sessions as tiles (waiting reason, last
   action, problems, stats, a sparkline until it ends, a red edge when one needs you, a Chat badge when hub web drives
   it), 50 then Load more, optionally grouped `within` repo, run or workflow. The Grid/Table control and the `v` key
@@ -126,6 +139,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   names, the agents' tickets as one list with their step progress instead of seven mostly empty columns, recent work
   without turns and errors, and repositories, checks, doctor findings and hub configuration folded into a collapsed
   "Setup and health" section (AGH-273).
+- Learnings lists the proposals that can be decided first and the blocked ones after them, each naming why
+  ("{r} ready · {b} blocked"); a missing note explains itself and the detail says "Cannot be decided here" in a
+  banner. Titles drop an agent's "Proposal:" prefix and wrap to two lines, the detail shows the note's frontmatter
+  (type, repos, last verified, provenance), and the status is in the URL (`?status=`), so Back undoes it (AGH-272).
 - The Live sessions screen is retired: Sessions is the one sessions screen and its sidebar entry carries the live
   count. A `/live` bookmark opens the Sessions grid (its `group=` becomes `within=`), and so does `g l`. Sessions
   announces new waiting and ended sessions to screen readers at most every 15 s, and its empty state shows how to
@@ -162,6 +179,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A session started from hub web takes Claude Code's title during its first turn (checked every 5 s until it has
   one) and when it ends, so a session stopped during its first turn (a hub web restart) no longer keeps its first
   prompt as its name for good; the first sweep after a restart names the sessions that ended unnamed (AGH-267).
+- Accept and Reject on a learning work for a note `/learn` wrote in the hub checkout and nobody pushed: the pull
+  request adds it from the checkout, which is only read (ADR 0037, AGH-272).
+- A hub whose `origin` is an ssh host alias `github.com-<account>` counts as on GitHub, so its learning actions are
+  on (ADR 0037, AGH-272).
 - `make dev` on macOS no longer shows a blank page: the chat's model module `transcript.ts` is now `model.ts`, so
   `./Transcript` no longer resolves to it on a case-insensitive file system (AGH-262).
 - New session is short: Where (the project, then the working folder last used for it) and the Prompt, which has

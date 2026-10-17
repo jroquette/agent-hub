@@ -18,6 +18,7 @@ from pydantic import JsonValue
 
 from agent_hub.core.brain.brain_path import (
     BRAIN_FOLDER,
+    MAX_NOTE_BYTES,
     BrainPathError,
     LearningAction,
     accept_destination,
@@ -26,6 +27,7 @@ from agent_hub.core.brain.brain_path import (
     inbox_note,
     learning_branch,
 )
+from agent_hub.core.brain.frontmatter import first_paragraph
 from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.learnings.brain_change_requests import (
@@ -55,6 +57,8 @@ MAX_SUMMARY_CHARS: Final = 200
 MAX_REASON_CHARS: Final = 300
 ACTION_RUNNING: Final = "Another learning action is running for this hub"
 REASON_REQUIRED: Final = "A reason is required to reject a learning"
+EDIT_EMPTY: Final = "The edited note is empty"
+EDIT_TOO_LARGE: Final = "The edited note is larger than the note size limit"
 
 _ALREADY: Final = {
     LearningState.ACCEPTED_PR_OPEN: "Learning already accepted, PR open",
@@ -96,6 +100,17 @@ def _refuse_decided(learning: LearningDetail) -> None:
     )
 
 
+def _edited_body(note_body: str | None) -> str | None:
+    """The edited note body, refused when blank or past the note size limit."""
+    if note_body is None:
+        return None
+    if not note_body.strip():
+        raise LearningConflictError(EDIT_EMPTY)
+    if len(note_body.encode("utf-8")) > MAX_NOTE_BYTES:
+        raise LearningConflictError(EDIT_TOO_LARGE)
+    return note_body
+
+
 def _note(learning: LearningDetail) -> PurePosixPath:
     if learning.note_path is None:
         raise LearningConflictError(NOTE_OUTSIDE_INBOX)
@@ -132,16 +147,25 @@ class DecideLearning:
         self._guard = threading.Lock()
         self._running: set[str] = set()
 
-    def accept(self, learning_id: str, *, target: str) -> LearningActionResult:
-        """Open a PR that moves the note to ``target`` (a folder or a ``.md`` path)."""
-        return self._decide(learning_id, "accept", target=target, reason="")
+    def accept(
+        self, learning_id: str, *, target: str, note_body: str | None = None
+    ) -> LearningActionResult:
+        """Open a PR that moves the note to ``target`` (a folder or a ``.md`` path); with
+        ``note_body``, the same commit replaces the note's text after its frontmatter."""
+        return self._decide(learning_id, "accept", target=target, reason="", note_body=note_body)
 
     def reject(self, learning_id: str, *, reason: str) -> LearningActionResult:
         """Open a PR that archives the note with ``reason``."""
         return self._decide(learning_id, "reject", target="", reason=reason)
 
     def _decide(
-        self, learning_id: str, action: LearningAction, *, target: str, reason: str
+        self,
+        learning_id: str,
+        action: LearningAction,
+        *,
+        target: str,
+        reason: str,
+        note_body: str | None = None,
     ) -> LearningActionResult:
         hub = self._usable_hub(self._reads.get_learning(learning_id).project)
         with self._one_action(hub.path):
@@ -152,7 +176,9 @@ class DecideLearning:
             if unavailable is not None:
                 raise HubReadOnlyError(unavailable)
             now = self._today()
-            change = self._change(learning, hub, action, target=target, reason=reason, now=now)
+            change = self._change(
+                learning, hub, action, target=target, reason=reason, note_body=note_body, now=now
+            )
             opened = (
                 self._changes.accept(change) if action == "accept" else self._changes.reject(change)
             )
@@ -187,9 +213,11 @@ class DecideLearning:
         *,
         target: str,
         reason: str,
+        note_body: str | None,
         now: datetime,
     ) -> BrainChange:
         note = _note(learning)
+        edited = _edited_body(note_body)
         day = now.date().isoformat()
         why = _redacted(reason, MAX_REASON_CHARS)
         try:
@@ -212,19 +240,31 @@ class DecideLearning:
             note=str(note),
             destination=destination,
             frontmatter=frontmatter,
+            note_body=edited,
             author=hub.author,
             branch=learning_branch(branch_prefix=hub.branch_prefix, action=action, note=note),
             title=title,
-            body=self._body(learning, note=note, destination=destination, why=why),
+            body=self._body(learning, note=note, destination=destination, why=why, edited=edited),
             commit_message=f"docs(brain): {action} learning {branch_slug(note)}",
         )
 
     @staticmethod
-    def _body(learning: LearningDetail, *, note: PurePosixPath, destination: str, why: str) -> str:
-        """The PR body: the move, the note's first paragraph and, for a reject, the reason."""
+    def _body(
+        learning: LearningDetail,
+        *,
+        note: PurePosixPath,
+        destination: str,
+        why: str,
+        edited: str | None = None,
+    ) -> str:
+        """The PR body: the move, whether the note was edited, its first paragraph and, for a
+        reject, the reason."""
         lines = [f"Moves `{BRAIN_FOLDER}/{note}` to `{BRAIN_FOLDER}/{destination}`."]
-        if learning.summary:
-            lines += ["", f"> {_redacted(learning.summary, MAX_SUMMARY_CHARS)}"]
+        if edited is not None:
+            lines += ["", "The note was edited in agent-hub before it was accepted."]
+        summary = first_paragraph(edited) if edited is not None else learning.summary
+        if summary:
+            lines += ["", f"> {_redacted(summary, MAX_SUMMARY_CHARS)}"]
         if why:
             lines += ["", f"Reason: {why}"]
         return "\n".join(lines) + "\n"

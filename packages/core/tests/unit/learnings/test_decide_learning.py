@@ -158,6 +158,34 @@ def test_opens_change_and_stores_event_when_accepted() -> None:
     assert setup.reads().get_learning("toolu_1").state == LearningState.ACCEPTED_PR_OPEN
 
 
+def test_writes_edited_body_and_names_edit_in_pr_when_accepted_with_edit() -> None:
+    setup = Setup()
+
+    setup.decide().accept(
+        "toolu_1", target="learnings/gotchas/", note_body="# Testing x\n\nRun migrations first.\n"
+    )
+
+    [change] = setup.port.calls
+    assert change.note_body == "# Testing x\n\nRun migrations first.\n"
+    assert "The note was edited in agent-hub before it was accepted." in change.body
+    assert "> Run migrations first." in change.body
+    moved = setup.origin.file_on(change.branch, "brain/learnings/gotchas/testing-x.md")
+    assert moved is not None
+    assert moved.endswith("---\n# Testing x\n\nRun migrations first.\n")
+    assert "status: accepted" in moved
+
+
+@pytest.mark.parametrize("note_body", ["  \n", "x" * (256 * 1024 + 1)])
+def test_refuses_edit_when_blank_or_too_large(note_body: str) -> None:
+    setup = Setup()
+
+    with pytest.raises(LearningConflictError):
+        setup.decide().accept("toolu_1", target="learnings/", note_body=note_body)
+
+    assert setup.port.calls == []
+    assert setup.decisions() == []
+
+
 def test_opens_change_and_stores_event_when_rejected() -> None:
     setup = Setup()
 

@@ -59,8 +59,9 @@ def get_learning(learning_id: LearningPath, reads: LearningReadsDep) -> Learning
 def accept_learning(
     learning_id: LearningPath, body: AcceptLearningBody, decisions: LearningDecisionsDep
 ) -> LearningActionResult:
-    """Open a hub PR that moves the note into the brain; nothing changes until it is merged."""
-    return decisions.accept(learning_id, target=body.target)
+    """Open a hub PR that moves the note into the brain, with the edited body when one is sent;
+    nothing changes until it is merged."""
+    return decisions.accept(learning_id, target=body.target, note_body=body.note_body)
 
 
 @router.post(
