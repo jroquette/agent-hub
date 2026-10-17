@@ -13,7 +13,13 @@ import { CostTab } from "./CostTab";
 import { FilesTab } from "./FilesTab";
 import { Header } from "./Header";
 import { ProblemsPanel } from "./ProblemsPanel";
-import { useSession, useSessionEvents, useSessionProblems, type Session } from "./queries";
+import {
+  usePrefetchSessionEvents,
+  useSession,
+  useSessionEvents,
+  useSessionProblems,
+  type Session,
+} from "./queries";
 import { RawTab } from "./RawTab";
 import { SummaryCard } from "./SummaryCard";
 import { buildTrace } from "./timeline";
@@ -48,6 +54,7 @@ function LoadingBody() {
 export function SessionDetailScreen() {
   const { sessionId = "" } = useParams();
   const session = useSession(sessionId);
+  usePrefetchSessionEvents(sessionId);
   const { openPalette } = useShell();
   if (session.isPending) return <LoadingBody />;
   if (session.error) {

@@ -117,6 +117,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- Session detail reads a session's events 1,000 at a time (`GET /sessions/{id}/events` takes `limit` up to 1,000;
+  the default stays 200) and starts reading them alongside the session, so a 5,000-event session is complete in
+  about half the time (AGH-275).
 - The chat folds what Claude does between two messages, its calls and the thoughts between them, into one line
   ("Ran 3 commands, read 2 files, thought 12 s", or the call it is on while it works, and how many failed). The line
   opens the steps in an Activity drawer over the right of the page; a permission card stays under the line. The

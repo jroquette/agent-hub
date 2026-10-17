@@ -217,7 +217,7 @@ All paths under `/api/v1`. Shapes are trimmed sketches; lists are paginated.
 | `GET /sessions/{id}` | | full Session entity (above) | Session detail header |
 | `GET /sessions/{id}/summary` | | `{"lines":[{"text":"Ran make check-fast: passed in 3 min 12 s","event_id":"…"}],"generated_at":"…","derived":true}` | Session detail summary card |
 | `GET /sessions/{session_id}/problems` (AGH-201) | | `{"session_id":"…","summary":[{"text":"2 problems: 1 needs you, 1 handled by the agent","event_id":"…"}],"items":[{"event_id":"…","kind":"command_exit","tool":"Bash","where":"make check","message":"…","at":"…","actor":{"kind":"main"},"resolution":"recovered","resolved_by_event_id":"…","derived":true}]}` | What went wrong, Live tiles |
-| `GET /sessions/{id}/events` | `cursor, types, around` (event id), `limit` (default 200), `include_children` | `{"items":[Event],"next_cursor":"…","prev_cursor":"…"}` | Timeline, Raw events |
+| `GET /sessions/{id}/events` | `cursor, types, around` (event id), `limit` (default 200, at most 1,000), `include_children` | `{"items":[Event],"next_cursor":"…","prev_cursor":"…"}` | Timeline, Raw events |
 | `GET /sessions/{id}/events/stream` | header `Last-Event-ID` | SSE (below) | Timeline live |
 | `GET /sessions/{id}/files` | | `{"items":[{"repo":"agent-hub","path":"brain/features/layered-memory/eval.md","ops":["edited"],"added":64,"removed":0,"event_ids":["…"]}]}` | Files and diffs |
 | `GET /sessions/{id}/files/diff` | `path`, `repo` | `{"path":"…","hunks":[…],"content_state":"available \| expired"}` | Files and diffs, DiffViewer |
