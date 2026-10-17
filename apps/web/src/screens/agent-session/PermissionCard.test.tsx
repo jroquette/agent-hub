@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -33,6 +36,43 @@ function open(
 }
 
 describe("PermissionCard (permission)", () => {
+  it("shows what the call is for above the command and keeps key hints out of button names", () => {
+    const { card } = open(
+      aView({ input: { command: "git status", description: "Show the working tree" } }),
+    );
+
+    expect(within(card).getByText("Show the working tree")).toBeInTheDocument();
+    expect(within(card).getByText("Waiting for you")).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Allow once" })).toBeEnabled();
+    expect(within(card).getByRole("button", { name: "Deny" })).toBeEnabled();
+  });
+
+  it("wraps the command, cuts the Always allow rule to one line and shows the key hints only on focus", () => {
+    const { card } = open(aView());
+    const css = readFileSync(
+      join(process.cwd(), "src/screens/agent-session/agent-session.css"),
+      "utf-8",
+    );
+    /** The declarations of the block whose selector is exactly `selector`. */
+    const rule = (selector: string) => {
+      const start = css.indexOf(`\n${selector} {`);
+      return start < 0 ? "" : css.slice(start, css.indexOf("}", start));
+    };
+
+    // The hints are decoration: aria-hidden, and shown by CSS only while the card has focus.
+    const hints = card.querySelectorAll("kbd.as-perm-kbd");
+    expect([...hints].map((hint) => hint.textContent)).toEqual(["A", "D"]);
+    hints.forEach((hint) => {
+      expect(hint).toHaveAttribute("aria-hidden", "true");
+    });
+    expect(rule(".as-perm-kbd")).toMatch(/display: none;/);
+    expect(rule(".as-perm:focus .as-perm-kbd")).toMatch(/display: inline-flex;/);
+    expect(rule(".as-perm-command")).toMatch(/white-space: pre-wrap;/);
+    expect(rule(".as-perm-command")).toMatch(/overflow-wrap: anywhere;/);
+    expect(rule(".as-perm-rule")).toMatch(/white-space: nowrap;/);
+    expect(rule(".as-perm-rule")).toMatch(/text-overflow: ellipsis;/);
+  });
+
   it("shows tool, summary and only localSettings suggestions and takes focus when it arrives", () => {
     const { card } = open(aView());
 
@@ -153,28 +193,145 @@ describe("PermissionCard (permission)", () => {
       },
     });
     const { card, onAnswer } = open(request);
-    const send = within(card).getByRole("button", { name: "Send answers" });
     expect(card).toHaveAccessibleName("Claude has a question");
-    expect(send).toBeDisabled();
+    expect(within(card).queryByRole("button", { name: "Send answers" })).toBeNull();
+    expect(within(card).getByText("0 of 2 answered")).toBeInTheDocument();
+    // One page at a time: the second question waits behind its step.
+    expect(within(card).queryByRole("group", { name: "Which checks?" })).toBeNull();
 
     const db = within(card).getByRole("group", { name: "DB Which database?" });
-    await userEvent.click(within(db).getByRole("button", { name: "SQLite" }));
-    expect(within(db).getByRole("button", { name: "SQLite" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    const sqlite = within(db).getByRole("radio", { name: "SQLite" });
+    expect(sqlite).toHaveAccessibleDescription("Local file");
+    expect(within(card).getByText("Server")).toBeVisible();
+    // A single choice completes the page and moves on to the next question.
+    await userEvent.click(sqlite);
+    expect(within(card).getByText("1 of 2 answered")).toBeInTheDocument();
     const checks = within(card).getByRole("group", { name: "Which checks?" });
-    await userEvent.click(within(checks).getByRole("button", { name: "lint" }));
-    await userEvent.click(within(checks).getByRole("button", { name: "types" }));
-    await userEvent.click(within(checks).getByRole("button", { name: "lint" }));
-    await userEvent.click(within(db).getByRole("button", { name: "Other" }));
-    await userEvent.type(within(db).getByLabelText("Your answer"), "DuckDB");
-    await userEvent.click(send);
+    const dbStep = within(card).getByRole("button", { name: /^DB/ });
+    expect(dbStep).not.toHaveAttribute("aria-current");
+    expect(dbStep).toHaveAccessibleName("DB (answered)");
+    const send = within(card).getByRole("button", { name: "Send answers" });
+    expect(send).toBeDisabled();
+    await userEvent.click(within(checks).getByRole("checkbox", { name: "lint" }));
+    await userEvent.click(within(checks).getByRole("checkbox", { name: "types" }));
+    await userEvent.click(within(checks).getByRole("checkbox", { name: "lint" }));
+
+    await userEvent.click(within(card).getByRole("button", { name: "Back" }));
+    expect(sqlite).toBeChecked();
+    await userEvent.click(within(db).getByRole("radio", { name: "Other" }));
+    expect(sqlite).not.toBeChecked();
+    await userEvent.type(within(db).getByRole("textbox", { name: "Your answer" }), "DuckDB");
+    await userEvent.click(within(card).getByRole("button", { name: "Next" }));
+    await userEvent.click(within(card).getByRole("button", { name: "Send answers" }));
 
     expect(onAnswer).toHaveBeenCalledWith({
       decision: "allow",
       answers: { "Which database?": "DuckDB", "Which checks?": "types" },
     });
+  });
+
+  it("tags Claude's recommended option, keeps its label in the answer and skips without a deny message", async () => {
+    const request = aView({
+      request_kind: "ask_user_question",
+      tool: "AskUserQuestion",
+      summary: "One question",
+      suggestions: [],
+      input: {
+        questions: [
+          {
+            question: "Which layout?",
+            multiSelect: false,
+            options: [{ label: "Tabs (Recommended)" }, { label: "Blocks" }],
+          },
+        ],
+      },
+    });
+    const { card, onAnswer } = open(request);
+    expect(within(card).queryByLabelText(/Message to Claude/)).not.toBeInTheDocument();
+    expect(within(card).queryByText(/answered$/)).not.toBeInTheDocument();
+    expect(within(card).getByText("Recommended")).toBeInTheDocument();
+
+    await userEvent.click(within(card).getByRole("radio", { name: "Tabs" }));
+    await userEvent.click(within(card).getByRole("button", { name: "Send answers" }));
+    expect(onAnswer).toHaveBeenCalledWith({
+      decision: "allow",
+      answers: { "Which layout?": "Tabs (Recommended)" },
+    });
+  });
+
+  it("skips a question with a plain deny", async () => {
+    const request = aView({
+      request_kind: "ask_user_question",
+      tool: "AskUserQuestion",
+      summary: "One question",
+      suggestions: [],
+      input: { questions: [{ question: "Which?", options: [{ label: "A" }] }] },
+    });
+    const { card, onAnswer } = open(request);
+
+    await userEvent.click(within(card).getByRole("button", { name: "Skip question" }));
+    expect(onAnswer).toHaveBeenCalledWith({ decision: "deny" });
+  });
+
+  it("keeps an answered question readable: each question with your answer, read as Answered", () => {
+    const request = aView({
+      request_kind: "ask_user_question",
+      tool: "AskUserQuestion",
+      summary: "Two questions",
+      suggestions: [],
+      input: {
+        questions: [
+          { question: "Which database?", header: "DB", options: [{ label: "SQLite" }] },
+          { question: "Which checks?", options: [{ label: "lint" }] },
+        ],
+      },
+    });
+    render(
+      <PermissionCard
+        request={{
+          ...request,
+          decision: {
+            decision: "allow",
+            by: "web",
+            message: null,
+            at: "2026-10-11T14:10:00Z",
+            answers: { "Which database?": "SQLite (Recommended)" },
+          },
+        }}
+      />,
+    );
+
+    const [database, checks] = screen.getAllByRole("definition");
+    expect(database).toHaveTextContent(/^SQLite$/);
+    expect(checks).toHaveTextContent("Not answered");
+    expect(screen.getByText("Which checks?")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/^Answered$/);
+    expect(screen.queryByText(/Allowed/)).toBeNull();
+  });
+
+  it.each([
+    ["ask_user_question", { decision: "deny", by: "web", message: null }, "Skipped"],
+    [
+      "plan_approval",
+      { decision: "allow", by: "web", message: null, mode: "acceptEdits" },
+      "Plan approved · Accept edits",
+    ],
+    [
+      "plan_approval",
+      { decision: "deny", by: "web", message: "Smaller steps" },
+      "Kept planning: Smaller steps",
+    ],
+  ] as const)("reads a %s decided %j as %s", (kind, decision, text) => {
+    render(
+      <PermissionCard
+        request={{
+          ...aView({ request_kind: kind, input: null }),
+          decision: { ...decision, at: "2026-10-11T14:10:00Z" },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(new RegExp(`^${text}$`));
   });
 
   it("approves a plan with the mode to continue in, or keeps planning", async () => {
