@@ -583,7 +583,8 @@ describe("changedFiles (review)", () => {
       ["/repo/src/a.ts", true, 2],
       ["/repo/src/b.ts", false, 2],
     ]);
-    expect(files[0]).toMatchObject({ added: 3, removed: 1, lastChangeId: "t4" });
+    // A written file counts its final lines: the edit's removed line was never in the repo.
+    expect(files[0]).toMatchObject({ added: 2, removed: 0, lastChangeId: "t4" });
     expect(files[1]).toMatchObject({ added: 1, removed: 1, lastChangeId: "t5" });
     expect(files[1]?.changes[1]?.state).toBe("error");
   });

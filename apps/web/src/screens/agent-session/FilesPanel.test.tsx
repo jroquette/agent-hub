@@ -178,6 +178,7 @@ describe("FilesPanel (long-files)", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: /a\.ts/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Each change (2)" }));
 
     expect(screen.getByLabelText("Change 1 to r/a.ts")).toHaveClass("as-diff-numbered");
     expect(screen.getByLabelText("Change 2 to r/a.ts")).not.toHaveClass("as-diff-numbered");
@@ -215,5 +216,34 @@ describe("FilesPanel (comments)", () => {
 
     expect(screen.getByTitle("2 open review comments")).toHaveTextContent("2");
     expect(screen.queryByTitle(/1 open review comment/)).toBeNull();
+  });
+});
+
+describe("FilesPanel (final result)", () => {
+  it("opens a file changed several times on its final diff, each change one click away", async () => {
+    render(
+      <FilesPanel
+        files={filesOf([
+          tool("t1", "Write", { file_path: "/r/a.md", content: "one\ntwo\n" }),
+          tool("t2", "Edit", { file_path: "/r/a.md", old_string: "two", new_string: "2" }),
+        ])}
+        sessionId="s1"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /a\.md/ }));
+
+    expect(screen.getByRole("button", { name: "Final result" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText("Final diff of r/a.md")).toHaveTextContent("+2");
+    expect(screen.queryByLabelText("Change 1 to r/a.md")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Each change (2)" }));
+
+    expect(screen.getByLabelText("Change 1 to r/a.md")).toBeInTheDocument();
+    expect(screen.getByLabelText("Change 2 to r/a.md")).toBeInTheDocument();
   });
 });

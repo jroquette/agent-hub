@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
 } from "react";
 
-import { Button, Icon } from "../../components";
+import { Button, Icon, SegmentedControl } from "../../components";
 import { cx } from "../../lib/cx";
 import { readStored, writeStored } from "../../lib/storage";
 import { useDrawerWidth } from "./DrawerResize";
@@ -132,6 +132,41 @@ function ChangeBlock({
     </div>
   );
 }
+
+/** A file's final diff: what all its changes add up to, open to review comments (change 0). */
+function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
+  const comments = useContext(ReviewCommentsContext);
+  const net = file.net;
+  if (!net) return null;
+  const label = `Final diff of ${path}`;
+  if (net.added === 0 && net.removed === 0) {
+    return <p className="ah-small ah-muted">The changes cancel out: the file ends as it began.</p>;
+  }
+  const threads =
+    comments?.threads.filter(
+      (thread) => thread.anchor.path === file.path && thread.anchor.change === 0,
+    ) ?? [];
+  return (
+    <div className="as-files-change">
+      {comments ? (
+        <ReviewDiff
+          diff={net.diff}
+          label={label}
+          numbered={net.numbered}
+          path={file.path}
+          change={0}
+          threads={threads}
+          resolved={comments.resolved}
+          onComment={comments.onComment}
+        />
+      ) : (
+        <DiffText diff={net.diff} label={label} numbered={net.numbered} />
+      )}
+    </div>
+  );
+}
+
+type DetailView = "final" | "changes";
 
 /** How many review threads on a file are still open, as a small speech-bubble count. */
 function OpenThreads({ path }: { path: string }) {
@@ -348,6 +383,9 @@ function FileDetail({
   const body = useRef<HTMLDivElement>(null);
   const section = useRef<HTMLElement>(null);
   const takesFocus = onBack !== null;
+  // The final result first; "Each change" stays picked as you step through the files.
+  const [view, setView] = useState<DetailView>("final");
+  const showNet = file.net !== null && view === "final";
   useEffect(() => {
     if (body.current) body.current.scrollTop = 0;
   }, [file.path]);
@@ -408,21 +446,44 @@ function FileDetail({
         </div>
       </header>
       <div className="as-files-detail-body" ref={body}>
-        <p className="as-files-summary ah-small ah-muted">
-          {file.changes.length === 1
-            ? "1 change in this session"
-            : `${String(file.changes.length)} changes in this session, oldest first`}
-        </p>
-        {file.changes.map((change, index) => (
-          <ChangeBlock
-            key={change.tool.id}
-            change={change}
-            index={index}
-            total={file.changes.length}
-            path={name}
-            filePath={file.path}
-          />
-        ))}
+        {file.net ? (
+          <div className="as-files-summary ah-row">
+            <SegmentedControl
+              label="Show"
+              value={showNet ? "final" : "changes"}
+              onChange={(id) => {
+                setView(id as DetailView);
+              }}
+              options={[
+                { id: "final", label: "Final result" },
+                { id: "changes", label: `Each change (${String(file.changes.length)})` },
+              ]}
+            />
+            <span className="ah-small ah-muted">
+              {showNet
+                ? `All ${String(file.changes.length)} changes in this session, as one diff`
+                : "Oldest first"}
+            </span>
+          </div>
+        ) : (
+          <p className="as-files-summary ah-small ah-muted">
+            {file.changes.length === 1
+              ? "1 change in this session"
+              : `${String(file.changes.length)} changes in this session, oldest first`}
+          </p>
+        )}
+        {showNet && <NetBlock file={file} path={name} />}
+        {!showNet &&
+          file.changes.map((change, index) => (
+            <ChangeBlock
+              key={change.tool.id}
+              change={change}
+              index={index}
+              total={file.changes.length}
+              path={name}
+              filePath={file.path}
+            />
+          ))}
       </div>
     </section>
   );
@@ -444,7 +505,7 @@ export interface FilesPanelProps {
 /**
  * The files Claude changed in this session, for review beside the chat, apart from the rest of
  * its activity. The list reads like source control (by folder, status, lines, viewed); a file
- * opens on its own with every change to it as a diff. Wide, the list stays beside the open file;
+ * opens on its own with its final diff (every change added up), or every change to it in turn. Wide, the list stays beside the open file;
  * narrow, the file takes the drawer and "All files" goes back. Marks are kept per session.
  */
 export function FilesPanel({
