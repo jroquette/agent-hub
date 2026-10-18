@@ -24,6 +24,7 @@ import { useCollectorState } from "../../shell/GlobalStream";
 import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
 import { FeatureNameField, RenameButton, useFeatureNames } from "../features/names";
 import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
+import { ApproveRecord } from "./ApproveRecord";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
@@ -161,6 +162,13 @@ function RecordTab({
           Open in Brain
         </Link>
       </div>
+      <ApproveRecord
+        project={detail.project}
+        slug={detail.slug}
+        record={meta.name}
+        path={`brain/${record.path}`}
+        tickets={ticketIds(detail.issues)}
+      />
       {view === "humans" ? (
         <RecordSummary
           key={record.path}
