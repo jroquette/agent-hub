@@ -4,7 +4,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path
 
-from agent_hub.api.dependencies import FeatureNamesDep, HubReadModelsDep, OwnerSignOffDep
+from agent_hub.api.ac_check import AcCheckRun
+from agent_hub.api.dependencies import (
+    AcChecksDep,
+    FeatureNamesDep,
+    HubReadModelsDep,
+    OwnerSignOffDep,
+)
 from agent_hub.api.feature_names import FeatureName, FeatureNameBody, FeatureNamesView
 from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES, ProjectParam
 from agent_hub.core.features.feature_view import EvalRecord, FeatureDetail, FeatureView
@@ -45,6 +51,15 @@ def sign_off_owner_steps(
     """The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over
     the ACs that waited on them (409 when no AC waits, or one is not covered by a SHIP)."""
     return sign_off(project, slug)
+
+
+@router.post("/features/{project}/{slug}/acs/{ac}/check-runs")
+def run_ac_check(
+    project: NamePath, slug: NamePath, ac: NamePath, *, checks: AcChecksDep
+) -> AcCheckRun:
+    """Run the check ``features.json`` records for one AC in its repo's checkout and answer its
+    exit code and output (nothing is recorded; 409 for a manual AC or one with no command)."""
+    return checks.run(project, slug, ac)
 
 
 @router.get("/feature-names")

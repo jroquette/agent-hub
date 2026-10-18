@@ -11,6 +11,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from pydantic import BaseModel, ValidationError
 
+from agent_hub.api.ac_check import AcCheckRunner
 from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.feature_names import FeatureNames
 from agent_hub.api.linear_connection import LinearConnection
@@ -57,6 +58,7 @@ class ApiPorts:
     linear: LinearConnection | None = None
     owner_signoff: SignOffOwnerSteps | None = None
     feature_names: FeatureNames | None = None
+    ac_checks: AcCheckRunner | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -247,6 +249,14 @@ def feature_names(request: Request) -> FeatureNames:
     return port
 
 
+def ac_checks(request: Request) -> AcCheckRunner:
+    """The runner of an AC's recorded check, or 501 when not wired."""
+    port = _ports(request).ac_checks
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
 def api_settings(request: Request) -> ApiSettings:
     """The settings ``create_app`` was given."""
     settings: ApiSettings = request.app.state.settings
@@ -286,5 +296,6 @@ CollectorPortsDep = Annotated[CollectorPorts, Depends(collector_ports)]
 SettingsDep = Annotated[ApiSettings, Depends(api_settings)]
 LinearConnectionDep = Annotated[LinearConnection, Depends(linear_connection)]
 FeatureNamesDep = Annotated[FeatureNames, Depends(feature_names)]
+AcChecksDep = Annotated[AcCheckRunner, Depends(ac_checks)]
 AgentSessionControlDep = Annotated[AgentSessionCommands, Depends(agent_session_control)]
 CloudSessionsDep = Annotated[CloudSessionCommands, Depends(cloud_sessions)]

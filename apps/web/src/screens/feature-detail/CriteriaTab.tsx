@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -17,6 +18,7 @@ import {
   useCopied,
   type IconName,
 } from "../../components";
+import { apiCommand, type ApiProblem } from "../../lib/api";
 import { brainRoute } from "../../lib/brainLinks";
 import { safeHref } from "../../lib/safeHref";
 import { useDiscuss, type DiscussReference } from "../../shell/discuss";
@@ -36,6 +38,7 @@ import "./criteria.css";
 type Detail = components["schemas"]["FeatureDetail"];
 type AcRow = components["schemas"]["AcRow"];
 type EvalRecord = components["schemas"]["EvalRecord"];
+type AcCheckRun = components["schemas"]["AcCheckRun"];
 
 export type Pass = "yes" | "owner" | "none";
 const PASS: Record<Pass, { icon: IconName; tone: string; label: string; title: string }> = {
@@ -488,6 +491,95 @@ function WhatMustBeTrue({ text }: { text: string }) {
   );
 }
 
+function seconds(ms: number): string {
+  return ms < 1000 ? `${String(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** Why a run could not start, in words: a locked browser, the container, or the API's own. */
+function runProblem(problem: ApiProblem): string {
+  if (problem.status === 401)
+    return "Running checks is locked in this browser: open the link hub web printed when it started (it ends with ?token=…) once.";
+  if (problem.status === 404 && problem.type === "urn:agent-hub:problem:run-control-off")
+    return "Checks cannot run from the agent-hub container. Run hub web on your machine.";
+  return problem.detail ?? problem.title;
+}
+
+/**
+ * The AC's command with a "Run it" button: the server runs the command features.json records
+ * for this AC (the browser only names the AC) in the repo's checkout, and the result shows
+ * below: passed or failed, the exit code, how long it took and the output. Nothing is recorded.
+ */
+function CheckRun({ ac, detail, command }: { ac: AcRow; detail: Detail; command: string }) {
+  const run = useMutation<AcCheckRun, ApiProblem>({
+    mutationFn: () =>
+      apiCommand("/api/v1/features/{project}/{slug}/acs/{ac}/check-runs", {
+        path: { project: detail.project, slug: detail.slug, ac: ac.id },
+      }),
+  });
+  const result = run.data;
+  return (
+    <div className="ah-stack" style={{ gap: 8 }}>
+      <CodeBlock code={command} prompt="$" wrap label={`Verification of ${ac.id}`} />
+      <div className="ah-row ah-wrap" style={{ gap: 10 }}>
+        <Button
+          size="sm"
+          variant="primary"
+          icon={run.isPending ? "loader" : result ? "rotate-ccw" : "play"}
+          className={run.isPending ? "ah-ac-running" : undefined}
+          disabled={run.isPending}
+          title={`Runs this command in the ${ac.repo ?? "project's"} checkout and shows its output; nothing is recorded`}
+          onClick={() => {
+            run.mutate();
+          }}
+        >
+          {run.isPending ? "Running…" : result ? "Run again" : "Run it"}
+        </Button>
+        {run.isPending && (
+          <span className="ah-small ah-muted">
+            Running in <span className="ah-mono">{ac.repo ?? "the repo"}</span>; a test suite can
+            take a while.
+          </span>
+        )}
+        {!run.isPending && result && (
+          <span
+            className="ah-ac-run-verdict"
+            style={{ color: result.passed ? "var(--done)" : "var(--failed)" }}
+            role="status"
+          >
+            <Icon name={result.passed ? "circle-check" : "circle-x"} size="sm" />
+            {result.passed
+              ? "Passed"
+              : result.timed_out
+                ? "Timed out"
+                : `Failed (exit ${String(result.exit_code)})`}
+            <span className="ah-subtle">
+              {" "}
+              · {seconds(result.duration_ms)} · in <span className="ah-mono">{result.repo}</span>
+            </span>
+          </span>
+        )}
+        {!run.isPending && run.error && (
+          <span className="ah-small" style={{ color: "var(--failed)" }} role="alert">
+            <Icon name="circle-alert" size="sm" /> {runProblem(run.error)}
+          </span>
+        )}
+      </div>
+      {!run.isPending && result && (
+        <div className="ah-ac-run-out" data-passed={result.passed || undefined}>
+          {result.truncated && (
+            <div className="ah-small ah-subtle">Long output: only its end is shown.</div>
+          )}
+          {/* The output scrolls, so the keyboard must reach it (axe scrollable-region-focusable). */}
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+          <pre tabIndex={0} aria-label={`Output of ${ac.id}'s check`}>
+            {result.output || "(no output)"}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AcCard({
   ac,
   detail,
@@ -550,7 +642,7 @@ function AcCard({
       </Section>
       <Section title="Check it yourself" icon="terminal">
         {ac.command && !ac.manual ? (
-          <CodeBlock code={ac.command} prompt="$" wrap label={`Verification of ${ac.id}`} />
+          <CheckRun ac={ac} detail={detail} command={ac.command} />
         ) : ac.command ? (
           <div className="ah-small">
             <span className="ah-muted">Manual owner step: </span>

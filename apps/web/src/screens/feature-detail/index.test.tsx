@@ -515,6 +515,33 @@ describe("FeatureDetailScreen", () => {
       expect(write).toHaveBeenCalledWith("uv run pytest -k case_2");
     });
 
+    it("runs an AC's check from its card and shows the exit code and output (playground)", async () => {
+      open({
+        [`POST ${API}/acs/AC-48.2/check-runs`]: {
+          ac: "AC-48.2",
+          command: "uv run pytest -k case_2",
+          repo: "agent-hub",
+          exit_code: 1,
+          passed: false,
+          timed_out: false,
+          duration_ms: 4200,
+          output: "1 failed in 0.4s",
+          truncated: false,
+        },
+      });
+
+      const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
+      const check = within(table).getByRole("region", { name: "Check it yourself" });
+      await userEvent.click(within(check).getByRole("button", { name: "Run it" }));
+
+      expect(await within(check).findByText(/Failed \(exit 1\)/)).toBeInTheDocument();
+      expect(within(check).getByLabelText("Output of AC-48.2's check")).toHaveTextContent(
+        "1 failed in 0.4s",
+      );
+      expect(within(check).getByRole("button", { name: "Run again" })).toBeInTheDocument();
+    });
+
     it("marks a manual AC's verification as an owner step (records)", async () => {
       open();
 

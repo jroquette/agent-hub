@@ -38,7 +38,8 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # (AC-213.18) runs the CLI and resumes the run, so it is one of them.
 RUN_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/(workflow-runs(/[^/]+/(cancel|resume|abandon))?"
-    r"|approvals/[^/]+/decision)$"
+    r"|approvals/[^/]+/decision"
+    r"|features/[^/]+/[^/]+/acs/[^/]+/check-runs)$"
 )
 STRICT_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"

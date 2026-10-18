@@ -1,6 +1,67 @@
 {
   "components": {
     "schemas": {
+      "AcCheckRun": {
+        "description": "One run of an AC's check: what ran, where, and what it answered.",
+        "properties": {
+          "ac": {
+            "title": "Ac",
+            "type": "string"
+          },
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "output": {
+            "title": "Output",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "timed_out": {
+            "title": "Timed Out",
+            "type": "boolean"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ac",
+          "command",
+          "repo",
+          "exit_code",
+          "passed",
+          "timed_out",
+          "duration_ms",
+          "output",
+          "truncated"
+        ],
+        "title": "AcCheckRun",
+        "type": "object"
+      },
       "AcCounts": {
         "additionalProperties": false,
         "description": "Passing and total acceptance criteria, and how many are owner steps.",
@@ -11413,6 +11474,83 @@
           }
         },
         "summary": "Get Feature",
+        "tags": [
+          "features"
+        ]
+      }
+    },
+    "/api/v1/features/{project}/{slug}/acs/{ac}/check-runs": {
+      "post": {
+        "description": "Run the check ``features.json`` records for one AC in its repo's checkout and answer its\nexit code and output (nothing is recorded; 409 for a manual AC or one with no command).",
+        "operationId": "run_ac_check_api_v1_features__project___slug__acs__ac__check_runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "ac",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Ac",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcCheckRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Run Ac Check",
         "tags": [
           "features"
         ]

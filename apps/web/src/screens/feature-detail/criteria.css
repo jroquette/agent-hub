@@ -71,7 +71,13 @@
   background: var(--surface-sunken);
   padding: 4px 12px 16px 0;
 }
+/* The card never widens the table: it takes the cell's width (the columns above set it), so a
+   long command, output or snippet wraps or scrolls inside the card, not the whole table. */
 .ah-ac-card {
+  width: 0;
+  min-width: 100%;
+  box-sizing: border-box;
+  white-space: normal;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -160,6 +166,7 @@
   font-weight: 500;
 }
 .ah-ac-cite-snip {
+  overflow-wrap: anywhere;
   margin: 2px 0 0 20px;
   font-size: 12px;
   line-height: 18px;
@@ -171,4 +178,47 @@
   margin: 4px 0 0;
   padding-left: 18px;
   line-height: 18px;
+}
+
+.ah-ac-sec-body {
+  min-width: 0;
+}
+.ah-ac-run-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.ah-ac-running svg {
+  animation: ah-ac-spin 1s linear infinite;
+}
+@keyframes ah-ac-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ah-ac-running svg {
+    animation: none;
+  }
+}
+.ah-ac-run-out {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--failed);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  padding: 8px 10px;
+}
+.ah-ac-run-out[data-passed] {
+  border-left-color: var(--done);
+}
+.ah-ac-run-out pre {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

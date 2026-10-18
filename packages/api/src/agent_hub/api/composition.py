@@ -36,6 +36,7 @@ from typing import Final
 
 from fastapi import FastAPI
 
+from agent_hub.api.ac_check import AcCheckError, AcCheckRunner, ac_check_problem
 from agent_hub.api.agent_session_runtime import (
     SessionRuntime,
     UnavailableCloudLauncher,
@@ -137,6 +138,7 @@ from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE, 
 # The errors of the wired adapters, each answered by its problem (API.md "Error mapping").
 COMPOSED_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     OwnerSignOffError: owner_signoff_problem,
+    AcCheckError: ac_check_problem,
     DatabaseBusyError: busy_problem,
     InvalidCursorError: invalid_cursor_problem,
     HubInvalidError: hub_invalid_problem,
@@ -655,6 +657,7 @@ def build_app(
             ProjectHubPaths(hubs), reader, HubEvalWriter(), clock=settings.clock
         ),
         feature_names=FeatureNames(settings.registry_path.parent / FEATURE_NAMES_FILE),
+        ac_checks=AcCheckRunner(hubs),
         linear=LinearConnection(
             linear_environ,
             key_file,

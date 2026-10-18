@@ -539,6 +539,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/features/{project}/{slug}/acs/{ac}/check-runs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Run Ac Check
+     * @description Run the check ``features.json`` records for one AC in its repo's checkout and answer its
+     *     exit code and output (nothing is recorded; 409 for a manual AC or one with no command).
+     */
+    post: operations["run_ac_check_api_v1_features__project___slug__acs__ac__check_runs_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/features/{project}/{slug}/owner-signoff": {
     parameters: {
       query?: never;
@@ -1382,6 +1403,30 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /**
+     * AcCheckRun
+     * @description One run of an AC's check: what ran, where, and what it answered.
+     */
+    AcCheckRun: {
+      /** Ac */
+      ac: string;
+      /** Command */
+      command: string;
+      /** Duration Ms */
+      duration_ms: number;
+      /** Exit Code */
+      exit_code: number | null;
+      /** Output */
+      output: string;
+      /** Passed */
+      passed: boolean;
+      /** Repo */
+      repo: string;
+      /** Timed Out */
+      timed_out: boolean;
+      /** Truncated */
+      truncated: boolean;
+    };
     /**
      * AcCounts
      * @description Passing and total acceptance criteria, and how many are owner steps.
@@ -6004,6 +6049,48 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["FeatureDetail"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  run_ac_check_api_v1_features__project___slug__acs__ac__check_runs_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+        ac: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AcCheckRun"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
