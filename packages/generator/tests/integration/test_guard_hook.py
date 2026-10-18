@@ -4869,3 +4869,222 @@ def test_reads_blocked_word_rule_when_path_or_contents_denied(
     ]
     assert rules == ["blocked_word"] * 4
     assert not any("prod-line" in reason for reason in reasons)
+
+
+# AGH-285 review: the deadline is checked for every folder entry a glob or a Grep walk examines.
+# ``decide`` on a clock that moves one step per look (no wall clock): argv hub, calls, step.
+# Prints {"verdicts": ..., "looks": how often the clock was read while deciding}.
+DECIDE_CLOCK = """
+import json
+import time
+from pathlib import Path
+import guard
+from hubhooks import load_config
+hub, calls, step = Path(sys.argv[1]), sys.argv[2], float(sys.argv[3])
+with open(calls, encoding="utf-8") as fh:
+    calls = json.load(fh)
+cfg = load_config(hub)
+looks = [0]
+def clock():
+    looks[0] += 1
+    return looks[0] * step
+time.monotonic = clock
+verdicts = [guard.decide(event, cfg, environ) for event, environ in calls]
+print(json.dumps({"verdicts": verdicts, "looks": looks[0]}))
+"""
+CLOCK_STEP = 0.01  # so the 300 ms budget is spent after about 30 looks
+MANY_ENTRIES = 2000
+
+
+def decide_on_clock(
+    blocked_hub: Path,
+    calls: Sequence[tuple[Mapping[str, Any], Mapping[str, str] | None]],
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    tmp_path: Path,
+) -> tuple[list[tuple[str, str] | None], int]:
+    batch = tmp_path / "decide-clock.json"
+    batch.write_text(json.dumps([[event, environ] for event, environ in calls]))
+    found = run_python(
+        hook_python,
+        DECIDE_CLOCK,
+        path=blocked_hub / HOOKS,
+        args=[str(blocked_hub), str(batch), str(CLOCK_STEP)],
+        cwd=tmp_path,
+        env={"HOME": str(tmp_path)},
+    )
+    return [tuple(v) if v else None for v in found["verdicts"]], found["looks"]
+
+
+def many_plain_files(folder: Path) -> None:
+    folder.mkdir(parents=True)
+    for index in range(MANY_ENTRIES):
+        (folder / f"f{index:04}.txt").touch()
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        bash_call("cat config/app.json many/zz*"),
+        tool_call("Grep", pattern="x", path="many"),
+    ],
+    ids=["glob", "grep-walk"],
+)
+def test_asks_when_budget_spent_on_folder_entries(
+    blocked_hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    tmp_path: Path,
+    event: dict[str, Any],
+) -> None:
+    api = blocked_hub.parent / "demo-api"
+    put(api, "config/app.json", "{}")
+    many_plain_files(api / "many")
+
+    verdicts, looks = decide_on_clock(
+        blocked_hub,
+        [(at(event, api), None)],
+        hook_python=hook_python,
+        run_python=run_python,
+        tmp_path=tmp_path,
+    )
+
+    # the ask comes after about 30 entries examined, not after the folder's 2000
+    assert verdicts == [unchecked(CONTENTS_CAUSES["out-of-time"])]
+    assert looks < MANY_ENTRIES // 10
+
+
+def test_denies_grep_when_no_path_and_cwd_file_holds_word(
+    decide: Decide, blocked_hub: Path
+) -> None:
+    api = blocked_hub.parent / "demo-api"
+    put(api, ".envrc", "export STAGE=prod\n")
+
+    verdicts = decide([(at(tool_call("Grep", pattern="STAGE"), api), None)])
+
+    assert verdicts == [blocked_word("prod", "the contents of .envrc")]
+
+
+SKIPPED_TREES = (
+    ".git",
+    "node_modules",
+    ".claude/worktrees",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "dist",
+    "build",
+    ".terraform",
+    ".next",
+    "target",
+)
+
+
+def test_passes_grep_when_word_only_in_skipped_tree(decide: Decide, blocked_hub: Path) -> None:
+    api = blocked_hub.parent / "demo-api"
+    for tree in SKIPPED_TREES:
+        put(api, f"{tree}/demo-x/config/app.json", '{"stage": "prod"}\n')
+    grep = at(tool_call("Grep", pattern="x", path="."), api)
+
+    skipped = decide([(grep, None)])
+    put(api, ".claude/notes/config/app.json", '{"stage": "prod"}\n')
+    walked = decide([(grep, None)])
+
+    assert skipped == [None]
+    assert walked == [blocked_word("prod", "the contents of .claude/notes/config/app.json")]
+
+
+def test_keeps_deep_tree_walk_when_grep_path_is_deep(decide: Decide, blocked_hub: Path) -> None:
+    api = blocked_hub.parent / "demo-api"
+    deep = "/".join(["d"] * 1200)
+    folder = api
+    for _ in range(1200):  # one level at a time: mkdir(parents=True) recurses
+        folder /= "d"
+        folder.mkdir(parents=False)
+    (folder / ".envrc").write_text("export STAGE=prod\n", encoding="utf-8")
+
+    verdicts = decide([(at(tool_call("Grep", pattern="x", path="."), api), None)])
+
+    assert verdicts == [blocked_word("prod", f"the contents of {(deep + '/.envrc')[:97]}...")]
+
+
+def test_keeps_secret_reason_when_secret_named_by_case_or_link(
+    decide_opens: DecideOpens, blocked_hub: Path
+) -> None:
+    api = blocked_hub.parent / "demo-api"
+    put(api, ".ENV", "STAGE=prod\n")
+    put(api, ".env", "STAGE=prod\n")
+    (api / "config").mkdir()
+    (api / "config" / "link.json").symlink_to(api / ".env")
+    events = [
+        read_call(".ENV"),
+        bash_call("cat .ENV"),
+        read_call("config/link.json"),
+        bash_call("cat config/link.json"),
+        tool_call("Grep", pattern="x", path="config"),
+    ]
+
+    verdicts, opened = decide_opens([(at(event, api), None) for event in events])
+
+    names = {os.path.basename(path) for path in opened}
+    assert names.isdisjoint({".ENV", ".env", "link.json"})
+    assert not any(v and v[1].startswith("blocked word") for v in verdicts)
+
+
+def test_denies_bash_read_when_braces_or_link_name_listed_file(
+    decide: Decide, blocked_hub: Path
+) -> None:
+    api = blocked_hub.parent / "demo-api"
+    put(api, "config/app.json", '{"stage": "prod"}\n')
+    (api / "sub").mkdir()
+    (api / "sub" / "plain.txt").symlink_to(api / "config" / "app.json")
+    braces = "cat config/{" + ",".join(f"x{n}" for n in range(FILES_CAP + 1)) + "}.json"
+
+    verdicts = decide(
+        [
+            (at(bash_call("cat config/{app,x}.json"), api), None),
+            (at(bash_call("cat sub/plain.txt"), api), None),
+            (at(tool_call("Read", file_path="sub/plain.txt"), api), None),
+            (at(bash_call(braces), api), None),
+        ]
+    )
+
+    assert verdicts == [
+        blocked_word("prod", "the contents of config/app.json"),
+        blocked_word("prod", "the contents of sub/plain.txt"),
+        blocked_word("prod", "the contents of sub/plain.txt"),
+        unchecked(CONTENTS_CAUSES["too-many"]),
+    ]
+
+
+def test_hides_listed_file_name_when_secret_shaped(decide: Decide, blocked_hub: Path) -> None:
+    api = blocked_hub.parent / "demo-api"
+    put(api, f"config/{SECRET_SHAPED_KEY}.json", '{"stage": "prod"}\n')
+
+    verdicts = decide(
+        [
+            (at(bash_call("cat config/*.json"), api), None),
+            (at(tool_call("Grep", pattern="x", path="config"), api), None),
+        ]
+    )
+
+    hidden = blocked_word("prod", "the contents of <a listed file>")
+    assert verdicts == [hidden, hidden]
+
+
+def test_denies_grep_when_glob_with_slash_matches_from_cwd(
+    decide: Decide, blocked_hub: Path
+) -> None:
+    ws = blocked_hub.parent
+    put(ws, "demo-api/config/app.json", '{"stage": "prod"}\n')
+    grep = tool_call("Grep", pattern="x", path="demo-api", glob="demo-api/config/*.json")
+
+    verdicts = decide([(at(grep, ws), None)])
+
+    assert verdicts == [blocked_word("prod", "the contents of demo-api/config/app.json")]
