@@ -106,13 +106,48 @@ function SessionLink({ session }: { session: Session }) {
   );
 }
 
-/** The sessions whose branch or run names this ticket, newest first, each one click from its dialogue. */
-function TicketSessions({ row, project }: { row: TicketRow; project: string }) {
-  const sessions = useApi(
+/** The sessions whose branch, worktree, run or first prompt names the ticket, newest first. */
+function useTicketSessions(project: string, row: TicketRow) {
+  return useApi(
     "/api/v1/sessions",
     { query: { project, issue: row.id ?? "", limit: 20 } },
     { enabled: row.id != null, refetchInterval: TICKETS_REFRESH_MS },
   );
+}
+
+/**
+ * What a ticket's card offers next to its readiness: its newest session, one click from its
+ * dialogue, and Start while the ticket is free to pick up and no session of it is still open.
+ */
+function CardAction({
+  project,
+  slug,
+  row,
+  rows,
+}: {
+  project: string;
+  slug: string;
+  row: TicketRow;
+  rows: readonly TicketRow[];
+}) {
+  const sessions = useTicketSessions(project, row);
+  const newest = sessions.data?.items[0];
+  const open = newest != null && newest.status !== "ended";
+  const start = canStartTicket(row) && !open && (
+    <StartTicketButton project={project} slug={slug} row={row} rows={rows} />
+  );
+  if (!newest) return start || null;
+  return (
+    <span className="ah-row ah-wrap" style={{ gap: 8 }}>
+      <SessionLink session={newest} />
+      {start}
+    </span>
+  );
+}
+
+/** The sessions whose branch or run names this ticket, newest first, each one click from its dialogue. */
+function TicketSessions({ row, project }: { row: TicketRow; project: string }) {
+  const sessions = useTicketSessions(project, row);
   if (!row.id) return <span className="ah-subtle">—</span>;
   if (sessions.isPending) return <Skeleton width={90} height={18} />;
   if (sessions.isError) {
@@ -396,6 +431,9 @@ export function TicketsTab({
     canStartTicket(row) ? (
       <StartTicketButton project={project} slug={slug} row={row} rows={data.tickets} />
     ) : null;
+  const cardAction: TicketAction = (row) => (
+    <CardAction project={project} slug={slug} row={row} rows={data.tickets} />
+  );
   return (
     <div className="ah-stack" style={{ gap: 12 }}>
       <TicketNotice tickets={data} onRefresh={onRefresh} refreshing={refreshing} />
@@ -412,7 +450,7 @@ export function TicketsTab({
             tickets={data.tickets}
             planning={data.planning}
             acPasses={acPasses}
-            ticketAction={ticketAction}
+            ticketAction={cardAction}
           />
           <TicketsTable
             data={data}
