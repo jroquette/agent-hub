@@ -8,7 +8,8 @@ project the first registered wins. A project's event-derived numbers come from `
 ``EntityNotFoundError``; a list scoped to an unknown project is empty.
 
 A project's Skills tab (AGH-164) is read through ``SkillReads``, with usage from ``usage``
-(``EventReadModels.skill_usage``; zero without it).
+(``EventReadModels.skill_usage``; zero without it); with ``capture`` its catalog and detail
+reads record the units they show (``CaptureItemVersions``, AGH-295).
 
 A feature's tickets come from ``ticket_snapshots`` (AGH-136): only ``feature_tickets`` fetches
 (the one read that may call the tracker); the Features list and the detail use what the cache
@@ -64,6 +65,8 @@ from agent_hub.core.hubs.now_note import now_sections
 from agent_hub.core.hubs.register_hub import RegisterHub
 from agent_hub.core.hubs.registered_hub import HubView
 from agent_hub.core.hubs.remove_hub import RemoveHub
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
+from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.projects.project_views import (
     HubHealth,
     ProjectActivity,
@@ -128,9 +131,10 @@ class HubFilesReadModels:
         clock: Callable[[], datetime],
         ticket_snapshots: TicketSnapshots | None = None,
         usage: SkillUsageSource | None = None,
+        capture: CaptureItemVersions | None = None,
     ) -> None:
         self._reader = reader
-        self._skills = SkillReads(reader, usage)
+        self._skills = SkillReads(reader, usage, capture=capture)
         self._snapshots = ticket_snapshots
         self._activity = activity
         self._settings = settings
@@ -314,6 +318,13 @@ class HubFilesReadModels:
         return self._skills.detail(
             project=found.name, hub_path=found.path, kind=kind, source=source, name=name
         )
+
+    def skill_unit(
+        self, project: str, *, kind: ItemKind, source: str, name: str
+    ) -> ItemUnit | None:
+        """The unit an item is versioned in, or None (``SkillReads.unit_of``)."""
+        found = self._project(project)
+        return self._skills.unit_of(found.name, found.path, kind=kind, source=source, name=name)
 
     def skill_file(
         self, project: str, *, kind: ItemKind, source: str, name: str, file_id: str

@@ -4,17 +4,19 @@ Each file the discovery read is a ``WorkflowFile`` with its origin (hub or built
 resolver of the workflows it may include (its own pack's), each
 problem a ``LoadProblem`` keyed ``$``. A file is shown relative to the hub, a built-in's as
 ``<builtin>/<pack>/<file>``, so no absolute path of the installed package is shown.
-``fingerprint`` lists the two roots stat-only (each entry's path, size and mtime, two levels
-deep, a link's target), so a reader can reuse what it planned while nothing changed.
+``fingerprint`` lists the two roots stat-only (each entry's path as a file is shown, size and
+mtime, two levels deep), so a reader can reuse what it planned while nothing changed and mark
+each workflow file by its own entry.
 """
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Final
 
 from agent_hub.core.hub_config.problems import ROOT_PATH
 from agent_hub.core.workflows.catalog import LoadProblem, WorkflowFile
+from agent_hub.core.workflows.workflow_reads import SourceStat
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
     HUB_WORKFLOWS,
@@ -24,8 +26,6 @@ from agent_hub.generator.workflow_discovery import (
     discover_workflows,
     pack_resolver,
 )
-
-type Stat = tuple[str, int, int]
 
 # How a built-in's file is shown: it lives in the installed package, not in the hub.
 BUILTIN_PREFIX: Final = "<builtin>"
@@ -65,9 +65,13 @@ class DiscoveredWorkflowSource:
                     shown, found.name, found.document, found.lines, found.origin, includes
                 )
 
-    def fingerprint(self) -> tuple[Stat, ...]:
-        """Each entry of the hub's ``workflows/`` and the built-ins, packs included."""
-        return (*_stats(self.root / HUB_WORKFLOWS, depth=2), *_stats(self.builtin_root, depth=2))
+    def fingerprint(self) -> tuple[SourceStat, ...]:
+        """Each entry of the hub's ``workflows/`` and the built-ins, packs included, by the path
+        ``WorkflowFile.file`` shows."""
+        return (
+            *_stats(self.root / HUB_WORKFLOWS, self._shown, depth=2),
+            *_stats(self.builtin_root, self._shown, depth=2),
+        )
 
     def _shown(self, path: Path) -> str:
         if path.is_relative_to(self.root):
@@ -77,7 +81,7 @@ class DiscoveredWorkflowSource:
         return str(path)
 
 
-def _stats(folder: Path, *, depth: int) -> Iterator[Stat]:
+def _stats(folder: Path, shown: Callable[[Path], str], *, depth: int) -> Iterator[SourceStat]:
     try:
         with os.scandir(folder) as listing:
             entries = sorted(listing, key=lambda entry: entry.name)
@@ -87,8 +91,8 @@ def _stats(folder: Path, *, depth: int) -> Iterator[Stat]:
         try:
             stat = entry.stat()
         except OSError:
-            yield (entry.path, -1, -1)
+            yield (shown(Path(entry.path)), -1, -1)
             continue
-        yield (entry.path, stat.st_size, stat.st_mtime_ns)
+        yield (shown(Path(entry.path)), stat.st_size, stat.st_mtime_ns)
         if depth > 1 and entry.is_dir(follow_symlinks=False):
-            yield from _stats(Path(entry.path), depth=depth - 1)
+            yield from _stats(Path(entry.path), shown, depth=depth - 1)
