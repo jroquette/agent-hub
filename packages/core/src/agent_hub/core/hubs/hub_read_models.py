@@ -66,7 +66,6 @@ from agent_hub.core.hubs.register_hub import RegisterHub
 from agent_hub.core.hubs.registered_hub import HubView
 from agent_hub.core.hubs.remove_hub import RemoveHub
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
-from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version_ports import MarkedUnit
 from agent_hub.core.projects.project_views import (
     HubHealth,
@@ -319,13 +318,6 @@ class HubFilesReadModels:
         return self._skills.detail(
             project=found.name, hub_path=found.path, kind=kind, source=source, name=name
         )
-
-    def skill_unit(
-        self, project: str, *, kind: ItemKind, source: str, name: str
-    ) -> ItemUnit | None:
-        """The unit an item is versioned in, or None (``SkillReads.unit_of``)."""
-        found = self._project(project)
-        return self._skills.unit_of(found.name, found.path, kind=kind, source=source, name=name)
 
     def marked_skill_unit(
         self, project: str, *, kind: ItemKind, source: str, name: str

@@ -227,9 +227,9 @@ def test_captures_hub_files_when_listed() -> None:
     assert last is not None
     assert (last.seq, last.first, last.kind) == (1, True, UnitKind.WORKFLOW)
     assert store.last("demo", "workflows/demo/broken.yaml") is None
-    assert reads.unit_of("demo", "ship") == ItemUnit(
-        project="demo", unit_path=SHIP_FILE, kind=UnitKind.WORKFLOW
-    )
+    marked = reads.marked_workflow_unit("demo", "ship")
+    assert marked is not None
+    assert marked.unit == ItemUnit(project="demo", unit_path=SHIP_FILE, kind=UnitKind.WORKFLOW)
 
 
 def test_no_unit_when_workflow_builtin() -> None:
@@ -240,10 +240,10 @@ def test_no_unit_when_workflow_builtin() -> None:
     reads.list_workflows(Scope())
     reads.get_workflow("demo", "ship")
 
-    assert reads.unit_of("demo", "ship") is None
+    assert reads.marked_workflow_unit("demo", "ship") is None
     assert reader.unit_reads == []
     with pytest.raises(EntityNotFoundError):
-        reads.unit_of("demo", "nope")
+        reads.marked_workflow_unit("demo", "nope")
     assert store.last("demo", "<builtin>/base/ship.yaml") is None
 
 

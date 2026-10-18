@@ -378,21 +378,24 @@ def test_captures_one_unit_when_detail_read() -> None:
 def test_names_unit_when_item_listed() -> None:
     reads, reader, _, _ = _capturing({".claude/skills/out": Link("/elsewhere/out")})
 
-    alpha = reads.unit_of(FIXTURE_PROJECT, HUB, **ALPHA)
-    hook = reads.unit_of(
+    alpha = reads.marked_unit(FIXTURE_PROJECT, HUB, **ALPHA)
+    hook = reads.marked_unit(
         FIXTURE_PROJECT, HUB, kind=ItemKind.HOOK, source="settings", name="settings-pretooluse-1"
     )
-    linked = reads.unit_of(FIXTURE_PROJECT, HUB, kind=ItemKind.SKILL, source="claude", name="out")
+    linked = reads.marked_unit(
+        FIXTURE_PROJECT, HUB, kind=ItemKind.SKILL, source="claude", name="out"
+    )
 
-    assert alpha == ItemUnit(
+    assert alpha is not None
+    assert alpha.unit == ItemUnit(
         project=FIXTURE_PROJECT, unit_path="plugin/hub-workflow/skills/alpha", kind=UnitKind.SKILL
     )
     assert hook is not None
-    assert hook.unit_path == ".claude/settings.json"
+    assert hook.unit.unit_path == ".claude/settings.json"
     assert linked is None
     assert reader.unit_reads == []
     with pytest.raises(EntityNotFoundError):
-        reads.unit_of(FIXTURE_PROJECT, HUB, kind=ItemKind.SKILL, source="claude", name="alpha")
+        reads.marked_unit(FIXTURE_PROJECT, HUB, kind=ItemKind.SKILL, source="claude", name="alpha")
 
 
 def test_marks_unit_as_detail_captures_when_hooks_share_file() -> None:

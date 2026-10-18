@@ -35,7 +35,7 @@ from agent_hub.core.readmodels.cursor import (
     encode_cursor,
 )
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
-from agent_hub.core.skills.skill_view import item_id
+from agent_hub.core.skills.skill_view import item_id, text_of
 
 HISTORY_ENTITY: Final = "item history"
 VERSION_ENTITY: Final = "item version"
@@ -95,7 +95,7 @@ class ReadItemVersions:
                 path=file.path,
                 executable=file.executable,
                 size=len(file.content),
-                text=_text_of(file.content),
+                text=text_of(file.content),
             )
             for file in content.files
         )
@@ -142,12 +142,3 @@ def _before_seq(text: str) -> int:
         msg = "invalid cursor: it was not written by this list"
         raise InvalidCursorError(msg)
     return key[0]
-
-
-def _text_of(content: bytes) -> str | None:
-    if b"\x00" in content:
-        return None
-    try:
-        return content.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
