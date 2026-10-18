@@ -42,7 +42,8 @@ from agent_hub.core.readmodels.cursor import Cursor, encode_cursor
 from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES
 from agent_hub.core.testing.skill_trees import Link, TreeEntry, write_tree
 from agent_hub.generator.hub_item_writer import FileSystemHubItemWriter
-from agent_hub.storage.item_version_store import open_item_version_store
+from agent_hub.storage.event_store import DatabaseBusyError
+from agent_hub.storage.item_version_store import SqliteItemVersionStore, open_item_version_store
 
 CATALOG: Final = "/api/v1/projects/demo/skills"
 SCOUT_DETAIL: Final = f"{CATALOG}/agent/demo/scout"
@@ -71,6 +72,7 @@ VERSION_FIELDS: Final = {
     "restored_from",
     "draft_id",
 }
+PACK_FILE: Final = "workflows/demo/prompts/p.md"
 # A built-in the fixture hub does not override (D14).
 BUILTIN_DETAIL: Final = f"{WORKFLOWS}/demo/deliver"
 READERS: Final = 10
@@ -457,33 +459,47 @@ def _opened_names(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
 
 
 def test_never_versioned_when_local_settings_builtin_pack_files_drafts_or_plugins(
-    composed: Any, versions_hub: VersionsHub, monkeypatch: pytest.MonkeyPatch
+    writer: Any, writer_hub: VersionsHub, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     local = _json({"hooks": {"PreToolUse": [_hook("python3 local-guard.py")]}})
     settings = json.loads(_settings())
     settings["enabledPlugins"] = {"other@claude-plugins-official": True}
-    versions_hub(
+    hub = writer_hub(
         {
             ".claude/settings.local.json": local,
             SETTINGS: _json(settings),
             ".hub-drafts/skill-a1b2c3/SKILL.md": b"---\nname: draft\ndescription: D.\n---\n",
-            "workflows/demo/prompts/p.md": b"# A prompt of the pack\n",
+            PACK_FILE: b"# A prompt of the pack\n",
         }
     )
 
     with _opened_names(monkeypatch) as opened:
-        catalog = _get(composed, CATALOG)
-        _get(composed, SCOUT_DETAIL)
-    workflows = _get(composed, WORKFLOWS)
-    builtin = _get(composed, BUILTIN_DETAIL)
+        catalog = _get(writer, CATALOG)
+        _get(writer, SCOUT_DETAIL)
+    workflows = _get(writer, WORKFLOWS)
+    builtin = _get(writer, BUILTIN_DETAIL)
 
     assert any(name.endswith("settings.json") for name in opened)
     assert not any(name.endswith("settings.local.json") for name in opened)
     assert [plugin["name"] for plugin in catalog["external_plugins"]] == ["other"]
     assert builtin["source"] == "builtin"
     assert {item["name"] for item in workflows["items"] if item["source"] == "builtin"}
-    paths = {path for path, _ in _rows(composed)}
+    paths = {path for path, _ in _rows(writer)}
     assert paths == {*TOOLKIT_UNITS, REVIEW}
+    # A restore of the settings file's hooks writes that file only.
+    [first] = _versions(writer, SETTINGS)
+    _edit(hub / SETTINGS, _settings(pre_tool_use="python3 hooks/guard.py --strict"))
+    untouched = {
+        path: (hub / path).read_bytes()
+        for path in (".claude/settings.local.json", ".hub-drafts/skill-a1b2c3/SKILL.md", PACK_FILE)
+    }
+
+    restored = _restore(writer, SETTINGS_HOOK, first.id, confirm_managed=True)
+
+    assert restored.status_code == 200, restored.text
+    assert (hub / SETTINGS).read_bytes() == _json(settings)
+    assert {path: (hub / path).read_bytes() for path in untouched} == untouched
+    assert {path for path, _ in _rows(writer)} == {*TOOLKIT_UNITS, REVIEW}
 
 
 def _append_versions(composed: Any, unit_path: str, contents: list[bytes]) -> None:
@@ -825,6 +841,70 @@ def test_restore_folder_and_workflow_match_version_when_restored(
     assert _origins(writer, REVIEW)[-1] == (VersionOrigin.RESTORE, review.content_hash)
 
 
+def test_restore_refuses_no_author_when_hub_has_no_identity(
+    writer: Any, make_hub: Callable[..., Path]
+) -> None:
+    def no_author(document: dict[str, Any]) -> None:
+        del document["project"]["author_name"], document["project"]["author_email"]
+
+    hub = _registered(writer, lambda: make_hub(change=no_author), None)
+    first, second = _two_scout_versions(writer, hub)
+
+    response = _restore(writer, SCOUT_DETAIL, first.id)
+
+    _refused(response, "no_author")
+    assert "author" in response.json()["reason"]
+    assert (hub / SCOUT).read_bytes() == SECOND
+    assert _versions(writer, SCOUT) == [first, second]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({"confirm_managed": True, "force": True}, id="unknown-field"),
+        pytest.param({"confirm_managed": 1}, id="number"),
+        pytest.param({"confirm_managed": "yes"}, id="text"),
+        pytest.param({"confirm_managed": "true"}, id="quoted-true"),
+    ],
+)
+def test_restore_refuses_body_when_field_unknown_or_not_strict_bool(
+    writer: Any, writer_hub: VersionsHub, body: dict[str, object]
+) -> None:
+    hub = writer_hub()
+    _get(writer, SETTINGS_HOOK)
+    [first] = _versions(writer, SETTINGS)
+    changed = _settings(pre_tool_use="python3 hooks/guard.py --strict")
+    _edit(hub / SETTINGS, changed)
+
+    response = writer.client.post(
+        f"{SETTINGS_HOOK}/versions/{first.id}/restore", json=body, headers=ORIGIN
+    )
+
+    assert response.status_code == 422, response.text
+    assert (hub / SETTINGS).read_bytes() == changed
+    assert _versions(writer, SETTINGS) == [first]
+
+
+def test_restore_says_written_not_recorded_when_database_busy_after_write(
+    writer: Any, writer_hub: VersionsHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = writer_hub()
+    first, second = _two_scout_versions(writer, hub)
+
+    def busy(_store: Any, _version: Any) -> Any:
+        raise DatabaseBusyError("database is locked")
+
+    # The disk equals the last version, so the only append is the restore's, after the write.
+    monkeypatch.setattr(SqliteItemVersionStore, "append", busy)
+    response = _restore(writer, SCOUT_DETAIL, first.id)
+
+    assert response.status_code == 503, response.text
+    assert (response.json()["code"], response.json()["written"]) == ("written_not_recorded", True)
+    assert response.headers["retry-after"] == "1"
+    assert (hub / SCOUT).read_bytes() == SCOUT_MD
+    assert _versions(writer, SCOUT) == [first, second]
+
+
 class EdgeWriter:
     """The real writer, with a fault to inject: ``fail`` raises the writer's error (its cause
     naming the unit's path) instead of writing; ``link`` swaps the agents folder for a link to
@@ -1025,34 +1105,49 @@ def test_git_untouched_when_every_route_runs(
     app = open_writer(read_git=read_git)
     hub = _registered(app, make_hub, None)
     _get(app, SCOUT_DETAIL)
+    _get(app, REVIEW_DETAIL)
     _edit(hub / SCOUT, SECOND)
+    _edit(hub / REVIEW, REVIEW_YAML + b"# Edited.\n")
     _git(hub, "init", "--quiet", "--initial-branch=main")
     _git(hub, "add", "--all")
     _git(hub, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "c")
     before = _git_state(hub)
-    spawned: list[object] = []
-    real_popen = subprocess.Popen
+    spawned: list[tuple[Any, ...]] = []
+    forks: list[str] = []
 
-    def popen(*args: Any, **kwargs: Any) -> Any:
-        spawned.append(args)
-        return real_popen(*args, **kwargs)
+    def counted(name: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        def call(*args: Any, **kwargs: Any) -> Any:
+            if name == "Popen":
+                spawned.append(args)
+            else:
+                forks.append(name)
+            return real(*args, **kwargs)
+
+        return call
 
     with monkeypatch.context() as patch:
-        patch.setattr(subprocess, "Popen", popen)
+        patch.setattr(subprocess, "Popen", counted("Popen", subprocess.Popen))
+        patch.setattr(os, "posix_spawn", counted("posix_spawn", os.posix_spawn))
+        patch.setattr(os, "fork", counted("fork", os.fork))
         _get(app, CATALOG)
         _get(app, WORKFLOWS)
         _get(app, REVIEW_DETAIL)
-        # The hub card's doctor drift check lists the checkout (read-only, before this feature).
-        listed = [_git_arguments(args) for args in spawned]
-        spawned.clear()
         history = _get(app, f"{SCOUT_DETAIL}/versions")
         first = history["items"][-1]["id"]
         _get(app, f"{SCOUT_DETAIL}/versions/{first}")
-        _get(app, f"{REVIEW_DETAIL}/versions")
+        workflow_first = _get(app, f"{REVIEW_DETAIL}/versions")["items"][-1]["id"]
+        _get(app, f"{REVIEW_DETAIL}/versions/{workflow_first}")
         restored = _restore(app, SCOUT_DETAIL, first)
+        workflow_restored = _restore(app, REVIEW_DETAIL, workflow_first)
 
     assert restored.status_code == 200, restored.text
-    assert (spawned, git_reads) == ([], [])
-    assert set(listed) <= READ_ONLY_LISTINGS
+    assert workflow_restored.status_code == 200, workflow_restored.text
+    # The only processes are the hub card's doctor drift check listing the checkout (read-only,
+    # before this feature), when a read or a restore resolves the project after the tree changed.
+    assert {_git_arguments(args) for args in spawned} <= READ_ONLY_LISTINGS
+    assert (forks, git_reads) == ([], [])
     assert _git_state(hub) == before
-    assert _git(hub, "status", "--porcelain").splitlines() == [f" M {SCOUT}"]
+    assert sorted(_git(hub, "status", "--porcelain").splitlines()) == [
+        f" M {SCOUT}",
+        f" M {REVIEW}",
+    ]
