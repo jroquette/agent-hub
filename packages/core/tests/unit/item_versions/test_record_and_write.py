@@ -607,9 +607,7 @@ def test_answers_replayed_when_disk_holds_this_drafts_publish() -> None:
 
     first = rig.step.publish(HUB, [_agent()], place, confirm_managed=False, draft_id=DRAFT_ID)
     again = rig.step.publish(HUB, [_agent()], place, confirm_managed=False, draft_id=DRAFT_ID)
-    other = rig.step.publish(
-        HUB, [_agent()], place, confirm_managed=False, draft_id="agent-zzz999"
-    )
+    other = rig.step.publish(HUB, [_agent()], place, confirm_managed=False, draft_id="agent-zzz999")
 
     assert seen == [False, True, False]
     assert (first.changed, again.changed, other.changed) == (True, False, False)

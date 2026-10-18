@@ -225,9 +225,7 @@ class RecordAndWrite:
             and unit_hash(unit, on_disk) == last.content_hash
         )
 
-    def _scripts_to_write(
-        self, hub_path: str, scripts: Sequence[UnitFile]
-    ) -> tuple[UnitFile, ...]:
+    def _scripts_to_write(self, hub_path: str, scripts: Sequence[UnitFile]) -> tuple[UnitFile, ...]:
         """The scripts not on disk yet; one there with other bytes refuses (``item_exists``)."""
         paths = [script.path for script in scripts]
         if paths and not self._writer.is_writable(hub_path, paths):
