@@ -49,6 +49,10 @@ def no_caller_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
+    # No background maintenance or gc: they write into `.git` while a test digests it (AGH-313).
+    (home / ".gitconfig").write_text(
+        "[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n", encoding="utf-8"
+    )
 
 
 @pytest.fixture
