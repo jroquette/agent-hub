@@ -1,5 +1,6 @@
-"""Publish rules (AGH-295, S5, D19, D24): a draft read as an item, where an edit or a new item
-lands, one hook replaced in its file, new hooks merged into the project plugin's file."""
+"""Publish rules (AGH-295, S5, D19, D24; AC-295.12, AC-295.13, AC-295.14, AC-295.15): a draft
+read as an item, where an edit or a new item lands, one hook replaced in its file, new hooks
+merged into the project plugin's file; replaying a publish gives the same bytes (A7)."""
 
 import json
 
@@ -148,7 +149,7 @@ def test_keeps_files_draft_lacks_when_skill_edited() -> None:
         ),
     )
 
-    destination = edit_destination(_unit(SKILL_UNIT, UnitKind.SKILL), current, draft)
+    destination = edit_destination(_unit(SKILL_UNIT, UnitKind.SKILL), current, draft, existing=())
 
     assert destination.unit == _unit(SKILL_UNIT, UnitKind.SKILL)
     assert destination.removed is None
@@ -166,7 +167,7 @@ def test_moves_folder_when_skill_renamed() -> None:
     current = _files({"SKILL.md": _named("alpha"), "references/r.md": b"# R\n"})
     draft = read_draft_item(UnitKind.SKILL, _files({"SKILL.md": _named("alpha2")}))
 
-    destination = edit_destination(_unit(SKILL_UNIT, UnitKind.SKILL), current, draft)
+    destination = edit_destination(_unit(SKILL_UNIT, UnitKind.SKILL), current, draft, existing=())
 
     assert destination.unit == _unit("plugin/demo/skills/alpha2", UnitKind.SKILL)
     assert destination.removed == _unit(SKILL_UNIT, UnitKind.SKILL)
@@ -181,8 +182,8 @@ def test_renames_agent_file_when_name_changed() -> None:
     same = read_draft_item(UnitKind.AGENT, _files({"reviewer.md": _named("reviewer", "# New\n")}))
     renamed = read_draft_item(UnitKind.AGENT, _files({"reviewer.md": _named("critic")}))
 
-    kept = edit_destination(_unit(AGENT_UNIT, UnitKind.AGENT), current, same)
-    moved = edit_destination(_unit(AGENT_UNIT, UnitKind.AGENT), current, renamed)
+    kept = edit_destination(_unit(AGENT_UNIT, UnitKind.AGENT), current, same, existing=())
+    moved = edit_destination(_unit(AGENT_UNIT, UnitKind.AGENT), current, renamed, existing=())
 
     assert kept.unit == _unit(AGENT_UNIT, UnitKind.AGENT)
     assert kept.removed is None
@@ -198,9 +199,9 @@ def test_refuses_edit_when_draft_kind_differs_from_target() -> None:
     current = _files({"SKILL.md": _named("alpha")})
 
     with pytest.raises(DraftInvalidError):
-        edit_destination(_unit(SKILL_UNIT, UnitKind.SKILL), current, draft)
+        edit_destination(_unit(SKILL_UNIT, UnitKind.SKILL), current, draft, existing=())
     with pytest.raises(ValueError, match="replace_hook"):
-        edit_destination(_unit(".claude/settings.json", UnitKind.HOOK), current, hook)
+        edit_destination(_unit(".claude/settings.json", UnitKind.HOOK), current, hook, existing=())
 
 
 def test_replaces_only_that_hook_when_hook_edited() -> None:
@@ -328,3 +329,112 @@ def test_places_new_skill_in_project_plugin_when_target_null() -> None:
     assert placed_agent.unit == _unit("plugin/demo/agents/planner.md", UnitKind.AGENT)
     assert _paths(placed_agent.content) == {"planner.md": _named("planner")}
     assert isinstance(skill, DraftItem)
+
+
+_NOT_STRICT = (
+    b'{"hooks": {"Stop": [{"hooks": [{"type": "command", "timeout": NaN}]}]}}',
+    b'{"hooks": {"Stop": [{"hooks": [{"type": "command", "timeout": 1e999}]}]}}',
+    b'{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "\\ud800"}]}]}}',
+    b'{"hooks": {"Stop": [{"hooks": [{"type": "command"}]}]}, "hooks": {}}',
+)
+
+
+def test_refuses_draft_when_hooks_json_not_strict_json() -> None:
+    for content in _NOT_STRICT:
+        with pytest.raises(DraftInvalidError):
+            read_draft_item(UnitKind.HOOK, _files({"hooks.json": content}))
+
+
+def test_refuses_hook_file_when_on_disk_not_strict_json() -> None:
+    new_hooks: dict[str, JsonValue] = {"Stop": [{"hooks": [{"type": "command", "command": "x"}]}]}
+
+    for content in _NOT_STRICT:
+        for write in (
+            lambda file: merge_hooks(file, new_hooks),
+            lambda file: replace_hook(file, HookAt("Stop", 1), new_hooks),
+        ):
+            with pytest.raises(ItemWriteRefusedError) as refused:
+                write(content)
+            assert refused.value.code == "unit_unreadable"
+
+
+def test_gives_same_bytes_when_merge_run_twice() -> None:
+    draft = read_draft_item(UnitKind.HOOK, _files({"hooks.json": _hooks("Stop", "new", "x")}))
+    assert draft.hooks is not None
+
+    for current in (None, _hooks("Stop", "old")):
+        once = merge_hooks(current, draft.hooks)
+        assert merge_hooks(once, draft.hooks) == once
+    assert len(json.loads(once)["hooks"]["Stop"]) == 2
+
+
+def test_gives_same_bytes_when_replace_run_twice() -> None:
+    settings = json.dumps(
+        {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Bash", "hooks": [{"type": "command", "command": "one"}]},
+                    {"matcher": "Edit", "hooks": [{"type": "command", "command": "two"}]},
+                ],
+                "Stop": [{"hooks": [{"type": "command", "command": "stop"}]}],
+            }
+        }
+    ).encode()
+    drafts = (_hooks("PreToolUse", "changed", "Bash"), _hooks("Stop", "moved"))
+
+    for content in drafts:
+        draft = read_draft_item(UnitKind.HOOK, _files({"hooks.json": content}))
+        assert draft.hooks is not None
+        once = replace_hook(settings, HookAt("PreToolUse", 1), draft.hooks)
+        assert replace_hook(once, HookAt("PreToolUse", 1), draft.hooks) == once
+        assert once != dump_json(json.loads(settings))
+
+
+def test_keeps_emptied_group_when_it_holds_other_keys() -> None:
+    settings = json.dumps(
+        {"hooks": {"Stop": [{"note": "kept", "hooks": [{"type": "command", "command": "a"}]}]}}
+    ).encode()
+    draft = read_draft_item(UnitKind.HOOK, _files({"hooks.json": _hooks("Stop", "b", "x")}))
+    assert draft.hooks is not None
+
+    written = replace_hook(settings, HookAt("Stop", 1), draft.hooks)
+
+    assert json.loads(written) == {
+        "hooks": {
+            "Stop": [
+                {"note": "kept", "hooks": []},
+                {"matcher": "x", "hooks": [{"type": "command", "command": "b"}]},
+            ]
+        }
+    }
+
+
+def test_refuses_rename_when_only_case_changes() -> None:
+    cases = [
+        (SKILL_UNIT, UnitKind.SKILL, {"SKILL.md": _named("Alpha")}, {"SKILL.md": _named("alpha")}),
+        (AGENT_UNIT, UnitKind.AGENT, {"x.md": _named("Reviewer")}, {"reviewer.md": b"x"}),
+    ]
+    for unit_path, kind, files, current in cases:
+        draft = read_draft_item(kind, _files(files))
+        with pytest.raises(DraftInvalidError):
+            edit_destination(_unit(unit_path, kind), _files(current), draft, existing=())
+
+
+def test_refuses_rename_when_sibling_unit_exists() -> None:
+    skill = read_draft_item(UnitKind.SKILL, _files({"SKILL.md": _named("beta")}))
+    agent = read_draft_item(UnitKind.AGENT, _files({"x.md": _named("critic")}))
+    cases = [
+        (SKILL_UNIT, skill, ["plugin/demo/skills/Beta"]),
+        (AGENT_UNIT, agent, [".claude/agents/critic.md"]),
+    ]
+    for unit_path, draft, existing in cases:
+        with pytest.raises(ItemWriteRefusedError) as refused:
+            edit_destination(_unit(unit_path, draft.kind), _files({}), draft, existing=existing)
+        assert refused.value.code == "item_exists"
+    elsewhere = edit_destination(
+        _unit(SKILL_UNIT, UnitKind.SKILL),
+        _files({"SKILL.md": _named("alpha")}),
+        skill,
+        existing=[".claude/skills/beta", SKILL_UNIT],
+    )
+    assert elsewhere.unit.unit_path == "plugin/demo/skills/beta"

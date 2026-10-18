@@ -4,21 +4,30 @@
 ``DraftInvalidError`` (422 ``draft_invalid``): a skill's ``SKILL.md`` or an agent's one top-level
 ``.md`` carries a frontmatter ``name`` within ``ITEM_NAME``; a hook's ``hooks.json`` is a hooks
 object in the catalog's strict shape (at least one hook, at most ``MAX_HOOKS``), beside which only
-``scripts/<file>`` may sit; no draft holds a hidden name (``scripts/.x``) or a script below a
+``scripts/<file>`` may sit, the file strict JSON (no repeated key, ``NaN``, overflowing number or
+lone surrogate); no draft holds a hidden name (``scripts/.x``) or a script below a
 folder of ``scripts/`` (``scripts/a/b.sh``).
 
 ``edit_destination`` places an edit of a skill (the item's files with the draft's over them, files
 the draft lacks kept) or of an agent (the draft's file); a changed ``name`` moves it to the
-sibling folder or file of that name and names the old unit for removal (D19). ``replace_hook``
-replaces one hook of a hook file by the draft's hooks and keeps every other hook and key;
-``merge_hooks`` adds hooks to a hook file (or a new one). Both write the file in ``dump_json``'s
-form (D24). ``new_destination`` places a new item in the project's own plugin,
-``plugin/<project>/``, a new hook's scripts in its ``scripts/``. No message names a path.
+sibling folder or file of that name and names the old unit for removal (D19). A rename that only
+changes case is refused (``DraftInvalidError``), and one onto a unit the listing holds under that
+name, case aside, as ``item_exists``.
+
+``replace_hook`` replaces one hook of a hook file by the draft's hooks and keeps every other hook
+and key; ``merge_hooks`` adds hooks to a hook file (or a new one). Both write the file in
+``dump_json``'s form (D24) and give the same bytes when run again on their own output (a draft
+group already there, equal as JSON, or its hooks already in place, is not added again), so a
+publish retried after a failed draft removal changes nothing (A7). A hooks file on disk that is
+not a strict JSON hooks object is ``ItemWriteRefusedError("unit_unreadable")``.
+
+``new_destination`` places a new item in the project's own plugin, ``plugin/<project>/``, a new
+hook's scripts in its ``scripts/``. No message names a path.
 """
 
 import copy
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, NamedTuple
 
@@ -112,8 +121,11 @@ def read_draft_item(kind: UnitKind, files: UnitContent) -> DraftItem:
     raise DraftInvalidError("A draft is a skill, an agent or a hook")
 
 
-def edit_destination(target: ItemUnit, current: UnitContent, draft: DraftItem) -> Destination:
-    """Where an edit of the skill or agent ``target`` (its content on disk ``current``) lands."""
+def edit_destination(
+    target: ItemUnit, current: UnitContent, draft: DraftItem, *, existing: Collection[str]
+) -> Destination:
+    """Where an edit of the skill or agent ``target`` (its content on disk ``current``) lands;
+    ``existing`` holds the unit paths of that kind the hub's listing has."""
     if draft.kind is not target.kind:
         raise DraftInvalidError("The draft's kind differs from the item's")
     if target.kind is UnitKind.HOOK:
@@ -132,7 +144,12 @@ def edit_destination(target: ItemUnit, current: UnitContent, draft: DraftItem) -
         content = _single(draft.content.files[0], new_own)
     if new_own == own:
         return Destination(unit=target, content=content)
-    unit = ItemUnit(project=target.project, unit_path=f"{parent}/{new_own}", kind=target.kind)
+    if new_own.casefold() == own.casefold():
+        raise DraftInvalidError("A rename changes more than the case of the name")
+    unit_path = f"{parent}/{new_own}"
+    if unit_path.casefold() in {path.casefold() for path in existing}:
+        raise ItemWriteRefusedError("item_exists")
+    unit = ItemUnit(project=target.project, unit_path=unit_path, kind=target.kind)
     return Destination(unit=unit, content=content, removed=target)
 
 
@@ -175,10 +192,18 @@ def hook_at(*, source: str, name: str, event: str) -> HookAt:
 def replace_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> bytes:
     """``file_json`` with the hook ``at`` replaced by ``new_hooks`` (a hooks object's ``hooks``):
     a draft group of the hook's event and matcher takes its place, the others are added as
-    ``merge_hooks`` adds them; a group or event left empty is dropped. Every other hook and key
-    is kept. ``EntityNotFoundError`` when the file holds no such hook."""
+    ``merge_hooks`` adds them; a group left with no hook and no key but ``matcher``, and an event
+    left with no group, are dropped. Every other hook and key is kept. A file already holding
+    every draft group (as a group equal as JSON, or its hooks in a group of its matcher) is only
+    rewritten in the byte form. ``EntityNotFoundError`` when the file holds no such hook."""
     document = _hooks_document(file_json)
     hooks = _hooks_of(document)
+    if all(
+        _holds(hooks.get(event), group)
+        for event, groups in new_hooks.items()
+        for group in (groups if isinstance(groups, list) else [])
+    ):
+        return dump_json(document)
     groups, group, entries, index = _locate(hooks, at)
     del entries[index]
     rest: dict[str, JsonValue] = {}
@@ -190,7 +215,7 @@ def replace_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> bytes:
                 spliced = True
             else:
                 _append(rest, event, draft_group)
-    if not entries:
+    if not entries and group.keys() <= _SPLICED_KEYS:
         del groups[next(i for i, found in enumerate(groups) if found is group)]
     if not groups:
         del hooks[at.event]
@@ -200,7 +225,8 @@ def replace_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> bytes:
 
 def merge_hooks(file_json: bytes | None, new_hooks: HookGroups) -> bytes:
     """``file_json`` (a hooks file, None when absent) with ``new_hooks``' matcher groups added
-    after each event's own; every hook and key already there is kept."""
+    after each event's own, but for a group the event already holds; every hook and key already
+    there is kept."""
     document: dict[str, JsonValue] = {} if file_json is None else _hooks_document(file_json)
     hooks = document.setdefault(_HOOKS_KEY, {})
     if not isinstance(hooks, dict):
@@ -242,6 +268,10 @@ def _hook_draft(files: UnitContent) -> DraftItem:
         folder, _, name = script.path.partition("/")
         if folder != _SCRIPTS_FOLDER or not name or "/" in name:
             raise DraftInvalidError("A hook draft holds hooks.json and scripts/<file> only")
+    try:
+        load_json_bytes(main.content, strict=True)
+    except InvalidJsonError, RecursionError:
+        raise DraftInvalidError("The draft's hooks.json is not strict JSON") from None
     fold = hook_records(None, None, {_DRAFT_SOURCE: main.content}, enabled={}, marketplace=None)
     if fold.notices or fold.truncated or not fold.records:
         raise DraftInvalidError("The draft's hooks.json is not a hooks object")
@@ -267,7 +297,7 @@ def _single(file: UnitFile, name: str) -> UnitContent:
 
 def _hooks_document(file_json: bytes) -> dict[str, JsonValue]:
     try:
-        document = load_json_bytes(file_json)
+        document = load_json_bytes(file_json, strict=True)
     except InvalidJsonError, RecursionError:
         raise ItemWriteRefusedError("unit_unreadable", _NOT_HOOKS_FILE) from None
     if not isinstance(document, dict):
@@ -332,4 +362,32 @@ def _add_groups(hooks: dict[str, JsonValue], new_hooks: dict[str, JsonValue]) ->
         existing = hooks.setdefault(event, [])
         if not isinstance(existing, list):
             raise ItemWriteRefusedError("unit_unreadable", _NOT_HOOKS_FILE)
-        existing.extend(groups if isinstance(groups, list) else [])
+        for group in groups if isinstance(groups, list) else []:
+            if not _holds(existing, group):
+                existing.append(group)
+
+
+def _holds(groups: JsonValue, draft_group: JsonValue) -> bool:
+    """Whether the event's ``groups`` hold ``draft_group``: a group equal to it as JSON (its
+    byte form), or, for a group of only a matcher and hooks, its hooks in a row in a group of
+    that matcher."""
+    if not isinstance(groups, list) or not isinstance(draft_group, dict):
+        return False
+    wanted = dump_json(draft_group)
+    run = [dump_json(hook) for hook in _group_hooks(draft_group)]
+    plain = draft_group.keys() <= _SPLICED_KEYS
+    matcher = draft_group.get(_MATCHER_KEY)
+    return any(
+        dump_json(group) == wanted
+        or (
+            plain
+            and isinstance(group, dict)
+            and group.get(_MATCHER_KEY) == matcher
+            and _in_a_row([dump_json(hook) for hook in _group_hooks(group)], run)
+        )
+        for group in groups
+    )
+
+
+def _in_a_row(entries: list[bytes], run: list[bytes]) -> bool:
+    return any(entries[start : start + len(run)] == run for start in range(len(entries)))
