@@ -161,3 +161,14 @@ class ItemVersionWrites(Protocol):
     def restore(self, ref: ItemRef, version_id: str, *, confirm_managed: bool) -> ItemWriteResult:
         """Write the version of the item's own unit back and record a ``restore`` version."""
         ...
+
+
+class ItemPublishes(Protocol):
+    """The publish route's write (``POST .../skills/drafts/{draft_id}/publish``, PR 3)."""
+
+    def publish(
+        self, project: str, draft_id: str, target: ToolkitRef | None, *, confirm_managed: bool
+    ) -> ItemWriteResult:
+        """Land the draft on ``target`` (None: a new item), record a ``publish`` version naming
+        the draft, then remove the draft."""
+        ...
