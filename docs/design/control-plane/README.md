@@ -82,9 +82,10 @@ AGH-201 (control-plane clarity) changes the design further
   `/brain/notes` (no backlinks); `brain/auto/` is never listed or served. Feature detail adds Spec, Research, Plan,
   Eval and Criteria tabs over the same note route.
 - **Security.** The strict writes need the server's own `Origin`, a same-origin fetch and a JSON body (E9,
-  `STRICT_WRITES`): the two learning POSTs, the workflow run commands and gate decision, and the two restores
-  (AGH-297). The agent-session routes (AGH-165) need the launch cookie and the server's own `Origin` too, and so do
-  the restores ([API.md](../../API.md#local-security)); the CSP is unchanged.
+  `STRICT_WRITES`): the two learning POSTs, the workflow run writes (start, cancel, resume and abandon a run, and a
+  gate's decision) and the two restores (AGH-297). The launch cookie is needed by the agent-session routes (AGH-165,
+  which also need the server's own `Origin`), the same workflow run writes and the restores
+  ([API.md](../../API.md#local-security)); the CSP is unchanged.
 
 ## Design system
 

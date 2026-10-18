@@ -503,8 +503,9 @@ it answers 404 `urn:agent-hub:problem:run-control-off`.
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
-run commands and the restores need that cookie too ([Workflow run commands](#workflow-run-commands), [Skills](#skills));
-every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
+run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, and a gate's decision) and the restores
+(`ITEM_WRITES`) need that cookie too ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
+[Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
 minted and the hubs are mounted read-only) a restore answers 409 `hub_read_only` before the cookie is checked.
 
 The two learning decisions, which reach the network, the four workflow run commands and a workflow gate's decision,
