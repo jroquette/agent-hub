@@ -2,6 +2,7 @@ from agent_hub.api.app import create_app
 from agent_hub.api.openapi_paths import (
     AGENT_SESSION_PATHS,
     CLARITY_PATHS,
+    DOCTOR_FIX_PATHS,
     FEATURE_NAME_PATHS,
     GATE_PATHS,
     LINEAR_PATHS,
@@ -131,6 +132,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | OWNER_SIGNOFF_PATHS
         | FEATURE_NAME_PATHS
         | PLATFORM_SYNC_PATHS
+        | DOCTOR_FIX_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -151,6 +153,7 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | OWNER_SIGNOFF_PATHS
         | FEATURE_NAME_PATHS
         | PLATFORM_SYNC_PATHS
+        | DOCTOR_FIX_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 

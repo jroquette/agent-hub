@@ -280,4 +280,40 @@ describe("HealthScreen", () => {
     expect(within(leak).getAllByRole("button", { name: "Copy fix" })).toHaveLength(11);
     expect(within(group("lock.drift")).getByText("Needs a person")).toBeInTheDocument();
   });
+
+  it("fixes every auto-fixable finding from the screen after confirming", async () => {
+    const user = userEvent.setup();
+    const leak = aFinding({
+      rule: "brain.leak",
+      severity: "error",
+      path: "../demo-api/docs/adr/0001.md",
+      line: 1,
+      message: "line also in the brain at brain/drafts/0001.md:1",
+      fix: "reword or remove the line here, or reword the brain note if it quotes this file",
+    });
+    const { requests } = open({
+      "/api/v1/doctor/findings": aPage([leak, ...findings]),
+      "/api/v1/hubs": aPage([aHub({ id: "hub-1", project: "demo" })]),
+      "POST /api/v1/hubs/hub-1/doctor-fix": {
+        hub_id: "hub-1",
+        ok: true,
+        exit_code: 1,
+        output: ["fixed brain/drafts/0001.md: 1 lines now point at the repo"],
+        changed_files: ["brain/drafts/0001.md"],
+        errors_left: 1,
+        warnings_left: 2,
+      },
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Fix 1 finding" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Fix 1 finding in demo?" });
+    expect(dialog).toHaveTextContent("never a code repo");
+    await user.click(within(dialog).getByRole("button", { name: "Fix" }));
+
+    const done = await screen.findByRole("status", { name: "Fix result" });
+    expect(done).toHaveTextContent("Fixed 1 file. Doctor ran again: 1 error, 2 warnings left.");
+    expect(done).toHaveTextContent("fixed brain/drafts/0001.md");
+    const post = requests.find((r) => r.method === "POST");
+    expect(new URL(post?.url ?? "").pathname).toBe("/api/v1/hubs/hub-1/doctor-fix");
+  });
 });

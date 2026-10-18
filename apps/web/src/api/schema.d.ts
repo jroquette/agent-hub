@@ -624,6 +624,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/hubs/{hub_id}/doctor-fix": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Fix Hub Findings
+     * @description Run ``hub doctor --fix`` in the hub: every auto-fixable finding; nothing committed.
+     */
+    post: operations["fix_hub_findings_api_v1_hubs__hub_id__doctor_fix_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/hubs/{hub_id}/platform-sync": {
     parameters: {
       query?: never;
@@ -1905,6 +1925,31 @@ export interface components {
      * @enum {string}
      */
     DiagnosticSeverity: "info" | "warning";
+    /**
+     * DoctorFixRequest
+     * @description The empty JSON body of the fix: a cross-site form cannot send one (S7).
+     */
+    DoctorFixRequest: Record<string, never>;
+    /**
+     * DoctorFixResult
+     * @description What one fix did, and what the check after it found.
+     */
+    DoctorFixResult: {
+      /** Changed Files */
+      changed_files: string[];
+      /** Errors Left */
+      errors_left: number | null;
+      /** Exit Code */
+      exit_code: number;
+      /** Hub Id */
+      hub_id: string;
+      /** Ok */
+      ok: boolean;
+      /** Output */
+      output: string[];
+      /** Warnings Left */
+      warnings_left: number | null;
+    };
     /**
      * DriverCapabilities
      * @description What this machine can do: whether sessions can start (and why not), the engine, the
@@ -6158,6 +6203,50 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  fix_hub_findings_api_v1_hubs__hub_id__doctor_fix_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        hub_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DoctorFixRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DoctorFixResult"];
+        };
       };
       /** @description A client error, as an RFC 9457 problem */
       "4XX": {

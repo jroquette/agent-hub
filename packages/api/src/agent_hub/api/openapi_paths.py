@@ -146,6 +146,11 @@ PLATFORM_SYNC_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("post", f"{API_PREFIX}/hubs/{{hub_id}}/platform-sync")}
 )
 
+# Fixing a hub's auto-fixable doctor findings from Health (playground): hub doctor --fix.
+DOCTOR_FIX_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/hubs/{{hub_id}}/doctor-fix")}
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
     P2_PATHS
@@ -160,6 +165,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | OWNER_SIGNOFF_PATHS
     | FEATURE_NAME_PATHS
     | PLATFORM_SYNC_PATHS
+    | DOCTOR_FIX_PATHS
 )
 
 

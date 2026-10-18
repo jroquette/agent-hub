@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Response
 
 from agent_hub.api.dependencies import HubReadModelsDep
+from agent_hub.api.doctor_fix import DoctorFixRequest, DoctorFixResult, fix_hub
 from agent_hub.api.platform_sync import (
     PlatformSyncError,
     PlatformSyncRequest,
@@ -61,3 +62,16 @@ def sync_hub_platform(
             output=(str(error),),
             changed_files=(),
         )
+
+
+@router.post("/hubs/{hub_id}/doctor-fix")
+def fix_hub_findings(
+    hub_id: Annotated[str, Path(min_length=1, max_length=64)],
+    _body: DoctorFixRequest,
+    models: HubReadModelsDep,
+) -> DoctorFixResult:
+    """Run ``hub doctor --fix`` in the hub: every auto-fixable finding; nothing committed."""
+    hub = next((view for view in models.list_hubs().items if view.id == hub_id), None)
+    if hub is None:
+        raise EntityNotFoundError(entity="hub", entity_id=hub_id)
+    return fix_hub(hub.id, hub.path)

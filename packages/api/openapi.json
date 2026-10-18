@@ -1388,6 +1388,78 @@
         "title": "DiagnosticSeverity",
         "type": "string"
       },
+      "DoctorFixRequest": {
+        "additionalProperties": false,
+        "description": "The empty JSON body of the fix: a cross-site form cannot send one (S7).",
+        "properties": {},
+        "title": "DoctorFixRequest",
+        "type": "object"
+      },
+      "DoctorFixResult": {
+        "additionalProperties": false,
+        "description": "What one fix did, and what the check after it found.",
+        "properties": {
+          "changed_files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Files",
+            "type": "array"
+          },
+          "errors_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors Left"
+          },
+          "exit_code": {
+            "title": "Exit Code",
+            "type": "integer"
+          },
+          "hub_id": {
+            "title": "Hub Id",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "output": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Output",
+            "type": "array"
+          },
+          "warnings_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings Left"
+          }
+        },
+        "required": [
+          "hub_id",
+          "ok",
+          "exit_code",
+          "output",
+          "changed_files",
+          "errors_left",
+          "warnings_left"
+        ],
+        "title": "DoctorFixResult",
+        "type": "object"
+      },
       "DriverCapabilities": {
         "additionalProperties": false,
         "description": "What this machine can do: whether sessions can start (and why not), the engine, the\n``claude`` version, the model aliases offered, and the cloud commands the CLI lists.",
@@ -11595,6 +11667,71 @@
           }
         },
         "summary": "Remove Hub",
+        "tags": [
+          "hubs"
+        ]
+      }
+    },
+    "/api/v1/hubs/{hub_id}/doctor-fix": {
+      "post": {
+        "description": "Run ``hub doctor --fix`` in the hub: every auto-fixable finding; nothing committed.",
+        "operationId": "fix_hub_findings_api_v1_hubs__hub_id__doctor_fix_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hub_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Hub Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoctorFixRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoctorFixResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Fix Hub Findings",
         "tags": [
           "hubs"
         ]
