@@ -54,7 +54,9 @@ from agent_hub.core.features.ticket_snapshots import (
     TicketSnapshots,
 )
 from agent_hub.core.features.ticket_view import FeatureTickets
+from agent_hub.core.hub_config.config_view import HubConfigView, hub_config_view
 from agent_hub.core.hub_config.doctor_rules import LOCK_DRIFT_RULE, Severity
+from agent_hub.core.hub_config.effective_identity import GitReader
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hubs.doctor_cache import DoctorCache
 from agent_hub.core.hubs.finding_view import FindingView
@@ -132,8 +134,10 @@ class HubFilesReadModels:
         ticket_snapshots: TicketSnapshots | None = None,
         usage: SkillUsageSource | None = None,
         capture: CaptureItemVersions | None = None,
+        read_git: Callable[[str], GitReader] | None = None,
     ) -> None:
         self._reader = reader
+        self._read_git = read_git
         self._skills = SkillReads(reader, usage, capture=capture)
         self._snapshots = ticket_snapshots
         self._activity = activity
@@ -205,6 +209,17 @@ class HubFilesReadModels:
         """The project's repos and their checkouts' ``AGENTS.md``."""
         found = self._project(project)
         return _page(tuple(self._repo(found, index) for index in range(len(found.config.repos))))
+
+    def hub_config(self, project: str) -> HubConfigView:
+        """The project's ``hub.json`` and ``hub.local.json`` values, each with its source."""
+        found = self._project(project)
+        read_git = _no_git if self._read_git is None else self._read_git(found.path)
+        return hub_config_view(
+            hub_path=found.path,
+            config=found.config,
+            local=self._reader.read_local(found.path),
+            read_git=read_git,
+        )
 
     def list_features(self, scope: Scope) -> Page[FeatureView]:
         """Feature folders of every scoped project."""
@@ -477,3 +492,7 @@ def _encodable(text: str) -> str:
 
 def _page[T](items: tuple[T, ...]) -> Page[T]:
     return Page[T](items=items, next_cursor=None, total_estimate=len(items))
+
+
+def _no_git(_keys: frozenset[str]) -> dict[str, str]:
+    return {}

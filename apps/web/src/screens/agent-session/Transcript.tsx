@@ -313,6 +313,8 @@ export function Transcript({
   const [panelRun, setPanelRun] = useState<string | null>(null);
   // Kept stable for the memoised run lines: the latest callback is read when a line is pressed.
   const sideOpen = Boolean(sidePanel);
+  // A drawer opened over it replaces the run panel: closing that drawer does not bring it back.
+  if (sideOpen && panelRun !== null) setPanelRun(null);
   const activityOpened = useRef(onActivityOpen);
   useEffect(() => {
     activityOpened.current = onActivityOpen;
@@ -482,7 +484,8 @@ export function Transcript({
           {state.status !== "ended" && state.status !== "failed" && (
             <p
               className={cx(
-                "as-working as-column ah-small ah-muted",
+                // Read by assistive tech only: the live bar above the composer shows it.
+                "as-working as-column ah-small ah-muted ah-sr",
                 !working && "as-working-idle",
               )}
               role="status"

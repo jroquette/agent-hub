@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -16,6 +16,7 @@ import {
   renderWithApi,
   type ApiRoutes,
   type Session,
+  T0,
 } from "../../testing/builders";
 import { SessionsListScreen } from "./index";
 
@@ -43,7 +44,15 @@ function tileOf(text: string): HTMLElement {
   return tile;
 }
 
+// The list is the default view: these tests read the grid.
+beforeEach(() => {
+  // The default period counts back from now: pin the clock a day after the builders' T0.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.parse(T0) + 86_400_000);
+  window.localStorage.setItem("ah.sessions.view", "grid");
+});
 afterEach(() => {
+  vi.useRealTimers();
   window.localStorage.clear();
 });
 
@@ -94,7 +103,7 @@ describe("SessionsListScreen grid", () => {
     const done = tileOf("/done");
     expect(within(done).getByText("Ended · done")).toBeInTheDocument();
     expect(within(done).queryByRole("img", { name: /Events per 5 s/ })).toBeNull();
-    expect(tilesIn(section(/^Ended or failed/))).toEqual([done]);
+    expect(tilesIn(section(/^Finished · last 7 days/))).toEqual([done]);
   });
 
   it("shows 50 tiles in a section, then Load more fetches the next cursor page", async () => {
@@ -112,7 +121,7 @@ describe("SessionsListScreen grid", () => {
     });
 
     await screen.findByText("/s50");
-    const live = section(/^Live/);
+    const live = section(/^Working/);
     expect(tilesIn(live)).toHaveLength(50);
     expect(within(live).queryByText("/s51")).toBeNull();
     fireEvent.click(within(live).getByRole("button", { name: "Load more" }));
@@ -152,11 +161,11 @@ describe("SessionsListScreen grid", () => {
       path: "/sessions?within=repo",
     });
     await screen.findByText("/a");
-    expect(heads(section(/^Live/))).toEqual([
+    expect(heads(section(/^Working/))).toEqual([
       "agent-hub › storefront · 1",
       "agent-hub › agent-hub · 2",
     ]);
-    expect(heads(section(/^Idle/))).toEqual(["agent-hub › agent-hub · 1"]);
+    expect(heads(section(/^Your turn/))).toEqual(["agent-hub › agent-hub · 1"]);
     repo.unmount();
 
     const run = renderWithApi(<SessionsListScreen />, {
@@ -164,10 +173,10 @@ describe("SessionsListScreen grid", () => {
       path: "/sessions?within=run",
     });
     await screen.findByText("/a");
-    expect(heads(section(/^Live/))).toEqual(["Run AGH-9 · implement · 1", "Not in a run · 2"]);
-    expect(within(section(/^Live/)).getByRole("group", { name: "Not in a run" })).toContainElement(
-      tileOf("/c"),
-    );
+    expect(heads(section(/^Working/))).toEqual(["Run AGH-9 · implement · 1", "Not in a run · 2"]);
+    expect(
+      within(section(/^Working/)).getByRole("group", { name: "Not in a run" }),
+    ).toContainElement(tileOf("/c"));
     run.unmount();
 
     renderWithApi(<SessionsListScreen />, {
@@ -175,8 +184,8 @@ describe("SessionsListScreen grid", () => {
       path: "/sessions?within=flat",
     });
     await screen.findByText("/a");
-    expect(heads(section(/^Live/))).toEqual([]);
-    expect(tilesIn(section(/^Live/))).toHaveLength(3);
+    expect(heads(section(/^Working/))).toEqual([]);
+    expect(tilesIn(section(/^Working/))).toHaveLength(3);
   });
 
   it("resume: an ended driven tile offers Resume, a link to its chat, where a message resumes it", async () => {
@@ -250,7 +259,7 @@ describe("SessionsListScreen grid", () => {
     });
 
     await screen.findByText("Fix the build");
-    const live = section(/^Live · 3/);
+    const live = section(/^Working · 3/);
     expect(tilesIn(live)).toHaveLength(3);
     expect(within(tileOf("Fix the build")).getByText("Chat")).toBeInTheDocument();
     // The twin has no title of its own yet: its tile reads the driven session's prompt.

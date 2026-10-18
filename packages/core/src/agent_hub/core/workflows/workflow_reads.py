@@ -15,9 +15,12 @@ A list scoped to an unknown project is empty; a detail of one raises ``EntityNot
 """
 
 import threading
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import NamedTuple, Protocol
+
+from pydantic import Field
 
 from agent_hub.core.item_versions.capture_item_versions import (
     CaptureBudget,
@@ -51,8 +54,29 @@ class WorkflowNodeView(ViewModel):
     description: str | None = None
 
 
+class WorkflowInputView(ViewModel):
+    """An input a run of the workflow takes: what to pass to ``hub workflow run``."""
+
+    name: str
+    type: str
+    required: bool
+    description: str | None = None
+
+
+class WorkflowStepView(ViewModel):
+    """A step as the catalog outlines it: declaration order, a repeat's body nested (its ids
+    without the ``<group>__`` prefix) and its round cap."""
+
+    id: str
+    type: str
+    description: str | None = None
+    max_iterations: int | None = None
+    body: tuple[WorkflowStepView, ...] = ()
+
+
 class WorkflowSummary(ViewModel):
-    """A workflow of a project's hub, and where it comes from (``source``)."""
+    """A workflow of a project's hub, and where it comes from (``source``). ``step_types``
+    counts every step by type, a ``loop_group``'s body included; ``inputs`` is what a run takes."""
 
     project: str
     name: str
@@ -61,6 +85,9 @@ class WorkflowSummary(ViewModel):
     source: WorkflowOrigin
     node_count: int
     layer_count: int
+    step_types: dict[str, int] = Field(default_factory=dict)
+    inputs: tuple[WorkflowInputView, ...] = ()
+    steps: tuple[WorkflowStepView, ...] = ()
 
 
 class WorkflowDetail(WorkflowSummary):
@@ -280,4 +307,36 @@ def _summary(
         source=origins.get(document.name, "hub"),
         node_count=len(document.nodes),
         layer_count=len(plan.layers),
+        step_types=dict(Counter(_step_types(document.nodes))),
+        inputs=tuple(
+            WorkflowInputView(
+                name=name, type=item.type, required=item.required, description=item.description
+            )
+            for name, item in document.inputs.items()
+        ),
+        steps=tuple(_outline(document.nodes)),
     )
+
+
+def _outline(nodes: Iterable[object], prefix: str = "") -> Iterator[WorkflowStepView]:
+    """Each step in declaration order, a ``loop_group``'s body nested under it."""
+    for node in nodes:
+        node_id = str(getattr(node, "id", ""))
+        body = getattr(node, "nodes", None)
+        cap = getattr(node, "max_iterations", None)
+        yield WorkflowStepView(
+            id=node_id.removeprefix(prefix),
+            type=str(getattr(node, "type", "unknown")),
+            description=getattr(node, "description", None),
+            max_iterations=cap if isinstance(cap, int) else None,
+            body=tuple(_outline(body, f"{node_id}__")) if isinstance(body, tuple) else (),
+        )
+
+
+def _step_types(nodes: Iterable[object]) -> Iterator[str]:
+    """Each step's type, a ``loop_group``'s body steps after the group's own."""
+    for node in nodes:
+        yield str(getattr(node, "type", "unknown"))
+        body = getattr(node, "nodes", None)
+        if isinstance(body, tuple):
+            yield from _step_types(body)

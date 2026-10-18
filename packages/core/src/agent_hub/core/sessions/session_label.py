@@ -13,6 +13,7 @@ from typing import Final
 
 from agent_hub.core.events.event import EventType
 from agent_hub.core.events.stored_event import StoredEvent
+from agent_hub.core.hub_config.team_keys import team_of
 from agent_hub.core.readmodels.fact_keys import canonical_events
 from agent_hub.core.sessions.session import SessionLabel
 from agent_hub.core.workspace.worktree_name import issue_of_worktree
@@ -160,4 +161,12 @@ def with_issue(label: SessionLabel, rules: LabelRules) -> SessionLabel:
             issue = _issue_of_branch(label.branch, rules)
         if issue is None and label.worktree is not None:
             issue = issue_of_worktree(label.worktree, teams=rules.teams)
+    return label.model_copy(update={"issue": issue})
+
+
+def with_prompt_issue(label: SessionLabel, issue: str | None, rules: LabelRules) -> SessionLabel:
+    """``label`` with ``issue`` (what the session's first prompt names) when neither its branch
+    nor its worktree names one and ``issue`` is of one of ``rules``' teams."""
+    if label.issue is not None or issue is None or team_of(issue, rules.teams) is None:
+        return label
     return label.model_copy(update={"issue": issue})

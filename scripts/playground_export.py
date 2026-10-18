@@ -36,6 +36,8 @@ from typing import Any
 
 import httpx
 
+from scripts.seed_demo import CHAT_SESSION
+
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "apps" / "web"
 ROUTES_FILE = "apps/web/src/routes.tsx"
@@ -75,12 +77,14 @@ class Route:
 
 # Each screen folder of apps/web/src/screens, to the routes.tsx routes showing it on the demo data.
 SCREEN_ROUTES: Mapping[str, tuple[Route, ...]] = {
-    "agent-session": (Route("sessions", "/sessions", follow="/agent-sessions/"),),
+    # The demo's ended chat, by its fixed id (scripts/seed_demo.py).
+    "agent-session": (Route("chat", f"/agent-sessions/{CHAT_SESSION}"),),
     "approvals": (Route("approvals", "/approvals"),),
     "brain": (Route("brain", "/knowledge/brain", follow="/projects/"),),
     "feature-detail": (Route("feature", "/features", follow="/features/"),),
     "features": (Route("features", "/features"),),
     "health": (Route("health", "/health"),),
+    "hub-config": (Route("config", "/projects/demo/config"),),
     # The History panel (AGH-297) shows on a Toolkit item's detail and a hub workflow's page.
     "item-history": (
         Route("item-history", "/projects/demo/skills", follow="/projects/demo/skills/"),
@@ -360,7 +364,8 @@ def conductor_logs(given: Path | None, environ: Mapping[str, str]) -> list[Path]
 
 
 def conductor_token(log: Path) -> str | None:
-    """The conductor's launch token, from the log make playground writes."""
+    """A ``hub web``'s launch token, the last in the log it wrote (the conductor's, which make
+    playground writes, or the capture's own)."""
     try:
         found = re.findall(r"\?token=([A-Za-z0-9_-]+)", log.read_text("utf-8", errors="replace"))
     except OSError:
@@ -844,120 +849,140 @@ def capture_routes(screens: Sequence[str]) -> list[dict[str, str]]:
     return routes
 
 
+class DemoWebError(Exception):
+    """The demo web could not start: the web app did not build or the demo data did not load."""
+
+
+@dataclass(frozen=True)
+class DemoWeb:
+    """A ``hub web`` serving the demo data, and the built web app previewed in front of it."""
+
+    env: Mapping[str, str]
+    web_url: str
+    api_url: str
+    # hub web's address with its launch token: the agent-session routes need its cookie.
+    login: str | None
+    logs: tuple[Path, ...]
+
+
+@contextmanager
+def demo_web(tree: Path, work: Path) -> Iterator[DemoWeb]:
+    """Builds ``tree``'s web app into ``work``, serves ``tree``'s ``hub web`` on a scratch
+    database, config and projects folder under ``work``, loads the demo data (``seed_demo``) and
+    previews the build in front of it, for the export's capture and the visual tests. Raises
+    ``DemoWebError`` with the reason when the build or the demo data fails; npm must be on PATH."""
+    npm = shutil.which("npm")
+    if npm is None:
+        raise DemoWebError("npm is not on PATH")
+    web_dir = tree / "apps" / "web"
+    for folder in ("config", "projects"):
+        (work / folder).mkdir(exist_ok=True)
+    # The tree's packages ahead of the editable installs, which point at the checkout.
+    sources = [str(path) for path in sorted((tree / "packages").glob("*/src"))]
+    env = {
+        **os.environ,
+        "XDG_CONFIG_HOME": str(work / "config"),
+        "AGENT_HUB_DB": str(work / "agent-hub.db"),
+        "AGENT_HUB_CLAUDE_PROJECTS": str(work / "projects"),
+        "PYTHONPATH": os.pathsep.join([*sources, str(tree)]),
+    }
+    built = subprocess.run(  # noqa: S603
+        [npm, "--prefix", str(web_dir), "run", "build", "--"]
+        + ["--outDir", str(work / "web"), "--emptyOutDir"],
+        cwd=tree,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if built.returncode != 0:
+        raise DemoWebError(f"the web app did not build: {built.stderr.strip()[-300:]}")
+    api, web = free_port(), free_port()
+    api_url, web_url = f"http://127.0.0.1:{api}", f"http://127.0.0.1:{web}"
+    server = [sys.executable, "-m", "agent_hub.cli", "web", "--port", str(api)]
+    preview = [npm, "--prefix", str(web_dir), "exec", "--", "vite", "preview"]
+    preview += ["--outDir", str(work / "web"), "--port", str(web), "--strictPort"]
+    preview_env = {**env, "AH_API_TARGET": api_url, "AH_SESSIONS_TARGET": api_url}
+    logs = (work / "api.log", work / "preview.log")
+    with (
+        background(server, env=env, cwd=tree, log=logs[0]),
+        background(preview, env=preview_env, cwd=web_dir, log=logs[1]),
+    ):
+        wait_until_up(f"{api_url}/api/v1/hubs")
+        seeded = subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "scripts.seed_demo", "--url", api_url, "--via", "local"],
+            cwd=tree,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if seeded.returncode != 0:
+            raise DemoWebError(f"the demo data did not load: {seeded.stdout.strip()[-300:]}")
+        wait_until_up(web_url)
+        token = conductor_token(logs[0])
+        yield DemoWeb(
+            env=env,
+            web_url=web_url,
+            api_url=api_url,
+            login=f"{api_url}/?token={token}" if token else None,
+            logs=logs,
+        )
+
+
+def run_playwright(
+    web: DemoWeb, web_dir: Path, spec: str, *, extra: Mapping[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Runs one Playwright spec (or folder) of ``web_dir`` against ``web``, with the Chromium
+    headless shell found when Playwright's own revision is missing."""
+    npm = shutil.which("npm") or "npm"
+    shell = chromium_executable(web.env)
+    return subprocess.run(  # noqa: S603
+        [npm, "--prefix", str(web_dir), "exec", "--", "playwright", "test"]
+        + ["--config", str(web_dir / "playwright.config.ts"), spec],
+        cwd=web_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **web.env,
+            "AGENT_HUB_WEB_URL": web.web_url,
+            **({"AGENT_HUB_CHROMIUM": shell} if shell else {}),
+            **extra,
+        },
+    )
+
+
 def capture_screens(screens: Sequence[str], out: Path) -> str | None:
     """Renders each screen from HEAD on synthetic data into ``out``.
 
     Returns why it could not, else None.
     """
     routes = capture_routes(screens)
-    npm = shutil.which("npm")
     if not routes:
         return None
-    if npm is None:
-        return "npm is not on PATH"
     with tempfile.TemporaryDirectory(prefix="playground-export-") as scratch:
         work = Path(scratch)
-        (work / "config").mkdir()
-        (work / "projects").mkdir()
         with head_checkout(work) as tree:
-            web_dir = tree / "apps" / "web"
-            # HEAD's packages ahead of the editable installs, which point at the checkout.
-            sources = [str(path) for path in sorted((tree / "packages").glob("*/src"))]
-            env = {
-                **os.environ,
-                "XDG_CONFIG_HOME": str(work / "config"),
-                "AGENT_HUB_DB": str(work / "agent-hub.db"),
-                "AGENT_HUB_CLAUDE_PROJECTS": str(work / "projects"),
-                "PYTHONPATH": os.pathsep.join([*sources, str(tree)]),
-            }
-            built = subprocess.run(  # noqa: S603
-                [
-                    npm,
-                    "--prefix",
-                    str(web_dir),
-                    "run",
-                    "build",
-                    "--",
-                    "--outDir",
-                    str(work / "web"),
-                    "--emptyOutDir",
-                ],
-                cwd=tree,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if built.returncode != 0:
-                return f"the web app did not build: {built.stderr.strip()[-300:]}"
-            api, web = free_port(), free_port()
-            api_url, web_url = f"http://127.0.0.1:{api}", f"http://127.0.0.1:{web}"
-            server = [sys.executable, "-m", "agent_hub.cli", "web", "--port", str(api)]
-            preview = [
-                npm,
-                "--prefix",
-                str(web_dir),
-                "exec",
-                "--",
-                "vite",
-                "preview",
-                "--outDir",
-                str(work / "web"),
-                "--port",
-                str(web),
-                "--strictPort",
-            ]
-            preview_env = {**env, "AH_API_TARGET": api_url, "AH_SESSIONS_TARGET": api_url}
-            with (
-                background(server, env=env, cwd=tree, log=work / "api.log"),
-                background(preview, env=preview_env, cwd=web_dir, log=work / "preview.log"),
-            ):
-                wait_until_up(f"{api_url}/api/v1/hubs")
-                seeded = subprocess.run(  # noqa: S603
-                    [sys.executable, "-m", "scripts.seed_demo", "--url", api_url, "--via", "local"],
-                    cwd=tree,
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if seeded.returncode != 0:
-                    return f"the demo data did not load: {seeded.stdout.strip()[-300:]}"
-                wait_until_up(web_url)
-                captured = subprocess.run(  # noqa: S603
-                    [
-                        npm,
-                        "--prefix",
-                        str(web_dir),
-                        "exec",
-                        "--",
-                        "playwright",
-                        "test",
-                        "--config",
-                        str(web_dir / "playwright.config.ts"),
+            try:
+                with demo_web(tree, work) as web:
+                    captured = run_playwright(
+                        web,
+                        tree / "apps" / "web",
                         "e2e/capture.spec.ts",
-                    ],
-                    cwd=web_dir,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    env={
-                        **env,
-                        "AGENT_HUB_WEB_URL": web_url,
-                        "AH_CAPTURE": json.dumps(routes),
-                        "AH_CAPTURE_DIR": str(out),
-                        **(
-                            {"AGENT_HUB_CHROMIUM": shell}
-                            if (shell := chromium_executable(env))
-                            else {}
-                        ),
-                    },
-                )
+                        extra={
+                            "AH_CAPTURE": json.dumps(routes),
+                            "AH_CAPTURE_DIR": str(out),
+                            **({"AH_CAPTURE_LOGIN": web.login} if web.login else {}),
+                        },
+                    )
+            except DemoWebError as error:
+                return str(error)
         # The capture's own output, and the servers' when it failed, next to the screens.
         out.parent.joinpath("capture.log").write_text(captured.stdout + captured.stderr, "utf-8")
         if captured.returncode != 0:
-            for name in ("api.log", "preview.log"):
-                shutil.copy(work / name, out.parent / f"capture-{name}")
+            for log in web.logs:
+                shutil.copy(log, out.parent / f"capture-{log.name}")
             return "Playwright failed on some screens: see capture.log"
     return None
 

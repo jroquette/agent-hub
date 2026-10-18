@@ -294,6 +294,31 @@ describe("ProjectOverviewScreen", () => {
     expect(scope.getByText("bench")).toBeInTheDocument();
   });
 
+  it("AC-PG-38.7 links Setup and health to the hub configuration and each repo's conventions", async () => {
+    const user = userEvent.setup();
+    renderProject({
+      "/api/v1/projects/agent-hub/repos": aPage([
+        aRepo(),
+        aRepo({ name: "web app", dir: "web-app" }),
+      ]),
+    });
+
+    await user.click(await screen.findByText("Setup and health"));
+    const setup = within(screen.getByText("Setup and health").closest("details") as HTMLElement);
+    expect(setup.getByRole("link", { name: /Open hub configuration/ })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/config",
+    );
+    expect(await setup.findByRole("link", { name: "Conventions of agent-hub" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/config?repo=agent-hub",
+    );
+    expect(setup.getByRole("link", { name: "Conventions of web app" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/config?repo=web-app",
+    );
+  });
+
   describe("states", () => {
     it("shows the header skeleton after 300 ms while pending", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });

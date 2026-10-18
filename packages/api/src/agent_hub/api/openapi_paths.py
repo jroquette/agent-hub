@@ -18,6 +18,8 @@ P2_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/projects/{project}"),
         ("get", "/projects/{project}/now"),
         ("get", "/projects/{project}/repos"),
+        ("get", "/projects/{project}/config"),
+        ("put", "/projects/{project}/config/local"),
         ("get", "/needs-you"),
         ("get", "/activity"),
         ("get", "/search"),
@@ -139,6 +141,36 @@ ITEM_VERSION_PATHS: frozenset[tuple[str, str]] = frozenset(
     )
 )
 
+# Connecting hub web to Linear from Settings (playground): its check, the key's save and removal.
+LINEAR_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}/tracker/linear") for method in ("get", "put", "delete")
+)
+
+# The owner signs off a feature's owner steps (playground): a new SHIP eval in the hub.
+OWNER_SIGNOFF_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/owner-signoff")}
+)
+
+# Feature nicknames the owner sets from the Features screen (playground), kept on this machine.
+FEATURE_NAME_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}/feature-names") for method in ("get", "put")
+)
+
+# Syncing a hub to the running release from Settings (playground): pin, then hub sync.
+PLATFORM_SYNC_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/hubs/{{hub_id}}/platform-sync")}
+)
+
+# Fixing a hub's auto-fixable doctor findings from Health (playground): hub doctor --fix.
+DOCTOR_FIX_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/hubs/{{hub_id}}/doctor-fix")}
+)
+
+# Running an AC's recorded check from the feature page (playground): run, never recorded.
+AC_CHECK_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/acs/{{ac}}/check-runs")}
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
     P2_PATHS
@@ -150,6 +182,12 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | RUN_COMMAND_PATHS
     | GATE_PATHS
     | ITEM_VERSION_PATHS
+    | LINEAR_PATHS
+    | OWNER_SIGNOFF_PATHS
+    | FEATURE_NAME_PATHS
+    | PLATFORM_SYNC_PATHS
+    | DOCTOR_FIX_PATHS
+    | AC_CHECK_PATHS
 )
 
 

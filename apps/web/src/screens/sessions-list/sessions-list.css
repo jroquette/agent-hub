@@ -1,10 +1,377 @@
-/* Sessions list: tighter cells so the default columns fit at 1440 px (design SessionsList). */
-.sl-table .ah-table td,
-.sl-table .ah-table th {
-  padding: 0 var(--space-2);
+/* Sessions: header, summary strip, filter toolbar, then one table per status group. */
+.sl-screen {
+  padding: var(--space-4) var(--space-6) var(--space-8);
+  gap: var(--space-3);
 }
 
-/* Status sections (spec 14): a header button collapses each one. */
+/* Toolbar: search + filter buttons + chips. */
+.sl-toolbar {
+  gap: var(--space-2);
+  align-items: center;
+}
+.sl-search {
+  width: 420px;
+  max-width: 100%;
+}
+.sl-search .ah-input {
+  height: 30px;
+  padding-right: 28px;
+}
+.sl-search-kbd {
+  position: absolute;
+  right: 8px;
+  pointer-events: none;
+}
+.sl-more-field {
+  gap: 4px;
+}
+.sl-more-field .ah-input {
+  height: 30px;
+}
+
+/* The list: status groups, each a table under one shared column header. */
+.sl-inbox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5, 20px);
+  overflow-anchor: none;
+}
+.sl-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.sl-group-toggle {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.sl-group-toggle:hover {
+  color: var(--text);
+}
+.sl-group-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.sl-group[data-group="waiting"] .sl-group-head {
+  color: var(--waiting);
+}
+.sl-group-hint,
+.sl-group-note {
+  font-weight: 400;
+  color: var(--text-subtle);
+}
+/* Each group is a table with the same fixed columns, so the shared header lines up with every row. */
+.sl-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.sl-col-status {
+  width: 156px;
+}
+.sl-col-where {
+  width: 232px;
+}
+.sl-col-cost {
+  width: 80px;
+}
+.sl-col-time {
+  width: 112px;
+}
+.sl-col-action {
+  width: 144px;
+}
+.sl-table-head {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky, 10);
+  background: var(--bg);
+  margin-bottom: calc(-1 * var(--space-3));
+}
+.sl-table-head th {
+  padding: var(--space-2) var(--space-3);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-subtle);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.sl-table-head th:first-child {
+  padding-left: var(--space-4);
+}
+.sl-th-cost,
+.sl-th-time {
+  text-align: right !important;
+}
+.sl-thead-sr th {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.sl-rows {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.sl-group[data-updating] .sl-rows {
+  box-shadow: inset 3px 0 0 var(--border-strong);
+}
+.sl-row {
+  cursor: pointer;
+}
+.sl-row > td {
+  padding: var(--space-3);
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 20px;
+}
+.sl-row > td:first-child {
+  padding-left: var(--space-4);
+}
+.sl-row:last-child > td {
+  border-bottom: 0;
+}
+.sl-row:hover > td {
+  background: var(--surface-hover);
+}
+.sl-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+/* A problem only the owner can fix: a red edge, with the words in the line (E11). */
+.sl-row[data-trouble] > td:first-child {
+  box-shadow: inset 3px 0 0 var(--failed);
+}
+.sl-group[data-group="waiting"] .sl-row:not([data-trouble]) > td:first-child {
+  box-shadow: inset 3px 0 0 var(--waiting);
+}
+.sl-row-skeleton {
+  cursor: default;
+}
+.sl-row-skeleton > td > * + * {
+  margin-top: 6px;
+}
+.sl-cell-status .ah-badge {
+  max-width: 100%;
+  white-space: nowrap;
+}
+.sl-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.sl-row-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: none;
+}
+.sl-row-title:hover {
+  text-decoration: underline;
+}
+.sl-row[data-muted] .sl-row-title {
+  font-weight: 400;
+}
+.sl-row-tag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.sl-row-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.sl-row-line > .ah-icon {
+  flex: none;
+}
+.sl-row-say {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sl-row-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.sl-inferred {
+  text-decoration: underline dashed var(--text-subtle);
+  text-underline-offset: 3px;
+}
+.sl-cell-where {
+  color: var(--text-muted);
+}
+.sl-where-place {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.sl-where-extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+}
+.sl-where-run {
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.sl-files {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.sl-files[data-due] {
+  color: var(--waiting);
+  font-weight: 500;
+}
+.sl-cell-cost,
+.sl-cell-time {
+  text-align: right;
+}
+.sl-cell-action {
+  text-align: right;
+}
+.sl-cell-action .ah-btn {
+  white-space: nowrap;
+}
+/* A chat's conversation so far: your last ask over Claude's last reply. */
+.sl-talk {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.sl-talk-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.sl-talk-who {
+  flex: none;
+  width: 44px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-subtle);
+}
+.sl-talk-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sl-talk-reply {
+  color: var(--text);
+}
+.sl-cell-cost {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.sl-row-time {
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sl-more-link {
+  all: unset;
+  margin-top: var(--space-2);
+  padding: 2px var(--space-4);
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.sl-more-link:hover {
+  text-decoration: underline;
+}
+.sl-more-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}
+.sl-more-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  padding: 0 var(--space-4);
+}
+@media (max-width: 1100px) {
+  .sl-col-where {
+    width: 168px;
+  }
+  .sl-col-status {
+    width: 128px;
+  }
+}
+
+.sl-foot {
+  gap: var(--space-3);
+  justify-content: space-between;
+  align-items: center;
+}
+.sl-keys .ah-kbd {
+  font-size: 11px;
+}
+
+/* Status sections of the grid view: a header button collapses each one. */
 .sl-sections {
   gap: var(--space-4);
   /* useScrollAnchor keeps the reader's row in place; the browser's own anchoring would double it. */
@@ -19,10 +386,6 @@
 .sl-section-updating {
   margin-left: var(--space-2);
   font-weight: 400;
-}
-/* A non-text cue that the rows are the previous ones; their text keeps its contrast. */
-.sl-section[data-updating] .ah-table-wrap {
-  box-shadow: inset 3px 0 0 var(--border-strong);
 }
 .sl-section-toggle {
   all: unset;
@@ -46,4 +409,67 @@
 }
 .sl-group-head {
   margin: 0;
+}
+
+/* The summary strip: one tile per status group (a quick filter) and the day's estimated cost. */
+.sl-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.sl-summary-tile {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+button.sl-summary-tile {
+  cursor: pointer;
+}
+button.sl-summary-tile:hover {
+  background: var(--surface-hover);
+}
+button.sl-summary-tile:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+button.sl-summary-tile[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.sl-summary-tile[data-tile="waiting"]:not([data-zero]) {
+  border-color: var(--waiting);
+}
+.sl-summary-tile[data-tile="waiting"]:not([data-zero]) .ah-kpi-label {
+  color: var(--waiting);
+}
+.sl-summary-value {
+  font: 500 22px/30px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.sl-summary-tile[data-zero] .sl-summary-value {
+  color: var(--text-subtle);
+}
+.sl-summary-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+@media (max-width: 1100px) {
+  .sl-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.sl-summary-value .ah-num {
+  font: inherit;
 }

@@ -34,6 +34,17 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   warns when `hub.lock` manages the file (the next `hub sync` rewrites it) and says how many hooks a hook file's
   restore brings back. A unit with a secret match on disk shows "Not versioned: secret" and cannot be restored.
 
+- The playground work of 2026-10-17/18 (AGH-314): Sessions as an inbox with a summary strip and one action per
+  row; the chat's header menu, Events link, live activity bar and Steps drawer, and Changed files on the final result;
+  Continue in chat for an ended terminal session; Features grouped by state with search, filters and nicknames kept on
+  this machine; on a feature's page the Waiting on you banner and owner sign-off, the Eval history per scope, Approve
+  with the spec's open questions, ticket sessions and Run on an AC's check; Workflows as plain rows with a step list
+  and New workflow; Settings › Linear with a key kept on this machine and a release sync for a hub on another pin;
+  Health's Fix (`hub doctor --fix`, which rewrites every `brain.leak` on the brain side); the Hub config screen and
+  `hub.local.json` editing. `agent_sessions` gains three columns (migration 0006, upgraded on start). The app writes
+  into a hub only what the CLI would, and never commits there
+  ([ADR 0040](docs/adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)).
+
 ## [0.16.1] - 2026-10-17
 
 ### Fixed

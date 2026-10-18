@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -28,15 +28,28 @@ import { usePreferences, type ThemeChoice } from "../../lib/preferences";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { NotFoundBody } from "../not-found";
 import { RegisterHubForm } from "./RegisterHubForm";
-import { useCollectorStatus, useHubs, useRemoveHub, useSettings } from "./queries";
+import {
+  useCheckLinear,
+  useCollectorStatus,
+  useConnectLinear,
+  useDisconnectLinear,
+  useHubs,
+  useLinearConnection,
+  useRemoveHub,
+  useSettings,
+  useSyncPlatform,
+} from "./queries";
 
 type HubView = components["schemas"]["HubView"];
 type EventSource = components["schemas"]["EventSource"];
 type LockState = components["schemas"]["LockState"];
+type LinearConnectionView = components["schemas"]["LinearConnectionView"];
+type PlatformSyncResult = components["schemas"]["PlatformSyncResult"];
 
 const SECTIONS: readonly { id: string; label: string; icon: IconName }[] = [
   { id: "hubs", label: "Hubs", icon: "warehouse" },
   { id: "collector", label: "Collector", icon: "server" },
+  { id: "linear", label: "Linear", icon: "plug" },
   { id: "privacy", label: "Privacy", icon: "lock" },
   { id: "appearance", label: "Appearance", icon: "monitor" },
   { id: "about", label: "About", icon: "info" },
@@ -113,14 +126,131 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
   );
 }
 
+/* ---------- Platform sync: bring a hub to the running release ---------- */
+
+function SyncOutcome({ result }: { result: PlatformSyncResult }) {
+  return (
+    <div className="ah-stack" style={{ gap: 6 }} role={result.ok ? "status" : "alert"}>
+      <span className="ah-small" style={{ color: result.ok ? "var(--done)" : "var(--failed)" }}>
+        <Icon
+          name={result.ok ? "circle-check" : "circle-x"}
+          size="sm"
+          style={{ verticalAlign: "-3px", marginRight: 4 }}
+        />
+        {result.ok
+          ? `Pinned to ${result.version} and synced${
+              result.previous_version ? ` (was ${result.previous_version})` : ""
+            }.`
+          : `hub sync failed (exit ${String(result.exit_code)}); hub.json was put back to ${result.version}.`}
+      </span>
+      {result.output.length > 0 && <CodeBlock code={result.output.join("\n")} />}
+      {result.ok && result.changed_files.length > 0 && (
+        <span className="ah-small ah-muted">
+          Changed in the hub checkout, not committed:{" "}
+          <span className="ah-mono">{result.changed_files.join(", ")}</span>. Review them and open a
+          hub PR.
+        </span>
+      )}
+    </div>
+  );
+}
+
+function PlatformSyncCard({
+  hub,
+  sync,
+}: {
+  hub: HubView;
+  sync: ReturnType<typeof useSyncPlatform>;
+}) {
+  const [asking, setAsking] = useState(false);
+  const name = hub.project ?? hub.path;
+  const result = sync.data?.hub_id === hub.id ? sync.data : undefined;
+  const behind = outdated(hub);
+  const tone = behind ? "var(--failed)" : "var(--done)";
+  return (
+    <div
+      className="ah-card ah-pad ah-stack"
+      style={{ gap: 10, borderColor: tone }}
+      aria-label={`${name} platform version`}
+    >
+      <div className="ah-row" style={{ gap: 12, alignItems: "flex-start" }}>
+        <Icon name={behind ? "circle-x" : "circle-check"} style={{ color: tone, marginTop: 2 }} />
+        <div className="ah-grow ah-stack" style={{ gap: 2 }}>
+          <b>
+            {behind
+              ? `${name} is pinned to ${hub.platform_pin ?? "none"}, this hub web runs ${hub.running_version}`
+              : `${name} is pinned to ${hub.running_version}, the release this hub web runs`}
+          </b>
+          <span className="ah-small ah-muted">
+            {behind
+              ? `hub doctor fails platform.version until they match. Sync pins hub.json to ${hub.running_version} and runs hub sync to bring the templates and hub.lock along.`
+              : "Run doctor again in Health to confirm."}
+          </span>
+        </div>
+        {behind && (
+          <Button
+            variant="primary"
+            icon="refresh-cw"
+            disabled={sync.isPending}
+            onClick={() => {
+              sync.reset();
+              setAsking(true);
+            }}
+          >
+            {sync.isPending ? "Syncing…" : `Sync to ${hub.running_version}`}
+          </Button>
+        )}
+      </div>
+      {result && <SyncOutcome result={result} />}
+      {sync.error && (
+        <span className="ah-small" role="alert" style={{ color: "var(--failed)" }}>
+          {sync.error.detail ?? sync.error.title}
+        </span>
+      )}
+      {asking && (
+        <ConfirmDialog
+          title={`Sync ${name} to ${hub.running_version}?`}
+          tone="primary"
+          consequences={[
+            `hub.json: platform.version ${hub.platform_pin ?? "none"} → ${hub.running_version}.`,
+            "hub sync rewrites the managed files and hub.lock; your own edits are kept.",
+            "On a conflict nothing is written and hub.json is put back.",
+            "Nothing is committed: review the changes and open a hub PR.",
+          ]}
+          confirmLabel={sync.isPending ? "Syncing…" : "Sync"}
+          pending={sync.isPending}
+          onCancel={() => {
+            setAsking(false);
+          }}
+          onConfirm={() => {
+            sync.mutate(hub.id, {
+              onSettled: () => {
+                setAsking(false);
+              },
+            });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 /* ---------- Hubs: register and remove are the only writes of Phase 2 ---------- */
+
+/** The hub's pin is a release other than this hub web's: `hub doctor` fails `platform.version`. */
+export function outdated(hub: HubView): boolean {
+  return hub.platform_pin !== null && hub.platform_pin !== hub.running_version;
+}
 
 function HubPlatform({ hub }: { hub: HubView }) {
   const lock = hub.lock_state ? LOCK[hub.lock_state] : null;
   return (
     <span className="ah-stack" style={{ gap: 2 }}>
       <span className="ah-small">
-        {hub.platform_pin ?? "not pinned"} pinned · lock {hub.lock_version ?? "none"}
+        <span style={outdated(hub) ? { color: "var(--failed)", fontWeight: 500 } : undefined}>
+          {hub.platform_pin ?? "not pinned"} pinned
+        </span>{" "}
+        · lock {hub.lock_version ?? "none"}
         {lock && (
           <>
             {" · "}
@@ -158,6 +288,7 @@ function HubValidity({ hub }: { hub: HubView }) {
 function Hubs() {
   const hubs = useHubs();
   const remove = useRemoveHub();
+  const sync = useSyncPlatform();
   const [removing, setRemoving] = useState<HubView | null>(null);
   const now = useNow(30_000);
   const formId = useId();
@@ -165,7 +296,7 @@ function Hubs() {
   return (
     <Section
       title="Hubs"
-      sub="Hub folders this app reads. Each hub is one project; nothing is written to them."
+      sub="Hub folders this app reads. Each hub is one project; only a platform sync writes to them."
       action={
         <Button
           variant="primary"
@@ -178,6 +309,11 @@ function Hubs() {
         </Button>
       }
     >
+      {(hubs.data?.items ?? [])
+        .filter((hub) => outdated(hub) || sync.data?.hub_id === hub.id)
+        .map((hub) => (
+          <PlatformSyncCard key={hub.id} hub={hub} sync={sync} />
+        ))}
       {hubs.isError ? (
         <ProblemError
           title={hubs.error.title}
@@ -301,8 +437,16 @@ function Stat({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/** The Linear row of the Collector's sources: hub web reads Linear, rather than receive events. */
+function linearHealth(view: LinearConnectionView | undefined): [Status, string] {
+  if (view?.connected) return ["done", "connected"];
+  if (view?.source) return ["failed", "key refused"];
+  return SOURCE_HEALTH.none;
+}
+
 function Collector() {
   const status = useCollectorStatus();
+  const linear = useLinearConnection();
   const settings = useSettings();
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
@@ -402,6 +546,14 @@ function Collector() {
             id: "health",
             label: "Health",
             render: (row) => {
+              if (row.source === "linear") {
+                const [tone, label] = linearHealth(linear.data);
+                return (
+                  <Link to="/settings/linear" aria-label={`Linear: ${label}. Open Linear settings`}>
+                    <StatusBadge status={tone} label={label} />
+                  </Link>
+                );
+              }
               const [tone, label] = SOURCE_HEALTH[row.state];
               return <StatusBadge status={tone} label={label} />;
             },
@@ -421,11 +573,193 @@ function Collector() {
         ]}
         footer={
           <span>
-            ok = events arrive as expected · delayed = no recent event · OpenTelemetry, GitHub and
-            Linear are not connected in this version.
+            ok = events arrive as expected · delayed = no recent event · OpenTelemetry and GitHub
+            are not connected in this version · Linear is read on demand:{" "}
+            <Link to="/settings/linear">connect it in Settings › Linear</Link>.
           </span>
         }
       />
+    </Section>
+  );
+}
+
+/* ---------- Linear: the key hub web reads the tracker with ---------- */
+
+const KEY_SOURCE: Record<"environment" | "settings", string> = {
+  environment: "LINEAR_API_KEY in hub web's environment",
+  settings: "Saved on this machine",
+};
+
+function LinearKeyForm({ replacing }: { replacing: boolean }) {
+  const [key, setKey] = useState("");
+  const connect = useConnectLinear();
+  const inputId = useId();
+  const messageId = useId();
+  const problem = connect.error;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const value = key.trim();
+    if (value === "") return;
+    connect.mutate(value, {
+      onSuccess: () => {
+        setKey("");
+      },
+    });
+  };
+  return (
+    <form className="ah-stack" style={{ gap: 4 }} onSubmit={submit}>
+      <label htmlFor={inputId} style={{ fontWeight: 500 }}>
+        {replacing ? "Replace the API key" : "Linear API key"}
+      </label>
+      <span className="ah-row" style={{ gap: 8, maxWidth: 640 }}>
+        <input
+          id={inputId}
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          className="ah-input ah-mono ah-grow"
+          placeholder="lin_api_…"
+          value={key}
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={messageId}
+          style={problem ? { borderColor: "var(--failed)" } : undefined}
+          onChange={(event) => {
+            setKey(event.target.value);
+            if (connect.isError) connect.reset();
+          }}
+        />
+        <Button
+          type="submit"
+          variant="primary"
+          icon="plug"
+          disabled={connect.isPending || key.trim() === ""}
+        >
+          {connect.isPending ? "Checking…" : "Connect"}
+        </Button>
+      </span>
+      <span id={messageId} className="ah-small" role={problem ? "alert" : undefined}>
+        {problem ? (
+          <span style={{ color: "var(--failed)" }}>
+            <Icon name="circle-x" size="sm" style={{ verticalAlign: "-3px", marginRight: 4 }} />
+            {problem.detail ?? problem.title}
+          </span>
+        ) : (
+          <span className="ah-muted">
+            Create a personal API key in Linear › Settings › Security &amp; access. hub web checks
+            it with Linear, keeps it on this machine only and sends it to api.linear.app alone.
+          </span>
+        )}
+      </span>
+    </form>
+  );
+}
+
+function Linear() {
+  const linear = useLinearConnection();
+  const check = useCheckLinear();
+  const disconnect = useDisconnectLinear();
+  const view = linear.data;
+  const badge = !view ? null : view.connected ? (
+    <StatusBadge status="done" label="Connected" />
+  ) : view.source ? (
+    <StatusBadge status="failed" label="Not working" />
+  ) : (
+    <StatusBadge status="idle" label="Not connected" />
+  );
+  return (
+    <Section
+      title="Linear"
+      sub="hub web reads a feature's tickets from Linear (title, status, assignee, blockers), read-only."
+      action={badge}
+    >
+      {linear.isError ? (
+        <ProblemError
+          title={linear.error.title}
+          detail={linear.error.detail}
+          status={linear.error.status}
+          onRetry={() => void linear.refetch()}
+        />
+      ) : !view ? (
+        <div className="ah-card ah-pad">
+          <Skeleton lines={2} height={16} />
+        </div>
+      ) : (
+        <div className="ah-card ah-pad ah-stack" style={{ gap: 16 }}>
+          {view.source && (
+            <div
+              style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 16 }}
+            >
+              <Stat label="Account">
+                {view.account ? (
+                  <div className="ah-small">
+                    <div>{view.account.name}</div>
+                    <div className="ah-muted">{view.account.email}</div>
+                  </div>
+                ) : (
+                  <span className="ah-subtle">—</span>
+                )}
+              </Stat>
+              <Stat label="Workspace">
+                {view.account ? (
+                  <a href={view.account.url} target="_blank" rel="noreferrer" className="ah-small">
+                    {view.account.workspace}{" "}
+                    <Icon name="external-link" size="sm" style={{ verticalAlign: "-2px" }} />
+                  </a>
+                ) : (
+                  <span className="ah-subtle">—</span>
+                )}
+              </Stat>
+              <Stat label="Key">
+                <div className="ah-small">{KEY_SOURCE[view.source]}</div>
+                {view.source === "settings" && <PathText path={view.key_path} max={30} />}
+              </Stat>
+              <Stat label="Checked">
+                <span className="ah-small">
+                  {view.checked_at ? <Time iso={view.checked_at} absolute /> : "—"}
+                </span>
+              </Stat>
+            </div>
+          )}
+          {view.problem && (
+            <div className="ah-small" role="alert" style={{ color: "var(--failed)" }}>
+              <Icon name="circle-x" size="sm" style={{ verticalAlign: "-3px", marginRight: 4 }} />
+              {view.problem}
+            </div>
+          )}
+          {view.source && (
+            <div className="ah-row" style={{ gap: 8 }}>
+              <Button
+                icon="refresh-cw"
+                disabled={check.isPending}
+                onClick={() => {
+                  check.mutate(undefined);
+                }}
+              >
+                {check.isPending ? "Checking…" : "Check connection"}
+              </Button>
+              {view.source === "settings" && (
+                <Button
+                  icon="x"
+                  disabled={disconnect.isPending}
+                  onClick={() => {
+                    disconnect.mutate(undefined);
+                  }}
+                >
+                  Disconnect
+                </Button>
+              )}
+            </div>
+          )}
+          {view.source === "environment" ? (
+            <p className="ah-small ah-muted" style={{ margin: 0 }}>
+              The key comes from LINEAR_API_KEY where hub web runs and wins over a saved one; change
+              it there and restart hub web.
+            </p>
+          ) : (
+            <LinearKeyForm replacing={view.source === "settings"} />
+          )}
+        </div>
+      )}
     </Section>
   );
 }
@@ -631,12 +965,13 @@ function About() {
 const BODIES: Readonly<Record<string, () => ReactNode>> = {
   hubs: () => <Hubs />,
   collector: () => <Collector />,
+  linear: () => <Linear />,
   privacy: () => <Privacy />,
   appearance: () => <Appearance />,
   about: () => <About />,
 };
 
-/** Settings (spec 01, D20): Hubs, Collector, Privacy, Appearance, About. */
+/** Settings (spec 01, D20): Hubs, Collector, Linear, Privacy, Appearance, About. */
 export function SettingsScreen() {
   const { section = "hubs" } = useParams();
   const { state, asOf } = useCollectorState();
