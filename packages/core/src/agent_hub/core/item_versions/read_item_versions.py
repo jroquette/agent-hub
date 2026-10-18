@@ -102,17 +102,24 @@ class ReadItemVersions:
         return ItemVersionContent(id=version.id, unit_kind=unit.kind, files=files)
 
     def _marked(self, ref: ItemRef) -> MarkedUnit:
-        if isinstance(ref, ToolkitRef):
-            marked = self._toolkit.marked_skill_unit(
-                ref.project, kind=ref.kind, source=ref.source, name=ref.name
-            )
-            named = item_id(ref.kind, ref.source, ref.name)
-        else:
-            marked = self._workflows.marked_workflow_unit(ref.project, ref.name)
-            named = ref.name
-        if marked is None:
-            raise EntityNotFoundError(entity=HISTORY_ENTITY, entity_id=f"{ref.project}/{named}")
-        return marked
+        return marked_unit(ref, toolkit_units=self._toolkit, workflow_units=self._workflows)
+
+
+def marked_unit(
+    ref: ItemRef, *, toolkit_units: ToolkitUnits, workflow_units: WorkflowUnits
+) -> MarkedUnit:
+    """The item's unit and mark; an item without a unit has no history (``HISTORY_ENTITY``)."""
+    if isinstance(ref, ToolkitRef):
+        marked = toolkit_units.marked_skill_unit(
+            ref.project, kind=ref.kind, source=ref.source, name=ref.name
+        )
+        named = item_id(ref.kind, ref.source, ref.name)
+    else:
+        marked = workflow_units.marked_workflow_unit(ref.project, ref.name)
+        named = ref.name
+    if marked is None:
+        raise EntityNotFoundError(entity=HISTORY_ENTITY, entity_id=f"{ref.project}/{named}")
+    return marked
 
 
 def _next_cursor(versions: tuple[ItemVersionMeta, ...], limit: int) -> str | None:

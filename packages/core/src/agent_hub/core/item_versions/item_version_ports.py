@@ -153,3 +153,11 @@ class ItemWriteResult(ViewModel):
     versioned: bool
     reason: UnversionedReason | None
     version: ItemVersionView | None
+
+
+class ItemVersionWrites(Protocol):
+    """The history routes' writes (``POST .../versions/{version_id}/restore``; Publish in PR 3)."""
+
+    def restore(self, ref: ItemRef, version_id: str, *, confirm_managed: bool) -> ItemWriteResult:
+        """Write the version of the item's own unit back and record a ``restore`` version."""
+        ...
