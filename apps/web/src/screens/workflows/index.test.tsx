@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
+  aPage,
   aProblem,
   aWorkflowCatalog,
   aWorkflowDetail,
@@ -284,5 +285,109 @@ describe("WorkflowDetailScreen", () => {
 
     await screen.findByRole("complementary", { name: "Node plan" });
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
+  function renderWith(name: string, detail: ApiRoutes[string], query = "") {
+    return renderWithApi(<WorkflowDetailScreen />, {
+      routes: {
+        [`/api/v1/workflows/agent-hub/${name}`]: detail,
+        "/api/v1/workflows": aWorkflowCatalog({ problems: [] }),
+        "/api/v1/workflow-runs": aPage([]),
+      },
+      path: `/workflows/agent-hub/${name}${query}`,
+      route: "/workflows/:project/:name",
+    });
+  }
+
+  it("AC-PG-13.3 opens Start run with this workflow chosen from Run this workflow", async () => {
+    const user = userEvent.setup();
+    renderWith("feature-flow", aWorkflowDetail());
+
+    await user.click(await screen.findByRole("button", { name: "Run this workflow" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Start a workflow run" });
+    const picker = within(dialog).getByRole("combobox", { name: "Workflow" });
+    await waitFor(() => {
+      expect(picker).toHaveDisplayValue("agent-hub / feature-flow");
+    });
+  });
+
+  it("AC-PG-13.3 offers no start from the page for issue-to-pr, which starts from hub run", async () => {
+    renderWith("issue-to-pr", aWorkflowDetail({ name: "issue-to-pr", source: "builtin" }));
+
+    await screen.findByRole("heading", { level: 1, name: "issue-to-pr" });
+    expect(screen.queryByRole("button", { name: "Run this workflow" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
+    expect(screen.getByText(/Starts from/)).toHaveTextContent("Starts from hub run");
+  });
+
+  it("AC-PG-13.4 keeps the graph and document in a closed Advanced disclosure", async () => {
+    renderWith("feature-flow", aWorkflowDetail());
+
+    const summary = await screen.findByText("Advanced: graph and document");
+    const details = summary.closest("details");
+    expect(details).not.toBeNull();
+    expect(details).not.toHaveAttribute("open");
+    expect(details).toContainElement(screen.getByRole("group", { name: "Workflow graph" }));
+    expect(details).toContainElement(screen.getByRole("region", { name: "Document" }));
+    expect(details).not.toContainElement(screen.getByRole("list", { name: "Steps" }));
+  });
+
+  it("AC-PG-13.4 opens the Advanced disclosure when a step is selected", async () => {
+    renderWith("feature-flow", aWorkflowDetail(), "?node=plan");
+
+    await screen.findByRole("complementary", { name: "Node plan" });
+    expect(screen.getByText("Advanced: graph and document").closest("details")).toHaveAttribute(
+      "open",
+    );
+  });
+
+  it("AC-PG-13.4 shows each step's kind, its prompt or command, and a repeat's rounds", async () => {
+    renderWith(
+      "feature-flow",
+      aWorkflowDetail({
+        layers: [[{ id: "fixing", type: "loop_group", depends_on: [], description: null }]],
+        document: {
+          name: "feature-flow",
+          nodes: [
+            {
+              id: "fixing",
+              type: "loop_group",
+              max_iterations: 3,
+              until_bash: ["make", "check"],
+              nodes: [
+                { id: "fixing__fix", type: "agent", prompt: "Fix the failing test." },
+                {
+                  id: "fixing__check",
+                  type: "shell",
+                  depends_on: ["fixing__fix"],
+                  command: ["make", "check"],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    const steps = await screen.findByRole("list", { name: "Steps" });
+    expect(steps).toHaveTextContent(
+      "Each round runs these steps; at most 3 rounds, stopping as soon as they pass.",
+    );
+    expect(within(steps).getByText("Read the prompt")).toBeInTheDocument();
+    expect(steps).toHaveTextContent("Fix the failing test.");
+    expect(steps).toHaveTextContent("$ make check");
+  });
+
+  it("AC-PG-13.4 says a built-in is not a hub file and how to propose a copy", async () => {
+    renderWith("issue-to-pr", aWorkflowDetail({ name: "issue-to-pr", source: "builtin" }));
+
+    const lives = await screen.findByRole("region", { name: "Where it lives" });
+    expect(lives).toHaveTextContent("Built into agent-hub.");
+    expect(lives).toHaveTextContent(
+      "To change it, copy it into the hub's workflows/ folder with the same name: the hub's copy wins.",
+    );
   });
 });

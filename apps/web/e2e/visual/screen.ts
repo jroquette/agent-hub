@@ -29,18 +29,46 @@ async function open(page: Page, path: string, follow?: string): Promise<void> {
   await page.waitForLoadState("networkidle");
 }
 
+/** What a visual test checks beyond its baseline. */
+export interface ScreenOptions {
+  /** After opening, follow the first link whose href starts with this. */
+  follow?: string;
+  /**
+   * Only the main area scrolls (AC-PG-7.1): the document is no taller than the viewport-high
+   * shell. jsdom has no layout, so this is only checked here.
+   */
+  fitsViewport?: boolean;
+}
+
+const VIEWPORT = { width: 1440, height: 900 };
+
 /**
  * One visual test: the screen at `path` (then `follow`'s first link) matches
  * `baselines/<area>/<route>.png`. Relative times (`<time>`) are masked, as in the capture.
+ * The last argument is `follow` as a string, or the options.
  */
-export function screen(area: string, route: string, path: string, follow?: string): void {
+export function screen(
+  area: string,
+  route: string,
+  path: string,
+  followOrOptions?: string | ScreenOptions,
+): void {
+  const options: ScreenOptions =
+    typeof followOrOptions === "string" ? { follow: followOrOptions } : (followOrOptions ?? {});
   // In its own block: a test.use at this module's top level would reach only the first spec
   // file that imports it.
   test.describe(area, () => {
-    test.use({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
+    test.use({ viewport: VIEWPORT, colorScheme: "dark" });
 
     test(`${area}/${route} matches its baseline`, async ({ page }) => {
-      await open(page, path, follow);
+      await open(page, path, options.follow);
+      if (options.fitsViewport) {
+        expect(
+          await page.evaluate(
+            () => (document.scrollingElement ?? document.documentElement).scrollHeight,
+          ),
+        ).toBeLessThanOrEqual(VIEWPORT.height);
+      }
       await expect(page).toHaveScreenshot([area, `${route}.png`], {
         mask: [page.locator("time")],
         animations: "disabled",

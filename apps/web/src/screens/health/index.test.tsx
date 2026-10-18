@@ -316,4 +316,60 @@ describe("HealthScreen", () => {
     const post = requests.find((r) => r.method === "POST");
     expect(new URL(post?.url ?? "").pathname).toBe("/api/v1/hubs/hub-1/doctor-fix");
   });
+
+  const leakFinding = aFinding({
+    rule: "brain.leak",
+    severity: "error",
+    path: "../demo-api/docs/adr/0001.md",
+    line: 1,
+    message: "line also in the brain at brain/drafts/0001.md:1",
+    fix: "reword or remove the line here, or reword the brain note if it quotes this file",
+  });
+
+  it("AC-PG-26.3 says Nothing to fix when the fix changed no file", async () => {
+    const user = userEvent.setup();
+    open({
+      "/api/v1/doctor/findings": aPage([leakFinding, ...findings]),
+      "/api/v1/hubs": aPage([aHub({ id: "hub-1", project: "demo" })]),
+      "POST /api/v1/hubs/hub-1/doctor-fix": {
+        hub_id: "hub-1",
+        ok: true,
+        exit_code: 0,
+        output: [],
+        changed_files: [],
+        errors_left: 0,
+        warnings_left: 2,
+      },
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Fix 1 finding" }));
+    await user.click(
+      within(screen.getByRole("alertdialog", { name: "Fix 1 finding in demo?" })).getByRole(
+        "button",
+        { name: "Fix" },
+      ),
+    );
+
+    const done = await screen.findByRole("status", { name: "Fix result" });
+    expect(done).toHaveTextContent("Nothing to fix: no file changed.");
+    expect(done).toHaveTextContent("Doctor ran again: 0 errors, 2 warnings left.");
+    expect(done).not.toHaveTextContent("Fixed");
+  });
+
+  it("AC-PG-26.3 asks to pick a project when All projects are in scope", async () => {
+    const { requests } = open({
+      "/api/v1/doctor/findings": aPage([leakFinding, ...findings]),
+      "/api/v1/hubs": aPage([
+        aHub({ id: "hub-1", project: "demo" }),
+        aHub({ id: "hub-2", project: "loki-trader" }),
+      ]),
+    });
+
+    const strip = await screen.findByRole("region", { name: "Automatic fixes" });
+    await waitFor(() => {
+      expect(strip).toHaveTextContent("Pick a project to fix");
+    });
+    expect(within(strip).queryByRole("button", { name: /^Fix/ })).toBeNull();
+    expect(requests.some((r) => r.method === "POST")).toBe(false);
+  });
 });

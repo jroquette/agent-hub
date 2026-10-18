@@ -126,6 +126,46 @@ describe("SettingsScreen", () => {
     expect(new URL(post?.url ?? "").pathname).toBe("/api/v1/hubs/hub-3/platform-sync");
   });
 
+  it("AC-PG-23.4 says nothing is committed and to run doctor again in Health after a sync", async () => {
+    let synced = false;
+    open("hubs", {
+      "/api/v1/hubs": () =>
+        aPage([
+          aHub(),
+          aHub({ id: "hub-3", project: "old-hub", platform_pin: synced ? "0.4.0" : "0.3.0" }),
+        ]),
+      "POST /api/v1/hubs/hub-3/platform-sync": () => {
+        synced = true;
+        return {
+          hub_id: "hub-3",
+          previous_version: "0.3.0",
+          version: "0.4.0",
+          ok: true,
+          exit_code: 0,
+          output: [],
+          changed_files: ["hub.json", "hub.lock"],
+        };
+      },
+    });
+
+    const card = await screen.findByLabelText("old-hub platform version");
+    expect(card).toHaveTextContent("hub doctor fails platform.version until they match.");
+    await userEvent.click(within(card).getByRole("button", { name: "Sync to 0.4.0" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Sync old-hub to 0.4.0?" });
+    expect(dialog).toHaveTextContent("Nothing is committed: review the changes and open a hub PR.");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Sync" }));
+
+    const outcome = await within(card).findByRole("status");
+    expect(outcome).toHaveTextContent(
+      "Changed in the hub checkout, not committed: hub.json, hub.lock. Review them and open a hub PR.",
+    );
+    await waitFor(() => {
+      expect(card).toHaveTextContent("Run doctor again in Health to confirm.");
+    });
+    expect(card).toHaveTextContent("old-hub is pinned to 0.4.0, the release this hub web runs");
+    expect(within(card).queryByRole("button", { name: /^Sync to/ })).toBeNull();
+  });
+
   it("shows why a sync failed", async () => {
     open("hubs", {
       "/api/v1/hubs": aPage([aHub({ id: "hub-3", project: "old-hub", platform_pin: "0.3.0" })]),
