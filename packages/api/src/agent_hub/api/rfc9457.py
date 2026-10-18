@@ -43,7 +43,10 @@ from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteToo
 from agent_hub.core.brain.brain_path import BrainPathError
 from agent_hub.core.errors import AgentHubError, EventConflictError
 from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
-from agent_hub.core.item_versions.record_and_write import ItemWrittenUnrecordedError
+from agent_hub.core.item_versions.record_and_write import (
+    ItemWrittenRaceLostError,
+    ItemWrittenUnrecordedError,
+)
 from agent_hub.core.item_versions.unit_content import CorruptVersionError
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
 from agent_hub.core.learnings.brain_change_requests import (
@@ -302,7 +305,7 @@ def _corrupt_version_problem(_: CorruptVersionError) -> Problem:
     return Problem(
         500,
         "Stored version unreadable",
-        "The stored version could not be read back; nothing was written.",
+        "A stored version of this item could not be read back.",
         {"code": "corrupt_version"},
     )
 
@@ -311,14 +314,14 @@ def _version_race_problem(_: ItemVersionSequenceError) -> Problem:
     return Problem(
         503,
         "Item version busy",
-        "Another reader recorded a version of this item at the same time; nothing was written. "
-        "Try again.",
+        "Another request recorded a version of this item at the same time. Try again.",
         {"code": "version_race", "written": False},
         {"Retry-After": "1"},
     )
 
 
 def _written_unrecorded_problem(_: ItemWrittenUnrecordedError) -> Problem:
+    # A lost seq race or the store failing (a busy database) after the write landed.
     return Problem(
         503,
         "Item written, version not recorded",
@@ -335,6 +338,7 @@ ITEM_WRITE_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     CorruptVersionError: _corrupt_version_problem,
     ItemVersionSequenceError: _version_race_problem,
     ItemWrittenUnrecordedError: _written_unrecorded_problem,
+    ItemWrittenRaceLostError: _written_unrecorded_problem,
 }
 
 

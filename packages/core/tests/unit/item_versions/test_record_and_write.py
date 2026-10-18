@@ -11,6 +11,7 @@ from typing import Final
 
 import pytest
 
+from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_files.hub_lock import HubLock, ManagedFileEntry
 from agent_hub.core.hubs.hub_registry import UnreadUnit
 from agent_hub.core.item_versions.append_version import ATTEMPTS
@@ -29,6 +30,7 @@ from agent_hub.core.item_versions.item_version import (
     VersionOrigin,
 )
 from agent_hub.core.item_versions.record_and_write import (
+    ItemWrittenRaceLostError,
     ItemWrittenUnrecordedError,
     NoAuthor,
     RecordAndWrite,
@@ -466,10 +468,11 @@ def test_says_written_unrecorded_when_race_lost_after_write() -> None:
     assert isinstance(rig.store, _RacedStore)
     rig.store.losses = ATTEMPTS
 
-    with pytest.raises(ItemWrittenUnrecordedError) as raised:
+    with pytest.raises(ItemWrittenRaceLostError) as raised:
         rig.step.write(HUB, _agent(), _scout(SCOUT), origin=VersionOrigin.PUBLISH)
 
     assert isinstance(raised.value, ItemVersionSequenceError)
+    assert isinstance(raised.value, ItemWrittenUnrecordedError)
     assert AGENT not in str(raised.value)
     assert rig.hub.skill_files[AGENT] == SCOUT
 
@@ -482,5 +485,62 @@ def test_writes_nothing_when_race_lost_before_write() -> None:
 
     # The disk's content could not be recorded first, so the unit is left as it was.
     assert not isinstance(raised.value, ItemWrittenUnrecordedError)
+    assert rig.hub.skill_files[AGENT] == SCOUT
+    assert rig.writer.writes == []
+
+
+class _StoreBusyError(AgentHubError):
+    """Stands in for the storage adapter's busy database (a ``DatabaseAccessError``)."""
+
+
+class _BusyAfterStore(InMemoryItemVersionStore):
+    """Appends ``appends`` versions, then fails every append as a busy database does."""
+
+    def __init__(self, appends: int) -> None:
+        super().__init__()
+        self.appends = appends
+
+    def append(self, version: NewItemVersion) -> ItemVersion:
+        if self.appends == 0:
+            raise _StoreBusyError("database is locked")
+        self.appends -= 1
+        return super().append(version)
+
+
+def test_says_written_unrecorded_when_store_fails_after_write() -> None:
+    rig = _Rig({AGENT: SCOUT})
+    rig.store = _BusyAfterStore(appends=1)
+    rig.step = RecordAndWrite(
+        rig.store,
+        reader=rig.reader,
+        writer=rig.writer,
+        author_of=lambda _project: AUTHOR,
+        clock=lambda: NOW,
+        capture=rig.capture,
+    )
+
+    with pytest.raises(ItemWrittenUnrecordedError) as raised:
+        rig.step.write(HUB, _agent(), _scout(NEWER), origin=VersionOrigin.PUBLISH)
+
+    assert isinstance(raised.value.__cause__, _StoreBusyError)
+    assert rig.hub.skill_files[AGENT] == NEWER
+    assert rig.origins() == [(VersionOrigin.EXTERNAL, file_hash(SCOUT))]
+
+
+def test_raises_store_error_when_store_fails_before_write() -> None:
+    rig = _Rig({AGENT: SCOUT})
+    rig.store = _BusyAfterStore(appends=0)
+    rig.step = RecordAndWrite(
+        rig.store,
+        reader=rig.reader,
+        writer=rig.writer,
+        author_of=lambda _project: AUTHOR,
+        clock=lambda: NOW,
+        capture=rig.capture,
+    )
+
+    with pytest.raises(_StoreBusyError):
+        rig.step.write(HUB, _agent(), _scout(NEWER), origin=VersionOrigin.PUBLISH)
+
     assert rig.hub.skill_files[AGENT] == SCOUT
     assert rig.writer.writes == []
