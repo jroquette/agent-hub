@@ -4903,6 +4903,7 @@ def decide_on_clock(
     hook_python: str,
     run_python: Callable[..., Any],
     tmp_path: Path,
+    step: float = CLOCK_STEP,
 ) -> tuple[list[tuple[str, str] | None], int]:
     batch = tmp_path / "decide-clock.json"
     batch.write_text(json.dumps([[event, environ] for event, environ in calls]))
@@ -4910,7 +4911,7 @@ def decide_on_clock(
         hook_python,
         DECIDE_CLOCK,
         path=blocked_hub / HOOKS,
-        args=[str(blocked_hub), str(batch), str(CLOCK_STEP)],
+        args=[str(blocked_hub), str(batch), str(step)],
         cwd=tmp_path,
         env={"HOME": str(tmp_path)},
     )
@@ -4972,17 +4973,13 @@ SKIPPED_TREES = (
     "node_modules",
     ".claude/worktrees",
     ".venv",
-    "venv",
     "__pycache__",
     ".tox",
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
-    "dist",
-    "build",
     ".terraform",
     ".next",
-    "target",
 )
 
 
@@ -5019,22 +5016,42 @@ def test_keeps_secret_reason_when_secret_named_by_case_or_link(
 ) -> None:
     api = blocked_hub.parent / "demo-api"
     put(api, ".ENV", "STAGE=prod\n")
+    put(api, ".ENV.LOCAL", "STAGE=prod\n")
     put(api, ".env", "STAGE=prod\n")
+    put(api, ".env.production", "STAGE=prod\n")
     (api / "config").mkdir()
     (api / "config" / "link.json").symlink_to(api / ".env")
+    (api / "config" / "app.json").symlink_to(api / ".env.production")
     events = [
         read_call(".ENV"),
         bash_call("cat .ENV"),
+        read_call(".ENV.LOCAL"),
         read_call("config/link.json"),
         bash_call("cat config/link.json"),
+        read_call("config/app.json"),
+        bash_call("cat config/app.json"),
+        tool_call("Grep", pattern="x", path="config/app.json"),
         tool_call("Grep", pattern="x", path="config"),
     ]
 
     verdicts, opened = decide_opens([(at(event, api), None) for event in events])
 
     names = {os.path.basename(path) for path in opened}
-    assert names.isdisjoint({".ENV", ".env", "link.json"})
-    assert not any(v and v[1].startswith("blocked word") for v in verdicts)
+    assert names.isdisjoint(
+        {".ENV", ".ENV.LOCAL", ".env", ".env.production", "link.json", "app.json"}
+    )
+    # the secret-file rule's own reasons; a walk skips links, so the folder Grep has none
+    assert verdicts == [
+        ("deny", ENV_FILE_DENIAL.format(".ENV")),
+        ("deny", ENV_READ_DENIAL.format(".ENV")),
+        ("deny", ENV_FILE_DENIAL.format(".ENV.LOCAL")),
+        ("deny", ENV_FILE_DENIAL.format("link.json")),
+        ("deny", ENV_READ_DENIAL.format("config/link.json")),
+        ("deny", ENV_FILE_DENIAL.format("app.json")),
+        ("deny", ENV_READ_DENIAL.format("config/app.json")),
+        ("deny", ENV_FILE_DENIAL.format("app.json")),
+        None,
+    ]
 
 
 def test_denies_bash_read_when_braces_or_link_name_listed_file(
@@ -5088,3 +5105,85 @@ def test_denies_grep_when_glob_with_slash_matches_from_cwd(
     verdicts = decide([(at(grep, ws), None)])
 
     assert verdicts == [blocked_word("prod", "the contents of demo-api/config/app.json")]
+
+
+@pytest.mark.parametrize("tree", ["build", "dist", "target", "venv"])
+def test_denies_grep_when_build_tree_file_holds_word(
+    decide: Decide, blocked_hub: Path, tree: str
+) -> None:
+    api = blocked_hub.parent / "demo-api"
+    put(api, f"{tree}/config/app.json", '{"stage": "prod"}\n')
+
+    verdicts = decide([(at(tool_call("Grep", pattern="x", path="."), api), None)])
+
+    assert verdicts == [blocked_word("prod", f"the contents of {tree}/config/app.json")]
+
+
+# AGH-285 second review: the clock is read for every folder entry listed and again for every
+# entry or match handled, so a folder's handling cannot run past the budget unseen.
+HANDLED_ENTRIES = 500
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        bash_call("cat many/*"),
+        tool_call("Grep", pattern="x", path="many"),
+        tool_call("Grep", pattern="x"),
+    ],
+    ids=["glob", "grep-walk", "grep-no-path"],
+)
+def test_reads_clock_when_each_folder_entry_handled(
+    blocked_hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    tmp_path: Path,
+    event: dict[str, Any],
+) -> None:
+    api = blocked_hub.parent / "demo-api"
+    folder = api / "many"
+    folder.mkdir(parents=True)
+    for index in range(HANDLED_ENTRIES):
+        (folder / f"f{index:04}.txt").touch()
+
+    verdicts, looks = decide_on_clock(
+        blocked_hub,
+        [(at(event, api), None)],
+        hook_python=hook_python,
+        run_python=run_python,
+        tmp_path=tmp_path,
+        step=0.0,
+    )
+
+    assert verdicts == [None]
+    assert looks >= 2 * HANDLED_ENTRIES
+
+
+# A brace token is scanned without backtracking, and one over BLOCKED_BRACE_TOKEN_CAP characters
+# asks (too many files): `{` and 20,000 commas with no `}` gets that verdict.
+def test_asks_when_brace_token_over_cap(decide: Decide, blocked_hub: Path) -> None:
+    api = blocked_hub.parent / "demo-api"
+    put(api, "config/app.json", '{"stage": "prod"}\n')
+    commas = "{" + "," * 20_000
+    near_cap = "config/{app,x}.json" + "{" * 4000
+
+    verdicts = decide(
+        [
+            (at(bash_call(f"cat {commas}"), api), None),
+            (at(bash_call(f"cat config/app.json {near_cap}"), api), None),
+        ]
+    )
+
+    assert verdicts == [
+        unchecked(CONTENTS_CAUSES["too-many"]),
+        blocked_word("prod", "the contents of config/app.json"),
+    ]
+
+
+def test_states_brace_token_cap_when_constant_read(
+    blocked_hub: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    code = "import json\nimport guard\nprint(json.dumps(guard.BLOCKED_BRACE_TOKEN_CAP))\n"
+
+    assert run_python(hook_python, code, path=blocked_hub / HOOKS) == 4096
