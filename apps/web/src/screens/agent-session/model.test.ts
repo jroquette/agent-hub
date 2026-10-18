@@ -175,6 +175,26 @@ describe("reduceTranscript (transcript)", () => {
     });
   });
 
+  it("goes idle when the turn's result arrives without its status frame", () => {
+    const running = { type: "status", status: { status: "running", end_reason: null } } as const;
+    const ended = run([running, record("user.message", { seq: 1 }), record("result", { seq: 2 })]);
+
+    expect(ended.status).toBe("idle");
+    expect(run([record("user.message", { seq: 3 })], ended).status).toBe("running");
+  });
+
+  it("stays running when the result ends a turn with a message queued", () => {
+    const running = { type: "status", status: { status: "running", end_reason: null } } as const;
+    const state = run([
+      running,
+      record("user.message", { seq: 1 }),
+      record("user.message", { seq: 2 }),
+      record("result", { seq: 3 }),
+    ]);
+
+    expect(state.status).toBe("running");
+  });
+
   it("shows the latest running cost and adds up tokens when turn results arrive", () => {
     // Each result carries Claude Code's running total for the session: 0.01, 0.02, 0.03 a turn.
     const result = (seq: number, cost: string | null) =>
@@ -209,6 +229,18 @@ describe("reduceTranscript (transcript)", () => {
     ]);
 
     expect(state.entries[0]).toMatchObject({ kind: "assistant", redacted: true });
+  });
+
+  it("takes a switch back to auto mode as a mode change", () => {
+    const state = run([
+      record("settings", { seq: 1, body: { mode: "acceptEdits" } }),
+      record("settings", { seq: 2, body: { mode: "auto" } }),
+    ]);
+
+    expect(state.mode).toBe("auto");
+    expect(
+      state.entries.map((entry) => (entry.kind === "notice" ? entry.text : entry.kind)),
+    ).toEqual(["Mode set to Accept edits", "Mode set to Auto"]);
   });
 
   it("turns audit and driver records into notices when they are not chat content", () => {
@@ -575,7 +607,8 @@ describe("changedFiles (review)", () => {
       ["/repo/src/a.ts", true, 2],
       ["/repo/src/b.ts", false, 2],
     ]);
-    expect(files[0]).toMatchObject({ added: 3, removed: 1, lastChangeId: "t4" });
+    // A written file counts its final lines: the edit's removed line was never in the repo.
+    expect(files[0]).toMatchObject({ added: 2, removed: 0, lastChangeId: "t4" });
     expect(files[1]).toMatchObject({ added: 1, removed: 1, lastChangeId: "t5" });
     expect(files[1]?.changes[1]?.state).toBe("error");
   });

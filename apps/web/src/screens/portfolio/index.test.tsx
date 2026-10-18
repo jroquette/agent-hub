@@ -82,20 +82,31 @@ describe("PortfolioScreen", () => {
     expect(within(needs).getAllByRole("link")).toHaveLength(6);
   });
 
-  it("shows live, runs in flight and estimated cost on cards with dashes for unconnected sources", async () => {
+  it("shows live, runs in flight and estimated cost on cards and says once which sources are not connected", async () => {
     renderWithApi(<PortfolioScreen />, { routes });
 
     const card = await screen.findByRole("article", { name: "Project agent-hub" });
     expect(within(card).getByText("Live sessions").nextSibling).toHaveTextContent("2");
-    expect(within(card).getByText("Runs in progress · 2")).toBeInTheDocument();
+    expect(within(card).getByText("Runs in flight").nextSibling).toHaveTextContent("2");
     expect(within(card).getByText("$10.50")).toBeInTheDocument();
-    const prs = within(card).getByText("Open PRs").nextElementSibling;
-    expect(prs).toHaveTextContent("—CI —");
-    expect(prs).toHaveAttribute("title", "GitHub is not connected in this version.");
-    const ready = within(card).getByText("Ready issues").nextElementSibling;
-    expect(ready).toHaveTextContent("—");
-    expect(ready).toHaveAttribute("title", "Linear is not connected in this version.");
-    expect(screen.getAllByText("Cost estimated from transcripts")).toHaveLength(2);
+    expect(within(card).queryByText("Open PRs")).not.toBeInTheDocument();
+    expect(within(card).getByText(/GitHub and Linear are not connected/)).toBeInTheDocument();
+    expect(screen.getByText("Cost is estimated from transcripts")).toBeInTheDocument();
+  });
+
+  it("collapses proposed learnings of a project into one Triage line", async () => {
+    renderWithApi(<PortfolioScreen />, {
+      routes: {
+        ...routes,
+        "/api/v1/needs-you": aPage([
+          aNeedsYouItem({ kind: "learning", verb: "Review learning", context: "A" }),
+          aNeedsYouItem({ kind: "learning", verb: "Review learning", context: "B" }),
+        ]),
+      },
+    });
+
+    expect(await screen.findByText("Triage 2 learnings")).toBeInTheDocument();
+    expect(screen.queryByText("Review learning")).not.toBeInTheDocument();
   });
 
   it("orders cards by items that need you, then live sessions", async () => {
@@ -156,7 +167,7 @@ describe("PortfolioScreen", () => {
     await user.click(await screen.findByRole("button", { name: "Health" }));
     expect(screen.queryByText("Run AGH-79 failed")).not.toBeInTheDocument();
     expect(screen.getByText("New doctor error")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Approvals" }));
+    await user.click(screen.getByRole("button", { name: "Learnings" }));
     expect(screen.getByText("Nothing happened in this period.")).toBeInTheDocument();
   });
 
@@ -243,7 +254,7 @@ describe("PortfolioScreen", () => {
       expect(screen.getByText(/No session\s+is running\./)).toBeInTheDocument();
       expect(screen.getByText("Nothing happened in this period.")).toBeInTheDocument();
       expect(screen.getByText(/No sessions yet\. Start Claude Code in/)).toBeInTheDocument();
-      expect(screen.getAllByText("No previous period to compare").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("First period tracked").length).toBeGreaterThan(0);
     });
 
     it("shows the live count in the empty copy when sessions run", async () => {

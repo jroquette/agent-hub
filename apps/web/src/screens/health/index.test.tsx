@@ -120,6 +120,26 @@ describe("HealthScreen", () => {
     );
   });
 
+  it("links a platform.version error to the sync in Settings", async () => {
+    open({
+      "/api/v1/doctor/findings": aPage([
+        aFinding({
+          rule: "platform.version",
+          severity: "error",
+          path: "hub.json",
+          message: "this hub is pinned to 0.3.0 but this hub command is 0.4.0",
+          fix: "run the pinned release",
+        }),
+      ]),
+    });
+
+    await screen.findByText(/pinned to 0\.3\.0/);
+    expect(
+      within(group("platform.version")).getByRole("link", { name: "Sync in Settings" }),
+    ).toHaveAttribute("href", "/settings/hubs");
+    expect(screen.queryByRole("link", { name: "Sync in Settings" })).toBeInTheDocument();
+  });
+
   it("hides info findings until their severity is turned on", async () => {
     open();
 
@@ -230,5 +250,70 @@ describe("HealthScreen", () => {
     await screen.findByText("AGENTS.md: 132 lines, limit 100");
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  it("offers one command that fixes every brain.leak, split by file", async () => {
+    const user = userEvent.setup();
+    const leaks = Array.from({ length: 12 }, (_, n) =>
+      aFinding({
+        rule: "brain.leak",
+        severity: "error",
+        path: n < 11 ? "../demo-api/docs/adr/0001.md" : "../demo-api/README.md",
+        line: n + 1,
+        message: `line also in the brain at brain/drafts/0001.md:${String(n + 1)}`,
+        fix: "reword or remove the line here, or reword the brain note if it quotes this file",
+      }),
+    );
+    open({ "/api/v1/doctor/findings": aPage([...leaks, ...findings]) });
+
+    const strip = await screen.findByRole("region", { name: "Automatic fixes" });
+    expect(strip).toHaveTextContent("12 of 16 findings can be fixed automatically");
+    expect(strip).toHaveTextContent("4 need a person");
+    expect(strip).toHaveTextContent("./hub doctor --fix");
+
+    const leak = group("brain.leak");
+    expect(within(leak).getByText("Auto-fix")).toBeInTheDocument();
+    expect(within(leak).getByText(/doctor --fix --only brain\.leak/)).toBeInTheDocument();
+    const file = within(leak).getByRole("button", { name: /0001\.md.*11 lines/ });
+    expect(within(leak).queryByText("Copy fix")).toBeNull();
+    await user.click(file);
+    expect(within(leak).getAllByRole("button", { name: "Copy fix" })).toHaveLength(11);
+    expect(within(group("lock.drift")).getByText("Needs a person")).toBeInTheDocument();
+  });
+
+  it("fixes every auto-fixable finding from the screen after confirming", async () => {
+    const user = userEvent.setup();
+    const leak = aFinding({
+      rule: "brain.leak",
+      severity: "error",
+      path: "../demo-api/docs/adr/0001.md",
+      line: 1,
+      message: "line also in the brain at brain/drafts/0001.md:1",
+      fix: "reword or remove the line here, or reword the brain note if it quotes this file",
+    });
+    const { requests } = open({
+      "/api/v1/doctor/findings": aPage([leak, ...findings]),
+      "/api/v1/hubs": aPage([aHub({ id: "hub-1", project: "demo" })]),
+      "POST /api/v1/hubs/hub-1/doctor-fix": {
+        hub_id: "hub-1",
+        ok: true,
+        exit_code: 1,
+        output: ["fixed brain/drafts/0001.md: 1 lines now point at the repo"],
+        changed_files: ["brain/drafts/0001.md"],
+        errors_left: 1,
+        warnings_left: 2,
+      },
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Fix 1 finding" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Fix 1 finding in demo?" });
+    expect(dialog).toHaveTextContent("never a code repo");
+    await user.click(within(dialog).getByRole("button", { name: "Fix" }));
+
+    const done = await screen.findByRole("status", { name: "Fix result" });
+    expect(done).toHaveTextContent("Fixed 1 file. Doctor ran again: 1 error, 2 warnings left.");
+    expect(done).toHaveTextContent("fixed brain/drafts/0001.md");
+    const post = requests.find((r) => r.method === "POST");
+    expect(new URL(post?.url ?? "").pathname).toBe("/api/v1/hubs/hub-1/doctor-fix");
   });
 });

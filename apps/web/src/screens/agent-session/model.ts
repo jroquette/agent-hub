@@ -9,6 +9,7 @@
  * `[redacted: <kind>]` marker is the stored copy (E9): live frames carry the original text.
  */
 import type { components } from "../../api/schema";
+import { netDiff, type NetDiff } from "./netDiff";
 
 type Schemas = components["schemas"];
 export type LogRecord = Schemas["LogRecord"];
@@ -84,6 +85,8 @@ export interface ToolView {
   /** A unified diff the server attached to the call, when it did. */
   diff: string | null;
   result: ToolResultView | null;
+  /** When its call record was written, for how long it has run. */
+  startedAt?: string | null;
 }
 
 export interface PermissionDecisionView {
@@ -452,6 +455,9 @@ export interface ChangedFile {
   removed: number;
   /** The id of the latest change: a review marked before it is out of date. */
   lastChangeId: string;
+  /** What the applied changes add up to, as one diff (null when they cannot be added up, or
+   * there is only one); when there is one, `added` and `removed` are its lines. */
+  net: NetDiff | null;
 }
 
 /** Lines added and removed in a unified diff, headers left out. */
@@ -499,6 +505,7 @@ export function changedFiles(state: Pick<TranscriptState, "tools" | "permissions
       added: 0,
       removed: 0,
       lastChangeId: tool.id,
+      net: null,
     };
     file.changes.push(change);
     file.lastChangeId = tool.id;
@@ -507,6 +514,26 @@ export function changedFiles(state: Pick<TranscriptState, "tools" | "permissions
       file.removed += stats.removed;
     }
     if (!known) files.set(path, file);
+  }
+  for (const file of files.values()) {
+    const applied = file.changes.filter(
+      (change) => change.state !== "error" && change.state !== "denied",
+    );
+    if (applied.length < 2) continue;
+    file.net = netDiff(
+      file.path,
+      applied.map((change) => ({
+        name: change.tool.name,
+        input: change.tool.input,
+        diff: change.diff,
+        numbered: change.numbered,
+      })),
+      file.created,
+    );
+    if (file.net) {
+      file.added = file.net.added;
+      file.removed = file.net.removed;
+    }
   }
   return [...files.values()];
 }
@@ -602,6 +629,7 @@ function applyToolCall(state: TranscriptState, body: JsonObject): TranscriptStat
     parentId,
     diff: str(body, "diff"),
     result: state.tools[id]?.result ?? null,
+    startedAt: state.tools[id]?.startedAt ?? state.lastAt,
   };
   const known = id in state.tools;
   const next = { ...state, tools: { ...state.tools, [id]: tool } };
@@ -729,7 +757,11 @@ function applyResult(state: TranscriptState, record: LogRecord): TranscriptState
   const entries = ended.entries.map((entry) =>
     entry.kind === "assistant" && entry.streaming ? { ...entry, streaming: false } : entry,
   );
-  const next = { ...ended, entries, meter, streaming: false, interrupted: false };
+  // The result record is the turn's end: with nothing queued the session is idle, even when the
+  // server's status frame is lost (a stream reconnect), so the bar never reads as a stalled turn.
+  const live = state.status === "running" || state.status === "waiting_permission";
+  const status = live && !ended.turnOpen ? "idle" : state.status;
+  const next = { ...ended, entries, meter, status, streaming: false, interrupted: false };
   const reason = str(body, "terminal_reason");
   if (state.interrupted || reason?.startsWith("aborted"))
     return notice(next, record.seq, "Turn interrupted", "warning");
@@ -744,7 +776,7 @@ function applySettings(state: TranscriptState, record: LogRecord): TranscriptSta
   const model = str(record.body, "model");
   const parts: string[] = [];
   let next = state;
-  if (mode === "default" || mode === "acceptEdits" || mode === "plan") {
+  if (mode === "default" || mode === "acceptEdits" || mode === "plan" || mode === "auto") {
     parts.push(`Mode set to ${modeLabel(mode)}`);
     next = { ...next, mode };
   }
@@ -849,8 +881,10 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
       const sending = withoutEcho(s.sending, record.seq, text);
       // Core refuses a send while an interrupt awaits its result, so a message after an
       // interrupt means that interrupt cut no turn short (it landed on an idle session).
+      // A message on an idle session starts a turn, as on the server.
+      const status = s.status === "idle" ? "running" : s.status;
       return push(
-        { ...s, sending, turnOpen: true, interrupted: false },
+        { ...s, sending, status, turnOpen: true, interrupted: false },
         {
           kind: "user",
           key: `u-${String(record.seq)}`,
