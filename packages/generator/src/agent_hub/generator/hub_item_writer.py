@@ -10,15 +10,25 @@ hex>`` beside it (``O_CREAT | O_EXCL | O_NOFOLLOW``, mode 0o600), given its fina
 (``0o777`` or ``0o666`` less the umask) and ``os.replace``d onto its name; on a failure the
 temp file is removed.
 
-A skill folder is swapped whole (no ``renameat2``): the version is staged at
-``.<name>.hub-tmp-<8 hex>`` beside the target (the leftover shape ``tree_snapshot.TEMP_NAME``,
-so ``hub doctor`` lists a crash's leftovers and the listing skips them); the target's hidden
-entries, which no version records, are moved into the stage unchanged (never a name of the temp
-shape; a hidden folder whole; a path the version writes wins); the target is renamed to a second
-temp name, the stage renamed into place, and the old folder removed with ``rmtree(dir_fd=…)``.
-Any failure before the stage is in place moves the hidden entries back, renames the old folder
-back and removes the stage, so the unit is left as it was. A reader may find no folder between
-the two renames. An old folder that cannot be removed afterwards stays as a leftover.
+A skill folder is swapped whole (no ``renameat2``): the version (which holds no hidden name)
+is staged at ``.<name>.hub-tmp-<8 hex>`` beside the target, in the leftover shape
+``tree_snapshot.TEMP_NAME``, so the skill listing skips it; the target's hidden entries, which
+no version records, are moved into the stage unchanged (never a name of the temp shape; a
+hidden folder whole), found by a walk bounded as a unit read is (``skill_depth``, the names
+budget; past either the write fails before anything moves); the target is renamed to a second
+temp name, the stage renamed into place, and the old folder removed with ``rmtree(dir_fd=…)``
+(a link inside it is removed, never followed). Any failure before the stage is in place moves
+the hidden entries back, renames the old folder back and removes the stage, so the unit is left
+as it was (``HubItemWriteError`` kind ``failed``); when that roll back fails too, the error's
+kind is ``rollback_failed`` and the stage, holding whatever was not put back, stays. A reader
+may find no folder between the two renames. The folders a write makes (the stage and its
+subfolders, missing parents) get mode ``0o777`` less the umask: a folder's own earlier mode is
+not kept. The umask is read once, when the writer is made.
+
+``hub init`` and ``hub sync`` remove only temp-shaped files and links in the folders they plan,
+never these folders: a stage or old folder a crash, a failed roll back or a failed removal left
+(``rmtree`` after a swap or in ``remove_unit``, whose failure the write does not report since
+the unit is already right) is listed by ``hub doctor``'s ``items.leftovers``.
 
 ``EROFS``, ``EACCES`` and ``EPERM`` are ``ItemWriteRefusedError("hub_read_only")``, a link met
 ``ItemWriteRefusedError("link_in_path")``, any other failure ``HubItemWriteError``; no message
@@ -38,8 +48,11 @@ from agent_hub.core.hub_files.tree_snapshot import is_leftover_name, temp_name
 from agent_hub.core.item_versions.hub_item_writer import (
     HubItemWriteError,
     ItemWriteRefusedError,
+    check_version_names,
     checked_unit_parts,
     plain_parts,
+    rollback_failed,
+    script_parts,
 )
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
@@ -54,6 +67,7 @@ _READ_ONLY: Final = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
 _NOT_FOLDER: Final = "the unit is not a folder"
 _NOT_FILE: Final = "the unit is not a file"
 _TOO_MANY: Final = "the folder holds too many names"
+_TOO_DEEP: Final = "the folder is deeper than a unit"
 
 
 class _LinkMetError(Exception):
@@ -62,6 +76,10 @@ class _LinkMetError(Exception):
 
 class FileSystemHubItemWriter:
     """Writes units into hub folders on disk; behaves as ``HubItemWriterContract`` says."""
+
+    def __init__(self) -> None:
+        # Read once: probing the umask sets it, which a threaded server must not do per write.
+        self._umask = _umask()
 
     def is_writable(self, hub_path: str, unit_paths: Sequence[str] = ()) -> bool:
         """Whether the hub folder and, for each path, its nearest existing folder (and the
@@ -90,20 +108,21 @@ class FileSystemHubItemWriter:
         if kind is not UnitKind.SKILL and [file.path for file in content.files] != [parts[-1]]:
             msg = "a file unit holds one file named after it"
             raise ValueError(msg)
-        umask = _umask()
+        if kind is UnitKind.SKILL:
+            check_version_names(content)
         with _opened_root(hub_path) as root, _guarded(), _parent(root, parts) as parent:
             if kind is UnitKind.SKILL:
-                _swap_folder(parent, parts[-1], content, umask=umask)
+                _swap_folder(parent, parts[-1], content, umask=self._umask)
             else:
                 file = content.files[0]
-                _write_file(parent, parts[-1], file.content, mode=_mode(file, umask))
+                _write_file(parent, parts[-1], file.content, mode=_mode(file, self._umask))
 
     def write_file(
         self, hub_path: str, path: str, content: bytes, *, executable: bool = False
     ) -> None:
-        """Write the one file ``path`` through a temp file and a rename."""
-        parts = plain_parts(path)
-        mode = (0o777 if executable else 0o666) & ~_umask()
+        """Write the hook script ``path`` through a temp file and a rename."""
+        parts = script_parts(path)
+        mode = (0o777 if executable else 0o666) & ~self._umask
         with _opened_root(hub_path) as root, _guarded(), _parent(root, parts) as parent:
             _write_file(parent, parts[-1], content, mode=mode)
 
@@ -154,7 +173,7 @@ def _mapped(error: OSError) -> AgentHubError:
 
 
 def _umask() -> int:
-    # ``os`` has no umask getter: set it and put it back (as ``file_adapter`` does).
+    # ``os`` has no umask getter: set it and put it back (as ``file_adapter`` does), once.
     umask = os.umask(0o022)
     os.umask(umask)
     return umask
@@ -314,10 +333,9 @@ def _swap_folder(parent: int, name: str, content: UnitContent, *, umask: int) ->
             os.rename(name, old, src_dir_fd=parent, dst_dir_fd=parent)
             renamed = True
         os.rename(stage, name, src_dir_fd=parent, dst_dir_fd=parent)
-    except BaseException as error:
-        _roll_back(
-            parent, name, stage=stage, old=old if renamed else None, moved=moved, error=error
-        )
+    except BaseException:
+        if not _roll_back(parent, name, stage=stage, old=old if renamed else None, moved=moved):
+            raise rollback_failed() from None
         raise
     if exists:
         # The new folder is in place; an old one that cannot be removed stays as a leftover.
@@ -339,58 +357,46 @@ def _folder_exists(parent: int, name: str) -> bool:
 
 def _hidden_entries(current: int) -> list[str]:
     """The hidden entries below the folder ``current`` (a hidden folder whole), never one of
-    the temp shape, found through its plain folders without following a link, parents first."""
+    the temp shape, found through its plain folders without following a link, in path order.
+    Iterative and bounded as a unit read: no entry deeper than ``skill_depth`` segments, at
+    most the names budget examined; past either, ``HubItemWriteError``."""
     found: list[str] = []
-    budget = [DEFAULT_LIMITS.names_examined]
-
-    def walk(folder: int, above: str) -> None:
-        for entry_name in sorted(os.listdir(folder)):
-            budget[0] -= 1
-            if budget[0] < 0:
-                raise HubItemWriteError(_TOO_MANY)
-            if entry_name.startswith("."):
-                if not is_leftover_name(entry_name):
-                    found.append(f"{above}{entry_name}")
-                continue
-            status = os.stat(entry_name, dir_fd=folder, follow_symlinks=False)
-            if stat.S_ISDIR(status.st_mode):
-                child = _open_folder(entry_name, folder)
-                try:
-                    walk(child, f"{above}{entry_name}/")
-                finally:
-                    os.close(child)
-
-    walk(current, "")
-    return found
+    budget = DEFAULT_LIMITS.names_examined
+    pending: list[tuple[str, ...]] = [()]
+    while pending:
+        folders = pending.pop()
+        with _folder(current, folders, create=False) as folder, os.scandir(folder) as listing:
+            for entry in listing:
+                budget -= 1
+                if budget < 0:
+                    raise HubItemWriteError(_TOO_MANY)
+                if len(folders) >= DEFAULT_LIMITS.skill_depth:
+                    raise HubItemWriteError(_TOO_DEEP)
+                if entry.name.startswith("."):
+                    if not is_leftover_name(entry.name):
+                        found.append("/".join((*folders, entry.name)))
+                elif entry.is_dir(follow_symlinks=False):
+                    pending.append((*folders, entry.name))
+    return sorted(found)
 
 
 def _carry_hidden(current: int, staged: int, moved: list[str]) -> None:
-    """Move each hidden entry of ``current`` to the same path in ``staged``, unless the version
-    writes that path; each one moved is added to ``moved`` (for a roll back)."""
+    """Move each hidden entry of ``current`` to the same path in ``staged`` (the version holds
+    no hidden name, so none is there); each one moved is added to ``moved`` (for a roll back)."""
     for path in _hidden_entries(current):
         *folders, entry_name = path.split("/")
         with (
             _folder(current, folders, create=False) as source,
             _folder(staged, folders, create=True) as target,
         ):
-            try:
-                os.stat(entry_name, dir_fd=target, follow_symlinks=False)
-            except FileNotFoundError:
-                os.rename(entry_name, entry_name, src_dir_fd=source, dst_dir_fd=target)
-                moved.append(path)
+            os.rename(entry_name, entry_name, src_dir_fd=source, dst_dir_fd=target)
+        moved.append(path)
 
 
-def _roll_back(
-    parent: int,
-    name: str,
-    *,
-    stage: str,
-    old: str | None,
-    moved: list[str],
-    error: BaseException,
-) -> None:
-    """Put the old folder back under ``name`` with its hidden entries, and remove the stage;
-    a step that fails is a note on ``error`` (naming no path), never masking it."""
+def _roll_back(parent: int, name: str, *, stage: str, old: str | None, moved: list[str]) -> bool:
+    """Put the old folder back under ``name`` with its hidden entries, then remove the stage;
+    False when the old folder or an entry could not be put back (the stage then stays, holding
+    what was not). A stage that cannot be removed stays as a leftover (``items.leftovers``)."""
     try:
         if old is not None:
             os.rename(old, name, src_dir_fd=parent, dst_dir_fd=parent)
@@ -401,13 +407,11 @@ def _roll_back(
                 _folder(parent, [name, *folders], create=False) as target,
             ):
                 os.rename(entry_name, entry_name, src_dir_fd=source, dst_dir_fd=target)
-    except (OSError, _LinkMetError) as failed:
-        error.add_note(f"the old folder was not fully put back: {type(failed).__name__}")
-        return
-    try:
+    except OSError, _LinkMetError:
+        return False
+    with contextlib.suppress(OSError):
         shutil.rmtree(stage, dir_fd=parent)
-    except OSError as failed:
-        error.add_note(f"the stage was not removed: {type(failed).__name__}")
+    return True
 
 
 def _remove(parent: int, name: str, *, folder: bool) -> None:

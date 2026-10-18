@@ -11,7 +11,11 @@ core ships this suite without depending on pytest.
 from typing import Final, Protocol
 
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
-from agent_hub.core.item_versions.hub_item_writer import HubItemWriter, ItemWriteRefusedError
+from agent_hub.core.item_versions.hub_item_writer import (
+    HubItemWriteError,
+    HubItemWriter,
+    ItemWriteRefusedError,
+)
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 
@@ -246,3 +250,101 @@ class HubItemWriterContract:
             pass
         else:
             raise AssertionError("a path climbing out of the hub was written")
+
+    def test_refuses_version_when_it_holds_hidden_name(self, writer_tree: WriterTree) -> None:
+        writer_tree.write(f"{SKILL_UNIT}/SKILL.md", b"# old\n")
+        writer_tree.write(f"{SKILL_UNIT}/.cache/data", b"cached")
+        for hidden in (".cache/other", "notes/.draft"):
+            version = _content(
+                UnitFile(path="SKILL.md", content=SKILL_V1), UnitFile(path=hidden, content=b"x")
+            )
+            try:
+                writer_tree.writer.write_unit(
+                    writer_tree.hub_path, SKILL_UNIT, version, kind=UnitKind.SKILL
+                )
+            except ValueError as error:
+                _check(hidden not in str(error), "the error names no path")
+            else:
+                raise AssertionError(f"{hidden}: a hidden name was written")
+        expected = {"SKILL.md": b"# old\n", ".cache/data": b"cached"}
+        _check(writer_tree.files(SKILL_UNIT) == expected, "nothing changed")
+
+    def test_refuses_file_when_not_a_hook_script(self, writer_tree: WriterTree) -> None:
+        refused = (
+            ".claude/settings.json",
+            "plugin/demo/agents/x.md",
+            "plugin/demo/hooks/hooks.json",
+            "plugin/demo/scripts/.hidden.sh",
+            "plugin/demo/check.sh",
+            "workflows/demo/x.yaml",
+        )
+        for path in refused:
+            try:
+                writer_tree.writer.write_file(writer_tree.hub_path, path, b"x")
+            except ValueError as error:
+                _check(path not in str(error), "the error names no path")
+            else:
+                raise AssertionError(f"{path}: written")
+            _check(not writer_tree.exists(path), f"{path}: nothing written")
+        writer_tree.writer.write_file(writer_tree.hub_path, "plugin/demo/scripts/lib/a.sh", b"a")
+        _check(writer_tree.files("plugin/demo/scripts") == {"lib/a.sh": b"a"}, "a script")
+
+    def test_refuses_link_when_skill_folder_is_link(self, writer_tree: WriterTree) -> None:
+        writer_tree.write("elsewhere/alpha/SKILL.md", b"# elsewhere\n")
+        writer_tree.link(SKILL_UNIT, "../../../elsewhere/alpha")
+        try:
+            writer_tree.writer.check_targets(writer_tree.hub_path, [SKILL_UNIT])
+        except ItemWriteRefusedError as error:
+            _check(error.code == "link_in_path", f"refused as {error.code}")
+        else:
+            raise AssertionError("a linked skill folder passed the check")
+        refused = _refusal(writer_tree, SKILL_UNIT, _v1(), kind=UnitKind.SKILL)
+        _check(refused == "link_in_path", f"the write is refused: {refused}")
+        _check(writer_tree.exists(SKILL_UNIT), "the link stays")
+        expected = {"alpha/SKILL.md": b"# elsewhere\n"}
+        _check(writer_tree.files("elsewhere") == expected, "nothing written through the link")
+        _no_leftover(writer_tree, SKILLS_FOLDER)
+
+    def test_removes_inner_link_when_folder_written(self, writer_tree: WriterTree) -> None:
+        writer_tree.write("elsewhere/data.md", b"kept\n")
+        writer_tree.write(f"{SKILL_UNIT}/SKILL.md", b"# old\n")
+        writer_tree.link(f"{SKILL_UNIT}/references", "../../../../elsewhere")
+        writer_tree.link(f"{SKILL_UNIT}/r.md", "../../../../elsewhere/data.md")
+        writer_tree.writer.write_unit(writer_tree.hub_path, SKILL_UNIT, _v1(), kind=UnitKind.SKILL)
+        expected = {file.path: file.content for file in _v1().files}
+        _check(writer_tree.files(SKILL_UNIT) == expected, "the folder equals the version")
+        _check(not writer_tree.exists(f"{SKILL_UNIT}/r.md"), "the inner link is removed")
+        _check(writer_tree.files("elsewhere") == {"data.md": b"kept\n"}, "its target untouched")
+
+    def test_fails_when_skill_path_is_file(self, writer_tree: WriterTree) -> None:
+        writer_tree.write(SKILL_UNIT, b"not a folder\n")
+        try:
+            writer_tree.writer.write_unit(
+                writer_tree.hub_path, SKILL_UNIT, _v1(), kind=UnitKind.SKILL
+            )
+        except HubItemWriteError as error:
+            _check(error.kind == "failed", f"the unit is as it was: {error.kind}")
+        else:
+            raise AssertionError("a file was written over as a folder")
+        _check(writer_tree.files(SKILLS_FOLDER) == {"alpha": b"not a folder\n"}, "unchanged")
+        _no_leftover(writer_tree, SKILLS_FOLDER)
+
+    def test_fails_when_version_file_is_hidden_entries_folder(
+        self, writer_tree: WriterTree
+    ) -> None:
+        writer_tree.write(f"{SKILL_UNIT}/SKILL.md", b"# old\n")
+        writer_tree.write(f"{SKILL_UNIT}/notes/.keep", b"kept")
+        version = _content(
+            UnitFile(path="SKILL.md", content=SKILL_V1), UnitFile(path="notes", content=b"x")
+        )
+        try:
+            writer_tree.writer.write_unit(
+                writer_tree.hub_path, SKILL_UNIT, version, kind=UnitKind.SKILL
+            )
+        except HubItemWriteError as error:
+            _check(error.kind == "failed", f"the unit is as it was: {error.kind}")
+        else:
+            raise AssertionError("a hidden entry's folder was written over")
+        expected = {"SKILL.md": b"# old\n", "notes/.keep": b"kept"}
+        _check(writer_tree.files(SKILL_UNIT) == expected, "unchanged")
+        _no_leftover(writer_tree, SKILLS_FOLDER)

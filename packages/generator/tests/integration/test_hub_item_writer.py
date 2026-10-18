@@ -14,6 +14,7 @@ from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, Item
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 from agent_hub.core.testing.skill_trees import write_tree
+from agent_hub.generator.doctor_snapshot import item_leftovers
 from agent_hub.generator.hub_item_writer import FileSystemHubItemWriter
 
 SKILLS = "plugin/demo/skills"
@@ -39,13 +40,13 @@ def _files(root: Path) -> dict[str, bytes]:
 
 
 def _failing_on(
-    real: Callable[..., Any], *, call: int, raised: int = errno.EIO
+    real: Callable[..., Any], *, call: int, raised: int = errno.EIO, also: int = 0
 ) -> Callable[..., Any]:
     calls = [0]
 
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         calls[0] += 1
-        if calls[0] == call:
+        if calls[0] in {call, also}:
             raise OSError(raised, os.strerror(raised))
         return real(*args, **kwargs)
 
@@ -147,3 +148,53 @@ def test_reports_read_only_when_mount_refuses_writes(
 
     assert raised.value.code == "hub_read_only"
     assert _files(hub) == OLD_SKILL
+
+
+def test_puts_hidden_entries_back_when_first_rename_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = {**OLD_SKILL, f"{SKILL}/.cache/data": b"cached", f"{SKILL}/references/.keep": b"k"}
+    hub = _hub(tmp_path, tree)
+    # Two hidden entries move into the stage, then moving the old folder aside fails.
+    monkeypatch.setattr(os, "rename", _failing_on(os.rename, call=3))
+
+    with pytest.raises(HubItemWriteError) as raised:
+        FileSystemHubItemWriter().write_unit(str(hub), SKILL, NEW_SKILL, kind=UnitKind.SKILL)
+
+    assert raised.value.kind == "failed"
+    assert _files(hub) == tree
+    assert os.listdir(hub / SKILLS) == ["alpha"]
+
+
+def test_reports_rollback_failed_when_old_folder_not_put_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = _hub(tmp_path, OLD_SKILL)
+    # The swap fails (2nd rename), then putting the old folder back fails (3rd).
+    monkeypatch.setattr(os, "rename", _failing_on(os.rename, call=2, also=3))
+
+    with pytest.raises(HubItemWriteError) as raised:
+        FileSystemHubItemWriter().write_unit(str(hub), SKILL, NEW_SKILL, kind=UnitKind.SKILL)
+    monkeypatch.undo()
+
+    assert raised.value.kind == "rollback_failed"
+    assert raised.value.cause == "the old folder was not put back"
+    assert "alpha" not in str(raised.value)
+    assert str(hub) not in str(raised.value)
+    leftovers, _ = item_leftovers(str(hub))
+    assert not (hub / SKILL).exists()
+    assert len(leftovers) == 2
+    old = {path.removeprefix(f"{SKILL}/"): content for path, content in OLD_SKILL.items()}
+    assert old in [_files(hub / leftover) for leftover in leftovers]
+
+
+def test_refuses_folder_when_deeper_than_a_unit(tmp_path: Path) -> None:
+    tree = {**OLD_SKILL, f"{SKILL}/a/b/c/.deep": b"deep"}
+    hub = _hub(tmp_path, tree)
+
+    with pytest.raises(HubItemWriteError) as raised:
+        FileSystemHubItemWriter().write_unit(str(hub), SKILL, NEW_SKILL, kind=UnitKind.SKILL)
+
+    assert raised.value.kind == "failed"
+    assert _files(hub) == tree
+    assert os.listdir(hub / SKILLS) == ["alpha"]
