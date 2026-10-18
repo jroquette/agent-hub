@@ -147,6 +147,33 @@
       "title": "Conventions",
       "type": "object"
     },
+    "Credentials": {
+      "additionalProperties": false,
+      "description": "Where the credentials of an environment come from: names, never values.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "aws_profile": {
+          "description": "An AWS profile name.",
+          "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+          "type": "string"
+        },
+        "env": {
+          "default": [],
+          "description": "Names of the environment variables that hold credentials.",
+          "items": {
+            "pattern": "^[A-Z_][A-Z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Env",
+          "type": "array"
+        }
+      },
+      "title": "Credentials",
+      "type": "object"
+    },
     "Doctor": {
       "additionalProperties": false,
       "description": "How ``hub doctor`` is tuned for this project (docs/design/hub-doctor.md).",
@@ -244,6 +271,87 @@
       "title": "DoctorRules",
       "type": "object"
     },
+    "Endpoint": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "url"
+          ]
+        },
+        {
+          "required": [
+            "resource"
+          ]
+        }
+      ],
+      "description": "How a service is reached in one environment: a url, a resource name, or both.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "url": {
+          "description": "scheme://host[:port][/path], at most 200 characters; no user info, query or fragment.",
+          "maxLength": 200,
+          "pattern": "^[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[!\"$->A-~]*)?$",
+          "type": "string"
+        },
+        "resource": {
+          "description": "A resource name, such as a table or a function.",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "type": "string"
+        },
+        "note": {
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "type": "string"
+        },
+        "credentials": {
+          "$ref": "#/$defs/Credentials",
+          "description": "Names of the credentials to use here; never a value."
+        }
+      },
+      "title": "Endpoint",
+      "type": "object"
+    },
+    "Environment": {
+      "additionalProperties": false,
+      "description": "A place the agent may reach, and what it may do there.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "access": {
+          "enum": [
+            "read",
+            "write",
+            "ask"
+          ],
+          "title": "Access",
+          "type": "string"
+        },
+        "production": {
+          "default": false,
+          "title": "Production",
+          "type": "boolean"
+        },
+        "description": {
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "type": "string"
+        },
+        "credentials": {
+          "$ref": "#/$defs/Credentials",
+          "description": "Names of the credentials to use; never a value."
+        }
+      },
+      "required": [
+        "access"
+      ],
+      "title": "Environment",
+      "type": "object"
+    },
     "Guard": {
       "additionalProperties": false,
       "description": "Paths and hosts the hub's guard hook asks about or denies.",
@@ -301,6 +409,42 @@
         "infra": {
           "$ref": "#/$defs/GuardInfra",
           "description": "Turns on the guard's infra classification: Python re patterns, searched with no flags. Absent: the fixed infra rule."
+        },
+        "blocked_words": {
+          "default": [],
+          "description": "Words the guard denies in commands, the session, paths and listed files; matched ignoring ASCII case, bounded by any character that is not a letter.",
+          "items": {
+            "maxLength": 64,
+            "minLength": 2,
+            "pattern": "^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$",
+            "type": "string"
+          },
+          "maxItems": 200,
+          "title": "Blocked Words",
+          "type": "array"
+        },
+        "blocked_words_files": {
+          "default": [],
+          "description": "Globs of files whose contents the guard checks for blocked words, on top of .env* files.",
+          "items": {
+            "maxLength": 200,
+            "pattern": "^[!-.0-~][!-~]*$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Blocked Words Files",
+          "type": "array"
+        },
+        "blocked_words_env": {
+          "default": [],
+          "description": "Names of variables whose values the guard checks for blocked words; a trailing * matches a prefix.",
+          "items": {
+            "pattern": "^[A-Z_][A-Z0-9_]{0,63}\\*?$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "Blocked Words Env",
+          "type": "array"
         }
       },
       "title": "Guard",
@@ -585,6 +729,21 @@
         "conventions": {
           "$ref": "#/$defs/Conventions",
           "description": "Overrides project.conventions key by key."
+        },
+        "services": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Service"
+          },
+          "description": "The services the repo runs, keyed by name, with their endpoints (docs/design/environments.md).",
+          "patternProperties": {
+            "^_": {}
+          },
+          "propertyNames": {
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$"
+          },
+          "title": "Services",
+          "type": "object"
         }
       },
       "required": [
@@ -612,6 +771,43 @@
         }
       },
       "title": "RuleSettings",
+      "type": "object"
+    },
+    "Service": {
+      "additionalProperties": false,
+      "description": "A service a repo runs, with its endpoint in each declared environment.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "kind": {
+          "description": "What the service is (api, dynamodb, lambda, ...): informational.",
+          "maxLength": 32,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "type": "string"
+        },
+        "description": {
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "type": "string"
+        },
+        "endpoints": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Endpoint"
+          },
+          "description": "Keyed by a declared environment's name.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "propertyNames": {
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$"
+          },
+          "title": "Endpoints",
+          "type": "object"
+        }
+      },
+      "title": "Service",
       "type": "object"
     },
     "Severity": {
@@ -788,6 +984,21 @@
     },
     "models": {
       "$ref": "#/$defs/Models"
+    },
+    "environments": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Environment"
+      },
+      "description": "The environments agents may reach, keyed by name, and what they may do there (docs/design/environments.md).",
+      "patternProperties": {
+        "^_": {}
+      },
+      "propertyNames": {
+        "maxLength": 40,
+        "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$"
+      },
+      "title": "Environments",
+      "type": "object"
     }
   },
   "required": [

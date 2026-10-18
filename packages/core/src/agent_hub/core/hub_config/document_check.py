@@ -5,7 +5,9 @@ both see the same problems, on the same paths (docs/design/project-config.md § 
 """
 
 from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 
+from agent_hub.core.hub_config.environments import CREDENTIAL_SHAPE_ERROR
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem, json_path, one_line
 from agent_hub.core.hub_config.versions import find_version_problem
@@ -14,6 +16,8 @@ type Location = tuple[int | str, ...]
 
 # The segment pydantic appends to a location when the error is about a map's key, not its value.
 KEY_MARKER = "[key]"
+# A map key with a secret's shape is never shown: the path names this in its place.
+HIDDEN_KEY = "<key>"
 
 
 def check_hub_document(
@@ -32,9 +36,17 @@ def check_hub_document(
 def validation_problems(error: ValidationError, document: object) -> tuple[ConfigProblem, ...]:
     """One problem per error of a config object's validation, at the bad key's JSON path."""
     return tuple(
-        ConfigProblem(json_path(_path_to_key(detail["loc"], document)), one_line(detail["msg"]))
+        ConfigProblem(json_path(_shown_location(detail, document)), one_line(detail["msg"]))
         for detail in error.errors()
     )
+
+
+def _shown_location(detail: ErrorDetails, document: object) -> Location:
+    """The bad key's location, with a secret-shaped map key replaced by a placeholder."""
+    loc = _path_to_key(detail["loc"], document)
+    if detail["type"] == CREDENTIAL_SHAPE_ERROR and loc != detail["loc"]:
+        return (*loc[:-1], HIDDEN_KEY)
+    return loc
 
 
 def _path_to_key(loc: Location, document: object) -> Location:

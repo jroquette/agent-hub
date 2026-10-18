@@ -25,6 +25,7 @@ from agent_hub.cli.hub_config_reader import (
 from agent_hub.core.hub_config.local_config import LOCAL_FILE_MAX_BYTES, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_hub_document
 
 
@@ -103,6 +104,104 @@ def test_prints_one_line_per_error_when_fields_invalid(
     assert len(lines) == 2
     assert all(line.startswith("hub.json: ") for line in lines)
     assert sorted(line.split(": ")[1] for line in lines) == ["project.name", "repos[0].dir"]
+
+
+def test_hides_secret_when_hub_json_holds_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Assembled at run time, so the repo holds no secret-shaped text.
+    password = "pw" + "s3cr3t"
+    jwt = "ey" + "J" + "a" * 15 + "." + "b" * 15
+    document = builders.an_environments_document()
+    document["platform"]["version"] = version("agent-hub-cli")
+    endpoints = document["repos"][0]["services"]["api"]["endpoints"]
+    endpoints["staging"] = {"url": "https://" + f"u:{password}@db.example.com"}
+    endpoints["live"]["note"] = f"token {jwt}"
+
+    lines = stderr_lines_on_exit(write_document(tmp_path, document), capsys)
+
+    assert [line.split(": ")[1] for line in lines] == [
+        "repos[0].services.api.endpoints.staging.url",
+        "repos[0].services.api.endpoints.live.note",
+    ]
+    assert "JWT" in lines[1]
+    assert all(password not in line and jwt not in line for line in lines)
+
+
+# Assembled at run time, so the repo holds no secret-shaped text.
+KEY_SHAPED = "AK" + "IA" + "ABCDEFGHIJKLMNOP"
+KEY_PLACEHOLDER = '["<key>"]'
+
+
+def secret_key_documents() -> list[tuple[str, dict[str, Any], str]]:
+    """``W`` with a secret-shaped name at an environment, a service and an endpoint key."""
+    environment = builders.an_environments_document()
+    environment["environments"][KEY_SHAPED] = {"access": "read"}
+    service = builders.an_environments_document()
+    service["repos"][0]["services"][KEY_SHAPED] = {"kind": "api"}
+    endpoint = builders.an_environments_document()
+    endpoint["repos"][0]["services"]["api"]["endpoints"][KEY_SHAPED] = {"url": "http://localhost:1"}
+    return [
+        ("environment", environment, "environments"),
+        ("service", service, "repos[0].services"),
+        ("endpoint", endpoint, "repos[0].services.api.endpoints"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("document", "parent"),
+    [pytest.param(document, parent, id=name) for name, document, parent in secret_key_documents()],
+)
+def test_hides_secret_key_when_hub_json_names_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], *, document: dict[str, Any], parent: str
+) -> None:
+    document["platform"]["version"] = version("agent-hub-cli")
+
+    lines = stderr_lines_on_exit(write_document(tmp_path, document), capsys)
+
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(f"hub.json: {parent}{KEY_PLACEHOLDER}: looks like a secret ("), lines
+    assert KEY_SHAPED not in lines[0]
+
+
+@pytest.mark.parametrize(
+    ("document", "parent"),
+    [
+        pytest.param({"environments": {KEY_SHAPED: {"access": "read"}}}, "environments", id="env"),
+        pytest.param(
+            {"repos": [{"dir": "demo-api", "services": {KEY_SHAPED: {}}}]},
+            "repos[0].services",
+            id="service",
+        ),
+        pytest.param(
+            {
+                "repos": [
+                    {
+                        "dir": "demo-api",
+                        "services": {"api": {"endpoints": {KEY_SHAPED: {"resource": "t"}}}},
+                    }
+                ]
+            },
+            "repos[0].services.api.endpoints",
+            id="endpoint",
+        ),
+    ],
+)
+def test_hides_secret_key_when_local_file_names_one(
+    tmp_path: Path, *, document: dict[str, Any], parent: str
+) -> None:
+    path = tmp_path / "hub.local.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    problems = read_local_json(path)
+
+    assert isinstance(problems, tuple)
+    lines = local_lines(problems)
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(
+        f"hub.local.json: {parent}{KEY_PLACEHOLDER}: looks like a secret ("
+    ), lines
+    assert KEY_SHAPED not in lines[0]
 
 
 def test_keeps_each_error_on_one_line_when_value_has_newline(
@@ -590,8 +689,8 @@ def write_oversize(path: Path) -> None:
             "project.default_branch",
             "set only in hub.json",
         ),
-        (write_local(b'{"guard": {}}'), "guard", "set only in hub.json"),
-        (write_local(b'{"repos": []}'), "repos", "set only in hub.json"),
+        (write_local(b'{"modules": {}}'), "modules", "set only in hub.json"),
+        (write_local(b'{"doctor": {}}'), "doctor", "set only in hub.json"),
         (write_local(b'{"tracker": {"team": "X"}}'), "tracker.team", "set only in hub.json"),
         (write_local(b'{"project": {"branch_prefix": "-x/"}}'), "project.branch_prefix", ""),
         (write_local(b'{"tracker": {"transport": "ftp"}}'), "tracker.transport", ""),
