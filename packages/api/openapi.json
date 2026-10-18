@@ -5725,7 +5725,7 @@
       },
       "RestoreVersionBody": {
         "additionalProperties": false,
-        "description": "``POST .../versions/{version_id}/restore``: ``confirm_managed`` true writes over a unit\n``hub.lock`` manages (S9), after the web's warning.",
+        "description": "``POST .../versions/{version_id}/restore``: ``confirm_managed`` true writes over a unit\n``hub.lock`` manages (S9), after the web's warning; only JSON ``true`` confirms.",
         "properties": {
           "confirm_managed": {
             "default": false,

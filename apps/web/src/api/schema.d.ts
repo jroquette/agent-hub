@@ -3420,7 +3420,7 @@ export interface components {
     /**
      * RestoreVersionBody
      * @description ``POST .../versions/{version_id}/restore``: ``confirm_managed`` true writes over a unit
-     *     ``hub.lock`` manages (S9), after the web's warning.
+     *     ``hub.lock`` manages (S9), after the web's warning; only JSON ``true`` confirms.
      */
     RestoreVersionBody: {
       /**
