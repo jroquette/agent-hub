@@ -31,6 +31,9 @@ describe("ApproveRecord", () => {
     const found = featureSessions([other, mention, writer], "real-cost", ["AGH-303"], null);
     expect(found.map((s) => s.id)).toEqual([writer.id, mention.id]);
     expect(featureSessions([writer], "real-cost", [], writer.id)).toEqual([]);
+    const listed = { ...mention } as Partial<typeof mention>;
+    delete listed.changed_files;
+    expect(featureSessions([listed as typeof mention], "real-cost", [], null)).toHaveLength(1);
   });
 
   it("sends the approval to the session that worked on the feature", async () => {
@@ -84,6 +87,7 @@ describe("ApproveRecord", () => {
     await waitFor(() => {
       expect(view.requests.some((r) => r.url.endsWith(`${other.id}/messages`))).toBe(true);
     });
+    expect(window.localStorage.getItem("ah.approve.session.agent-hub:real-cost")).toBe(other.id);
   });
 
   it("shows nothing without session control", () => {

@@ -20,6 +20,25 @@ function discussSessionId(project: string, slug: string): string | null {
   }
 }
 
+const pickedKey = (project: string, slug: string) => `ah.approve.session.${project}:${slug}`;
+
+/** The session the owner last sent this feature's approvals to, remembered per feature. */
+function readPicked(project: string, slug: string): string | null {
+  try {
+    return window.localStorage.getItem(pickedKey(project, slug));
+  } catch {
+    return null;
+  }
+}
+
+function writePicked(project: string, slug: string, id: string) {
+  try {
+    window.localStorage.setItem(pickedKey(project, slug), id);
+  } catch {
+    // Without storage the pick lasts until the page reloads.
+  }
+}
+
 /** A session's name in one line: its title, else its last prompt. */
 export function sessionName(session: AgentSession): string {
   const text = session.title ?? session.last_prompt ?? "";
@@ -40,7 +59,11 @@ export function featureSessions(
 ): AgentSession[] {
   const folder = `features/${slug}/`;
   const names = [slug, ...tickets];
-  const touched = (s: AgentSession) => s.changed_files.some((f) => f.path.includes(folder));
+  // The list route leaves `changed_files` out (only one session's read carries it).
+  const touched = (s: AgentSession) => {
+    const files = (s as Partial<AgentSession>).changed_files ?? [];
+    return files.some((f) => f.path.includes(folder));
+  };
   const named = (s: AgentSession) =>
     [s.title, s.last_prompt, s.last_reply].some(
       (text) => text != null && names.some((name) => text.includes(name)),
@@ -83,7 +106,7 @@ export function ApproveRecord({
     { query: { project } },
     { retry: false, refetchInterval: 15_000 },
   );
-  const [chosen, setChosen] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string | null>(() => readPicked(project, slug));
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<AgentSession | null>(null);
@@ -126,6 +149,7 @@ export function ApproveRecord({
       { path: { agent_session_id: target.id } },
     )
       .then(() => {
+        writePicked(project, slug, target.id);
         setSent(target);
       })
       .catch((cause: unknown) => {
@@ -154,6 +178,7 @@ export function ApproveRecord({
 
   const pick = (id: string) => () => {
     setChosen(id);
+    writePicked(project, slug, id);
     setOpen(false);
   };
   const item = (s: AgentSession) => (
