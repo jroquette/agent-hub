@@ -154,7 +154,8 @@ Versions of .claude/settings.json · Shared by 3 hooks · (lock) Managed by hub.
   diff per changed file, each headed "Added", "Removed" or "Changed" with its path, and "Executable bit: off → on"
   (or on → off) for a changed bit; a binary file says its bytes differ. Equal versions say "These two versions hold
   the same content."; two versions whose hashes differ with no change the web can see (a binary file of the same
-  size) say "These versions differ in bytes the app cannot show" and name the binary files. The diffs share one
+  size) say "These versions differ in bytes the app cannot show" and name the binary files; when other files changed
+  too, the changes end with "They may also differ in bytes the app cannot show, in <binary files>". The diffs share one
   budget of 2,000 rendered lines (`COMPARE_MAX_LINES`), headers included: the file that crosses it ends with "<n>
   more lines — too large to show here", and each file after it keeps its heading with "Diff not shown — too large
   to show here.". The diffs are computed once per pair of versions. Opening Compare moves focus to its heading;
@@ -174,7 +175,7 @@ Versions of .claude/settings.json · Shared by 3 hooks · (lock) Managed by hub.
     `link_in_path`, `unit_unreadable`, `secret_unversioned`, a 500 `write_failed`, a 503 `version_race` or
     `written_not_recorded`, and a 401 (open the link hub web printed, ending `?token=…`).
 - **Result.** The dialog closes and a notice under the unit line says "Restored <hash>: a new version records it.",
-  "The item already holds <hash>: nothing was written." or, as a warning, "Restored <hash>, but not versioned:
+  "The item already holds <hash>: nothing was written." (both neutral notices) or, as a warning, "Restored <hash>, but not versioned:
   secret" (or "too large"). A 503 `written_not_recorded` also closes the dialog, with the warning "Wrote <hash>, but
   its version was not recorded." and the server's advice to reload the history. Every read of the project's Toolkit
   (the item, its bundled files, the hooks sharing its file, the catalog), or the workflows list and the workflow,
