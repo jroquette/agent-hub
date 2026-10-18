@@ -91,29 +91,32 @@ def build_doctor_snapshot(
 
 
 # The folders a unit's temp entries sit in: ``.claude`` (its hook files), its skills and agents,
-# and below ``plugin/<p>/`` its skills, agents and hooks; then each ``workflows/<pack>``.
+# and below ``plugin/<p>/`` its skills, agents, hooks and hook scripts; then each
+# ``workflows/<pack>``.
 _CLAUDE_FOLDERS = (".claude", ".claude/skills", ".claude/agents")
-_PLUGIN_FOLDERS = ("skills", "agents", "hooks")
+_PLUGIN = "plugin"
+_PLUGIN_FOLDERS = ("skills", "agents", "hooks", "scripts")
 
 
 def item_leftovers(root: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """The temp-shaped entries directly in the item folders, and the folders scanned, each in
-    path order. A folder reached through a link is not scanned; at most the listing's names
-    budget is examined in each."""
-    plugins = tuple(f"plugin/{name}" for name in _sub_folders(root, "plugin"))
+    """The temp-shaped entries directly in the item folders, and the folders to watch for them,
+    each in path order: the folders scanned, plus ``plugin`` and each ``plugin/<p>``, whose
+    times change when an item folder is made in them. A folder reached through a link is not
+    scanned; at most the listing's names budget is examined in each."""
+    plugins = tuple(f"{_PLUGIN}/{name}" for name in _sub_folders(root, _PLUGIN))
     candidates = [
         *_CLAUDE_FOLDERS,
         *(f"{plugin}/{folder}" for plugin in plugins for folder in _PLUGIN_FOLDERS),
         *(f"{HUB_WORKFLOWS}/{name}" for name in _sub_folders(root, HUB_WORKFLOWS)),
     ]
-    scanned: list[str] = []
+    scanned: list[str] = [*([_PLUGIN] if _plain_folder(root, _PLUGIN) else []), *plugins]
     found: list[str] = []
     for folder in sorted(candidates):
         names = _temp_names(root, folder)
         if names is not None:
             scanned.append(folder)
             found.extend(f"{folder}/{name}" for name in names)
-    return tuple(sorted(found)), tuple(scanned)
+    return tuple(sorted(found)), tuple(sorted(scanned))
 
 
 def _plain_folder(root: str, folder: str) -> bool:

@@ -114,8 +114,9 @@ class DoctorSnapshot:
     ``None``. ``workflows`` is the hub's workflows and the built-ins, as ``hub workflow`` reads
     them, when a selected rule reads them; else ``None``. ``workflow_folders`` then lists the pack
     folders, so the control plane's cache sees a pack git does not list. ``item_leftovers`` is
-    every temp-named entry directly in the item folders (``item_folders``, the ones scanned), in
-    path order, when a selected rule reads them; else ``None``.
+    every temp-named entry directly in the item folders, in path order, when a selected rule
+    reads them; else ``None``. ``item_folders`` then holds the folders to watch for them: the
+    ones scanned, plus ``plugin`` and each ``plugin/<p>``, where an item folder can be made.
     """
 
     config: HubConfig | ConfigFailure

@@ -8,8 +8,9 @@ only there. ``hub init`` and ``hub sync`` remove only temp-shaped files and link
 they plan, so this rule lists every temp-shaped entry (folder, file or link) directly in the
 item folders, which the generator scans without following a link: ``.claude``,
 ``.claude/skills``, ``.claude/agents``, ``plugin/<p>/skills``, ``plugin/<p>/agents``,
-``plugin/<p>/hooks`` and ``workflows/<pack>``. One warning per entry, in path order, at most 10,
-then one ``N more`` at the hub root. It reads nothing inside an entry and removes nothing.
+``plugin/<p>/hooks``, ``plugin/<p>/scripts`` and ``workflows/<pack>``. One warning per entry,
+in path order, at most 10, then one ``N more`` at the hub root. It reads nothing inside an
+entry and removes nothing.
 """
 
 from collections.abc import Iterator

@@ -219,6 +219,9 @@ def test_lists_temp_entries_when_item_leftovers_rule_selected(hub_root: Path) ->
     (agents / ".reviewer.md.hub-tmp-89abcdef").write_bytes(b"x")
     (hub_root / "workflows" / "demo").mkdir(parents=True)
     (hub_root / "workflows" / "demo" / ".lint.yaml.hub-tmp-00000000").write_bytes(b"x")
+    (hub_root / "plugin" / "demo" / "scripts").mkdir()
+    (hub_root / "plugin" / "demo" / "scripts" / ".check.sh.hub-tmp-22222222").write_bytes(b"x")
+    (hub_root / "plugin" / "other").mkdir()
     outside = hub_root.parent / "outside"
     (outside / ".beta.hub-tmp-11111111").mkdir(parents=True)
     (hub_root / ".claude" / "skills").symlink_to(outside)
@@ -234,13 +237,19 @@ def test_lists_temp_entries_when_item_leftovers_rule_selected(hub_root: Path) ->
 
     assert snapshot.item_leftovers == (
         ".claude/agents/.reviewer.md.hub-tmp-89abcdef",
+        "plugin/demo/scripts/.check.sh.hub-tmp-22222222",
         "plugin/demo/skills/.alpha.hub-tmp-0123abcd",
         "workflows/demo/.lint.yaml.hub-tmp-00000000",
     )
+    # The folders where an item folder can be made are watched too (``plugin/other``).
     assert snapshot.item_folders == (
         ".claude",
         ".claude/agents",
+        "plugin",
+        "plugin/demo",
+        "plugin/demo/scripts",
         "plugin/demo/skills",
+        "plugin/other",
         "workflows/demo",
     )
 
