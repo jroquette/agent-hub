@@ -15,12 +15,15 @@ unit after it, for the next read. One request stops reading
 new units once ``budget_bytes`` (the catalog's 16 MiB) have been read; the read that crosses it
 still finishes, and the units left are read by a later request. A call spends its own budget
 unless it is handed one (``budget()``), which a request reading several hubs shares across its
-calls. A unit gone before its read is left out of the answer.
+calls. A unit gone before its read is left out of the answer. A write of units (S4) runs
+``holding`` them: no capture of one reads or records meanwhile, and their memo entries are
+dropped, so the next read reads them again (and finds the version the write recorded).
 """
 
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Hashable, Iterable, Mapping
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
+from contextlib import ExitStack, contextmanager
 from datetime import datetime
 from enum import StrEnum
 from typing import Final
@@ -128,7 +131,7 @@ class CaptureItemVersions:
     ) -> tuple[UnitState | None, int]:
         """Read, record and mark one unit with its key held, so an older read of it is never
         appended after a newer one; answers its state (None: not settled) and the bytes read."""
-        with self._unit_locks[hash(key) % UNIT_LOCKS]:
+        with self._unit_locks[_lock_index(key)]:
             with self._guard:
                 known = self._memo.get(key)
             if known is not None and known[0] == mark:
@@ -146,6 +149,21 @@ class CaptureItemVersions:
                     return None, read_bytes
             self._mark(key, mark, state)
             return state, read_bytes
+
+    @contextmanager
+    def holding(self, units: Iterable[ItemUnit]) -> Iterator[None]:
+        """Hold the keys of ``units`` while a write of them runs, then forget their marks."""
+        keys = {(unit.project, unit.unit_path) for unit in units}
+        with ExitStack() as held:
+            # Each lock once (two keys may share one) and in one order, so writes never deadlock.
+            for index in sorted({_lock_index(key) for key in keys}):
+                held.enter_context(self._unit_locks[index])
+            try:
+                yield
+            finally:
+                with self._guard:
+                    for key in keys:
+                        self._memo.pop(key, None)
 
     def _record(self, unit: ItemUnit, content: UnitContent) -> bool:
         """Append ``content`` unless the unit's last version holds it; False when every try lost
@@ -182,3 +200,7 @@ class CaptureItemVersions:
             self._memo.move_to_end(key)
             while len(self._memo) > MEMO_UNITS:
                 self._memo.popitem(last=False)
+
+
+def _lock_index(key: tuple[str, str]) -> int:
+    return hash(key) % UNIT_LOCKS

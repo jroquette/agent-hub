@@ -7,7 +7,7 @@ shared), the hub it lives in and how many items share it; an unknown project or 
 ``EntityNotFoundError``, a known item with no unit (a link, a built-in) is None.
 """
 
-from typing import NamedTuple, Protocol
+from typing import Literal, NamedTuple, Protocol
 
 from pydantic import Field
 
@@ -15,6 +15,7 @@ from agent_hub.core.item_versions.capture_item_versions import UnitMark, UnitSta
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import (
     DRAFT_ID,
+    ItemVersionMeta,
     UnitKind,
     VersionAuthor,
     VersionOrigin,
@@ -81,6 +82,21 @@ class ItemVersionView(ViewModel):
     draft_id: str | None = Field(default=None, pattern=DRAFT_ID)
 
 
+def version_view(version: ItemVersionMeta) -> ItemVersionView:
+    """``version`` as the history lists it."""
+    return ItemVersionView(
+        id=version.id,
+        origin=version.origin,
+        first=version.first,
+        author=version.author,
+        recorded_at=version.recorded_at,
+        content_hash=version.content_hash,
+        size=version.size,
+        restored_from=version.restored_from,
+        draft_id=version.draft_id,
+    )
+
+
 class ItemVersionPage(ViewModel):
     """A page of a unit's versions, newest first, with what the disk holds now: ``state`` (S8,
     S10, A1), ``managed`` (A4), the unit and how many items share it."""
@@ -122,3 +138,18 @@ class ItemVersionReads(Protocol):
     def get(self, ref: ItemRef, version_id: str) -> ItemVersionContent:
         """One version of the item's own unit; ``EntityNotFoundError`` else."""
         ...
+
+
+# Why a written unit was not versioned (A2).
+type UnversionedReason = Literal["secret", "too_large"]
+
+
+class ItemWriteResult(ViewModel):
+    """What a Publish or Restore did: ``changed`` False when the content was equal (nothing
+    written or recorded, D12); ``versioned`` False with its ``reason`` when the written content
+    was not stored (D9, A2); ``version`` the version recorded."""
+
+    changed: bool
+    versioned: bool
+    reason: UnversionedReason | None
+    version: ItemVersionView | None
