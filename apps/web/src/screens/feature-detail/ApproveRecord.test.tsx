@@ -100,12 +100,13 @@ describe("ApproveRecord", () => {
     expect(body.text).toBe(approvalMessage("spec", PATH));
   });
 
-  it("shows the approve bar above and below the record", async () => {
+  it("shows the approve bar once, at the end of the record", async () => {
     renderWithApi(ui(), { routes: sessions([author], [author]) });
 
-    expect(await screen.findByRole("group", { name: "Approve the spec (end)" })).toBeVisible();
-    expect(screen.getAllByRole("button", { name: "Approve spec" })).toHaveLength(2);
-    expect(screen.getByText("The spec")).toBeVisible();
+    await topBar();
+    expect(screen.getAllByRole("button", { name: "Approve spec" })).toHaveLength(1);
+    const text = document.body.textContent;
+    expect(text.indexOf("The spec")).toBeLessThan(text.indexOf("Approve spec"));
   });
 
   it("falls back to a session naming the feature when none wrote the record", async () => {

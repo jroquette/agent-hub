@@ -84,7 +84,7 @@ export function approvalMessage(record: string, path: string): string {
 }
 
 /**
- * Approve a feature record (spec, research, plan) from its tab, above and below the record
+ * Approve a feature record (spec, research, plan) from its tab, at the end of the record
  * (`children`): the approval goes as a message to the session that wrote the record, so that
  * session goes on from where it asked. The target is the one the owner picked for this feature,
  * else the newest session that wrote the file (`?wrote=`), else the newest one naming the feature;
@@ -116,7 +116,7 @@ export function ApproveRecord({
     { retry: false, refetchInterval: 15_000 },
   );
   const [chosen, setChosen] = useState<string | null>(() => readPicked(project, slug));
-  const [open, setOpen] = useState<Place | null>(null);
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<AgentSession | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -125,10 +125,10 @@ export function ApproveRecord({
     if (!open) return undefined;
     const onPointer = (event: PointerEvent) => {
       const target = event.target;
-      if (!(target instanceof Element && target.closest("[data-approve-picker]"))) setOpen(null);
+      if (!(target instanceof Element && target.closest("[data-approve-picker]"))) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(null);
+      if (event.key === "Escape") setOpen(false);
     };
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -149,9 +149,9 @@ export function ApproveRecord({
   const others = all.filter((s) => !listed.some((r) => r.id === s.id)).slice(0, OTHER_SESSIONS);
   const target = [...all, ...wrote].find((s) => s.id === chosen) ?? wrote[0] ?? related[0] ?? null;
 
-  const approve = (place: Place) => {
+  const approve = () => {
     if (!target) {
-      setOpen(place);
+      setOpen(true);
       return;
     }
     setBusy(true);
@@ -180,7 +180,7 @@ export function ApproveRecord({
   const pick = (id: string) => () => {
     setChosen(id);
     writePicked(project, slug, id);
-    setOpen(null);
+    setOpen(false);
   };
   const item = (s: AgentSession) => (
     <MenuItem
@@ -203,7 +203,7 @@ export function ApproveRecord({
       </>
     );
 
-  const bar = (place: Place) => {
+  const bar = () => {
     if (sent) {
       return (
         <div className="ah-row ah-wrap ah-small" style={{ gap: 8 }} role="status">
@@ -221,16 +221,14 @@ export function ApproveRecord({
         className="ah-row ah-wrap ah-small"
         style={{ gap: 8 }}
         role="group"
-        aria-label={place === "top" ? `Approve the ${record}` : `Approve the ${record} (end)`}
+        aria-label={`Approve the ${record}`}
       >
         <Button
           size="sm"
           variant="primary"
           icon="check"
           disabled={busy}
-          onClick={() => {
-            approve(place);
-          }}
+          onClick={approve}
           title={
             target
               ? `Send "${approvalMessage(record, path)}" to ${sessionName(target)}`
@@ -244,10 +242,10 @@ export function ApproveRecord({
             type="button"
             className="ah-btn ah-btn-ghost ah-btn-sm"
             aria-haspopup="true"
-            aria-expanded={open === place}
+            aria-expanded={open}
             aria-label={`Approval goes to: ${target ? sessionName(target) : "no session picked"}`}
             onClick={() => {
-              setOpen(open === place ? null : place);
+              setOpen(!open);
             }}
           >
             <span className="ah-muted">to</span>
@@ -256,10 +254,10 @@ export function ApproveRecord({
             <Icon name="chevron-down" size="sm" />
           </button>
           <Popover
-            open={open === place}
+            open={open}
             label="Session that gets the approval"
             style={{
-              ...(place === "top" ? { top: 30 } : { bottom: 30 }),
+              bottom: 30,
               left: 0,
               minWidth: 320,
               maxWidth: 440,
@@ -286,9 +284,8 @@ export function ApproveRecord({
 
   return (
     <>
-      {bar("top")}
       {children}
-      {bar("bottom")}
+      {bar()}
     </>
   );
 }
@@ -305,6 +302,3 @@ export function writersOf(
   const ignored = all.length > 1 && local.length >= all.length;
   return ignored ? [] : local;
 }
-
-/** Where a bar sits: above the record, or at its end. */
-type Place = "top" | "bottom";
