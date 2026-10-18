@@ -1143,6 +1143,66 @@ describe("AgentSessionScreen (chat-shortcuts)", () => {
   });
 });
 
+describe("AgentSessionScreen (steps-drawer)", () => {
+  const drawer = () => screen.queryByRole("complementary", { name: "Steps" });
+  const box = () => screen.getByRole("textbox", { name: "Message Claude" });
+
+  it("AC-PG-32.1: the live bar sits above the composer while the turn runs", async () => {
+    renderChat();
+    const bar = await screen.findByRole("region", { name: "Live activity" });
+    const composer = await screen.findByRole("textbox", { name: "Message Claude" });
+    expect(bar.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("AC-PG-32.2: Ctrl+Alt+. and Cmd+Alt+. open and close Steps, from anywhere on the page", async () => {
+    renderChat();
+    await screen.findByText("Starting.");
+    expect(drawer()).toBeNull();
+
+    fireEvent.keyDown(document.body, { key: "≥", code: "Period", ctrlKey: true, altKey: true });
+    expect(drawer()).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Steps" })).toHaveFocus();
+
+    fireEvent.keyDown(document.body, { key: "≥", code: "Period", metaKey: true, altKey: true });
+    expect(drawer()).toBeNull();
+    // Without both modifiers, the key is left alone.
+    fireEvent.keyDown(document.body, { key: ".", code: "Period", altKey: true });
+    expect(drawer()).toBeNull();
+  });
+
+  it("AC-PG-32.2: the header chip and the bar open Steps, and the open state is remembered", async () => {
+    renderChat();
+    const chip = await screen.findByRole("button", { name: /^Steps, \d+, turn running$/ });
+    await userEvent.click(chip);
+    expect(drawer()).toBeInTheDocument();
+    expect(chip).toHaveAttribute("aria-expanded", "true");
+    expect(window.localStorage.getItem("ah.chat.steps")).toBe("open");
+
+    await userEvent.click(
+      within(screen.getByRole("complementary", { name: "Steps" })).getByRole("button", {
+        name: "Close",
+      }),
+    );
+    expect(drawer()).toBeNull();
+    expect(window.localStorage.getItem("ah.chat.steps")).toBe("closed");
+
+    const bar = within(screen.getByRole("region", { name: "Live activity" })).getByRole("button");
+    await userEvent.click(bar);
+    expect(drawer()).toBeInTheDocument();
+    expect(window.localStorage.getItem("ah.chat.steps")).toBe("open");
+  });
+
+  it("AC-PG-32.2, AC-PG-32.4: left open, Steps reopens on load and leaves the keyboard in the composer", async () => {
+    window.localStorage.setItem("ah.chat.steps", "open");
+    renderChat();
+    await screen.findByText("Starting.");
+    expect(drawer()).toBeInTheDocument();
+    await waitFor(() => {
+      expect(box()).toHaveFocus();
+    });
+  });
+});
+
 describe("AgentSessionScreen (axe)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

@@ -246,4 +246,38 @@ describe("FilesPanel (final result)", () => {
     expect(screen.getByLabelText("Change 1 to r/a.md")).toBeInTheDocument();
     expect(screen.getByLabelText("Change 2 to r/a.md")).toBeInTheDocument();
   });
+
+  it("AC-PG-18.3: says the file ends as it began when its changes cancel out", async () => {
+    // A line added, then removed again, as Claude reported each change (with line numbers).
+    const reported = (id: string, diff: string): ToolView => ({
+      ...tool(id, "Edit", { file_path: "/r/b.md", old_string: "x", new_string: "y" }),
+      diff,
+      result: { content: "ok", isError: false, truncated: false, originalBytes: null, diff },
+    });
+    render(
+      <FilesPanel
+        files={filesOf([
+          reported("t1", "--- a/r/b.md\n+++ b/r/b.md\n@@ -1,1 +1,2 @@\n one\n+draft"),
+          reported("t2", "--- a/r/b.md\n+++ b/r/b.md\n@@ -1,2 +1,1 @@\n one\n-draft"),
+        ])}
+        sessionId="s1"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /b\.md/ }));
+
+    expect(screen.getByRole("button", { name: "Final result" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      screen.getByText("The changes cancel out: the file ends as it began."),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Final diff of r/b.md")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Each change (2)" }));
+    expect(screen.getByLabelText("Change 1 to r/b.md")).toBeInTheDocument();
+    expect(screen.getByLabelText("Change 2 to r/b.md")).toBeInTheDocument();
+  });
 });

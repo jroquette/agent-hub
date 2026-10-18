@@ -18,6 +18,7 @@ import {
   type Session,
   T0,
 } from "../../testing/builders";
+import { reviewedKey } from "../agent-session/FilesPanel";
 import { SessionsListScreen } from "./index";
 
 const SESSIONS = "/api/v1/sessions";
@@ -305,6 +306,91 @@ describe("SessionsListScreen summary strip", () => {
     renderList(routes(aSessionsByStatus([SAMPLE[3]])));
     expect(await screen.findByText("No session is working")).toBeInTheDocument();
     expect(screen.getByText("last 7 days")).toBeInTheDocument();
+  });
+});
+
+describe("SessionsListScreen chat digest", () => {
+  const BUSY = anId(21, "0192a5e5");
+  const READY = anId(22, "0192a5e5");
+  const CHATS = [
+    anAgentSession({
+      id: BUSY,
+      title: "Busy chat",
+      status: "running",
+      last_prompt: "Add a cost tile",
+      last_reply: "Done with the tile.",
+      changed_files: [
+        { path: "/r/a.ts", last_change_id: "t1" },
+        { path: "/r/b.ts", last_change_id: "t2" },
+        { path: "/r/c.ts", last_change_id: "t3" },
+      ],
+    }),
+    anAgentSession({
+      id: READY,
+      title: "Ready chat",
+      status: "idle",
+      last_prompt: "Fix the flaky test",
+      last_reply: "Fixed: the clock is pinned now.",
+      changed_files: [{ path: "/r/t.ts", last_change_id: "t9" }],
+    }),
+  ];
+  const talk = (title: string) =>
+    [...rowOf(title).querySelectorAll(".sl-talk-line")].map((line) => line.textContent);
+  const chip = (title: string) => rowOf(title).querySelector(".sl-files");
+
+  it("AC-PG-8.8: a chat in Working or Your turn reads You / Claude with the latest ask and reply, and a files chip", async () => {
+    // In the chat, the owner viewed a.ts at its latest change and b.ts at an older one.
+    window.localStorage.setItem(
+      reviewedKey(BUSY),
+      JSON.stringify({ "/r/a.ts": "t1", "/r/b.ts": "t0" }),
+    );
+    window.localStorage.setItem(reviewedKey(READY), JSON.stringify({ "/r/t.ts": "t9" }));
+    renderList(routes(aSessionsByStatus(SAMPLE), CHATS));
+    await screen.findByText("Ready chat");
+
+    expect(rowsIn(group(/^Working/))).toContain(rowOf("Busy chat"));
+    expect(rowsIn(group(/^Your turn/))).toContain(rowOf("Ready chat"));
+    // Working: your ask, and what Claude does now.
+    expect(talk("Busy chat")).toEqual(["YouAdd a cost tile", "ClaudeWorking on your message"]);
+    // Your turn: your ask and Claude's reply.
+    expect(talk("Ready chat")).toEqual([
+      "YouFix the flaky test",
+      "ClaudeFixed: the clock is pinned now.",
+    ]);
+    // The chip: how many files changed, and how many changed since the owner last viewed them.
+    expect(chip("Busy chat")).toHaveTextContent("3 files · 2 to review");
+    expect(chip("Busy chat")).toHaveAttribute(
+      "title",
+      "3 files changed; 2 changed since you last viewed them in the chat",
+    );
+    expect(chip("Busy chat")).toHaveAttribute("data-due", "true");
+    expect(chip("Ready chat")).toHaveTextContent(/^1 file$/);
+    expect(chip("Ready chat")).toHaveAttribute("title", "1 file changed, all viewed");
+    expect(chip("Ready chat")).not.toHaveAttribute("data-due");
+    // A terminal session has no conversation lines nor a files chip.
+    expect(rowOf("/runner").querySelector(".sl-talk")).toBeNull();
+    expect(chip("/runner")).toBeNull();
+  });
+});
+
+describe("SessionsListScreen summary cost", () => {
+  it("AC-PG-27.4: the cost tile shows the last 24 hours' estimate", async () => {
+    renderList();
+    await screen.findByText("/asker");
+    const tile = document.querySelector<HTMLElement>('[data-tile="cost"]');
+    expect(tile).toHaveTextContent("Est. cost");
+    expect(tile).toHaveTextContent("last 24 h");
+    expect(tileValue("cost")).not.toBe("—");
+  });
+
+  it("AC-PG-27.4: the cost tile shows a dash with a tooltip when no cost was recorded", async () => {
+    renderList({ ...routes(), "/api/v1/projects": aPage([aProjectSummary({ cost_daily: [] })]) });
+    await screen.findByText("/asker");
+    await waitFor(() => {
+      expect(tileValue("cost")).toBe("—");
+    });
+    const dash = document.querySelector('[data-tile="cost"] .sl-summary-value > span');
+    expect(dash).toHaveAttribute("title", "No cost recorded in the last 24 hours.");
   });
 });
 
