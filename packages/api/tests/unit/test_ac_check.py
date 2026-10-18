@@ -94,3 +94,71 @@ def test_refuses_run_when_ac_cannot_run(tmp_path: Path, ac: Any, status: int) ->
         runner.run("p", "f", "AC-1")
 
     assert raised.value.status == status
+
+
+# AC-PG-37.1: an unknown AC is refused with its reason, and nothing runs.
+def test_refuses_with_reason_when_ac_unknown(tmp_path: Path) -> None:
+    runner = AcCheckRunner(_models(tmp_path, _ac("AC-1", "touch ran")))
+
+    with pytest.raises(AcCheckError) as raised:
+        runner.run("p", "f", "AC-9")
+
+    assert (raised.value.status, raised.value.title, raised.value.detail) == (
+        404,
+        "Unknown acceptance criterion",
+        "f has no AC-9.",
+    )
+    assert not (tmp_path / "app" / "ran").exists()
+
+
+# AC-PG-37.1: a repo not checked out beside the hub (absent, or a file) is refused with its reason.
+@pytest.mark.parametrize("shape", ["absent", "file"])
+def test_refuses_with_reason_when_checkout_missing(tmp_path: Path, shape: str) -> None:
+    runner = AcCheckRunner(_models(tmp_path, _ac("AC-1", "touch ran")))
+    (tmp_path / "app").rmdir()
+    if shape == "file":
+        (tmp_path / "app").write_text("not a checkout\n", encoding="utf-8")
+
+    with pytest.raises(AcCheckError) as raised:
+        runner.run("p", "f", "AC-1")
+
+    assert (raised.value.status, raised.value.title, raised.value.detail) == (
+        409,
+        "No checkout",
+        "app is not checked out beside the hub.",
+    )
+    assert not (tmp_path / "ran").exists()
+    assert not (tmp_path / "hub" / "ran").exists()
+
+
+# AC-PG-37.1: an AC naming a repo the project lacks is refused with that repo's name.
+def test_refuses_with_reason_when_repo_unknown(tmp_path: Path) -> None:
+    runner = AcCheckRunner(_models(tmp_path, _ac("AC-1", "true", repo="other")))
+
+    with pytest.raises(AcCheckError) as raised:
+        runner.run("p", "f", "AC-1")
+
+    assert (raised.value.title, raised.value.detail) == (
+        "Repo unknown",
+        "The project has no repo other.",
+    )
+
+
+# AC-PG-37.1: a manual AC and one with no command answer 409 with their reasons.
+@pytest.mark.parametrize(
+    ("ac", "title", "detail"),
+    [
+        (_ac("AC-1", "true", manual=True), "Manual owner step", "AC-1 is checked by hand."),
+        (_ac("AC-1", None), "No check recorded", "AC-1 records no command."),
+        (_ac("AC-1", ""), "No check recorded", "AC-1 records no command."),
+    ],
+)
+def test_refuses_with_reason_when_ac_has_no_command_to_run(
+    tmp_path: Path, *, ac: Any, title: str, detail: str
+) -> None:
+    runner = AcCheckRunner(_models(tmp_path, ac))
+
+    with pytest.raises(AcCheckError) as raised:
+        runner.run("p", "f", "AC-1")
+
+    assert (raised.value.status, raised.value.title, raised.value.detail) == (409, title, detail)

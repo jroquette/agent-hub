@@ -2,6 +2,8 @@ import hashlib
 import json
 import os
 import subprocess
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,16 +15,19 @@ from scripts.playground_export import (
     SCREEN_ROUTES,
     SHELL_ROUTES,
     Commit,
+    DemoWeb,
     RequestsUnavailableError,
     Session,
     Turn,
     area_of,
     build_requests,
     capture_routes,
+    capture_screens,
     commit_patches,
     conductor_logs,
     conductor_token,
     delivering_branches,
+    demo_web,
     equivalent_on,
     git,
     hub_changes,
@@ -32,6 +37,7 @@ from scripts.playground_export import (
     repeated_changes,
     route_patterns,
     routes_of,
+    run_playwright,
     screens_of,
     slug_of,
     snapshot,
@@ -526,3 +532,178 @@ def test_skips_deleted_file_when_hub_changes_read(tmp_path: Path) -> None:
 
 def test_returns_nothing_when_folder_is_no_hub(tmp_path: Path) -> None:
     assert hub_changes(tmp_path, datetime(2026, 10, 16, tzinfo=UTC)) == []
+
+
+# AC-PG-39.2: hub-config has its own capture route, the project's config page on the demo data.
+def test_captures_hub_config_page_when_hub_config_screen_asked() -> None:
+    [route] = capture_routes(["hub-config/config"])
+
+    assert route == {"file": "hub-config/config", "path": "/projects/demo/config"}
+    assert any(
+        pattern.fullmatch(route["path"].strip("/"))
+        for pattern in route_patterns(ROUTES_FILE.read_text("utf-8"))
+    )
+
+
+def _demo_web(login: str | None, tmp_path: Path) -> DemoWeb:
+    return DemoWeb(
+        env={"PATH": "/usr/bin"},
+        web_url="http://127.0.0.1:5001",
+        api_url="http://127.0.0.1:5002",
+        login=login,
+        logs=(tmp_path / "api.log", tmp_path / "preview.log"),
+    )
+
+
+def _fake_capture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, web: DemoWeb, *, returncode: int = 0
+) -> list[dict[str, Any]]:
+    """``capture_screens`` with no worktree, servers or Playwright: records each Playwright run."""
+    runs: list[dict[str, Any]] = []
+
+    @contextmanager
+    def checkout(scratch: Path) -> Iterator[Path]:
+        yield tmp_path / "tree"
+
+    @contextmanager
+    def served(tree: Path, work: Path) -> Iterator[DemoWeb]:
+        yield web
+
+    def playwright(
+        given: DemoWeb, web_dir: Path, spec: str, *, extra: Mapping[str, str]
+    ) -> subprocess.CompletedProcess[str]:
+        runs.append({"web": given, "web_dir": web_dir, "spec": spec, "extra": dict(extra)})
+        return subprocess.CompletedProcess(["playwright"], returncode, "captured\n", "")
+
+    monkeypatch.setattr("scripts.playground_export.head_checkout", checkout)
+    monkeypatch.setattr("scripts.playground_export.demo_web", served)
+    monkeypatch.setattr("scripts.playground_export.run_playwright", playwright)
+    return runs
+
+
+# AC-PG-39.2: the capture hands Playwright the launch-token login (AH_CAPTURE_LOGIN), so the
+# spec trades it for the session cookie before it opens the agent-session screen.
+def test_passes_launch_token_login_when_screens_captured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    login = "http://127.0.0.1:5002/?token=synthetic-launch-token"
+    runs = _fake_capture(monkeypatch, tmp_path, _demo_web(login, tmp_path))
+    out = tmp_path / "export" / "screens"
+    out.mkdir(parents=True)
+
+    reason = capture_screens(["agent-session/chat", "hub-config/config"], out)
+
+    assert reason is None
+    [run] = runs
+    assert run["spec"] == "e2e/capture.spec.ts"
+    assert run["web_dir"] == tmp_path / "tree" / "apps" / "web"
+    assert run["extra"]["AH_CAPTURE_LOGIN"] == login
+    assert run["extra"]["AH_CAPTURE_DIR"] == str(out)
+    assert json.loads(run["extra"]["AH_CAPTURE"]) == [
+        {"file": "agent-session/chat", "path": f"/agent-sessions/{CHAT_SESSION}"},
+        {"file": "hub-config/config", "path": "/projects/demo/config"},
+    ]
+    assert (out.parent / "capture.log").read_text("utf-8") == "captured\n"
+
+
+# AC-PG-39.2: without a launch token in hub web's log, no login is passed (the spec skips it).
+def test_passes_no_login_when_hub_web_printed_no_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs = _fake_capture(monkeypatch, tmp_path, _demo_web(None, tmp_path))
+    out = tmp_path / "screens"
+    out.mkdir()
+
+    capture_screens(["hub-config/config"], out)
+
+    [run] = runs
+    assert "AH_CAPTURE_LOGIN" not in run["extra"]
+
+
+# AC-PG-39.2: a failed capture says so and keeps the servers' logs beside the screens.
+def test_keeps_server_logs_when_playwright_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web = _demo_web("http://127.0.0.1:5002/?token=t", tmp_path)
+    for log in web.logs:
+        log.write_text(f"{log.name} output\n", "utf-8")
+    _fake_capture(monkeypatch, tmp_path, web, returncode=1)
+    out = tmp_path / "export" / "screens"
+    out.mkdir(parents=True)
+
+    reason = capture_screens(["agent-session/chat"], out)
+
+    assert reason == "Playwright failed on some screens: see capture.log"
+    assert (out.parent / "capture-api.log").read_text("utf-8") == "api.log output\n"
+    assert (out.parent / "capture-preview.log").read_text("utf-8") == "preview.log output\n"
+
+
+# AC-PG-39.2: nothing to capture, nothing started.
+def test_starts_nothing_when_no_screen_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs = _fake_capture(monkeypatch, tmp_path, _demo_web(None, tmp_path))
+
+    assert capture_screens([], tmp_path) is None
+    assert runs == []
+
+
+# AC-PG-39.2: demo_web builds its login from the launch token hub web printed in its log.
+def test_builds_login_from_logged_token_when_demo_web_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ports = iter((5002, 5001))
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_options: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    @contextmanager
+    def background(command: Any, *, env: Any, cwd: Path, log: Path) -> Iterator[None]:
+        if log.name == "api.log":
+            log.write_text("agent-hub at http://127.0.0.1:5002/?token=synthetic_token-1\n")
+        yield
+
+    monkeypatch.setattr("scripts.playground_export.shutil.which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr("scripts.playground_export.free_port", lambda: next(ports))
+    monkeypatch.setattr("scripts.playground_export.wait_until_up", lambda _url: None)
+    monkeypatch.setattr("scripts.playground_export.background", background)
+    monkeypatch.setattr("scripts.playground_export.subprocess.run", run)
+    tree = tmp_path / "tree"
+    work = tmp_path / "work"
+    work.mkdir()
+
+    with demo_web(tree, work) as web:
+        assert web.login == "http://127.0.0.1:5002/?token=synthetic_token-1"
+        assert (web.api_url, web.web_url) == ("http://127.0.0.1:5002", "http://127.0.0.1:5001")
+
+    assert any("scripts.seed_demo" in command for command in commands)
+
+
+# AC-PG-39.2: run_playwright passes the capture's variables on to Playwright's environment.
+def test_passes_capture_variables_when_playwright_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def run(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
+        seen.update(command=command, env=options["env"])
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("scripts.playground_export.shutil.which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr("scripts.playground_export.chromium_executable", lambda _env: None)
+    monkeypatch.setattr("scripts.playground_export.subprocess.run", run)
+    login = "http://127.0.0.1:5002/?token=t"
+
+    run_playwright(
+        _demo_web(login, tmp_path),
+        tmp_path / "web",
+        "e2e/capture.spec.ts",
+        extra={"AH_CAPTURE_LOGIN": login},
+    )
+
+    assert seen["env"]["AH_CAPTURE_LOGIN"] == login
+    assert seen["env"]["AGENT_HUB_WEB_URL"] == "http://127.0.0.1:5001"
+    assert "AGENT_HUB_CHROMIUM" not in seen["env"]
+    assert seen["command"][-1] == "e2e/capture.spec.ts"
