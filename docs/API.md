@@ -136,7 +136,8 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
 - Nested paths only for ownership (`/api/v1/sessions/{session_id}/events`). Methods keep their HTTP meaning: `GET`
   reads, `POST` creates or triggers an action (`POST /api/v1/hubs`, `POST /api/v1/events/hooks`), `PATCH` updates part
   of a resource, `DELETE` removes it. The only writes are registering and removing a hub, posting hook envelopes,
-  since AGH-201 the two learning decisions, and since AGH-165 the agent-session commands.
+  since AGH-201 the two learning decisions, and since AGH-165 the agent-session commands. Since AGH-296 the Toolkit
+  and Workflows `GET`s also record item versions in agent-hub's database (never in the hub, see Skills).
 
 ## Sessions
 
