@@ -98,3 +98,55 @@ def test_removes_hub_and_keeps_its_events_when_deleted(
     assert composed.client.get(HUBS).json()["items"] == []
     assert [row.project for row in composed.rows()] == ["demo"]
     assert composed.client.delete(f"{HUBS}/{hub_id}", headers=OWN).status_code == 404
+
+
+# AC-PG-38.1: the composed GET /projects/{project}/config reads the registered hub's hub.json and
+# hub.local.json: per repo its checks and patterns, the tracker, the models, each with a source.
+def test_answers_project_config_from_files_when_hub_registered(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub = make_hub()
+    (hub / "hub.local.json").write_text(
+        json.dumps({"project": {"author_email": "me@example.com"}}), encoding="utf-8"
+    )
+    assert composed.client.post(HUBS, json={"path": str(hub)}, headers=OWN).status_code == 201
+
+    response = composed.client.get("/api/v1/projects/demo/config")
+
+    assert response.status_code == 200, response.text
+    view = response.json()
+    [repo] = view["repos"]
+    assert (repo["dir"], repo["check_fast"], repo["check"]) == (
+        "demo-api",
+        "make check-fast",
+        "make check",
+    )
+    assert repo["pr_title"]["source"] == "commit_title"
+    assert repo["pr_title"]["example"] == "feat(api): add the hub config view (DEM-42)"
+    assert (view["tracker"]["kind"], view["tracker"]["teams"]) == ("linear", ["DEM"])
+    assert set(view["model_tiers"]) == {"small", "medium", "large"}
+    assert (view["author_email"]["value"], view["author_email"]["source"]) == (
+        "me@example.com",
+        "local",
+    )
+    assert view["author_email"]["team_value"] == "jane@example.com"
+    assert view["local_file"]["problems"] == []
+
+
+# AC-PG-38.1: an invalid hub.local.json is reported with its problems and ignored.
+def test_reports_and_ignores_local_file_when_invalid_over_composed_app(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub = make_hub()
+    (hub / "hub.local.json").write_text(
+        json.dumps({"project": {"author_email": "not an email"}}), encoding="utf-8"
+    )
+    assert composed.client.post(HUBS, json={"path": str(hub)}, headers=OWN).status_code == 201
+
+    view = composed.client.get("/api/v1/projects/demo/config").json()
+
+    assert view["local_file"]["problems"] != []
+    assert (view["author_email"]["value"], view["author_email"]["source"]) == (
+        "jane@example.com",
+        "team",
+    )

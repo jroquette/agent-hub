@@ -433,6 +433,27 @@ def test_keeps_first_verdict_when_no_final_line_legacy() -> None:
     assert record.verdict == "NO-SHIP"
 
 
+# AC-PG-11.1: a lowercase "final verdict" line (and a lowercase verdict) still decides.
+def test_takes_final_verdict_when_line_lowercase_legacy() -> None:
+    head = (
+        b"# Eval\n\n**Verdict: NO-SHIP.** 1 of 2.\n\n"
+        b"addendum: final verdict: ship-with-owner-steps\n"
+    )
+
+    [record] = eval_records((), head, slug=SLUG)
+
+    assert record.verdict == "SHIP-WITH-OWNER-STEPS"
+
+
+# AC-PG-11.1: the first "Final verdict" line decides when an eval has two.
+def test_takes_first_final_verdict_when_two_final_lines_legacy() -> None:
+    head = b"FINAL VERDICT: NO-SHIP\n\nVerdict: SHIP\n\nFinal verdict: SHIP\n"
+
+    [record] = eval_records((), head, slug=SLUG)
+
+    assert record.verdict == "NO-SHIP"
+
+
 @pytest.mark.parametrize(
     ("provenance", "expected"),
     [("agent-evaluator", "agent-evaluator"), ("owner", "owner"), ("[a, b]", None), (None, None)],

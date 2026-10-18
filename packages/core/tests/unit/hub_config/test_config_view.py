@@ -5,7 +5,11 @@ from agent_hub.core.hub_config.config_view import hub_config_view
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import (
+    a_conventions_document,
+    a_hub_document,
+    a_models_document,
+)
 
 
 def _no_git(_keys: frozenset[str]) -> Mapping[str, str]:
@@ -105,3 +109,72 @@ def test_reports_and_ignores_local_file_when_invalid() -> None:
 
     assert view.local_file.problems == ("project.author_email: not an email",)
     assert view.author_email.source == "team"
+
+
+# AC-PG-38.1: per repo of hub.json, the checks it runs, while working and before a PR.
+def test_lists_each_repo_checks_when_hub_has_two_repos() -> None:
+    view = _view(a_conventions_document())
+
+    assert [(repo.index, repo.dir, repo.github) for repo in view.repos] == [
+        (0, "demo-api", "acme/demo-api"),
+        (1, "demo-web", "acme/demo-web"),
+    ]
+    assert [(repo.check_fast, repo.check) for repo in view.repos] == [
+        ("make check-fast", "make check"),
+        ("make check-fast", "make check"),
+    ]
+    assert view.repos[0].check_fast_timeout is None
+
+
+# AC-PG-38.1: the PR title pattern of each repo, with its layer and a rendered example.
+def test_renders_pr_title_example_when_project_sets_pr_title() -> None:
+    view = _view(a_conventions_document())
+
+    pr_title = view.repos[1].pr_title
+    assert (pr_title.pattern, pr_title.source) == ("{ISSUE}: {type}({scope}): {summary}", "project")
+    assert pr_title.where == "hub.json → project.conventions.pr_title"
+    assert pr_title.example == "DEM-42: feat(api): add the hub config view"
+    assert view.repos[0].branch.example == "feature/dem-42/hub-config"
+
+
+# AC-PG-38.1: the tracker, with its transport's source (built-in default here).
+def test_answers_tracker_with_default_transport_when_team_sets_only_kind_and_team() -> None:
+    tracker = _view(a_hub_document()).tracker
+
+    assert (tracker.kind, tracker.teams) == ("linear", ("DEM",))
+    assert (tracker.transport.value, tracker.transport.source) == ("api", "default")
+    assert (tracker.ready_label, tracker.failed_label, tracker.blocked_label) == (
+        "agent-ready",
+        "agent-failed",
+        None,
+    )
+    assert (tracker.started_state, tracker.review_state) == ("In Progress", "In Review")
+
+
+# AC-PG-38.1: the local layer wins over the team's tracker transport, which stays visible.
+def test_takes_local_transport_when_local_file_sets_it() -> None:
+    local = LocalConfig.model_validate({"tracker": {"transport": "mcp"}})
+
+    transport = _view(a_hub_document(), local).tracker.transport
+
+    assert (transport.value, transport.source, transport.team_value) == ("mcp", "local", "api")
+    assert transport.where == "hub.local.json → tracker.transport"
+
+
+# AC-PG-38.1: the models: each tier's model (defaults filled in) and the agents moved off theirs.
+def test_answers_tiers_and_moved_agents_when_models_set() -> None:
+    view = _view(a_models_document())
+
+    assert view.model_tiers == {"small": "haiku", "medium": "sonnet", "large": "claude-opus-4-1"}
+    assert {(item.agent, item.tier) for item in view.agent_models} == {
+        ("evaluator", "small"),
+        ("researcher", "large"),
+    }
+
+
+# AC-PG-38.1: without a models block, the built-in tier models and no moved agent.
+def test_answers_default_tiers_when_models_unset() -> None:
+    view = _view(a_hub_document())
+
+    assert view.model_tiers == {"small": "haiku", "medium": "sonnet", "large": "opus"}
+    assert view.agent_models == ()
