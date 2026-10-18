@@ -64,7 +64,7 @@ const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
 
 const PAGES: SmokePage[] = [
   { name: "Portfolio", path: "/", heading: "Portfolio", shows: /Failed runs · 7 d/ },
-  { name: "Sessions", path: "/sessions", heading: "Sessions", shows: "Waiting · 1" },
+  { name: "Sessions", path: "/sessions", heading: "Sessions", shows: "Needs you" },
   {
     name: "Session detail",
     path: `/sessions/${LIVE_SESSION}`,
@@ -147,12 +147,13 @@ test("Sessions grid shows a red edge only on the session that needs you, in its 
   baseURL,
 }) => {
   await visit(page, baseURL, "/sessions?view=grid", async () => {
-    const live = page.getByRole("region", { name: /^Live/ }).locator("article.ah-tile", {
+    // The inbox's sections (AGH-314): Needs you, Working, Your turn, Finished.
+    const live = page.getByRole("region", { name: /^Working/ }).locator("article.ah-tile", {
       hasText: "DEM-7",
     });
     await expect(live).toHaveCount(1);
     await expect(live).not.toHaveAttribute("data-trouble", "true");
-    const stuck = page.getByRole("region", { name: /^Idle/ }).locator("article.ah-tile", {
+    const stuck = page.getByRole("region", { name: /^Needs you/ }).locator("article.ah-tile", {
       hasText: "make test",
     });
     await expect(stuck).toHaveAttribute("data-trouble", "true");
