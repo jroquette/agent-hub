@@ -523,6 +523,7 @@ def hub_read_models(  # noqa: PLR0913 - the hub reads' ports, all keyword-only
     activity: ProjectActivitySource,
     usage: SkillUsageSource,
     ticket_snapshots: TicketSnapshots | None,
+    read_git: Callable[[str], GitReader] = _files_only,
 ) -> HubFilesReadModels:
     """The hub read models of ``hub web``: ``activity`` and ``usage`` are the event read models
     (the project cards' numbers, the Skills tab's 30-day counts)."""
@@ -542,6 +543,7 @@ def hub_read_models(  # noqa: PLR0913 - the hub reads' ports, all keyword-only
         clock=settings.clock,
         ticket_snapshots=ticket_snapshots,
         usage=usage,
+        read_git=read_git,
     )
 
 
@@ -616,6 +618,7 @@ def build_app(
         activity=events,
         usage=events,
         ticket_snapshots=snapshots,
+        read_git=_files_only if read_git is None else read_git,
     )
     hub_paths.hubs = hubs
     changes = default_brain_changes() if brain_changes is None else brain_changes

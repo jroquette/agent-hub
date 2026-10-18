@@ -28,6 +28,7 @@ SPEC_PATHS = {
     ("get", "/api/v1/projects/{project}"),
     ("get", "/api/v1/projects/{project}/now"),
     ("get", "/api/v1/projects/{project}/repos"),
+    ("get", "/api/v1/projects/{project}/config"),
     ("get", "/api/v1/needs-you"),
     ("get", "/api/v1/activity"),
     ("get", "/api/v1/search"),

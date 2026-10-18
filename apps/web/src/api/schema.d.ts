@@ -907,6 +907,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/config": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Project Config
+     * @description The project's hub config: team (``hub.json``) and local (``hub.local.json``) values.
+     */
+    get: operations["get_project_config_api_v1_projects__project__config_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/now": {
     parameters: {
       query?: never;
@@ -1515,6 +1535,16 @@ export interface components {
     /** @enum {string} */
     ActorKind: "main" | "subagent";
     /**
+     * AgentModelView
+     * @description A plugin agent's tier, when ``models.agents`` moves it off its template's.
+     */
+    AgentModelView: {
+      /** Agent */
+      agent: string;
+      /** Tier */
+      tier: string;
+    };
+    /**
      * AgentSession
      * @description One session ``hub web`` started (or one cloud start, ``kind="cloud"``).
      *
@@ -1894,6 +1924,21 @@ export interface components {
       transcript_lines_skipped: number;
       /** Transcript Refused */
       transcript_refused: number;
+    };
+    /**
+     * ConfigFileView
+     * @description One of the two files: its path and, when it cannot be used, its problems.
+     */
+    ConfigFileView: {
+      /** Name */
+      name: string;
+      /** Path */
+      path: string;
+      /**
+       * Problems
+       * @default []
+       */
+      problems: string[];
     };
     /**
      * ContextCost
@@ -2432,6 +2477,27 @@ export interface components {
       state: components["schemas"]["StepState"];
     };
     /**
+     * GuardConfigView
+     * @description The guard's lists: the blocked entries are layered, the rest are team only.
+     */
+    GuardConfigView: {
+      /** Ask Before Edit */
+      ask_before_edit: string[];
+      blocked_words: components["schemas"]["LayeredList"];
+      blocked_words_env: components["schemas"]["LayeredList"];
+      blocked_words_files: components["schemas"]["LayeredList"];
+      /** Deny Hosts */
+      deny_hosts: string[];
+      /** Deny Paths */
+      deny_paths: string[];
+      /** Infra On */
+      infra_on: boolean;
+      /** Readable Env Files */
+      readable_env_files: string[];
+      /** Secret Env Files */
+      secret_env_files: string[];
+    };
+    /**
      * HookAccepted
      * @description ``POST /events/hooks``: how many events the envelope added and how many were known.
      */
@@ -2516,6 +2582,44 @@ export interface components {
     };
     /** @enum {string} */
     HookState: "synced" | "not synced";
+    /**
+     * HubConfigView
+     * @description The whole Hub config screen of one project.
+     */
+    HubConfigView: {
+      /** Agent Models */
+      agent_models: components["schemas"]["AgentModelView"][];
+      author_email: components["schemas"]["SourcedValue"];
+      author_name: components["schemas"]["SourcedValue"];
+      branch_prefix: components["schemas"]["SourcedValue"];
+      /** Conventions */
+      conventions: [
+        components["schemas"]["PatternView"],
+        components["schemas"]["PatternView"],
+        components["schemas"]["PatternView"],
+      ];
+      default_branch: components["schemas"]["SourcedValue"];
+      guard: components["schemas"]["GuardConfigView"];
+      /** Hub Path */
+      hub_path: string;
+      /** Hub Repo */
+      hub_repo: string;
+      local_file: components["schemas"]["ConfigFileView"];
+      /** Model Tiers */
+      model_tiers: {
+        [key: string]: string;
+      };
+      /** Modules */
+      modules: string[];
+      /** Platform Version */
+      platform_version: string;
+      /** Project */
+      project: string;
+      /** Repos */
+      repos: components["schemas"]["RepoConfigView"][];
+      team_file: components["schemas"]["ConfigFileView"];
+      tracker: components["schemas"]["TrackerConfigView"];
+    };
     /**
      * HubCreate
      * @description ``POST /hubs``: the absolute path of a hub to register.
@@ -2606,6 +2710,16 @@ export interface components {
     "JsonValue-Input": unknown;
     /** @enum {string} */
     KeySource: "environment" | "settings";
+    /**
+     * LayeredList
+     * @description A list the team sets and this developer adds to.
+     */
+    LayeredList: {
+      /** Local */
+      local: string[];
+      /** Team */
+      team: string[];
+    };
     /**
      * Learning
      * @description A learning; ``text`` is its title (120 characters at most, redacted).
@@ -3178,6 +3292,21 @@ export interface components {
       /** Title */
       title?: string | null;
     };
+    /** @enum {string} */
+    PatternSource: "repo" | "project" | "default" | "commit_title";
+    /**
+     * PatternView
+     * @description An effective convention pattern, which layer sets it, and a rendered example.
+     */
+    PatternView: {
+      /** Example */
+      example: string | null;
+      /** Pattern */
+      pattern: string;
+      source: components["schemas"]["PatternSource"];
+      /** Where */
+      where: string;
+    };
     /**
      * PermissionDecision
      * @description ``POST /{id}/permissions/{request_id}`` (E7).
@@ -3497,6 +3626,30 @@ export interface components {
       name: string;
       /** Source */
       source: string;
+    };
+    /**
+     * RepoConfigView
+     * @description One repo of ``hub.json`` with its effective branch and conventions.
+     */
+    RepoConfigView: {
+      branch: components["schemas"]["PatternView"];
+      /** Check */
+      check: string;
+      /** Check Fast */
+      check_fast: string | null;
+      /** Check Fast Timeout */
+      check_fast_timeout: number | null;
+      commit_title: components["schemas"]["PatternView"];
+      default_branch: components["schemas"]["SourcedValue"];
+      /** Dir */
+      dir: string;
+      /** Github */
+      github: string;
+      /** Index */
+      index: number;
+      pr_title: components["schemas"]["PatternView"];
+      /** Role */
+      role: string;
     };
     /**
      * RepoView
@@ -4183,6 +4336,17 @@ export interface components {
       state: "fresh" | "stale" | "never";
     };
     /**
+     * SourcedValue
+     * @description An effective value (None when no source gives one) and where it comes from.
+     */
+    SourcedValue: {
+      source: components["schemas"]["ValueSource"];
+      /** Value */
+      value: string | null;
+      /** Where */
+      where: string;
+    };
+    /**
      * Stage
      * @description A state of the run's machine; any stage before ``REPORTED`` can end in ``FAILED``.
      * @enum {string}
@@ -4464,6 +4628,27 @@ export interface components {
       output: number;
     };
     /**
+     * TrackerConfigView
+     * @description How the hub reaches its tracker.
+     */
+    TrackerConfigView: {
+      /** Blocked Label */
+      blocked_label: string | null;
+      /** Failed Label */
+      failed_label: string;
+      /** Kind */
+      kind: string;
+      /** Ready Label */
+      ready_label: string;
+      /** Review State */
+      review_state: string;
+      /** Started State */
+      started_state: string;
+      /** Teams */
+      teams: string[];
+      transport: components["schemas"]["SourcedValue"];
+    };
+    /**
      * TrackerProblem
      * @description Why Linear was not read, as RFC 9457 members: ``type`` is
      *     ``urn:agent-hub:problem:tracker-<kind>``, ``status`` Linear's HTTP status (or 503 when it did
@@ -4537,6 +4722,8 @@ export interface components {
       /** Pointer */
       pointer: string;
     };
+    /** @enum {string} */
+    ValueSource: "team" | "local" | "git" | "derived" | "default";
     /** @enum {string} */
     Verdict: "SHIP" | "SHIP-WITH-OWNER-STEPS" | "NO-SHIP";
     /**
@@ -6908,6 +7095,46 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["BrainNote"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_project_config_api_v1_projects__project__config_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HubConfigView"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
