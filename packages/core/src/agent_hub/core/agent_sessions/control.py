@@ -36,8 +36,10 @@ carry conversation text outside the log itself.
 import asyncio
 import contextlib
 import uuid
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
+from decimal import Decimal
 from functools import partial
 from typing import Final, Protocol
 
@@ -335,6 +337,10 @@ class AgentSessionControl:
         self._observed_sessions = observed_sessions
         self._session_title = session_title
         self._live: dict[str, LiveSession] = {}
+        # Per CLI process: what its reported running cost adds to (see ``_session_cost``).
+        self._cost_bases: weakref.WeakKeyDictionary[LiveSession, Decimal] = (
+            weakref.WeakKeyDictionary()
+        )
         self._pumps: set[asyncio.Task[None]] = set()
         self._admission = asyncio.Lock()
         self._stopping = False
@@ -1058,8 +1064,7 @@ class AgentSessionControl:
             live.answered.add(request_id)
         session = live.session
         fields: AgentSessionFields = {
-            # Claude Code reports the session's running total (kept on --resume), not the turn's.
-            "cost_usd": session.cost_usd if result.cost_usd is None else result.cost_usd,
+            "cost_usd": self._session_cost(live, result.cost_usd),
             "usage": _sum_usage(session.usage, result.usage),
         }
         fields |= await self._title_fields(live)
@@ -1071,6 +1076,25 @@ class AgentSessionControl:
             return
         live.state = apply(live.state, result)
         await self._sync(live, fields)
+
+    def _session_cost(self, live: LiveSession, reported: Decimal | None) -> Decimal | None:
+        """The session's cost once this process reports ``reported``, its running total.
+
+        Claude Code reports the session's total, restored on ``--resume`` from the transcript's
+        cost-state line, so a process's results replace the stored cost. A process whose first
+        total is below the stored cost restarted from 0 (its predecessor died before writing that
+        line): its totals add to the stored cost. A restarted process whose first turn already
+        exceeds the stored cost cannot be told from a restored one, and replaces it.
+        """
+        stored = live.session.cost_usd
+        if reported is None:
+            return stored
+        if live not in self._cost_bases:
+            # A restarted process (below the stored cost) adds to it; a restored one replaces it.
+            self._cost_bases[live] = (
+                stored if stored is not None and reported < stored else Decimal(0)
+            )
+        return self._cost_bases[live] + reported
 
     # Naming
 
