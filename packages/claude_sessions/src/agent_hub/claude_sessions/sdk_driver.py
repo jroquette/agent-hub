@@ -44,7 +44,7 @@ from agent_hub.claude_sessions.permission_bridge import INTERRUPTED, PermissionB
 from agent_hub.claude_sessions.process_tree import terminate
 from agent_hub.claude_sessions.resumable import SessionLister, list_resumable, sdk_lister
 from agent_hub.core.agent_sessions.driver import (
-    ABORTED_TERMINAL_REASON,
+    ACTIVITY_EVENTS,
     DriverAnswer,
     DriverCapabilities,
     DriverError,
@@ -89,8 +89,10 @@ class _Session:
         if self.exited:
             return
         if isinstance(event, TurnResult):
-            aborted = event.terminal_reason == ABORTED_TERMINAL_REASON
-            self.turns = 0 if aborted else max(self.turns - 1, 0)
+            # The CLI folds a message sent mid-turn into the running turn: one result ends all.
+            self.turns = 0
+        elif self.turns == 0 and isinstance(event, ACTIVITY_EVENTS):
+            self.turns = 1  # a queued message played as a turn of its own
         if isinstance(event, Exited):
             self.exited = True
         self.queue.put_nowait(event)
