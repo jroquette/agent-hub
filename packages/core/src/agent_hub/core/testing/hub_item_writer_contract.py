@@ -18,6 +18,7 @@ from agent_hub.core.item_versions.hub_item_writer import (
 )
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
+from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS
 
 SKILL_UNIT: Final = "plugin/demo/skills/alpha"
 SKILLS_FOLDER: Final = "plugin/demo/skills"
@@ -132,11 +133,11 @@ class HubItemWriterContract:
         _no_leftover(writer_tree, "plugin/demo/agents")
 
     def test_writes_plain_file_when_file_written(self, writer_tree: WriterTree) -> None:
-        script = "plugin/demo/hooks/check.sh"
+        script = "plugin/demo/scripts/check.sh"
         writer_tree.writer.write_file(writer_tree.hub_path, script, b"#!/bin/sh\n", executable=True)
-        _check(writer_tree.files("plugin/demo/hooks") == {"check.sh": b"#!/bin/sh\n"}, "written")
+        _check(writer_tree.files("plugin/demo/scripts") == {"check.sh": b"#!/bin/sh\n"}, "written")
         _check(writer_tree.is_executable(script), "the script is executable")
-        _no_leftover(writer_tree, "plugin/demo/hooks")
+        _no_leftover(writer_tree, "plugin/demo/scripts")
 
     def test_makes_folder_equal_when_folder_written(self, writer_tree: WriterTree) -> None:
         writer_tree.write(f"{SKILL_UNIT}/SKILL.md", SKILL_V1)
@@ -274,6 +275,7 @@ class HubItemWriterContract:
             ".claude/settings.json",
             "plugin/demo/agents/x.md",
             "plugin/demo/hooks/hooks.json",
+            "plugin/demo/hooks/check.sh",
             "plugin/demo/scripts/.hidden.sh",
             "plugin/demo/check.sh",
             "workflows/demo/x.yaml",
@@ -347,4 +349,46 @@ class HubItemWriterContract:
             raise AssertionError("a hidden entry's folder was written over")
         expected = {"SKILL.md": b"# old\n", "notes/.keep": b"kept"}
         _check(writer_tree.files(SKILL_UNIT) == expected, "unchanged")
+        _no_leftover(writer_tree, SKILLS_FOLDER)
+
+    def test_carries_hidden_entry_when_at_deepest_folder(self, writer_tree: WriterTree) -> None:
+        deep = "refs/a/b/.gitkeep"
+        writer_tree.write(f"{SKILL_UNIT}/SKILL.md", b"# old\n")
+        writer_tree.write(f"{SKILL_UNIT}/refs/a/c.md", b"c")
+        writer_tree.write(f"{SKILL_UNIT}/{deep}", b"kept")
+        writer_tree.writer.write_unit(writer_tree.hub_path, SKILL_UNIT, _v1(), kind=UnitKind.SKILL)
+        expected = {file.path: file.content for file in _v1().files} | {deep: b"kept"}
+        _check(writer_tree.files(SKILL_UNIT) == expected, "the deepest hidden entry is kept")
+
+    def test_fails_when_old_folder_deeper_than_a_unit(self, writer_tree: WriterTree) -> None:
+        tree = {"SKILL.md": b"# old\n", "a/b/c/d.md": b"too deep", "a/b/.keep": b"k"}
+        for path, content in tree.items():
+            writer_tree.write(f"{SKILL_UNIT}/{path}", content)
+        try:
+            writer_tree.writer.write_unit(
+                writer_tree.hub_path, SKILL_UNIT, _v1(), kind=UnitKind.SKILL
+            )
+        except HubItemWriteError as error:
+            _check(error.kind == "failed", f"the unit is as it was: {error.kind}")
+        else:
+            raise AssertionError("a folder deeper than a unit was swapped")
+        _check(writer_tree.files(SKILL_UNIT) == tree, "unchanged")
+        _no_leftover(writer_tree, SKILLS_FOLDER)
+
+    def test_fails_when_old_folder_holds_more_names_than_examined(
+        self, writer_tree: WriterTree
+    ) -> None:
+        writer_tree.write(f"{SKILL_UNIT}/SKILL.md", b"# old\n")
+        # With SKILL.md, one name past the budget a unit read examines.
+        for number in range(DEFAULT_LIMITS.names_examined):
+            writer_tree.write(f"{SKILL_UNIT}/.n{number}", b"")
+        try:
+            writer_tree.writer.write_unit(
+                writer_tree.hub_path, SKILL_UNIT, _v1(), kind=UnitKind.SKILL
+            )
+        except HubItemWriteError as error:
+            _check(error.kind == "failed", f"the unit is as it was: {error.kind}")
+        else:
+            raise AssertionError("a folder past the names budget was swapped")
+        _check(writer_tree.files(SKILL_UNIT)["SKILL.md"] == b"# old\n", "unchanged")
         _no_leftover(writer_tree, SKILLS_FOLDER)

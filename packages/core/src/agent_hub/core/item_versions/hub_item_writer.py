@@ -16,19 +16,19 @@ Synchronous. ``HubItemWriterContract`` checks every implementation:
   (which no version records) carried over unchanged. A version holding a hidden name is a
   caller bug (``ValueError``): the reader never records one. A completed or failed write never
   leaves a mix of old and new files, but for a failed roll back (below).
-- ``write_file`` writes one new hook's script, ``plugin/<p>/scripts/…`` or
-  ``plugin/<p>/hooks/…`` (no hidden segment, ``hooks/hooks.json`` excluded: it is a unit), the
-  same way as a file unit.
+- ``write_file`` writes one new hook's script, ``plugin/<p>/scripts/…`` (no hidden segment),
+  the same way as a file unit.
 - ``remove_unit`` removes a unit (a rename's old unit), a skill folder whole, its hidden entries
   too (PR 3 decides whether a rename carries them); an absent one is fine.
 
 A refusal is ``ItemWriteRefusedError`` (``hub_read_only`` or ``link_in_path``); any other I/O
 failure is ``HubItemWriteError``. Its ``kind`` is ``failed`` when the unit was left as it was,
 and ``rollback_failed`` when a folder swap failed and putting the old folder back failed too:
-the unit's name may then be missing, and its old content (hidden entries included) is in a
-``.<name>.hub-tmp-<8 hex>`` folder beside it, which ``hub doctor``'s ``items.leftovers``
-lists. No message names a path. A unit path that is not a unit of its kind, or a path that is
-not plain and relative, is a caller bug (``ValueError``).
+the unit's name may then be missing, and two ``.<name>.hub-tmp-<8 hex>`` folders stay beside
+it, which ``hub doctor``'s ``items.leftovers`` lists: the stage (the version, with the hidden
+entries moved into it and not put back) and the old folder (the rest of the old content).
+No message names a path. A unit path that is not a unit of its kind, or a path that is not
+plain and relative, is a caller bug (``ValueError``).
 """
 
 from collections.abc import Sequence
@@ -40,14 +40,12 @@ from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import UnitContent
 from agent_hub.core.skills.skill_sources import (
     DEFAULT_LIMITS,
-    HOOKS_FILE,
-    HOOKS_FOLDER,
     PLUGIN_FOLDER,
     SkillPathError,
 )
 
 _NOT_PLAIN: Final = frozenset({"", ".", ".."})
-_SCRIPT_FOLDERS: Final = frozenset({"scripts", HOOKS_FOLDER})
+_SCRIPT_FOLDERS: Final = frozenset({"scripts"})
 # ``plugin/<p>/<folder>/<name>`` at the least, ``skill_depth`` segments below the folder at most.
 _SCRIPT_MIN_SEGMENTS: Final = 4
 _SCRIPT_MAX_SEGMENTS: Final = 3 + DEFAULT_LIMITS.skill_depth
@@ -128,15 +126,13 @@ def checked_unit_parts(unit_path: str, kind: UnitKind) -> tuple[str, ...]:
 
 def script_parts(path: str) -> tuple[str, ...]:
     """``path``'s segments when it is a hook's script ``write_file`` may write:
-    ``plugin/<p>/scripts/…`` or ``plugin/<p>/hooks/…`` (not ``hooks/hooks.json``), plain, no
-    hidden segment, at most ``skill_depth`` segments below that folder; else ``ValueError``
-    naming no path."""
+    ``plugin/<p>/scripts/…``, plain, no hidden segment, at most ``skill_depth`` segments below
+    that folder; else ``ValueError`` naming no path."""
     parts = plain_parts(path)
     shaped = (
         _SCRIPT_MIN_SEGMENTS <= len(parts) <= _SCRIPT_MAX_SEGMENTS
         and parts[0] == PLUGIN_FOLDER
         and parts[2] in _SCRIPT_FOLDERS
-        and parts[2:] != (HOOKS_FOLDER, HOOKS_FILE)
         and not any(segment.startswith(".") for segment in parts)
     )
     if not shaped:
