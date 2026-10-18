@@ -7,14 +7,17 @@ import threading
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Final
 
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.item_versions.hub_item_writer import (
     HubItemWriteError,
     HubItemWriter,
     ItemWriteRefusedError,
+    check_version_names,
     checked_unit_parts,
     plain_parts,
+    script_parts,
 )
 from agent_hub.core.item_versions.item_version import (
     ItemVersion,
@@ -27,6 +30,8 @@ from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
 from agent_hub.core.testing.hub_fakes import FakeHub
 
 type _UnitKey = tuple[str, str]
+
+_NOT_FOLDER: Final = "Not a directory"
 
 
 class InMemoryItemVersionStore:
@@ -115,13 +120,17 @@ class FakeHubItemWriter:
         if kind is not UnitKind.SKILL and [file.path for file in content.files] != [parts[-1]]:
             msg = "a file unit holds one file named after it"
             raise ValueError(msg)
+        if kind is UnitKind.SKILL:
+            check_version_names(content)
         hub = self._writable(hub_path, unit_path)
         if kind is not UnitKind.SKILL:
             _put(hub, unit_path, content.files[0].content, executable=content.files[0].executable)
         else:
             below = f"{unit_path}/"
+            carried = [p for p in _under(hub, below) if _carried(p.removeprefix(below))]
+            _check_folder_write(hub, unit_path, content, carried=carried)
             for path in _under(hub, below):
-                if not _carried(path.removeprefix(below)):
+                if path not in carried:
                     _drop(hub, path)
             for file in content.files:
                 _put(hub, below + file.path, file.content, executable=file.executable)
@@ -130,8 +139,8 @@ class FakeHubItemWriter:
     def write_file(
         self, hub_path: str, path: str, content: bytes, *, executable: bool = False
     ) -> None:
-        """Put the one file ``path``."""
-        plain_parts(path)
+        """Put the one hook script ``path``."""
+        script_parts(path)
         hub = self._writable(hub_path, path)
         _put(hub, path, content, executable=executable)
         self.writes.append((hub_path, path))
@@ -155,6 +164,19 @@ class FakeHubItemWriter:
 
     def _hub(self, hub_path: str) -> FakeHub:
         return self.hubs.setdefault(hub_path, FakeHub())
+
+
+def _check_folder_write(
+    hub: FakeHub, unit_path: str, content: UnitContent, *, carried: list[str]
+) -> None:
+    """Fail as the disk does, before anything changes: the skill path is no folder, or a
+    version file sits where a carried hidden entry's folder is."""
+    if unit_path in hub.skill_files or unit_path in hub.skill_specials:
+        raise HubItemWriteError(_NOT_FOLDER)
+    below = f"{unit_path}/"
+    written = {below + file.path for file in content.files}
+    if any(path.startswith(f"{file}/") for path in carried for file in written):
+        raise HubItemWriteError(_NOT_FOLDER)
 
 
 def _under(hub: FakeHub, below: str) -> list[str]:
