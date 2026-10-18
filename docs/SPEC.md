@@ -578,7 +578,7 @@ only the version history below is stored:
   kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog
   says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
   hub by its listing's fingerprint.
-- **Version history (AGH-295, capture so far; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
+- **Version history (AGH-295, capture and history reads so far; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
   The catalog and the detail, and the Workflows list and detail, record a version of each unit they show in
   agent-hub's database (table `item_versions`): a skill's whole folder, an agent's file, a hook's whole file (every
   hook of a file shares it), a hub workflow's file. A
@@ -590,6 +590,11 @@ only the version history below is stored:
   `settings.local.json`. A catalog read stops reading new units once 16 MiB have been read (the read that crosses it
   still finishes); the rest wait for a later read. A capture that cannot write within the database's busy timeout
   answers 503, and the next read captures again. The hub's files stay untouched.
+  `GET .../skills/{kind}/{source}/{name}/versions` and `GET /api/v1/workflows/{project}/{name}/versions` list a
+  unit's versions newest first (1 to 200 a page, default 50, with a cursor), after capturing that unit, with its
+  `state` now (`ok`, `too_large`, `secret`, `unreadable`), whether `hub.lock` manages it and how many items share it
+  (the hooks of one file list the same versions); `.../versions/{version_id}` serves one version's files (texts and
+  executable bits), only within the item's own unit. An item with no unit (a link, a built-in) has no history (404).
 
 **Workflows (AGH-225 API, AGH-226 screen).** `GET /api/v1/workflows` lists each project's workflows (the
 hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema.md)) with their source (`hub` or
