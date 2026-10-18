@@ -252,6 +252,9 @@
         "config.identity": {
           "$ref": "#/$defs/IdentityRuleSettings"
         },
+        "environments.production": {
+          "$ref": "#/$defs/RuleSettings"
+        },
         "repos.agents": {
           "$ref": "#/$defs/RuleSettings"
         },

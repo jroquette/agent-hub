@@ -37,10 +37,10 @@ RULE_TABLE_IDS = [
     "config.identity",
     "repos.agents",
     "config.stop_gate",
+    "environments.production",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",
-    "environments.production",
 ]
 CONFIGURABLE_IDS = [rule_id for rule_id in RULE_TABLE_IDS if rule_id != "config.schema"]
 # config.identity's info must read the same for every developer, and config.stop_gate stays a
