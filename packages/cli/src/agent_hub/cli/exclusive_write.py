@@ -39,7 +39,7 @@ def write_exclusive(folder: Path, name: str, content: bytes, *, mode: int = 0o64
             os.link(temp, folder / name)
         except FileExistsError:
             return False
-        _sync_folder(folder)
+        sync_folder(folder)
         return True
     finally:
         # Cleanup never decides the outcome: after the link the file is published; before it,
@@ -48,7 +48,7 @@ def write_exclusive(folder: Path, name: str, content: bytes, *, mode: int = 0o64
             os.unlink(temp)
 
 
-def _sync_folder(folder: Path) -> None:
+def sync_folder(folder: Path) -> None:
     """Make the new name durable, best effort: some file systems cannot sync a folder."""
     with contextlib.suppress(OSError):
         descriptor = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
