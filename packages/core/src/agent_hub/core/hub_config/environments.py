@@ -45,6 +45,11 @@ def _no_secret_shape(value: str) -> str:
 # Every string under ``environments`` and ``services`` is checked for a secret's shape.
 NoSecret = AfterValidator(_no_secret_shape)
 NoSecretText = Annotated[str, Field(min_length=1, pattern=FREE_TEXT_PATTERN), NoSecret]
+EnvironmentDescription = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_DESCRIPTION_CHARS, pattern=FREE_TEXT_PATTERN),
+    NoSecret,
+]
 # An environment's or a service's name: a safe segment, as repo dirs are.
 EnvironmentName = Annotated[
     str, Field(pattern=rf"^{SAFE_SEGMENT}$", max_length=MAX_NAME_CHARS), NoSecret
@@ -115,8 +120,8 @@ class Environment(ConfigObject):
 
     access: Access
     production: StrictBool = False
-    description: Annotated[NoSecretText, Field(max_length=MAX_DESCRIPTION_CHARS)] | None = (
-        absent_by_default(description="At most 80 characters; AGENTS.md renders it as text.")
+    description: EnvironmentDescription | None = absent_by_default(
+        description="At most 80 characters; AGENTS.md renders it as text."
     )
     credentials: Credentials | None = absent_by_default(
         description="Names of the credentials to use; never a value."
