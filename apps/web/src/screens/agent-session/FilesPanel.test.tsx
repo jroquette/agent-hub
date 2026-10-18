@@ -130,7 +130,7 @@ describe("ChangedFilesChip (review)", () => {
     );
 
     const chip = screen.getByRole("button", {
-      name: "Changed files: 2 files, 2 lines added, 1 removed, 2 to review",
+      name: "Review changes: 2 files, 2 lines added, 1 removed, 2 to review",
     });
     expect(chip).toHaveClass("as-files-chip-due");
     await userEvent.click(chip);
@@ -146,7 +146,7 @@ describe("ChangedFilesChip (review)", () => {
       />,
     );
     const done = screen.getByRole("button", {
-      name: "Changed files: 2 files, 2 lines added, 1 removed, all reviewed",
+      name: "Review changes: 2 files, 2 lines added, 1 removed, all reviewed",
     });
     expect(done).not.toHaveClass("as-files-chip-due");
     expect(done).toHaveAttribute("aria-expanded", "true");
@@ -178,6 +178,7 @@ describe("FilesPanel (long-files)", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: /a\.ts/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Each change (2)" }));
 
     expect(screen.getByLabelText("Change 1 to r/a.ts")).toHaveClass("as-diff-numbered");
     expect(screen.getByLabelText("Change 2 to r/a.ts")).not.toHaveClass("as-diff-numbered");
@@ -215,5 +216,68 @@ describe("FilesPanel (comments)", () => {
 
     expect(screen.getByTitle("2 open review comments")).toHaveTextContent("2");
     expect(screen.queryByTitle(/1 open review comment/)).toBeNull();
+  });
+});
+
+describe("FilesPanel (final result)", () => {
+  it("opens a file changed several times on its final diff, each change one click away", async () => {
+    render(
+      <FilesPanel
+        files={filesOf([
+          tool("t1", "Write", { file_path: "/r/a.md", content: "one\ntwo\n" }),
+          tool("t2", "Edit", { file_path: "/r/a.md", old_string: "two", new_string: "2" }),
+        ])}
+        sessionId="s1"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /a\.md/ }));
+
+    expect(screen.getByRole("button", { name: "Final result" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText("Final diff of r/a.md")).toHaveTextContent("+2");
+    expect(screen.queryByLabelText("Change 1 to r/a.md")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Each change (2)" }));
+
+    expect(screen.getByLabelText("Change 1 to r/a.md")).toBeInTheDocument();
+    expect(screen.getByLabelText("Change 2 to r/a.md")).toBeInTheDocument();
+  });
+
+  it("AC-PG-18.3: says the file ends as it began when its changes cancel out", async () => {
+    // A line added, then removed again, as Claude reported each change (with line numbers).
+    const reported = (id: string, diff: string): ToolView => ({
+      ...tool(id, "Edit", { file_path: "/r/b.md", old_string: "x", new_string: "y" }),
+      diff,
+      result: { content: "ok", isError: false, truncated: false, originalBytes: null, diff },
+    });
+    render(
+      <FilesPanel
+        files={filesOf([
+          reported("t1", "--- a/r/b.md\n+++ b/r/b.md\n@@ -1,1 +1,2 @@\n one\n+draft"),
+          reported("t2", "--- a/r/b.md\n+++ b/r/b.md\n@@ -1,2 +1,1 @@\n one\n-draft"),
+        ])}
+        sessionId="s1"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /b\.md/ }));
+
+    expect(screen.getByRole("button", { name: "Final result" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      screen.getByText("The changes cancel out: the file ends as it began."),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Final diff of r/b.md")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Each change (2)" }));
+    expect(screen.getByLabelText("Change 1 to r/b.md")).toBeInTheDocument();
+    expect(screen.getByLabelText("Change 2 to r/b.md")).toBeInTheDocument();
   });
 });

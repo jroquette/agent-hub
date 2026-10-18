@@ -32,6 +32,9 @@ MAX_TITLE_CHARS: Final = 200
 MAX_DECISION_MESSAGE: Final = 2048
 MAX_ANSWERS: Final = 16
 MAX_CLOUD_TASK_CHARS: Final = 65536
+# The Sessions list's glimpse of a session: the last prompt and reply, and the files changed.
+MAX_SNIPPET_CHARS: Final = 280
+MAX_CHANGED_FILES: Final = 200
 
 
 class AgentSessionStatus(StrEnum):
@@ -81,6 +84,15 @@ class OpenPermission(ViewModel):
     deadline_at: ApiTimestamp
 
 
+class ChangedFile(ViewModel):
+    """A file the session's tool calls changed (``Edit``, ``MultiEdit``, ``Write``,
+    ``NotebookEdit``, subagents' included); ``last_change_id`` is the ``tool_use_id`` of the
+    latest change to it, the id the chat's review marks compare with."""
+
+    path: str
+    last_change_id: str
+
+
 class AgentSession(ViewModel):
     """One session ``hub web`` started (or one cloud start, ``kind="cloud"``).
 
@@ -88,6 +100,10 @@ class AgentSession(ViewModel):
     start when the id is given, P13); ``observed_session_id`` is that Session's id once it has
     been observed, else ``null`` (a twin may never arrive, D2). ``last_seq`` is the last
     persisted record's ``seq``. ``cost_usd`` and ``usage`` add up the turns' results (an estimate).
+    ``last_prompt`` and ``last_reply`` are the latest ``user.message`` and assistant ``text`` of
+    the stored (redacted) log as one line of at most 280 characters, the reply's markdown
+    marks dropped; ``changed_files`` the files changed, latest change first, at most 200
+    (``digest``).
     """
 
     id: str
@@ -109,6 +125,9 @@ class AgentSession(ViewModel):
     cost_usd: Money | None = None
     usage: TokenUsage | None = None
     last_seq: int = Field(default=0, ge=0)
+    last_prompt: str | None = Field(default=None, max_length=MAX_SNIPPET_CHARS)
+    last_reply: str | None = Field(default=None, max_length=MAX_SNIPPET_CHARS)
+    changed_files: tuple[ChangedFile, ...] = Field(default=(), max_length=MAX_CHANGED_FILES)
     open_permission: OpenPermission | None = None
     observed_session_id: str | None = None
 

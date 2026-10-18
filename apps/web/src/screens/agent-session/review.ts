@@ -17,7 +17,7 @@ export type AnchorSide = "new" | "old" | "diff";
 
 export interface ReviewAnchor {
   path: string;
-  /** The change in the file's review, from 1. */
+  /** The change in the file's review, from 1; 0 for the file's final diff (all changes). */
   change: number;
   side: AnchorSide;
   start: number;
@@ -48,7 +48,7 @@ const SIDE_WORDS: Record<AnchorSide, string> = {
 };
 
 const HEADER =
-  /^(Review comment|Reply to review comment) on `([^`\n]+)`, change (\d+), (lines|old lines|diff lines) (\d+)(?:-(\d+))?:/;
+  /^(Review comment|Reply to review comment) on `([^`\n]+)`, (?:change (\d+)|final diff), (lines|old lines|diff lines) (\d+)(?:-(\d+))?:/;
 
 export const anchorKey = (anchor: ReviewAnchor) =>
   `${anchor.path}#${String(anchor.change)}#${anchor.side}${String(anchor.start)}-${String(anchor.end)}`;
@@ -58,7 +58,8 @@ function anchorWords(anchor: ReviewAnchor): string {
     anchor.start === anchor.end
       ? String(anchor.start)
       : `${String(anchor.start)}-${String(anchor.end)}`;
-  return `\`${anchor.path}\`, change ${String(anchor.change)}, ${SIDE_WORDS[anchor.side]} ${range}`;
+  const change = anchor.change === 0 ? "final diff" : `change ${String(anchor.change)}`;
+  return `\`${anchor.path}\`, ${change}, ${SIDE_WORDS[anchor.side]} ${range}`;
 }
 
 /** A new comment's message: the anchor, the code it is about, then the comment. */

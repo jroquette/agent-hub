@@ -20,6 +20,7 @@ import {
   at,
   renderWithApi,
   type ApiRoutes,
+  T0,
 } from "../../testing/builders";
 import { servedCheckout } from "../../lib/devCheckout";
 import { GLOBAL_STREAM, GlobalStreamProvider } from "../../shell/GlobalStream";
@@ -30,12 +31,16 @@ vi.mock("../../lib/devCheckout", async (importOriginal) => {
   return { ...actual, servedCheckout: vi.fn(() => null) };
 });
 
-// These tests read the tables; the grid is the default view (AC-234.3).
+// These tests read the list, the default view.
 beforeEach(() => {
-  window.localStorage.setItem("ah.sessions.view", "table");
+  // The default period counts back from now: pin the clock a day after the builders' T0.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.parse(T0) + 86_400_000);
+  window.localStorage.setItem("ah.sessions.view", "list");
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.mocked(servedCheckout).mockReturnValue(null);
 });
 
@@ -84,77 +89,123 @@ function routes(overrides: ApiRoutes = {}): ApiRoutes {
   };
 }
 
+/** A group of the list, by its header. */
+const group = (name: RegExp) => screen.getByRole("region", { name });
+/** The groups' header buttons, as they read. */
+const groupToggles = () =>
+  [...document.querySelectorAll<HTMLButtonElement>("[data-group] h2 button[aria-expanded]")].map(
+    (button) => button.textContent,
+  );
+const rowOf = (text: string) => screen.getByText(text).closest("tr") as HTMLElement;
+const lineOf = (text: string) => rowOf(text).querySelector(".sl-row-line")?.textContent;
+const tagsOf = (text: string) =>
+  [...rowOf(text).querySelectorAll(".sl-row-tag")].map((tag) => tag.textContent);
+/** The Where column of a row: "project / repo · branch". */
+const placeOf = (text: string) => rowOf(text).querySelector(".sl-where-place")?.textContent;
+const badgeOf = (text: string) => rowOf(text).querySelector(".sl-cell-status")?.textContent;
+
 function renderList(apiRoutes: ApiRoutes, path = "/sessions") {
   return renderWithApi(<SessionsListScreen />, { routes: apiRoutes, path });
 }
 
 describe("SessionsListScreen", () => {
-  it("lists sessions with outcome, cost, errors and transcript columns", async () => {
+  it("lists each session as its title and one line, with its issue, cost and time on the right", async () => {
     renderList(routes());
 
     await screen.findByText("/evaluator");
-    const live = screen.getByRole("table", { name: "Live sessions" });
-    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
-    const inTables = (text: string) =>
-      [live, ended].flatMap((table) => within(table).queryAllByText(text));
-    expect(within(live).getByText("Live")).toBeInTheDocument();
-    expect(within(ended).getByText("Error")).toBeInTheDocument();
-    expect(inTables("$1.2500")).toHaveLength(2);
-    expect(inTables("3")).toHaveLength(3);
-    expect(inTables("—")).toHaveLength(1);
-    expect(screen.getByText(/Showing 2 of ~2 · Ended: last 7 d · 1 project/)).toBeInTheDocument();
+    const live = group(/^Working/);
+    const ended = group(/^Finished/);
+    expect(within(live).getByText("/evaluator")).toBeInTheDocument();
+    expect(lineOf("/evaluator")).toBe("Starting");
+    expect(lineOf("ACME-1511 · /feature")).toBe("Ran 30 min");
+    // Each group is a table naming its columns for readers; every row carries its status badge.
+    expect(within(live).getByRole("table", { name: "Working sessions" })).toBeInTheDocument();
+    expect(
+      within(live)
+        .getAllByRole("columnheader")
+        .map((th) => th.textContent),
+    ).toEqual(["Status", "Session", "Where", "Cost", "Last activity", "Action"]);
+    expect(badgeOf("/evaluator")).toBe("Working");
+    expect(badgeOf("ACME-1511 · /feature")).toBe("Failed");
+    // Each group says what it asks of the owner and how it is ordered.
+    expect(
+      within(live).getByText("Claude is on it, nothing to do yet · latest first"),
+    ).toBeInTheDocument();
+    expect(within(ended).getByText("Newest first")).toBeInTheDocument();
+    // Two decimals on the row, four on hover.
+    expect(within(live).getByText("$1.25")).toHaveAttribute("title", "$1.2500 USD");
+    expect(within(ended).getByText("$1.25")).toBeInTheDocument();
+    // The issue shows only where there is one; no "no issue" filler.
+    expect(within(ended).getByText("ACME-1511")).toHaveClass("ah-issue");
+    expect(screen.queryByText(/no issue|no run/)).toBeNull();
+    // One time: last activity while open, the end once finished.
+    expect(rowOf("/evaluator").querySelector("time")).toHaveAttribute("datetime", at(600));
+    expect(rowOf("/evaluator").querySelector("time")?.getAttribute("title")).toMatch(
+      /^Last activity /,
+    );
+    expect(rowOf("ACME-1511 · /feature").querySelector("time")).toHaveAttribute(
+      "datetime",
+      at(1800),
+    );
+    expect(rowOf("ACME-1511 · /feature").querySelector("time")?.getAttribute("title")).toMatch(
+      /^Ended /,
+    );
+    // No transcript, turns or tokens in the list.
+    expect(screen.queryByText("local file")).toBeNull();
+    expect(screen.queryByText("6,400")).toBeNull();
   });
 
-  it("names each session by its label over repo · branch and has no Agent column (label, AC-201.4)", async () => {
+  it("names each session by its label, tags where it came from, and places it by repo, branch and run (label, AC-201.4)", async () => {
     renderList(routes());
 
     await screen.findByText("ACME-1511 · /feature");
-    const ended = screen.getByRole("table", { name: "Ended or failed sessions" });
-    expect(within(ended).getByText("storefront · main")).toBeInTheDocument();
+    // Every row says it came from a terminal or a chat; the Where column names repo and branch.
+    expect(tagsOf("ACME-1511 · /feature")).toEqual(["Terminal"]);
+    expect(tagsOf("/evaluator")).toEqual(["Terminal"]);
+    expect(placeOf("ACME-1511 · /feature")).toBe("storefront · main");
+    expect(placeOf("/evaluator")).toBe("agent-hub · dev/agh-48-live-tiles");
     expect(
-      within(screen.getByRole("table", { name: "Live sessions" })).getByText(
-        "agent-hub · dev/agh-48-live-tiles",
-      ),
-    ).toBeInTheDocument();
-    const headers = () =>
-      within(screen.getByRole("table", { name: "Live sessions" }))
-        .getAllByRole("columnheader")
-        .map((th) => th.textContent);
-    expect(headers()).toContain("Session");
-    expect(headers()).not.toContain("Agent");
+      within(rowOf("ACME-1511 · /feature")).getByText("Run ACME-1511 · implement"),
+    ).toHaveClass("sl-where-run");
+    // The title is a real link to the session.
     expect(
-      screen
-        .getAllByRole("table")
-        .flatMap((table) => within(table).queryAllByText(/\bmain\b/))
-        .map((node) => node.textContent),
-    ).toEqual(["storefront · main"]);
-
-    fireEvent.click(screen.getByRole("button", { name: "Compact rows" }));
-    expect(headers()).toContain("Session");
-    expect(headers()).not.toContain("Agent");
-    expect(screen.getByText("ACME-1511 · /feature")).toBeInTheDocument();
+      within(group(/^Finished/)).getByRole("link", { name: "ACME-1511 · /feature" }),
+    ).toHaveAttribute("href", `/sessions/${anId(2, "aaaa0002")}`);
   });
 
-  it("sends filters from the URL and the rail to the API", async () => {
+  it("sends filters from the URL and the Filters popover to the API", async () => {
     const { requests, router } = renderList(routes(), "/sessions?outcome=error&period=24 h");
-    // An outcome asks only the Ended section.
+    // An outcome asks only the Finished section.
     await screen.findByText("ACME-1511 · /feature");
     expect(screen.queryByText("/evaluator")).toBeNull();
 
-    const first = new URL(requests.find((r) => new URL(r.url).pathname === SESSIONS)?.url ?? "");
+    const asked = requests.filter((r) => new URL(r.url).pathname === SESSIONS);
+    expect(asked).toHaveLength(1);
+    const first = new URL(asked[0]?.url ?? "");
+    expect(first.searchParams.get("status")).toBe("ended");
     expect(first.searchParams.get("outcome")).toBe("error");
     expect(first.searchParams.get("from")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Remove filter Outcome error" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove filter Outcome Error" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Period: Last 24 hours" })).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "Filters · 1" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Had a guard denial/ }));
     expect(router.state.location.search).toContain("guard_denial=1");
     fireEvent.click(screen.getByRole("button", { name: "Bash" }));
     expect(router.state.location.search).toContain("tool=Bash");
-    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    await waitFor(() => {
+      const last = new URL(requests.at(-1)?.url ?? "");
+      expect([last.searchParams.get("tool"), last.searchParams.get("guard_denial")]).toEqual([
+        "Bash",
+        "true",
+      ]);
+    });
+    expect(screen.getByRole("button", { name: "Filters · 3" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(router.state.location.search).toBe("");
   });
 
-  it("loads the next page, sorts by cost and opens a session when its row is clicked", async () => {
+  it("loads the next page in a group and opens a session when its row is clicked", async () => {
     const { router, requests } = renderList(
       routes({
         [SESSIONS]: (request: Request) =>
@@ -163,42 +214,17 @@ describe("SessionsListScreen", () => {
             : aSessionsByStatus(sessions(), { next_cursor: "c2" })(request),
       }),
     );
-    const live = await screen.findByRole("region", { name: /^Live/ });
+    const live = await screen.findByRole("region", { name: /^Working/ });
+    expect(await within(live).findByText("Showing 1 of ~1")).toBeInTheDocument();
     fireEvent.click(await within(live).findByRole("button", { name: "Load more" }));
     await waitFor(() => {
       expect(requests.map((r) => r.url).join(" ")).toContain("cursor=c2");
     });
     expect(await within(live).findByText("/third")).toBeInTheDocument();
-    expect(within(live).getByText("Showing all 2")).toBeInTheDocument();
+    expect(within(live).queryByRole("button", { name: "Load more" })).toBeNull();
 
-    fireEvent.click(within(live).getByRole("button", { name: /^Cost/ }));
-    expect(router.state.location.search).toBe("?sort=-cost");
-    await waitFor(() => {
-      expect(requests.some((r) => new URL(r.url).searchParams.get("sort") === "-cost")).toBe(true);
-    });
-
-    fireEvent.click(await screen.findByText("/evaluator"));
+    fireEvent.click(rowOf("/evaluator"));
     expect(router.state.location.pathname).toBe(`/sessions/${anId(1, "aaaa0001")}`);
-  });
-
-  it("selects two sessions with Compare disabled for Phase 3, and changes columns and density", async () => {
-    renderList(routes());
-    await screen.findByText("/evaluator");
-
-    const boxes = screen.getAllByRole("checkbox", { name: "Select row" });
-    boxes.forEach((box) => fireEvent.click(box));
-    const compare = screen.getByRole("button", { name: /Compare 2 sessions/ });
-    expect(compare).toBeDisabled();
-    expect(compare).toHaveAttribute("title", "Available in Phase 3. This version is read-only.");
-
-    fireEvent.click(screen.getByRole("button", { name: "Columns" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Model" }));
-    expect(screen.getAllByRole("columnheader", { name: "Model" })).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "Compact rows" }));
-    expect(document.querySelector('[data-density="compact"]')).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Default" }));
-    fireEvent.click(screen.getByRole("button", { name: /Live now/ }));
-    expect(screen.getByRole("button", { name: "Live now" })).toBeInTheDocument();
   });
 
   it("shows loading, empty, filtered empty, error and stale states", async () => {
@@ -206,6 +232,9 @@ describe("SessionsListScreen", () => {
     await waitFor(() => {
       expect(pending.container.querySelector(".ah-skel")).not.toBeNull();
     });
+    // The group counts wait for their sections.
+    expect(screen.getByRole("button", { name: "Needs you · …" })).toBeInTheDocument();
+    expect(screen.queryByText(/needs? you\./)).toBeNull();
     pending.unmount();
 
     const empty = renderList(routes({ [SESSIONS]: aPage([]) }));
@@ -214,7 +243,8 @@ describe("SessionsListScreen", () => {
 
     const filtered = renderList(routes({ [SESSIONS]: aPage([]) }), "/sessions?outcome=error");
     expect(await screen.findByText("No sessions match these filters.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Widen to 30 d" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show last 30 days" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Clear filters" }).length).toBeGreaterThan(0);
     filtered.unmount();
 
     const failed = renderList(
@@ -229,15 +259,10 @@ describe("SessionsListScreen", () => {
     // Each section reports its own error (four sections asked).
     expect(await screen.findAllByText(/^Could not load .+ sessions$/)).toHaveLength(4);
     expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(4);
-    expect(screen.getAllByRole("button", { name: "Clear filters" })).toHaveLength(4);
     failed.unmount();
 
     renderList(routes());
     expect(await screen.findByText(/Stale · as of/)).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox", { name: "Minimum cost" }), {
-      target: { value: "1,5" },
-    });
-    expect(screen.getByText("Use a decimal with a dot, e.g. 1.5")).toBeInTheDocument();
   });
 
   it("empty: says how to start a session with claude when there has never been one", async () => {
@@ -246,11 +271,15 @@ describe("SessionsListScreen", () => {
     expect(await screen.findByText("No sessions yet.")).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Sessions appear when Claude Code runs in a registered hub with the collector on\./,
+        /Each Claude Code session in a registered hub is listed here after its first event\./,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("cd ~/agent-hub-hub && claude")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Show all time" })).not.toBeInTheDocument();
+    // New session stays in the header.
+    expect(
+      await screen.findByRole("button", { name: "New session" }, { timeout: 5000 }),
+    ).toBeInTheDocument();
   });
 
   it("offline: shows the collector's as-of stamp only while the collector is offline", async () => {
@@ -495,50 +524,68 @@ function drivenFixture(
   });
 }
 
-const table = (name: string) => screen.getByRole("table", { name: `${name} sessions` });
-const rowOf = (text: string) => screen.getByText(text).closest("tr");
-
 describe("SessionsListScreen driven sessions in the list (driven-in-list)", () => {
-  it("shows a twin once with a Chat badge, and twinless ones in their section with their counts", async () => {
+  it("shows a twin once as a chat, and twinless ones in their group with their counts", async () => {
     const view = renderList(drivenFixture());
 
     await screen.findByText("Fix the build");
     // The twin reads its driven session's prompt until Claude Code's title reaches its label.
-    expect(within(table("Live")).getByText("Twin chat")).toBeInTheDocument();
-    expect(within(rowOf("Twin chat") ?? document.body).getByText("Chat")).toBeInTheDocument();
+    const live = group(/^Working/);
+    expect(within(live).getByText("Twin chat")).toBeInTheDocument();
+    const twin = rowOf("Twin chat");
+    // A twin reads as the chat it is, not as a terminal session.
+    expect(within(twin).queryByText("Terminal")).toBeNull();
+    expect(tagsOf("Twin chat")).toEqual(["Chat"]);
+    expect(within(twin).getByRole("link", { name: "Open chat Twin chat" })).toBeInTheDocument();
+    expect(within(twin).getByRole("link", { name: "Twin chat" })).toHaveAttribute(
+      "href",
+      `/agent-sessions/${anId(11, "0192a5e5")}`,
+    );
     expect(screen.getAllByText("Twin chat")).toHaveLength(1);
-    const name = within(table("Live")).getByText("Fix the build");
     // A long first prompt stays on one line, the whole of it on hover.
-    expect(name).toHaveAttribute("title", "Fix the build");
-    expect(name).toHaveStyle({ whiteSpace: "nowrap", textOverflow: "ellipsis" });
-    expect(within(table("Waiting")).getByText("Approve me")).toBeInTheDocument();
-    expect(within(table("Ended or failed")).getByText("Broke")).toBeInTheDocument();
-    const idle = within(table("Idle"))
+    expect(within(live).getByRole("link", { name: "Fix the build" })).toHaveAttribute(
+      "title",
+      "Fix the build",
+    );
+    expect(lineOf("Fix the build")).toBe("Working on your message");
+    expect(within(group(/^Needs you/)).getByText("Approve me")).toBeInTheDocument();
+    expect(lineOf("Approve me")).toBe("Asks to use Bash: git status");
+    expect(within(group(/^Finished/)).getByText("Broke")).toBeInTheDocument();
+    expect(badgeOf("Broke")).toBe("Failed");
+    expect(lineOf("Broke")).toBe("No details recorded");
+    const idle = within(group(/^Your turn/))
       .getAllByText(/idle$/)
       .map((node) => node.textContent);
     expect(idle).toEqual(["Newer idle", "Older idle"]);
-    expect(screen.getByRole("button", { name: "Waiting · 1" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Live · 3" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Idle · 2" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ended or failed · 2" })).toBeInTheDocument();
+    expect(groupToggles()).toEqual([
+      "Needs you · 1",
+      "Working · 3",
+      "Your turn · 2",
+      "Finished · last 7 days · 2",
+    ]);
+    expect(
+      within(group(/^Your turn/)).getByText(
+        "Claude finished its turn: check the work or send your next message · latest first",
+      ),
+    ).toBeInTheDocument();
 
-    fireEvent.click(rowOf("Twin chat") as HTMLElement);
+    fireEvent.click(twin);
     expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(11, "0192a5e5")}`);
   });
 
-  it("bounds Ended's twinless driven sessions by the period, rows and count alike", async () => {
+  it("bounds Finished's twinless driven sessions by the period, rows and count alike", async () => {
     const view = renderList(drivenFixture());
 
     await screen.findByText("Broke");
     expect(screen.queryByText("Ancient")).toBeNull();
-    expect(screen.getByRole("button", { name: "Ended or failed · 2" })).toBeInTheDocument();
-    // Waiting, Live and Idle are not bounded (O-4): the idle one from T0 still shows.
+    expect(groupToggles()).toContain("Finished · last 7 days · 2");
+    // Needs you, Working and Paused are not bounded (O-4): the idle one from T0 still shows.
     expect(screen.getByText("Older idle")).toBeInTheDocument();
     view.unmount();
 
     renderList(drivenFixture(), "/sessions?period=All");
     expect(await screen.findByText("Ancient")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ended or failed · 3" })).toBeInTheDocument();
+    expect(groupToggles()).toContain("Finished · 3");
   });
 
   it("resume: ended or failed driven rows and twins offer Resume, a link to the chat that resumes them", async () => {
@@ -573,22 +620,17 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     });
 
     await screen.findByText("Broke");
-    const resumes = within(table("Ended or failed")).getAllByRole("link", { name: /^Resume/ });
+    const resumes = within(group(/^Finished/)).getAllByRole("link", { name: /^Resume/ });
+    // Finished is newest first: the twin was active last.
     expect(
       resumes.map((link) => [link.getAttribute("aria-label"), link.getAttribute("href")]),
     ).toEqual([
-      ["Resume Broke", `/agent-sessions/${anId(16, "0192a5e5")}`],
       ["Resume Twin chat", `/agent-sessions/${anId(11, "0192a5e5")}`],
+      ["Resume Broke", `/agent-sessions/${anId(16, "0192a5e5")}`],
     ]);
-    expect(
-      within(rowOf("Fix the build") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
-    ).toBeNull();
-    expect(
-      within(rowOf("In the cloud") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
-    ).toBeNull();
-    expect(
-      within(rowOf("/evaluator") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
-    ).toBeNull();
+    expect(within(rowOf("Fix the build")).queryByRole("link", { name: /^Resume/ })).toBeNull();
+    expect(within(rowOf("In the cloud")).queryByRole("link", { name: /^Resume/ })).toBeNull();
+    expect(within(rowOf("/evaluator")).queryByRole("link", { name: /^Resume/ })).toBeNull();
 
     expect(await seriousViolations(view.container)).toEqual([]);
 
@@ -606,12 +648,12 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     });
     const view = renderList({ ...drivenFixture(), [AGENT]: { items: [broke, full] } });
     await screen.findByText("Full");
-    expect(
-      within(rowOf("Broke") as HTMLElement).getByRole("link", { name: "Resume Broke" }),
-    ).toBeInTheDocument();
-    expect(
-      within(rowOf("Full") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
-    ).toBeNull();
+    expect(within(rowOf("Broke")).getByRole("link", { name: "Resume Broke" })).toBeInTheDocument();
+    expect(within(rowOf("Full")).queryByRole("link", { name: /^Resume/ })).toBeNull();
+    expect(badgeOf("Full")).toBe("Closed");
+    expect(lineOf("Full")).toMatch(/^Closed: the conversation is full/);
+    // Without Resume, the row still offers a way in: its chat.
+    expect(within(rowOf("Full")).getByRole("link", { name: "Open chat Full" })).toBeInTheDocument();
     view.unmount();
 
     renderList({
@@ -620,9 +662,7 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
       [`${AGENT}/capabilities`]: aCapabilities({ available: false }),
     });
     await screen.findByText("Broke");
-    expect(
-      within(rowOf("Broke") as HTMLElement).queryByRole("link", { name: /^Resume/ }),
-    ).toBeNull();
+    expect(within(rowOf("Broke")).queryByRole("link", { name: /^Resume/ })).toBeNull();
   });
 
   it("resume: an ended twin whose driven session is not listed shows its row without Resume", async () => {
@@ -640,22 +680,29 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     });
 
     await screen.findByText("Broke");
-    expect(
-      within(rowOf("Broke") as HTMLElement).getByRole("link", { name: "Resume Broke" }),
-    ).toBeInTheDocument();
-    const orphan = rowOf("/orphan") as HTMLElement;
-    expect(within(orphan).queryByRole("link", { name: /^Resume/ })).toBeNull();
+    expect(within(rowOf("Broke")).getByRole("link", { name: "Resume Broke" })).toBeInTheDocument();
+    expect(within(rowOf("/orphan")).queryByRole("link", { name: /^Resume/ })).toBeNull();
   });
 
-  it("shows a twinless row's folder, mode, model and cost", async () => {
+  it("shows a twinless row's cost and line, its mode and model once paused, its folder when it differs", async () => {
     renderList(drivenFixture());
 
-    const row = (await screen.findByText("Fix the build")).closest("tr") as HTMLElement;
-    expect(within(row).getByText("agent-hub-hub · Ask before edits · sonnet")).toBeInTheDocument();
-    expect(within(row).getByText("$0.0012")).toBeInTheDocument();
+    await screen.findByText("Fix the build");
+    expect(within(rowOf("Fix the build")).getByText("$0.00")).toHaveAttribute(
+      "title",
+      "$0.0012 USD",
+    );
+    expect(lineOf("Newer idle")).toBe("Waiting for your next message");
+    expect(badgeOf("Newer idle")).toBe("Your turn");
+    // A chat in the default mode names no mode; the Where column names its folder.
+    expect(tagsOf("Newer idle")).toEqual(["Chat"]);
+    expect(tagsOf("Fix the build")).toEqual(["Chat"]);
+    expect(placeOf("Fix the build")).toBe("agent-hub-hub");
+    expect(tagsOf("/evaluator")).toEqual(["Terminal"]);
+    expect(placeOf("/evaluator")).toBe("agent-hub · dev/agh-48-live-tiles");
   });
 
-  it("adds placed rows and drops moved ones once in the paged footer and the count line", async () => {
+  it("adds placed rows and drops moved ones once in the paged footer, the group counts and the summary strip", async () => {
     const twin = aSession({
       id: anId(3, "aaaa0003"),
       label: named("twin"),
@@ -671,14 +718,13 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     renderList(drivenFixture("waiting_permission", observed));
 
     await screen.findByText("Fix the build");
-    // Live: 120 observed, + "Fix the build", - the twin moved to Waiting; 2 rows loaded.
-    expect(screen.getByRole("button", { name: "Live · ~120" })).toBeInTheDocument();
-    expect(
-      within(screen.getByRole("region", { name: "Live · ~120" })).getByText("Showing 2 of ~120"),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Waiting · 2" })).toBeInTheDocument();
-    // Waiting 2 + Live 2 + Idle 2 + Ended 2 rows; 2 + 120 + 2 + 2 counted.
-    expect(screen.getByText(/^Showing 8 of ~126 ·/)).toBeInTheDocument();
+    // Working: 120 observed, + "Fix the build", - the twin moved to Needs you; 2 rows loaded.
+    expect(groupToggles()).toContain("Working · ~120");
+    expect(within(group(/^Working/)).getByText("Showing 2 of ~120")).toBeInTheDocument();
+    expect(groupToggles()).toContain("Needs you · 2");
+    const tile = (id: string) =>
+      document.querySelector(`[data-tile="${id}"] .sl-summary-value`)?.textContent;
+    expect([tile("waiting"), tile("live"), tile("idle")]).toEqual(["2", "120", "2"]);
   });
 
   it("opens a twinless driven session's chat from its row", async () => {
@@ -688,27 +734,36 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     expect(view.router.state.location.pathname).toBe(`/agent-sessions/${anId(12, "0192a5e5")}`);
   });
 
-  it("moves a twin whose driven session waits on a permission into Waiting, out of Live's count", async () => {
+  it("moves a twin whose driven session waits on a permission into Needs you, out of Working's count", async () => {
     renderList(drivenFixture("waiting_permission"));
 
     await screen.findByText("Twin chat");
-    expect(within(table("Waiting")).getByText("Twin chat")).toBeInTheDocument();
-    expect(within(rowOf("Twin chat") ?? document.body).getByText("Waiting")).toBeInTheDocument();
-    expect(within(table("Live")).queryByText("Twin chat")).toBeNull();
-    expect(screen.getByRole("button", { name: "Waiting · 2" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Live · 2" })).toBeInTheDocument();
+    expect(within(group(/^Needs you/)).getByText("Twin chat")).toBeInTheDocument();
+    const twin = rowOf("Twin chat");
+    expect(lineOf("Twin chat")).toBe("Asks for a permission");
+    expect(within(twin).getByRole("link", { name: "Answer Twin chat" })).toHaveAttribute(
+      "href",
+      `/agent-sessions/${anId(11, "0192a5e5")}`,
+    );
+    expect(within(group(/^Working/)).queryByText("Twin chat")).toBeNull();
+    expect(groupToggles()).toEqual([
+      "Needs you · 2",
+      "Working · 2",
+      "Your turn · 2",
+      "Finished · last 7 days · 2",
+    ]);
   });
 
   it("leaves twinless driven sessions out while a filter they cannot match is on", async () => {
     renderList(drivenFixture(), "/sessions?repo=agent-hub");
 
     await screen.findByText("Twin chat");
-    expect(within(rowOf("Twin chat") ?? document.body).getByText("Chat")).toBeInTheDocument();
+    expect(tagsOf("Twin chat")).toEqual(["Chat"]);
     expect(screen.queryByText("Fix the build")).toBeNull();
     expect(screen.queryByText("Approve me")).toBeNull();
   });
 
-  it("has New session in the page header, no driven region, and cloud guidance closed below the sections", async () => {
+  it("has New session in the page header, no driven region, and cloud guidance closed below the groups", async () => {
     renderList(routes({ [AGENT]: { items: [anAgentSession()] } }));
 
     // New session waits on three queries (list, capabilities, folders); a loaded runner needs > 1 s.
@@ -719,7 +774,7 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
     const cloud = screen.getByText("Cloud sessions").closest("details");
     expect(cloud).not.toHaveAttribute("open");
     expect(
-      table("Live").compareDocumentPosition(cloud as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+      group(/^Finished/).compareDocumentPosition(cloud as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
@@ -738,7 +793,7 @@ describe("SessionsListScreen driven sessions in the list (driven-in-list)", () =
 
     expect(await screen.findByRole("status")).toHaveTextContent(text);
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
-    expect(screen.getByRole("table", { name: "Live sessions" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: /^Working/ })).toBeInTheDocument();
   });
 
   it("offers a retry when the agent list fails otherwise, and the retry asks again", async () => {
@@ -823,13 +878,13 @@ describe("SessionsListScreen agent sessions (unavailable)", () => {
 describe("SessionsListScreen view-toggle", () => {
   const VIEW = "ah.sessions.view";
   const tiles = () => screen.queryAllByRole("article");
-  const shows = async (view: "grid" | "table") => {
+  const shows = async (view: "grid" | "list") => {
     await screen.findByText("/evaluator");
     if (view === "grid") {
       expect(tiles().length).toBeGreaterThan(0);
-      expect(screen.queryByRole("table")).toBeNull();
+      expect(document.querySelector(".sl-inbox")).toBeNull();
     } else {
-      expect(screen.getAllByRole("table").length).toBeGreaterThan(0);
+      expect(document.querySelectorAll(".sl-inbox")).toHaveLength(1);
       expect(tiles()).toHaveLength(0);
     }
   };
@@ -838,53 +893,67 @@ describe("SessionsListScreen view-toggle", () => {
     window.localStorage.removeItem(VIEW);
   });
 
-  it("shows the grid when neither the URL nor the stored preference sets a view", async () => {
+  it("shows the list when neither the URL nor the stored preference sets a view", async () => {
     renderList(routes());
 
-    await shows("grid");
-    expect(screen.getByRole("button", { name: "Grid" })).toHaveAttribute("aria-pressed", "true");
+    await shows("list");
+    expect(screen.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Grid" })).toHaveAttribute("title", "Grid view (v)");
   });
 
   it("uses the stored view, and a URL view wins over it", async () => {
-    window.localStorage.setItem(VIEW, "table");
+    window.localStorage.setItem(VIEW, "grid");
     const stored = renderList(routes());
-    await shows("table");
+    await shows("grid");
     stored.unmount();
 
-    renderList(routes(), "/sessions?view=grid");
-    await shows("grid");
-    expect(window.localStorage.getItem(VIEW)).toBe("table");
+    renderList(routes(), "/sessions?view=list");
+    await shows("list");
+    expect(window.localStorage.getItem(VIEW)).toBe("grid");
   });
 
-  it("falls back to the grid on an unknown view in the URL or in storage", async () => {
+  it("reads table, the list's old name, from old links and stored values", async () => {
+    const url = renderList(routes(), "/sessions?view=table");
+    await shows("list");
+    url.unmount();
+
+    window.localStorage.setItem(VIEW, "table");
+    renderList(routes());
+    await shows("list");
+  });
+
+  it("falls back to the list on an unknown view in the URL or in storage", async () => {
     const url = renderList(routes(), "/sessions?view=cards");
-    await shows("grid");
+    await shows("list");
     url.unmount();
 
     window.localStorage.setItem(VIEW, "cards");
     renderList(routes());
-    await shows("grid");
+    await shows("list");
   });
 
   it("switches from the control and the v key, writing the URL and the stored view", async () => {
     const { router } = renderList(routes(), "/sessions?status=live");
-    await shows("grid");
+    await shows("list");
 
-    fireEvent.click(screen.getByRole("button", { name: "Table" }));
-    await shows("table");
-    expect(router.state.location.search).toBe("?status=live&view=table");
-    expect(window.localStorage.getItem(VIEW)).toBe("table");
+    fireEvent.click(screen.getByRole("button", { name: "Grid" }));
+    await shows("grid");
+    expect(router.state.location.search).toBe("?status=live&view=grid");
+    expect(window.localStorage.getItem(VIEW)).toBe("grid");
+    // The Group menu is the grid's only.
+    expect(screen.getByRole("button", { name: "Group: None" })).toBeInTheDocument();
 
     fireEvent.keyDown(document.body, { key: "v" });
-    await shows("grid");
-    expect(new URLSearchParams(router.state.location.search).get("view")).toBe("grid");
-    expect(window.localStorage.getItem(VIEW)).toBe("grid");
+    await shows("list");
+    expect(new URLSearchParams(router.state.location.search).get("view")).toBe("list");
+    expect(window.localStorage.getItem(VIEW)).toBe("list");
+    expect(screen.queryByRole("button", { name: /^Group:/ })).toBeNull();
   });
 
   it("ignores v while typing, with a modifier, or when another handler took it", async () => {
     renderList(routes());
-    await shows("grid");
-    const input = screen.getByRole("textbox", { name: "Repo" });
+    await shows("list");
+    const input = screen.getByRole("searchbox", { name: "Find sessions" });
 
     fireEvent.keyDown(input, { key: "v" });
     fireEvent.keyDown(document.body, { key: "v", ctrlKey: true });
@@ -893,13 +962,13 @@ describe("SessionsListScreen view-toggle", () => {
     taken.preventDefault();
     document.body.dispatchEvent(taken);
 
-    await shows("grid");
+    await shows("list");
     expect(window.localStorage.getItem(VIEW)).toBeNull();
   });
 
   it("ignores v with Alt, and from a control inside an open dialog", async () => {
     renderList(routes());
-    await shows("grid");
+    await shows("list");
 
     fireEvent.keyDown(document.body, { key: "v", altKey: true });
     fireEvent.click(await screen.findByRole("button", { name: "New session" }));
@@ -909,7 +978,7 @@ describe("SessionsListScreen view-toggle", () => {
     close.focus();
     fireEvent.keyDown(close, { key: "v" });
 
-    await shows("grid");
+    await shows("list");
     expect(window.localStorage.getItem(VIEW)).toBeNull();
   });
 });

@@ -1,9 +1,15 @@
 from agent_hub.api.app import create_app
 from agent_hub.api.openapi_paths import (
+    AC_CHECK_PATHS,
     AGENT_SESSION_PATHS,
     CLARITY_PATHS,
+    DOCTOR_FIX_PATHS,
+    FEATURE_NAME_PATHS,
     GATE_PATHS,
+    LINEAR_PATHS,
+    OWNER_SIGNOFF_PATHS,
     P2_PATHS,
+    PLATFORM_SYNC_PATHS,
     RUN_COMMAND_PATHS,
     SERVED_PATHS,
     SKILL_PATHS,
@@ -23,6 +29,8 @@ SPEC_PATHS = {
     ("get", "/api/v1/projects/{project}"),
     ("get", "/api/v1/projects/{project}/now"),
     ("get", "/api/v1/projects/{project}/repos"),
+    ("get", "/api/v1/projects/{project}/config"),
+    ("put", "/api/v1/projects/{project}/config/local"),
     ("get", "/api/v1/needs-you"),
     ("get", "/api/v1/activity"),
     ("get", "/api/v1/search"),
@@ -123,6 +131,12 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | WORKFLOW_PATHS
         | RUN_COMMAND_PATHS
         | GATE_PATHS
+        | LINEAR_PATHS
+        | OWNER_SIGNOFF_PATHS
+        | FEATURE_NAME_PATHS
+        | PLATFORM_SYNC_PATHS
+        | DOCTOR_FIX_PATHS
+        | AC_CHECK_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -139,6 +153,12 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | WORKFLOW_PATHS
         | RUN_COMMAND_PATHS
         | GATE_PATHS
+        | LINEAR_PATHS
+        | OWNER_SIGNOFF_PATHS
+        | FEATURE_NAME_PATHS
+        | PLATFORM_SYNC_PATHS
+        | DOCTOR_FIX_PATHS
+        | AC_CHECK_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 

@@ -96,7 +96,7 @@ from agent_hub.core.sessions.session import (
 )
 from agent_hub.core.sessions.session_cost import fold_session_cost
 from agent_hub.core.sessions.session_files import fold_session_files
-from agent_hub.core.sessions.session_label import LabelRules, with_issue
+from agent_hub.core.sessions.session_label import LabelRules, with_issue, with_prompt_issue
 from agent_hub.core.sessions.session_summary import summarize_session
 from agent_hub.core.skills.skill_usage import fold_skill_usage
 from agent_hub.core.skills.skill_view import SkillUsage
@@ -492,9 +492,9 @@ class FoldedEventReadModels:
             if session.project not in rules:
                 found = self._label_rules_of
                 rules[session.project] = None if found is None else found(session.project)
-            labelled = _with_issue(session, rules[session.project])
             link_of = self._agent_session_link_of
             link = None if link_of is None else link_of(session.project, session.id)
+            labelled = _with_issue(session, rules[session.project], link)
             if link is not None:
                 labelled = labelled.model_copy(update={"agent_session_id": link.agent_session_id})
             decorated.append((labelled, link is not None and link.waiting))
@@ -502,7 +502,8 @@ class FoldedEventReadModels:
 
     def _of_issue(self, sessions: Iterable[Session], issue: str) -> list[Session]:
         """The sessions about ``issue`` (any case): the issue their run names, else the one
-        their branch or worktree names for the hub's tracker teams."""
+        their branch, worktree or first prompt (``/feature AGH-305``) names for the hub's
+        tracker teams."""
         wanted = issue.casefold()
         rules: dict[str, LabelRules | None] = {}
         found: list[Session] = []
@@ -510,7 +511,9 @@ class FoldedEventReadModels:
             if session.project not in rules:
                 rules_of = self._label_rules_of
                 rules[session.project] = None if rules_of is None else rules_of(session.project)
-            label = _with_issue(session, rules[session.project]).label
+            link_of = self._agent_session_link_of
+            link = None if link_of is None else link_of(session.project, session.id)
+            label = _with_issue(session, rules[session.project], link).label
             of = (label.issue if label is not None else None) or session.issue
             if of is not None and of.casefold() == wanted:
                 found.append(session)
@@ -878,10 +881,14 @@ def _permission_tile(tile: LiveTile) -> LiveTile:
     return tile.model_copy(update={"waiting_reason": _permission_reason(None)})
 
 
-def _with_issue(session: Session, rules: LabelRules | None) -> Session:
+def _with_issue(
+    session: Session, rules: LabelRules | None, link: AgentSessionLink | None = None
+) -> Session:
     if rules is None or session.label is None:
         return session
     label = with_issue(session.label, rules)
+    if link is not None:
+        label = with_prompt_issue(label, link.prompt_issue, rules)
     return session if label == session.label else session.model_copy(update={"label": label})
 
 

@@ -27,6 +27,7 @@ from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
 from agent_hub.core.features.ticket_view import FeatureTickets
+from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import FindingView
 from agent_hub.core.hubs.registered_hub import HubView
 from agent_hub.core.ingestion.hook_envelope import HookEnvelope
@@ -259,6 +260,7 @@ class FakeHubReadModels:
     details: dict[str, ProjectDetail] = field(default_factory=dict)
     nows: dict[str, ProjectNow] = field(default_factory=dict)
     repos: dict[str, list[RepoView]] = field(default_factory=dict)
+    configs: dict[str, HubConfigView] = field(default_factory=dict)
     features: list[FeatureDetail] = field(default_factory=list)
     tickets: dict[str, FeatureTickets] = field(default_factory=dict)
     findings: list[FindingView] = field(default_factory=list)
@@ -306,6 +308,10 @@ class FakeHubReadModels:
     def project_repos(self, project: str) -> Page[RepoView]:
         self._call("project_repos", project)
         return _page(_found(self.repos, "project", project))
+
+    def hub_config(self, project: str) -> HubConfigView:
+        self._call("hub_config", project)
+        return _found(self.configs, "project", project)
 
     def list_features(self, scope: Scope) -> Page[FeatureView]:
         self._call("list_features", scope)

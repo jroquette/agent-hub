@@ -1,0 +1,27 @@
+/* Feature nicknames: the rename pencil and the inline name field (list and detail). */
+/* The pencil shows on hover and on keyboard focus, so it does not repeat on every row. */
+.ft-rename {
+  flex: none;
+  min-height: 24px;
+  min-width: 24px;
+  padding: 0 4px;
+}
+.ft-row .ft-rename {
+  opacity: 0;
+}
+.ft-row:hover .ft-rename,
+.ft-row:focus-within .ft-rename,
+.ft-row .ft-rename:focus-visible {
+  opacity: 1;
+}
+.ft-name-input {
+  height: 28px;
+  width: min(360px, 100%);
+  font-size: 14px;
+}
+.fd-name-input {
+  height: 36px;
+  width: min(480px, 100%);
+  font-size: 20px;
+  font-weight: 600;
+}

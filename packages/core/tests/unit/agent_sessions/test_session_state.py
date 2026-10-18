@@ -64,11 +64,29 @@ def test_returns_idle_when_turn_result_arrives() -> None:
     assert state.turns == 0
 
 
-def test_stays_running_when_queued_message_follows_result() -> None:
+def test_returns_idle_when_one_result_answers_message_sent_mid_turn() -> None:
+    # Claude Code folds a message sent during a turn into it: one result answers both.
     state = _run(start_state(with_prompt=True), Send(), RESULT)
+
+    assert state.status == AgentSessionStatus.IDLE
+    assert state.turns == 0
+
+
+def test_runs_again_when_queued_message_plays_after_result() -> None:
+    idle = _run(start_state(with_prompt=True), Send(), RESULT)
+
+    state = _run(idle, TextDelta(block=0, index=0, text="Next"))
 
     assert state.status == AgentSessionStatus.RUNNING
     assert _run(state, RESULT).status == AgentSessionStatus.IDLE
+
+
+def test_stays_idle_when_init_arrives_between_turns() -> None:
+    state = _run(
+        start_state(with_prompt=False), InitEvent(session_id="5091b986-0000-4000-8000-0000000000d1")
+    )
+
+    assert state.status == AgentSessionStatus.IDLE
 
 
 def test_waits_permission_when_request_open_and_runs_when_answered() -> None:
