@@ -5,7 +5,8 @@ and the brain tree under 150 ms in a hub of 2,000 notes; AGH-136's: a feature's 
 100 ms on a warm snapshot cache with 50 tickets; AGH-236's: a page of 50 sessions of 2,000
 events each, with their tile fields, under 300 ms; AGH-164's: the skills catalog under 150 ms and
 a skill's detail under 100 ms, warm, with 200 skills beside the 10,000 events, and (AGH-295,
-AC-295.35) every skill's baseline version stored by the capture on read.
+AC-295.35) every skill's baseline version stored by the capture on read; AGH-295's: the
+Workflows list under 150 ms, warm, with 50 hub workflows and their baselines stored.
 
 Each read follows an append, so it folds again (the memo is keyed by the high-water mark): the
 budget holds while sessions are live, not only on a warm memo. The first read after start-up,
@@ -464,3 +465,59 @@ def test_answers_skills_within_budget_when_two_hundred_skills_and_ten_thousand_e
     assert detail_p95 < SKILL_DETAIL_P95_MS, detail_samples
     # AC-295.35: the budgets hold with every skill's baseline stored (capture on read).
     assert _skill_baselines(skills_loaded) == HUB_SKILLS
+
+
+# AGH-295 budget (AC-295.35): 50 hub workflows beside 10,000 events in 200 sessions, the list
+# read warm under 150 ms, with every workflow's baseline version stored by the capture on read.
+HUB_WORKFLOWS = 50
+WORKFLOW_CATALOG_P95_MS = 150
+
+
+def _workflow_yaml(number: int) -> str:
+    nodes = "".join(
+        f"  - {{id: n{step}, type: shell, command: [make, t{step}]"
+        + (f", depends_on: [n{step - 1}]" if step else "")
+        + "}\n"
+        for step in range(8)
+    )
+    return f"version: 1\nname: w-{number:02d}\nrevision: 1\nnodes:\n{nodes}"
+
+
+@pytest.fixture
+def workflows_loaded(loaded: Any, make_hub: Callable[..., Path]) -> Any:
+    hub = make_hub()
+    pack = hub / "workflows" / "perf"
+    pack.mkdir(parents=True)
+    for number in range(HUB_WORKFLOWS):
+        (pack / f"w-{number:02d}.yaml").write_text(_workflow_yaml(number), encoding="utf-8")
+    assert (
+        loaded.client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        ).status_code
+        == 201
+    )
+    return loaded
+
+
+def _workflow_baselines(composed: Any) -> int:
+    """The ``first`` versions stored for the hub's own ``workflows/perf/w-*`` files."""
+    with closing(sqlite3.connect(composed.settings.db_path)) as connection:
+        row = connection.execute(
+            "SELECT count(*) FROM item_versions"
+            " WHERE unit_path LIKE 'workflows/perf/w-%' AND seq = 1 AND first"
+        ).fetchone()
+    return int(row[0])
+
+
+def test_answers_workflows_within_budget_when_fifty_workflows_and_ten_thousand_events(
+    workflows_loaded: Any,
+) -> None:
+    listed = workflows_loaded.client.get("/api/v1/workflows?project=demo")
+    assert listed.status_code == 200, listed.text
+    names = {item["name"] for item in listed.json()["items"] if item["source"] == "hub"}
+    assert {f"w-{number:02d}" for number in range(HUB_WORKFLOWS)} <= names
+
+    catalog_p95, catalog_samples = _warm_p95(workflows_loaded, "/api/v1/workflows?project=demo")
+
+    assert catalog_p95 < WORKFLOW_CATALOG_P95_MS, catalog_samples
+    assert _workflow_baselines(workflows_loaded) == HUB_WORKFLOWS
