@@ -39,6 +39,7 @@ from agent_hub.generator.placeholders import (
 # The runtime readers check platform.repository against core's pattern and name its form (AGH-49).
 # The README's tracker credential line, cloud subsection and the hub's clone folder (AGH-51).
 # The input brief's names and placeholders, from core (AGH-138).
+# AGENTS.md's Environments and services section, from hub.json's environments (AGH-282).
 RENDERED_KEYS = {
     "project_name",
     "project_hub_repo",
@@ -70,6 +71,7 @@ RENDERED_KEYS = {
     "branch_rule",
     "kickoff_branch",
     "conventions_section",
+    "environments_section",
     "join_tracker_credential",
     "join_cloud",
     "brief_sections",
@@ -158,6 +160,7 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "branch_rule": DEMO_BRANCH_RULE,
         "kickoff_branch": "`jdoe/<team>-<n>-<desc>`",
         "conventions_section": "",
+        "environments_section": "",
         "join_tracker_credential": JOIN_TRACKER_API,
         "join_cloud": JOIN_CLOUD,
         "brief_sections": BRIEF_SECTIONS_TEXT,

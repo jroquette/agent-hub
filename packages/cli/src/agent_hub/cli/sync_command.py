@@ -9,7 +9,9 @@ one line per problem, then the way out). Then the steps of ``sync_steps``: the t
 extension inputs and the render with them, and core's planner. A conflict exits 3 with its report
 on stderr and nothing written. With nothing pending, ``up to date`` and no write at all (the
 adapter is not called). ``--check`` prints the ``would`` lines and exits 4. Otherwise the plan is
-applied and its lines are printed. Every error goes to stderr.
+applied and its lines are printed. After those lines, ``up to date`` included, one
+``production environment: <name> (access <a>, hub.json)`` line per production environment of
+``hub.json`` (never ``hub.local.json``, AGH-282). Every error goes to stderr.
 """
 
 from pathlib import Path
@@ -29,8 +31,11 @@ from agent_hub.cli.sync_steps import (
     lock_or_exit,
     rendering_or_exit,
 )
+from agent_hub.core.hub_config.effective_environments import effective_environments
+from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_files.hub_lock import ADOPT_POINTER, HUB_JSON_PATH, LOCK_WAY_OUT
 from agent_hub.core.hub_files.plan_sync import SyncConflicts, plan_sync
+from agent_hub.core.workspace.environment_lines import production_lines
 
 
 def sync(
@@ -93,6 +98,9 @@ def _sync(*, check: bool) -> None:
     if planned.pending and not check:
         apply_or_exit(root, planned)
     for line in change_lines(planned, check=check):
+        typer.echo(line)
+    # After the report, whatever it is: hub.json's production environments only (AM-8).
+    for line in production_lines(effective_environments(config, LocalConfig())):
         typer.echo(line)
     if planned.pending and check:
         raise typer.Exit(PENDING)
