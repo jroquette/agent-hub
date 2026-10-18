@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   aCapabilities,
+  aProblem,
   aSession,
   aWorkdir,
   anAgentSession,
@@ -68,6 +69,46 @@ describe("ContinueInChat", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/no resumable copy/);
     expect(view.requests.some((r) => r.method === "POST")).toBe(false);
+  });
+
+  it("AC-PG-24.4: a transient failure says why and offers a retry, which then opens the chat", async () => {
+    let attempts = 0;
+    const view = renderButton(
+      aSession({ id: CLAUDE_ID, status: "ended", repo: "agent-hub", label: null }),
+      {
+        "POST /api/v1/agent-sessions": () => {
+          attempts += 1;
+          return attempts === 1
+            ? aProblem({ status: 503, title: "Service unavailable", detail: "Try again shortly." })
+            : anAgentSession({ id: CHAT_ID, claude_session_id: CLAUDE_ID });
+        },
+      },
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Continue in chat" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Service unavailable: Try again shortly.",
+    );
+    expect(view.router.state.location.pathname).not.toBe(`/agent-sessions/${CHAT_ID}`);
+    const retry = await screen.findByRole("button", { name: "Continue in chat" });
+    expect(retry).toBeEnabled();
+
+    await userEvent.click(retry);
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${CHAT_ID}`);
+    });
+    expect(attempts).toBe(2);
+  });
+
+  it("AC-PG-24.4: a still-running session says to exit it in the terminal first", async () => {
+    renderButton(aSession({ id: CLAUDE_ID, status: "idle" }));
+
+    expect(await screen.findByText("Running in a terminal")).toHaveAttribute(
+      "title",
+      "Exit it in the terminal (/exit) to continue this conversation in the chat.",
+    );
   });
 
   it("waits while the session is still open in the terminal", async () => {
