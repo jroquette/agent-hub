@@ -15,7 +15,8 @@ import {
 } from "../../components";
 import { useNow } from "../../lib/clock";
 import { Compare } from "./Compare";
-import { authorWords, originIcon, originWords, shortHash, stateNotice } from "./model";
+import { authorWords, canRestore, originIcon, originWords, shortHash, stateNotice } from "./model";
+import { RestoreDialog } from "./RestoreDialog";
 import {
   useItemVersions,
   type HistoryTarget,
@@ -71,6 +72,8 @@ function VersionsBody({ target }: { target: HistoryTarget }) {
   // Two versions at most, the last two picked; Compare orders them older then newer.
   const [picked, setPicked] = useState<string[]>([]);
   const [comparing, setComparing] = useState<[ItemVersion, ItemVersion] | null>(null);
+  const [restoring, setRestoring] = useState<ItemVersion | null>(null);
+  const [restored, setRestored] = useState<string | null>(null);
   const toggle = (id: string) => {
     setPicked((was) => (was.includes(id) ? was.filter((p) => p !== id) : [...was, id].slice(-2)));
   };
@@ -114,9 +117,22 @@ function VersionsBody({ target }: { target: HistoryTarget }) {
   const page = versions.data.pages[0];
   if (page === undefined) return null;
   const notice = stateNotice(page.state);
+  const restorable = canRestore(page.state);
   return (
     <div className="ah-stack ah-history-body">
       <UnitLine page={page} />
+      {restored && (
+        <Banner
+          tone="info"
+          icon="circle-check"
+          boxed
+          onDismiss={() => {
+            setRestored(null);
+          }}
+        >
+          {restored}
+        </Banner>
+      )}
       {notice && (
         <Banner tone="warning" icon={notice.icon} boxed>
           <strong>{notice.title}</strong>
@@ -182,6 +198,27 @@ function VersionsBody({ target }: { target: HistoryTarget }) {
                 </span>
               ),
             },
+            {
+              id: "restore",
+              label: <span className="ah-sr">Restore</span>,
+              width: 110,
+              align: "right",
+              render: (v) => (
+                <Button
+                  size="sm"
+                  icon="rotate-ccw"
+                  disabled={!restorable}
+                  title={restorable ? undefined : "Restore is off: see the notice above."}
+                  aria-label={`Restore ${shortHash(v.content_hash)} (${originWords(v, byId)})`}
+                  onClick={() => {
+                    setRestored(null);
+                    setRestoring(v);
+                  }}
+                >
+                  Restore
+                </Button>
+              ),
+            },
           ]}
         />
       )}
@@ -212,6 +249,20 @@ function VersionsBody({ target }: { target: HistoryTarget }) {
               : "Select two versions to compare, any two."}
           </span>
         </div>
+      )}
+      {restoring && (
+        <RestoreDialog
+          target={target}
+          version={restoring}
+          page={page}
+          onClose={() => {
+            setRestoring(null);
+          }}
+          onRestored={(words) => {
+            setRestoring(null);
+            setRestored(words);
+          }}
+        />
       )}
       {comparing && (
         <Compare

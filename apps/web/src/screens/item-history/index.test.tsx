@@ -2,9 +2,12 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
+import { seriousViolations } from "../../testing/axe";
+
 import {
   aProblem,
   anItemVersion,
+  anItemVersionContent,
   anItemVersionPage,
   renderWithApi,
   type ApiRoutes,
@@ -180,5 +183,41 @@ describe("HistoryPanel", () => {
     renderPanel({ [VERSIONS]: aProblem({ status: 404, title: "Item history not found" }) });
     await openPanel();
     expect(await screen.findByText("No history for this item")).toBeInTheDocument();
+  });
+
+  it("a11y history panel has no serious violations and selects compares from the keyboard", async () => {
+    const versions = fourVersions();
+    const content = (n: number, text: string) =>
+      anItemVersionContent({
+        id: versions[4 - n]?.id ?? "",
+        files: [{ path: "SKILL.md", executable: false, size: text.length, text }],
+      });
+    renderPanel({
+      [VERSIONS]: anItemVersionPage({ state: "too_large", items: versions }),
+      [`${VERSIONS}/${versions[3]?.id ?? ""}`]: content(1, "first\n"),
+      [`${VERSIONS}/${versions[1]?.id ?? ""}`]: content(3, "third\n"),
+    });
+    const user = userEvent.setup();
+
+    screen.getByRole("button", { name: "Show history" }).focus();
+    await user.keyboard("{Enter}");
+    const panel = screen.getByRole("region", { name: "History" });
+    await rows();
+    expect(await seriousViolations(panel)).toEqual([]);
+
+    // Space ticks a version's box; Compare waits for two, any two.
+    screen.getByRole("checkbox", { name: /^Select 33333333/ }).focus();
+    await user.keyboard(" ");
+    screen.getByRole("checkbox", { name: /^Select 11111111/ }).focus();
+    await user.keyboard(" ");
+    const compareButton = screen.getByRole("button", { name: "Compare" });
+    compareButton.focus();
+    await user.keyboard("{Enter}");
+
+    const compared = await screen.findByRole("region", { name: "From 11111111 to 33333333" });
+    await within(compared).findByLabelText("Changes to SKILL.md");
+    expect(await seriousViolations(panel)).toEqual([]);
+    // The origin is words beside an icon, never a color alone.
+    expect(within(panel).getByText("Changed outside the app")).toBeInTheDocument();
   });
 });
