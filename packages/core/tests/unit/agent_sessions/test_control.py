@@ -4,6 +4,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from datetime import timedelta
+from decimal import Decimal
 from typing import Unpack
 
 import pytest
@@ -39,6 +40,7 @@ from agent_hub.core.agent_sessions.driver import (
     Thinking,
     ToolCall,
     ToolResult,
+    TurnResult,
 )
 from agent_hub.core.agent_sessions.errors import (
     AgentSessionNotFoundError,
@@ -445,6 +447,58 @@ async def test_counts_the_log_it_already_holds_when_reopened(make_rig: MakeRig) 
 
     assert ended.end_reason == EndReason.LOG_FULL
     assert len(rig.kinds(created.id)) <= 100
+
+
+def _turn_costing(total: str | None) -> tuple[TextBlock, TurnResult]:
+    """A turn whose result reports ``total``: Claude Code's running cost for the session."""
+    cost = None if total is None else Decimal(total)
+    return TextBlock(block=0, text="ok"), TurnResult(subtype="success", cost_usd=cost)
+
+
+async def test_stores_latest_cumulative_cost_when_three_turns_end(make_rig: MakeRig) -> None:
+    # The turns cost 0.01, 0.02 and 0.03; each result carries the session's running total.
+    replies = {"One.": _turn_costing("0.01"), "Two.": _turn_costing("0.03")}
+    rig = make_rig(replies=replies | {"Three.": _turn_costing("0.06")})
+    created = await rig.create("One.")
+    await rig.until_status(created.id, "idle")
+    await rig.control.send(created.id, SendMessage(text="Two."))
+    await rig.until(lambda: rig.kinds(created.id).count("result") == 2)
+    await rig.until_status(created.id, "idle")
+
+    await rig.control.send(created.id, SendMessage(text="Three."))
+    await rig.until(lambda: rig.kinds(created.id).count("result") == 3)
+    ended_turn = await rig.until_status(created.id, "idle")
+
+    assert ended_turn.cost_usd == Decimal("0.06")
+
+
+async def test_keeps_carried_cumulative_cost_when_reopened_session_reports_total(
+    make_rig: MakeRig,
+) -> None:
+    # The resumed Claude session had spent 0.05; the reopened process restores it and adds 0.02.
+    replies = {"Say hello.": _turn_costing("0.05"), "Go on.": _turn_costing("0.07")}
+    rig = make_rig(replies=replies, past_sessions=(PAST,))
+    created = await rig.create("Say hello.", resume_session_id=PAST.session_id)
+    await rig.until_status(created.id, "idle")
+    await rig.control.close(created.id)
+
+    await rig.control.send(created.id, SendMessage(text="Go on."))
+    await rig.until(lambda: rig.kinds(created.id).count("result") == 2)
+    reopened = await rig.until_status(created.id, "idle")
+
+    assert reopened.cost_usd == Decimal("0.07")
+
+
+async def test_keeps_stored_cumulative_cost_when_result_has_no_cost(make_rig: MakeRig) -> None:
+    rig = make_rig(replies={"One.": _turn_costing("0.01"), "Two.": _turn_costing(None)})
+    created = await rig.create("One.")
+    await rig.until_status(created.id, "idle")
+
+    await rig.control.send(created.id, SendMessage(text="Two."))
+    await rig.until(lambda: rig.kinds(created.id).count("result") == 2)
+    ended_turn = await rig.until_status(created.id, "idle")
+
+    assert ended_turn.cost_usd == Decimal("0.01")
 
 
 async def test_keeps_session_ended_when_claude_lists_no_conversation(make_rig: MakeRig) -> None:
