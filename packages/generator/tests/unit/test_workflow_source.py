@@ -66,3 +66,21 @@ def test_changes_fingerprint_when_a_workflow_file_changes(tmp_path: Path) -> Non
 
     assert first == same
     assert len({first, edited, source.fingerprint()}) == 3
+
+
+def test_lists_entries_by_shown_path_when_fingerprint_taken(tmp_path: Path) -> None:
+    hub, builtin = tmp_path / "hub", tmp_path / "builtin"
+    _workflow(hub / "workflows", "mine", "ship")
+    _workflow(builtin, "base", "lint")
+    source = DiscoveredWorkflowSource(hub, builtin_root=builtin)
+
+    paths = [path for path, _, _ in source.fingerprint()]
+    shown = [item.file for item in source.workflow_files() if isinstance(item, WorkflowFile)]
+
+    assert paths == [
+        "workflows/mine",
+        "workflows/mine/ship.yaml",
+        "<builtin>/base",
+        "<builtin>/base/lint.yaml",
+    ]
+    assert set(shown) <= set(paths)

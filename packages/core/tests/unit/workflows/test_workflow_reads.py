@@ -13,7 +13,7 @@ from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader
 from agent_hub.core.testing.item_version_fakes import InMemoryItemVersionStore
 from agent_hub.core.workflows.catalog import LoadProblem, WorkflowFile
-from agent_hub.core.workflows.workflow_reads import ReadWorkflows
+from agent_hub.core.workflows.workflow_reads import ReadWorkflows, SourceStat
 
 SHIP = {
     "version": 1,
@@ -44,17 +44,23 @@ class Hubs:
 
 
 class Files:
-    def __init__(self, items: tuple[WorkflowFile | LoadProblem, ...], mark: object = 1) -> None:
+    """``mark`` stands for the listing's other entries (a pack folder), ``stamps`` for each
+    workflow file's mtime."""
+
+    def __init__(self, items: tuple[WorkflowFile | LoadProblem, ...], mark: int = 1) -> None:
         self.items = items
         self.mark = mark
+        self.stamps: dict[str, int] = {}
         self.reads = 0
 
     def workflow_files(self) -> Iterable[WorkflowFile | LoadProblem]:
         self.reads += 1
         return self.items
 
-    def fingerprint(self) -> object:
-        return self.mark
+    def fingerprint(self) -> tuple[SourceStat, ...]:
+        files = [item.file for item in self.items if isinstance(item, WorkflowFile)]
+        stats = tuple((file, 1, self.stamps.get(file, 0)) for file in files)
+        return (("workflows", 0, self.mark), *stats)
 
 
 def reads() -> ReadWorkflows:
@@ -161,6 +167,48 @@ def _capturing(
     return reads, files, reader, store
 
 
+def test_reads_one_budget_when_unscoped_list_spans_hubs() -> None:
+    disk = {SHIP_FILE: b"name: ship\n" * 10}
+    budget = len(disk[SHIP_FILE])
+    reader = FakeHubFileReader(
+        {"/hubs/one": FakeHub(skill_files=dict(disk)), "/hubs/two": FakeHub(skill_files=dict(disk))}
+    )
+    capture = CaptureItemVersions(
+        InMemoryItemVersionStore(),
+        reader,
+        lambda: datetime(2026, 10, 18, tzinfo=UTC),
+        budget_bytes=budget,
+    )
+    files = Files((WorkflowFile(SHIP_FILE, "ship", SHIP),))
+    reads = ReadWorkflows(
+        Hubs(("one", "/hubs/one"), ("two", "/hubs/two")), lambda _hub: files, capture=capture
+    )
+
+    reads.list_workflows(Scope())
+
+    # The first hub's read spends the request's budget; the second waits for a later read.
+    assert reader.unit_reads == [("/hubs/one", SHIP_FILE)]
+    reads.list_workflows(Scope())
+    assert reader.unit_reads == [("/hubs/one", SHIP_FILE), ("/hubs/two", SHIP_FILE)]
+
+
+def test_rereads_only_edited_file_when_one_of_two_hub_workflows_changes() -> None:
+    lint = {**SHIP, "name": "lint"}
+    lint_file = "workflows/demo/lint.yaml"
+    reads, files, reader, _ = _capturing(
+        WorkflowFile(SHIP_FILE, "ship", SHIP),
+        WorkflowFile(lint_file, "lint", lint),
+        disk={SHIP_FILE: b"name: ship\n", lint_file: b"name: lint\n"},
+    )
+    reads.list_workflows(Scope())
+    reader.unit_reads.clear()
+
+    files.stamps[lint_file] = 1
+    reads.list_workflows(Scope())
+
+    assert reader.unit_reads == [("/hubs/demo", lint_file)]
+
+
 def test_captures_hub_files_when_listed() -> None:
     reads, files, reader, store = _capturing(
         WorkflowFile(SHIP_FILE, "ship", SHIP),
@@ -171,7 +219,7 @@ def test_captures_hub_files_when_listed() -> None:
     reads.list_workflows(Scope())
     reads.list_workflows(Scope())
     reads.get_workflow("demo", "ship")
-    files.mark = 2
+    files.stamps[SHIP_FILE] = 1
     reads.get_workflow("demo", "ship")
 
     assert reader.unit_reads == [("/hubs/demo", SHIP_FILE), ("/hubs/demo", SHIP_FILE)]

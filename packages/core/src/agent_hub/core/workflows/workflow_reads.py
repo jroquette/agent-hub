@@ -3,22 +3,27 @@
 ``ReadWorkflows`` reads each hub's workflows on request through a ``WorkflowSource`` per hub
 (``source_of``, the generator's discovery: the hub's ``workflows/``, then the built-ins) and
 ``check_workflows``, so an edited file shows on the next request. Each hub's read is kept with
-the source's listing fingerprint (path, size and mtime of each file) and reused while it is
-unchanged.
+the source's listing fingerprint (shown path, size and mtime of each entry) and reused while it
+is unchanged.
 With ``capture`` (AGH-295, D8, D14, A3), the list hands the capture every hub workflow that
 loads and the detail its one workflow, each as the hub-relative file the discovery loaded
-(``.yaml`` or ``.json``) marked with the source's fingerprint; a built-in has no unit, and
-``unit_of`` names a workflow's unit without capturing.
+(``.yaml`` or ``.json``) marked with that file's own fingerprint entry, so an edit re-reads only
+its file; one list request shares one capture budget across its hubs. A built-in has no unit,
+and ``unit_of`` names a workflow's unit without capturing.
 A file that does not load is a problem of the list, never an item, and its detail is not found.
 A list scoped to an unknown project is empty; a detail of one raises ``EntityNotFoundError``.
 """
 
 import threading
-from collections.abc import Callable, Hashable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import NamedTuple, Protocol
 
-from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
+from agent_hub.core.item_versions.capture_item_versions import (
+    CaptureBudget,
+    CaptureItemVersions,
+    UnitMark,
+)
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.json_form import JsonValue
@@ -83,9 +88,13 @@ class WorkflowCatalogView(ViewModel):
     problems: tuple[WorkflowProblemView, ...]
 
 
+# One listing entry: its path as ``WorkflowFile.file`` shows it, its size and mtime_ns.
+type SourceStat = tuple[str, int, int]
+
+
 class ListedWorkflowSource(WorkflowSource, Protocol):
-    def fingerprint(self) -> Hashable:
-        """A value that changes whenever a workflow file may have changed (stat only)."""
+    def fingerprint(self) -> tuple[SourceStat, ...]:
+        """The listing's entries, stat only: it changes whenever a workflow file may have."""
         ...
 
 
@@ -94,7 +103,9 @@ class _Read(NamedTuple):
     origins: dict[str, WorkflowOrigin]
     # Each hub-origin workflow file by name: the unit it is versioned in.
     files: dict[str, str]
-    mark: Hashable
+    fingerprint: tuple[SourceStat, ...]
+    # Each listed path's own fingerprint entry: a unit's capture mark.
+    marks: dict[str, SourceStat]
 
 
 class ProjectHubs(Protocol):
@@ -142,12 +153,13 @@ class ReadWorkflows:
     def list_workflows(self, scope: Scope) -> WorkflowCatalogView:
         items: list[WorkflowSummary] = []
         problems: list[WorkflowProblemView] = []
+        budget = None if self._capture is None else self._capture.budget()
         for project, hub_path in self._hubs.project_hubs():
             if scope.project not in {None, project}:
                 continue
             read = self._read(hub_path)
             catalog, origins = read.catalog, read.origins
-            self._capture_plans(project, hub_path, read, *catalog.plans)
+            self._capture_plans(project, hub_path, read, *catalog.plans, budget=budget)
             items.extend(_summary(project, plan, origins) for plan in catalog.plans)
             problems.extend(
                 WorkflowProblemView(project=project, **problem._asdict())
@@ -199,37 +211,46 @@ class ReadWorkflows:
         return _unit_of(project, plan, self._read(hub_path))
 
     def _capture_plans(
-        self, project: str, hub_path: str, read: _Read, *plans: WorkflowPlan
+        self,
+        project: str,
+        hub_path: str,
+        read: _Read,
+        *plans: WorkflowPlan,
+        budget: CaptureBudget | None = None,
     ) -> None:
         if self._capture is None:
             return
-        units = (_unit_of(project, plan, read) for plan in plans)
-        self._capture.capture(
-            project, hub_path, ((unit, read.mark) for unit in units if unit is not None)
-        )
+        marked: list[tuple[ItemUnit, UnitMark]] = []
+        for plan in plans:
+            unit = _unit_of(project, plan, read)
+            if unit is not None:
+                # A file the listing does not hold (never expected) falls back to the whole one.
+                marked.append((unit, read.marks.get(unit.unit_path, read.fingerprint)))
+        self._capture.capture(project, hub_path, marked, budget=budget)
 
     def _read(self, hub_path: str) -> _Read:
         source = self._source_of(hub_path)
         mark = source.fingerprint()
         with self._guard:
             found = self._memo.get(hub_path)
-        if found is not None and found.mark == mark:
+        if found is not None and found.fingerprint == mark:
             return found
         files = tuple(source.workflow_files())
         loaded = tuple(_workflow_files(files))
         origins = {item.stem: item.origin for item in loaded}
         hub_files = {item.stem: item.file for item in loaded if item.origin == "hub"}
-        read = _Read(check_workflows(_Listed(files)), origins, hub_files, mark)
+        marks = {entry[0]: entry for entry in mark}
+        read = _Read(check_workflows(_Listed(files)), origins, hub_files, mark, marks)
         with self._guard:
             self._memo[hub_path] = read
         return read
 
 
 def _unit_of(project: str, plan: WorkflowPlan, read: _Read) -> ItemUnit | None:
-    name = plan.document.name
-    if read.origins.get(name, "hub") != "hub" or name not in read.files:
+    unit_path = read.files.get(plan.document.name)
+    if unit_path is None:
         return None
-    return ItemUnit(project=project, unit_path=read.files[name], kind=UnitKind.WORKFLOW)
+    return ItemUnit(project=project, unit_path=unit_path, kind=UnitKind.WORKFLOW)
 
 
 def _workflow_files(files: Iterable[WorkflowFile | LoadProblem]) -> Iterator[WorkflowFile]:

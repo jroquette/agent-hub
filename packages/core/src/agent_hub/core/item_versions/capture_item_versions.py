@@ -11,10 +11,11 @@ last version again and stops once that hash equals, up to ``ATTEMPTS`` tries, so
 store one row. A unit's cold path (memo check, read, record, mark) runs with its key held, so of
 two reads of one unit the older is never appended after the newer. A unit is marked only after
 it is settled: a store error (the database busy past its timeout, a 503) leaves it, and every
-unit after it, for the next read. One call stops reading
+unit after it, for the next read. One request stops reading
 new units once ``budget_bytes`` (the catalog's 16 MiB) have been read; the read that crosses it
-still finishes, and the units left are read by a later call. A unit gone before its read is
-left out of the answer.
+still finishes, and the units left are read by a later request. A call spends its own budget
+unless it is handed one (``budget()``), which a request reading several hubs shares across its
+calls. A unit gone before its read is left out of the answer.
 """
 
 import threading
@@ -56,6 +57,18 @@ class UnitState(StrEnum):
     UNREADABLE = "unreadable"
 
 
+class CaptureBudget:
+    """The unit bytes one request may still read; the read that crosses it still finishes."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.spent = 0
+
+    @property
+    def exhausted(self) -> bool:
+        return self.spent >= self.total
+
+
 _UNREAD_STATES: Final = {"too_large": UnitState.TOO_LARGE, "unreadable": UnitState.UNREADABLE}
 
 
@@ -78,13 +91,23 @@ class CaptureItemVersions:
         self._guard = threading.Lock()
         self._unit_locks = tuple(threading.Lock() for _ in range(UNIT_LOCKS))
 
+    def budget(self) -> CaptureBudget:
+        """A fresh budget for one request, to share across its ``capture`` calls."""
+        return CaptureBudget(self._budget)
+
     def capture(
-        self, project: str, hub_path: str, units: Iterable[tuple[ItemUnit, UnitMark]]
+        self,
+        project: str,
+        hub_path: str,
+        units: Iterable[tuple[ItemUnit, UnitMark]],
+        *,
+        budget: CaptureBudget | None = None,
     ) -> Mapping[str, UnitState]:
-        """Capture each unit of ``project`` in the hub at ``hub_path``; answers the state of
-        every unit settled now or before under the same mark."""
+        """Capture each unit of ``project`` in the hub at ``hub_path`` within ``budget`` (a
+        fresh one when None); answers the state of every unit settled now or before under the
+        same mark."""
         states: dict[str, UnitState] = {}
-        spent = 0
+        spending = self.budget() if budget is None else budget
         for unit, mark in units:
             key = (project, unit.unit_path)
             with self._guard:
@@ -92,10 +115,10 @@ class CaptureItemVersions:
             if known is not None and known[0] == mark:
                 states[unit.unit_path] = known[1]
                 continue
-            if spent >= self._budget:
+            if spending.exhausted:
                 continue
             settled, read_bytes = self._settle(key, hub_path, unit, mark=mark)
-            spent += read_bytes
+            spending.spent += read_bytes
             if settled is not None:
                 states[unit.unit_path] = settled
         return states
