@@ -21,6 +21,7 @@ import sys
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -137,6 +138,8 @@ class StubSession:
     queued: list[str] = field(default_factory=list)
     turns_played: int = 0
     requests: int = 0
+    # The session's running cost, reported in every result as Claude Code does.
+    spent: Decimal = Decimal(0)
 
     def __post_init__(self) -> None:
         self.session_id = _session_id(self.scenario, self.options)
@@ -352,6 +355,8 @@ class StubSession:
     def _result(self, step: ResultStep, terminal_reason: str, text: str) -> Message:
         completed = terminal_reason == "completed"
         usage = {"input_tokens": step.input_tokens, "output_tokens": step.output_tokens}
+        self.spent += Decimal(str(step.cost_usd))
+        total = float(self.spent)
         return {
             "type": "result",
             "subtype": "success" if completed else "error_during_execution",
@@ -361,9 +366,9 @@ class StubSession:
             "num_turns": self.turns_played,
             "result": text,
             "stop_reason": "end_turn" if completed else None,
-            "total_cost_usd": step.cost_usd,
+            "total_cost_usd": total,
             "usage": usage,
-            "modelUsage": {self.model: {**usage, "costUSD": step.cost_usd}},
+            "modelUsage": {self.model: {**usage, "costUSD": total}},
             "permission_denials": [],
             "terminal_reason": terminal_reason,
             **self._ids(),
