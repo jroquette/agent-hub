@@ -144,6 +144,19 @@ describe("ApproveRecord", () => {
     expect(window.localStorage.getItem("ah.approve.session.agent-hub:real-cost")).toBe(other.id);
   });
 
+  it("moves focus into the session list on open and back to the trigger on pick", async () => {
+    renderWithApi(ui(), { routes: sessions([other, author], [author]) });
+
+    const trigger = await (await topBar()).findByRole("button", { name: /goes to: Estimativa/ });
+    expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
+    await userEvent.click(trigger);
+    const list = within(screen.getByRole("dialog", { name: "Session that gets the approval" }));
+    expect(list.getByRole("button", { name: /Estimativa de custo/ })).toHaveFocus();
+
+    await userEvent.click(list.getByRole("button", { name: /Something else/ }));
+    expect(screen.getByRole("button", { name: /goes to: Something else/ })).toHaveFocus();
+  });
+
   it("shows only the record without session control", async () => {
     renderWithApi(ui());
     expect(await screen.findByText("The spec")).toBeVisible();
@@ -247,6 +260,10 @@ describe("ApproveRecord", () => {
       const { container } = renderWithApi(ui(), { routes: routes() });
       await userEvent.click(await screen.findByText("Port"));
       await screen.findByLabelText("Your answer to Q9");
+      expect(screen.getByLabelText("Your answer to Q9")).toHaveAttribute(
+        "placeholder",
+        "Blank: the hook sensor's port, 7420.",
+      );
 
       expect(await seriousViolations(container)).toEqual([]);
     });

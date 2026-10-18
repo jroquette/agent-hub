@@ -21,7 +21,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  min-height: 32px;
+  min-height: var(--row-compact);
   padding: var(--space-2) 0;
   cursor: pointer;
   list-style: none;
@@ -31,9 +31,9 @@
 }
 .ah-aq-chevron {
   flex: none;
-  margin-top: 3px;
+  margin-top: var(--space-1);
   color: var(--text-subtle);
-  transition: transform 120ms ease;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .ah-aq[open] > .ah-aq-summary .ah-aq-chevron {
   transform: rotate(90deg);
@@ -61,7 +61,7 @@
 .ah-aq-outcome {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   flex: none;
   margin-top: 2px;
   color: var(--text-muted);
@@ -75,6 +75,11 @@
 .ah-aq-prose {
   max-width: 110ch;
   color: var(--text-muted);
+}
+.ah-aq-recommendation {
+  margin: 0;
+  max-width: 110ch;
+  color: var(--text);
 }
 .ah-aq-input {
   width: 100%;

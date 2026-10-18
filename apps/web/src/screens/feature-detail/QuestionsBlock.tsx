@@ -1,6 +1,7 @@
 import { useId, useMemo, useState } from "react";
 
 import { Button, Icon, Markdown, type IconName } from "../../components";
+import { useApi } from "../../lib/api";
 import { useBrainNote } from "../brain/queries";
 import {
   openQuestions,
@@ -14,13 +15,16 @@ import "./questions.css";
 
 export const QUESTIONS_ID = "approve-questions";
 const MAX_ANSWER_CHARS = 4000;
+/** The counter shows from this share of the limit on: below it, it is only noise. */
+const COUNT_FROM = 0.8;
+const PLACEHOLDER_CHARS = 80;
 /** Up to this many questions start open; more start folded (progressive disclosure). */
 const OPEN_UP_TO = 3;
 
 const OUTCOME: Record<Outcome, { icon: IconName; label: string }> = {
   answered: { icon: "pencil", label: "Answered" },
   recommended: { icon: "check", label: "Takes the recommendation" },
-  claude: { icon: "message-square", label: "Claude decides" },
+  claude: { icon: "network", label: "Claude decides" },
 };
 
 /** Inline code spans (`…`) of a one-line text as code, the rest as plain text. */
@@ -30,6 +34,11 @@ function withCode(text: string) {
     .map((part, index) =>
       index % 2 === 1 ? <code key={index}>{part}</code> : <span key={index}>{part}</span>,
     );
+}
+
+/** A one-line text cut at `max` characters with an ellipsis. */
+function clipLine(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 }
 
 /** A text on one line, for the folded row's second line. */
@@ -140,6 +149,7 @@ function Question({
   const fieldId = useId();
   const recommendationId = useId();
   const counterId = useId();
+  const showCount = answer.length >= MAX_ANSWER_CHARS * COUNT_FROM;
   const outcome = outcomeOf(question, { [question.id]: answer });
   const { icon, label } = OUTCOME[outcome];
   const glimpse =
@@ -187,17 +197,20 @@ function Question({
       </summary>
       <div className="ah-aq-body">
         {question.body && <Markdown source={question.body} className="ah-aq-prose ah-small" />}
-        <p id={recommendationId} className="ah-small ah-muted" style={{ margin: 0 }}>
+        <p id={recommendationId} className="ah-aq-recommendation ah-small">
           {question.recommendation ? (
             <>
-              Recommended in the spec: <q>{withCode(question.recommendation)}</q>
+              <span className="ah-muted">Recommended in the spec: </span>
+              <q>{withCode(question.recommendation)}</q>
             </>
           ) : (
-            "No recommendation in the spec. Left blank, Claude decides from its research."
+            <span className="ah-muted">
+              No recommendation in the spec. Left blank, Claude decides from its research.
+            </span>
           )}
         </p>
         {changed && (
-          <p className="ah-row ah-small ah-muted" style={{ gap: 6, margin: 0 }}>
+          <p className="ah-row ah-small ah-muted" style={{ gap: "var(--space-2)", margin: 0 }}>
             <Icon name="triangle-alert" size="sm" />
             This question changed after you wrote the answer.
           </p>
@@ -214,10 +227,10 @@ function Question({
           disabled={disabled}
           placeholder={
             question.recommendation
-              ? "Leave blank to accept the recommendation"
-              : "Leave blank to let Claude decide"
+              ? `Blank: ${clipLine(question.recommendation.replaceAll("`", ""), PLACEHOLDER_CHARS)}`
+              : "Blank: Claude decides"
           }
-          aria-describedby={`${recommendationId} ${counterId}`}
+          aria-describedby={showCount ? `${recommendationId} ${counterId}` : recommendationId}
           onChange={(event) => {
             onAnswer(event.target.value);
           }}
@@ -238,9 +251,11 @@ function Question({
             </Button>
           )}
           <span className="ah-grow" />
-          <span id={counterId} className="ah-small ah-subtle ah-num">
-            {answer.length.toLocaleString("en-US")} / {MAX_ANSWER_CHARS.toLocaleString("en-US")}
-          </span>
+          {showCount && (
+            <span id={counterId} className="ah-small ah-subtle ah-num">
+              {answer.length.toLocaleString("en-US")} / {MAX_ANSWER_CHARS.toLocaleString("en-US")}
+            </span>
+          )}
         </div>
       </div>
     </details>
@@ -253,16 +268,18 @@ function Question({
  */
 export function QuestionsLink({ project, path }: { project: string; path: string }) {
   const note = useBrainNote(project, path);
+  // The block shows only with session control (ApproveRecord): without it, nothing to reach.
+  const sessions = useApi("/api/v1/agent-sessions", { query: { project } }, { retry: false });
   const markdown = note.data?.markdown;
   const count = useMemo(() => (markdown ? openQuestions(markdown).length : 0), [markdown]);
-  if (count === 0) return null;
+  if (count === 0 || !sessions.isSuccess) return null;
   return (
     <a
       className="ah-small"
       href={`#${QUESTIONS_ID}`}
       onClick={(event) => {
         const block = document.getElementById(QUESTIONS_ID);
-        if (!block) return; // No session control: the block is not shown, nothing to reach.
+        if (!block) return;
         event.preventDefault();
         block.scrollIntoView({ block: "start" });
         block.querySelector<HTMLElement>("h3")?.focus({ preventScroll: true });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -125,6 +125,7 @@ export function ApproveRecord({
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<AgentSession | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const [sentAnswers, setSentAnswers] = useState<Answers>({});
   const note = useBrainNote(project, path.replace(/^brain\//, ""));
   const markdown = note.data?.markdown;
@@ -138,8 +139,16 @@ export function ApproveRecord({
       if (!(target instanceof Element && target.closest("[data-approve-picker]"))) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      trigger.current?.focus();
     };
+    // Focus goes into the list on open: the session picked, else the first one.
+    const list = trigger.current?.parentElement;
+    const first =
+      list?.querySelector<HTMLElement>(".ah-menu-item[aria-current]") ??
+      list?.querySelector<HTMLElement>(".ah-menu-item");
+    first?.focus();
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -186,11 +195,11 @@ export function ApproveRecord({
         setSent(target);
       })
       .catch((cause: unknown) => {
-        setError(
+        const why =
           cause instanceof ApiProblem
             ? (cause.detail ?? cause.title)
-            : "The approval could not be sent.",
-        );
+            : "The approval could not be sent.";
+        setError(`${why} Try again, or pick another session.`);
       })
       .finally(() => {
         setBusy(false);
@@ -201,11 +210,12 @@ export function ApproveRecord({
     setChosen(id);
     writePicked(project, slug, id);
     setOpen(false);
+    trigger.current?.focus();
   };
   const item = (s: AgentSession) => (
     <MenuItem
       key={s.id}
-      icon="message-square"
+      icon="square-terminal"
       selected={s.id === target?.id}
       onClick={pick(s.id)}
       hint={<span className="ah-subtle ah-small">{s.status}</span>}
@@ -216,7 +226,7 @@ export function ApproveRecord({
   const section = (label: string, rows: readonly AgentSession[]) =>
     rows.length > 0 && (
       <>
-        <div className="ah-subtle ah-small" style={{ padding: "6px 10px" }}>
+        <div className="ah-subtle ah-small" style={{ padding: "var(--space-2) var(--space-3)" }}>
           {label}
         </div>
         {rows.map(item)}
@@ -243,7 +253,7 @@ export function ApproveRecord({
     }
     const wroteIt = target !== null && wrote.some((s) => s.id === target.id);
     return (
-      <div className="ah-stack" style={{ gap: 6 }}>
+      <div className="ah-stack" style={{ gap: "var(--space-2)" }}>
         {questions.length > 0 && (
           <span className="ah-small ah-muted">{countLine(questions, drafts.answers)}</span>
         )}
@@ -273,7 +283,8 @@ export function ApproveRecord({
             <button
               type="button"
               className="ah-btn ah-btn-ghost ah-btn-sm"
-              aria-haspopup="true"
+              ref={trigger}
+              aria-haspopup="dialog"
               aria-expanded={open}
               disabled={busy}
               aria-label={`Approval goes to: ${target ? sessionName(target) : "no session picked"}`}
@@ -290,7 +301,7 @@ export function ApproveRecord({
               open={open}
               label="Session that gets the approval"
               style={{
-                bottom: 30,
+                bottom: "calc(100% + var(--space-1))",
                 left: 0,
                 minWidth: 320,
                 maxWidth: 440,
@@ -300,15 +311,19 @@ export function ApproveRecord({
               {section(`Worked on ${slug}`, related)}
               {section(`Other sessions in ${project}`, others)}
               {all.length === 0 && wrote.length === 0 && (
-                <div className="ah-muted ah-small" style={{ padding: "6px 10px" }}>
+                <div
+                  className="ah-muted ah-small"
+                  style={{ padding: "var(--space-2) var(--space-3)" }}
+                >
                   No session in {project} yet.
                 </div>
               )}
             </Popover>
           </span>
           {error && (
-            <span role="alert" style={{ color: "var(--failed)" }}>
-              {error}
+            <span role="alert" className="ah-row" style={{ gap: "var(--space-2)" }}>
+              <Icon name="circle-x" size="sm" style={{ color: "var(--failed)" }} />
+              <span>{error}</span>
             </span>
           )}
         </div>
