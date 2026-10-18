@@ -566,3 +566,59 @@ class HubItemWriterContract:
             raise AssertionError("a draft was removed below a file")
         _check(_draft_refusal(writer_tree) == "not_found", "no draft is read below a file")
         _check(writer_tree.exists(".hub-drafts"), "the file stays")
+
+    def test_carries_old_hidden_entries_when_written_from_old_folder(
+        self, writer_tree: WriterTree
+    ) -> None:
+        renamed = f"{SKILLS_FOLDER}/beta"
+        writer_tree.write(f"{SKILL_UNIT}/SKILL.md", b"# old\n")
+        writer_tree.write(f"{SKILL_UNIT}/.cache/data", b"cached")
+        writer_tree.write(f"{SKILL_UNIT}/notes/.keep", b"kept")
+        writer_tree.write(f"{SKILL_UNIT}/notes/old.md", b"# old note\n")
+        writer_tree.link(f"{SKILL_UNIT}/.current", "SKILL.md")
+        writer_tree.writer.write_unit(
+            writer_tree.hub_path, renamed, _v1(), kind=UnitKind.SKILL, carry_from=SKILL_UNIT
+        )
+        expected = {file.path: file.content for file in _v1().files}
+        expected |= {".cache/data": b"cached", "notes/.keep": b"kept"}
+        found = writer_tree.files(renamed)
+        _check(found == expected, f"the new folder holds the version and the old hidden: {found}")
+        _check(writer_tree.exists(f"{renamed}/.current"), "a hidden link is carried")
+        _check(not writer_tree.exists(f"{SKILL_UNIT}/.cache"), "the hidden entries moved")
+        writer_tree.writer.remove_unit(writer_tree.hub_path, SKILL_UNIT, kind=UnitKind.SKILL)
+        _check(not writer_tree.exists(SKILL_UNIT), "the old folder is removed after")
+        _no_leftover(writer_tree, SKILLS_FOLDER)
+
+    def test_fails_carry_when_new_folder_exists(self, writer_tree: WriterTree) -> None:
+        renamed = f"{SKILLS_FOLDER}/beta"
+        writer_tree.write(f"{SKILL_UNIT}/SKILL.md", b"# old\n")
+        writer_tree.write(f"{SKILL_UNIT}/.cache/data", b"cached")
+        writer_tree.write(f"{renamed}/SKILL.md", b"# beta\n")
+        try:
+            writer_tree.writer.write_unit(
+                writer_tree.hub_path, renamed, _v1(), kind=UnitKind.SKILL, carry_from=SKILL_UNIT
+            )
+        except HubItemWriteError as error:
+            _check(error.kind == "failed" and "beta" not in str(error), "failed, no path named")
+        else:
+            raise AssertionError("a carry wrote over an existing folder")
+        _check(writer_tree.files(renamed) == {"SKILL.md": b"# beta\n"}, "the folder unchanged")
+        old = {"SKILL.md": b"# old\n", ".cache/data": b"cached"}
+        _check(writer_tree.files(SKILL_UNIT) == old, "the old folder unchanged")
+        _no_leftover(writer_tree, SKILLS_FOLDER)
+
+    def test_reads_script_when_present(self, writer_tree: WriterTree) -> None:
+        script = "plugin/demo/scripts/check.sh"
+        linked = "plugin/demo/scripts/linked.sh"
+        _check(writer_tree.writer.read_script(writer_tree.hub_path, script) is None, "absent")
+        writer_tree.write(script, b"#!/bin/sh\n")
+        writer_tree.write("elsewhere/x.sh", b"x")
+        writer_tree.link(linked, "../../../elsewhere/x.sh")
+        found = writer_tree.writer.read_script(writer_tree.hub_path, script)
+        _check(found == b"#!/bin/sh\n", f"the script's bytes: {found!r}")
+        try:
+            writer_tree.writer.read_script(writer_tree.hub_path, linked)
+        except ItemWriteRefusedError as error:
+            _check(error.code == "link_in_path", f"refused as {error.code}")
+        else:
+            raise AssertionError("a script was read through a link")
