@@ -1,9 +1,10 @@
 """Item versions on the composed app over a registered fixture hub (AGH-295, D2, D5, D9, S1, S2).
 
-The hub is a ``hub init`` hub whose ``plugin/`` and ``.claude/`` are replaced by the spec's
-fixture: skills ``alpha`` (with ``references/r.md``) and ``beta``, agent ``scout``, two hooks in
-``.claude/settings.json``, one in ``.claude/settings.project.json`` and one in
-``plugin/demo/hooks/hooks.json``. Every read is a GET on the real file adapter; the versions are
+The hub is a ``hub init`` hub whose ``plugin/``, ``.claude/`` and ``workflows/`` are replaced by
+the spec's fixture: skills ``alpha`` (with ``references/r.md``) and ``beta``, agent ``scout``, two
+hooks in ``.claude/settings.json``, one in ``.claude/settings.project.json`` and one in
+``plugin/demo/hooks/hooks.json``, and the hub workflow ``workflows/demo/review.yaml`` (it
+overrides the built-in ``review``). Every read is a GET on the real file adapter; the versions are
 read back from the app's database through ``open_item_version_store`` (and the table itself, to
 see every unit). Synthetic data only: each token is built from fragments at run time.
 """
@@ -37,6 +38,11 @@ SETTINGS: Final = ".claude/settings.json"
 PROJECT_SETTINGS: Final = ".claude/settings.project.json"
 PLUGIN_HOOKS: Final = "plugin/demo/hooks/hooks.json"
 TOOLKIT_UNITS: Final = {ALPHA, BETA, SCOUT, SETTINGS, PROJECT_SETTINGS, PLUGIN_HOOKS}
+WORKFLOWS: Final = "/api/v1/workflows"
+REVIEW: Final = "workflows/demo/review.yaml"
+REVIEW_DETAIL: Final = f"{WORKFLOWS}/demo/review"
+# A built-in the fixture hub does not override (D14).
+BUILTIN_DETAIL: Final = f"{WORKFLOWS}/demo/deliver"
 READERS: Final = 10
 WAIT_SECONDS: Final = 30.0
 _ALNUM: Final = "A1b2C3d4E5f6G7h8"
@@ -45,6 +51,10 @@ ALPHA_MD: Final = b"---\nname: alpha\ndescription: Checks the alpha flow.\n---\n
 REFERENCE: Final = b"# R\n\nRead on demand.\n"
 BETA_MD: Final = b"---\nname: beta\ndescription: Writes the beta notes.\n---\n# Beta\n"
 SCOUT_MD: Final = b"---\nname: scout\ndescription: Scouts the repo.\n---\nScout the repo.\n"
+REVIEW_YAML: Final = (
+    b"version: 1\nname: review\nrevision: 1\n"
+    b"nodes:\n  - {id: lint, type: shell, command: [make, lint]}\n"
+)
 
 
 def _json(document: object) -> bytes:
@@ -71,6 +81,7 @@ def _fixture_tree() -> dict[str, TreeEntry]:
         # Not in settings.json, so it is its own (not synced) item of the project file.
         PROJECT_SETTINGS: _json({"hooks": {"Stop": [_hook("make stop-check")]}}),
         PLUGIN_HOOKS: _json({"hooks": {"Stop": [_hook("python3 hooks/stop.py")]}}),
+        REVIEW: REVIEW_YAML,
     }
 
 
@@ -83,7 +94,7 @@ def versions_hub(composed: Any, make_hub: Callable[..., Path]) -> VersionsHub:
 
     def make(extra: Mapping[str, TreeEntry] | None = None) -> Path:
         hub = make_hub()
-        for folder in ("plugin", ".claude"):
+        for folder in ("plugin", ".claude", "workflows"):
             shutil.rmtree(hub / folder)
         write_tree(hub, _fixture_tree() | dict(extra or {}))
         registered = composed.client.post("/api/v1/hubs", json={"path": str(hub)}, headers=ORIGIN)
@@ -131,6 +142,11 @@ def test_records_baseline_when_catalog_and_workflows_first_read(
     _get(composed, CATALOG)
 
     assert _rows(composed) == sorted((path, 1) for path in TOOLKIT_UNITS)
+
+    listed = _get(composed, WORKFLOWS)
+
+    assert ("review", "hub") in {(item["name"], item["source"]) for item in listed["items"]}
+    assert _rows(composed) == sorted((path, 1) for path in {*TOOLKIT_UNITS, REVIEW})
     alpha_files = (
         UnitFile(path="SKILL.md", content=ALPHA_MD),
         UnitFile(path="references/r.md", content=REFERENCE),
@@ -140,7 +156,7 @@ def test_records_baseline_when_catalog_and_workflows_first_read(
         BETA: (folder_hash((UnitFile(path="SKILL.md", content=BETA_MD),)), len(BETA_MD)),
     }
     tree = _fixture_tree()
-    for path in (SCOUT, SETTINGS, PROJECT_SETTINGS, PLUGIN_HOOKS):
+    for path in (SCOUT, SETTINGS, PROJECT_SETTINGS, PLUGIN_HOOKS, REVIEW):
         content = tree[path]
         assert isinstance(content, bytes)
         expected[path] = (file_hash(content), len(content))
@@ -154,14 +170,19 @@ def test_records_baseline_when_catalog_and_workflows_first_read(
         assert (version.content_hash, version.size) == (content_hash, size), path
 
 
-@pytest.mark.parametrize("item", [pytest.param((SCOUT, SCOUT_DETAIL), id="toolkit")])
+@pytest.mark.parametrize(
+    "item",
+    [
+        pytest.param((SCOUT, SCOUT_DETAIL, SCOUT_MD + b"Then report.\n"), id="toolkit"),
+        pytest.param((REVIEW, REVIEW_DETAIL, REVIEW_YAML + b"# Then report.\n"), id="workflow"),
+    ],
+)
 def test_detail_captures_change_when_file_changed_without_catalog_read(
-    composed: Any, versions_hub: VersionsHub, item: tuple[str, str]
+    composed: Any, versions_hub: VersionsHub, item: tuple[str, str, bytes]
 ) -> None:
-    unit_path, detail = item
+    unit_path, detail, edited = item
     hub = versions_hub()
     _get(composed, detail)
-    edited = SCOUT_MD + b"Then report.\n"
     _edit(hub / unit_path, edited)
 
     _get(composed, detail)
@@ -371,15 +392,20 @@ def test_never_versioned_when_local_settings_builtin_pack_files_drafts_or_plugin
             ".claude/settings.local.json": local,
             SETTINGS: _json(settings),
             ".hub-drafts/skill-a1b2c3/SKILL.md": b"---\nname: draft\ndescription: D.\n---\n",
+            "workflows/demo/prompts/p.md": b"# A prompt of the pack\n",
         }
     )
 
     with _opened_names(monkeypatch) as opened:
         catalog = _get(composed, CATALOG)
         _get(composed, SCOUT_DETAIL)
+    workflows = _get(composed, WORKFLOWS)
+    builtin = _get(composed, BUILTIN_DETAIL)
 
     assert any(name.endswith("settings.json") for name in opened)
     assert not any(name.endswith("settings.local.json") for name in opened)
     assert [plugin["name"] for plugin in catalog["external_plugins"]] == ["other"]
+    assert builtin["source"] == "builtin"
+    assert {item["name"] for item in workflows["items"] if item["source"] == "builtin"}
     paths = {path for path, _ in _rows(composed)}
-    assert paths == TOOLKIT_UNITS
+    assert paths == {*TOOLKIT_UNITS, REVIEW}

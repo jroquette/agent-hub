@@ -613,7 +613,7 @@ def build_app(
     learning_reads = ReadLearnings(
         events, reader, hub_of=facts.hub_of, availability=CachedAvailability(changes.availability)
     )
-    workflows = ReadWorkflows(hubs, workflow_source_of)
+    workflows = ReadWorkflows(hubs, workflow_source_of, capture=capture)
     gates = WorkflowGates(events, hubs, workflows)
     guard = None
     if not settings.sessions_off:
