@@ -596,8 +596,9 @@ hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema
 `builtin`), revision and counts, and every file that does not load as a problem (file, line, key, message);
 `GET /api/v1/workflows/{project}/{name}` gives one workflow's document as written and its layers (each node's id, type
 and `depends_on`). Both read the files on request through the generator's discovery; each hub workflow they show
-(the file the discovery loaded, `.yaml` or `.json`) is captured into the version history above, marked by the
-discovery's listing fingerprint, while a built-in, a file that does not load and a pack's other files (`prompts/`,
+(the file the discovery loaded, `.yaml` or `.json`) is captured into the version history above, marked by its own
+entry of the discovery's listing fingerprint (so an edit re-reads only that file; one list shares one 16 MiB read
+budget across its hubs), while a built-in, a file that does not load and a pack's other files (`prompts/`,
 `scripts/`, `fixtures/`) are never versioned. Workflow runs
 read any engine run: node ids as recorded, `skipped` steps with their cause, failure kinds, the run's `status`,
 `outcome`, `revision` and `content_hash` ([event derivations](design/event-derivations.md)). The Workflows page
