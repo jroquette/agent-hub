@@ -3062,6 +3062,48 @@
         "title": "ItemVersionView",
         "type": "object"
       },
+      "ItemWriteResult": {
+        "additionalProperties": false,
+        "description": "What a Publish or Restore did: ``changed`` False when the content was equal (nothing\nwritten or recorded, D12); ``versioned`` False with its ``reason`` when the written content\nwas not stored (D9, A2); ``version`` the version recorded.",
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UnversionedReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemVersionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "versioned": {
+            "title": "Versioned",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "changed",
+          "versioned",
+          "reason",
+          "version"
+        ],
+        "title": "ItemWriteResult",
+        "type": "object"
+      },
       "JsonValue-Input": {},
       "Learning": {
         "additionalProperties": false,
@@ -5680,6 +5722,19 @@
         ],
         "title": "Resolution",
         "type": "string"
+      },
+      "RestoreVersionBody": {
+        "additionalProperties": false,
+        "description": "``POST .../versions/{version_id}/restore``: ``confirm_managed`` true writes over a unit\n``hub.lock`` manages (S9), after the web's warning.",
+        "properties": {
+          "confirm_managed": {
+            "default": false,
+            "title": "Confirm Managed",
+            "type": "boolean"
+          }
+        },
+        "title": "RestoreVersionBody",
+        "type": "object"
       },
       "ResumableList": {
         "additionalProperties": false,
@@ -8412,6 +8467,13 @@
           "unreadable"
         ],
         "title": "UnitState",
+        "type": "string"
+      },
+      "UnversionedReason": {
+        "enum": [
+          "secret",
+          "too_large"
+        ],
         "type": "string"
       },
       "Usage": {
@@ -12566,6 +12628,139 @@
         ]
       }
     },
+    "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}/restore": {
+      "post": {
+        "description": "Write the version back into the hub and record a ``restore`` version naming it.",
+        "operationId": "restore_skill_version_api_v1_projects__project__skills__kind___source___name__versions__version_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ItemKind"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreVersionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemWriteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "No launch cookie (open hub web's address)"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Write refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, secret_unversioned or managed_confirmation_required"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The body is not application/json"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Restore Skill Version",
+        "tags": [
+          "item versions"
+        ]
+      }
+    },
     "/api/v1/search": {
       "get": {
         "description": "Search ids, paths, commands and tool names.",
@@ -14369,6 +14564,122 @@
           }
         },
         "summary": "Get Workflow Version",
+        "tags": [
+          "item versions"
+        ]
+      }
+    },
+    "/api/v1/workflows/{project}/{name}/versions/{version_id}/restore": {
+      "post": {
+        "description": "Write the version back into the hub workflow's file and record a ``restore`` version.",
+        "operationId": "restore_workflow_version_api_v1_workflows__project___name__versions__version_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreVersionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemWriteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "No launch cookie (open hub web's address)"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Write refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, secret_unversioned or managed_confirmation_required"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The body is not application/json"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Restore Workflow Version",
         "tags": [
           "item versions"
         ]

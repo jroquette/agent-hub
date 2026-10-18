@@ -940,6 +940,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}/restore": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Restore Skill Version
+     * @description Write the version back into the hub and record a ``restore`` version naming it.
+     */
+    post: operations["restore_skill_version_api_v1_projects__project__skills__kind___source___name__versions__version_id__restore_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/search": {
     parameters: {
       query?: never;
@@ -1338,6 +1358,26 @@ export interface paths {
     get: operations["get_workflow_version_api_v1_workflows__project___name__versions__version_id__get"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/workflows/{project}/{name}/versions/{version_id}/restore": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Restore Workflow Version
+     * @description Write the version back into the hub workflow's file and record a ``restore`` version.
+     */
+    post: operations["restore_workflow_version_api_v1_workflows__project___name__versions__version_id__restore_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2488,6 +2528,20 @@ export interface components {
       /** Size */
       size: number;
     };
+    /**
+     * ItemWriteResult
+     * @description What a Publish or Restore did: ``changed`` False when the content was equal (nothing
+     *     written or recorded, D12); ``versioned`` False with its ``reason`` when the written content
+     *     was not stored (D9, A2); ``version`` the version recorded.
+     */
+    ItemWriteResult: {
+      /** Changed */
+      changed: boolean;
+      reason: components["schemas"]["UnversionedReason"] | null;
+      version: components["schemas"]["ItemVersionView"] | null;
+      /** Versioned */
+      versioned: boolean;
+    };
     "JsonValue-Input": unknown;
     /**
      * Learning
@@ -3363,6 +3417,18 @@ export interface components {
      * @enum {string}
      */
     Resolution: "recovered" | "agent_continued" | "open" | "needs_you" | "by_you";
+    /**
+     * RestoreVersionBody
+     * @description ``POST .../versions/{version_id}/restore``: ``confirm_managed`` true writes over a unit
+     *     ``hub.lock`` manages (S9), after the web's warning.
+     */
+    RestoreVersionBody: {
+      /**
+       * Confirm Managed
+       * @default false
+       */
+      confirm_managed: boolean;
+    };
     /**
      * ResumableList
      * @description ``GET /agent-sessions/resumable``: past Claude sessions of a workdir, newest first.
@@ -4340,6 +4406,8 @@ export interface components {
      * @enum {string}
      */
     UnitState: "ok" | "too_large" | "secret" | "unreadable";
+    /** @enum {string} */
+    UnversionedReason: "secret" | "too_large";
     /**
      * Usage
      * @description How often a skill or agent was used in the window: counts and a time only (D6, ADR 0019).
@@ -6772,6 +6840,81 @@ export interface operations {
       };
     };
   };
+  restore_skill_version_api_v1_projects__project__skills__kind___source___name__versions__version_id__restore_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        kind: components["schemas"]["ItemKind"];
+        source: string;
+        name: string;
+        version_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RestoreVersionBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ItemWriteResult"];
+        };
+      };
+      /** @description No launch cookie (open hub web's address) */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Write refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, secret_unversioned or managed_confirmation_required */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The body is not application/json */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   search_api_v1_search_get: {
     parameters: {
       query: {
@@ -7640,6 +7783,79 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ItemVersionContent"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  restore_workflow_version_api_v1_workflows__project___name__versions__version_id__restore_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+        version_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RestoreVersionBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ItemWriteResult"];
+        };
+      };
+      /** @description No launch cookie (open hub web's address) */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Write refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, secret_unversioned or managed_confirmation_required */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The body is not application/json */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

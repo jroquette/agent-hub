@@ -70,6 +70,15 @@ class RejectLearningBody(BaseModel):
     ]
 
 
+class RestoreVersionBody(BaseModel):
+    """``POST .../versions/{version_id}/restore``: ``confirm_managed`` true writes over a unit
+    ``hub.lock`` manages (S9), after the web's warning."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    confirm_managed: bool = False
+
+
 # Every operation may answer a problem; listing the ranges keeps FastAPI's validation schema out.
 PROBLEM_RESPONSES: dict[int | str, dict[str, Any]] = {
     "4XX": {"model": ProblemDetails, "description": "A client error, as an RFC 9457 problem"},
@@ -86,6 +95,17 @@ LEARNING_ACTION_RESPONSES: dict[int | str, dict[str, Any]] = {
     415: {"model": ProblemDetails, "description": "The body is not application/json"},
     502: {"model": ProblemDetails, "description": "Could not open the pull request"},
     504: {"model": ProblemDetails, "description": "The action passed its 60 s deadline"},
+}
+
+# The problems an item write (Restore; Publish in PR 3) documents beyond the ranges (S7, D13).
+ITEM_WRITE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": ProblemDetails, "description": "No launch cookie (open hub web's address)"},
+    409: {
+        "model": ProblemDetails,
+        "description": "Write refused, with a code: hub_read_only, no_author, link_in_path, "
+        "unit_unreadable, secret_unversioned or managed_confirmation_required",
+    },
+    415: {"model": ProblemDetails, "description": "The body is not application/json"},
 }
 
 ProjectParam = Annotated[str | None, Query(min_length=1, max_length=MAX_QUERY_TEXT)]
