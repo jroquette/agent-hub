@@ -33,10 +33,14 @@ vi.mock("../../lib/devCheckout", async (importOriginal) => {
 // These tests read the tables; the grid is the default view (AC-234.3).
 beforeEach(() => {
   window.localStorage.setItem("ah.sessions.view", "table");
+  // The fixtures are dated at T0 and the list keeps the last 7 days: pin the clock to the day after.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(at(86_400)));
 });
 
 afterEach(() => {
   vi.mocked(servedCheckout).mockReturnValue(null);
+  vi.useRealTimers();
 });
 
 const SESSIONS = "/api/v1/sessions";

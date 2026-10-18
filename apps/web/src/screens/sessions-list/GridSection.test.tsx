@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -43,8 +43,15 @@ function tileOf(text: string): HTMLElement {
   return tile;
 }
 
+// The fixtures are dated at T0 and the list keeps the last 7 days: pin the clock to the day after.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(at(86_400)));
+});
+
 afterEach(() => {
   window.localStorage.clear();
+  vi.useRealTimers();
 });
 
 describe("SessionsListScreen grid", () => {
