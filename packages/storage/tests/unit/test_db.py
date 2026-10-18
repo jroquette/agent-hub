@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import JSON, UniqueConstraint
+from sqlalchemy import JSON, LargeBinary, String, UniqueConstraint
 from sqlalchemy.dialects import sqlite
 
 from agent_hub.storage.db import (
@@ -9,12 +9,18 @@ from agent_hub.storage.db import (
     agent_session_records,
     agent_sessions,
     events,
+    item_versions,
     metadata,
 )
 
 
 def test_declares_events_table_when_metadata_loaded() -> None:
-    assert set(metadata.tables) == {"events", "agent_sessions", "agent_session_records"}
+    assert set(metadata.tables) == {
+        "events",
+        "agent_sessions",
+        "agent_session_records",
+        "item_versions",
+    }
     required = {
         "id",
         "project",
@@ -102,3 +108,35 @@ def test_declares_agent_session_tables_when_metadata_loaded() -> None:
     assert (key.target_fullname, key.ondelete) == ("agent_sessions.id", "CASCADE")
     assert isinstance(agent_session_records.c.body.type, JSON)
     assert {column.name for column in agent_session_records.columns if column.nullable} == {"by"}
+
+
+def test_declares_item_versions_when_metadata_read() -> None:
+    columns = [column.name for column in item_versions.columns]
+    assert columns == [
+        "id",
+        "project",
+        "unit_path",
+        "kind",
+        "seq",
+        "origin",
+        "first",
+        "author_name",
+        "author_email",
+        "recorded_at",
+        "content_hash",
+        "size",
+        "content",
+        "restored_from",
+        "draft_id",
+    ]
+    nullable = {column.name for column in item_versions.columns if column.nullable}
+    assert nullable == {"author_name", "author_email", "restored_from", "draft_id"}
+    assert [column.name for column in item_versions.primary_key] == ["id"]
+    assert isinstance(item_versions.c.id.type, String)
+    assert item_versions.c.id.type.length == 36
+    assert isinstance(item_versions.c.recorded_at.type, UtcDateTime)
+    assert isinstance(item_versions.c.content.type, LargeBinary)
+    unique = [item for item in item_versions.constraints if isinstance(item, UniqueConstraint)]
+    assert [(item.name, [column.name for column in item.columns]) for item in unique] == [
+        ("uq_item_versions_project_unit_path_seq", ["project", "unit_path", "seq"])
+    ]

@@ -9,6 +9,7 @@ text) or ``Fifo`` (a named pipe). ``InMemorySkillTree`` and ``DiskSkillTree`` ar
 import hashlib
 import json
 import os
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -292,6 +293,10 @@ class InMemorySkillTree:
         """Add a named pipe."""
         self.hub.skill_specials = self.hub.skill_specials | {path}
 
+    def make_executable(self, path: str) -> None:
+        """Set the file's executable bit."""
+        self.hub.executable = self.hub.executable | {path}
+
 
 @dataclass
 class DiskSkillTree:
@@ -317,3 +322,8 @@ class DiskSkillTree:
     def fifo(self, path: str) -> None:
         """Make a named pipe."""
         write_tree(self.root, {path: Fifo()})
+
+    def make_executable(self, path: str) -> None:
+        """Set the owner's, group's and others' executable bits of the file."""
+        target = self.root / path
+        target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

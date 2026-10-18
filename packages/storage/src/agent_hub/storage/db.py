@@ -9,12 +9,14 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     DateTime,
     Dialect,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     PrimaryKeyConstraint,
     String,
@@ -137,4 +139,30 @@ agent_session_records = Table(
     Column("body", JSON, nullable=False),
     Column("text_bytes", Integer, nullable=False),
     PrimaryKeyConstraint("agent_session_id", "seq", name="pk_agent_session_records"),
+)
+
+# One row per item version (AGH-295, S3, ADR 0039): a stored snapshot of a Toolkit or workflow
+# unit, append-only. ``seq`` is gap-free per ``(project, unit_path)``; the unique constraint
+# makes a racing writer's second ``seq`` fail, and it serves the newest-first pages. ``content``
+# is a file unit's bytes or a folder's frames; ``draft_id`` names the Studio draft a ``publish``
+# came from (A5).
+item_versions = Table(
+    "item_versions",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("project", String, nullable=False),
+    Column("unit_path", String, nullable=False),
+    Column("kind", String, nullable=False),
+    Column("seq", Integer, nullable=False),
+    Column("origin", String, nullable=False),
+    Column("first", Boolean, nullable=False),
+    Column("author_name", String, nullable=True),
+    Column("author_email", String, nullable=True),
+    Column("recorded_at", UtcDateTime, nullable=False),
+    Column("content_hash", String, nullable=False),
+    Column("size", Integer, nullable=False),
+    Column("content", LargeBinary, nullable=False),
+    Column("restored_from", String(36), nullable=True),
+    Column("draft_id", String, nullable=True),
+    UniqueConstraint("project", "unit_path", "seq", name="uq_item_versions_project_unit_path_seq"),
 )

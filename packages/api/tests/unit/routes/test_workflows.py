@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from agent_hub.core.workflows.catalog import LoadProblem, WorkflowFile
-from agent_hub.core.workflows.workflow_reads import ReadWorkflows
+from agent_hub.core.workflows.workflow_reads import ReadWorkflows, SourceStat
 
 SHIP = {
     "version": 1,
@@ -23,8 +23,8 @@ class Hubs:
 
 
 class Files:
-    def fingerprint(self) -> object:
-        return 1
+    def fingerprint(self) -> tuple[SourceStat, ...]:
+        return (("workflows", 0, 1),)
 
     def workflow_files(self) -> Iterable[WorkflowFile | LoadProblem]:
         return [

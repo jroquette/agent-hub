@@ -1,5 +1,10 @@
+from datetime import UTC, datetime
+
 import pytest
 
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
+from agent_hub.core.item_versions.item_units import ItemUnit
+from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_catalog import EMPTY_NOTICE
 from agent_hub.core.skills.skill_reads import SkillReads
@@ -11,9 +16,11 @@ from agent_hub.core.skills.skill_view import (
     SkillUsage,
 )
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader
+from agent_hub.core.testing.item_version_fakes import InMemoryItemVersionStore
 from agent_hub.core.testing.read_model_builders import a_skill_usage
 from agent_hub.core.testing.skill_trees import (
     FIXTURE_PROJECT,
+    Link,
     TreeEntry,
     a_skills_fixture_tree,
     fake_hub_of,
@@ -312,3 +319,77 @@ def test_counts_zero_when_no_usage_source() -> None:
     alpha = next(item for item in catalog.items if item.name == "alpha")
     assert alpha.usage is not None
     assert alpha.usage.count == 0
+
+
+# Every unit of the AC-164.1 tree: the ``.claude/skills/alpha`` link is versioned at its
+# target, and the ``settings.json`` hooks share one file.
+FIXTURE_UNITS = {
+    "plugin/hub-workflow/skills/alpha",
+    "plugin/hub-workflow/skills/beta",
+    "plugin/demo/skills/gamma",
+    "plugin/extra/skills/delta",
+    ".claude/skills/local-one",
+    "plugin/hub-workflow/agents/evaluator.md",
+    "plugin/demo/agents/scout.md",
+    ".claude/agents/local-agent.md",
+    "plugin/hub-workflow/hooks/hooks.json",
+    ".claude/settings.json",
+}
+
+
+def _capturing(
+    extra: dict[str, TreeEntry] | None = None,
+) -> tuple[SkillReads, FakeHubFileReader, FakeHub, InMemoryItemVersionStore]:
+    hub = fake_hub_of(a_skills_fixture_tree() | (extra or {}))
+    reader = FakeHubFileReader({HUB: hub})
+    store = InMemoryItemVersionStore()
+    capture = CaptureItemVersions(store, reader, lambda: datetime(2026, 10, 17, tzinfo=UTC))
+    return SkillReads(reader, capture=capture), reader, hub, store
+
+
+def test_captures_units_when_catalog_read() -> None:
+    reads, reader, _, store = _capturing()
+
+    reads.catalog(project=FIXTURE_PROJECT, hub_path=HUB)
+    reads.catalog(project=FIXTURE_PROJECT, hub_path=HUB)
+
+    read_paths = [path for _, path in reader.unit_reads]
+    assert sorted(read_paths) == sorted(FIXTURE_UNITS)
+    for path in FIXTURE_UNITS:
+        last = store.last(FIXTURE_PROJECT, path)
+        assert last is not None, path
+        assert (last.seq, last.first) == (1, True)
+
+
+def test_captures_one_unit_when_detail_read() -> None:
+    reads, reader, hub, store = _capturing()
+    reads.detail(project=FIXTURE_PROJECT, hub_path=HUB, **ALPHA)
+    alpha = "plugin/hub-workflow/skills/alpha"
+    path = f"{alpha}/references/r.md"
+    hub.skill_files[path] = hub.skill_files[path] + b"More.\n"
+    hub.mtimes[path] = 1
+
+    reads.detail(project=FIXTURE_PROJECT, hub_path=HUB, **ALPHA)
+
+    assert [path for _, path in reader.unit_reads] == [alpha, alpha]
+    assert [version.seq for version in store.page(FIXTURE_PROJECT, alpha)] == [2, 1]
+
+
+def test_names_unit_when_item_listed() -> None:
+    reads, reader, _, _ = _capturing({".claude/skills/out": Link("/elsewhere/out")})
+
+    alpha = reads.unit_of(FIXTURE_PROJECT, HUB, **ALPHA)
+    hook = reads.unit_of(
+        FIXTURE_PROJECT, HUB, kind=ItemKind.HOOK, source="settings", name="settings-pretooluse-1"
+    )
+    linked = reads.unit_of(FIXTURE_PROJECT, HUB, kind=ItemKind.SKILL, source="claude", name="out")
+
+    assert alpha == ItemUnit(
+        project=FIXTURE_PROJECT, unit_path="plugin/hub-workflow/skills/alpha", kind=UnitKind.SKILL
+    )
+    assert hook is not None
+    assert hook.unit_path == ".claude/settings.json"
+    assert linked is None
+    assert reader.unit_reads == []
+    with pytest.raises(EntityNotFoundError):
+        reads.unit_of(FIXTURE_PROJECT, HUB, kind=ItemKind.SKILL, source="claude", name="alpha")
