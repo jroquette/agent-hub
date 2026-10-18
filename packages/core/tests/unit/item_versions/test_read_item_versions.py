@@ -7,6 +7,7 @@ from typing import Final
 
 import pytest
 
+from agent_hub.core.hub_files.hub_lock import HubLock, ManagedFileEntry
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions, UnitState
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import UnitKind
@@ -16,12 +17,15 @@ from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_view import ItemKind
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader
 from agent_hub.core.testing.item_version_fakes import InMemoryItemVersionStore
+from agent_hub.core.testing.skill_trees import FIXTURE_PLATFORM_VERSION
 
 HUB: Final = "/hubs/demo-hub"
 PROJECT: Final = "demo"
 NOW: Final = datetime(2026, 10, 18, 9, 0, tzinfo=UTC)
 SCOUT: Final = "plugin/demo/agents/scout.md"
 SCRIBE: Final = "plugin/demo/agents/scribe.md"
+ALPHA: Final = "plugin/demo/skills/alpha"
+ALPHA_MD: Final = b"---\nname: alpha\ndescription: Alpha.\n---\n# Alpha\n"
 REVIEW: Final = "workflows/demo/review.yaml"
 SCOUT_MD: Final = b"---\nname: scout\ndescription: Scouts.\n---\nScout the repo.\n"
 SCRIBE_MD: Final = b"---\nname: scribe\ndescription: Writes.\n---\nWrite it down.\n"
@@ -68,6 +72,7 @@ def _rig(files: dict[str, bytes]) -> tuple[ReadItemVersions, FakeHub, _Units]:
             f"{PROJECT}:agent/demo/scout": _unit(SCOUT, UnitKind.AGENT),
             f"{PROJECT}:agent/demo/scribe": _unit(SCRIBE, UnitKind.AGENT),
             f"{PROJECT}:skill/claude/out": None,
+            f"{PROJECT}:skill/demo/alpha": _unit(ALPHA, UnitKind.SKILL),
             f"{PROJECT}:review": _unit(REVIEW, UnitKind.WORKFLOW),
         }
     )
@@ -134,3 +139,22 @@ def test_no_history_when_item_has_no_unit() -> None:
 
     assert listed.value.entity == "item history"
     assert unknown.value.entity == "skill"
+
+
+def test_lists_managed_when_lock_lists_skill_md() -> None:
+    reads, hub, _ = _rig({f"{ALPHA}/SKILL.md": ALPHA_MD, SCOUT: SCOUT_MD})
+    entry = ManagedFileEntry(ownership="managed", sha256="ab" * 32, executable=False)
+    hub.lock = HubLock(
+        lock_version=1,
+        platform_version=FIXTURE_PLATFORM_VERSION,
+        schema_version=1,
+        modules=(),
+        files={f"{ALPHA}/SKILL.md": entry},
+    )
+    alpha = ToolkitRef(project=PROJECT, kind=ItemKind.SKILL, source="demo", name="alpha")
+
+    page = reads.list(alpha, limit=50, cursor=None)
+
+    # A skill's main path is its SKILL.md (A4); the agent the lock does not list is not managed.
+    assert (page.managed, page.unit_kind, len(page.items)) == (True, UnitKind.SKILL, 1)
+    assert not reads.list(SCOUT_REF, limit=50, cursor=None).managed
