@@ -84,13 +84,13 @@ tightens); the brief, `hub env list`, doctor and setup show it.
   matches any repo's copy), read through Read, Grep (its `path`, or the cwd, walked without following links) and Bash
   (each token naming such a file from the event's cwd, braces and globs expanded; not `ls`, `test`, `[`, `stat`).
 - **Order:** the rule runs first on every surface; a deny is final (the project extension does not run) and wins over
-  any `access` and any `guard.infra.allow` match. It never opens a file the secret-file rule treats as secret: that
-  file keeps the secret-file reason, unless its path or the command text holds a word. `prod_markers` is unchanged.
+  any `access` and any `guard.infra.allow` match. It never opens a secret file, by any case or link: it keeps the
+  secret-file reason (this rule gives it then), unless its path or the command holds a word. `prod_markers` is unchanged.
 - **Bounds:** regular files only (`O_NONBLOCK`, `S_ISREG`), as latin-1; 1 MiB per command or file, 64 listed files
   and 4 MiB per call, 300 ms (checked per folder entry) in all. Over one, or not regular: **ask** `blocked words not
   checked: <cause>` (`too large`, `too many files`, `out of time`, `not a regular file`); a listed name that is a
-  folder, or unreadable: no verdict. Walks skip `.git`, `node_modules`, `.claude/worktrees`, `.venv`, `venv`,
-  `__pycache__`, `.tox`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `dist`, `build`, `.terraform`, `.next`, `target`.
+  folder, or unreadable: no verdict. Walks skip heavy vendored and cache trees: `.git`, `node_modules`,
+  `.claude/worktrees`, `.venv`, `__pycache__`, `.tox`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.terraform`, `.next`.
 - **Layers:** the CLI, doctor and the brief union `hub.json` and `hub.local.json`; the hooks also add a `hub.json`
   named by `$HUB_CONFIG`. No layer removes an entry; an empty list adds nothing.
 - **Fail closed:** a list that is not a list, a bad item or an unknown `guard` key in any layer makes the guard ask on
