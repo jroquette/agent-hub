@@ -1824,7 +1824,7 @@ def test_prints_nothing_on_stdout_when_production_and_conflict(
     assert tree_digest(demo_hub) == before
 
 
-def test_prints_no_production_line_when_no_environment(
+def test_prints_no_production_line_when_environment_named_production_unflagged(
     demo_hub: Path, run_sync: SyncRunner
 ) -> None:
     document = json.loads((demo_hub / "hub.json").read_bytes())
