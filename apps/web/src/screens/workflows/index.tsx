@@ -13,6 +13,7 @@ import {
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
+import { HistoryPanel } from "../item-history";
 import { NodePanel, useNodeParam, WorkflowGraph } from "./WorkflowGraph";
 import { useWorkflow, useWorkflows, type WorkflowDetail, type WorkflowSummary } from "./queries";
 
@@ -252,6 +253,11 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
         <span className="ah-small ah-subtle">The parsed document (JSON), read-only.</span>
         <JsonViewer value={workflow.document} maxHeight={480} />
       </section>
+      {workflow.source === "hub" && (
+        <HistoryPanel
+          target={{ kind: "workflow", project: workflow.project, name: workflow.name }}
+        />
+      )}
     </Page>
   );
 }
