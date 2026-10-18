@@ -12,7 +12,9 @@ from agent_hub.claude_sessions.testing.scenarios import (
     FORK_SESSION_ID,
     RECORD_ENV,
     SCENARIO_ENV,
+    ResultStep,
     Scenario,
+    TextStep,
     held_turn,
     permission_turn,
     read_records,
@@ -101,6 +103,18 @@ def test_answers_scripted_stdout_when_protocol_turn_scripted(tmp_path: Path) -> 
     )
     assert result["total_cost_usd"] == pytest.approx(0.0012)
     assert result["result"] == "Hello there"
+
+
+def test_reports_running_total_cost_when_turns_end(tmp_path: Path) -> None:
+    # Each step's cost is its own turn's; Claude Code reports the session's running total.
+    turns = [[TextStep(text="ok"), ResultStep(cost_usd=cost)] for cost in (0.01, 0.02, 0.03)]
+    lines = [_user("one"), _user("two"), _user("three")]
+
+    _, out = _run(tmp_path, STREAM, lines, scenario=Scenario(turns=turns))
+
+    results = _of(out, "result")
+    assert [r["total_cost_usd"] for r in results] == [0.01, 0.03, 0.06]
+    assert [r["modelUsage"]["claude-stub-model"]["costUSD"] for r in results] == [0.01, 0.03, 0.06]
 
 
 def test_skips_deltas_when_partial_messages_not_requested(tmp_path: Path) -> None:
