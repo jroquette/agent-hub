@@ -36,6 +36,8 @@ from typing import Any
 
 import httpx
 
+from scripts.seed_demo import CHAT_SESSION
+
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "apps" / "web"
 ROUTES_FILE = "apps/web/src/routes.tsx"
@@ -75,12 +77,14 @@ class Route:
 
 # Each screen folder of apps/web/src/screens, to the routes.tsx routes showing it on the demo data.
 SCREEN_ROUTES: Mapping[str, tuple[Route, ...]] = {
-    "agent-session": (Route("sessions", "/sessions", follow="/agent-sessions/"),),
+    # The demo's ended chat, by its fixed id (scripts/seed_demo.py).
+    "agent-session": (Route("chat", f"/agent-sessions/{CHAT_SESSION}"),),
     "approvals": (Route("approvals", "/approvals"),),
     "brain": (Route("brain", "/knowledge/brain", follow="/projects/"),),
     "feature-detail": (Route("feature", "/features", follow="/features/"),),
     "features": (Route("features", "/features"),),
     "health": (Route("health", "/health"),),
+    "hub-config": (Route("config", "/projects/demo/config"),),
     "knowledge-index": (Route("skills", "/knowledge/skills"), Route("brain", "/knowledge/brain")),
     "knowledge-phase3": (Route("knowledge", "/knowledge/decisions"),),
     "learnings": (Route("learnings", "/knowledge/learnings"),),
@@ -356,7 +360,8 @@ def conductor_logs(given: Path | None, environ: Mapping[str, str]) -> list[Path]
 
 
 def conductor_token(log: Path) -> str | None:
-    """The conductor's launch token, from the log make playground writes."""
+    """A ``hub web``'s launch token, the last in the log it wrote (the conductor's, which make
+    playground writes, or the capture's own)."""
     try:
         found = re.findall(r"\?token=([A-Za-z0-9_-]+)", log.read_text("utf-8", errors="replace"))
     except OSError:
@@ -920,6 +925,8 @@ def capture_screens(screens: Sequence[str], out: Path) -> str | None:
                 if seeded.returncode != 0:
                     return f"the demo data did not load: {seeded.stdout.strip()[-300:]}"
                 wait_until_up(web_url)
+                # The agent-session routes need the cookie the launch token is traded for.
+                token = conductor_token(work / "api.log")
                 captured = subprocess.run(  # noqa: S603
                     [
                         npm,
@@ -942,6 +949,7 @@ def capture_screens(screens: Sequence[str], out: Path) -> str | None:
                         "AGENT_HUB_WEB_URL": web_url,
                         "AH_CAPTURE": json.dumps(routes),
                         "AH_CAPTURE_DIR": str(out),
+                        **({"AH_CAPTURE_LOGIN": f"{api_url}/?token={token}"} if token else {}),
                         **(
                             {"AGENT_HUB_CHROMIUM": shell}
                             if (shell := chromium_executable(env))

@@ -59,7 +59,9 @@ tests and the repo's conventions instead of reinterpreting them.
   is not captured. The script checks `HEAD` out in a temporary worktree (sharing the checkout's `node_modules`, its
   packages ahead of the editable installs), builds the web app there, starts its `hub web` on a free port with a
   temporary database, loads `scripts/seed_demo.py` into it, and has Playwright capture each route at 1440 by 900,
-  dark theme, the clock frozen and relative times masked.
+  dark theme, the clock frozen and relative times masked. The capture first trades that `hub web`'s launch token
+  (its URL line) for the session cookie, so the agent-session screen reads the demo's ended chat (`CHAT_SESSION`,
+  opened by its id).
 - **Hub.** The project's hub (`--hub`, default `agent-hub-hub` next to the main checkout, as `make playground` makes
   it) is where Studio sessions write skills, agents and hooks, outside this checkout's git. Its files are those its
   git sees as new or changed (ignored files left out) that `hub sync` did not write as they are (`hub.lock`), and

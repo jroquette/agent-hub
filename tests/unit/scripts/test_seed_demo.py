@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
+from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus
 from agent_hub.core.features.feature_evals import eval_coverage, eval_records
 from agent_hub.core.features.feature_record import FeatureRecordFile
 from agent_hub.core.features.feature_reviews import approved_tickets, review_records
@@ -17,6 +18,7 @@ from agent_hub.core.testing.transcript_lines import TRANSCRIPT_MODEL
 from scripts.seed_demo import (
     ASK_SESSION,
     BACKFILL_SESSION,
+    CHAT_SESSION,
     DEMO_BRANCH,
     DEMO_PROJECT,
     FEATURE,
@@ -26,11 +28,14 @@ from scripts.seed_demo import (
     STUCK_SESSION,
     ComposeTarget,
     LocalTarget,
+    SeedError,
     choose_target,
+    demo_chat,
     demo_envelopes,
     demo_transcript,
     hub_files,
     main,
+    store_chat,
 )
 
 NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
@@ -46,6 +51,7 @@ class FakeTarget:
         self.workdir = PurePosixPath(workdir)
         self.files: dict[str, str] = {}
         self.commands: list[list[str]] = []
+        self.python_runs: list[tuple[list[str], str]] = []
         self._init_stderr = init_stderr
 
     def write(self, path: PurePosixPath, text: str) -> None:
@@ -56,6 +62,10 @@ class FakeTarget:
         if arguments[0] == "init" and self._init_stderr:
             return subprocess.CompletedProcess(arguments, 1, "", self._init_stderr)
         return subprocess.CompletedProcess(arguments, 0, "appended 1, duplicates 0\n", "")
+
+    def python(self, arguments: Sequence[str], stdin: str) -> subprocess.CompletedProcess[str]:
+        self.python_runs.append((list(arguments), stdin))
+        return subprocess.CompletedProcess(arguments, 0, "", "")
 
 
 class FakeServer:
@@ -177,7 +187,39 @@ def test_loads_every_screen_input_when_run_against_target(
     assert transcript[2].startswith(f"/data/demo/transcripts/{BACKFILL_SESSION}-")
     for command in (runs, transcript):
         assert command[-4:] == ["--project", DEMO_PROJECT, "--db", "/data/agent-hub.db"]
+    [(chat_arguments, chat)] = target.python_runs
+    assert chat_arguments[0] == "-c"
+    assert chat_arguments[-1] == "/data/agent-hub.db"
+    assert json.loads(chat)["session"]["id"] == CHAT_SESSION
     assert f"demo data loaded: open {URL}" in capsys.readouterr().out
+
+
+def test_holds_ended_chat_with_its_digest_when_chat_built() -> None:
+    session, records = demo_chat(NOW)
+
+    kinds = [record.kind for record in records]
+    assert session.id == CHAT_SESSION
+    assert session.project == DEMO_PROJECT
+    assert session.status == AgentSessionStatus.ENDED
+    assert session.ended_at == records[-1].at
+    assert [record.seq for record in records] == list(range(1, len(records) + 1))
+    assert kinds[0] == "user.message"
+    assert {"text", "tool.call", "tool.result", "result", "close"} <= set(kinds)
+    assert session.last_prompt == "Why does the CSV export test fail? Fix it."
+    assert session.last_reply is not None
+    assert session.last_reply.startswith("Fixed:")
+    assert [item.path for item in session.changed_files] == ["/work/demo-api/src/export.py"]
+    assert all(record.text_bytes > 0 for record in records)
+
+
+def test_fails_naming_chat_when_storing_it_fails() -> None:
+    def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, "", "sqlite3.OperationalError: locked")
+
+    with pytest.raises(SeedError, match="storing the demo chat failed: .*locked"):
+        store_chat(
+            LocalTarget(workdir=PurePosixPath("/x"), runner=runner), db_path="/x/a.db", now=NOW
+        )
 
 
 def _heads(files: dict[PurePosixPath, str], folder: str) -> list[RecordHead]:
@@ -275,8 +317,23 @@ def test_runs_hub_in_service_when_compose_target_runs_command() -> None:
     target = ComposeTarget(runner=runner)
     target.write(PurePosixPath("/data/demo/x.jsonl"), "line\n")
     target.hub(["collect", "--runs", "/data/demo/x.jsonl"])
+    target.python(["-c", "pass", "/data/agent-hub.db"], "{}")
 
-    write, hub = calls
+    write, hub, python = calls
+    assert python == (
+        [
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "agent-hub",
+            "python",
+            "-c",
+            "pass",
+            "/data/agent-hub.db",
+        ],
+        "{}",
+    )
     assert write[0][:5] == ["docker", "compose", "exec", "-T", "agent-hub"]
     assert write[0][-1] == "/data/demo/x.jsonl"
     assert write[1] == "line\n"

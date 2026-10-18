@@ -8,9 +8,11 @@ from typing import Any
 
 import httpx
 
+from agent_hub.api.session_token import cookie_name
 from scripts.seed_demo import (
     ASK_SESSION,
     BACKFILL_SESSION,
+    CHAT_SESSION,
     DEMO_PROJECT,
     INBOX_NOTE,
     LIVE_SESSION,
@@ -64,6 +66,11 @@ def test_fills_every_screen_when_demo_loaded_twice(
         learnings = _items(client, "/api/v1/learnings")
         feature = client.get(f"/api/v1/features/{DEMO_PROJECT}/export-button")
         tree = client.get(f"/api/v1/projects/{DEMO_PROJECT}/brain")
+        # The agent-session routes need the cookie the launch token is traded for.
+        client.cookies.set(cookie_name(hub_web.port), hub_web.token)
+        chats = _items(client, f"/api/v1/agent-sessions?project={DEMO_PROJECT}")
+        chat = client.get(f"/api/v1/agent-sessions/{CHAT_SESSION}").json()
+        chat_records = _items(client, f"/api/v1/agent-sessions/{CHAT_SESSION}/events")
 
     assert len(hubs) == 1
     assert [project["name"] for project in projects] == [DEMO_PROJECT]
@@ -121,3 +128,9 @@ def test_fills_every_screen_when_demo_loaded_twice(
         "issues": False,
     }
     assert tree.status_code == 200, tree.text
+    # The playground export's chat (one, though seeded twice), its log as the seed stored it.
+    assert [item["id"] for item in chats] == [CHAT_SESSION]
+    assert (chat["status"], chat["end_reason"]) == ("ended", "closed")
+    assert chat["last_seq"] == len(chat_records)
+    assert chat_records[0]["kind"] == "user.message"
+    assert {"text", "tool.call", "tool.result", "result"} <= {r["kind"] for r in chat_records}
