@@ -22,7 +22,8 @@ brief's sections and placeholders from core, read at render time so core stays t
 (AGH-138). Each plugin agent's ``model:`` names its default tier, ``@@{model_<tier>}``, resolved
 from ``models.tiers``; ``agent_model_overlay`` maps every tier key of one agent's file to the
 tier ``models.agents`` gives it. A hub without ``models`` renders the models the templates pinned
-before tiers (AGH-180).
+before tiers (AGH-180). A hub that declares ``environments`` gets ``AGENTS.md``'s Environments and
+services section, from ``hub.json`` only; a hub without keeps its bytes (AGH-282).
 """
 
 import re
@@ -91,6 +92,25 @@ _RULE_INDENT: Final = "   "
 # The template text of rule 1's line before its branch rule, so a long configured branch shape
 # wraps within 120 characters (AGH-57).
 _BRANCH_RULE_LEAD: Final = "   after an agent (e.g. `claude/…`). "
+# The fixed rules of ``AGENTS.md``'s Environments and services section (AGH-282, spec D-render
+# and Q-1), wrapped within 120 characters, then the lead of its repo lines.
+_ENVIRONMENTS_LEAD: Final = (
+    "Only the environments listed here or in the session brief exist for you; anything else is"
+    " out of bounds. `read`: look,\n"
+    "never change; `ask`: ask the user before any write; `write`: change data, never deploy"
+    " (rule 2). This access is an\n"
+    "instruction to you; the guard does not enforce it. Credentials are never here: use the named"
+    " profile or variable and\n"
+    "never print its value. A command, path or file naming a blocked word"
+    " (`guard.blocked_words`) is denied. Endpoints,\n"
+    "credential names and your own environments (`hub.local.json`): the session brief or"
+    " `./hub env list`."
+)
+# An environment's description is the project's free text: each Markdown-significant character
+# is escaped, and so is a block marker opening a wrapped line, so it renders as plain text.
+_MARKDOWN_SIGNIFICANT: Final = re.compile(r"([\\`*_\[\]<>#|~])")
+_LINE_MARKER: Final = re.compile(r"^( *)(?:([-+=])|([0-9]+)([.)]))")
+_SERVICES_LEAD: Final = "Services by repo:"
 # The conventions' block in ``AGENTS.md``: its lead paragraph and each key as a repo line names
 # it; the shapes and examples come from ``shown_conventions`` (AGH-57, plan § Design 7, E32).
 _CONVENTIONS_LEAD: Final = (
@@ -163,6 +183,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         **_branch_mentions(config),
         **_team_mentions(config),
         **_conventions_texts(config),
+        "environments_section": _environments_section(config),
         **_join_texts(config),
         **_brief_texts(),
         **_model_texts(config),
@@ -348,6 +369,60 @@ def _conventions_section(shown: ShownConventions) -> str:
         items.append(f"- {subject}{_OVERRIDE_TAIL}".replace("; a `", f"; a{_GLUE}`"))
     bullets = "\n".join(_filled_after(item, lead="") for item in items)
     return f"\n\n## Conventions\n\n{_CONVENTIONS_LEAD}\n\n{bullets}"
+
+
+def _environments_section(config: HubConfig) -> str:
+    """``AGENTS.md``'s Environments and services section; empty without ``environments``.
+
+    From ``hub.json`` only (ADR 0016): the fixed rules, one line per environment with its access
+    and ``PRODUCTION`` flag and description, then one line per repo that has services, naming
+    them. Never an endpoint or a credential name (AGH-282, spec D-render).
+    """
+    if not config.environments:
+        return ""
+    environments = "\n".join(
+        _inert_lines(
+            _filled_after(
+                f"- `{name}` ({environment.access}"
+                f"{', PRODUCTION' if environment.production else ''})"
+                + (f": {_escaped(environment.description)}" if environment.description else ""),
+                lead="",
+            )
+        )
+        for name, environment in config.environments.items()
+    )
+    services = "\n".join(
+        _filled_after(f"- {repo.dir}: {_LIST_SEPARATOR.join(repo.services)}", lead="")
+        for repo in config.repos
+        if repo.services
+    )
+    by_repo = f"\n\n{_SERVICES_LEAD}\n\n{services}" if services else ""
+    return f"\n\n## Environments and services\n\n{_ENVIRONMENTS_LEAD}\n\n{environments}{by_repo}"
+
+
+def _escaped(text: str) -> str:
+    """``text`` with a backslash before each Markdown-significant character."""
+    return _MARKDOWN_SIGNIFICANT.sub(r"\\\1", text)
+
+
+def _inert_lines(item: str) -> str:
+    """``item`` with a backslash before a block marker (``-``, ``+``, ``=``, ``1.``) that opens
+    one of its wrapped lines, so a description never starts a list or a heading there."""
+    first, *rest = item.split("\n")
+    return "\n".join(
+        [
+            first,
+            *(
+                _LINE_MARKER.sub(
+                    lambda found: (
+                        found[1] + (f"\\{found[2]}" if found[2] else f"{found[3]}\\{found[4]}")
+                    ),
+                    line,
+                )
+                for line in rest
+            ),
+        ]
+    )
 
 
 def _filled_after(text: str, *, lead: str) -> str:

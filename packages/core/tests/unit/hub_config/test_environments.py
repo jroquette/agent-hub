@@ -189,3 +189,13 @@ def test_loads_service_when_endpoints_given() -> None:
     assert service.kind == "api"
     assert list(service.endpoints) == ["local", "staging", "live"]
     assert service.endpoints["live"].url == "https://api.example.com"
+
+
+def test_rejects_description_when_over_eighty_characters() -> None:
+    # AGH-282: AGENTS.md renders an environment's description on one item, so it stays short.
+    environment = a_live_environment()
+
+    assert Environment.model_validate({**environment, "description": "d" * 80}).description == (
+        "d" * 80
+    )
+    assert error_locs(Environment, {**environment, "description": "d" * 81}) == [("description",)]

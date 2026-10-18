@@ -6,7 +6,7 @@ export interface CostMeterProps {
   meter: MeterView;
 }
 
-/** The session's cost and tokens, added up from the turns' results; always labelled an estimate (L7). */
+/** The session's running cost (the latest result's) and tokens (added up); always an estimate (L7). */
 export function CostMeter({ meter }: CostMeterProps) {
   const usage = meter.usage;
   return (

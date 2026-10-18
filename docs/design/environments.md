@@ -14,7 +14,7 @@ All optional and additive under `schema_version: 1`; a hub without them behaves,
 
 | Key | Shape |
 |---|---|
-| `environments.<name>` | `access` (required: `read`, `write` or `ask`), `production` (bool, `false`), `description`, `credentials` |
+| `environments.<name>` | `access` (required: `read`, `write` or `ask`), `production` (bool, `false`), `description` (≤ 80, rendered as plain text), `credentials` |
 | `…credentials` | `aws_profile` (`^[A-Za-z0-9_.-]{1,64}$`) and `env` (≤ 10 names `^[A-Z_][A-Z0-9_]{0,63}$`): names, never values |
 | `repos[].services.<name>` | `kind` (`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 32, informational), `description`, `endpoints` |
 | `…endpoints.<env>` | `url` or `resource` (one required), `note`, `credentials`; `<env>` must be declared |
@@ -55,9 +55,10 @@ tightens); the brief, `hub env list`, doctor and setup show it.
 ### What agents see
 
 - **`AGENTS.md`** renders `hub.json` only: with `environments`, an `## Environments and services` section of fixed
-  rules (only listed environments exist; `write` covers data, never a deploy; use the named profile or variable and
-  never print its value; blocked words are denied), a line per environment (`` `live` (read, PRODUCTION): … ``) and per
-  repo with services (`demo-api: api, orders`), no endpoint or credential. Each line counts in `instructions.size`.
+  rules (only environments listed there or in the brief exist; `write` covers data, never a deploy; `access` is not
+  enforced; never print a credential; blocked words are denied; the rest: the brief, `./hub env list`), one line per
+  environment (`` `live` (read, PRODUCTION): … ``, its description Markdown-escaped) and per repo with services, no
+  endpoint or credential. Each counts in `instructions.size` (the example: 96 of 100; more raise its `max_lines`).
 - **`hub brief`** reads both files: after `## Repos`, an `Environments` block with each environment's access,
   PRODUCTION, source and credential names, each service's endpoint per environment and the effective blocked words
   (≤ 60 lines and 2000 characters, then `… <n> more: ./hub env list`), never cut by the 5500-character limit. The
