@@ -2984,8 +2984,8 @@ button.ah-tree-item {
   color: var(--accent);
 }
 .ah-facet-btn[data-active="true"] .ah-subtle {
+  /* Full accent: at 0.8 the label fails AA contrast on the accent-soft fill (AGH-314). */
   color: inherit;
-  opacity: 0.8;
 }
 .ah-chip-part,
 .ah-th-sort {
