@@ -9,7 +9,8 @@ With ``capture`` (AGH-295, D8, D14, A3), the list hands the capture every hub wo
 loads and the detail its one workflow, each as the hub-relative file the discovery loaded
 (``.yaml`` or ``.json``) marked with that file's own fingerprint entry, so an edit re-reads only
 its file; one list request shares one capture budget across its hubs. A built-in has no unit,
-and ``unit_of`` names a workflow's unit without capturing.
+and ``unit_of`` names a workflow's unit without capturing (``marked_workflow_unit`` with its
+capture mark).
 A file that does not load is a problem of the list, never an item, and its detail is not found.
 A list scoped to an unknown project is empty; a detail of one raises ``EntityNotFoundError``.
 """
@@ -26,6 +27,7 @@ from agent_hub.core.item_versions.capture_item_versions import (
 )
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import UnitKind
+from agent_hub.core.item_versions.item_version_ports import MarkedUnit
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
@@ -207,8 +209,18 @@ class ReadWorkflows:
     def unit_of(self, project: str, name: str) -> ItemUnit | None:
         """The unit the workflow is versioned in, or None (a built-in, D14); an unknown project
         or workflow is ``EntityNotFoundError``. Reads no unit."""
+        marked = self.marked_workflow_unit(project, name)
+        return None if marked is None else marked.unit
+
+    def marked_workflow_unit(self, project: str, name: str) -> MarkedUnit | None:
+        """``unit_of`` with the mark the reads capture the file under. Reads no unit."""
         hub_path, plan = self.workflow_plan(project, name)
-        return _unit_of(project, plan, self._read(hub_path))
+        read = self._read(hub_path)
+        unit = _unit_of(project, plan, read)
+        if unit is None:
+            return None
+        mark = read.marks.get(unit.unit_path, read.fingerprint)
+        return MarkedUnit(hub_path=hub_path, unit=unit, mark=mark, shared_by=1)
 
     def _capture_plans(
         self,

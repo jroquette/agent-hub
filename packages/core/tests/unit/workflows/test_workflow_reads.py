@@ -258,3 +258,22 @@ def test_versions_json_file_when_json_workflow() -> None:
     last = store.last("demo", json_file)
     assert last is not None
     assert (last.kind, last.size) == (UnitKind.WORKFLOW, len(b'{"name": "ship"}\n'))
+
+
+def test_marks_workflow_unit_as_detail_captures_when_hub_file() -> None:
+    reads, files, reader, _ = _capturing(
+        WorkflowFile(SHIP_FILE, "ship", SHIP), disk={SHIP_FILE: b"x"}
+    )
+    reads.get_workflow("demo", "ship")
+
+    marked = reads.marked_workflow_unit("demo", "ship")
+
+    assert marked is not None
+    assert (marked.hub_path, marked.unit.unit_path, marked.shared_by) == (
+        "/hubs/demo",
+        SHIP_FILE,
+        1,
+    )
+    # The file's own fingerprint entry, as the detail captures it under.
+    assert marked.mark in files.fingerprint()
+    assert len(reader.unit_reads) == 1

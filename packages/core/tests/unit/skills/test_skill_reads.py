@@ -393,3 +393,30 @@ def test_names_unit_when_item_listed() -> None:
     assert reader.unit_reads == []
     with pytest.raises(EntityNotFoundError):
         reads.unit_of(FIXTURE_PROJECT, HUB, kind=ItemKind.SKILL, source="claude", name="alpha")
+
+
+def test_marks_unit_as_detail_captures_when_hooks_share_file() -> None:
+    hub = fake_hub_of(a_skills_fixture_tree())
+    reader = FakeHubFileReader({HUB: hub})
+    capture = CaptureItemVersions(
+        InMemoryItemVersionStore(), reader, lambda: datetime(2026, 10, 18, tzinfo=UTC)
+    )
+    reads = SkillReads(reader, capture=capture)
+    hook = {"kind": ItemKind.HOOK, "source": "settings", "name": "settings-pretooluse-1"}
+    catalog = reads.catalog(project=FIXTURE_PROJECT, hub_path=HUB)
+    reads.detail(project=FIXTURE_PROJECT, hub_path=HUB, **hook)
+    read_before = len(reader.unit_reads)
+
+    marked = reads.marked_unit(FIXTURE_PROJECT, HUB, **hook)
+
+    assert marked is not None
+    in_file = [item for item in catalog.items if item.source_path == ".claude/settings.json"]
+    assert (marked.hub_path, marked.unit.unit_path, marked.shared_by) == (
+        HUB,
+        ".claude/settings.json",
+        len(in_file),
+    )
+    assert len(in_file) > 1
+    # The same mark as the detail's: the memo answers without reading the unit again.
+    capture.capture(FIXTURE_PROJECT, HUB, [(marked.unit, marked.mark)])
+    assert len(reader.unit_reads) == read_before
