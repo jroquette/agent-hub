@@ -386,23 +386,36 @@ def test_reports_too_large_when_bounds_exceeded(composed: Any, versions_hub: Ver
 
 
 def test_keeps_versions_listed_when_unit_grew_past_bounds(
-    composed: Any, versions_hub: VersionsHub
+    writer: Any, writer_hub: VersionsHub
 ) -> None:
-    hub = versions_hub()
-    items = _get(composed, CATALOG)["items"]
+    hub = writer_hub()
+    items = _get(writer, CATALOG)["items"]
     [stop] = [item["id"] for item in items if item["source_path"] == PROJECT_SETTINGS]
     history = f"{CATALOG}/{stop}/versions"
-    [baseline] = _versions(composed, PROJECT_SETTINGS)
+    [baseline] = _versions(writer, PROJECT_SETTINGS)
+    original = (hub / PROJECT_SETTINGS).read_bytes()
     padding = "x" * (300 * 1024)
     _edit(
         hub / PROJECT_SETTINGS,
         _json({"env": {"PAD": padding}, "hooks": {"Stop": [_hook("make stop-check")]}}),
     )
 
-    grown = _get(composed, history)
+    grown = _get(writer, history)
 
     assert grown["state"] == "too_large"
     assert [item["id"] for item in grown["items"]] == [baseline.id]
+
+    # The earlier version stays restorable (S8): the file goes back and a restore names it.
+    response = _restore(writer, f"{CATALOG}/{stop}", baseline.id)
+
+    assert response.status_code == 200, response.text
+    assert (response.json()["changed"], response.json()["versioned"]) == (True, True)
+    assert (hub / PROJECT_SETTINGS).read_bytes() == original
+    after = _versions(writer, PROJECT_SETTINGS)
+    assert [(v.origin, v.restored_from) for v in after] == [
+        (VersionOrigin.EXTERNAL, None),
+        (VersionOrigin.RESTORE, baseline.id),
+    ]
 
 
 def _github_token() -> str:
@@ -440,6 +453,28 @@ def test_stores_nothing_when_secret_matches(composed: Any, versions_hub: Version
     for item in ("agent/demo/scout", "skill/demo/alpha"):
         history = _get(composed, f"{CATALOG}/{item}/versions")
         assert (history["state"], history["items"]) == ("secret", []), item
+
+
+def test_refuses_restore_when_versioned_unit_gains_secret(
+    writer: Any, writer_hub: VersionsHub
+) -> None:
+    hub = writer_hub()
+    _get(writer, SCOUT_DETAIL)
+    [baseline] = _versions(writer, SCOUT)
+    leaked = SCOUT_MD + f"Push with {_github_token()}.\n".encode()
+    _edit(hub / SCOUT, leaked)
+
+    history = _get(writer, f"{SCOUT_DETAIL}/versions")
+
+    # The baseline stays listed; the disk's content is not stored (AC-295.10).
+    assert history["state"] == "secret"
+    assert [item["id"] for item in history["items"]] == [baseline.id]
+
+    response = _restore(writer, SCOUT_DETAIL, baseline.id)
+
+    _refused(response, "secret_unversioned")
+    assert (hub / SCOUT).read_bytes() == leaked
+    assert _versions(writer, SCOUT) == [baseline]
 
 
 @contextmanager
@@ -1114,14 +1149,22 @@ def test_git_untouched_when_every_route_runs(
     before = _git_state(hub)
     spawned: list[tuple[Any, ...]] = []
     forks: list[str] = []
+    # A Popen may spawn through os.posix_spawn itself (an absolute executable path): that is
+    # the same process, counted once as the Popen, so a spawn inside one is not a fork.
+    in_popen = threading.local()
 
     def counted(name: str, real: Callable[..., Any]) -> Callable[..., Any]:
         def call(*args: Any, **kwargs: Any) -> Any:
-            if name == "Popen":
-                spawned.append(args)
-            else:
-                forks.append(name)
-            return real(*args, **kwargs)
+            if name != "Popen":
+                if not getattr(in_popen, "depth", 0):
+                    forks.append(name)
+                return real(*args, **kwargs)
+            spawned.append(args)
+            in_popen.depth = getattr(in_popen, "depth", 0) + 1
+            try:
+                return real(*args, **kwargs)
+            finally:
+                in_popen.depth -= 1
 
         return call
 
