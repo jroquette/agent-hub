@@ -19,12 +19,12 @@ from agent_hub.core.item_versions.item_version_ports import (
     ItemRef,
     ItemVersionContent,
     ItemVersionPage,
-    ItemVersionView,
     MarkedUnit,
     ToolkitRef,
     ToolkitUnits,
     VersionFileView,
     WorkflowUnits,
+    version_view,
 )
 from agent_hub.core.item_versions.unit_content import decode
 from agent_hub.core.item_versions.version_store import ItemVersionStore
@@ -72,7 +72,7 @@ class ReadItemVersions:
         versions = self._store.page(unit.project, unit.unit_path, limit=limit, before_seq=before)
         last = self._store.last(unit.project, unit.unit_path)
         return ItemVersionPage(
-            items=tuple(_view(version) for version in versions),
+            items=tuple(version_view(version) for version in versions),
             next_cursor=_next_cursor(versions, limit),
             total_estimate=0 if last is None else last.seq,
             state=state,
@@ -113,20 +113,6 @@ class ReadItemVersions:
         if marked is None:
             raise EntityNotFoundError(entity=HISTORY_ENTITY, entity_id=f"{ref.project}/{named}")
         return marked
-
-
-def _view(version: ItemVersionMeta) -> ItemVersionView:
-    return ItemVersionView(
-        id=version.id,
-        origin=version.origin,
-        first=version.first,
-        author=version.author,
-        recorded_at=version.recorded_at,
-        content_hash=version.content_hash,
-        size=version.size,
-        restored_from=version.restored_from,
-        draft_id=version.draft_id,
-    )
 
 
 def _next_cursor(versions: tuple[ItemVersionMeta, ...], limit: int) -> str | None:
