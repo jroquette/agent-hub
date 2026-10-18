@@ -550,8 +550,8 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
 - **Session names.** A session's name is the title Claude Code writes in its transcript, or the user's `/rename`,
   stored as `session.title` ([ADR 0035](adr/0035-session-titles.md), below).
 
-**Skills tab (AGH-164, built; named Toolkit since AGH-271).** Knowledge › Toolkit shows what a hub's agents can do, read from its files on request
-and never stored:
+**Skills tab (AGH-164, built; named Toolkit since AGH-271).** Knowledge › Toolkit shows what a hub's agents can do, read from its files on request;
+only the version history below is stored:
 
 - **Catalog.** `GET /api/v1/projects/{project}/skills` lists the hub's skills, agents and hooks: the base plugin
   `plugin/hub-workflow/`, the project and other plugins under `plugin/`, real entries in `.claude/skills/` and
@@ -578,12 +578,28 @@ and never stored:
   kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog
   says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
   hub by its listing's fingerprint.
+- **Version history (AGH-295, capture so far; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
+  The catalog and the detail, and the Workflows list and detail, record a version of each unit they show in
+  agent-hub's database (table `item_versions`): a skill's whole folder, an agent's file, a hook's whole file (every
+  hook of a file shares it), a hub workflow's file. A
+  unit seen for the first time gets an `external` baseline marked `first`; one whose content hash differs from its
+  last version gets an `external` version (two edits between reads are one). The stat mark of each unit is memoized,
+  so a warm read reads no unit and no database row, and an edit that keeps size and mtime is noticed at the
+  next real change. Nothing is stored for a unit with a secret match (r1), past the bounds (256 KiB per file,
+  `SKILL.md` and 200 bundled files) or that cannot be read; a link is versioned at its target, never
+  `settings.local.json`. A catalog read stops reading new units once 16 MiB have been read (the read that crosses it
+  still finishes); the rest wait for a later read. A capture that cannot write within the database's busy timeout
+  answers 503, and the next read captures again. The hub's files stay untouched.
 
 **Workflows (AGH-225 API, AGH-226 screen).** `GET /api/v1/workflows` lists each project's workflows (the
 hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema.md)) with their source (`hub` or
 `builtin`), revision and counts, and every file that does not load as a problem (file, line, key, message);
 `GET /api/v1/workflows/{project}/{name}` gives one workflow's document as written and its layers (each node's id, type
-and `depends_on`). Both read the files on request through the generator's discovery and store nothing. Workflow runs
+and `depends_on`). Both read the files on request through the generator's discovery; each hub workflow they show
+(the file the discovery loaded, `.yaml` or `.json`) is captured into the version history above, marked by its own
+entry of the discovery's listing fingerprint (so an edit re-reads only that file; one list shares one 16 MiB read
+budget across its hubs), while a built-in, a file that does not load and a pack's other files (`prompts/`,
+`scripts/`, `fixtures/`) are never versioned. Workflow runs
 read any engine run: node ids as recorded, `skipped` steps with their cause, failure kinds, the run's `status`,
 `outcome`, `revision` and `content_hash` ([event derivations](design/event-derivations.md)). The Workflows page
 (`/workflows`, sidebar group Improve) lists them with their source and the files that do not load; a workflow's page

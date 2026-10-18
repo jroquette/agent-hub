@@ -3,12 +3,14 @@
 import pytest
 
 from agent_hub.core.events.event_store import EventStore
+from agent_hub.core.item_versions.version_store import ItemVersionStore
 from agent_hub.core.testing.builders import a_seeded_tracker_backend
 from agent_hub.core.testing.fakes import (
     FakeTrackerBackend,
     InMemoryEventStore,
     InMemoryTrackerClient,
 )
+from agent_hub.core.testing.item_version_fakes import InMemoryItemVersionStore
 from agent_hub.core.testing.skill_sources_contract import SkillTree
 from agent_hub.core.testing.skill_trees import InMemorySkillTree
 from agent_hub.core.testing.tracker_reader_fakes import (
@@ -48,3 +50,8 @@ def tracker_reader(issue_board: FakeIssueBoard) -> TrackerReader:
 @pytest.fixture
 def skill_tree() -> SkillTree:
     return InMemorySkillTree()
+
+
+@pytest.fixture
+def item_version_store() -> ItemVersionStore:
+    return InMemoryItemVersionStore()

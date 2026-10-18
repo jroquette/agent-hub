@@ -136,7 +136,8 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
 - Nested paths only for ownership (`/api/v1/sessions/{session_id}/events`). Methods keep their HTTP meaning: `GET`
   reads, `POST` creates or triggers an action (`POST /api/v1/hubs`, `POST /api/v1/events/hooks`), `PATCH` updates part
   of a resource, `DELETE` removes it. The only writes are registering and removing a hub, posting hook envelopes,
-  since AGH-201 the two learning decisions, and since AGH-165 the agent-session commands.
+  since AGH-201 the two learning decisions, and since AGH-165 the agent-session commands. Since AGH-296 the Toolkit
+  and Workflows `GET`s also record item versions in agent-hub's database (never in the hub, see Skills).
 
 ## Sessions
 
@@ -320,9 +321,12 @@ text or a value the browser sent):
 
 ## Skills
 
-Three read-only GET routes serve a hub's skills, agents and hooks, read from its files on request (the hub tree
-under `plugin/` and `.claude/`, through `HubFileReader.skill_sources` and `read_skill_file`, never through a link) and
-never stored. POST, PUT, PATCH and DELETE answer 405; no route runs a script, a hook or a command.
+Three GET routes serve a hub's skills, agents and hooks, read from its files on request (the hub tree under
+`plugin/` and `.claude/`, through `HubFileReader.skill_sources` and `read_skill_file`, never through a link). They
+never write the hub; the catalog and the detail record a version of each unit they show in agent-hub's database
+(`item_versions`, AGH-295: a baseline the first time, a new version when its content changed; never a unit with a
+secret match or past the bounds), and a capture that cannot write within the database's busy timeout answers 503.
+POST, PUT, PATCH and DELETE answer 405; no route runs a script, a hook or a command.
 
 - `GET /api/v1/projects/{project}/skills` → `SkillCatalog`: `items` (each with `id` `kind/source/name`, `kind`,
   `source`, `name`, one-line `description`, `origin`, `mode`, `invocation`, hub-relative `source_path`,
@@ -345,10 +349,12 @@ the diagnostic `too_large`.
 
 ## Workflows
 
-Two read-only GET routes serve the registered hubs' workflows, read from their files on request through the
-generator's discovery (the hub's `workflows/<pack>/` files, then the built-ins; a hub workflow overrides a built-in of
-its name) and never stored. A hub's read is reused while its listing fingerprint (path, size and mtime of each entry
-of its `workflows/` and the built-ins, stat only) is unchanged. A problem never names an absolute path.
+Two GET routes serve the registered hubs' workflows, read from their files on request through the generator's
+discovery (the hub's `workflows/<pack>/` files, then the built-ins; a hub workflow overrides a built-in of its name).
+They never write the hub; the list and the detail record a version of each hub workflow file they show in agent-hub's
+database (`item_versions`, AGH-295, as for the Skills routes; never a built-in or a pack's other files), and answer
+503 when that capture cannot write within the database's busy timeout. A hub's read is reused while its listing
+fingerprint (path, size and mtime of each entry of its `workflows/` and the built-ins, stat only) is unchanged. A problem never names an absolute path.
 
 - `GET /api/v1/workflows[?project=…]` → `WorkflowCatalogView`: `items` (each with `project`, `name`, `description`,
   `revision`, `source` `hub` or `builtin`, `node_count`, `layer_count`), by project then name, and `problems` (each

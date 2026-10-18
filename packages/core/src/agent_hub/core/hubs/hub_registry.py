@@ -7,7 +7,7 @@ skill sources, repo checkouts) and builds its doctor snapshot; the generator imp
 core decides what the files mean. A registry that cannot be read or written raises
 ``HubRegistryError``; a request the registry or a use case refuses raises
 ``HubConflictError`` (already registered, same project) or ``HubInvalidError`` (no or invalid
-``hub.json``).
+``hub.json``). ``read_unit`` reads one versioned unit whole (AGH-295), or says why it cannot.
 """
 
 from collections.abc import Sequence
@@ -24,6 +24,8 @@ from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hubs.registered_hub import RegisteredHub, ValidationProblem
+from agent_hub.core.item_versions.item_version import UnitKind
+from agent_hub.core.item_versions.unit_content import UnitContent
 from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, SkillLimits, SkillSources
 
 # The most hubs a registry holds.
@@ -66,6 +68,20 @@ class UnreadHubFile:
     message: str
     is_missing: bool
     kind: UnreadKind | None = None
+
+
+type UnreadUnitKind = Literal["missing", "too_large", "unreadable"]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class UnreadUnit:
+    """Why a versioned unit could not be read (AGH-295, S8, D15, A1): ``missing`` (absent, a
+    path the unit rules refuse, a skill folder without ``SKILL.md``), ``too_large`` (a file over
+    256 KiB, more than ``SKILL.md`` and 200 bundled files, a file deeper than 3 below the
+    folder) or ``unreadable`` (a link, FIFO, socket or device in it, a file that cannot be
+    opened). It names no path."""
+
+    kind: UnreadUnitKind
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -173,4 +189,13 @@ class HubFileReader(Protocol):
         """The bytes of the hub-relative ``path``, or why not: a path ``skill_relative`` refuses
         reads ``missing`` without any read; a link or special file is ``not_regular`` (never
         opened through, never blocking); over ``max_bytes`` is ``too_large``."""
+        ...
+
+    def read_unit(
+        self, hub_path: str, unit_path: str, *, kind: UnitKind
+    ) -> UnitContent | UnreadUnit:
+        """The whole unit at the hub-relative ``unit_path`` (a skill's folder, an agent, hook or
+        workflow file), each file with its executable bit taken from the opened file, or why
+        not. A path ``unit_parts`` refuses for ``kind`` reads ``missing`` without any read
+        (``settings.local.json`` is never opened); no link is followed anywhere on the way."""
         ...
