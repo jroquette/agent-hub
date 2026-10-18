@@ -13,7 +13,7 @@ import pytest
 from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent, UnitFile
-from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES
+from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, MAX_SKILL_FILE_BYTES
 from agent_hub.core.testing.skill_trees import write_tree
 from agent_hub.generator.doctor_snapshot import item_leftovers
 from agent_hub.generator.hub_item_writer import FileSystemHubItemWriter
@@ -225,6 +225,21 @@ def test_writes_back_unit_read_when_at_each_bound(tmp_path: Path) -> None:
     read = HubFileSystem().read_unit(str(hub), SKILL, kind=UnitKind.SKILL)
     assert isinstance(read, UnitContent)
     assert len(read.files) == MAX_UNIT_FILES
+    (hub / SKILL / "SKILL.md").write_bytes(b"# changed\n")
+
+    FileSystemHubItemWriter().write_unit(str(hub), SKILL, read, kind=UnitKind.SKILL)
+
+    assert _files(hub) == tree
+    assert os.listdir(hub / SKILLS) == ["alpha"]
+
+
+def test_writes_back_unit_read_when_at_names_bound(tmp_path: Path) -> None:
+    # SKILL.md and hidden names: exactly the names a unit read examines, read and written back.
+    hidden = {f"{SKILL}/.n{number}": b"" for number in range(DEFAULT_LIMITS.names_examined - 1)}
+    tree = {f"{SKILL}/SKILL.md": b"# skill\n", **hidden}
+    hub = _hub(tmp_path, tree)
+    read = HubFileSystem().read_unit(str(hub), SKILL, kind=UnitKind.SKILL)
+    assert isinstance(read, UnitContent)
     (hub / SKILL / "SKILL.md").write_bytes(b"# changed\n")
 
     FileSystemHubItemWriter().write_unit(str(hub), SKILL, read, kind=UnitKind.SKILL)

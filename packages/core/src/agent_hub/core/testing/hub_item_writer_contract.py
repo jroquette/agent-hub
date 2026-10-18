@@ -375,6 +375,21 @@ class HubItemWriterContract:
         _check(writer_tree.files(SKILL_UNIT) == tree, "unchanged")
         _no_leftover(writer_tree, SKILLS_FOLDER)
 
+    def test_writes_when_old_folder_holds_names_examined_exactly(
+        self, writer_tree: WriterTree
+    ) -> None:
+        writer_tree.write(f"{SKILL_UNIT}/SKILL.md", b"# old\n")
+        # With SKILL.md, exactly the names a unit read examines: at the bound, not past it.
+        hidden = {f".n{number}": b"" for number in range(DEFAULT_LIMITS.names_examined - 1)}
+        for path, content in hidden.items():
+            writer_tree.write(f"{SKILL_UNIT}/{path}", content)
+
+        writer_tree.writer.write_unit(writer_tree.hub_path, SKILL_UNIT, _v1(), kind=UnitKind.SKILL)
+
+        expected = {file.path: file.content for file in _v1().files} | hidden
+        _check(writer_tree.files(SKILL_UNIT) == expected, "the version, its hidden names kept")
+        _no_leftover(writer_tree, SKILLS_FOLDER)
+
     def test_fails_when_old_folder_holds_more_names_than_examined(
         self, writer_tree: WriterTree
     ) -> None:
