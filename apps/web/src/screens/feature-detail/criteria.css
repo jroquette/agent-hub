@@ -225,3 +225,25 @@ a.ah-ac-id {
 a.ah-ac-id:hover {
   text-decoration: underline;
 }
+
+/* The split Run button: the action, and an arrow that picks how it runs. */
+.ah-split {
+  position: relative;
+  display: inline-flex;
+}
+.ah-split > .ah-btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.ah-split > .ah-split-caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid color-mix(in srgb, var(--on-accent) 35%, transparent);
+  padding: 0 var(--space-1);
+  min-width: 24px;
+}
+.ah-split-menu .ah-menu-item {
+  height: auto;
+  padding: var(--space-2);
+  text-align: left;
+}

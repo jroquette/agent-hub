@@ -1,12 +1,10 @@
 import { Fragment, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { useMutation, useMutationState, type MutationState } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
   Button,
-  CodeBlock,
   DerivedLabel,
   EmptyState,
   Icon,
@@ -14,20 +12,16 @@ import {
   ProblemError,
   SegmentedControl,
   Skeleton,
-  StatusBadge,
-  Tooltip,
   copyText,
   useCopied,
   type IconName,
 } from "../../components";
-import { apiCommand, type ApiProblem } from "../../lib/api";
 import { brainRoute } from "../../lib/brainLinks";
 import { safeHref } from "../../lib/safeHref";
 import { useDiscuss, type DiscussReference } from "../../shell/discuss";
 import { FilterMenu } from "../features/parts";
-import { SESSIONS_OFF_TYPE } from "../sessions-list/control";
-import { useAgentCapabilities } from "../sessions-list/queries";
 import { useProjectRepos } from "../project-overview/queries";
+import { CheckRun } from "./CheckRun";
 import { useAcCitations, type AcCitations, type Citation } from "./acCitations";
 import {
   parseEvidence,
@@ -42,7 +36,6 @@ import "./criteria.css";
 type Detail = components["schemas"]["FeatureDetail"];
 type AcRow = components["schemas"]["AcRow"];
 type EvalRecord = components["schemas"]["EvalRecord"];
-type AcCheckRun = components["schemas"]["AcCheckRun"];
 
 export type Pass = "yes" | "owner" | "none";
 const PASS: Record<Pass, { icon: IconName; tone: string; label: string; title: string }> = {
@@ -492,207 +485,6 @@ function WhatMustBeTrue({ text }: { text: string }) {
         </Fragment>
       ))}
     </dl>
-  );
-}
-
-function seconds(ms: number): string {
-  return ms < 1000 ? `${String(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
-}
-
-function clock(total: number): string {
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${String(m)}:${String(s).padStart(2, "0")}`;
-}
-
-const RUN_TIMEOUT = "10 min";
-const LOCKED =
-  "Locked in this browser. Open the link hub web printed when it started (it ends with ?token=…) once.";
-const OFF = "Checks cannot run from the agent-hub container. Run hub web on your machine.";
-
-/** Why a check cannot run from this page, read before any click: a locked browser or the
- * container. A driver problem (no claude) does not matter: a check is a plain command. */
-function runBlocked(problem: ApiProblem | null | undefined): string | null {
-  if (problem?.status === 401) return LOCKED;
-  if (problem?.status === 404 && problem.type === SESSIONS_OFF_TYPE) return OFF;
-  return null;
-}
-
-/** Why a started run failed, in words. */
-function runProblem(problem: ApiProblem): string {
-  return runBlocked(problem) ?? problem.detail ?? problem.title;
-}
-
-/** Seconds since `start`, ticking while `on`. */
-function useElapsed(on: boolean, start: number | null): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!on) return;
-    const id = window.setInterval(() => {
-      setNow(Date.now());
-    }, 1000);
-    return () => {
-      window.clearInterval(id);
-    };
-  }, [on]);
-  return start === null ? 0 : Math.max(0, Math.floor((now - start) / 1000));
-}
-
-function outputLines(text: string): number {
-  return text === "" ? 0 : text.replace(/\n$/, "").split("\n").length;
-}
-
-/**
- * "Check it yourself": the AC's command, and "Run check": the server runs the command
- * features.json records for this AC (the browser only names the AC) in the repo's checkout.
- * The result is this run only, never the record's evidence, and says so. The run lives in the
- * query client's mutation cache under the AC, so it survives the card closing and reopening.
- */
-function CheckRun({ ac, detail, command }: { ac: AcRow; detail: Detail; command: string }) {
-  const key = ["ac-check", detail.project, detail.slug, ac.id];
-  const run = useMutation<AcCheckRun, ApiProblem>({
-    mutationKey: key,
-    gcTime: 30 * 60_000,
-    mutationFn: () =>
-      apiCommand("/api/v1/features/{project}/{slug}/acs/{ac}/check-runs", {
-        path: { project: detail.project, slug: detail.slug, ac: ac.id },
-      }),
-  });
-  const runs = useMutationState({
-    filters: { mutationKey: key },
-    select: (m) => m.state as MutationState<AcCheckRun, ApiProblem>,
-  });
-  const last = runs.at(-1);
-  const pending = last?.status === "pending";
-  const result = last?.status === "success" ? last.data : undefined;
-  const failure = last?.status === "error" ? last.error : null;
-  const elapsed = useElapsed(pending, pending ? last.submittedAt : null);
-  const capabilities = useAgentCapabilities();
-  const blocked = runBlocked(capabilities.error);
-  const where = ac.repo ?? "the repo";
-
-  const announce = pending
-    ? `Running ${ac.id}'s check…`
-    : result
-      ? result.passed
-        ? `${ac.id}'s check passed, ${seconds(result.duration_ms)}.`
-        : result.timed_out
-          ? `${ac.id}'s check timed out after ${RUN_TIMEOUT}.`
-          : `${ac.id}'s check failed, exit ${String(result.exit_code)}, ${seconds(result.duration_ms)}.`
-      : "";
-  const label = result ? "Run check again" : "Run check";
-  return (
-    <div className="ah-stack" style={{ gap: 8 }}>
-      <CodeBlock code={command} prompt="$" wrap label={`Verification of ${ac.id}`} />
-      <div className="ah-row ah-wrap" style={{ gap: 10 }}>
-        {blocked ? (
-          <Tooltip label={blocked}>
-            <Button
-              size="sm"
-              variant="primary"
-              icon="play"
-              disabled
-              aria-label={`${label}. ${blocked}`}
-            >
-              {label}
-            </Button>
-          </Tooltip>
-        ) : (
-          <Button
-            size="sm"
-            variant={result ? "default" : "primary"}
-            icon={result ? "rotate-ccw" : "play"}
-            aria-disabled={pending || undefined}
-            onClick={() => {
-              if (!pending) run.mutate();
-            }}
-          >
-            {pending ? "Running…" : label}
-          </Button>
-        )}
-        {pending ? (
-          <span className="ah-row ah-small ah-muted" style={{ gap: 8 }}>
-            <StatusBadge status="running" label={`Running · ${clock(elapsed)}`} />
-            <span>
-              in <span className="ah-mono">{where}</span>. Stops after {RUN_TIMEOUT}.
-            </span>
-          </span>
-        ) : blocked ? (
-          <span className="ah-small ah-muted">{blocked}</span>
-        ) : (
-          !result && (
-            <span className="ah-small ah-muted">
-              Runs in <span className="ah-mono">{where}</span> on this machine. The result is not
-              recorded.
-            </span>
-          )
-        )}
-      </div>
-      <div className="ah-sr" role="status" aria-live="polite">
-        {announce}
-      </div>
-      {failure && (
-        <div className="ah-small" style={{ color: "var(--failed)" }} role="alert">
-          <Icon name="circle-alert" size="sm" /> The check could not start: {runProblem(failure)}
-        </div>
-      )}
-      {result && !pending && <RunResult ac={ac} result={result} />}
-    </div>
-  );
-}
-
-function RunResult({ ac, result }: { ac: AcRow; result: AcCheckRun }) {
-  const lines = outputLines(result.output);
-  const at = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const [shownAt] = useState(at);
-  return (
-    <div className="ah-ac-run">
-      <div className="ah-row ah-wrap ah-small" style={{ gap: 8 }}>
-        <span className="ah-muted">This run</span>
-        <StatusBadge
-          status={result.passed ? "passed" : "failed"}
-          label={
-            result.passed
-              ? "Passed"
-              : result.timed_out
-                ? `Timed out after ${RUN_TIMEOUT}`
-                : `Failed · exit ${String(result.exit_code)}`
-          }
-        />
-        <span className="ah-subtle">
-          {seconds(result.duration_ms)} · <span className="ah-mono">{result.repo}</span>
-          {result.branch && (
-            <>
-              {" "}
-              on <span className="ah-mono">{result.branch}</span>
-            </>
-          )}
-          {result.commit && (
-            <>
-              {" "}
-              @ <span className="ah-mono">{result.commit}</span>
-            </>
-          )}{" "}
-          · {shownAt}
-        </span>
-      </div>
-      <details className="ah-ac-run-out" open={!result.passed}>
-        <summary>
-          Output · {lines} line{lines === 1 ? "" : "s"}
-        </summary>
-        {result.truncated && (
-          <div className="ah-small ah-subtle">Long output: only its last 200 KB is shown.</div>
-        )}
-        {/* The output scrolls, so the keyboard must reach it (axe scrollable-region-focusable). */}
-        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-        <pre tabIndex={0} aria-label={`Output of ${ac.id}'s check`}>
-          {result.output || "(no output)"}
-        </pre>
-      </details>
-      <div className="ah-small ah-subtle">
-        Not recorded. <span className="ah-mono">/evaluate</span> records evidence.
-      </div>
-    </div>
   );
 }
 

@@ -7,6 +7,10 @@ import { seriousViolations } from "../../testing/axe";
 import {
   aBrainNote,
   aBrainTree,
+  aCapabilities,
+  aWorkdir,
+  anAgentSession,
+  anId,
   aFeatureDetail,
   aFeatureRecord,
   aFeatureTickets,
@@ -532,13 +536,59 @@ describe("FeatureDetailScreen", () => {
     };
 
     async function runCheck() {
+      window.localStorage.clear();
       const table = await screen.findByRole("table", { name: "Acceptance criteria" });
       await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
       const check = within(table).getByRole("region", { name: "Check it yourself" });
-      await userEvent.click(within(check).getByRole("button", { name: "Run check" }));
+      await userEvent.click(
+        within(check).getByRole("button", { name: "Choose how to run the check" }),
+      );
+      await userEvent.click(within(check).getByRole("button", { name: /^Run in terminal/ }));
       await within(check).findByText("Failed · exit 1");
       return check;
     }
+
+    it("runs an AC's check with Claude by default, in the AC's repo folder (playground)", async () => {
+      window.localStorage.clear();
+      const created = anAgentSession({ id: anId(9, "0192a5e5"), status: "running" });
+      const repo = aWorkdir({
+        kind: "repo",
+        label: "agent-hub",
+        repo: "agent-hub",
+        workdir_id: "w-repo",
+      });
+      const view = open({
+        "/api/v1/agent-sessions/capabilities": aCapabilities(),
+        "/api/v1/agent-sessions/workdirs": { items: [aWorkdir(), repo], warnings: [] },
+        "POST /api/v1/agent-sessions": created,
+        [`/api/v1/agent-sessions/${created.id}`]: created,
+      });
+
+      const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
+      const check = within(table).getByRole("region", { name: "Check it yourself" });
+      const run = await within(check).findByRole("button", { name: "Run with Claude" });
+      await waitFor(() => {
+        expect(run).toBeEnabled();
+      });
+      await userEvent.click(run);
+
+      const post = await waitFor(() => {
+        const found = view.requests.find(
+          (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+        );
+        if (!found) throw new Error("no POST");
+        return found;
+      });
+      const body = JSON.parse(await post.clone().text()) as Record<string, unknown>;
+      expect(body).toMatchObject({ project: "agent-hub", workdir_id: "w-repo", mode: "default" });
+      expect(String(body.prompt)).toContain("uv run pytest -k case_2");
+      expect(await within(check).findByText("Claude is running the check")).toBeInTheDocument();
+      expect(within(check).getByRole("link", { name: /Open chat/ })).toHaveAttribute(
+        "href",
+        `/agent-sessions/${created.id}`,
+      );
+    });
 
     it("runs an AC's check and shows this run's result, not the record's (playground)", async () => {
       open(failedRun);
@@ -555,7 +605,7 @@ describe("FeatureDetailScreen", () => {
         "aria-live",
         "polite",
       );
-      expect(within(check).getByRole("button", { name: "Run check again" })).toBeInTheDocument();
+      expect(within(check).getByRole("button", { name: "Run in terminal" })).toBeInTheDocument();
     });
 
     it("keeps an AC's last run when its card closes and opens again (playground)", async () => {
@@ -570,6 +620,7 @@ describe("FeatureDetailScreen", () => {
     });
 
     it("says before any click that checks are locked in this browser (playground)", async () => {
+      window.localStorage.clear();
       open({
         "/api/v1/agent-sessions/capabilities": aProblem({
           status: 401,
@@ -582,7 +633,9 @@ describe("FeatureDetailScreen", () => {
       const check = within(table).getByRole("region", { name: "Check it yourself" });
 
       expect(
-        await within(check).findByRole("button", { name: /^Run check\. Locked in this browser/ }),
+        await within(check).findByRole("button", {
+          name: /^Run with Claude\. Locked in this browser/,
+        }),
       ).toBeDisabled();
     });
 
