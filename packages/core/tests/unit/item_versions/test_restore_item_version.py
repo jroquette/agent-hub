@@ -26,6 +26,8 @@ NOW: Final = datetime(2026, 10, 18, 9, 0, tzinfo=UTC)
 SCOUT: Final = "plugin/demo/agents/scout.md"
 SCRIBE: Final = "plugin/demo/agents/scribe.md"
 REVIEW: Final = "workflows/demo/review.yaml"
+ALPHA: Final = "plugin/demo/skills/alpha"
+ALPHA_MD: Final = b"---\nname: alpha\ndescription: Alpha.\n---\n# Alpha\n"
 AUTHOR: Final = VersionAuthor(name="Dev One", email="dev@example.com")
 SCOUT_REF: Final = ToolkitRef(project=PROJECT, kind=ItemKind.AGENT, source="demo", name="scout")
 REVIEW_REF: Final = WorkflowRef(project=PROJECT, name="review")
@@ -37,6 +39,10 @@ def _agent(path: str) -> ItemUnit:
     return ItemUnit(project=PROJECT, unit_path=path, kind=UnitKind.AGENT)
 
 
+def _skill() -> ItemUnit:
+    return ItemUnit(project=PROJECT, unit_path=ALPHA, kind=UnitKind.SKILL)
+
+
 def _text(version: int) -> bytes:
     return f"---\nname: scout\ndescription: Scouts.\n---\nVersion {version}.\n".encode()
 
@@ -45,7 +51,11 @@ class _Units:
     """Both unit ports over fixed units, each under a mark the test moves."""
 
     def __init__(self) -> None:
-        self.units = {"agent/demo/scout": _agent(SCOUT), "scribe": _agent(SCRIBE)}
+        self.units = {
+            "agent/demo/scout": _agent(SCOUT),
+            "scribe": _agent(SCRIBE),
+            "skill/demo/alpha": _skill(),
+        }
         self.mark = 0
 
     def marked_skill_unit(
@@ -155,3 +165,43 @@ def test_restores_workflow_file_when_hub_workflow_restored() -> None:
 
     assert rig.hub.skill_files[REVIEW] == b"version: 1\nname: review\nrevision: 1\n"
     assert result.changed
+
+
+def test_restores_folder_when_skill_version_restored() -> None:
+    rig = _Rig()
+    rig.hub.skill_files.update(
+        {
+            f"{ALPHA}/SKILL.md": ALPHA_MD,
+            f"{ALPHA}/references/r.md": b"# R\n",
+            f"{ALPHA}/scripts/s.sh": b"echo s\n",
+        }
+    )
+    rig.hub.executable = frozenset({f"{ALPHA}/scripts/s.sh"})
+    rig.capture.capture(PROJECT, HUB, [(_skill(), 1)])
+    first = rig.store.page(PROJECT, ALPHA)[0]
+    rig.hub.skill_files[f"{ALPHA}/references/r.md"] = b"# R changed\n"
+    rig.hub.skill_files[f"{ALPHA}/assets/new.png"] = b"\x89PNG"
+    rig.hub.executable = frozenset()
+    skill = ToolkitRef(project=PROJECT, kind=ItemKind.SKILL, source="demo", name="alpha")
+
+    result = rig.restore.restore(skill, first.id, confirm_managed=False)
+
+    assert {
+        path: content for path, content in rig.hub.skill_files.items() if path.startswith(ALPHA)
+    } == {
+        f"{ALPHA}/SKILL.md": ALPHA_MD,
+        f"{ALPHA}/references/r.md": b"# R\n",
+        f"{ALPHA}/scripts/s.sh": b"echo s\n",
+    }
+    assert rig.hub.executable == {f"{ALPHA}/scripts/s.sh"}
+    assert result.version is not None
+    assert (result.version.origin, result.version.content_hash) == (
+        VersionOrigin.RESTORE,
+        first.content_hash,
+    )
+    # The changed folder was recorded first, between the baseline and the restore.
+    assert [version.origin for version in rig.store.page(PROJECT, ALPHA)] == [
+        VersionOrigin.RESTORE,
+        VersionOrigin.EXTERNAL,
+        VersionOrigin.EXTERNAL,
+    ]

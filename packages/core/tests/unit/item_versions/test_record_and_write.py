@@ -13,8 +13,13 @@ import pytest
 
 from agent_hub.core.hub_files.hub_lock import HubLock, ManagedFileEntry
 from agent_hub.core.hubs.hub_registry import UnreadUnit
-from agent_hub.core.item_versions.capture_item_versions import ATTEMPTS, CaptureItemVersions
-from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
+from agent_hub.core.item_versions.append_version import ATTEMPTS
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
+from agent_hub.core.item_versions.hub_item_writer import (
+    HubItemWriteError,
+    ItemWriteRefusedError,
+    rollback_failed,
+)
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import (
     ItemVersion,
@@ -250,6 +255,42 @@ def test_records_nothing_more_when_write_fails() -> None:
         (VersionOrigin.EXTERNAL, file_hash(SCOUT)),
         (VersionOrigin.EXTERNAL, file_hash(EDITED)),
     ]
+
+
+class _RollbackFailingWriter(FakeHubItemWriter):
+    """A folder swap whose roll back failed too: the write raises ``rollback_failed``."""
+
+    def write_unit(
+        self, hub_path: str, unit_path: str, content: UnitContent, *, kind: UnitKind
+    ) -> None:
+        raise rollback_failed()
+
+
+@pytest.mark.parametrize("kind", ["failed", "rollback_failed"])
+def test_reads_unit_again_when_write_fails(kind: str) -> None:
+    rig = _Rig({AGENT: SCOUT})
+    rig.seen(1)
+    if kind == "failed":
+        rig.writer.fail_on.add(AGENT)
+    else:
+        rig.writer = _RollbackFailingWriter({HUB: rig.hub})
+        rig.step = RecordAndWrite(
+            rig.store,
+            reader=rig.reader,
+            writer=rig.writer,
+            author_of=lambda _project: AUTHOR,
+            clock=lambda: NOW,
+            capture=rig.capture,
+        )
+    reads = len(rig.reader.unit_reads)
+
+    with pytest.raises(HubItemWriteError) as failed:
+        rig.step.write(HUB, _agent(), _scout(NEWER), origin=VersionOrigin.PUBLISH)
+    rig.seen(1)
+
+    assert failed.value.kind == kind
+    # The memo entry is dropped: the next read under the same mark reads the unit again.
+    assert len(rig.reader.unit_reads) == reads + len(("write", "seen again"))
 
 
 def test_unversioned_when_written_content_secret() -> None:

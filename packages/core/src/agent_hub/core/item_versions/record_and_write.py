@@ -1,7 +1,8 @@
 """``RecordAndWrite``: the write step Publish and Restore share (AGH-295, S4, D3, D9, D12, D22,
 O2, O6, A1, A2, A8).
 
-One write runs at a time in the process (``WRITE_LOCK``), holding its unit in the app's
+One write runs at a time in the process (the instance's lock: one instance per app, shared by
+Publish and Restore), holding its unit in the app's
 ``CaptureItemVersions``, so a catalog read never records what it read before the write after
 the write's version, and the next read reads the unit again. In this order:
 
@@ -19,48 +20,36 @@ the write's version, and the next read reads the unit again. In this order:
 5. the unit is written; a failure raises the writer's ``HubItemWriteError`` and records nothing
    more (step 3's row stays: it is a true fact about the disk);
 6. the written content is recorded with the origin given and the author, unless it is too large
-   or a secret match (``versioned: false`` and that ``reason``).
+   or a secret match (``versioned: false`` and that ``reason``). A record failing after the
+   write succeeded (every ``seq`` race lost, ``ItemVersionSequenceError``; the database busy past
+   its timeout) fails the request although the disk changed; the next read records the written
+   content as ``external``.
+
+Accepted: the lock holds only this process's captures. Another process can capture the written
+content as ``external`` between the write and its record, so one write can show as an
+``external`` version followed by its ``publish`` or ``restore`` of the same content.
 """
 
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Final
 
 from agent_hub.core.hubs.hub_registry import HubFileReader
-from agent_hub.core.item_versions.capture_item_versions import ATTEMPTS, CaptureItemVersions
+from agent_hub.core.item_versions.append_version import append_next, unit_hash
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
 from agent_hub.core.item_versions.hub_item_writer import HubItemWriter, ItemWriteRefusedError
 from agent_hub.core.item_versions.item_units import ItemUnit, is_managed
-from agent_hub.core.item_versions.item_version import (
-    ItemVersionMeta,
-    NewItemVersion,
-    UnitKind,
-    VersionAuthor,
-    VersionOrigin,
-)
+from agent_hub.core.item_versions.item_version import VersionAuthor, VersionOrigin
 from agent_hub.core.item_versions.item_version_ports import (
     ItemWriteResult,
     UnversionedReason,
     version_view,
 )
 from agent_hub.core.item_versions.secret_match import has_secret_match
-from agent_hub.core.item_versions.unit_content import (
-    MAX_UNIT_FILES,
-    UnitContent,
-    encode,
-    size_of,
-)
-from agent_hub.core.item_versions.unit_hash import file_hash, folder_hash
-from agent_hub.core.item_versions.version_store import (
-    ItemVersionSequenceError,
-    ItemVersionStore,
-)
+from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent
+from agent_hub.core.item_versions.version_store import ItemVersionStore
 from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, MAX_SKILL_FILE_BYTES
-
-# Publish and Restore are rare and user-driven: one write at a time in the process; a second
-# waits for the first.
-WRITE_LOCK: Final = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +81,9 @@ class RecordAndWrite:
         self._author_of = author_of
         self._clock = clock
         self._capture = capture
+        # Publish and Restore are rare and user-driven, and share this one instance: one write
+        # at a time in the process; a second waits for the first.
+        self._write_lock = threading.Lock()
 
     def write(
         self,
@@ -105,10 +97,10 @@ class RecordAndWrite:
     ) -> ItemWriteResult:
         """Make ``unit`` in the hub at ``hub_path`` equal to ``content`` and record it as a
         ``origin`` version (a ``restore`` names ``restored_from``)."""
-        with WRITE_LOCK, self._capture.holding([unit]):
+        with self._write_lock, self._capture.holding([unit]):
             author = self._refuse_before_read(hub_path, unit)
             on_disk = self._read(hub_path, unit)
-            if on_disk is not None and _hash(unit, on_disk) == _hash(unit, content):
+            if on_disk is not None and unit_hash(unit, on_disk) == unit_hash(unit, content):
                 return ItemWriteResult(changed=False, versioned=False, reason=None, version=None)
             self._record_first(
                 hub_path, unit, on_disk, origin=origin, confirm_managed=confirm_managed
@@ -117,8 +109,14 @@ class RecordAndWrite:
             reason = _unversioned(content)
             if reason is not None:
                 return ItemWriteResult(changed=True, versioned=False, reason=reason, version=None)
-            version = self._record(
-                unit, content, origin=origin, author=author, restored_from=restored_from
+            version = append_next(
+                self._store,
+                unit,
+                content,
+                origin=origin,
+                clock=self._clock,
+                author=author,
+                restored_from=restored_from,
             )
             return ItemWriteResult(
                 changed=True, versioned=True, reason=None, version=version_view(version)
@@ -156,61 +154,13 @@ class RecordAndWrite:
         unconfirmed managed write."""
         secret_on_disk = on_disk is not None and has_secret_match(on_disk)
         if on_disk is not None and not secret_on_disk:
-            self._record(unit, on_disk, origin=VersionOrigin.EXTERNAL)
+            append_next(
+                self._store, unit, on_disk, origin=VersionOrigin.EXTERNAL, clock=self._clock
+            )
         if secret_on_disk and origin is VersionOrigin.RESTORE:
             raise ItemWriteRefusedError("secret_unversioned")
         if not confirm_managed and is_managed(self._reader.read_lock(hub_path), unit):
             raise ItemWriteRefusedError("managed_confirmation_required")
-
-    def _record(
-        self,
-        unit: ItemUnit,
-        content: UnitContent,
-        *,
-        origin: VersionOrigin,
-        author: VersionAuthor | None = None,
-        restored_from: str | None = None,
-    ) -> ItemVersionMeta:
-        """Append ``content`` as the unit's next version, an ``external`` one only when the last
-        version does not hold it (that last one is answered then). A lost race (another process
-        appending) tries again."""
-        content_hash = _hash(unit, content)
-        attempt = 1
-        while True:
-            last = self._store.last(unit.project, unit.unit_path)
-            if (
-                origin is VersionOrigin.EXTERNAL
-                and last is not None
-                and last.content_hash == content_hash
-            ):
-                return last
-            seq = 1 if last is None else last.seq + 1
-            version = NewItemVersion(
-                project=unit.project,
-                unit_path=unit.unit_path,
-                kind=unit.kind,
-                seq=seq,
-                origin=origin,
-                first=seq == 1,
-                author=author,
-                recorded_at=self._clock(),
-                content_hash=content_hash,
-                size=size_of(content),
-                content=encode(content, folder=unit.kind is UnitKind.SKILL),
-                restored_from=restored_from,
-            )
-            try:
-                return self._store.append(version).meta()
-            except ItemVersionSequenceError:
-                if attempt == ATTEMPTS:
-                    raise
-                attempt += 1
-
-
-def _hash(unit: ItemUnit, content: UnitContent) -> str:
-    if unit.kind is UnitKind.SKILL:
-        return folder_hash(content.files)
-    return file_hash(content.files[0].content)
 
 
 def _unversioned(content: UnitContent) -> UnversionedReason | None:
