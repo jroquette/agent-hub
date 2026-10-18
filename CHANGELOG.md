@@ -28,6 +28,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   and your identity. A unit `hub.lock` manages needs a confirmation, a unit with a secret match on disk is refused,
   and in the container (`make up`) the hubs are read-only, so a restore answers 409 `hub_read_only`. git is never
   run: the change shows in the hub's working tree.
+- The Toolkit detail and a hub workflow's page have a History panel (AGH-297): each version with its origin in words
+  ("Published", "Restored from <hash>", "Changed outside the app", "First seen"), its author or "Outside the app",
+  when and its hash; Compare shows any two versions as a diff, file by file for a skill folder; Restore asks first,
+  warns when `hub.lock` manages the file (the next `hub sync` rewrites it) and says how many hooks a hook file's
+  restore brings back. A unit with a secret match on disk shows "Not versioned: secret" and cannot be restored.
 
 ## [0.16.1] - 2026-10-17
 
