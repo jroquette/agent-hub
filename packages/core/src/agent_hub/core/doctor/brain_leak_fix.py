@@ -4,8 +4,10 @@ A leak is a brain line that a repo file also holds. The repo text is the publish
 promoted from a brain draft, a doc that grew out of a note), so the fix rewrites the brain note
 and never touches a repo: each leaked brain line, and each run of them (blank lines between two
 leaked lines belong to the run), becomes one pointer line ``[in ../<dir>/<path>:<first>-<last>]``
-with the run's indent, so nothing is lost (the text is in the repo) and the note keeps what the
-repo does not hold. Every brain file is rewritten, not only the first one that holds a line, so
+with the run's indent, so the note keeps what the repo does not hold (the leaked text is in the
+repo). A note that is mostly a promoted draft becomes a stub pointing at its repo file instead,
+and that stub keeps only the frontmatter: what else the note held is then only in git, if the
+note was committed. Every brain file is rewritten, not only the first one that holds a line, so
 one run leaves no ``brain.leak`` finding behind.
 
 The brain and repo lines are read exactly as the rule reads them (``brain_leak_rule``): same
