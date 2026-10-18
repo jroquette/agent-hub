@@ -5,9 +5,10 @@ records for that AC (``AcRow.command``), read here through the hub read models. 
 one with no command, is refused (409). The command runs with ``/bin/sh -c`` in the checkout of
 the AC's repo (``<hub>/../<repo dir>``; with no repo on the AC, the project's only repo), stdin
 empty, stdout and stderr merged, with this process's environment minus ``LINEAR_API_KEY``. It
-runs in its own process group, which is killed at the timeout. The answer carries the exit code,
-the duration, the checkout's branch and short commit, and the output, its tail kept when it is
-longer than ``MAX_OUTPUT_BYTES``.
+runs in its own process group, which is killed at the timeout; its output is then read for
+``DRAIN_SECONDS`` at most (a process that left the group may hold the pipe open). The answer
+carries the exit code, the duration, the checkout's branch and short commit, and the output, its
+tail kept when it is longer than ``MAX_OUTPUT_BYTES``.
 
 Nothing is recorded: the run proves nothing to the hub (that is ``/evaluate``'s evidence); it
 only lets the owner see the check pass or fail. The route is a run write: it needs the session
@@ -27,6 +28,7 @@ from agent_hub.api.rfc9457 import Problem
 from agent_hub.core.readmodels.read_ports import HubReadModels
 
 TIMEOUT_SECONDS: Final = 600
+DRAIN_SECONDS: Final = 5
 MAX_OUTPUT_BYTES: Final = 200_000
 HIDDEN_VARIABLES: Final = frozenset({"LINEAR_API_KEY"})
 SHELL: Final = "/bin/sh"
@@ -136,9 +138,24 @@ class AcCheckRunner:
             output, _ = child.communicate(timeout=self._timeout)
         except subprocess.TimeoutExpired:
             os.killpg(child.pid, signal.SIGKILL)
-            output, _ = child.communicate()
-            return output, None, True
+            return _drain(child), None, True
         return output, child.returncode, False
+
+
+def _drain(child: subprocess.Popen[bytes]) -> bytes:
+    """The output of a killed check, read for ``DRAIN_SECONDS`` at most.
+
+    A process that left the check's group can hold the pipe open after the kill: past the bound
+    the pipe is closed and the output read so far is the answer.
+    """
+    try:
+        output, _ = child.communicate(timeout=DRAIN_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        output = error.output or b""
+        if child.stdout is not None:
+            child.stdout.close()
+        child.wait()
+    return output
 
 
 def _git_head(cwd: Path) -> tuple[str | None, str | None]:

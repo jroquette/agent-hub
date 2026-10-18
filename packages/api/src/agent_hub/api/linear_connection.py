@@ -12,8 +12,10 @@ effect at once and survives a restart.
 only when Linear accepts it. The key is never returned, logged or put in a message.
 """
 
+import errno
 import os
 import re
+import secrets
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from datetime import datetime, timedelta
@@ -48,12 +50,26 @@ class LinearKeyFile:
             return ""
 
     def write(self, key: str) -> None:
-        """Save ``key``, readable by this user only."""
+        """Save ``key``, readable by this user only.
+
+        The key goes to a new 0600 file beside the key path, which then replaces it, so an
+        existing file's looser mode never covers the key; a symbolic link at the key path is
+        refused (``OSError``) rather than followed.
+        """
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        descriptor = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-            file.write(key + "\n")
-        os.chmod(self.path, 0o600)
+        if self.path.is_symlink():
+            raise OSError(errno.ELOOP, "The key path is a symbolic link", str(self.path))
+        temporary = self.path.with_name(f".{self.path.name}.{secrets.token_hex(8)}.tmp")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+                file.write(key + "\n")
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, self.path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
 
     def delete(self) -> None:
         """Forget the saved key."""

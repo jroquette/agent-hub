@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from agent_hub.api.linear_connection import (
     LinearConnection,
     LinearEnviron,
@@ -146,3 +148,35 @@ def test_forgets_saved_key_when_disconnected(tmp_path: Path) -> None:
 
     assert key_file.read() == ""
     assert (view.connected, view.source) == (False, None)
+
+
+def test_saves_key_in_new_owner_only_file_when_an_open_0644_file_is_replaced(
+    tmp_path: Path,
+) -> None:
+    key_file = LinearKeyFile(tmp_path / "linear-api-key")
+    key_file.path.write_text("old\n", encoding="utf-8")
+    key_file.path.chmod(0o644)
+    old_inode = tmp_path / "old-inode"
+    old_inode.hardlink_to(key_file.path)
+
+    key_file.write(GOOD)
+
+    assert key_file.read() == GOOD
+    assert stat.S_IMODE(key_file.path.stat().st_mode) == 0o600
+    assert old_inode.read_text(encoding="utf-8") == "old\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["linear-api-key", "old-inode"]
+
+
+def test_refuses_to_save_key_when_key_path_is_a_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere"
+    target.write_text("untouched\n", encoding="utf-8")
+    key_file = LinearKeyFile(tmp_path / "config" / "linear-api-key")
+    key_file.path.parent.mkdir()
+    key_file.path.symlink_to(target)
+
+    with pytest.raises(OSError, match="symbolic link"):
+        key_file.write(GOOD)
+
+    assert key_file.path.is_symlink()
+    assert target.read_text(encoding="utf-8") == "untouched\n"
+    assert [p.name for p in key_file.path.parent.iterdir()] == ["linear-api-key"]

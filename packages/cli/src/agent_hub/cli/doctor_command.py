@@ -25,7 +25,10 @@ when one is an error, else 0. ``check_hub`` is the same check on a given root, f
 reports what is left, so the exit says whether anything still needs a person.
 """
 
+import contextlib
 import os
+import secrets
+import stat
 from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path
@@ -202,15 +205,44 @@ def _fix_all(root: str, run: DoctorRun) -> bool:
 
 
 def _write(root: str, edit: BrainEdit) -> bool:
+    """Replace the note whole: its new text goes to a file beside it, which then takes its place.
+
+    The note is opened first without following a link (a link or a missing note is refused, as
+    before), so the new file gets its mode; a failure leaves the note as it was.
+    """
     path = os.path.join(root, edit.path)
     try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC)
-        with os.fdopen(descriptor, "wb") as file:
-            file.write(edit.text.encode())
+        note = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            mode = stat.S_IMODE(os.fstat(note).st_mode)
+        finally:
+            os.close(note)
+        _replace_with(path, edit.text.encode(), mode=mode)
     except OSError as error:
         typer.echo(f"could not fix {shown_path(edit.path)}: {error.strerror or error}", err=True)
         return False
     return True
+
+
+def _replace_with(path: str, data: bytes, *, mode: int) -> None:
+    """Write ``data`` to a new file beside ``path`` (mode ``mode``), then move it over ``path``."""
+    temporary = os.path.join(
+        os.path.dirname(path), f".{os.path.basename(path)}.{secrets.token_hex(8)}.tmp"
+    )
+    descriptor = os.open(
+        temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as file:
+            os.fchmod(file.fileno(), mode)
+            file.write(data)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
 
 
 def _hub_or_exit(root: str) -> None:
