@@ -130,9 +130,9 @@ def rollback_failed() -> HubItemWriteError:
 class DraftTooLargeError(AgentHubError):
     """A draft past the bounds a unit is read within (answers 413); ``limit`` says them."""
 
-    def __init__(self, limit: str = DRAFT_LIMIT) -> None:
-        self.limit = limit
-        super().__init__(f"draft too large: {limit}")
+    def __init__(self) -> None:
+        self.limit = DRAFT_LIMIT
+        super().__init__(f"draft too large: {DRAFT_LIMIT}")
 
 
 class DraftFiles(BaseModel):
