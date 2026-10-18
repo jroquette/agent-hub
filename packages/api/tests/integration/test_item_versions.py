@@ -30,6 +30,7 @@ from agent_hub.core.item_versions.item_version import (
 )
 from agent_hub.core.item_versions.unit_content import UnitFile
 from agent_hub.core.item_versions.unit_hash import file_hash, folder_hash
+from agent_hub.core.readmodels.cursor import Cursor, encode_cursor
 from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES
 from agent_hub.core.testing.skill_trees import Link, TreeEntry, write_tree
 from agent_hub.storage.item_version_store import open_item_version_store
@@ -525,6 +526,8 @@ def test_list_versions_pages_newest_first_when_sixty_versions(
         (f"{history}?limit=0", 400),
         (f"{history}?limit=201", 400),
         (f"{history}?cursor=bm90LW91cnM", 400),
+        # A seq past SQLite's integer range: refused before it reaches the store.
+        (f"{history}?cursor={encode_cursor(Cursor(hwm=0, key=(2**63,), id='x'))}", 400),
     ):
         response = composed.client.get(path)
         assert response.status_code == status, (path, response.text)
