@@ -4,6 +4,7 @@ error names no path."""
 
 import errno
 import os
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ import pytest
 from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent, UnitFile
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, MAX_SKILL_FILE_BYTES
 from agent_hub.core.testing.skill_trees import write_tree
 from agent_hub.generator.doctor_snapshot import item_leftovers
@@ -267,3 +269,37 @@ def test_raises_interrupt_as_is_when_roll_back_fails(
 
     with pytest.raises(KeyboardInterrupt):
         FileSystemHubItemWriter().write_unit(str(hub), SKILL, NEW_SKILL, kind=UnitKind.SKILL)
+
+
+DRAFT = ".hub-drafts/hook-abc123"
+
+
+def test_refuses_draft_when_draft_holds_fifo(tmp_path: Path) -> None:
+    hub = _hub(tmp_path, {f"{DRAFT}/hooks.json": b"{}"})
+    os.mkfifo(hub / DRAFT / "scripts")
+    os.mkfifo(hub / ".hub-drafts/hook-fifo00")
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        FileSystemHubItemWriter().read_draft(str(hub), "hook-abc123")
+    with pytest.raises(EntityNotFoundError):
+        FileSystemHubItemWriter().read_draft(str(hub), "hook-fifo00")
+
+    assert refused.value.code == "link_in_path"
+    assert "hub-drafts" not in str(refused.value)
+
+
+def test_reports_failure_when_draft_removal_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = _hub(tmp_path, {f"{DRAFT}/hooks.json": b"{}"})
+
+    def failing(*_: Any, **__: Any) -> None:
+        raise OSError(errno.EIO, os.strerror(errno.EIO))
+
+    monkeypatch.setattr(shutil, "rmtree", failing)
+
+    with pytest.raises(HubItemWriteError) as raised:
+        FileSystemHubItemWriter().remove_draft(str(hub), "hook-abc123")
+
+    assert _files(hub) == {f"{DRAFT}/hooks.json": b"{}"}
+    assert "hub-drafts" not in str(raised.value)

@@ -14,6 +14,9 @@ here, the listing's own budget is never trusted. A skill folder is walked stat-o
 one the walk already refuses (too many files, a special or oversized file) is refused before
 any byte is read. Hidden names inside a skill folder are left
 out, as the listing leaves them out. Nothing is written; no message names a path.
+
+``read_folder_files`` reads an already opened folder the same way and within the same bounds,
+hidden names included and no ``SKILL.md`` required: the writer reads a Studio draft through it.
 """
 
 import errno
@@ -52,9 +55,10 @@ class _RefusedError(Exception):
 
 @dataclass(kw_only=True, slots=True)
 class _Budget:
-    """The names a folder walk may still look at."""
+    """The names a folder walk may still look at, and whether it keeps hidden ones."""
 
     names: int = DEFAULT_LIMITS.names_examined
+    keep_hidden: bool = False
 
 
 def read_unit(hub_root: Path, unit_path: str, *, kind: UnitKind) -> UnitContent | UnreadUnit:
@@ -82,16 +86,31 @@ def read_unit(hub_root: Path, unit_path: str, *, kind: UnitKind) -> UnitContent 
             os.close(descriptor)
 
 
+def read_folder_files(folder: int) -> UnitContent | UnreadUnit:
+    """Every file below the opened ``folder``, hidden names included, within a unit's bounds,
+    or why not (``missing`` only when a name on the way vanished as a folder)."""
+    try:
+        return UnitContent(files=tuple(_files_below(folder, keep_hidden=True)))
+    except _RefusedError as refused:
+        return refused.unread
+    except OSError as error:
+        return _unread(error)
+
+
+def _files_below(root: int, *, keep_hidden: bool) -> list[UnitFile]:
+    entries: list[_Entry] = []
+    _walk(root, "", depth=1, entries=entries, budget=_Budget(keep_hidden=keep_hidden))
+    ordered = sorted(entries, key=lambda entry: entry.path)
+    _refuse_early(ordered)
+    return _read_in_order(root, ordered)
+
+
 def _folder_unit(parent: int, name: str) -> UnitContent | UnreadUnit:
     root = _open_folder(name, parent)
     try:
         # ``SKILL.md`` first: a folder without one is no skill, whatever else it holds.
         os.stat(SKILL_FILE, dir_fd=root, follow_symlinks=False)
-        entries: list[_Entry] = []
-        _walk(root, "", depth=1, entries=entries, budget=_Budget())
-        ordered = sorted(entries, key=lambda entry: entry.path)
-        _refuse_early(ordered)
-        found = _read_in_order(root, ordered)
+        found = _files_below(root, keep_hidden=False)
     finally:
         os.close(root)
     if not any(file.path == SKILL_FILE for file in found):
@@ -179,14 +198,15 @@ def _read_below(root: int, path: str) -> UnitFile:
 
 
 def _names(folder: int, budget: _Budget) -> list[str]:
-    """The names in ``folder``, hidden ones left out, in name order; each one counted."""
+    """The names in ``folder``, hidden ones left out unless the walk keeps them, in name order;
+    each one counted."""
     names: list[str] = []
     with os.scandir(folder) as found:
         for entry in found:
             budget.names -= 1
             if budget.names < 0:
                 raise _RefusedError(_TOO_LARGE)
-            if not entry.name.startswith("."):
+            if budget.keep_hidden or not entry.name.startswith("."):
                 names.append(entry.name)
     return sorted(names)
 
