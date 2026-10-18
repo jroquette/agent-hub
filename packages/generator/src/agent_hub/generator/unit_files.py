@@ -10,7 +10,9 @@ come from ``fstat`` of the opened descriptor, so bit and bytes belong to one ino
 socket or device anywhere in the unit or on the way is ``unreadable``. A file over 256 KiB, more
 than ``SKILL.md`` and 200 bundled files, a file deeper than 3 segments below the folder, or a
 folder holding more names than a listing examines, is ``too_large``; every entry is counted
-here, the listing's own budget is never trusted. Hidden names inside a skill folder are left
+here, the listing's own budget is never trusted. A skill folder is walked stat-only first, and
+one the walk already refuses (too many files, a special or oversized file) is refused before
+any byte is read. Hidden names inside a skill folder are left
 out, as the listing leaves them out. Nothing is written; no message names a path.
 """
 
@@ -87,7 +89,9 @@ def _folder_unit(parent: int, name: str) -> UnitContent | UnreadUnit:
         os.stat(SKILL_FILE, dir_fd=root, follow_symlinks=False)
         entries: list[_Entry] = []
         _walk(root, "", depth=1, entries=entries, budget=_Budget())
-        found = _read_in_order(root, sorted(entries, key=lambda entry: entry.path))
+        ordered = sorted(entries, key=lambda entry: entry.path)
+        _refuse_early(ordered)
+        found = _read_in_order(root, ordered)
     finally:
         os.close(root)
     if not any(file.path == SKILL_FILE for file in found):
@@ -126,9 +130,21 @@ def _walk(folder: int, above: str, *, depth: int, entries: list[_Entry], budget:
             finally:
                 os.close(child)
         elif stat.S_ISREG(status.st_mode) and _utf8(name):
-            entries.append(_Entry(path, None))
+            too_large = status.st_size > MAX_SKILL_FILE_BYTES
+            entries.append(_Entry(path, _TOO_LARGE if too_large else None))
         else:
             entries.append(_Entry(path, _UNREADABLE))
+
+
+def _refuse_early(entries: list[_Entry]) -> None:
+    """Refuse the unit from the walk alone, before any byte is read, as ``_read_in_order``
+    would: at the first problem in path order, or once more files than a unit holds come
+    before it. A refused unit so costs only stats."""
+    for files, entry in enumerate(entries):
+        if entry.problem is not None:
+            raise _RefusedError(entry.problem)
+        if files >= MAX_UNIT_FILES:
+            raise _RefusedError(_TOO_LARGE)
 
 
 def _read_in_order(root: int, entries: list[_Entry]) -> list[UnitFile]:
