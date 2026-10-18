@@ -11,6 +11,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
     EndReason,
 )
+from agent_hub.core.agent_sessions.authorship import wrote as changed_file
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, StoreSequenceError
 from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.agent_sessions.store import AgentSessionFields
@@ -64,6 +65,7 @@ class InMemoryAgentSessionStore:
         project: str | None = None,
         status: AgentSessionStatus | None = None,
         kind: AgentSessionKind | None = None,
+        wrote: str | None = None,
         limit: int = 200,
     ) -> tuple[AgentSession, ...]:
         """Matching sessions, newest first."""
@@ -73,9 +75,16 @@ class InMemoryAgentSessionStore:
             if (project is None or session.project == project)
             and (status is None or session.status == status)
             and (kind is None or session.kind == kind)
+            and (wrote is None or self._wrote(session.id, wrote))
         ]
         matching.sort(key=lambda session: (session.created_at, session.id), reverse=True)
         return tuple(matching[:limit])
+
+    def _wrote(self, agent_session_id: str, path: str) -> bool:
+        return any(
+            record.kind == "tool.call" and changed_file(record.body, path)
+            for record in self._records.get(agent_session_id, [])
+        )
 
     def records(
         self,

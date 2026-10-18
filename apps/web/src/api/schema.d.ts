@@ -30,7 +30,8 @@ export interface paths {
     };
     /**
      * List Agent Sessions
-     * @description Agent sessions, newest first.
+     * @description Agent sessions, newest first; with ``wrote``, the ones that changed that file (a path
+     *     relative to any workdir, such as ``brain/features/<slug>/spec.md``).
      */
     get: operations["list_agent_sessions_api_v1_agent_sessions_get"];
     put?: never;
@@ -4832,6 +4833,7 @@ export interface operations {
       query?: {
         project?: string | null;
         status?: components["schemas"]["AgentSessionStatus"] | null;
+        wrote?: string | null;
       };
       header?: never;
       path?: never;

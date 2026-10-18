@@ -208,6 +208,28 @@ class AgentSessionStoreContract:
         _check(_ids(store.list(kind="cloud")) == [THIRD], "filtered by kind")
         _check(_ids(store.list(limit=1)) == [THIRD], "at most limit")
 
+    def test_lists_only_writers_of_a_file_when_wrote_given(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        hub = "/work/agent-hub-hub/brain/features/real_cost/spec.md"
+
+        def call(seq: int, name: str, path: str) -> LogRecord:
+            body = {"tool_use_id": f"t{seq}", "name": name, "input": {"file_path": path}}
+            return a_log_record("tool.call", seq, body=body)
+
+        store = agent_session_store
+        for minutes, agent_session_id in enumerate((FIRST, SECOND, THIRD)):
+            store.create(_session(agent_session_id, minutes))
+        store.append(FIRST, [call(1, "Write", hub)])
+        store.append(SECOND, [call(1, "Read", hub)])
+        store.append(THIRD, [call(1, "Edit", hub), call(2, "Write", "/w/xbrain/features/a.md")])
+
+        spec = "brain/features/real_cost/spec.md"
+        _check(_ids(store.list(wrote=spec)) == [THIRD, FIRST], "the writers, newest first")
+        _check(_ids(store.list(wrote=hub)) == [THIRD, FIRST], "an absolute path too")
+        _check(_ids(store.list(wrote="brain/features/real%cost/spec.md")) == [], "% is literal")
+        _check(_ids(store.list(wrote="brain/features/a.md")) == [], "a whole path segment")
+
     def test_finds_link_when_claude_session_id_known(
         self, agent_session_store: AgentSessionStore
     ) -> None:

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -84,9 +84,11 @@ export function approvalMessage(record: string, path: string): string {
 }
 
 /**
- * Approve a feature record (spec, research, plan) from its tab: the approval goes as a message to
- * the session that worked on the feature, so that session goes on from where it asked. The target
- * is the most recent session that touched the feature; the arrow picks another one.
+ * Approve a feature record (spec, research, plan) from its tab, above and below the record
+ * (`children`): the approval goes as a message to the session that wrote the record, so that
+ * session goes on from where it asked. The target is the one the owner picked for this feature,
+ * else the newest session that wrote the file (`?wrote=`), else the newest one naming the feature;
+ * the arrow picks another one.
  */
 export function ApproveRecord({
   project,
@@ -94,32 +96,39 @@ export function ApproveRecord({
   record,
   path,
   tickets,
+  children,
 }: {
   project: string;
   slug: string;
   record: string;
   path: string;
   tickets: readonly string[];
+  children?: ReactNode;
 }) {
   const sessions = useApi(
     "/api/v1/agent-sessions",
     { query: { project } },
     { retry: false, refetchInterval: 15_000 },
   );
+  const writers = useApi(
+    "/api/v1/agent-sessions",
+    { query: { project, wrote: path } },
+    { retry: false, refetchInterval: 15_000 },
+  );
   const [chosen, setChosen] = useState<string | null>(() => readPicked(project, slug));
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState<Place | null>(null);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<AgentSession | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const wrap = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     if (!open) return undefined;
     const onPointer = (event: PointerEvent) => {
-      if (!wrap.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target;
+      if (!(target instanceof Element && target.closest("[data-approve-picker]"))) setOpen(null);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") setOpen(null);
     };
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -130,15 +139,19 @@ export function ApproveRecord({
   }, [open]);
 
   // Without session control (no cookie, the container) there is nowhere to send it.
-  if (!sessions.isSuccess) return null;
+  if (!sessions.isSuccess) return <>{children}</>;
   const all = sessions.data.items.filter((s) => s.kind === "local");
-  const related = featureSessions(all, slug, tickets, discussSessionId(project, slug));
-  const others = all.filter((s) => !related.some((r) => r.id === s.id)).slice(0, OTHER_SESSIONS);
-  const target = all.find((s) => s.id === chosen) ?? related[0] ?? null;
+  const wrote = writersOf(writers.data?.items ?? [], all);
+  const related = featureSessions(all, slug, tickets, discussSessionId(project, slug)).filter(
+    (s) => !wrote.some((w) => w.id === s.id),
+  );
+  const listed = [...wrote, ...related];
+  const others = all.filter((s) => !listed.some((r) => r.id === s.id)).slice(0, OTHER_SESSIONS);
+  const target = [...all, ...wrote].find((s) => s.id === chosen) ?? wrote[0] ?? related[0] ?? null;
 
-  const approve = () => {
+  const approve = (place: Place) => {
     if (!target) {
-      setOpen(true);
+      setOpen(place);
       return;
     }
     setBusy(true);
@@ -164,22 +177,10 @@ export function ApproveRecord({
       });
   };
 
-  if (sent) {
-    return (
-      <div className="ah-row ah-wrap ah-small" style={{ gap: 8 }} role="status">
-        <Icon name="check" size="sm" style={{ color: "var(--done)" }} />
-        <span>
-          Approval of the {record} sent to <b>{sessionName(sent)}</b>.
-        </span>
-        <Link to={agentSessionHref(sent.id)}>Open session</Link>
-      </div>
-    );
-  }
-
   const pick = (id: string) => () => {
     setChosen(id);
     writePicked(project, slug, id);
-    setOpen(false);
+    setOpen(null);
   };
   const item = (s: AgentSession) => (
     <MenuItem
@@ -192,67 +193,118 @@ export function ApproveRecord({
       {sessionName(s)}
     </MenuItem>
   );
+  const section = (label: string, rows: readonly AgentSession[]) =>
+    rows.length > 0 && (
+      <>
+        <div className="ah-subtle ah-small" style={{ padding: "6px 10px" }}>
+          {label}
+        </div>
+        {rows.map(item)}
+      </>
+    );
+
+  const bar = (place: Place) => {
+    if (sent) {
+      return (
+        <div className="ah-row ah-wrap ah-small" style={{ gap: 8 }} role="status">
+          <Icon name="check" size="sm" style={{ color: "var(--done)" }} />
+          <span>
+            Approval of the {record} sent to <b>{sessionName(sent)}</b>.
+          </span>
+          <Link to={agentSessionHref(sent.id)}>Open session</Link>
+        </div>
+      );
+    }
+    const wroteIt = target !== null && wrote.some((s) => s.id === target.id);
+    return (
+      <div
+        className="ah-row ah-wrap ah-small"
+        style={{ gap: 8 }}
+        role="group"
+        aria-label={place === "top" ? `Approve the ${record}` : `Approve the ${record} (end)`}
+      >
+        <Button
+          size="sm"
+          variant="primary"
+          icon="check"
+          disabled={busy}
+          onClick={() => {
+            approve(place);
+          }}
+          title={
+            target
+              ? `Send "${approvalMessage(record, path)}" to ${sessionName(target)}`
+              : "Pick the session that worked on this feature"
+          }
+        >
+          Approve {record}
+        </Button>
+        <span data-approve-picker style={{ position: "relative" }} className="ah-row">
+          <button
+            type="button"
+            className="ah-btn ah-btn-ghost ah-btn-sm"
+            aria-haspopup="true"
+            aria-expanded={open === place}
+            aria-label={`Approval goes to: ${target ? sessionName(target) : "no session picked"}`}
+            onClick={() => {
+              setOpen(open === place ? null : place);
+            }}
+          >
+            <span className="ah-muted">to</span>
+            <span>{target ? sessionName(target) : "pick a session"}</span>
+            {wroteIt && <span className="ah-subtle">· wrote it</span>}
+            <Icon name="chevron-down" size="sm" />
+          </button>
+          <Popover
+            open={open === place}
+            label="Session that gets the approval"
+            style={{
+              ...(place === "top" ? { top: 30 } : { bottom: 30 }),
+              left: 0,
+              minWidth: 320,
+              maxWidth: 440,
+            }}
+          >
+            {section(`Wrote ${path.split("/").pop() ?? record}`, wrote)}
+            {section(`Worked on ${slug}`, related)}
+            {section(`Other sessions in ${project}`, others)}
+            {all.length === 0 && wrote.length === 0 && (
+              <div className="ah-muted ah-small" style={{ padding: "6px 10px" }}>
+                No session in {project} yet.
+              </div>
+            )}
+          </Popover>
+        </span>
+        {error && (
+          <span role="alert" style={{ color: "var(--failed)" }}>
+            {error}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
-    <div className="ah-row ah-wrap ah-small" style={{ gap: 8 }}>
-      <Button
-        size="sm"
-        variant="primary"
-        icon="check"
-        disabled={busy}
-        onClick={approve}
-        title={
-          target
-            ? `Send "${approvalMessage(record, path)}" to ${sessionName(target)}`
-            : "Pick the session that worked on this feature"
-        }
-      >
-        Approve {record}
-      </Button>
-      <span ref={wrap} style={{ position: "relative" }} className="ah-row">
-        <button
-          type="button"
-          className="ah-btn ah-btn-ghost ah-btn-sm"
-          aria-haspopup="true"
-          aria-expanded={open}
-          aria-label={`Approval goes to: ${target ? sessionName(target) : "no session picked"}`}
-          onClick={() => {
-            setOpen(!open);
-          }}
-        >
-          <span className="ah-muted">to</span>
-          <span>{target ? sessionName(target) : "pick a session"}</span>
-          <Icon name="chevron-down" size="sm" />
-        </button>
-        <Popover
-          open={open}
-          label="Session that gets the approval"
-          style={{ top: 30, left: 0, minWidth: 320, maxWidth: 440 }}
-        >
-          {related.length > 0 && (
-            <div className="ah-subtle ah-small" style={{ padding: "6px 10px" }}>
-              Worked on {slug}
-            </div>
-          )}
-          {related.map(item)}
-          {others.length > 0 && (
-            <div className="ah-subtle ah-small" style={{ padding: "6px 10px" }}>
-              Other sessions in {project}
-            </div>
-          )}
-          {others.map(item)}
-          {all.length === 0 && (
-            <div className="ah-muted ah-small" style={{ padding: "6px 10px" }}>
-              No session in {project} yet.
-            </div>
-          )}
-        </Popover>
-      </span>
-      {error && (
-        <span role="alert" style={{ color: "var(--failed)" }}>
-          {error}
-        </span>
-      )}
-    </div>
+    <>
+      {bar("top")}
+      {children}
+      {bar("bottom")}
+    </>
   );
 }
+
+/**
+ * The local sessions `?wrote=` answered. A hub web older than that filter ignores it and answers
+ * every session; that answer names no writer.
+ */
+export function writersOf(
+  answered: readonly AgentSession[],
+  all: readonly AgentSession[],
+): AgentSession[] {
+  const local = answered.filter((s) => s.kind === "local");
+  const ignored = all.length > 1 && local.length >= all.length;
+  return ignored ? [] : local;
+}
+
+/** Where a bar sits: above the record, or at its end. */
+type Place = "top" | "bottom";

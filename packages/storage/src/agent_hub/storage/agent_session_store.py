@@ -21,7 +21,19 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Unpack
 
-from sqlalchemy import Connection, Engine, RowMapping, delete, insert, select, update
+from sqlalchemy import (
+    ColumnElement,
+    Connection,
+    Engine,
+    RowMapping,
+    Select,
+    delete,
+    func,
+    insert,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from agent_hub.core.agent_sessions.agent_session import (
@@ -31,6 +43,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
     EndReason,
 )
+from agent_hub.core.agent_sessions.authorship import WRITE_TOOLS
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, StoreSequenceError
 from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.agent_sessions.store import AgentSessionFields
@@ -105,6 +118,7 @@ class SqliteAgentSessionStore:
         project: str | None = None,
         status: AgentSessionStatus | None = None,
         kind: AgentSessionKind | None = None,
+        wrote: str | None = None,
         limit: int = 200,
     ) -> tuple[AgentSession, ...]:
         """Sessions matching every filter given, newest first, at most ``limit``."""
@@ -115,6 +129,8 @@ class SqliteAgentSessionStore:
             statement = statement.where(agent_sessions.c.status == status.value)
         if kind is not None:
             statement = statement.where(agent_sessions.c.kind == kind)
+        if wrote is not None:
+            statement = statement.where(agent_sessions.c.id.in_(_writers_of(wrote)))
         statement = statement.order_by(
             agent_sessions.c.created_at.desc(), agent_sessions.c.id.desc()
         ).limit(limit)
@@ -303,4 +319,29 @@ def _is_busy(error: SQLAlchemyError) -> bool:
         isinstance(error, OperationalError)
         and code is not None
         and code & 0xFF in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+    )
+
+
+def _like_tail(path: str) -> str:
+    """A LIKE pattern for a file path ending with ``/<path>``, its wildcards escaped."""
+    tail = path.lstrip("/").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%/{tail}"
+
+
+def _writers_of(path: str) -> Select[tuple[str]]:
+    """The ids of the sessions with a ``tool.call`` record that changed ``path``
+    (``authorship.wrote``, in SQL)."""
+    body = agent_session_records.c.body
+    matches: list[ColumnElement[bool]] = []
+    for tool, field in WRITE_TOOLS.items():
+        written = func.json_extract(body, f"$.input.{field}")
+        matches.append(
+            (func.json_extract(body, "$.name") == tool)
+            & or_(written == path, written.like(_like_tail(path), escape="\\"))
+        )
+    return (
+        select(agent_session_records.c.agent_session_id)
+        .where(agent_session_records.c.kind == "tool.call")
+        .where(or_(*matches))
+        .distinct()
     )

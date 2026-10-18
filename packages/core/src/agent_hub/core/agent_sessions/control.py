@@ -257,7 +257,11 @@ class AgentSessionCommands(Protocol):
         ...
 
     async def list_sessions(
-        self, *, project: str | None, status: AgentSessionStatus | None
+        self,
+        *,
+        project: str | None,
+        status: AgentSessionStatus | None,
+        wrote: str | None = None,
     ) -> AgentSessionList:
         """Local agent sessions, newest first."""
         ...
@@ -371,11 +375,15 @@ class AgentSessionControl:
         return ResumableList(items=await self._driver.list_resumable(resolved.path))
 
     async def list_sessions(
-        self, *, project: str | None, status: AgentSessionStatus | None
+        self,
+        *,
+        project: str | None,
+        status: AgentSessionStatus | None,
+        wrote: str | None = None,
     ) -> AgentSessionList:
         """Local agent sessions, newest first; a live one with its open request."""
         stored = await asyncio.to_thread(
-            lambda: self._store.list(project=project, status=status, kind="local")
+            lambda: self._store.list(project=project, status=status, kind="local", wrote=wrote)
         )
         views = [self._view(session) for session in stored]
         return AgentSessionList(items=tuple(await self._with_twins(views)))

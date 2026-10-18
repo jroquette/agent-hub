@@ -168,25 +168,26 @@ function RecordTab({
         record={meta.name}
         path={`brain/${record.path}`}
         tickets={ticketIds(detail.issues)}
-      />
-      {view === "humans" ? (
-        <RecordSummary
-          key={record.path}
-          project={detail.project}
-          record={meta.name}
-          recordPath={record.path}
-          onReadRecord={(anchor) => {
-            onView("agent", anchor);
-          }}
-        />
-      ) : (
-        <NoteView
-          key={record.path}
-          project={detail.project}
-          path={record.path}
-          missing={`No ${file} yet.`}
-        />
-      )}
+      >
+        {view === "humans" ? (
+          <RecordSummary
+            key={record.path}
+            project={detail.project}
+            record={meta.name}
+            recordPath={record.path}
+            onReadRecord={(anchor) => {
+              onView("agent", anchor);
+            }}
+          />
+        ) : (
+          <NoteView
+            key={record.path}
+            project={detail.project}
+            path={record.path}
+            missing={`No ${file} yet.`}
+          />
+        )}
+      </ApproveRecord>
     </div>
   );
 }

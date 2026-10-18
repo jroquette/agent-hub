@@ -76,9 +76,11 @@ class AgentSessionStore(Protocol):
         project: str | None = None,
         status: AgentSessionStatus | None = None,
         kind: AgentSessionKind | None = None,
+        wrote: str | None = None,
         limit: int = 200,
     ) -> tuple[AgentSession, ...]:
-        """Sessions matching every filter given, newest first, at most ``limit``."""
+        """Sessions matching every filter given, newest first, at most ``limit``; with ``wrote``,
+        only the ones with a ``tool.call`` that changed that file (``authorship.wrote``)."""
         ...
 
     def records(

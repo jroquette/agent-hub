@@ -9608,7 +9608,7 @@
     },
     "/api/v1/agent-sessions": {
       "get": {
-        "description": "Agent sessions, newest first.",
+        "description": "Agent sessions, newest first; with ``wrote``, the ones that changed that file (a path\nrelative to any workdir, such as ``brain/features/<slug>/spec.md``).",
         "operationId": "list_agent_sessions_api_v1_agent_sessions_get",
         "parameters": [
           {
@@ -9643,6 +9643,24 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "wrote",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Wrote"
             }
           }
         ],
