@@ -12,7 +12,6 @@ effect at once and survives a restart.
 only when Linear accepts it. The key is never returned, logged or put in a message.
 """
 
-import errno
 import os
 import re
 import secrets
@@ -54,11 +53,9 @@ class LinearKeyFile:
 
         The key goes to a new 0600 file beside the key path, which then replaces it, so an
         existing file's looser mode never covers the key; a symbolic link at the key path is
-        refused (``OSError``) rather than followed.
+        replaced, never followed.
         """
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if self.path.is_symlink():
-            raise OSError(errno.ELOOP, "The key path is a symbolic link", str(self.path))
         temporary = self.path.with_name(f".{self.path.name}.{secrets.token_hex(8)}.tmp")
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:

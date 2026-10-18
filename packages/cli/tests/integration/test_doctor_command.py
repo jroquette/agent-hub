@@ -2097,6 +2097,25 @@ def test_replaces_brain_note_whole_keeping_its_mode_when_fix_given(
     assert sorted(p.name for p in note.parent.iterdir()) == before
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root may write a read-only file")
+def test_refuses_brain_note_when_this_user_may_not_write_it(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+) -> None:
+    # Replacing the note must not get round its mode: a note this user may not write is refused,
+    # as the in-place write refused it.
+    note = _leaking_note(demo_two_repo_hub, demo_checkout)
+    note.chmod(0o444)
+
+    result = run_doctor(demo_two_repo_hub, "--fix", "--only", "brain.leak")
+
+    assert result.exit_code == 1, result.output
+    assert "could not fix" in result.output
+    assert note.read_text(encoding="utf-8") == f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n"
+
+
 def test_keeps_old_brain_note_when_its_replacement_fails(
     demo_two_repo_hub: Path,
     run_doctor: DoctorRunner,

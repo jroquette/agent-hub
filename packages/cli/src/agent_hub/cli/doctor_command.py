@@ -207,12 +207,13 @@ def _fix_all(root: str, run: DoctorRun) -> bool:
 def _write(root: str, edit: BrainEdit) -> bool:
     """Replace the note whole: its new text goes to a file beside it, which then takes its place.
 
-    The note is opened first without following a link (a link or a missing note is refused, as
-    before), so the new file gets its mode; a failure leaves the note as it was.
+    The note is opened for writing first, never truncated and without following a link, so a
+    link, a missing note or one this user may not write is refused as before, and the new file
+    gets its mode; a failure leaves the note as it was.
     """
     path = os.path.join(root, edit.path)
     try:
-        note = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        note = os.open(path, os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
             mode = stat.S_IMODE(os.fstat(note).st_mode)
         finally:
