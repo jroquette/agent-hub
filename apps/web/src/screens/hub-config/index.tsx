@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router";
 
@@ -12,6 +12,7 @@ import {
   ProblemError,
   SegmentedControl,
   Skeleton,
+  Toast,
   Tooltip,
 } from "../../components";
 import type { IconName } from "../../components";
@@ -19,6 +20,8 @@ import { useApi } from "../../lib/api";
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { useDiscuss, useDiscussTarget } from "../../shell/discuss";
+import { useAgentCapabilities } from "../sessions-list/queries";
+import { sessionControlUnavailable } from "../sessions-list/control";
 import type { DiscussReference, DiscussStarter } from "../../shell/discuss";
 import { KnowledgeProjectIndex } from "../knowledge-index";
 import { LocalSettingsDialog } from "./LocalSettingsDialog";
@@ -143,6 +146,9 @@ const STARTERS: readonly DiscussStarter[] = [
 
 /* ---------- Rows ---------- */
 
+/** Why Claude cannot be asked here (session control locked or off), else null. */
+const AskBlocked = createContext<string | null>(null);
+
 interface RowProps {
   label: string;
   children: ReactNode;
@@ -152,18 +158,28 @@ interface RowProps {
 }
 
 function ConfigRow({ label, children, source, action }: RowProps) {
+  const blocked = useContext(AskBlocked);
+  const askDisabled = action?.icon === "message-square" && blocked !== null;
   return (
     <div className="ah-config-row">
       <div className="ah-config-label">{label}</div>
       <div className="ah-config-value">{children}</div>
       <div className="ah-config-src">{source}</div>
       <div className="ah-config-act">
+        {action?.pressed && <span className="ah-small ah-muted">In next message</span>}
         {action && (
           <IconButton
             icon={action.pressed ? "check" : action.icon}
             size="sm"
             variant="ghost"
-            label={action.pressed ? `${action.label}: in next message` : action.label}
+            disabled={askDisabled}
+            label={
+              askDisabled
+                ? `${action.label} (unavailable: ${blocked})`
+                : action.pressed
+                  ? `${action.label}: in next message`
+                  : action.label
+            }
             onClick={action.onClick}
           />
         )}
@@ -203,6 +219,7 @@ interface SectionProps {
 }
 
 function Section({ id, title, purpose, icon, onAsk, children }: SectionProps) {
+  const blocked = useContext(AskBlocked);
   return (
     <section className="ah-card ah-config-section" aria-labelledby={`${id}-title`} id={id}>
       <header className="ah-config-section-head">
@@ -215,14 +232,17 @@ function Section({ id, title, purpose, icon, onAsk, children }: SectionProps) {
           </p>
         </div>
         {onAsk && (
-          <Button
-            size="sm"
-            icon="message-square"
-            aria-label={`Ask Claude to change ${title.toLowerCase()}`}
-            onClick={onAsk}
-          >
-            Ask Claude to change this
-          </Button>
+          <Tooltip label={blocked ?? undefined}>
+            <Button
+              size="sm"
+              icon="message-square"
+              aria-label={`Ask Claude to change ${title.toLowerCase()}`}
+              disabled={blocked !== null}
+              onClick={onAsk}
+            >
+              Ask Claude to change this
+            </Button>
+          </Tooltip>
         )}
       </header>
       {children}
@@ -467,7 +487,9 @@ function BlockedRow({
       label={label}
       source={
         layer === "local" ? (
-          <ConfigSource source="local" where={`hub.local.json → guard.${keyPath}`} />
+          list.local.length > 0 ? (
+            <ConfigSource source="local" where={`hub.local.json → guard.${keyPath}`} />
+          ) : null
         ) : (
           <ConfigSource source="team" where={`hub.json → guard.${keyPath}, plus hub.local.json`} />
         )
@@ -522,7 +544,15 @@ function BlockedRow({
   );
 }
 
-function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
+function ConfigBody({
+  view,
+  layer,
+  onSaved,
+}: {
+  view: HubConfigView;
+  layer: Layer;
+  onSaved: () => void;
+}) {
   const [params, setParams] = useSearchParams();
   const openRepo = params.get("repo");
   const { attach, isAttached } = useAttach();
@@ -563,6 +593,20 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
   };
   const guard = view.guard;
   const tracker = view.tracker;
+  /** A team-only row's action: point Claude at that one key. */
+  const teamAsk = (path: string, label: string, value: unknown) => ({
+    label: `Ask Claude to change ${label.toLowerCase()}`,
+    icon: "message-square" as IconName,
+    pressed: isAttached(path),
+    onClick: () => {
+      attach({
+        id: `config:${path}`,
+        label,
+        source: "hub.json",
+        quote: `${path}: ${JSON.stringify(value)}   (source: Team)`,
+      });
+    },
+  });
   const editLocal = (field: string) => () => {
     setEditing(field);
   };
@@ -572,11 +616,13 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
       <div className="ah-config-layout">
         <nav className="ah-config-rail" aria-label="On this page">
           <div className="ah-small ah-muted">On this page</div>
-          {SECTIONS.map((section) => (
-            <a key={section.id} href={`#${section.id}`}>
-              {section.label}
-            </a>
-          ))}
+          {SECTIONS.filter((section) => layer !== "local" || section.id !== "models").map(
+            (section) => (
+              <a key={section.id} href={`#${section.id}`}>
+                {section.label}
+              </a>
+            ),
+          )}
           {view.repos.length > 1 &&
             view.repos.map((repo) => (
               <a
@@ -692,24 +738,36 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
                 <>
                   <ConfigRow
                     label="Never read or edit"
+                    action={teamAsk("guard.deny_paths", "Never read or edit", guard.deny_paths)}
                     source={<ConfigSource source="team" where="hub.json → guard.deny_paths" />}
                   >
                     <ListValue items={guard.deny_paths} />
                   </ConfigRow>
                   <ConfigRow
                     label="Ask before editing"
+                    action={teamAsk(
+                      "guard.ask_before_edit",
+                      "Ask before editing",
+                      guard.ask_before_edit,
+                    )}
                     source={<ConfigSource source="team" where="hub.json → guard.ask_before_edit" />}
                   >
                     <ListValue items={guard.ask_before_edit} />
                   </ConfigRow>
                   <ConfigRow
                     label="Hosts denied"
+                    action={teamAsk("guard.deny_hosts", "Hosts denied", guard.deny_hosts)}
                     source={<ConfigSource source="team" where="hub.json → guard.deny_hosts" />}
                   >
                     <ListValue items={guard.deny_hosts} />
                   </ConfigRow>
                   <ConfigRow
                     label="Secret env files"
+                    action={teamAsk(
+                      "guard.secret_env_files",
+                      "Secret env files",
+                      guard.secret_env_files,
+                    )}
                     source={
                       <ConfigSource source="team" where="hub.json → guard.secret_env_files" />
                     }
@@ -718,6 +776,11 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
                   </ConfigRow>
                   <ConfigRow
                     label="Readable env files"
+                    action={teamAsk(
+                      "guard.readable_env_files",
+                      "Readable env files",
+                      guard.readable_env_files,
+                    )}
                     source={
                       <ConfigSource source="team" where="hub.json → guard.readable_env_files" />
                     }
@@ -726,6 +789,7 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
                   </ConfigRow>
                   <ConfigRow
                     label="Infra guard"
+                    action={teamAsk("guard.infra", "Infra guard", guard.infra_on ? "on" : "off")}
                     source={
                       <ConfigSource
                         source={guard.infra_on ? "team" : "default"}
@@ -763,6 +827,7 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
               {layer !== "local" && (
                 <ConfigRow
                   label="Tracker"
+                  action={teamAsk("tracker.teams", "Tracker teams", tracker.teams)}
                   source={
                     <ConfigSource source="team" where="hub.json → tracker.kind, tracker.team(s)" />
                   }
@@ -784,7 +849,7 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
                         icon: "pencil",
                         onClick: editLocal("transport"),
                       }
-                    : undefined
+                    : teamAsk("tracker.transport", "Transport", tracker.transport.value)
                 }
               >
                 <SourcedCell value={tracker.transport} layer={layer} />
@@ -793,6 +858,11 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
                 <>
                   <ConfigRow
                     label="Labels"
+                    action={teamAsk("tracker.labels", "Labels", {
+                      ready_label: tracker.ready_label,
+                      failed_label: tracker.failed_label,
+                      blocked_label: tracker.blocked_label,
+                    })}
                     source={<ConfigSource source="team" where="hub.json → tracker.*_label" />}
                   >
                     <span className="ah-config-list">
@@ -809,6 +879,10 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
                   </ConfigRow>
                   <ConfigRow
                     label="States"
+                    action={teamAsk("tracker.states", "States", {
+                      started: tracker.started_state,
+                      review: tracker.review_state,
+                    })}
                     source={<ConfigSource source="team" where="hub.json → tracker.states" />}
                   >
                     <span className="ah-config-list">
@@ -848,6 +922,11 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
                   <ConfigRow
                     key={tier}
                     label={tierLabel}
+                    action={teamAsk(
+                      `models.tiers.${tier}`,
+                      `${tierLabel} model`,
+                      view.model_tiers[tier],
+                    )}
                     source={
                       <ConfigSource
                         source="team"
@@ -882,6 +961,7 @@ function ConfigBody({ view, layer }: { view: HubConfigView; layer: Layer }) {
             onClose={() => {
               setEditing(null);
             }}
+            onSaved={onSaved}
           />
         )}
       </div>
@@ -896,8 +976,24 @@ export function HubConfigScreen() {
   const layerParam = params.get("layer");
   const layer: Layer = layerParam === "team" || layerParam === "local" ? layerParam : "effective";
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });
-  const { setOpen } = useDiscuss();
+  const { setOpen, addReference } = useDiscuss();
   const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => {
+      setSaved(false);
+    }, 4000);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [saved]);
+  const capabilities = useAgentCapabilities();
+  const unavailable = sessionControlUnavailable(capabilities.error, capabilities.data);
+  const blocked = unavailable ? `${unavailable.title}. ${unavailable.detail}` : null;
+  const onSaved = () => {
+    setSaved(true);
+  };
   useDiscussTarget({
     key: `config:${project}`,
     project,
@@ -944,100 +1040,152 @@ export function HubConfigScreen() {
       </div>
     );
   } else {
-    body = <ConfigBody view={view} layer={layer} />;
+    body = (
+      <>
+        {layer === "local" && localSet === 0 && (
+          <Banner
+            tone="info"
+            action={
+              <Button
+                size="sm"
+                icon="pencil"
+                onClick={() => {
+                  setEditing(true);
+                }}
+              >
+                Edit my local settings
+              </Button>
+            }
+          >
+            No hub.local.json values on this machine. Your values come from hub.json and git config.
+          </Banner>
+        )}
+        <ConfigBody view={view} layer={layer} onSaved={onSaved} />
+      </>
+    );
   }
 
   return (
-    <div className="ah-page" style={{ gap: 16 }}>
-      <Breadcrumbs
-        items={[
-          { label: "Portfolio", href: "/" },
-          { label: project, href: `/projects/${encodeURIComponent(project)}` },
-          { label: "Hub configuration" },
-        ]}
-      />
-      <header className="ah-config-head">
-        <div className="ah-stack" style={{ gap: 4, minWidth: 0 }}>
-          <h1 className="ah-h1">Hub configuration</h1>
-          {view && (
-            <>
-              <p className="ah-muted ah-small" style={{ margin: 0 }}>
-                <Icon name="users" /> <Mono>hub.json</Mono> in {view.hub_repo} · shared with the
-                team, changed through a hub PR
-              </p>
-              <p className="ah-muted ah-small" style={{ margin: 0 }}>
-                <Icon name="laptop" /> Your layer: <Mono>hub.local.json</Mono> on this machine ·
-                only you ·{" "}
-                {localSet === 0
-                  ? "nothing set"
-                  : `${String(localSet)} ${localSet === 1 ? "value" : "values"} set`}
-              </p>
-            </>
-          )}
-        </div>
-        <div className="ah-row" style={{ gap: 8, flexShrink: 0 }}>
-          <Button
-            icon="pencil"
-            disabled={!view}
-            onClick={() => {
-              setEditing(true);
-            }}
-          >
-            Edit my local settings
-          </Button>
-          <Button
-            variant="primary"
-            icon="message-square"
-            onClick={() => {
-              setOpen(true);
-            }}
-          >
-            Ask Claude to change the config
-          </Button>
-        </div>
-      </header>
-      {view && view.local_file.problems.length > 0 && (
-        <Banner tone="warning">
-          hub.local.json has a problem, so your local values are ignored:{" "}
-          {view.local_file.problems.join("; ")}
-        </Banner>
-      )}
-      <div className="ah-row" style={{ gap: 12, flexWrap: "wrap" }}>
-        <span className="ah-small ah-muted">Show</span>
-        <SegmentedControl
-          label="Layer"
-          options={LAYERS}
-          value={layer}
-          onChange={(id) => {
-            setParams(
-              (prev) => {
-                if (id === "effective") prev.delete("layer");
-                else prev.set("layer", id);
-                return prev;
-              },
-              { replace: true },
-            );
-          }}
+    <AskBlocked.Provider value={blocked}>
+      <div className="ah-page" style={{ gap: 16 }}>
+        <Breadcrumbs
+          items={[
+            { label: "Portfolio", href: "/" },
+            { label: project, href: `/projects/${encodeURIComponent(project)}` },
+            { label: "Hub configuration" },
+          ]}
         />
-        <span className="ah-small ah-muted">
-          {layer === "effective"
-            ? "The value that applies, and the layer that set it."
-            : layer === "team"
-              ? "What the team prepared in hub.json, even where your local value wins."
-              : "Only what hub.local.json may set on this machine."}
-        </span>
+        <header className="ah-config-head">
+          <div className="ah-stack" style={{ gap: 4, minWidth: 0 }}>
+            <h1 className="ah-h1">Hub configuration</h1>
+            {view && (
+              <>
+                <p className="ah-muted ah-small" style={{ margin: 0 }}>
+                  <Icon name="users" /> <Mono>hub.json</Mono> in {view.hub_repo} · shared with the
+                  team, changed through a hub PR
+                </p>
+                <p className="ah-muted ah-small" style={{ margin: 0 }}>
+                  <Icon name="laptop" /> Your layer: <Mono>hub.local.json</Mono> on this machine ·
+                  only you ·{" "}
+                  {localSet === 0
+                    ? "nothing set"
+                    : `${String(localSet)} ${localSet === 1 ? "value" : "values"} set`}
+                </p>
+              </>
+            )}
+          </div>
+          <div className="ah-row" style={{ gap: 8, flexShrink: 0 }}>
+            <Button
+              icon="pencil"
+              disabled={!view}
+              onClick={() => {
+                setEditing(true);
+              }}
+            >
+              Edit my local settings
+            </Button>
+            <Tooltip label={blocked ?? undefined}>
+              <Button
+                variant="primary"
+                icon="message-square"
+                disabled={blocked !== null}
+                onClick={() => {
+                  setOpen(true);
+                }}
+              >
+                Ask Claude to change the config
+              </Button>
+            </Tooltip>
+          </div>
+        </header>
+        {view && view.local_file.problems.length > 0 && (
+          <Banner
+            tone="warning"
+            action={
+              <Button
+                size="sm"
+                icon="message-square"
+                disabled={blocked !== null}
+                onClick={() => {
+                  addReference({
+                    id: "config:hub.local.json",
+                    label: "hub.local.json problems",
+                    source: "hub.local.json",
+                    quote: view.local_file.problems.join("\n"),
+                  });
+                }}
+              >
+                Ask Claude to fix it
+              </Button>
+            }
+          >
+            hub.local.json has a problem, so your local values are ignored:{" "}
+            {view.local_file.problems.join("; ")}
+          </Banner>
+        )}
+        <div className="ah-row" style={{ gap: 12, flexWrap: "wrap" }}>
+          <span className="ah-small ah-muted">Show</span>
+          <SegmentedControl
+            label="Layer"
+            options={LAYERS}
+            value={layer}
+            onChange={(id) => {
+              setParams(
+                (prev) => {
+                  if (id === "effective") prev.delete("layer");
+                  else prev.set("layer", id);
+                  return prev;
+                },
+                { replace: true },
+              );
+            }}
+          />
+          <span className="ah-small ah-muted">
+            {layer === "effective"
+              ? "The value that applies, and the layer that set it."
+              : layer === "team"
+                ? "What the team prepared in hub.json, even where your local value wins."
+                : "Only what hub.local.json may set on this machine."}
+          </span>
+        </div>
+        {body}
+        {editing && view && (
+          <LocalSettingsDialog
+            view={view}
+            focus={null}
+            onClose={() => {
+              setEditing(false);
+            }}
+            onSaved={onSaved}
+          />
+        )}
+        {saved && (
+          <div className="ah-config-toast">
+            <Toast>Saved hub.local.json</Toast>
+          </div>
+        )}
       </div>
-      {body}
-      {editing && view && (
-        <LocalSettingsDialog
-          view={view}
-          focus={null}
-          onClose={() => {
-            setEditing(false);
-          }}
-        />
-      )}
-    </div>
+    </AskBlocked.Provider>
   );
 }
 

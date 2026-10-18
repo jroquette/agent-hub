@@ -218,3 +218,10 @@
     padding-left: 0;
   }
 }
+
+.ah-config-toast {
+  position: fixed;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: 50;
+}

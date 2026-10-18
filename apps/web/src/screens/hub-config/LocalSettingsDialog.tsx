@@ -67,11 +67,14 @@ export function LocalSettingsDialog({
   view,
   focus,
   onClose,
+  onSaved,
 }: {
   view: HubConfigView;
   /** The field to focus on open: a row's ✎ names it. */
   focus: string | null;
   onClose: () => void;
+  /** Called once the file is written, for the screen's confirmation. */
+  onSaved?: (() => void) | undefined;
 }) {
   const id = useId();
   const client = useQueryClient();
@@ -122,6 +125,7 @@ export function LocalSettingsDialog({
           fresh,
         );
         onClose();
+        onSaved?.();
       })
       .catch((error: unknown) => {
         setPending(false);
@@ -129,7 +133,10 @@ export function LocalSettingsDialog({
           const found: Record<string, string> = {};
           for (const item of error.errors) {
             const key = item.pointer.split(".")[1]?.split("[")[0] ?? item.pointer;
-            found[key] = plainMessage(key, item.message);
+            const line = /\[(\d+)\]/.exec(item.pointer)?.[1];
+            const message = plainMessage(key, item.message);
+            found[key] =
+              line === undefined ? message : `Line ${String(Number(line) + 1)}: ${message}`;
           }
           setErrors(found);
           setFailure(
@@ -228,8 +235,9 @@ export function LocalSettingsDialog({
             value={transport}
             onChange={setTransport}
           />
-          <span className="ah-small ah-muted">
-            API needs LINEAR_API_KEY; MCP uses your Linear MCP server in Claude.
+          <span className={errors.transport ? "ah-small ah-config-error" : "ah-small ah-muted"}>
+            {errors.transport ??
+              "API needs LINEAR_API_KEY; MCP uses your Linear MCP server in Claude."}
           </span>
         </div>
         {LOCAL_LISTS.map((key) => (
@@ -243,14 +251,18 @@ export function LocalSettingsDialog({
               rows={3}
               value={lists[key]}
               spellCheck={false}
-              aria-invalid={errors.guard && key in errors ? true : undefined}
+              aria-invalid={errors[key] ? true : undefined}
               aria-describedby={`${fieldId(key)}-help`}
               onChange={(event) => {
                 setLists({ ...lists, [key]: event.target.value });
               }}
             />
-            <span id={`${fieldId(key)}-help`} className="ah-small ah-muted">
-              {LIST_HELP[key]} The team has {String(view.guard[key].team.length)}.
+            <span
+              id={`${fieldId(key)}-help`}
+              className={errors[key] ? "ah-small ah-config-error" : "ah-small ah-muted"}
+            >
+              {errors[key] ??
+                `${LIST_HELP[key]} The team has ${String(view.guard[key].team.length)}.`}
             </span>
           </div>
         ))}

@@ -208,6 +208,58 @@ describe("HubConfigScreen", () => {
     });
   });
 
+  it("disables the Ask buttons with the reason when session control is locked", async () => {
+    open("/projects/demo/config", {
+      [CONFIG]: aConfig(),
+      "/api/v1/agent-sessions/capabilities": aProblem({ status: 401, title: "Unauthorized" }),
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Ask Claude to change the config" }),
+      ).toBeDisabled();
+    });
+    expect(
+      screen.getByRole("button", {
+        name: (name) =>
+          name.startsWith("Ask Claude to change commit title of demo-api (unavailable"),
+      }),
+    ).toBeDisabled();
+  });
+
+  it("marks the list a refused blocked word is in, with its line", async () => {
+    open("/projects/demo/config", {
+      [CONFIG]: aConfig(),
+      "PUT /api/v1/projects/demo/config/local": aProblem({
+        status: 422,
+        title: "These local settings are not valid",
+        errors: [{ pointer: "guard.blocked_words[1]", message: "must not hold a space" }],
+      }),
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit my local settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit my local settings" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save local settings" }));
+
+    const words = within(dialog).getByRole("textbox", { name: "Blocked words" });
+    await waitFor(() => {
+      expect(words).toHaveAttribute("aria-invalid", "true");
+    });
+    expect(within(dialog).getByText("Line 2: Must not hold a space")).toBeVisible();
+  });
+
+  it("confirms a save of the local settings", async () => {
+    open("/projects/demo/config", {
+      [CONFIG]: aConfig(),
+      "PUT /api/v1/projects/demo/config/local": aConfig(),
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit my local settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save local settings" }));
+
+    expect(await screen.findByText("Saved hub.local.json")).toBeVisible();
+  });
+
   it("explains a hub.json it cannot read", async () => {
     open("/projects/demo/config", {
       [CONFIG]: aProblem({ status: 404, title: "Project not found", detail: "No project demo." }),
