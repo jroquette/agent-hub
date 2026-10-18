@@ -261,10 +261,14 @@ def test_versions_json_file_when_json_workflow() -> None:
 
 
 def test_marks_workflow_unit_as_detail_captures_when_hub_file() -> None:
-    reads, files, reader, _ = _capturing(
-        WorkflowFile(SHIP_FILE, "ship", SHIP), disk={SHIP_FILE: b"x"}
+    files = Files((WorkflowFile(SHIP_FILE, "ship", SHIP),))
+    reader = FakeHubFileReader({"/hubs/demo": FakeHub(skill_files={SHIP_FILE: b"x"})})
+    capture = CaptureItemVersions(
+        InMemoryItemVersionStore(), reader, lambda: datetime(2026, 10, 18, tzinfo=UTC)
     )
+    reads = ReadWorkflows(Hubs(("demo", "/hubs/demo")), lambda _hub: files, capture=capture)
     reads.get_workflow("demo", "ship")
+    read_before = len(reader.unit_reads)
 
     marked = reads.marked_workflow_unit("demo", "ship")
 
@@ -274,6 +278,6 @@ def test_marks_workflow_unit_as_detail_captures_when_hub_file() -> None:
         SHIP_FILE,
         1,
     )
-    # The file's own fingerprint entry, as the detail captures it under.
-    assert marked.mark in files.fingerprint()
-    assert len(reader.unit_reads) == 1
+    # The same mark as the detail's: the memo answers without reading the file again.
+    capture.capture("demo", marked.hub_path, [(marked.unit, marked.mark)])
+    assert (read_before, len(reader.unit_reads)) == (1, 1)
