@@ -94,6 +94,7 @@ from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
+from agent_hub.core.item_versions.read_item_versions import ReadItemVersions
 from agent_hub.core.learnings.brain_change_requests import BrainChangeRequests, CommitAuthor
 from agent_hub.core.learnings.decide_learning import DecideLearning
 from agent_hub.core.learnings.learning_ports import LearningHub
@@ -566,7 +567,8 @@ def build_app(
     ingest = IngestHook(store, ClaudeHookMapper(), tail, status=counters)
     hub_paths = _HubPaths()
     reader = HubFileSystem() if read_git is None else HubFileSystem(read_git=read_git)
-    capture = CaptureItemVersions(open_item_version_store(settings.db_path), reader, settings.clock)
+    versions = open_item_version_store(settings.db_path)
+    capture = CaptureItemVersions(versions, reader, settings.clock)
     registry = JsonHubRegistry(settings.registry_path)
     facts = RegisteredHubFacts(
         registry=registry,
@@ -644,6 +646,9 @@ def build_app(
         run_control=None if guard is None else ControlWorkflowRun(hubs, guard),
         workflow_gates=gates,
         gate_decisions=None if guard is None else DecideWorkflowGate(gates, guard),
+        item_version_reads=ReadItemVersions(
+            versions, reader=reader, toolkit_units=hubs, workflow_units=workflows, capture=capture
+        ),
     )
     return create_app(
         settings,

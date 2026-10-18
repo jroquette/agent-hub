@@ -16,12 +16,18 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
 import pytest
 
-from agent_hub.core.item_versions.item_version import ItemVersionMeta, VersionOrigin
+from agent_hub.core.item_versions.item_version import (
+    ItemVersionMeta,
+    NewItemVersion,
+    UnitKind,
+    VersionOrigin,
+)
 from agent_hub.core.item_versions.unit_content import UnitFile
 from agent_hub.core.item_versions.unit_hash import file_hash, folder_hash
 from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES
@@ -41,6 +47,20 @@ TOOLKIT_UNITS: Final = {ALPHA, BETA, SCOUT, SETTINGS, PROJECT_SETTINGS, PLUGIN_H
 WORKFLOWS: Final = "/api/v1/workflows"
 REVIEW: Final = "workflows/demo/review.yaml"
 REVIEW_DETAIL: Final = f"{WORKFLOWS}/demo/review"
+ALPHA_DETAIL: Final = f"{CATALOG}/skill/demo/alpha"
+# A UUIDv7-shaped id no unit holds.
+UNKNOWN_ID: Final = "0199f0a0-0000-7000-8000-000000000000"
+VERSION_FIELDS: Final = {
+    "id",
+    "origin",
+    "first",
+    "author",
+    "recorded_at",
+    "content_hash",
+    "size",
+    "restored_from",
+    "draft_id",
+}
 # A built-in the fixture hub does not override (D14).
 BUILTIN_DETAIL: Final = f"{WORKFLOWS}/demo/deliver"
 READERS: Final = 10
@@ -123,7 +143,7 @@ def _rows(composed: Any) -> list[tuple[str, int]]:
 def _versions(composed: Any, unit_path: str) -> list[ItemVersionMeta]:
     """The unit's versions, oldest first."""
     store = open_item_version_store(composed.settings.db_path)
-    return list(reversed(store.page("demo", unit_path)))
+    return list(reversed(store.page("demo", unit_path, limit=200)))
 
 
 def _edit(path: Path, content: bytes) -> None:
@@ -256,6 +276,15 @@ def test_shares_hook_file_unit_when_one_hook_changed(
         (2, file_hash(changed)),
     ]
     assert [path for path, seq in _rows(composed) if seq > 1] == [SETTINGS]
+    histories = [_get(composed, f"{CATALOG}/{item_id}/versions") for item_id in in_settings]
+    stored = [v.id for v in reversed(_versions(composed, SETTINGS))]
+    for history in histories:
+        assert [item["id"] for item in history["items"]] == stored
+        assert (history["unit_path"], history["unit_kind"], history["shared_by"]) == (
+            SETTINGS,
+            "hook",
+            2,
+        )
 
 
 def test_stores_one_version_when_ten_catalog_reads_race(
@@ -306,6 +335,9 @@ def test_versions_target_once_when_links_read(
     paths = [path for path, _ in _rows(composed)]
     assert paths.count(ALPHA) == 1
     assert not any(path.startswith(".claude/skills") for path in paths)
+    assert len(_get(composed, f"{ALPHA_DETAIL}/versions")["items"]) == 1
+    out = composed.client.get(f"{CATALOG}/skill/claude/out/versions")
+    assert out.status_code == 404, out.text
 
 
 def test_reports_too_large_when_bounds_exceeded(composed: Any, versions_hub: VersionsHub) -> None:
@@ -329,6 +361,29 @@ def test_reports_too_large_when_bounds_exceeded(composed: Any, versions_hub: Ver
     paths = {path for path, _ in _rows(composed)}
     assert paths.isdisjoint({SCOUT, SETTINGS, "plugin/demo/skills/many"})
     assert {ALPHA, BETA} <= paths
+    for item in ("agent/demo/scout", "skill/demo/many", "hook/settings/settings-stop-1"):
+        history = _get(composed, f"{CATALOG}/{item}/versions")
+        assert (history["state"], history["items"]) == ("too_large", []), item
+
+
+def test_keeps_versions_listed_when_unit_grew_past_bounds(
+    composed: Any, versions_hub: VersionsHub
+) -> None:
+    hub = versions_hub()
+    items = _get(composed, CATALOG)["items"]
+    [stop] = [item["id"] for item in items if item["source_path"] == PROJECT_SETTINGS]
+    history = f"{CATALOG}/{stop}/versions"
+    [baseline] = _versions(composed, PROJECT_SETTINGS)
+    padding = "x" * (300 * 1024)
+    _edit(
+        hub / PROJECT_SETTINGS,
+        _json({"env": {"PAD": padding}, "hooks": {"Stop": [_hook("make stop-check")]}}),
+    )
+
+    grown = _get(composed, history)
+
+    assert grown["state"] == "too_large"
+    assert [item["id"] for item in grown["items"]] == [baseline.id]
 
 
 def _github_token() -> str:
@@ -363,6 +418,9 @@ def test_stores_nothing_when_secret_matches(composed: Any, versions_hub: Version
     )
     assert token.encode() not in stored
     assert bearer.encode() not in stored
+    for item in ("agent/demo/scout", "skill/demo/alpha"):
+        history = _get(composed, f"{CATALOG}/{item}/versions")
+        assert (history["state"], history["items"]) == ("secret", []), item
 
 
 @contextmanager
@@ -409,3 +467,103 @@ def test_never_versioned_when_local_settings_builtin_pack_files_drafts_or_plugin
     assert {item["name"] for item in workflows["items"] if item["source"] == "builtin"}
     paths = {path for path, _ in _rows(composed)}
     assert paths == {*TOOLKIT_UNITS, REVIEW}
+
+
+def _append_versions(composed: Any, unit_path: str, contents: list[bytes]) -> None:
+    """Stores ``contents`` as the agent unit's versions 1 to n, a minute apart."""
+    store = open_item_version_store(composed.settings.db_path)
+    start = datetime(2026, 10, 1, tzinfo=UTC)
+    for seq, content in enumerate(contents, start=1):
+        store.append(
+            NewItemVersion(
+                project="demo",
+                unit_path=unit_path,
+                kind=UnitKind.AGENT,
+                seq=seq,
+                origin=VersionOrigin.EXTERNAL,
+                first=seq == 1,
+                recorded_at=start + timedelta(minutes=seq),
+                content_hash=file_hash(content),
+                size=len(content),
+                content=content,
+            )
+        )
+
+
+def test_list_versions_pages_newest_first_when_sixty_versions(
+    composed: Any, versions_hub: VersionsHub
+) -> None:
+    versions_hub()
+    # The newest stored version is the disk's content, so the list's capture adds nothing.
+    contents = [SCOUT_MD + f"Edit {seq}.\n".encode() for seq in range(1, 60)] + [SCOUT_MD]
+    _append_versions(composed, SCOUT, contents)
+    history = f"{SCOUT_DETAIL}/versions"
+
+    first = _get(composed, history)
+    second = _get(composed, f"{history}?cursor={first['next_cursor']}")
+
+    stored = [v.id for v in reversed(_versions(composed, SCOUT))]
+    assert len(stored) == 60
+    assert [item["id"] for item in first["items"]] == stored[:50]
+    assert [item["id"] for item in second["items"]] == stored[50:]
+    assert second["next_cursor"] is None
+    assert (first["total_estimate"], first["state"], first["managed"]) == (60, "ok", False)
+    assert (first["unit_path"], first["unit_kind"], first["shared_by"]) == (SCOUT, "agent", 1)
+    newest, oldest = first["items"][0], second["items"][-1]
+    assert set(newest) == VERSION_FIELDS
+    assert (newest["origin"], newest["first"], newest["author"]) == ("external", False, None)
+    assert (newest["content_hash"], newest["size"]) == (file_hash(SCOUT_MD), len(SCOUT_MD))
+    assert newest["recorded_at"] == "2026-10-01T01:00:00.000Z"
+    assert (oldest["first"], oldest["restored_from"]) == (True, None)
+    assert len(_get(composed, f"{history}?limit=200")["items"]) == 60
+    for path, status in (
+        ("/api/v1/projects/nope/skills/agent/demo/scout/versions", 404),
+        (f"{CATALOG}/agent/demo/nope/versions", 404),
+        (f"{WORKFLOWS}/demo/nope/versions", 404),
+        (f"{SCOUT_DETAIL}/versions/not-a-uuid", 400),
+        (f"{REVIEW_DETAIL}/versions/{UNKNOWN_ID.upper()}", 400),
+        (f"{history}?limit=0", 400),
+        (f"{history}?limit=201", 400),
+        (f"{history}?cursor=bm90LW91cnM", 400),
+    ):
+        response = composed.client.get(path)
+        assert response.status_code == status, (path, response.text)
+        assert str(composed.settings.db_path.parent) not in response.text
+
+
+def test_get_version_answers_content_when_id_is_the_items(
+    composed: Any, versions_hub: VersionsHub
+) -> None:
+    hub = versions_hub({f"{ALPHA}/scripts/run.sh": b"#!/bin/sh\necho run\n"})
+    (hub / ALPHA / "scripts" / "run.sh").chmod(0o755)
+    _get(composed, CATALOG)
+    _get(composed, WORKFLOWS)
+    [alpha] = _get(composed, f"{ALPHA_DETAIL}/versions")["items"]
+    [scout] = _get(composed, f"{SCOUT_DETAIL}/versions")["items"]
+    [review] = _get(composed, f"{REVIEW_DETAIL}/versions")["items"]
+
+    folder = _get(composed, f"{ALPHA_DETAIL}/versions/{alpha['id']}")
+    agent = _get(composed, f"{SCOUT_DETAIL}/versions/{scout['id']}")
+    workflow = _get(composed, f"{REVIEW_DETAIL}/versions/{review['id']}")
+
+    assert (folder["id"], folder["unit_kind"]) == (alpha["id"], "skill")
+    assert [(f["path"], f["executable"], f["text"]) for f in folder["files"]] == [
+        ("SKILL.md", False, ALPHA_MD.decode()),
+        ("references/r.md", False, REFERENCE.decode()),
+        ("scripts/run.sh", True, "#!/bin/sh\necho run\n"),
+    ]
+    assert agent["files"] == [
+        {"path": "scout.md", "executable": False, "size": len(SCOUT_MD), "text": SCOUT_MD.decode()}
+    ]
+    assert [(f["path"], f["text"]) for f in workflow["files"]] == [
+        ("review.yaml", REVIEW_YAML.decode())
+    ]
+    for path in (
+        f"{ALPHA_DETAIL}/versions/{scout['id']}",
+        f"{SCOUT_DETAIL}/versions/{alpha['id']}",
+        f"{REVIEW_DETAIL}/versions/{scout['id']}",
+        f"{SCOUT_DETAIL}/versions/{UNKNOWN_ID}",
+        f"{BUILTIN_DETAIL}/versions",
+    ):
+        response = composed.client.get(path)
+        assert response.status_code == 404, (path, response.text)
