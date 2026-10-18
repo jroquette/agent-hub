@@ -26,10 +26,10 @@ RELEASED_IDS = (
     "config.identity",
     "repos.agents",
     "config.stop_gate",
+    "environments.production",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",
-    "environments.production",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.
