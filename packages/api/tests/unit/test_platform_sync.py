@@ -1,0 +1,72 @@
+import json
+import subprocess
+from collections.abc import Sequence
+from pathlib import Path
+
+import pytest
+
+from agent_hub.api.platform_sync import PlatformSyncError, pinned_text, sync_platform
+
+HUB_JSON = (
+    '{\n  "schema_version": 1,\n  "platform": {\n    "version": "0.14.0"\n  },\n  "x": 1\n}\n'
+)
+
+
+class FakeRunner:
+    """Answers ``hub sync`` with ``sync_exit``; ``git status`` lists ``notes.md`` (the owner's
+    own edit) before the sync, and the pin and lock beside it after."""
+
+    def __init__(self, *, sync_exit: int = 0) -> None:
+        self.sync_exit = sync_exit
+        self.calls: list[tuple[str, ...]] = []
+        self.pin_seen: str | None = None
+
+    def __call__(self, argv: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        self.calls.append(tuple(argv))
+        if argv[-1] == "sync":
+            self.pin_seen = json.loads((cwd / "hub.json").read_text())["platform"]["version"]
+            return subprocess.CompletedProcess(argv, self.sync_exit, "updated hub.lock\n", "")
+        synced = any(call[-1] == "sync" for call in self.calls)
+        status = " M notes.md\n" + (" M hub.json\n M hub.lock\n" if synced else "")
+        return subprocess.CompletedProcess(argv, 0, status, "")
+
+
+def test_changes_only_pin_when_text_pinned() -> None:
+    previous, text = pinned_text(HUB_JSON, "0.16.0")
+
+    assert previous == "0.14.0"
+    assert text == HUB_JSON.replace("0.14.0", "0.16.0")
+
+
+def test_refuses_pin_when_hub_json_has_no_platform() -> None:
+    with pytest.raises(PlatformSyncError):
+        pinned_text('{"schema_version": 1}', "0.16.0")
+
+
+def test_pins_syncs_and_lists_changes_when_platform_synced(tmp_path: Path) -> None:
+    (tmp_path / "hub.json").write_text(HUB_JSON)
+    runner = FakeRunner()
+
+    result = sync_platform(
+        "h1", str(tmp_path), running_version="0.16.0", run=runner, program=("hub",)
+    )
+
+    assert runner.pin_seen == "0.16.0"
+    assert ("hub", "sync") in runner.calls
+    assert result.ok
+    assert (result.previous_version, result.version) == ("0.14.0", "0.16.0")
+    assert result.output == ("updated hub.lock",)
+    assert result.changed_files == ("hub.json", "hub.lock")
+
+
+def test_restores_old_pin_when_sync_fails(tmp_path: Path) -> None:
+    (tmp_path / "hub.json").write_text(HUB_JSON)
+
+    result = sync_platform(
+        "h1", str(tmp_path), running_version="0.16.0", run=FakeRunner(sync_exit=3), program=("hub",)
+    )
+
+    assert not result.ok
+    assert result.exit_code == 3
+    assert result.version == "0.14.0"
+    assert (tmp_path / "hub.json").read_text() == HUB_JSON
