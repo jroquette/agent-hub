@@ -11,11 +11,14 @@ from typing import Final
 
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.item_versions.hub_item_writer import (
+    DraftFiles,
+    DraftTooLargeError,
     HubItemWriteError,
     HubItemWriter,
     ItemWriteRefusedError,
     check_version_names,
     checked_unit_parts,
+    draft_parts,
     plain_parts,
     script_parts,
 )
@@ -25,9 +28,10 @@ from agent_hub.core.item_versions.item_version import (
     NewItemVersion,
     UnitKind,
 )
-from agent_hub.core.item_versions.unit_content import UnitContent
+from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent, UnitFile
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
-from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, MAX_SKILL_FILE_BYTES
 from agent_hub.core.testing.hub_fakes import FakeHub
 
 type _UnitKey = tuple[str, str]
@@ -157,6 +161,42 @@ class FakeHubItemWriter:
             _drop(hub, path)
         self.writes.append((hub_path, unit_path))
 
+    def read_draft(self, hub_path: str, draft_id: str) -> DraftFiles:
+        """The files under ``.hub-drafts/<draft_id>/``, refused as the disk refuses them."""
+        folder = "/".join(draft_parts(draft_id))
+        hub = self._hub(hub_path)
+        self.check_targets(hub_path, [folder])
+        below = f"{folder}/"
+        paths = _under(hub, below)
+        if not paths:
+            raise EntityNotFoundError(entity="draft", entity_id=draft_id)
+        if any(path in hub.skill_links or path in hub.skill_specials for path in paths):
+            raise ItemWriteRefusedError("link_in_path")
+        files = tuple(
+            UnitFile(
+                path=path.removeprefix(below),
+                content=hub.skill_files[path],
+                executable=path in hub.executable,
+            )
+            for path in paths
+        )
+        too_large = len(files) > MAX_UNIT_FILES or any(
+            len(file.content) > MAX_SKILL_FILE_BYTES
+            or file.path.count("/") >= DEFAULT_LIMITS.skill_depth
+            for file in files
+        )
+        if too_large:
+            raise DraftTooLargeError
+        return DraftFiles(draft_id=draft_id, content=UnitContent(files=files))
+
+    def remove_draft(self, hub_path: str, draft_id: str) -> None:
+        """Drop everything under the draft's folder."""
+        folder = "/".join(draft_parts(draft_id))
+        hub = self._writable(hub_path, folder)
+        for path in _under(hub, f"{folder}/"):
+            _drop(hub, path)
+        self.writes.append((hub_path, folder))
+
     def _writable(self, hub_path: str, path: str) -> FakeHub:
         if hub_path in self.read_only:
             raise ItemWriteRefusedError("hub_read_only")
@@ -247,6 +287,9 @@ class InMemoryWriterTree:
     def link(self, path: str, target: str) -> None:
         """Add a link to ``target``."""
         self.hub.skill_links[path] = target
+
+    def make_folder(self, path: str) -> None:
+        """Nothing: a fake folder exists only while it holds an entry."""
 
     def make_executable(self, path: str) -> None:
         """Set the file's executable bit."""
