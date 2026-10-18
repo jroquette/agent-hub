@@ -21,7 +21,8 @@ the stage renamed into place, and the old folder removed with ``rmtree(dir_fd=â€
 inside it is removed, never followed). Any failure before the stage is in place moves the hidden
 entries back, renames the old folder back and removes the stage, so the unit is left as it was
 (``HubItemWriteError`` kind ``failed``); when that roll back fails too, the error's kind is
-``rollback_failed`` and the stage, holding whatever was not put back, stays. A reader may find
+``rollback_failed`` and the stage (holding whatever was not put back) stays, and the old
+folder when it was already renamed. A reader may find
 no folder between the two renames. The folders a write makes (the stage and its subfolders,
 missing parents) get mode ``0o777`` less the umask: a folder's own earlier mode is not kept. The
 umask is read once, when the writer is made.
@@ -402,7 +403,8 @@ def _carry_hidden(current: int, staged: int, moved: list[str]) -> None:
 def _roll_back(parent: int, name: str, *, stage: str, old: str | None, moved: list[str]) -> bool:
     """Put the old folder back under ``name`` with its hidden entries, then remove the stage;
     False when the old folder or an entry could not be put back (the stage then stays, holding
-    what was not). A stage that cannot be removed stays as a leftover (``items.leftovers``)."""
+    what was not, and the old folder when it was already renamed and not put back). A stage
+    that cannot be removed stays as a leftover (``items.leftovers``)."""
     try:
         if old is not None:
             os.rename(old, name, src_dir_fd=parent, dst_dir_fd=parent)
