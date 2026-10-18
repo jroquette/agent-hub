@@ -114,7 +114,7 @@ class ItemVersionStoreContract:
                 answer.model_dump(exclude={"id"}) == new.model_dump(),
                 f"the {new.origin} version keeps every field given: {answer}",
             )
-        _check(published.draft_id == "agent-a1b2c3", "the publish carries its draft id")
+        _check(answers[1].draft_id == "agent-a1b2c3", "the publish carries its draft id")
         _check(store.last("demo", AGENT) == answers[-1].meta(), "last is the newest")
         _check(item_version_store.last("demo", OTHER_AGENT) is None, "last is per unit")
         _check(item_version_store.last("other", AGENT) is None, "last is per project")
