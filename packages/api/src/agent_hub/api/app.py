@@ -32,6 +32,7 @@ from agent_hub.api.routes import (
     settings,
     skills,
     streams,
+    tracker,
     workflows,
 )
 from agent_hub.api.session_access import SessionAccessMiddleware
@@ -57,6 +58,7 @@ ROUTERS = (
     doctor,
     collector,
     settings,
+    tracker,
     streams,
     # Cloud first, then the static agent-session paths before the id ones (P5).
     cloud_sessions,

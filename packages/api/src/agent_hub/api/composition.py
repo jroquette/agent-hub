@@ -36,6 +36,7 @@ from typing import Final
 
 from fastapi import FastAPI
 
+from agent_hub.api.ac_check import AcCheckError, AcCheckRunner, ac_check_problem
 from agent_hub.api.agent_session_runtime import (
     SessionRuntime,
     UnavailableCloudLauncher,
@@ -44,6 +45,15 @@ from agent_hub.api.agent_session_runtime import (
 from agent_hub.api.app import create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
 from agent_hub.api.dependencies import ApiPorts
+from agent_hub.api.feature_names import FILE_NAME as FEATURE_NAMES_FILE
+from agent_hub.api.feature_names import FeatureNames
+from agent_hub.api.linear_connection import (
+    KEY_FILE_NAME,
+    LinearConnection,
+    LinearEnviron,
+    LinearKeyFile,
+)
+from agent_hub.api.owner_signoff_files import HubEvalWriter, ProjectHubPaths
 from agent_hub.api.rfc9457 import (
     ProblemFactory,
     busy_problem,
@@ -51,6 +61,7 @@ from agent_hub.api.rfc9457 import (
     hub_invalid_problem,
     hub_registry_problem,
     invalid_cursor_problem,
+    owner_signoff_problem,
 )
 from agent_hub.api.run_launcher import ProcessRunLauncher
 from agent_hub.api.settings import ApiSettings, utc_now
@@ -68,6 +79,7 @@ from agent_hub.core.agent_sessions.control import AgentSessionControl, WorkdirSo
 from agent_hub.core.agent_sessions.driver import SessionDriver
 from agent_hub.core.agent_sessions.links import AgentSessionLinks, ObservedSessionLookup
 from agent_hub.core.agent_sessions.store import AgentSessionStore
+from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRequest,
     TicketSnapshots,
@@ -127,6 +139,8 @@ from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE, 
 
 # The errors of the wired adapters, each answered by its problem (API.md "Error mapping").
 COMPOSED_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
+    OwnerSignOffError: owner_signoff_problem,
+    AcCheckError: ac_check_problem,
     DatabaseBusyError: busy_problem,
     InvalidCursorError: invalid_cursor_problem,
     HubInvalidError: hub_invalid_problem,
@@ -512,6 +526,7 @@ def hub_read_models(  # noqa: PLR0913 - the hub reads' ports, all keyword-only
     usage: SkillUsageSource,
     ticket_snapshots: TicketSnapshots | None,
     capture: CaptureItemVersions | None = None,
+    read_git: Callable[[str], GitReader] = _files_only,
 ) -> HubFilesReadModels:
     """The hub read models of ``hub web``: ``activity`` and ``usage`` are the event read models
     (the project cards' numbers, the Skills tab's 30-day counts); ``capture`` records the units
@@ -533,6 +548,7 @@ def hub_read_models(  # noqa: PLR0913 - the hub reads' ports, all keyword-only
         ticket_snapshots=ticket_snapshots,
         usage=usage,
         capture=capture,
+        read_git=read_git,
     )
 
 
@@ -592,9 +608,11 @@ def build_app(
         sessions=sessions,
     )
     observed.events = events
+    key_file = LinearKeyFile(settings.registry_path.parent / KEY_FILE_NAME)
+    linear_environ = LinearEnviron(os.environ if environ is None else environ, key_file)
     snapshots = ticket_snapshots(
         facts,
-        environ=environ,
+        environ=linear_environ,
         linear_post=linear_post,
         tracker_reader=tracker_reader,
         clock=settings.clock,
@@ -607,6 +625,7 @@ def build_app(
         usage=events,
         ticket_snapshots=snapshots,
         capture=capture,
+        read_git=_files_only if read_git is None else read_git,
     )
     hub_paths.hubs = hubs
     changes = default_brain_changes() if brain_changes is None else brain_changes
@@ -644,6 +663,17 @@ def build_app(
         run_control=None if guard is None else ControlWorkflowRun(hubs, guard),
         workflow_gates=gates,
         gate_decisions=None if guard is None else DecideWorkflowGate(gates, guard),
+        owner_signoff=SignOffOwnerSteps(
+            ProjectHubPaths(hubs), reader, HubEvalWriter(), clock=settings.clock
+        ),
+        feature_names=FeatureNames(settings.registry_path.parent / FEATURE_NAMES_FILE),
+        ac_checks=AcCheckRunner(hubs),
+        linear=LinearConnection(
+            linear_environ,
+            key_file,
+            clock=settings.clock,
+            post=linear_post,
+        ),
     )
     return create_app(
         settings,
