@@ -6,7 +6,7 @@ Read models come from core; only what exists for HTTP alone is declared here.
 from typing import Annotated, Any
 
 from fastapi import Header, Query
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints
 
 from agent_hub.core.brain.brain_path import MAX_NOTE_BYTES
 from agent_hub.core.readmodels.filters import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
@@ -72,11 +72,11 @@ class RejectLearningBody(BaseModel):
 
 class RestoreVersionBody(BaseModel):
     """``POST .../versions/{version_id}/restore``: ``confirm_managed`` true writes over a unit
-    ``hub.lock`` manages (S9), after the web's warning."""
+    ``hub.lock`` manages (S9), after the web's warning; only JSON ``true`` confirms."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    confirm_managed: bool = False
+    confirm_managed: StrictBool = False
 
 
 # Every operation may answer a problem; listing the ranges keeps FastAPI's validation schema out.
