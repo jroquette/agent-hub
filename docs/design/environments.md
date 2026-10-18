@@ -55,9 +55,10 @@ tightens); the brief, `hub env list`, doctor and setup show it.
 ### What agents see
 
 - **`AGENTS.md`** renders `hub.json` only: with `environments`, an `## Environments and services` section of fixed
-  rules (only listed environments exist; `write` covers data, never a deploy; use the named profile or variable and
-  never print its value; blocked words are denied), a line per environment (`` `live` (read, PRODUCTION): … ``) and per
-  repo with services (`demo-api: api, orders`), no endpoint or credential. Each line counts in `instructions.size`.
+  rules (only listed environments exist; `write` covers data, never a deploy; `access` is an instruction, not enforced;
+  use the named profile or variable and never print its value; blocked words are denied), a line per environment
+  (`` `live` (read, PRODUCTION): … ``) and per repo with services (`demo-api: api, orders`), no endpoint or credential.
+  Each line counts in `instructions.size` (the example: 95 of 100); more raise `instructions.size`'s `max_lines`.
 - **`hub brief`** reads both files: after `## Repos`, an `Environments` block with each environment's access,
   PRODUCTION, source and credential names, each service's endpoint per environment and the effective blocked words
   (≤ 60 lines and 2000 characters, then `… <n> more: ./hub env list`), never cut by the 5500-character limit. The
