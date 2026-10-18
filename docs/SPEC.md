@@ -579,8 +579,9 @@ only the version history below is stored:
   says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
   hub by its listing's fingerprint.
 - **Version history (AGH-295, capture so far; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
-  The catalog and the detail record a version of each unit they show in agent-hub's database (table
-  `item_versions`): a skill's whole folder, an agent's file, a hook's whole file (every hook of a file shares it). A
+  The catalog and the detail, and the Workflows list and detail, record a version of each unit they show in
+  agent-hub's database (table `item_versions`): a skill's whole folder, an agent's file, a hook's whole file (every
+  hook of a file shares it), a hub workflow's file. A
   unit seen for the first time gets an `external` baseline marked `first`; one whose content hash differs from its
   last version gets an `external` version (two edits between reads are one). The stat mark of each unit is memoized,
   so a warm read reads no unit and no database row, and an edit that keeps size and mtime is noticed at the
@@ -594,7 +595,10 @@ only the version history below is stored:
 hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema.md)) with their source (`hub` or
 `builtin`), revision and counts, and every file that does not load as a problem (file, line, key, message);
 `GET /api/v1/workflows/{project}/{name}` gives one workflow's document as written and its layers (each node's id, type
-and `depends_on`). Both read the files on request through the generator's discovery and store nothing. Workflow runs
+and `depends_on`). Both read the files on request through the generator's discovery; each hub workflow they show
+(the file the discovery loaded, `.yaml` or `.json`) is captured into the version history above, marked by the
+discovery's listing fingerprint, while a built-in, a file that does not load and a pack's other files (`prompts/`,
+`scripts/`, `fixtures/`) are never versioned. Workflow runs
 read any engine run: node ids as recorded, `skipped` steps with their cause, failure kinds, the run's `status`,
 `outcome`, `revision` and `content_hash` ([event derivations](design/event-derivations.md)). The Workflows page
 (`/workflows`, sidebar group Improve) lists them with their source and the files that do not load; a workflow's page

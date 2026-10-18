@@ -13,11 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
-- The Toolkit keeps a version history of every skill folder, agent file and hook file (AGH-296): reading the catalog
-  or an item's detail stores a baseline the first time a unit is seen and a new version when its content changed,
+- The Toolkit keeps a version history of every skill folder, agent file and hook file, and the Workflows page of every
+  hub workflow file (AGH-296): reading the catalog, the Workflows list or an item's detail stores a baseline the first
+  time a unit is seen and a new version when its content changed,
   in agent-hub's database (`item_versions`, migration 0005, upgraded on start). A link is versioned once, at its
-  target; a unit with a secret match or past the 256 KiB or 200-file bounds is never stored; the hub's files are not
-  touched.
+  target; a built-in workflow, or a unit with a secret match or past the 256 KiB or 200-file bounds, is never
+  stored; the hub's files are not touched.
 
 ## [0.16.1] - 2026-10-17
 
