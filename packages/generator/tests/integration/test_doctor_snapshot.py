@@ -205,3 +205,55 @@ def test_lists_pack_folders_when_workflows_rule_selected(hub_root: Path) -> None
     )
 
     assert snapshot.workflow_folders == ("workflows/empty",)
+
+
+def test_lists_temp_entries_when_item_leftovers_rule_selected(hub_root: Path) -> None:
+    # AGH-297: a crash mid-swap leaves a stage or old folder beside a skill, never followed.
+    config = a_config()
+    skills = hub_root / "plugin" / "demo" / "skills"
+    (skills / "alpha").mkdir(parents=True)
+    (skills / ".alpha.hub-tmp-0123abcd" / "references").mkdir(parents=True)
+    (skills / ".hidden").mkdir()
+    agents = hub_root / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    (agents / ".reviewer.md.hub-tmp-89abcdef").write_bytes(b"x")
+    (hub_root / "workflows" / "demo").mkdir(parents=True)
+    (hub_root / "workflows" / "demo" / ".lint.yaml.hub-tmp-00000000").write_bytes(b"x")
+    outside = hub_root.parent / "outside"
+    (outside / ".beta.hub-tmp-11111111").mkdir(parents=True)
+    (hub_root / ".claude" / "skills").symlink_to(outside)
+
+    snapshot = build_doctor_snapshot(
+        str(hub_root),
+        config=config,
+        running=RUNNING,
+        selection=every_rule(config),
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+
+    assert snapshot.item_leftovers == (
+        ".claude/agents/.reviewer.md.hub-tmp-89abcdef",
+        "plugin/demo/skills/.alpha.hub-tmp-0123abcd",
+        "workflows/demo/.lint.yaml.hub-tmp-00000000",
+    )
+    assert snapshot.item_folders == (
+        ".claude",
+        ".claude/agents",
+        "plugin/demo/skills",
+        "workflows/demo",
+    )
+
+
+def test_reads_no_item_folders_when_rule_not_selected(hub_root: Path) -> None:
+    snapshot = build_doctor_snapshot(
+        str(hub_root),
+        config=a_config(),
+        running=RUNNING,
+        selection=NO_RULES,
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+
+    assert snapshot.item_leftovers is None
+    assert snapshot.item_folders == ()

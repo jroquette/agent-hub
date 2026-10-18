@@ -51,6 +51,8 @@ class Read(StrEnum):
     REMOTES = "remotes"
     # The hub's workflows and the built-ins, through core's ``WorkflowSource`` (AGH-227).
     WORKFLOWS = "workflows"
+    # The temp-named entries directly in the item folders, scanned by name (AGH-297).
+    ITEM_FOLDERS = "item_folders"
 
 
 # The reads the hub listing serves: the listing itself, and the file sets that come from it.

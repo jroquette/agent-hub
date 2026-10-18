@@ -10,7 +10,8 @@ which stays with the caller: it passes ``branch_prefix``, called only when a rul
 developer identity and the local file is valid. The remote probes (AGH-134) run git against the
 network, also the caller's: it passes ``remote_probes`` only from a Claude Code session, called
 only when a rule reads the remotes. The workflows are the hub's and the built-ins, read as
-``hub workflow`` reads them, when a rule reads them (AGH-227).
+``hub workflow`` reads them, when a rule reads them (AGH-227). The item folders (AGH-297) are
+scanned by name only for temp-shaped entries an interrupted item write left beside a unit.
 """
 
 import os
@@ -33,6 +34,8 @@ from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
+from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
+from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS
 from agent_hub.generator.built_json import base_hooks_block
 from agent_hub.generator.doctor_tree import read_checkout, read_doctor_tree
 from agent_hub.generator.errors import GeneratorError
@@ -69,6 +72,7 @@ def build_doctor_snapshot(
     probes = remote_probes() if Read.REMOTES in reads and remote_probes else None
     workflows = DiscoveredWorkflowSource(Path(root)) if Read.WORKFLOWS in reads else None
     packs = pack_folders(root) if workflows is not None else ()
+    leftovers, item_folders = item_leftovers(root) if Read.ITEM_FOLDERS in reads else (None, ())
     return DoctorSnapshot(
         config=config,
         running_version=running,
@@ -81,7 +85,76 @@ def build_doctor_snapshot(
         remote_probes=probes,
         workflows=workflows,
         workflow_folders=packs,
+        item_leftovers=leftovers,
+        item_folders=item_folders,
     )
+
+
+# The folders a unit's temp entries sit in: ``.claude`` (its hook files), its skills and agents,
+# and below ``plugin/<p>/`` its skills, agents and hooks; then each ``workflows/<pack>``.
+_CLAUDE_FOLDERS = (".claude", ".claude/skills", ".claude/agents")
+_PLUGIN_FOLDERS = ("skills", "agents", "hooks")
+
+
+def item_leftovers(root: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The temp-shaped entries directly in the item folders, and the folders scanned, each in
+    path order. A folder reached through a link is not scanned; at most the listing's names
+    budget is examined in each."""
+    plugins = tuple(f"plugin/{name}" for name in _sub_folders(root, "plugin"))
+    candidates = [
+        *_CLAUDE_FOLDERS,
+        *(f"{plugin}/{folder}" for plugin in plugins for folder in _PLUGIN_FOLDERS),
+        *(f"{HUB_WORKFLOWS}/{name}" for name in _sub_folders(root, HUB_WORKFLOWS)),
+    ]
+    scanned: list[str] = []
+    found: list[str] = []
+    for folder in sorted(candidates):
+        names = _temp_names(root, folder)
+        if names is not None:
+            scanned.append(folder)
+            found.extend(f"{folder}/{name}" for name in names)
+    return tuple(sorted(found)), tuple(scanned)
+
+
+def _plain_folder(root: str, folder: str) -> bool:
+    """Whether every segment of ``folder`` is a folder, none of them a link."""
+    path = root
+    for segment in folder.split("/"):
+        path = os.path.join(path, segment)
+        try:
+            if not stat.S_ISDIR(os.lstat(path).st_mode):
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def _sub_folders(root: str, folder: str) -> list[str]:
+    if not _plain_folder(root, folder):
+        return []
+    try:
+        with os.scandir(os.path.join(root, folder)) as listing:
+            return sorted(e.name for e in listing if e.is_dir(follow_symlinks=False))
+    except OSError:
+        return []
+
+
+def _temp_names(root: str, folder: str) -> list[str] | None:
+    """The temp-shaped names in ``folder``, or None when it is no plain folder or cannot be
+    listed."""
+    if not _plain_folder(root, folder):
+        return None
+    names: list[str] = []
+    try:
+        with os.scandir(os.path.join(root, folder)) as listing:
+            for examined, entry in enumerate(listing, start=1):
+                if examined > DEFAULT_LIMITS.names_examined:
+                    break
+                if is_leftover_name(entry.name):
+                    names.append(entry.name)
+    except OSError:
+        return None
+    return sorted(names)
 
 
 def pack_folders(root: str) -> tuple[str, ...]:

@@ -113,7 +113,9 @@ class DoctorSnapshot:
     runs inside a Claude Code session (its commands sandboxed when the settings say so); else
     ``None``. ``workflows`` is the hub's workflows and the built-ins, as ``hub workflow`` reads
     them, when a selected rule reads them; else ``None``. ``workflow_folders`` then lists the pack
-    folders, so the control plane's cache sees a pack git does not list.
+    folders, so the control plane's cache sees a pack git does not list. ``item_leftovers`` is
+    every temp-named entry directly in the item folders (``item_folders``, the ones scanned), in
+    path order, when a selected rule reads them; else ``None``.
     """
 
     config: HubConfig | ConfigFailure
@@ -128,6 +130,8 @@ class DoctorSnapshot:
     workflows: WorkflowSource | None = None
     # The folders directly under ``workflows/`` (``workflows/<pack>``), read with ``workflows``.
     workflow_folders: tuple[str, ...] = ()
+    item_leftovers: tuple[str, ...] | None = None
+    item_folders: tuple[str, ...] = ()
 
     @property
     def hub_config(self) -> HubConfig:
