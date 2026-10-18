@@ -629,3 +629,49 @@ def test_records_blocked_word_rule_when_guard_denies(
     assert value not in json.dumps(bodies)
     for body in bodies:
         HookEnvelope.model_validate(body)
+
+
+# AC-277.19 (path and contents surfaces): a deny for a word in a file tool's path or in a listed
+# file's contents is recorded with ``rule: blocked_word``, and no body holds the file's line.
+def test_records_blocked_word_rule_when_guard_denies_file_read(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    event_server: Any,
+    sensor_env: dict[str, str],
+) -> None:
+    (hub / "hub.json").write_text(json.dumps(builders.an_environments_document()), encoding="utf-8")
+    api = hub.parent / "demo-api"
+    (api / "config").mkdir()
+    line = '{"stage": "prod-line-demo-7"}'
+    (api / "config" / "app.json").write_text(line + "\n", encoding="utf-8")
+    events = [
+        hook_input("PreToolUse", api)
+        | {"tool_name": "Read", "tool_input": {"file_path": file_path}}
+        for file_path in ("config/app.json", "envs/prod/main.tf")
+    ]
+
+    runs = [
+        run_hook_file(
+            hook_python,
+            hub / HOOKS / "guard.py",
+            stdin=json.dumps(event).encode(),
+            cwd=api,
+            env=sensor_env,
+        )
+        for event in events
+    ]
+
+    assert [(run.returncode, run.stderr) for run in runs] == [(0, b""), (0, b"")]
+    assert [json.loads(run.stdout)["hookSpecificOutput"]["permissionDecision"] for run in runs] == [
+        "deny",
+        "deny",
+    ]
+    bodies = event_server.bodies()
+    assert [body["decision"] for body in bodies] == [
+        {"by": "guard", "kind": "deny", "rule": "blocked_word"}
+    ] * 2
+    assert "prod-line" not in json.dumps(bodies)
+    for body in bodies:
+        HookEnvelope.model_validate(body)
