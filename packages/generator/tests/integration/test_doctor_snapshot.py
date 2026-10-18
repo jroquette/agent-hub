@@ -19,7 +19,7 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.core.workflows.catalog import check_workflows
-from agent_hub.generator.doctor_snapshot import build_doctor_snapshot
+from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, item_leftovers
 
 RUNNING = "4.5.6"
 NO_RULES = Selection(rules=(), notes=(), severities={})
@@ -252,6 +252,11 @@ def test_lists_temp_entries_when_item_leftovers_rule_selected(hub_root: Path) ->
         "plugin/other",
         "workflows/demo",
     )
+
+
+def test_watches_plugin_folder_when_absent(tmp_path: Path) -> None:
+    # A ``plugin`` made later changes its watched time (absent: None), so the next run rescans.
+    assert item_leftovers(str(tmp_path)) == ((), ("plugin",))
 
 
 def test_reads_no_item_folders_when_rule_not_selected(hub_root: Path) -> None:

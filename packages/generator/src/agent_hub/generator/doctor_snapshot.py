@@ -100,8 +100,9 @@ _PLUGIN_FOLDERS = ("skills", "agents", "hooks", "scripts")
 
 def item_leftovers(root: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """The temp-shaped entries directly in the item folders, and the folders to watch for them,
-    each in path order: the folders scanned, plus ``plugin`` and each ``plugin/<p>``, whose
-    times change when an item folder is made in them. A folder reached through a link is not
+    each in path order: the folders scanned, plus ``plugin`` (always: while it is absent its
+    time reads None, so making it is noticed) and each ``plugin/<p>``, whose times change when
+    an item folder is made in them. A folder reached through a link is not
     scanned; at most the listing's names budget is examined in each."""
     plugins = tuple(f"{_PLUGIN}/{name}" for name in _sub_folders(root, _PLUGIN))
     candidates = [
@@ -109,7 +110,7 @@ def item_leftovers(root: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
         *(f"{plugin}/{folder}" for plugin in plugins for folder in _PLUGIN_FOLDERS),
         *(f"{HUB_WORKFLOWS}/{name}" for name in _sub_folders(root, HUB_WORKFLOWS)),
     ]
-    scanned: list[str] = [*([_PLUGIN] if _plain_folder(root, _PLUGIN) else []), *plugins]
+    scanned: list[str] = [_PLUGIN, *plugins]
     found: list[str] = []
     for folder in sorted(candidates):
         names = _temp_names(root, folder)
