@@ -25,6 +25,16 @@ from agent_hub.core.hub_config.conventions import (
     title_pattern_problem,
 )
 from agent_hub.core.hub_config.doctor_rules import RULE_MODULES, DoctorRules
+from agent_hub.core.hub_config.environments import (
+    MAX_BLOCKED_ENV,
+    MAX_BLOCKED_GLOBS,
+    MAX_BLOCKED_WORDS,
+    BlockedWord,
+    Environments,
+    EnvVarPattern,
+    Services,
+    WordFileGlob,
+)
 from agent_hub.core.hub_config.model_tiers import Models
 from agent_hub.core.hub_config.platform_repository import (
     DEFAULT_PLATFORM_REPOSITORY,
@@ -33,14 +43,14 @@ from agent_hub.core.hub_config.platform_repository import (
     PLATFORM_REPOSITORY_PATTERN,
     is_platform_repository,
 )
+from agent_hub.core.hub_config.text_shapes import FREE_TEXT_PATTERN, SAFE_SEGMENT
 
 HUB_ROOT = "@hub"
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 # Plain aliases, not ``type`` statements: pydantic inlines them, so the schema's ``$defs`` hold
 # only the object models.
-# Free text still lands in files and commands, so a control character is never part of it.
-FreeString = Annotated[str, Field(min_length=1, pattern=r"^[^\x00-\x1f\x7f]+$")]
+FreeString = Annotated[str, Field(min_length=1, pattern=FREE_TEXT_PATTERN)]
 # A repo's fast gate may be empty or blank: no Stop gate (project-config.md).
 CommandString = Annotated[str, Field(pattern=r"^[^\x00-\x1f\x7f]*$")]
 # ``str.isspace`` outside the control characters, spelled out: JSON Schema's ``\s`` (ECMA) and
@@ -52,12 +62,8 @@ MAX_CHECK_FAST_TIMEOUT: Final = 160
 # ``tracker.states.review``'s default: the state ``hub run`` and ``hub ship`` move an issue to.
 REVIEW_STATE: Final = "In Review"
 
-# Rendered values (project-config.md): values that land in shell, Make or YAML text. Pydantic's
-# Rust regex has no look-around, and ``[0-9]`` is spelled out because ``\d`` takes any digit.
-# A safe segment: no leading ``-`` or ``.`` (an option or a hidden path), no ``..``, no trailing
-# punctuation. The separator class leaves out ``_``, already a segment character: the hooks'
-# reader copies this pattern into Python's ``re``, which backtracks exponentially on an overlap.
-_SAFE_SEGMENT = r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*"
+# Rendered values (project-config.md): the safe segment and its comment are in text_shapes.py.
+_SAFE_SEGMENT = SAFE_SEGMENT
 _HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
 KebabName = Annotated[str, Field(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
 RepoDir = Annotated[str, Field(pattern=rf"^{_SAFE_SEGMENT}$")]
@@ -364,6 +370,11 @@ class Repo(ConfigObject):
     conventions: Conventions | None = absent_by_default(
         description="Overrides project.conventions key by key."
     )
+    services: Services = Field(
+        default_factory=dict,
+        description="The services the repo runs, keyed by name, with their endpoints"
+        " (docs/design/environments.md).",
+    )
 
 
 def _python_regex(value: str) -> str:
@@ -407,6 +418,25 @@ class Guard(ConfigObject):
     infra: GuardInfra | None = absent_by_default(
         description="Turns on the guard's infra classification: Python re patterns, searched with"
         " no flags. Absent: the fixed infra rule."
+    )
+    blocked_words: Annotated[tuple[BlockedWord, ...], Field(max_length=MAX_BLOCKED_WORDS)] = Field(
+        default=(),
+        description="Words the guard denies in commands, the session, paths and listed files;"
+        " matched ignoring ASCII case, bounded by any character that is not a letter.",
+    )
+    blocked_words_files: Annotated[
+        tuple[WordFileGlob, ...], Field(max_length=MAX_BLOCKED_GLOBS)
+    ] = Field(
+        default=(),
+        description="Globs of files whose contents the guard checks for blocked words, on top"
+        " of .env* files.",
+    )
+    blocked_words_env: Annotated[tuple[EnvVarPattern, ...], Field(max_length=MAX_BLOCKED_ENV)] = (
+        Field(
+            default=(),
+            description="Names of variables whose values the guard checks for blocked words; a"
+            " trailing * matches a prefix.",
+        )
     )
 
     def cross_field_problems(self) -> list[InitErrorDetails]:
@@ -505,6 +535,11 @@ class HubConfig(ConfigObject):
     doctor: Doctor = Field(default_factory=Doctor)
     # A factory, not an instance: the schema would export its unset keys as nulls.
     models: Models = Field(default_factory=Models)
+    environments: Environments = Field(
+        default_factory=dict,
+        description="The environments agents may reach, keyed by name, and what they may do"
+        " there (docs/design/environments.md).",
+    )
 
     def default_branch_for(self, repo_dir: str) -> str:
         """The effective default branch of the repo at ``repo_dir``: its own, else the project's.
@@ -543,14 +578,53 @@ class HubConfig(ConfigObject):
 
     def cross_field_problems(self) -> list[InitErrorDetails]:
         """Unique repo dirs, known guard roots and contract-sync repos, rules of chosen modules,
-        and an explicit ``pr_title`` that its repo's ``commit_title`` cannot fill."""
+        an explicit ``pr_title`` that its repo's ``commit_title`` cannot fill, and environment
+        names unique ignoring case with every endpoint on a declared one."""
         return [
             *self._duplicate_repo_dirs(),
             *self._unknown_guard_roots(),
             *self._contract_sync_repos(),
             *self._rules_of_unselected_modules(),
             *self._unfillable_pr_titles(),
+            *self._environment_problems(),
         ]
+
+    def _environment_problems(self) -> Iterator[InitErrorDetails]:
+        yield from self._duplicate_environment_names()
+        yield from self._undeclared_endpoint_environments()
+
+    def _duplicate_environment_names(self) -> Iterator[InitErrorDetails]:
+        # Ignoring case, as repo dirs: ``live`` and ``Live`` would read as one environment.
+        first_name: dict[str, str] = {}
+        for name in self.environments:
+            folded = name.lower()
+            if folded in first_name:
+                yield InitErrorDetails(
+                    type=PydanticCustomError(
+                        "duplicate_environment",
+                        "environment name {name} is already used by {first}, ignoring case",
+                        {"name": json.dumps(name), "first": json.dumps(first_name[folded])},
+                    ),
+                    loc=("environments", name),
+                    input=name,
+                )
+            first_name.setdefault(folded, name)
+
+    def _undeclared_endpoint_environments(self) -> Iterator[InitErrorDetails]:
+        for index, repo in enumerate(self.repos):
+            for service_name, service in repo.services.items():
+                for name in service.endpoints:
+                    if name in self.environments:
+                        continue
+                    yield InitErrorDetails(
+                        type=PydanticCustomError(
+                            "unknown_environment",
+                            "environment {name} is not in environments",
+                            {"name": json.dumps(name)},
+                        ),
+                        loc=("repos", index, "services", service_name, "endpoints", name),
+                        input=name,
+                    )
 
     def _unfillable_pr_titles(self) -> Iterator[InitErrorDetails]:
         # Per repo, on the effective patterns; an unset pr_title is the commit_title, so only an

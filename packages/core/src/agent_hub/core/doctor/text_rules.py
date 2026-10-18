@@ -15,12 +15,12 @@ present) as regular files; a link is never followed (D3). An instruction or plug
 not text is the runner's to report (E28); every other file that is not text is skipped (Q-19).
 
 Each shape runs in time linear in the line: the old lint's JWT and co-author patterns retried a
-run from every start and are rewritten so each start is tried once, with the same matches.
+run from every start and are rewritten so each start is tried once, with the same matches. The
+secret shapes live in ``agent_hub.core.secret_shapes``, which ``hub.json``'s model shares.
 """
 
 import re
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from collections.abc import Iterator
 from typing import Final
 
 from agent_hub.core.doctor.config_lint import (
@@ -42,6 +42,7 @@ from agent_hub.core.hub_config.doctor_rules import (
 from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, HubConfig
 from agent_hub.core.hub_config.team_keys import team_segment
 from agent_hub.core.hub_config.versions import cut_echo
+from agent_hub.core.secret_shapes import SECRETS, Shape, searched_shape
 
 # The files read beyond the instruction and plugin files, when among the hub's files.
 EXTRA_FILES: Final = (
@@ -59,54 +60,6 @@ READABLE_ENV_FILES_FIX: Final = "remove a name from guard.readable_env_files to 
 DENIED_ENV_FILES: Final = "guard.secret_env_files always denies: {names}"
 DENIED_ENV_FILES_FIX: Final = "none needed"
 
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class Shape:
-    """What a line must hold to be flagged, and the kind a finding names.
-
-    ``patterns`` are the ones ``matches`` searches with; none anchors at the text's start or end,
-    so a line's match is also one of the whole text (the pre-filter in ``_flagged``).
-    """
-
-    kind: str
-    patterns: tuple[re.Pattern[str], ...]
-    matches: Callable[[str], bool]
-
-
-def _searched(kind: str, pattern: str) -> Shape:
-    compiled = re.compile(pattern)
-    return Shape(
-        kind=kind,
-        patterns=(compiled,),
-        matches=lambda text: compiled.search(text) is not None,
-    )
-
-
-# A run of the JWT's characters, which holds its ``eyJ`` and first part.
-_JWT_CHARACTER: Final = "[A-Za-z0-9_-]"
-# The old ``eyJ[C]{15,}\.[C]{15,}`` retried the run after each ``eyJ`` in it, quadratic in the
-# run. The first part ends where its run does (``.`` is not in it), so the first ``eyJ`` of the
-# run, which leaves the most after it, decides: each run is tried once, from its start.
-_JWT: Final = (
-    rf"(?<!{_JWT_CHARACTER})(?>{_JWT_CHARACTER}*?eyJ){_JWT_CHARACTER}{{15,}}+\."
-    rf"{_JWT_CHARACTER}{{15}}"
-)
-
-# The old lint's shapes, in its order; two shapes share the kind ``API key``.
-SECRETS: Final = (
-    _searched("JWT", _JWT),
-    _searched("AWS access key", r"AKIA[0-9A-Z]{16}"),
-    _searched("private key", r"-{5}BEGIN [A-Z ]*PRIVATE KEY-{5}"),
-    _searched("API key", r"\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"),
-    _searched("API key", r"\bsk-[A-Za-z0-9_-]{20,}"),
-    _searched("GitHub token", r"\bghp_[A-Za-z0-9]{30,}"),
-    _searched("Linear API key", r"\blin_api_[A-Za-z0-9]{20,}"),
-    _searched(
-        "credential assignment",
-        r"(?i)\b[A-Z_]*(?:PASSWORD|SECRET|TOKEN|ENCRYPTION_KEY)\s*=\s*['\"]?[^\s'\"<>$`{]{6,}",
-    ),
-    _searched("Fernet-like key", r"\b[A-Za-z0-9_-]{43}=(?![A-Za-z0-9])"),
-)
 
 _CO_AUTHOR_TAG: Final = re.compile(r"(?i)co-authored-by:")
 _CO_AUTHOR_NAMED: Final = re.compile(r"(?i)co-authored-by:\s*(?:claude|copilot)")
@@ -134,11 +87,11 @@ ATTRIBUTIONS: Final = (
         patterns=(_CO_AUTHOR_TAG, _CO_AUTHOR_NAMED, _AI_VENDOR),
         matches=_names_ai_co_author,
     ),
-    _searched(
+    searched_shape(
         '"Generated with Claude Code"',
         r"(?i)generated with \[?claude code",
     ),
-    _searched("`claude/` branch prefix", r"\bclaude/(?:<|[a-z0-9-]+-)"),
+    searched_shape("`claude/` branch prefix", r"\bclaude/(?:<|[a-z0-9-]+-)"),
 )
 
 

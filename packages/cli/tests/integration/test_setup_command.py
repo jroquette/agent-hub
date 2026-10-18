@@ -522,7 +522,7 @@ class TestTools:
     ) -> None:
         # The file asks for mcp but is invalid: hub.json's transport (api) is the one checked.
         monkeypatch.delenv(KEY_VARIABLE, raising=False)
-        demo_workspace.write_local('{"tracker": {"transport": "mcp"}, "repos": []}\n')
+        demo_workspace.write_local('{"tracker": {"transport": "mcp"}, "doctor": {}}\n')
         install_probe()
 
         result = run_setup(demo_workspace.hub)
@@ -679,7 +679,7 @@ class TestIdentity:
         self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
     ) -> None:
         hub = _team_hub(demo_workspace)
-        demo_workspace.write_local('{"repos": []}\n')
+        demo_workspace.write_local('{"doctor": {}}\n')
         before = _snapshot(hub / LOCAL_FILE)
 
         result = run_setup(hub, "--yes")

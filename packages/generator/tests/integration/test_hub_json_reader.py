@@ -79,6 +79,7 @@ TEAM_PATHS: tuple[tuple[str | int, ...], ...] = (("tracker", "team"), ("tracker"
 IGNORED_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("project", "conventions"),
     ("repos", 0, "conventions"),
+    ("repos", 0, "services"),
     ("tracker", "states"),
     ("tracker", "blocked_label"),
     ("models",),
@@ -101,6 +102,17 @@ INFRA_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("guard", "infra"),
     ("guard", "infra", "allow"),
     ("guard", "infra", "prod_markers"),
+)
+
+# ``environments``: to be read leniently by the hooks (AGH-277's reader change), and compared by
+# ``test_reads_environments_as_model_when_document_valid``.
+ENVIRONMENT_PATHS: tuple[tuple[str | int, ...], ...] = (("environments",),)
+
+# The guard's blocked lists: compared by the shared blocked-word cases (AGH-277).
+BLOCKED_WORD_PATHS: tuple[tuple[str | int, ...], ...] = (
+    ("guard", "blocked_words"),
+    ("guard", "blocked_words_files"),
+    ("guard", "blocked_words_env"),
 )
 
 # argv: mode, reader file, hub.json path, checks (JSON: name -> [actual, expected] expressions,
@@ -360,6 +372,9 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
         | set(PLATFORM_SOURCE_PATHS)
         | set(GATE_DEFAULT_PATHS)
         | set(INFRA_PATHS)
+        # ``ENVIRONMENT_PATHS`` and ``BLOCKED_WORD_PATHS`` are the ninth and tenth.
+        | set(ENVIRONMENT_PATHS)
+        | set(BLOCKED_WORD_PATHS)
     )
 
 

@@ -25,17 +25,22 @@ cloud setup. The `hub.json` fields themselves are in [project-config.md](project
 - **Location: the identity home**, the root of the hub's main checkout. From a hub worktree the main checkout's file
   is read (the CLI falls back to the worktree only when git cannot run). It is never read beside a `$HUB_CONFIG` file.
 - **Format.** `hub.json`'s nesting, plain JSON, a regular file of at most 65,536 bytes. It accepts only
-  `project.branch_prefix`, `project.author_name`, `project.author_email` and `tracker.transport` (`api` or `mcp`),
-  each with `hub.json`'s rule, plus `_` comment keys at `$`, `project` and `tracker`. `null` is refused.
+  `project.branch_prefix`, `project.author_name`, `project.author_email` and `tracker.transport` (`api` or `mcp`);
+  the developer's `environments`, `repos: [{dir, services}]` and `guard.blocked_words`, `guard.blocked_words_files`
+  and `guard.blocked_words_env` ([environments.md](environments.md) § The developer's layer); each with `hub.json`'s
+  rule, plus `_` comment keys at every object level. `null` is refused. The CLI also checks them against `hub.json`
+  (new names only, `access` only tightened, a known `dir`, local endpoints on local environments).
 - **Example:** `{"project": {"branch_prefix": "jane/", "author_name": "Jane Roe", "author_email": "jane@example.com"}}`.
 - **Problems** (CLI and doctor), one per error, `hub.local.json: <json path>: <message>`. A `hub.json` key that is not
-  local: `set only in hub.json; hub.local.json holds project.branch_prefix, author_name, author_email and
-  tracker.transport`. Any other key: `Extra inputs are not permitted`. Not an object: `$: must be a JSON object`. Too
+  local: `set only in hub.json (hub.local.json's keys: docs/design/developer-identity.md)`. Any other key: `Extra inputs are not permitted`. Not an object: `$: must be a JSON object`. Too
   big: `$: cannot read "<path>": larger than 65536 bytes`. An absent file sets nothing.
 - **Ignored by git.** `hub init` seeds `.gitignore` with `hub.local.json`. `.gitignore` is seeded, so `hub sync` never
   adds the line: an existing hub adds it by hand (README, `hub.local.json`).
-- **Nothing in it relaxes a guard**: it cannot add or remove a guard path, host, protected branch or repo.
-- **One writer:** `hub setup` ([hub-setup.md](hub-setup.md)) writes it, as a new file only, never overwritten.
+- **Nothing in it relaxes a guard**: it cannot add or remove a guard path, host, protected branch or repo. It adds
+  blocked entries and tightens `access` only.
+- **Three writers** ([ADR 0038](../adr/0038-declared-environments-and-blocked-words.md)): `hub setup`
+  ([hub-setup.md](hub-setup.md)) writes the identity as a new file only, never overwritten; its environments step
+  and `hub env … --local` update the file.
 
 ### CLI
 

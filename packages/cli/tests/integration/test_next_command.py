@@ -607,7 +607,7 @@ class TestLocalFile:
         ("document", "expected_path"),
         [
             ([], "$"),
-            ({"guard": {}}, "guard"),
+            ({"modules": {}}, "modules"),
             ({"tracker": {"transport": "ftp"}}, "tracker.transport"),
         ],
         ids=["array", "guard", "bad-transport"],
