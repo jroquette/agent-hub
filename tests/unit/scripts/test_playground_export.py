@@ -39,6 +39,7 @@ from scripts.playground_export import (
     uncommitted,
     uncommitted_patch,
 )
+from scripts.seed_demo import CHAT_SESSION
 
 ROUTES_FILE = Path(__file__).resolve().parents[3] / "apps" / "web" / "src" / "routes.tsx"
 SCREENS_DIR = ROUTES_FILE.parent / "screens"
@@ -141,10 +142,21 @@ def test_reads_every_route_of_routes_file_when_patterns_built() -> None:
 
 
 def test_captures_shared_screen_once_when_two_requests_show_it() -> None:
-    routes = capture_routes(["agent-session/sessions", "skills/skills", "agent-session/sessions"])
+    routes = capture_routes(["run-detail/run", "skills/skills", "run-detail/run"])
 
-    assert [route["file"] for route in routes] == ["agent-session/sessions", "skills/skills"]
-    assert routes[0]["follow"] == "/agent-sessions/"
+    assert [route["file"] for route in routes] == ["run-detail/run", "skills/skills"]
+    assert routes[0]["follow"] == "/runs/"
+    assert "follow" not in routes[1]
+
+
+def test_opens_demo_chat_by_its_id_when_agent_session_captured() -> None:
+    [route] = capture_routes(["agent-session/chat"])
+
+    assert route == {"file": "agent-session/chat", "path": f"/agent-sessions/{CHAT_SESSION}"}
+    assert any(
+        pattern.fullmatch(route["path"].strip("/"))
+        for pattern in route_patterns(ROUTES_FILE.read_text("utf-8"))
+    )
 
 
 def test_reads_last_token_when_log_holds_several(tmp_path: Path) -> None:
@@ -280,7 +292,7 @@ def test_merges_same_title_sessions_and_keeps_unclaimed_work_when_requests_built
     assert skills.also_on == {"4" * 40: "origin/pr"}
     assert review.hub_files == ["plugin/p/skills/x/SKILL.md"]
     assert chat.in_progress == ["apps/web/src/screens/agent-session/Files.tsx"]
-    assert chat.screens == ["agent-session/sessions"]
+    assert chat.screens == ["agent-session/chat"]
     assert leftover.commits == ["5" * 40]
     assert leftover.hub_files == ["notes.md"]
     assert leftover.in_progress == ["loose.txt"]
