@@ -1,4 +1,5 @@
-"""Item versions on the composed app over a registered fixture hub (AGH-295, D2, D5, D9, S1, S2).
+"""Item versions on the composed app over a registered fixture hub (AGH-295, D2, D5, D9, S1, S2;
+the restores: D4, D12, D13, D22, S4, S9, A6).
 
 The hub is a ``hub init`` hub whose ``plugin/``, ``.claude/`` and ``workflows/`` are replaced by
 the spec's fixture: skills ``alpha`` (with ``references/r.md``) and ``beta``, agent ``scout``, two
@@ -6,33 +7,41 @@ hooks in ``.claude/settings.json``, one in ``.claude/settings.project.json`` and
 ``plugin/demo/hooks/hooks.json``, and the hub workflow ``workflows/demo/review.yaml`` (it
 overrides the built-in ``review``). Every read is a GET on the real file adapter; the versions are
 read back from the app's database through ``open_item_version_store`` (and the table itself, to
-see every unit). Synthetic data only: each token is built from fragments at run time.
+see every unit). The restores are posted by a client signed in with a synthetic launch token,
+on this server's Origin. Synthetic data only: each token is built from fragments at run time.
 """
 
 import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
 import pytest
 
+from agent_hub.api.session_token import cookie_name
+from agent_hub.api.settings import ApiSettings
+from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError
 from agent_hub.core.item_versions.item_version import (
     ItemVersionMeta,
     NewItemVersion,
     UnitKind,
+    VersionAuthor,
     VersionOrigin,
 )
-from agent_hub.core.item_versions.unit_content import UnitFile
+from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 from agent_hub.core.item_versions.unit_hash import file_hash, folder_hash
 from agent_hub.core.readmodels.cursor import Cursor, encode_cursor
 from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES
 from agent_hub.core.testing.skill_trees import Link, TreeEntry, write_tree
+from agent_hub.generator.hub_item_writer import FileSystemHubItemWriter
 from agent_hub.storage.item_version_store import open_item_version_store
 
 CATALOG: Final = "/api/v1/projects/demo/skills"
@@ -109,18 +118,25 @@ def _fixture_tree() -> dict[str, TreeEntry]:
 type VersionsHub = Callable[..., Path]
 
 
+def _registered(
+    composed: Any, make_hub: Callable[..., Path], extra: Mapping[str, TreeEntry] | None
+) -> Path:
+    """A ``demo`` hub holding the fixture tree plus ``extra`` entries, registered."""
+    hub = make_hub()
+    for folder in ("plugin", ".claude", "workflows"):
+        shutil.rmtree(hub / folder)
+    write_tree(hub, _fixture_tree() | dict(extra or {}))
+    registered = composed.client.post("/api/v1/hubs", json={"path": str(hub)}, headers=ORIGIN)
+    assert registered.status_code == 201, registered.text
+    return hub
+
+
 @pytest.fixture
 def versions_hub(composed: Any, make_hub: Callable[..., Path]) -> VersionsHub:
     """Registers a ``demo`` hub holding the fixture tree plus ``extra`` entries."""
 
     def make(extra: Mapping[str, TreeEntry] | None = None) -> Path:
-        hub = make_hub()
-        for folder in ("plugin", ".claude", "workflows"):
-            shutil.rmtree(hub / folder)
-        write_tree(hub, _fixture_tree() | dict(extra or {}))
-        registered = composed.client.post("/api/v1/hubs", json={"path": str(hub)}, headers=ORIGIN)
-        assert registered.status_code == 201, registered.text
-        return hub
+        return _registered(composed, make_hub, extra)
 
     return make
 
@@ -570,3 +586,473 @@ def test_get_version_answers_content_when_id_is_the_items(
     ):
         response = composed.client.get(path)
         assert response.status_code == 404, (path, response.text)
+
+
+# The restores (AGH-295 slice 2e): a client signed in with this launch's (synthetic) token.
+TOKEN: Final = "synthetic-launch-" + "token-" + _ALNUM * 2
+SETTINGS_HOOK: Final = f"{CATALOG}/hook/settings/settings-pretooluse-1"
+SECOND: Final = SCOUT_MD + b"Second.\n"
+
+type WriterOpener = Callable[..., Any]
+
+
+@pytest.fixture
+def open_writer(open_composed: Callable[..., Any], composed_settings: ApiSettings) -> WriterOpener:
+    """Opens the composed app with a launch token and its client signed in (a restore needs the
+    cookie); ``sessions_off`` and ``build_app`` keywords (``item_writer``) pass through."""
+
+    def opened(*, sessions_off: bool = False, **options: Any) -> Any:
+        settings = replace(composed_settings, session_token=TOKEN, sessions_off=sessions_off)
+        app = open_composed(settings, **options)
+        app.client.cookies.set(cookie_name(settings.port), TOKEN)
+        return app
+
+    return opened
+
+
+@pytest.fixture
+def writer(open_writer: WriterOpener) -> Any:
+    """The composed app, signed in."""
+    return open_writer()
+
+
+@pytest.fixture
+def writer_hub(writer: Any, make_hub: Callable[..., Path]) -> VersionsHub:
+    """Registers the fixture hub (plus ``extra``) on the signed-in app."""
+
+    def make(extra: Mapping[str, TreeEntry] | None = None) -> Path:
+        return _registered(writer, make_hub, extra)
+
+    return make
+
+
+def _restore(app: Any, item: str, version_id: str, **body: bool) -> Any:
+    """``POST {item}/versions/{version_id}/restore`` with ``body``, from this server's page."""
+    path = f"{item}/versions/{version_id}/restore"
+    return app.client.post(path, json=body, headers=ORIGIN)
+
+
+def _origins(app: Any, unit_path: str) -> list[tuple[VersionOrigin, str]]:
+    return [(v.origin, v.content_hash) for v in _versions(app, unit_path)]
+
+
+def _author(hub: Path) -> VersionAuthor:
+    project = json.loads((hub / "hub.json").read_bytes())["project"]
+    return VersionAuthor(name=project["author_name"], email=project["author_email"])
+
+
+def _two_scout_versions(app: Any, hub: Path) -> list[ItemVersionMeta]:
+    """The agent read as ``SCOUT_MD``, then edited to ``SECOND`` and read again."""
+    _get(app, SCOUT_DETAIL)
+    _edit(hub / SCOUT, SECOND)
+    _get(app, SCOUT_DETAIL)
+    versions = _versions(app, SCOUT)
+    assert [v.content_hash for v in versions] == [file_hash(SCOUT_MD), file_hash(SECOND)]
+    return versions
+
+
+def _refused(response: Any, code: str) -> None:
+    assert response.status_code == 409, response.text
+    assert response.headers["content-type"] == "application/problem+json"
+    assert (response.json()["title"], response.json()["code"]) == ("Item write refused", code)
+
+
+def test_restore_appends_version_when_earlier_version_restored(
+    writer: Any, writer_hub: VersionsHub
+) -> None:
+    hub = writer_hub()
+    contents = [SCOUT_MD, SECOND, SCOUT_MD + b"Third.\n"]
+    for content in contents:
+        _edit(hub / SCOUT, content)
+        _get(writer, SCOUT_DETAIL)
+    before = _versions(writer, SCOUT)
+    assert [v.content_hash for v in before] == [file_hash(content) for content in contents]
+    store = open_item_version_store(writer.settings.db_path)
+    stored = [store.get("demo", SCOUT, v.id) for v in before]
+
+    response = _restore(writer, SCOUT_DETAIL, before[0].id)
+
+    assert response.status_code == 200, response.text
+    answer = response.json()
+    assert (answer["changed"], answer["versioned"], answer["reason"]) == (True, True, None)
+    assert (hub / SCOUT).read_bytes() == SCOUT_MD
+    after = _versions(writer, SCOUT)
+    assert after[:3] == before
+    assert [store.get("demo", SCOUT, v.id) for v in before] == stored
+    restored = after[3]
+    assert answer["version"]["id"] == restored.id
+    assert (restored.seq, restored.origin, restored.first) == (4, VersionOrigin.RESTORE, False)
+    assert (restored.restored_from, restored.content_hash) == (before[0].id, before[0].content_hash)
+    assert restored.author == _author(hub)
+    listed = _get(writer, f"{SCOUT_DETAIL}/versions")["items"][0]
+    assert (listed["id"], listed["origin"], listed["restored_from"]) == (
+        restored.id,
+        "restore",
+        before[0].id,
+    )
+    assert listed["author"] == {"name": restored.author.name, "email": restored.author.email}
+
+
+def test_restore_records_external_first_when_hand_edited(
+    writer: Any, writer_hub: VersionsHub
+) -> None:
+    hub = writer_hub()
+    first, _ = _two_scout_versions(writer, hub)
+    by_hand = SCOUT_MD + b"Edited by hand.\n"
+    _edit(hub / SCOUT, by_hand)
+
+    response = _restore(writer, SCOUT_DETAIL, first.id)
+
+    assert response.status_code == 200, response.text
+    assert _origins(writer, SCOUT) == [
+        (VersionOrigin.EXTERNAL, file_hash(SCOUT_MD)),
+        (VersionOrigin.EXTERNAL, file_hash(SECOND)),
+        (VersionOrigin.EXTERNAL, file_hash(by_hand)),
+        (VersionOrigin.RESTORE, file_hash(SCOUT_MD)),
+    ]
+    hand_edit = _versions(writer, SCOUT)[2]
+    assert hand_edit.author is None
+    # The hand edit stays restorable.
+    again = _restore(writer, SCOUT_DETAIL, hand_edit.id)
+    assert again.status_code == 200, again.text
+    assert (hub / SCOUT).read_bytes() == by_hand
+    assert _versions(writer, SCOUT)[-1].restored_from == hand_edit.id
+
+
+def test_restore_managed_needs_confirmation_when_unit_managed(
+    writer: Any, writer_hub: VersionsHub
+) -> None:
+    hub = writer_hub()
+    history = _get(writer, f"{SETTINGS_HOOK}/versions")
+    assert (history["managed"], history["unit_path"]) == (True, SETTINGS)
+    [first] = _versions(writer, SETTINGS)
+    changed = _settings(pre_tool_use="python3 hooks/guard.py --strict")
+    _edit(hub / SETTINGS, changed)
+
+    refused = _restore(writer, SETTINGS_HOOK, first.id)
+    declined = _restore(writer, SETTINGS_HOOK, first.id, confirm_managed=False)
+
+    for response in (refused, declined):
+        _refused(response, "managed_confirmation_required")
+    assert (hub / SETTINGS).read_bytes() == changed
+    assert VersionOrigin.RESTORE not in {origin for origin, _ in _origins(writer, SETTINGS)}
+
+    confirmed = _restore(writer, SETTINGS_HOOK, first.id, confirm_managed=True)
+
+    assert confirmed.status_code == 200, confirmed.text
+    assert (hub / SETTINGS).read_bytes() == _settings()
+    assert _origins(writer, SETTINGS)[-1] == (VersionOrigin.RESTORE, file_hash(_settings()))
+
+
+def _three_hooks(stop: str = "make stop-check") -> bytes:
+    return _json(
+        {
+            "hooks": {
+                "PreToolUse": [_hook("python3 hooks/guard.py")],
+                "SessionStart": [_hook("make brief")],
+                "Stop": [_hook(stop)],
+            }
+        }
+    )
+
+
+def test_restore_hook_file_writes_whole_file_when_restored(
+    writer: Any, writer_hub: VersionsHub
+) -> None:
+    hub = writer_hub({SETTINGS: _three_hooks()})
+    hooks = [
+        item["id"]
+        for item in _get(writer, CATALOG)["items"]
+        if item["kind"] == "hook" and item["source_path"] == SETTINGS
+    ]
+    assert len(hooks) == 3
+    [first] = _versions(writer, SETTINGS)
+    _edit(hub / SETTINGS, _three_hooks(stop="make stop-check --all"))
+    _get(writer, CATALOG)
+    # One hook changed; another hook's history restores the whole file.
+    other = next(item for item in hooks if "sessionstart" in item)
+    history = _get(writer, f"{CATALOG}/{other}/versions")
+    assert (history["shared_by"], len(history["items"])) == (3, 2)
+
+    response = _restore(writer, f"{CATALOG}/{other}", first.id, confirm_managed=True)
+
+    assert response.status_code == 200, response.text
+    assert (hub / SETTINGS).read_bytes() == _three_hooks()
+    assert _origins(writer, SETTINGS)[-1] == (VersionOrigin.RESTORE, file_hash(_three_hooks()))
+
+
+def _folder(root: Path) -> dict[str, tuple[bytes, bool]]:
+    """Every file under ``root``: its bytes and whether it is executable."""
+    return {
+        str(path.relative_to(root)): (path.read_bytes(), os.access(path, os.X_OK))
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def test_restore_folder_and_workflow_match_version_when_restored(
+    writer: Any, writer_hub: VersionsHub
+) -> None:
+    script = b"#!/bin/sh\necho s\n"
+    prompt = b"# A prompt of the pack\n"
+    hub = writer_hub({f"{ALPHA}/scripts/s.sh": script, "workflows/demo/prompts/p.md": prompt})
+    (hub / ALPHA / "scripts" / "s.sh").chmod(0o755)
+    _get(writer, ALPHA_DETAIL)
+    _get(writer, REVIEW_DETAIL)
+    [alpha] = _versions(writer, ALPHA)
+    [review] = _versions(writer, REVIEW)
+    _edit(hub / ALPHA / "references" / "r.md", b"# R, changed\n")
+    (hub / ALPHA / "scripts" / "s.sh").chmod(0o644)
+    (hub / ALPHA / "assets").mkdir()
+    (hub / ALPHA / "assets" / "new.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    _edit(hub / REVIEW, REVIEW_YAML + b"# Edited.\n")
+    edited_prompt = prompt + b"Edited too.\n"
+    _edit(hub / "workflows/demo/prompts/p.md", edited_prompt)
+
+    folder = _restore(writer, ALPHA_DETAIL, alpha.id)
+    workflow = _restore(writer, REVIEW_DETAIL, review.id)
+
+    assert (folder.status_code, workflow.status_code) == (200, 200), (folder.text, workflow.text)
+    assert _folder(hub / ALPHA) == {
+        "SKILL.md": (ALPHA_MD, False),
+        "references/r.md": (REFERENCE, False),
+        "scripts/s.sh": (script, True),
+    }
+    assert not (hub / ALPHA / "assets").exists()
+    assert (hub / REVIEW).read_bytes() == REVIEW_YAML
+    assert (hub / "workflows/demo/prompts/p.md").read_bytes() == edited_prompt
+    assert _origins(writer, ALPHA)[-1] == (VersionOrigin.RESTORE, alpha.content_hash)
+    assert _origins(writer, REVIEW)[-1] == (VersionOrigin.RESTORE, review.content_hash)
+
+
+class EdgeWriter:
+    """The real writer, with a fault to inject: ``fail`` raises the writer's error (its cause
+    naming the unit's path) instead of writing; ``link`` swaps the agents folder for a link to
+    a copy outside the hub just before the targets are checked, as a concurrent change would."""
+
+    def __init__(self, outside: Path) -> None:
+        self.real = FileSystemHubItemWriter()
+        self.outside = outside
+        self.fail = False
+        self.link = False
+
+    def is_writable(self, hub_path: str, unit_paths: Any = ()) -> bool:
+        return self.real.is_writable(hub_path, unit_paths)
+
+    def check_targets(self, hub_path: str, unit_paths: Any) -> None:
+        if self.link:
+            agents = Path(hub_path) / "plugin/demo/agents"
+            agents.rename(self.outside)
+            agents.symlink_to(self.outside)
+        self.real.check_targets(hub_path, unit_paths)
+
+    def write_unit(
+        self, hub_path: str, unit_path: str, content: UnitContent, *, kind: UnitKind
+    ) -> None:
+        if self.fail:
+            raise HubItemWriteError(f"rename failed at {hub_path}/{unit_path}")
+        self.real.write_unit(hub_path, unit_path, content, kind=kind)
+
+    def write_file(
+        self, hub_path: str, path: str, content: bytes, *, executable: bool = False
+    ) -> None:
+        self.real.write_file(hub_path, path, content, executable=executable)
+
+    def remove_unit(self, hub_path: str, unit_path: str, *, kind: UnitKind) -> None:
+        self.real.remove_unit(hub_path, unit_path, kind=kind)
+
+
+def test_write_edges_refuse_or_skip_when_link_equal_or_failing(
+    open_writer: WriterOpener, make_hub: Callable[..., Path], tmp_path: Path
+) -> None:
+    edges = EdgeWriter(tmp_path / "outside-agents")
+    app = open_writer(item_writer=edges)
+    hub = _registered(app, make_hub, None)
+    first, second = _two_scout_versions(app, hub)
+    stamp = (hub / SCOUT).stat().st_mtime_ns
+
+    equal = _restore(app, SCOUT_DETAIL, second.id)
+
+    assert equal.status_code == 200, equal.text
+    assert equal.json() == {"changed": False, "versioned": False, "reason": None, "version": None}
+    assert (hub / SCOUT).stat().st_mtime_ns == stamp
+
+    edges.fail = True
+    failed = _restore(app, SCOUT_DETAIL, first.id)
+
+    assert failed.status_code == 500, failed.text
+    assert (failed.json()["code"], failed.json()["kind"]) == ("write_failed", "failed")
+    assert str(hub) not in failed.text
+    assert SCOUT not in failed.text
+    assert "scout" not in failed.json()["detail"]
+    assert (hub / SCOUT).read_bytes() == SECOND
+
+    edges.fail, edges.link = False, True
+    linked = _restore(app, SCOUT_DETAIL, first.id)
+
+    _refused(linked, "link_in_path")
+    assert (edges.outside / "scout.md").read_bytes() == SECOND
+    assert _versions(app, SCOUT) == [first, second]
+
+
+@pytest.fixture
+def read_only_root(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[Path], None]]:
+    """Makes a hub folder unwritable, as a read-only mount does, and undoes it after: ``0o555``,
+    and for a user that writes anywhere (root in a container) ``chattr +i``, or, where that is
+    refused, the folder's write access denied as the mount would answer it."""
+    locked: list[Path] = []
+    immutable: list[Path] = []
+
+    def make(root: Path) -> None:
+        root.chmod(0o555)
+        locked.append(root)
+        if not os.access(root, os.W_OK):
+            return
+        chattr = shutil.which("chattr")
+        if chattr is not None and _ran([chattr, "+i", str(root)]):
+            immutable.append(root)
+            return
+        real = os.access
+
+        def access(path: Any, mode: int, *args: Any, **kwargs: Any) -> bool:
+            if mode & os.W_OK and str(path) == str(root):
+                return False
+            return real(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(os, "access", access)
+
+    yield make
+    for root in immutable:
+        _ran(["chattr", "-i", str(root)])
+    for root in locked:
+        root.chmod(0o755)
+
+
+def _ran(command: list[str]) -> bool:
+    return subprocess.run(command, capture_output=True, check=False).returncode == 0  # noqa: S603
+
+
+def test_read_only_hub_refuses_when_folder_not_writable(
+    writer: Any, writer_hub: VersionsHub, read_only_root: Callable[[Path], None]
+) -> None:
+    hub = writer_hub()
+    first, second = _two_scout_versions(writer, hub)
+    _get(writer, REVIEW_DETAIL)
+    [review] = _versions(writer, REVIEW)
+    _edit(hub / REVIEW, REVIEW_YAML + b"# Edited.\n")
+    read_only_root(hub)
+
+    for response in (
+        _restore(writer, SCOUT_DETAIL, first.id),
+        _restore(writer, REVIEW_DETAIL, review.id),
+    ):
+        _refused(response, "hub_read_only")
+    assert (hub / SCOUT).read_bytes() == SECOND
+    assert (hub / REVIEW).read_bytes() == REVIEW_YAML + b"# Edited.\n"
+    assert _versions(writer, SCOUT) == [first, second]
+    assert _versions(writer, REVIEW) == [review]
+
+
+def test_read_only_hub_refuses_when_in_container(
+    writer: Any, writer_hub: VersionsHub, open_writer: WriterOpener
+) -> None:
+    hub = writer_hub()
+    first, second = _two_scout_versions(writer, hub)
+    container = open_writer(sessions_off=True)
+
+    signed_in = _restore(container, SCOUT_DETAIL, first.id)
+    container.client.cookies.clear()
+    without_cookie = _restore(container, f"{REVIEW_DETAIL}", first.id)
+
+    for response in (signed_in, without_cookie):
+        _refused(response, "hub_read_only")
+    assert (hub / SCOUT).read_bytes() == SECOND
+    assert _versions(container, SCOUT) == [first, second]
+    assert REVIEW not in {path for path, _ in _rows(container)}
+    # The history reads stay open in the container.
+    assert len(_get(container, f"{SCOUT_DETAIL}/versions")["items"]) == 2
+
+
+def _git(hub: Path, *arguments: str) -> str:
+    done = subprocess.run(  # noqa: S603 -- a fixed git command on the test's own folder
+        ["git", "-C", str(hub), *arguments],  # noqa: S607
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return done.stdout
+
+
+def _git_state(hub: Path) -> tuple[str, str, bytes, str]:
+    """``HEAD``, the branches, the index's bytes and the stash."""
+    return (
+        _git(hub, "rev-parse", "HEAD"),
+        _git(hub, "for-each-ref", "refs/heads"),
+        (hub / ".git" / "index").read_bytes(),
+        _git(hub, "stash", "list"),
+    )
+
+
+# What ``hub doctor``'s tree read runs (generator/doctor_tree.py): it lists, never changes.
+READ_ONLY_LISTINGS: Final = {
+    ("rev-parse", "--show-toplevel"),
+    ("ls-files", "-z", "--cached", "--others", "--exclude-standard"),
+}
+
+
+def _git_arguments(args: tuple[Any, ...]) -> tuple[str, ...]:
+    """A spawned git command's arguments after its ``-c`` options."""
+    command = [str(part) for part in args[0]]
+    assert command[0].endswith("git"), command
+    rest = command[1:]
+    while rest[:1] == ["-c"]:
+        rest = rest[2:]
+    return tuple(rest)
+
+
+def test_git_untouched_when_every_route_runs(
+    open_writer: WriterOpener, make_hub: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git_reads: list[object] = []
+
+    def read_git(_hub_path: str) -> Callable[[frozenset[str]], Mapping[str, str]]:
+        def read(keys: frozenset[str]) -> Mapping[str, str]:
+            git_reads.append(keys)
+            return {}
+
+        return read
+
+    app = open_writer(read_git=read_git)
+    hub = _registered(app, make_hub, None)
+    _get(app, SCOUT_DETAIL)
+    _edit(hub / SCOUT, SECOND)
+    _git(hub, "init", "--quiet", "--initial-branch=main")
+    _git(hub, "add", "--all")
+    _git(hub, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "c")
+    before = _git_state(hub)
+    spawned: list[object] = []
+    real_popen = subprocess.Popen
+
+    def popen(*args: Any, **kwargs: Any) -> Any:
+        spawned.append(args)
+        return real_popen(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "Popen", popen)
+        _get(app, CATALOG)
+        _get(app, WORKFLOWS)
+        _get(app, REVIEW_DETAIL)
+        # The hub card's doctor drift check lists the checkout (read-only, before this feature).
+        listed = [_git_arguments(args) for args in spawned]
+        spawned.clear()
+        history = _get(app, f"{SCOUT_DETAIL}/versions")
+        first = history["items"][-1]["id"]
+        _get(app, f"{SCOUT_DETAIL}/versions/{first}")
+        _get(app, f"{REVIEW_DETAIL}/versions")
+        restored = _restore(app, SCOUT_DETAIL, first)
+
+    assert restored.status_code == 200, restored.text
+    assert (spawned, git_reads) == ([], [])
+    assert set(listed) <= READ_ONLY_LISTINGS
+    assert _git_state(hub) == before
+    assert _git(hub, "status", "--porcelain").splitlines() == [f" M {SCOUT}"]
