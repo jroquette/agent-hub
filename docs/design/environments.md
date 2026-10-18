@@ -61,9 +61,9 @@ tightens); the brief, `hub env list`, doctor and setup show it.
   endpoint or credential. Each counts in `instructions.size` (the example: 96 of 100; more raise its `max_lines`).
 - **`hub brief`** reads both files: after `## Repos`, an `Environments` block with each environment's access,
   PRODUCTION, source and credential names, each service's endpoint per environment and the effective blocked words
-  (≤ 60 lines and 2000 characters, then `… <n> more: ./hub env list`), never cut by the 5500-character limit. The
-  hooks' mini brief lists names, access and PRODUCTION; with an unusable `hub.local.json`, `hub.json`'s ones and
-  `hub.local.json is unusable: your own environments are not shown`.
+  (≤ 60 lines and 2000 characters, then `… <n> more: ./hub env list`; free text cut at 80, Markdown-escaped), never
+  cut by the 5500-character limit. The hooks' mini brief lists names, access and PRODUCTION; with an unusable
+  `hub.local.json`, `hub.json`'s ones and `hub.local.json is unusable: your own environments are not shown`.
 - **Production lines** `production environment: <name> (access <a>, <source>)`: `hub sync` (`hub.json` only, after
   its report, `up to date` and `--check` included; none on a conflict or `--adopt`), `hub setup` (under its
   `environments` item, shown only when one is declared) and `hub env add|set`, whatever doctor's settings. Doctor's
