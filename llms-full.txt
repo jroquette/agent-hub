@@ -2068,6 +2068,9 @@ the render and `hub.json` only, never `hub.local.json` (`build_hub_lock`), writt
 - **`--check`** writes nothing and prints the same lines with `would ` before the verb (`would create P`,
   `would remove N leftover temporary files`, `would update hub.lock`): exit 4 when anything is pending, creations and
   leftovers included; else `up to date`, exit 0.
+- **Production lines** (stdout, after the report, `up to date` and `--check` included; the exit code unchanged): one
+  `production environment: <name> (access <a>, hub.json)` per environment `hub.json` flags `production`, never one of
+  `hub.local.json` ([environments.md](environments.md)). None on a conflict, and none from `--adopt`.
 - **Conflicts** win, with or without `--check`: stdout empty; on stderr each conflicted path in path order, then the
   way out `move the change to an extension file (hub.json, a *.project.* file, Makefile.project), restore or delete
   the file, then re-run hub sync`; nothing written; exit 3. A text file gives a unified diff of disk against render,
@@ -2136,7 +2139,8 @@ sibling but links no entry: an unlinkable name exits 1, others are unknown (`hub
 - It deletes only a managed path equal to its entry and leftovers in listed folders; it never writes `hub.json`, never
   removes a folder, and never reads or touches a path neither rendered nor in the lock, bar listing project entries.
 - Same `hub.json`, release and extension inputs, same tree and `hub.lock` bytes; after any successful sync the lock is
-  `build_hub_lock` of the render, and a second sync prints `up to date` and writes nothing, not even `hub.lock`.
+  `build_hub_lock` of the render, and a second sync prints `up to date` (then its production lines) and writes
+  nothing, not even `hub.lock`.
 - The planner is pure core code; reads and writes go through the generator's adapter from the held root.
 
 ## Decisions
