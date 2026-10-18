@@ -16,10 +16,11 @@ name, case aside, as ``item_exists``.
 
 ``replace_hook`` replaces one hook of a hook file by the draft's hooks and keeps every other hook
 and key; ``merge_hooks`` adds hooks to a hook file (or a new one). Both write the file in
-``dump_json``'s form (D24) and give the same bytes when run again on their own output (a draft
-group already there, equal as JSON, or its hooks already in place, is not added again), so a
-publish retried after a failed draft removal changes nothing (A7). A hooks file on disk that is
-not a strict JSON hooks object is ``ItemWriteRefusedError("unit_unreadable")``.
+``dump_json``'s form (D24). ``merge_hooks`` gives the same bytes when run again on its own output
+(a draft group already there, equal as JSON, or its hooks already in place, is not added again);
+``replace_hook`` always replaces its hook, so a replay of an edit after a failed draft removal
+(A7) is told by the unit's ``publish`` version naming the draft, not by the file. A hooks file on
+disk that is not a strict JSON hooks object is ``ItemWriteRefusedError("unit_unreadable")``.
 
 ``new_destination`` places a new item in the project's own plugin, ``plugin/<project>/``, a new
 hook's scripts in its ``scripts/``. No message names a path.
@@ -193,17 +194,12 @@ def replace_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> bytes:
     """``file_json`` with the hook ``at`` replaced by ``new_hooks`` (a hooks object's ``hooks``):
     a draft group of the hook's event and matcher takes its place, the others are added as
     ``merge_hooks`` adds them; a group left with no hook and no key but ``matcher``, and an event
-    left with no group, are dropped. Every other hook and key is kept. A file already holding
-    every draft group (as a group equal as JSON, or its hooks in a group of its matcher) is only
-    rewritten in the byte form. ``EntityNotFoundError`` when the file holds no such hook."""
+    left with no group, are dropped. Every other hook and key is kept. The hook ``at`` is always
+    replaced, even when the file already holds every draft group: a replay of a publish is told
+    by its ``draft_id`` (``PublishDraft``), never by the file. ``EntityNotFoundError`` when the
+    file holds no such hook."""
     document = _hooks_document(file_json)
     hooks = _hooks_of(document)
-    if all(
-        _holds(hooks.get(event), group)
-        for event, groups in new_hooks.items()
-        for group in (groups if isinstance(groups, list) else [])
-    ):
-        return dump_json(document)
     groups, group, entries, index = _locate(hooks, at)
     del entries[index]
     rest: dict[str, JsonValue] = {}
