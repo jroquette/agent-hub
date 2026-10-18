@@ -17,6 +17,8 @@ out, as the listing leaves them out. Nothing is written; no message names a path
 
 ``read_folder_files`` reads an already opened folder the same way and within the same bounds,
 hidden names included and no ``SKILL.md`` required: the writer reads a Studio draft through it.
+There only a link or a special file is ``unreadable``; any other failure (an I/O error, a refused
+permission, a name that is not UTF-8) is raised as ``OSError``.
 """
 
 import errno
@@ -43,6 +45,8 @@ _CHUNK: Final = 65_536
 _MISSING: Final = UnreadUnit(kind="missing")
 _TOO_LARGE: Final = UnreadUnit(kind="too_large")
 _UNREADABLE: Final = UnreadUnit(kind="unreadable")
+# A name that is not UTF-8: ``unreadable`` for a unit read, an ``OSError`` for a folder read.
+_NOT_UTF8_NAME: Final = UnreadUnit(kind="unreadable")
 
 
 class _RefusedError(Exception):
@@ -88,13 +92,18 @@ def read_unit(hub_root: Path, unit_path: str, *, kind: UnitKind) -> UnitContent 
 
 def read_folder_files(folder: int) -> UnitContent | UnreadUnit:
     """Every file below the opened ``folder``, hidden names included, within a unit's bounds,
-    or why not (``missing`` only when a name on the way vanished as a folder)."""
+    or why not: ``too_large``, ``unreadable`` (a link or a special file), ``missing`` (a folder
+    vanished meanwhile); any other failure raises ``OSError``."""
     try:
         return UnitContent(files=tuple(_files_below(folder, keep_hidden=True)))
     except _RefusedError as refused:
+        if refused.unread is _NOT_UTF8_NAME:
+            raise OSError(errno.EILSEQ, "a name is not UTF-8") from None
         return refused.unread
     except OSError as error:
-        return _unread(error)
+        if error.errno in {errno.ELOOP, errno.ENOENT, errno.ENOTDIR}:
+            return _unread(error)
+        raise
 
 
 def _files_below(root: int, *, keep_hidden: bool) -> list[UnitFile]:
@@ -152,7 +161,7 @@ def _walk(folder: int, above: str, *, depth: int, entries: list[_Entry], budget:
             too_large = status.st_size > MAX_SKILL_FILE_BYTES
             entries.append(_Entry(path, _TOO_LARGE if too_large else None))
         else:
-            entries.append(_Entry(path, _UNREADABLE))
+            entries.append(_Entry(path, _UNREADABLE if _utf8(name) else _NOT_UTF8_NAME))
 
 
 def _refuse_early(entries: list[_Entry]) -> None:

@@ -170,29 +170,33 @@ class FakeHubItemWriter:
         paths = _under(hub, below)
         if not paths:
             raise EntityNotFoundError(entity="draft", entity_id=draft_id)
-        if any(path in hub.skill_links or path in hub.skill_specials for path in paths):
-            raise ItemWriteRefusedError("link_in_path")
-        files = tuple(
-            UnitFile(
+        files: list[UnitFile] = []
+        # The first problem in path order, as the disk's walk finds it.
+        for path in paths:
+            if path in hub.skill_links or path in hub.skill_specials:
+                raise ItemWriteRefusedError("link_in_path")
+            file = UnitFile(
                 path=path.removeprefix(below),
                 content=hub.skill_files[path],
                 executable=path in hub.executable,
             )
-            for path in paths
-        )
-        too_large = len(files) > MAX_UNIT_FILES or any(
-            len(file.content) > MAX_SKILL_FILE_BYTES
-            or file.path.count("/") >= DEFAULT_LIMITS.skill_depth
-            for file in files
-        )
-        if too_large:
-            raise DraftTooLargeError
-        return DraftFiles(draft_id=draft_id, content=UnitContent(files=files))
+            too_large = (
+                len(files) >= MAX_UNIT_FILES
+                or len(file.content) > MAX_SKILL_FILE_BYTES
+                or file.path.count("/") >= DEFAULT_LIMITS.skill_depth
+            )
+            if too_large:
+                raise DraftTooLargeError
+            files.append(file)
+        return DraftFiles(draft_id=draft_id, content=UnitContent(files=tuple(files)))
 
     def remove_draft(self, hub_path: str, draft_id: str) -> None:
         """Drop everything under the draft's folder."""
+        drafts, _ = draft_parts(draft_id)
         folder = "/".join(draft_parts(draft_id))
         hub = self._writable(hub_path, folder)
+        if {drafts, folder} & {*hub.skill_files, *hub.skill_specials}:
+            raise HubItemWriteError(_NOT_FOLDER)
         for path in _under(hub, f"{folder}/"):
             _drop(hub, path)
         self.writes.append((hub_path, folder))
