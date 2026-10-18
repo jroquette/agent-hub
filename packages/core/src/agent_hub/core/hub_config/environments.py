@@ -24,6 +24,8 @@ MAX_NAME_CHARS: Final = 40
 MAX_CREDENTIAL_ENV: Final = 10
 MAX_URL_CHARS: Final = 200
 MAX_KIND_CHARS: Final = 32
+# AGENTS.md renders an environment's description on its one list item (AGH-282).
+MAX_DESCRIPTION_CHARS: Final = 80
 # The error type of a value with a secret's shape; ``document_check`` hides such a map key.
 CREDENTIAL_SHAPE_ERROR: Final = "secret_shape"
 
@@ -113,7 +115,9 @@ class Environment(ConfigObject):
 
     access: Access
     production: StrictBool = False
-    description: NoSecretText | None = absent_by_default()
+    description: Annotated[NoSecretText, Field(max_length=MAX_DESCRIPTION_CHARS)] | None = (
+        absent_by_default(description="At most 80 characters; AGENTS.md renders it as text.")
+    )
     credentials: Credentials | None = absent_by_default(
         description="Names of the credentials to use; never a value."
     )

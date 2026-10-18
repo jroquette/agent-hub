@@ -337,6 +337,8 @@
           "type": "boolean"
         },
         "description": {
+          "description": "At most 80 characters; AGENTS.md renders it as text.",
+          "maxLength": 80,
           "minLength": 1,
           "pattern": "^[^\\x00-\\x1f\\x7f]+$",
           "type": "string"
