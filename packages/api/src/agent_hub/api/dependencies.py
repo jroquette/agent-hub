@@ -21,6 +21,7 @@ from agent_hub.core.brain.brain_path import DEFAULT_ACCEPT_FOLDER
 from agent_hub.core.events.event_reader import EventReader
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
+from agent_hub.core.item_versions.item_version_ports import ItemVersionReads
 from agent_hub.core.learnings.learning import Learning, LearningDetail
 from agent_hub.core.learnings.learning_ports import LearningDecisions, LearningReads
 from agent_hub.core.readmodels.filters import LearningFilter
@@ -51,6 +52,7 @@ class ApiPorts:
     run_control: ControlWorkflowRun | None = None
     workflow_gates: WorkflowGates | None = None
     gate_decisions: DecideWorkflowGate | None = None
+    item_version_reads: ItemVersionReads | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -114,6 +116,14 @@ def workflow_gates(request: Request) -> WorkflowGates:
 def gate_decisions(request: Request) -> DecideWorkflowGate:
     """A workflow gate's decision from hub web, or 501 when not wired."""
     port = _ports(request).gate_decisions
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def item_version_reads(request: Request) -> ItemVersionReads:
+    """An item's version history reads, or 501 when not wired."""
+    port = _ports(request).item_version_reads
     if port is None:
         raise _unwired(request)
     return port
@@ -247,6 +257,7 @@ RunStartsDep = Annotated[StartWorkflowRun, Depends(run_starts)]
 RunControlDep = Annotated[ControlWorkflowRun, Depends(run_control)]
 WorkflowGatesDep = Annotated[WorkflowGates, Depends(workflow_gates)]
 GateDecisionsDep = Annotated[DecideWorkflowGate, Depends(gate_decisions)]
+ItemVersionReadsDep = Annotated[ItemVersionReads, Depends(item_version_reads)]
 IngestHookDep = Annotated[IngestHook, Depends(ingest_hook)]
 LearningReadsDep = Annotated[LearningReads, Depends(learning_reads)]
 LearningDecisionsDep = Annotated[LearningDecisions, Depends(learning_decisions)]

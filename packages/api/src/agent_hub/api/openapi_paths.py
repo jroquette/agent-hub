@@ -1,5 +1,6 @@
 """The Phase 2 contract's paths, the paths control-plane clarity, ticket planning, the Skills
-tab, the workflows and the run commands add, and the paths an app's OpenAPI document lists."""
+tab, the workflows, the run commands and the item versions add, and the paths an app's OpenAPI
+document lists."""
 
 from fastapi import FastAPI
 
@@ -126,6 +127,17 @@ RUN_COMMAND_PATHS: frozenset[tuple[str, str]] = frozenset(
     )
 )
 
+# An item's version history (AGH-295, S7): its versions and one version, Toolkit and workflows.
+ITEM_VERSION_PATHS: frozenset[tuple[str, str]] = frozenset(
+    ("get", f"{API_PREFIX}{path}")
+    for path in (
+        "/projects/{project}/skills/{kind}/{source}/{name}/versions",
+        "/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}",
+        "/workflows/{project}/{name}/versions",
+        "/workflows/{project}/{name}/versions/{version_id}",
+    )
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
     P2_PATHS
@@ -136,6 +148,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | WORKFLOW_PATHS
     | RUN_COMMAND_PATHS
     | GATE_PATHS
+    | ITEM_VERSION_PATHS
 )
 
 

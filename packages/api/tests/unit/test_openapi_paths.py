@@ -3,6 +3,7 @@ from agent_hub.api.openapi_paths import (
     AGENT_SESSION_PATHS,
     CLARITY_PATHS,
     GATE_PATHS,
+    ITEM_VERSION_PATHS,
     P2_PATHS,
     RUN_COMMAND_PATHS,
     SERVED_PATHS,
@@ -123,6 +124,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | WORKFLOW_PATHS
         | RUN_COMMAND_PATHS
         | GATE_PATHS
+        | ITEM_VERSION_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -139,6 +141,7 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | WORKFLOW_PATHS
         | RUN_COMMAND_PATHS
         | GATE_PATHS
+        | ITEM_VERSION_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -169,6 +172,17 @@ def test_lists_gate_paths_when_document_built(api_settings: ApiSettings) -> None
         ("get", "/api/v1/approvals/{approval_id}/gate"),
         ("post", "/api/v1/approvals/{approval_id}/decision"),
     } == GATE_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_lists_item_version_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-295.36 (slice 2a): today's paths plus the four history reads, all GET, and nothing else.
+    assert {
+        ("get", "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions"),
+        ("get", "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}"),
+        ("get", "/api/v1/workflows/{project}/{name}/versions"),
+        ("get", "/api/v1/workflows/{project}/{name}/versions/{version_id}"),
+    } == ITEM_VERSION_PATHS
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
