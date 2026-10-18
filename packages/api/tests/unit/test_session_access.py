@@ -123,7 +123,7 @@ def test_serves_item_write_when_cookie_matches() -> None:
     assert response.json() == {"served": True}
 
 
-def test_serves_item_version_read_in_container_without_cookie() -> None:
+def test_serves_item_version_read_when_in_container_without_cookie() -> None:
     response = _client(sessions_off=True).get(RESTORE.removesuffix("/v-1/restore"))
 
     assert response.json() == {"served": True}

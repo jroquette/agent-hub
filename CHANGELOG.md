@@ -22,6 +22,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   in agent-hub's database (`item_versions`, migration 0005, upgraded on start). A link is versioned once, at its
   target; a built-in workflow, or a unit with a secret match or past the 256 KiB or 200-file bounds, is never
   stored; the hub's files are not touched.
+- `hub web` can restore an earlier version of a Toolkit item or a hub workflow (AGH-297,
+  `POST .../versions/{version_id}/restore`): the hub's file or skill folder is written back as that version, its
+  executable bits included, after the current content is recorded first, and a `restore` version names its source
+  and your identity. A unit `hub.lock` manages needs a confirmation, a unit with a secret match on disk is refused,
+  and in the container (`make up`) the hubs are read-only, so a restore answers 409 `hub_read_only`. git is never
+  run: the change shows in the hub's working tree.
 
 ## [0.16.1] - 2026-10-17
 
