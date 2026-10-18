@@ -10,20 +10,21 @@ hex>`` beside it (``O_CREAT | O_EXCL | O_NOFOLLOW``, mode 0o600), given its fina
 (``0o777`` or ``0o666`` less the umask) and ``os.replace``d onto its name; on a failure the
 temp file is removed.
 
-A skill folder is swapped whole (no ``renameat2``): the version (which holds no hidden name)
-is staged at ``.<name>.hub-tmp-<8 hex>`` beside the target, in the leftover shape
+A skill folder is swapped whole (no ``renameat2``): the version (which holds no hidden name) is
+staged at ``.<name>.hub-tmp-<8 hex>`` beside the target, in the leftover shape
 ``tree_snapshot.TEMP_NAME``, so the skill listing skips it; the target's hidden entries, which
-no version records, are moved into the stage unchanged (never a name of the temp shape; a
-hidden folder whole), found by a walk bounded as a unit read is (``skill_depth``, the names
-budget; past either the write fails before anything moves); the target is renamed to a second
-temp name, the stage renamed into place, and the old folder removed with ``rmtree(dir_fd=…)``
-(a link inside it is removed, never followed). Any failure before the stage is in place moves
-the hidden entries back, renames the old folder back and removes the stage, so the unit is left
-as it was (``HubItemWriteError`` kind ``failed``); when that roll back fails too, the error's
-kind is ``rollback_failed`` and the stage, holding whatever was not put back, stays. A reader
-may find no folder between the two renames. The folders a write makes (the stage and its
-subfolders, missing parents) get mode ``0o777`` less the umask: a folder's own earlier mode is
-not kept. The umask is read once, when the writer is made.
+no version records, are moved into the stage unchanged (never a name of the temp shape; a hidden
+folder whole), found by a walk bounded as a unit read is (the names budget and ``skill_depth``:
+a hidden name below the deepest folder is carried, a plain name past ``skill_depth`` refused;
+past either the write fails before anything moves); the target is renamed to a second temp name,
+the stage renamed into place, and the old folder removed with ``rmtree(dir_fd=…)`` (a link
+inside it is removed, never followed). Any failure before the stage is in place moves the hidden
+entries back, renames the old folder back and removes the stage, so the unit is left as it was
+(``HubItemWriteError`` kind ``failed``); when that roll back fails too, the error's kind is
+``rollback_failed`` and the stage, holding whatever was not put back, stays. A reader may find
+no folder between the two renames. The folders a write makes (the stage and its subfolders,
+missing parents) get mode ``0o777`` less the umask: a folder's own earlier mode is not kept. The
+umask is read once, when the writer is made.
 
 ``hub init`` and ``hub sync`` remove only temp-shaped files and links in the folders they plan,
 never these folders: a stage or old folder a crash, a failed roll back or a failed removal left
@@ -333,8 +334,10 @@ def _swap_folder(parent: int, name: str, content: UnitContent, *, umask: int) ->
             os.rename(name, old, src_dir_fd=parent, dst_dir_fd=parent)
             renamed = True
         os.rename(stage, name, src_dir_fd=parent, dst_dir_fd=parent)
-    except BaseException:
-        if not _roll_back(parent, name, stage=stage, old=old if renamed else None, moved=moved):
+    except BaseException as error:
+        restored = _roll_back(parent, name, stage=stage, old=old if renamed else None, moved=moved)
+        # A KeyboardInterrupt or SystemExit goes on as it is, whatever the roll back did.
+        if not restored and isinstance(error, Exception):
             raise rollback_failed() from None
         raise
     if exists:
@@ -358,19 +361,22 @@ def _folder_exists(parent: int, name: str) -> bool:
 def _hidden_entries(current: int) -> list[str]:
     """The hidden entries below the folder ``current`` (a hidden folder whole), never one of
     the temp shape, found through its plain folders without following a link, in path order.
-    Iterative and bounded as a unit read: no entry deeper than ``skill_depth`` segments, at
-    most the names budget examined; past either, ``HubItemWriteError``."""
+    Iterative and bounded as a unit read (``unit_files``) is: every name examined counts
+    against the names budget, a hidden name is taken at any depth the walk reaches, and a
+    plain name deeper than ``skill_depth`` segments (which the reader reads ``too_large``) is
+    refused; past either bound, ``HubItemWriteError``."""
     found: list[str] = []
     budget = DEFAULT_LIMITS.names_examined
     pending: list[tuple[str, ...]] = [()]
     while pending:
         folders = pending.pop()
+        depth = len(folders) + 1
         with _folder(current, folders, create=False) as folder, os.scandir(folder) as listing:
             for entry in listing:
                 budget -= 1
                 if budget < 0:
                     raise HubItemWriteError(_TOO_MANY)
-                if len(folders) >= DEFAULT_LIMITS.skill_depth:
+                if not entry.name.startswith(".") and depth > DEFAULT_LIMITS.skill_depth:
                     raise HubItemWriteError(_TOO_DEEP)
                 if entry.name.startswith("."):
                     if not is_leftover_name(entry.name):

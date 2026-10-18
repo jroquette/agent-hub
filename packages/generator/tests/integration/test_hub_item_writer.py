@@ -12,10 +12,12 @@ import pytest
 
 from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
 from agent_hub.core.item_versions.item_version import UnitKind
-from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
+from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent, UnitFile
+from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES
 from agent_hub.core.testing.skill_trees import write_tree
 from agent_hub.generator.doctor_snapshot import item_leftovers
 from agent_hub.generator.hub_item_writer import FileSystemHubItemWriter
+from agent_hub.generator.registered_hub_files import HubFileSystem
 
 SKILLS = "plugin/demo/skills"
 SKILL = f"{SKILLS}/alpha"
@@ -188,8 +190,8 @@ def test_reports_rollback_failed_when_old_folder_not_put_back(
     assert old in [_files(hub / leftover) for leftover in leftovers]
 
 
-def test_refuses_folder_when_deeper_than_a_unit(tmp_path: Path) -> None:
-    tree = {**OLD_SKILL, f"{SKILL}/a/b/c/.deep": b"deep"}
+def test_refuses_folder_when_non_hidden_entry_deeper_than_a_unit(tmp_path: Path) -> None:
+    tree = {**OLD_SKILL, f"{SKILL}/a/b/c/d": b"deep", f"{SKILL}/a/b/c/.keep": b"k"}
     hub = _hub(tmp_path, tree)
 
     with pytest.raises(HubItemWriteError) as raised:
@@ -198,3 +200,55 @@ def test_refuses_folder_when_deeper_than_a_unit(tmp_path: Path) -> None:
     assert raised.value.kind == "failed"
     assert _files(hub) == tree
     assert os.listdir(hub / SKILLS) == ["alpha"]
+
+
+def test_carries_hidden_entry_when_below_deepest_folder(tmp_path: Path) -> None:
+    hub = _hub(tmp_path, {**OLD_SKILL, f"{SKILL}/a/b/c/.keep": b"k"})
+
+    FileSystemHubItemWriter().write_unit(str(hub), SKILL, NEW_SKILL, kind=UnitKind.SKILL)
+
+    expected = {f"{SKILL}/{file.path}": file.content for file in NEW_SKILL.files}
+    assert _files(hub) == expected | {f"{SKILL}/a/b/c/.keep": b"k"}
+
+
+def test_writes_back_unit_read_when_at_each_bound(tmp_path: Path) -> None:
+    # What the reader accepts at its bounds (depth, file count, file size), the writer writes.
+    bundled = MAX_UNIT_FILES - 3
+    tree = {
+        f"{SKILL}/SKILL.md": b"# skill\n",
+        f"{SKILL}/a/b/deepest.md": b"at the depth bound",
+        f"{SKILL}/big.bin": b"x" * MAX_SKILL_FILE_BYTES,
+        **{f"{SKILL}/many/f{number:03}.md": b"f" for number in range(bundled)},
+        f"{SKILL}/a/b/c/.keep": b"hidden below the bound",
+    }
+    hub = _hub(tmp_path, tree)
+    read = HubFileSystem().read_unit(str(hub), SKILL, kind=UnitKind.SKILL)
+    assert isinstance(read, UnitContent)
+    assert len(read.files) == MAX_UNIT_FILES
+    (hub / SKILL / "SKILL.md").write_bytes(b"# changed\n")
+
+    FileSystemHubItemWriter().write_unit(str(hub), SKILL, read, kind=UnitKind.SKILL)
+
+    assert _files(hub) == tree
+    assert os.listdir(hub / SKILLS) == ["alpha"]
+
+
+def test_raises_interrupt_as_is_when_roll_back_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = _hub(tmp_path, OLD_SKILL)
+    real = os.rename
+    calls = [0]
+
+    def rename(*args: Any, **kwargs: Any) -> None:
+        calls[0] += 1
+        if calls[0] == 2:
+            raise KeyboardInterrupt
+        if calls[0] == 3:
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        real(*args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", rename)
+
+    with pytest.raises(KeyboardInterrupt):
+        FileSystemHubItemWriter().write_unit(str(hub), SKILL, NEW_SKILL, kind=UnitKind.SKILL)

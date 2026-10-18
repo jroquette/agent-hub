@@ -27,11 +27,14 @@ from agent_hub.core.item_versions.item_version import (
 )
 from agent_hub.core.item_versions.unit_content import UnitContent
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
+from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS
 from agent_hub.core.testing.hub_fakes import FakeHub
 
 type _UnitKey = tuple[str, str]
 
 _NOT_FOLDER: Final = "Not a directory"
+_TOO_DEEP: Final = "the folder is deeper than a unit"
+_TOO_MANY: Final = "the folder holds too many names"
 
 
 class InMemoryItemVersionStore:
@@ -169,11 +172,24 @@ class FakeHubItemWriter:
 def _check_folder_write(
     hub: FakeHub, unit_path: str, content: UnitContent, *, carried: list[str]
 ) -> None:
-    """Fail as the disk does, before anything changes: the skill path is no folder, or a
-    version file sits where a carried hidden entry's folder is."""
+    """Fail as the disk does, before anything changes: the skill path is no folder, the old
+    folder is past a unit read's bounds (more names examined than the budget, a plain name
+    deeper than ``skill_depth``; a hidden name is not looked into), or a version file sits
+    where a carried hidden entry's folder is."""
     if unit_path in hub.skill_files or unit_path in hub.skill_specials:
         raise HubItemWriteError(_NOT_FOLDER)
     below = f"{unit_path}/"
+    examined: set[tuple[str, ...]] = set()
+    for path in _under(hub, below):
+        segments = tuple(path.removeprefix(below).split("/"))
+        for depth, segment in enumerate(segments, start=1):
+            examined.add(segments[:depth])
+            if segment.startswith("."):
+                break
+            if depth > DEFAULT_LIMITS.skill_depth:
+                raise HubItemWriteError(_TOO_DEEP)
+    if len(examined) > DEFAULT_LIMITS.names_examined:
+        raise HubItemWriteError(_TOO_MANY)
     written = {below + file.path for file in content.files}
     if any(path.startswith(f"{file}/") for path in carried for file in written):
         raise HubItemWriteError(_NOT_FOLDER)
