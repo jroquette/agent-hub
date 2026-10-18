@@ -53,6 +53,8 @@ HUB_REGISTRY_WRITES = (
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+/platform-sync$")),
     # Runs ``hub doctor --fix`` in the hub: rewrites brain notes, never a repo.
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+/doctor-fix$")),
+    # Rewrites the developer's hub.local.json (the Hub config screen).
+    ("PUT", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/local$")),
 )
 # The routes with a larger body cap: a session's first prompt may carry a PNG screenshot (at
 # most ``MAX_SCREENSHOT_BYTES`` decoded, 5 MiB of base64), and a later message up to

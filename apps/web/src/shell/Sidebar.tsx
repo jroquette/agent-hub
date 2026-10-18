@@ -39,6 +39,16 @@ export function skillsLink(open: string | null, scope: string | null): string {
   return project === null ? SKILLS_PICKER : `/projects/${encodeURIComponent(project)}/skills`;
 }
 
+const CONFIG_ID = "config";
+/** Where Hub config goes with All projects in scope: a project picker. */
+const CONFIG_PICKER = "/config";
+
+/** Hub config's destination: the config of the project open, else in scope, else the picker. */
+export function configLink(open: string | null, scope: string | null): string {
+  const project = open ?? scope;
+  return project === null ? CONFIG_PICKER : `/projects/${encodeURIComponent(project)}/config`;
+}
+
 interface NavItem {
   id: string;
   label: string;
@@ -117,6 +127,7 @@ export const NAV: readonly NavGroup[] = [
         countNoun: (n) => (n === 1 ? "doctor error" : "doctor errors"),
         tone: "failed",
       },
+      { id: CONFIG_ID, label: "Hub config", to: CONFIG_PICKER, icon: "sliders-horizontal" },
       { id: "settings", label: "Settings", to: "/settings", icon: "settings" },
     ],
   },
@@ -142,8 +153,16 @@ export function Sidebar({ counts, onShortcuts }: SidebarProps) {
   const brainTo = brainLink(openBrain?.params.project ?? null, scope);
   const openSkills = useMatch("/projects/:project/skills/*");
   const skillsTo = skillsLink(openSkills?.params.project ?? null, scope);
+  const openConfig = useMatch("/projects/:project/*");
+  const configTo = configLink(openConfig?.params.project ?? null, scope);
   const itemTo = (item: NavItem): string =>
-    item.id === BRAIN_ID ? brainTo : item.id === SKILLS_ID ? skillsTo : item.to;
+    item.id === BRAIN_ID
+      ? brainTo
+      : item.id === SKILLS_ID
+        ? skillsTo
+        : item.id === CONFIG_ID
+          ? configTo
+          : item.to;
 
   const renderItem = (item: NavItem) => {
     const count = item.countKey ? counts[item.countKey] : undefined;

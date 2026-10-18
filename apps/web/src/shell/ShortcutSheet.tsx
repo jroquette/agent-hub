@@ -28,6 +28,7 @@ export const SHORTCUTS: readonly { title: string; rows: readonly [string, string
       ["Close panel", "Esc"],
       ["Features", "g f"],
       ["Health", "g h"],
+      ["Hub config", "g c"],
       ["Settings", "g ,"],
       ["Toggle UTC", "t"],
       ["This sheet", "?"],

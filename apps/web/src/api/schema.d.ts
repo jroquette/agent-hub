@@ -927,6 +927,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/config/local": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Put Project Local Config
+     * @description Save this developer's ``hub.local.json`` values; the team's ``hub.json`` is untouched.
+     */
+    put: operations["put_project_local_config_api_v1_projects__project__config_local_put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/now": {
     parameters: {
       query?: never;
@@ -3015,6 +3035,35 @@ export interface components {
       waiting_reason?: string | null;
     };
     /**
+     * LocalSettings
+     * @description What the screen edits; an empty text or ``None`` removes the key from the file.
+     */
+    LocalSettings: {
+      /** Author Email */
+      author_email?: string | null;
+      /** Author Name */
+      author_name?: string | null;
+      /**
+       * Blocked Words
+       * @default []
+       */
+      blocked_words: string[];
+      /**
+       * Blocked Words Env
+       * @default []
+       */
+      blocked_words_env: string[];
+      /**
+       * Blocked Words Files
+       * @default []
+       */
+      blocked_words_files: string[];
+      /** Branch Prefix */
+      branch_prefix?: string | null;
+      /** Transport */
+      transport?: ("api" | "mcp") | null;
+    };
+    /**
      * LockFacts
      * @description What ``hub.lock`` says of the item's file: its ownership and, when managed, its sha256.
      */
@@ -4341,6 +4390,8 @@ export interface components {
      */
     SourcedValue: {
       source: components["schemas"]["ValueSource"];
+      /** Team Value */
+      team_value?: string | null;
       /** Value */
       value: string | null;
       /** Where */
@@ -7127,6 +7178,50 @@ export interface operations {
       cookie?: never;
     };
     requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HubConfigView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  put_project_local_config_api_v1_projects__project__config_local_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LocalSettings"];
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {

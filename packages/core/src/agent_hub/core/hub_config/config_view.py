@@ -57,6 +57,8 @@ class SourcedValue(ViewModel):
     value: str | None
     source: ValueSource
     where: str
+    # What hub.json says for a key this developer's layer may override; None when it says nothing.
+    team_value: str | None = None
 
 
 class PatternView(ViewModel):
@@ -191,9 +193,9 @@ def hub_config_view(
         local_file=ConfigFileView(
             name=LOCAL_FILE, path=f"{hub_path}/{LOCAL_FILE}", problems=problems
         ),
-        author_name=_identity(resolved[IdentityKey.AUTHOR_NAME]),
-        author_email=_identity(resolved[IdentityKey.AUTHOR_EMAIL]),
-        branch_prefix=_identity(prefix),
+        author_name=_identity(resolved[IdentityKey.AUTHOR_NAME], project.author_name),
+        author_email=_identity(resolved[IdentityKey.AUTHOR_EMAIL], project.author_email),
+        branch_prefix=_identity(prefix, project.branch_prefix),
         default_branch=project_branch,
         conventions=_patterns(project.conventions, None, example, where="project.conventions"),
         repos=tuple(
@@ -235,14 +237,18 @@ class _Examples:
             return None
 
 
-def _identity(found: Sourced | None) -> SourcedValue:
+def _identity(found: Sourced | None, team: str | None) -> SourcedValue:
     if found is None:
-        return SourcedValue(value=None, source="default", where="not set")
+        return SourcedValue(value=None, source="default", where="not set", team_value=team)
     if found.derived:
         email = _place(IdentityKey.AUTHOR_EMAIL, found.source)
-        return SourcedValue(value=found.value, source="derived", where=f"derived from {email}")
+        return SourcedValue(
+            value=found.value, source="derived", where=f"derived from {email}", team_value=team
+        )
     where = _place(found.key, found.source)
-    return SourcedValue(value=found.value, source=_SOURCES[found.source], where=where)
+    return SourcedValue(
+        value=found.value, source=_SOURCES[found.source], where=where, team_value=team
+    )
 
 
 def _place(key: IdentityKey, source: Source) -> str:
@@ -341,6 +347,7 @@ def _tracker(config: HubConfig, local: LocalConfig) -> TrackerConfigView:
             value=local.tracker.transport,
             source="local",
             where=f"{LOCAL_FILE} → tracker.transport",
+            team_value=tracker.transport,
         )
     else:
         transport = _sourced_hub(

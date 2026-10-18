@@ -4463,6 +4463,92 @@
         "title": "LiveTile",
         "type": "object"
       },
+      "LocalSettings": {
+        "additionalProperties": false,
+        "description": "What the screen edits; an empty text or ``None`` removes the key from the file.",
+        "properties": {
+          "author_email": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Email"
+          },
+          "author_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
+          "blocked_words": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Blocked Words",
+            "type": "array"
+          },
+          "blocked_words_env": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Blocked Words Env",
+            "type": "array"
+          },
+          "blocked_words_files": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Blocked Words Files",
+            "type": "array"
+          },
+          "branch_prefix": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Prefix"
+          },
+          "transport": {
+            "anyOf": [
+              {
+                "enum": [
+                  "api",
+                  "mcp"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transport"
+          }
+        },
+        "title": "LocalSettings",
+        "type": "object"
+      },
       "LockFacts": {
         "additionalProperties": false,
         "description": "What ``hub.lock`` says of the item's file: its ownership and, when managed, its sha256.",
@@ -8184,6 +8270,17 @@
         "properties": {
           "source": {
             "$ref": "#/components/schemas/ValueSource"
+          },
+          "team_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Value"
           },
           "value": {
             "anyOf": [
@@ -13298,6 +13395,71 @@
           }
         },
         "summary": "Get Project Config",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/config/local": {
+      "put": {
+        "description": "Save this developer's ``hub.local.json`` values; the team's ``hub.json`` is untouched.",
+        "operationId": "put_project_local_config_api_v1_projects__project__config_local_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubConfigView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Put Project Local Config",
         "tags": [
           "projects"
         ]
