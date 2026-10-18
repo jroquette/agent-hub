@@ -12,7 +12,8 @@ before any file is read.
 
 With ``capture`` (AGH-295, D2), the catalog hands every unit its items are versioned in (each
 once: the hooks of one file share it) to ``CaptureItemVersions`` with the unit's stat mark, and
-the detail its one item's unit; ``unit_of`` names an item's unit without capturing.
+the detail its one item's unit; ``unit_of`` names an item's unit without capturing, and
+``marked_unit`` adds the mark the reads capture it under and how many items share it.
 """
 
 import re
@@ -29,6 +30,7 @@ from agent_hub.core.item_versions.item_units import (
     unit_fingerprint,
     unit_of_item,
 )
+from agent_hub.core.item_versions.item_version_ports import MarkedUnit
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_catalog import build_catalog, catalog_reads, may_hold
 from agent_hub.core.skills.skill_sources import (
@@ -193,8 +195,27 @@ class SkillReads:
     ) -> ItemUnit | None:
         """The unit the item is versioned in, or None (a link, local settings); an unknown item
         is ``EntityNotFoundError``. Reads no unit."""
-        sources, _, detail = self._detail(project, hub_path, kind=kind, source=source, name=name)
-        return unit_of_item(detail, SourceIndex(sources), project=project)
+        marked = self.marked_unit(project, hub_path, kind=kind, source=source, name=name)
+        return None if marked is None else marked.unit
+
+    def marked_unit(
+        self, project: str, hub_path: str, *, kind: ItemKind, source: str, name: str
+    ) -> MarkedUnit | None:
+        """``unit_of`` with the unit's capture mark (the one ``detail`` uses) and the number of
+        catalog items it holds. Reads no unit."""
+        sources, folded, detail = self._detail(
+            project, hub_path, kind=kind, source=source, name=name
+        )
+        index = SourceIndex(sources)
+        unit = unit_of_item(detail, index, project=project)
+        if unit is None:
+            return None
+        shared_by = sum(
+            1 for item in folded.catalog.items if unit_of_item(item, index, project=project) == unit
+        )
+        return MarkedUnit(
+            hub_path=hub_path, unit=unit, mark=unit_fingerprint(index, unit), shared_by=shared_by
+        )
 
     def _capture_items(
         self, project: str, hub_path: str, sources: SkillSources, *items: CatalogItem
