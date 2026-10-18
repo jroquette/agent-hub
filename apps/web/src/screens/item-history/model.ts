@@ -1,5 +1,6 @@
 import type { IconName } from "../../components";
 import type { ApiProblem } from "../../lib/api";
+import { unifiedDiff } from "../agent-session/model";
 import type { ItemVersion, ItemVersionPage, VersionFile } from "./queries";
 
 /* The History panel's words (AGH-295): origin, author, state and refusals in plain language,
@@ -108,6 +109,66 @@ export function folderDiff(
       ? [{ path, status: "changed", older: a, newer: b, textChanged, bitsChanged }]
       : [];
   });
+}
+
+/**
+ * The most diff lines Compare renders for one pair of versions, headers included, across every
+ * file of a folder: a 200-file folder of 256 KiB files must not render millions of lines.
+ */
+export const COMPARE_MAX_LINES = 2000;
+
+export interface ShownChange extends FileChange {
+  /** The unified diff to render, cut to the budget; null for a binary file or one not shown. */
+  diff: string | null;
+  /** Lines of this file's diff past the budget. */
+  hiddenLines: number;
+  /** The budget ran out before this file: its diff was not computed. */
+  skipped: boolean;
+}
+
+const isBinary = (change: FileChange) =>
+  (change.older !== null && change.older.text === null) ||
+  (change.newer !== null && change.newer.text === null);
+
+/**
+ * Each changed file of two versions with its diff, within one budget of `maxLines` rendered
+ * lines: the file that crosses it is cut and the files after it are not diffed at all.
+ */
+export function compareChanges(
+  older: readonly VersionFile[],
+  newer: readonly VersionFile[],
+  maxLines: number = COMPARE_MAX_LINES,
+): ShownChange[] {
+  let left = maxLines;
+  return folderDiff(older, newer).map((change): ShownChange => {
+    if (!change.textChanged || isBinary(change))
+      return { ...change, diff: null, hiddenLines: 0, skipped: false };
+    if (left <= 0) return { ...change, diff: null, hiddenLines: 0, skipped: true };
+    const lines = unifiedDiff(
+      change.path,
+      change.older?.text ?? "",
+      change.newer?.text ?? "",
+    ).split("\n");
+    const shown = lines.slice(0, left);
+    left -= shown.length;
+    return {
+      ...change,
+      diff: shown.join("\n"),
+      hiddenLines: lines.length - shown.length,
+      skipped: false,
+    };
+  });
+}
+
+/** Binary files both versions hold with the same size and bit: their bytes may still differ. */
+export function unshownBinaries(older: readonly VersionFile[], newer: readonly VersionFile[]) {
+  const after = new Map(newer.map((file) => [file.path, file]));
+  return older
+    .filter((a) => {
+      const b = after.get(a.path);
+      return b !== undefined && a.text === null && b.text === null;
+    })
+    .map((file) => file.path);
 }
 
 /** Why a restore did not go through, in words (`code` and `reason` of the problem, API.md Errors). */

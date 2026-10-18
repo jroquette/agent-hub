@@ -1,6 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -11,6 +11,7 @@ import {
   type ApiRoutes,
   type ItemVersionPage,
 } from "../../testing/builders";
+import { useSkillCatalog, useSkillDetail, useSkillFile } from "../skills/queries";
 import { HistoryPanel } from ".";
 import type { HistoryTarget } from "./queries";
 
@@ -204,5 +205,87 @@ describe("RestoreDialog", () => {
     await user.keyboard("{Enter}");
     await screen.findByText(/Restored 11111111/);
     expect(posts(requests)).toHaveLength(1);
+  });
+
+  it("closes on a write whose version was not recorded and says to reload the history", async () => {
+    renderPanel({
+      [VERSIONS]: hookPage(),
+      [RESTORE]: aProblem({
+        status: 503,
+        title: "Item written, version not recorded",
+        detail: "Reload the history before trying again.",
+        code: "written_not_recorded",
+      }),
+    });
+
+    const { user, dialog } = await openRestore();
+    await user.click(within(dialog).getByRole("button", { name: "Restore" }));
+
+    expect(
+      await screen.findByText(
+        "Wrote 11111111, but its version was not recorded. Reload the history before trying again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("reads the detail, its files, a sibling hook, the catalog and the history again after a restore", async () => {
+    const SIBLING = "/api/v1/projects/demo/skills/hook/settings/settings-pretooluse-2";
+    const DETAIL = "/api/v1/projects/demo/skills/hook/settings/settings-pretooluse-1";
+    const FILE = `${DETAIL}/files/0123456789abcdef`;
+    const CATALOG = "/api/v1/projects/demo/skills";
+    function Reads() {
+      const hook = (name: string) => ({ kind: "hook" as const, source: "settings", name });
+      useSkillCatalog("demo");
+      useSkillDetail("demo", hook("settings-pretooluse-1"));
+      useSkillDetail("demo", hook("settings-pretooluse-2"));
+      useSkillFile("demo", hook("settings-pretooluse-1"), "0123456789abcdef");
+      return null;
+    }
+    const { requests } = renderWithApi(
+      <>
+        <Reads />
+        <HistoryPanel target={TARGET} />
+      </>,
+      {
+        routes: {
+          [VERSIONS]: hookPage(),
+          [CATALOG]: {},
+          [DETAIL]: {},
+          [SIBLING]: {},
+          [FILE]: {},
+          [RESTORE]: { changed: true, versioned: true, reason: null, version: two[0] },
+        },
+      },
+    );
+    const gets = (path: string) =>
+      requests.filter((r) => r.method === "GET" && new URL(r.url).pathname === path).length;
+
+    const { user, dialog } = await openRestore();
+    await vi.waitFor(() => {
+      expect([CATALOG, DETAIL, SIBLING, FILE, VERSIONS].map(gets)).toEqual([1, 1, 1, 1, 1]);
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Restore" }));
+
+    await screen.findByText(/Restored 11111111/);
+    await vi.waitFor(() => {
+      expect([CATALOG, DETAIL, SIBLING, FILE, VERSIONS].map(gets)).toEqual([2, 2, 2, 2, 2]);
+    });
+  });
+
+  it("keeps the list and the result when the history cannot be read again", async () => {
+    let reads = 0;
+    renderPanel({
+      [VERSIONS]: () =>
+        ++reads === 1 ? hookPage() : aProblem({ status: 500, title: "Internal server error" }),
+      [RESTORE]: { changed: true, versioned: true, reason: null, version: two[0] },
+    });
+
+    const { user, dialog } = await openRestore();
+    await user.click(within(dialog).getByRole("button", { name: "Restore" }));
+
+    expect(await screen.findByText("Could not refresh the history")).toBeInTheDocument();
+    expect(screen.getByText(/Restored 11111111/)).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: /Versions of/ })).toBeInTheDocument();
   });
 });

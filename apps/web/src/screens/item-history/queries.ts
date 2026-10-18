@@ -25,6 +25,20 @@ const WORKFLOW_VERSIONS = "/api/v1/workflows/{project}/{name}/versions";
 const WORKFLOW_VERSION = "/api/v1/workflows/{project}/{name}/versions/{version_id}";
 const WORKFLOW_RESTORE = "/api/v1/workflows/{project}/{name}/versions/{version_id}/restore";
 
+/** Whether a query key `["api", path, params]` reads what restoring `target` may change. */
+export function readsUnit(target: HistoryTarget, key: readonly unknown[]): boolean {
+  const [scope, path, params] = key;
+  if (scope !== "api" || typeof path !== "string" || path.includes("{version_id}")) return false;
+  const project = (params as { path?: { project?: unknown } } | undefined)?.path?.project;
+  if (target.kind === "item") {
+    return path.startsWith("/api/v1/projects/{project}/skills") && project === target.project;
+  }
+  return (
+    path === "/api/v1/workflows" ||
+    (path.startsWith("/api/v1/workflows/{project}") && project === target.project)
+  );
+}
+
 function skillPath(project: string, item: SkillRef) {
   return { project, kind: item.kind, source: item.source, name: item.name };
 }
@@ -64,6 +78,9 @@ export function useItemVersions(target: HistoryTarget, enabled = true) {
   });
 }
 
+/** How long an unused version's content stays cached. */
+export const VERSION_CONTENT_GC_MS = 15_000;
+
 /** One version's content (immutable, so never refetched); nothing is fetched while `id` is null. */
 export function useItemVersion(target: HistoryTarget, id: string | null) {
   const versionId = id ?? "";
@@ -79,6 +96,8 @@ export function useItemVersion(target: HistoryTarget, id: string | null) {
         : apiGet(WORKFLOW_VERSION, { path: { ...workflow, version_id: versionId } }, signal),
     enabled: id !== null,
     staleTime: Infinity,
+    // Versions can be large: once Compare closes, drop them soon instead of the default 5 min.
+    gcTime: VERSION_CONTENT_GC_MS,
   });
 }
 
@@ -97,27 +116,11 @@ export function useRestoreVersion(target: HistoryTarget) {
           });
     },
     onSettled: () => {
-      // The restore (or the external version recorded before a refusal) changes the list, and
-      // a written unit changes what the detail and the catalog read.
-      void client.invalidateQueries({ queryKey: versionsKey(target) });
-      if (target.kind === "item") {
-        void client.invalidateQueries({
-          queryKey: apiKey("/api/v1/projects/{project}/skills/{kind}/{source}/{name}", {
-            path: skillPath(target.project, target.item),
-          }),
-        });
-        void client.invalidateQueries({
-          queryKey: apiKey("/api/v1/projects/{project}/skills", {
-            path: { project: target.project },
-          }),
-        });
-      } else {
-        void client.invalidateQueries({
-          queryKey: apiKey("/api/v1/workflows/{project}/{name}", {
-            path: { project: target.project, name: target.name },
-          }),
-        });
-      }
+      // The restore (or the external version recorded before a refusal) changes the list, and a
+      // written unit changes every read of the project's Toolkit (the item, its bundled files,
+      // the hooks sharing its file, the catalog) or its workflows. A version's content never
+      // changes, so it is left cached.
+      void client.invalidateQueries({ predicate: (query) => readsUnit(target, query.queryKey) });
     },
   });
 }

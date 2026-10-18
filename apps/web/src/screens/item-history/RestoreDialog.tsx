@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { Banner, ConfirmDialog } from "../../components";
+import type { ApiProblem } from "../../lib/api";
 import { shortHash, writeProblemWords } from "./model";
 import {
   useRestoreVersion,
@@ -17,6 +18,12 @@ import {
 export const MANAGED_WARNING =
   "This file is managed by hub.lock: the next hub sync rewrites it. Restore anyway?";
 
+/** What the panel says once the dialog closes; `warning` when something was not recorded. */
+export interface RestoreOutcome {
+  text: string;
+  warning: boolean;
+}
+
 /** What a finished restore did, in words, for the panel's status line. */
 export function restoredWords(version: ItemVersion, result: ItemWriteResult): string {
   const hash = shortHash(version.content_hash);
@@ -26,6 +33,14 @@ export function restoredWords(version: ItemVersion, result: ItemWriteResult): st
     return `Restored ${hash}, but not versioned: ${why}.`;
   }
   return `Restored ${hash}: a new version records it.`;
+}
+
+/** A restore that wrote the unit but could not record its version (503, API.md Errors). */
+export function unrecordedWords(version: ItemVersion, problem: ApiProblem): string {
+  const advice =
+    problem.detail ??
+    "The next read records it as changed outside the app. Reload the history before trying again.";
+  return `Wrote ${shortHash(version.content_hash)}, but its version was not recorded. ${advice}`;
 }
 
 function whatIsWritten(page: ItemVersionPage) {
@@ -52,7 +67,7 @@ export function RestoreDialog({
   version: ItemVersion;
   page: ItemVersionPage;
   onClose: () => void;
-  onRestored: (words: string) => void;
+  onRestored: (outcome: RestoreOutcome) => void;
 }) {
   const restore = useRestoreVersion(target);
   // The server may know the unit is managed when the list did not (hub.lock changed since).
@@ -64,10 +79,13 @@ export function RestoreDialog({
       { versionId: version.id, confirmManaged: managed },
       {
         onSuccess: (result) => {
-          onRestored(restoredWords(version, result));
+          onRestored({ text: restoredWords(version, result), warning: !result.versioned });
         },
         onError: (error) => {
           if (error.code === "managed_confirmation_required") setManaged(true);
+          // The unit was written (`written: true`): there is nothing left to confirm here.
+          if (error.code === "written_not_recorded")
+            onRestored({ text: unrecordedWords(version, error), warning: true });
         },
       },
     );
