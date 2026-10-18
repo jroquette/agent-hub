@@ -32,6 +32,7 @@ Makefile uses.
 | live agent | A real `claude -p` session in a temp hub, seen through `hub web`, and a session `hub web` drives whose `git push origin main` the guard denies (`tests/e2e/test_live_agent.py`, marker `live("claude")`) | root `tests/e2e/` | `make test-live`, by hand |
 | web | The React app: Vitest + Testing Library in jsdom for components and screens (states, a11y with `axe-core`), against `src/testing/builders.ts` fixtures and a mocked API (`renderWithApi`) | `apps/web/src/**/*.test.{ts,tsx}` beside the code | `make check-fast` (`web-fast`) |
 | web smoke | The built app on an installed `hub web`: Playwright (Chromium) opens the printed token URL, visits the nine P2 pages of a synthetic scenario, and drives an agent session against the stub `claude` through two reloads | `apps/web/e2e/smoke.spec.ts`, driven by root `tests/e2e/test_web_smoke.py` | `make check` (`test-e2e`) |
+| web visual | Each screen the owner validated in the playground (AGH-314), on the demo data (`seed_demo`) at 1440 × 900, dark theme, clock frozen at 2026-01-01T12:00:00Z, `<time>` masked, against its export PNG (`e2e/visual/baselines/<area>/<route>.png`, `maxDiffPixelRatio` 0.01 for font anti-aliasing between machines) | `apps/web/e2e/visual/<area>.spec.ts`, driven by root `tests/e2e/test_web_visual.py` | `make check` (`test-e2e`) |
 
 A port's suite is written once, as reusable tests in `agent_hub.core.testing.contracts`, and each implementation's
 `tests/contract/` runs it against that implementation, so the fake used by unit tests is proven to behave like the real
