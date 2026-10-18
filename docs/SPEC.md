@@ -551,7 +551,7 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   stored as `session.title` ([ADR 0035](adr/0035-session-titles.md), below).
 
 **Skills tab (AGH-164, built; named Toolkit since AGH-271).** Knowledge › Toolkit shows what a hub's agents can do, read from its files on request;
-only the version history below is stored:
+only the version history below is stored, and only its restore writes into the hub:
 
 - **Catalog.** `GET /api/v1/projects/{project}/skills` lists the hub's skills, agents and hooks: the base plugin
   `plugin/hub-workflow/`, the project and other plugins under `plugin/`, real entries in `.claude/skills/` and
@@ -578,7 +578,7 @@ only the version history below is stored:
   kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog
   says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
   hub by its listing's fingerprint.
-- **Version history (AGH-295, capture and history reads so far; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
+- **Version history (AGH-295: capture, history, diff and restore so far; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
   The catalog and the detail, and the Workflows list and detail, record a version of each unit they show in
   agent-hub's database (table `item_versions`): a skill's whole folder, an agent's file, a hook's whole file (every
   hook of a file shares it), a hub workflow's file. A
@@ -595,6 +595,18 @@ only the version history below is stored:
   `state` now (`ok`, `too_large`, `secret`, `unreadable`), whether `hub.lock` manages it and how many items share it
   (the hooks of one file list the same versions); `.../versions/{version_id}` serves one version's files (texts and
   executable bits), only within the item's own unit. An item with no unit (a link, a built-in) has no history (404).
+  `POST .../versions/{version_id}/restore` (Toolkit and Workflows) writes a version back into the hub's tree, the
+  first route that does: a file through a temporary file and a rename, a skill folder staged beside it and swapped in
+  (its files and executable bits equal to the version, its hidden entries kept), a hook's whole file. One write runs
+  at a time. In order: the hub must be writable and have an effective identity, no component of the path may be a
+  link and the unit must be readable whole (else 409 `hub_read_only`, `no_author`, `link_in_path`,
+  `unit_unreadable`); a version equal to the disk writes and records nothing (`changed: false`); the disk's content
+  is recorded first as `external` when it changed, so a hand edit stays restorable; a unit with a secret match on
+  disk is refused (409 `secret_unversioned`), and one `hub.lock` manages needs `confirm_managed: true` (else 409
+  `managed_confirmation_required`); then the write, and a `restore` version naming its source (`restored_from`) by
+  the hub's effective identity. A failed write records nothing more and answers 500 without a path. Restore is a
+  strict write that needs `hub web`'s launch cookie; in the container it answers 409 `hub_read_only`. It never runs
+  git: the change shows in the hub's working tree.
 
 **Workflows (AGH-225 API, AGH-226 screen).** `GET /api/v1/workflows` lists each project's workflows (the
 hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema.md)) with their source (`hub` or
