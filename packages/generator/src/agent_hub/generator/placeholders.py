@@ -22,7 +22,8 @@ brief's sections and placeholders from core, read at render time so core stays t
 (AGH-138). Each plugin agent's ``model:`` names its default tier, ``@@{model_<tier>}``, resolved
 from ``models.tiers``; ``agent_model_overlay`` maps every tier key of one agent's file to the
 tier ``models.agents`` gives it. A hub without ``models`` renders the models the templates pinned
-before tiers (AGH-180).
+before tiers (AGH-180). A hub that declares ``environments`` gets ``AGENTS.md``'s Environments and
+services section, from ``hub.json`` only; a hub without keeps its bytes (AGH-282).
 """
 
 import re
@@ -91,6 +92,19 @@ _RULE_INDENT: Final = "   "
 # The template text of rule 1's line before its branch rule, so a long configured branch shape
 # wraps within 120 characters (AGH-57).
 _BRANCH_RULE_LEAD: Final = "   after an agent (e.g. `claude/…`). "
+# The fixed rules of ``AGENTS.md``'s Environments and services section (AGH-282, spec D-render
+# and Q-1), wrapped within 120 characters, then the lead of its repo lines.
+_ENVIRONMENTS_LEAD: Final = (
+    "Only the environments listed here exist for you; anything else is out of bounds. `read`:"
+    " look, never change; `ask`:\n"
+    "ask the user before any write; `write`: change data, never deploy (rule 2). This access is"
+    " an instruction to you; the\n"
+    "guard does not enforce it. Credentials are never here: use the profile or variable the"
+    " session brief or `./hub env list`\n"
+    "names, and never print its value. A command, path or file naming a blocked word"
+    " (`guard.blocked_words`) is denied."
+)
+_SERVICES_LEAD: Final = "Services by repo:"
 # The conventions' block in ``AGENTS.md``: its lead paragraph and each key as a repo line names
 # it; the shapes and examples come from ``shown_conventions`` (AGH-57, plan § Design 7, E32).
 _CONVENTIONS_LEAD: Final = (
@@ -163,6 +177,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         **_branch_mentions(config),
         **_team_mentions(config),
         **_conventions_texts(config),
+        "environments_section": _environments_section(config),
         **_join_texts(config),
         **_brief_texts(),
         **_model_texts(config),
@@ -348,6 +363,32 @@ def _conventions_section(shown: ShownConventions) -> str:
         items.append(f"- {subject}{_OVERRIDE_TAIL}".replace("; a `", f"; a{_GLUE}`"))
     bullets = "\n".join(_filled_after(item, lead="") for item in items)
     return f"\n\n## Conventions\n\n{_CONVENTIONS_LEAD}\n\n{bullets}"
+
+
+def _environments_section(config: HubConfig) -> str:
+    """``AGENTS.md``'s Environments and services section; empty without ``environments``.
+
+    From ``hub.json`` only (ADR 0016): the fixed rules, one line per environment with its access
+    and ``PRODUCTION`` flag and description, then one line per repo that has services, naming
+    them. Never an endpoint or a credential name (AGH-282, spec D-render).
+    """
+    if not config.environments:
+        return ""
+    environments = "\n".join(
+        _filled_after(
+            f"- `{name}` ({environment.access}{', PRODUCTION' if environment.production else ''})"
+            + (f": {environment.description}" if environment.description else ""),
+            lead="",
+        )
+        for name, environment in config.environments.items()
+    )
+    services = "\n".join(
+        _filled_after(f"- {repo.dir}: {_LIST_SEPARATOR.join(repo.services)}", lead="")
+        for repo in config.repos
+        if repo.services
+    )
+    by_repo = f"\n\n{_SERVICES_LEAD}\n\n{services}" if services else ""
+    return f"\n\n## Environments and services\n\n{_ENVIRONMENTS_LEAD}\n\n{environments}{by_repo}"
 
 
 def _filled_after(text: str, *, lead: str) -> str:
