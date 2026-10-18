@@ -7,7 +7,8 @@ import os
 import re
 import shutil
 import stat
-from collections.abc import Callable, Iterable
+import subprocess
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ _EXECUTABLE_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
 type TreeWriter = Callable[..., Path]
 type ShellScripts = Callable[[Iterable[RenderedFile]], list[str]]
+type ReadOnlyMaker = Callable[[Path], None]
 
 # A sh or bash ``#!`` line: the ``hub`` and ``agent`` shims carry one and no ``.sh`` suffix.
 _SHELL_SHEBANG = re.compile(rb"^#!\s*/(?:usr/)?bin/(?:env\s+)?(?:ba)?sh\b")
@@ -147,3 +149,38 @@ def shell_scripts() -> ShellScripts:
         ]
 
     return scripts
+
+
+@pytest.fixture
+def read_only_tree() -> Iterator[ReadOnlyMaker]:
+    """Make every folder under a root unwritable, as a read-only mount does, and undo it after.
+
+    Each folder (links not followed) goes to ``0o555``; a user that writes anywhere still can
+    (root in a container), so its folders are also made immutable with ``chattr +i``, which
+    refuses root too. The teardown takes both back, so ``tmp_path`` can be removed.
+    """
+    folders: list[Path] = []
+    immutable: list[Path] = []
+    chattr = shutil.which("chattr")
+
+    def make(root: Path) -> None:
+        found = [root] + [
+            Path(top) / name
+            for top, names, _ in os.walk(root)
+            for name in names
+            if not (Path(top) / name).is_symlink()
+        ]
+        for folder in found:
+            folder.chmod(0o555)
+            folders.append(folder)
+        if os.access(root, os.W_OK):
+            assert chattr is not None, "a user that writes anywhere needs chattr here"
+            for folder in found:
+                subprocess.run([chattr, "+i", str(folder)], check=True)  # noqa: S603
+                immutable.append(folder)
+
+    yield make
+    for folder in immutable:
+        subprocess.run([chattr, "-i", str(folder)], check=True)  # noqa: S603
+    for folder in folders:
+        folder.chmod(0o755)
