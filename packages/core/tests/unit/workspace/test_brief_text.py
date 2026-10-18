@@ -258,3 +258,54 @@ def test_truncates_when_over_max_chars() -> None:
     assert len(text) == 5500 - 20 + len("\n…(truncated)")
     assert text.endswith("z\n…(truncated)")
     assert len(render_brief(inputs())) < 5500
+
+
+ENVIRONMENTS = (
+    "## Environments",
+    "- `local` (write, hub.json): docker compose stack on this machine",
+    "- `live` (read, PRODUCTION, hub.json); credentials: AWS profile `demo-live-ro`",
+    "Blocked words (the guard denies them): `prod`, `production`",
+)
+
+
+def test_places_environments_block_after_repos_when_given() -> None:
+    text = render_brief(
+        inputs(repos=(a_repo(name="hub", dirty=0, behind="0"),), environments=ENVIRONMENTS)
+    )
+
+    assert text.split("\n") == [
+        "# Brief",
+        "",
+        "## Now",
+        "Ship the collector.",
+        "Then the CLI.",
+        "",
+        "## Journal (last 7 days)",
+        "- (no entry in the last week)",
+        "",
+        "## Repos",
+        "- hub: trunk, 0 changed file(s), 0 behind origin/trunk",
+        "",
+        *ENVIRONMENTS,
+        *FOOTER,
+    ]
+
+
+def test_keeps_text_when_no_environments() -> None:
+    # AC-277.33: without environments the brief is today's, byte for byte.
+    long_now = "---\nlast_verified: 2026-01-14\n---\n# Now\n" + "z" * 6000 + "\n"
+    for given in (inputs(), inputs(now_text=long_now)):
+        assert render_brief(given.model_copy(update={"environments": ()})) == render_brief(given)
+    assert BriefInputs.model_fields["environments"].default == ()
+
+
+def test_keeps_environments_block_when_brief_cut() -> None:
+    # AC-277.33 (AM-10): the block and the footer always fit; the earlier sections are cut.
+    long_now = "---\nlast_verified: 2026-01-14\n---\n# Now\n" + "z" * 6000 + "\n"
+
+    text = render_brief(inputs(now_text=long_now, environments=ENVIRONMENTS))
+
+    assert len(text) <= 5500
+    tail = "\n".join(("", *ENVIRONMENTS, *FOOTER))
+    assert text.endswith("z\n…(truncated)\n" + tail)
+    assert len(text) == 5500 - 20 + len("\n…(truncated)")
