@@ -3,6 +3,7 @@
 TESTING.md: builders only, no real hub.json; a test that writes does so under ``tmp_path``.
 """
 
+import contextlib
 import os
 import re
 import shutil
@@ -155,9 +156,11 @@ def shell_scripts() -> ShellScripts:
 def read_only_tree() -> Iterator[ReadOnlyMaker]:
     """Make every folder under a root unwritable, as a read-only mount does, and undo it after.
 
-    Each folder (links not followed) goes to ``0o555``; a user that writes anywhere still can
+    Each folder (links not followed) goes to ``0o555``. A user that writes anywhere still can
     (root in a container), so its folders are also made immutable with ``chattr +i``, which
-    refuses root too. The teardown takes both back, so ``tmp_path`` can be removed.
+    refuses root too; where that is not possible (no ``chattr``, or no ``CAP_LINUX_IMMUTABLE``)
+    the test is skipped, as ``hub_git``'s read-only test is. The teardown takes each folder back
+    on its own, so one that fails never leaves the others locked.
     """
     folders: list[Path] = []
     immutable: list[Path] = []
@@ -173,14 +176,25 @@ def read_only_tree() -> Iterator[ReadOnlyMaker]:
         for folder in found:
             folder.chmod(0o555)
             folders.append(folder)
-        if os.access(root, os.W_OK):
-            assert chattr is not None, "a user that writes anywhere needs chattr here"
-            for folder in found:
-                subprocess.run([chattr, "+i", str(folder)], check=True)  # noqa: S603
-                immutable.append(folder)
+        if not os.access(root, os.W_OK):
+            return
+        for folder in found:
+            done = chattr is not None and _run_quietly([chattr, "+i", str(folder)])
+            if not done:
+                pytest.skip("running as a user that writes anywhere, and chattr +i is refused")
+            immutable.append(folder)
 
     yield make
     for folder in immutable:
-        subprocess.run([chattr, "-i", str(folder)], check=True)  # noqa: S603
+        _run_quietly([str(chattr), "-i", str(folder)])
     for folder in folders:
-        folder.chmod(0o755)
+        with contextlib.suppress(OSError):
+            folder.chmod(0o755)
+
+
+def _run_quietly(command: list[str]) -> bool:
+    """Run ``command``; whether it exited 0 (a missing tool or a refusal is False)."""
+    try:
+        return subprocess.run(command, check=False, capture_output=True).returncode == 0  # noqa: S603
+    except OSError:
+        return False
