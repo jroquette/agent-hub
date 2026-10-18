@@ -48,8 +48,9 @@ class EvalRecord(ViewModel):
     """One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.
 
     ``path`` is relative to the hub's ``brain/``. ``acs`` is the AC ids evaluated or ``"all"``;
-    ``evaluated_at`` is the frontmatter's text (an ISO date or time). ``problem`` says why the
-    file could not be read or parsed; its other fields are then empty.
+    ``evaluated_at`` is the frontmatter's text (an ISO date or time). ``provenance`` says who ran
+    it (e.g. ``agent``, ``agent-evaluator``, ``owner``), None when the note does not say.
+    ``problem`` says why the file could not be read or parsed; its other fields are then empty.
     """
 
     delivery: str
@@ -62,6 +63,7 @@ class EvalRecord(ViewModel):
     evaluated_at: str | None
     legacy: bool
     problem: str | None
+    provenance: str | None = None
 
 
 class AcCounts(ViewModel):
