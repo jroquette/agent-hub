@@ -39,6 +39,8 @@ from agent_hub.core.skills.skill_view import item_id
 
 HISTORY_ENTITY: Final = "item history"
 VERSION_ENTITY: Final = "item version"
+# The largest seq a store can hold (SQLite's signed 64-bit integer).
+MAX_SEQ: Final = 2**63 - 1
 
 
 class ReadItemVersions:
@@ -136,7 +138,7 @@ def _next_cursor(versions: tuple[ItemVersionMeta, ...], limit: int) -> str | Non
 
 def _before_seq(text: str) -> int:
     key = decode_cursor(text).key
-    if len(key) != 1 or not isinstance(key[0], int) or key[0] < 1:
+    if len(key) != 1 or not isinstance(key[0], int) or not 1 <= key[0] <= MAX_SEQ:
         msg = "invalid cursor: it was not written by this list"
         raise InvalidCursorError(msg)
     return key[0]
