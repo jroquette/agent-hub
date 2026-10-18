@@ -5,8 +5,14 @@ import { describe, expect, it } from "vitest";
 
 import { DiscussProvider, useDiscuss } from "../../shell/discuss";
 import { seriousViolations } from "../../testing/axe";
-import { aProblem, renderWithApi, type ApiRoutes } from "../../testing/builders";
-import { HubConfigScreen } from "./index";
+import {
+  aPage,
+  aProblem,
+  aProjectSummary,
+  renderWithApi,
+  type ApiRoutes,
+} from "../../testing/builders";
+import { HubConfigPickerScreen, HubConfigScreen } from "./index";
 
 const CONFIG = "/api/v1/projects/demo/config";
 
@@ -266,6 +272,135 @@ describe("HubConfigScreen", () => {
     });
 
     expect(await screen.findByText("Project not found")).toBeVisible();
+  });
+
+  it("AC-PG-38.2 opens a project picker at /config with All projects in scope", async () => {
+    renderWithApi(createElement(HubConfigPickerScreen), {
+      routes: { "/api/v1/projects": aPage([aProjectSummary({ name: "demo" })]) },
+      path: "/config",
+    });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Hub configuration" }),
+    ).toBeVisible();
+    expect(await screen.findByRole("link", { name: "demo" })).toHaveAttribute(
+      "href",
+      "/projects/demo/config",
+    );
+  });
+
+  it("AC-PG-38.2 opens the project in scope's configuration from /config", async () => {
+    const { router } = renderWithApi(createElement(HubConfigPickerScreen), {
+      routes: { "/api/v1/projects": aPage([aProjectSummary({ name: "demo" })]) },
+      path: "/config?scope=demo",
+    });
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/projects/demo/config");
+    });
+  });
+
+  it("AC-PG-38.2 has no Models link or section in the Mine view", async () => {
+    open("/projects/demo/config?layer=local");
+
+    const rail = await screen.findByRole("navigation", { name: "On this page" });
+    expect(within(rail).queryByRole("link", { name: "Models" })).toBeNull();
+    expect(within(rail).getByRole("link", { name: "Guard" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: /Models/ })).toBeNull();
+  });
+
+  it("AC-PG-38.2 lists Models in the Effective view", async () => {
+    open();
+
+    const rail = await screen.findByRole("navigation", { name: "On this page" });
+    expect(within(rail).getByRole("link", { name: "Models" })).toBeVisible();
+    expect(screen.getByRole("region", { name: /Models/ })).toBeVisible();
+  });
+
+  it("AC-PG-38.2 hides the team and local guard words until Show words", async () => {
+    open();
+
+    const guard = await screen.findByRole("region", { name: /Guard/ });
+    expect(within(guard).queryByText("acme-prod")).toBeNull();
+    expect(within(guard).queryByText("my-client")).toBeNull();
+    await userEvent.click(within(guard).getByRole("button", { name: "Show words" }));
+    expect(within(guard).getByText("acme-prod")).toBeVisible();
+    expect(within(guard).getByText("my-client")).toBeVisible();
+  });
+
+  it("AC-PG-38.3 says in words that a row pointed at goes in the next message", async () => {
+    open();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Ask Claude to change commit title of demo-api" }),
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: "Ask Claude to change commit title of demo-api: in next message",
+      }),
+    ).toBeVisible();
+    expect(screen.getAllByText("In next message").length).toBeGreaterThan(0);
+  });
+
+  it("AC-PG-38.3 names the reason a row's Ask is disabled when session control is locked", async () => {
+    open("/projects/demo/config", {
+      [CONFIG]: aConfig(),
+      "/api/v1/agent-sessions/capabilities": aProblem({ status: 401, title: "Unauthorized" }),
+    });
+
+    const row = await screen.findByRole("button", {
+      name: (name) => name.startsWith("Ask Claude to change commit title of demo-api (unavailable"),
+    });
+    expect(row).toBeDisabled();
+    expect(row).toHaveAccessibleName(
+      expect.stringContaining("Session control is locked in this browser") as string,
+    );
+  });
+
+  it("AC-PG-38.6 says the local layer is empty and offers Edit my local settings", async () => {
+    open("/projects/demo/config?layer=local", {
+      [CONFIG]: aConfig({
+        author_email: sourced(
+          "jane@example.com",
+          "team",
+          "hub.json → project.author_email",
+          "jane@example.com",
+        ),
+        guard: {
+          ...aConfig().guard,
+          blocked_words: { team: ["acme-prod"], local: [] },
+        },
+      }),
+    });
+
+    const notice = await screen.findByText(/No hub.local.json values on this machine/);
+    const banner = notice.closest("[role=status]");
+    expect(banner).not.toBeNull();
+    await userEvent.click(
+      within(banner as HTMLElement).getByRole("button", { name: "Edit my local settings" }),
+    );
+    expect(screen.getByRole("dialog", { name: "Edit my local settings" })).toBeVisible();
+  });
+
+  it("AC-PG-38.6 offers Ask Claude to fix an unreadable hub.local.json", async () => {
+    open("/projects/demo/config", {
+      [CONFIG]: aConfig({
+        local_file: {
+          name: "hub.local.json",
+          path: "/hubs/demo-hub/hub.local.json",
+          problems: ["line 3: expected ','"],
+        },
+      }),
+    });
+
+    expect(
+      await screen.findByText(/hub.local.json has a problem, so your local values are ignored/),
+    ).toHaveTextContent("line 3: expected ','");
+    await userEvent.click(screen.getByRole("button", { name: "Ask Claude to fix it" }));
+    expect(screen.getByRole("list", { name: "references" })).toHaveTextContent(
+      "hub.local.json problems: line 3: expected ','",
+    );
   });
 
   it("has no serious a11y violations", async () => {

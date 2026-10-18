@@ -3,7 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
-import { aWorkflowCatalog, renderWithApi } from "../../testing/builders";
+import {
+  aWorkflowCatalog,
+  aWorkflowSummary,
+  renderWithApi,
+  type ApiRoutes,
+} from "../../testing/builders";
 import { DiscussProvider, useDiscuss } from "../../shell/discuss";
 import { NewWorkflowScreen } from "./NewWorkflow";
 
@@ -16,13 +21,13 @@ function Probe() {
   );
 }
 
-function renderNew() {
+function renderNew(routes: ApiRoutes = { "/api/v1/workflows": aWorkflowCatalog() }) {
   return renderWithApi(
     <DiscussProvider>
       <NewWorkflowScreen />
       <Probe />
     </DiscussProvider>,
-    { routes: { "/api/v1/workflows": aWorkflowCatalog() }, path: "/workflows/new" },
+    { routes, path: "/workflows/new" },
   );
 }
 
@@ -63,6 +68,37 @@ describe("NewWorkflowScreen", () => {
       key.startsWith("ah.chat.draft.discuss.workflow-new:agent-hub:"),
     );
     expect(window.localStorage.getItem(draft ?? "")).toContain("fix-test");
+  });
+
+  it("AC-PG-13.5 says the new workflow loads, with a link to it, once the catalog lists it", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderNew({
+      // The watch asks for the chosen project; by then Claude has written the file.
+      "/api/v1/workflows": (request: Request) =>
+        new URL(request.url).searchParams.get("project") === "agent-hub"
+          ? aWorkflowCatalog({
+              items: [...aWorkflowCatalog().items, aWorkflowSummary({ name: "fix-test" })],
+            })
+          : aWorkflowCatalog(),
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Fix a failing test" }));
+    await user.type(screen.getByLabelText("Name (optional)"), "fix-test");
+    expect(screen.queryByRole("link", { name: "See its steps" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Create with Claude" }));
+
+    const loaded = await screen.findByText(
+      (_, element) => element?.tagName === "SPAN" && element.textContent === "fix-test loads.",
+    );
+    expect(loaded.closest("[role=status]")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "See its steps" })).toHaveAttribute(
+      "href",
+      "/workflows/agent-hub/fix-test",
+    );
+    expect(screen.queryByText(/Claude has your request in the panel/)).toBeNull();
+    expect(requests.some((r) => new URL(r.url).searchParams.get("project") === "agent-hub")).toBe(
+      true,
+    );
   });
 
   it("has no serious a11y violations (a11y)", async () => {
