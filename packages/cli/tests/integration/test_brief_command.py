@@ -20,6 +20,10 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli import brief_command
 from agent_hub.cli.main import app
+from agent_hub.core.testing.builders import (
+    a_local_environments_document,
+    an_environments_document,
+)
 
 # The conftest's workspace (tests cannot import a conftest in importlib mode).
 type Workspace = Any
@@ -493,3 +497,83 @@ def test_keeps_git_in_caller_group_when_brief_runs(
     assert result.exit_code == 0, result.output
     assert len(options) == 10  # three checkouts, the detached one asks for its short HEAD
     assert all(given["own_session"] is False for given in options)
+
+
+# The spec's W and Lc on the brief workspace's repo ``api`` (AC-277.8).
+ENVIRONMENTS_BLOCK = [
+    "## Environments",
+    "- `local` (write, hub.json): docker compose stack on this machine",
+    "- `staging` (ask, hub.json); credentials: AWS profile `demo-staging`",
+    "- `live` (read, PRODUCTION, hub.json); credentials: AWS profile `demo-live-ro`,"
+    " variables `DEMO_LIVE_DB_URL`",
+    "- `jane-cloud` (write, hub.local.json); credentials: AWS profile `jane-sandbox`",
+    "Endpoints:",
+    "- `api/api` on `local`: http://localhost:8000",
+    "- `api/api` on `staging`: https://api.staging.example.com",
+    "- `api/api` on `live`: https://api.example.com",
+    "- `api/api` on `jane-cloud`: https://api.jane.example.com",
+    "- `api/orders` on `staging`: resource demo-orders-staging",
+    "Blocked words (the guard denies them): `prod`, `production`, `demo-live`",
+]
+# A synthetic value in a credential variable: the brief names the variable, never its value.
+CREDENTIAL_VALUE = "postgres://demo-reader@db.example.com/demo"
+
+
+def commit_environments(workspace: Workspace, local: dict[str, Any]) -> None:
+    """Commit the hub's ``hub.json`` with ``W`` on ``api`` and ``local`` as ``hub.local.json``."""
+    document = json.loads((workspace.hub / "hub.json").read_text())
+    environments = an_environments_document()
+    document["environments"] = environments["environments"]
+    document["repos"][0]["services"] = environments["repos"][0]["services"]
+    document["guard"] = {"blocked_words": environments["guard"]["blocked_words"]}
+    workspace.commit_hub(
+        {
+            "hub.json": json.dumps(document, indent=2) + "\n",
+            "hub.local.json": json.dumps(local, indent=2) + "\n",
+        }
+    )
+
+
+def environments_block(stdout: str) -> list[str]:
+    """The lines from ``## Environments`` to the footer's blank line, which ends the brief."""
+    lines = stdout.splitlines()
+    start = lines.index("## Environments")
+    assert lines[start - 1] == "", lines
+    assert lines[start - 2].startswith("- ui: "), lines
+    end = len(lines) - 3
+    assert lines[end:] == [
+        "",
+        "Linear: n/a (connector not configured for scripts).",
+        "More: brain/index.md (pull only what the task needs).",
+    ]
+    return lines[start:end]
+
+
+def test_prints_environments_block_when_files_declare_them(brief_workspace: Workspace) -> None:
+    local = a_local_environments_document()
+    local["repos"][0]["dir"] = "api"
+    commit_environments(brief_workspace, local)
+
+    result = run_brief(brief_workspace, "--no-network", DEMO_LIVE_DB_URL=CREDENTIAL_VALUE)
+
+    assert result.exit_code == 0, result.output
+    assert environments_block(result.stdout) == ENVIRONMENTS_BLOCK
+    assert CREDENTIAL_VALUE not in result.output
+    assert "demo-reader" not in result.output
+
+
+def test_shows_tightened_access_when_local_tightens(brief_workspace: Workspace) -> None:
+    # AC-277.28: the effective access, with the file it comes from.
+    commit_environments(brief_workspace, {"environments": {"staging": {"access": "read"}}})
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert environments_block(result.stdout) == [
+        *ENVIRONMENTS_BLOCK[:2],
+        "- `staging` (read, hub.local.json); credentials: AWS profile `demo-staging`",
+        ENVIRONMENTS_BLOCK[3],
+        *ENVIRONMENTS_BLOCK[5:9],
+        ENVIRONMENTS_BLOCK[10],
+        "Blocked words (the guard denies them): `prod`, `production`",
+    ]
