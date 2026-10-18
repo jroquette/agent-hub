@@ -5,7 +5,6 @@ import { Link, useSearchParams } from "react-router";
 import type { components } from "../../api/schema";
 import {
   Button,
-  CodeBlock,
   DerivedLabel,
   EmptyState,
   Icon,
@@ -22,6 +21,7 @@ import { safeHref } from "../../lib/safeHref";
 import { useDiscuss, type DiscussReference } from "../../shell/discuss";
 import { FilterMenu } from "../features/parts";
 import { useProjectRepos } from "../project-overview/queries";
+import { CheckRun } from "./CheckRun";
 import { useAcCitations, type AcCitations, type Citation } from "./acCitations";
 import {
   parseEvidence,
@@ -41,7 +41,7 @@ export type Pass = "yes" | "owner" | "none";
 const PASS: Record<Pass, { icon: IconName; tone: string; label: string; title: string }> = {
   yes: { icon: "circle-check", tone: "done", label: "Passes", title: "Its check passes" },
   owner: { icon: "hand", tone: "waiting", label: "Owner step", title: "Waits on a manual check" },
-  none: { icon: "circle-dashed", tone: "idle", label: "Not passing", title: "Not passing yet" },
+  none: { icon: "clock", tone: "idle", label: "Not passing", title: "Not passing yet" },
 };
 export const passOf = (ac: AcRow): Pass => (ac.passes ? "yes" : ac.manual ? "owner" : "none");
 
@@ -74,13 +74,13 @@ export function allCommands(rows: AcRow[]): string {
 }
 
 /** Sends one criterion to the feature's Discuss conversation; a labelled button, not an icon. */
-function DiscussAc({ ac, slug, long }: { ac: AcRow; slug: string; long?: boolean }) {
+function DiscussAc({ ac, slug }: { ac: AcRow; slug: string }) {
   const { addReference, references } = useDiscuss();
   const pointed = references.some((r) => r.id === `ac:${ac.id}`);
   return (
     <Button
       size="sm"
-      variant={long ? "default" : "ghost"}
+      variant="ghost"
       icon={pointed ? "check" : "message-square"}
       aria-label={pointed ? `${ac.id} is in the next message` : `Discuss ${ac.id} with Claude`}
       title={
@@ -93,7 +93,7 @@ function DiscussAc({ ac, slug, long }: { ac: AcRow; slug: string; long?: boolean
         addReference(acReference(ac, slug));
       }}
     >
-      {pointed ? "In next message" : long ? `Discuss ${ac.id} with Claude` : "Discuss"}
+      {pointed ? "In next message" : "Discuss"}
     </Button>
   );
 }
@@ -504,53 +504,27 @@ function AcCard({
   const list = citations.byAc.get(ac.id) ?? [];
   return (
     <div className="ah-ac-card">
-      <div className="ah-row ah-wrap" style={{ gap: 8 }}>
-        <span className="ah-mono" style={{ fontWeight: 600 }}>
-          {ac.id}
-        </span>
-        <StatusCell ac={ac} />
-        <span className="ah-grow" />
-        <Button
-          size="sm"
-          variant="ghost"
-          icon={copied ? "check" : "link"}
-          onClick={() => {
-            const url = new URL(window.location.href);
-            url.searchParams.set("doc", "acs");
-            url.searchParams.set("ac", ac.id);
-            url.hash = "";
-            copyText(url.toString());
-            markCopied();
-          }}
+      <div className="ah-ac-card-top">
+        <Section title="What must be true" icon="list-checks">
+          <WhatMustBeTrue text={ac.description} />
+        </Section>
+        <Section
+          title="How it was proven"
+          icon="flask-conical"
+          aside={
+            facts && (
+              <DerivedLabel how="Read by agent-hub from the evidence text in features.json; the full text is below.">
+                read from the evidence text
+              </DerivedLabel>
+            )
+          }
         >
-          {copied ? "Copied" : "Copy link"}
-        </Button>
-        <DiscussAc ac={ac} slug={detail.slug} long />
+          <HowProven ac={ac} facts={facts} detail={detail} githubOf={githubOf} />
+        </Section>
       </div>
-      <Section title="What must be true" icon="list-checks">
-        <WhatMustBeTrue text={ac.description} />
-        {ac.repo && (
-          <div className="ah-small ah-subtle">
-            In <span className="ah-mono">{ac.repo}</span>
-          </div>
-        )}
-      </Section>
-      <Section
-        title="How it was proven"
-        icon="flask-conical"
-        aside={
-          facts && (
-            <DerivedLabel how="Read by agent-hub from the evidence text in features.json; the full text is below.">
-              read from the evidence text
-            </DerivedLabel>
-          )
-        }
-      >
-        <HowProven ac={ac} facts={facts} detail={detail} githubOf={githubOf} />
-      </Section>
       <Section title="Check it yourself" icon="terminal">
         {ac.command && !ac.manual ? (
-          <CodeBlock code={ac.command} prompt="$" wrap label={`Verification of ${ac.id}`} />
+          <CheckRun ac={ac} detail={detail} command={ac.command} />
         ) : ac.command ? (
           <div className="ah-small">
             <span className="ah-muted">Manual owner step: </span>
@@ -573,6 +547,24 @@ function AcCard({
       >
         <CitationList citations={list} loading={citations.loading} detail={detail} />
       </Section>
+      <div className="ah-row">
+        <span className="ah-grow" />
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={copied ? "check" : "link"}
+          onClick={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.set("doc", "acs");
+            url.searchParams.set("ac", ac.id);
+            url.hash = "";
+            copyText(url.toString());
+            markCopied();
+          }}
+        >
+          {copied ? "Copied" : `Copy link to ${ac.id}`}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -681,9 +673,8 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
       <p className="ah-small ah-muted ah-ac-hint">
         <Icon name="message-square" size="sm" />
         <span>
-          Each criterion has a <b>Discuss</b> button: it attaches that criterion to your next
-          message for Claude in the panel on the right. Open a row to see how it was proven and
-          where it is cited.
+          Open a criterion to see how it was proven and to run its check. Discuss attaches it to
+          your next message for Claude.
         </span>
       </p>
       <div className="ah-table-wrap">
@@ -741,12 +732,16 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
                     </td>
                     <td className="ah-ac-desc">
                       <div className="ah-ac-crit">
-                        <span className="ah-ac-id ah-mono">{ac.id}</span>
+                        <Link
+                          to={`?doc=acs&ac=${encodeURIComponent(ac.id)}`}
+                          className="ah-ac-id ah-mono"
+                          title={`Link to ${ac.id}`}
+                        >
+                          {ac.id}
+                        </Link>
                         {ac.repo && <span className="ah-fm-chip">{ac.repo}</span>}
                       </div>
-                      <div className="ah-ac-clamp" data-open={expanded || undefined}>
-                        {ac.description}
-                      </div>
+                      <div className="ah-ac-clamp">{ac.description}</div>
                     </td>
                     <td>
                       <EvidenceSummary ac={ac} facts={facts} githubOf={githubOf} />
@@ -763,8 +758,7 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
                   </tr>
                   {expanded && (
                     <tr style={{ cursor: "default" }} className="ah-ac-detail-row">
-                      <td />
-                      <td colSpan={COLS - 1}>
+                      <td colSpan={COLS}>
                         <AcCard ac={ac} detail={detail} citations={citations} githubOf={githubOf} />
                       </td>
                     </tr>

@@ -31,6 +31,32 @@ export function orderNeeds(items: readonly NeedsYouItem[]): NeedsYouItem[] {
   );
 }
 
+/**
+ * Proposed learnings collapse into one "Triage N learnings" line per project (spec 12: learnings
+ * are always one aggregated line), so they never push an approval or a failure out of view.
+ */
+export function groupLearnings(items: readonly NeedsYouItem[]): NeedsYouItem[] {
+  const byProject = new Map<string, NeedsYouItem[]>();
+  for (const item of items) {
+    if (item.kind !== "learning") continue;
+    byProject.set(item.project, [...(byProject.get(item.project) ?? []), item]);
+  }
+  const grouped: NeedsYouItem[] = items.filter(
+    (item) => item.kind !== "learning" || (byProject.get(item.project)?.length ?? 0) < 2,
+  );
+  for (const [project, learnings] of byProject) {
+    if (learnings.length < 2) continue;
+    const oldest = learnings.reduce((a, b) => (sinceMs(a) <= sinceMs(b) ? a : b));
+    grouped.push({
+      ...oldest,
+      verb: `Triage ${String(learnings.length)} learnings`,
+      context: `${project} · proposed, waiting for review`,
+      href: "/knowledge/learnings?status=proposed",
+    });
+  }
+  return grouped;
+}
+
 /** "41 min", "2 h": how long an item has waited; "now" when it has no time. */
 export function age(iso: string | null | undefined, now: number): string {
   if (!iso) return "now";
@@ -119,7 +145,7 @@ export function projectCard(project: ProjectSummary): ProjectCardData {
     failed7d: project.failed_runs_7d,
     ready: project.ready_issues ?? null,
     cost: toNumber(project.cost_period),
-    costDelta: delta.text,
+    costDelta: delta.pct === null ? "First period tracked" : delta.text,
     costDeltaTone: delta.tone,
     costSpark: project.cost_daily.map((value) => toNumber(value) ?? 0),
   };
@@ -164,13 +190,26 @@ export function totals(projects: readonly ProjectSummary[]): Totals {
 
 /** The activity chips and the API kinds each one shows. */
 export const ACTIVITY_FILTERS: readonly { id: string; kinds: readonly ActivityItem["kind"][] }[] = [
-  { id: "All", kinds: ["reported", "failed", "learning", "doctor", "approval"] },
+  // Answered approvals are routine (spec 12: routine items never appear); they live in Approvals.
+  { id: "All", kinds: ["reported", "failed", "learning", "doctor"] },
   { id: "Runs", kinds: ["reported", "failed"] },
-  { id: "Approvals", kinds: ["approval"] },
   { id: "Learnings", kinds: ["learning"] },
   { id: "Health", kinds: ["doctor"] },
 ];
 
 export function activityEntry(item: ActivityItem, now: number): Omit<ActivityEntry, "node"> {
   return { kind: item.kind, text: item.text, project: item.project, age: age(item.at, now) };
+}
+
+/** Consecutive rows with the same text and project become one row with a count. */
+export function collapseRepeats(
+  items: readonly ActivityItem[],
+): { item: ActivityItem; count: number }[] {
+  const rows: { item: ActivityItem; count: number }[] = [];
+  for (const item of items) {
+    const last = rows[rows.length - 1];
+    if (last?.item.text === item.text && last.item.project === item.project) last.count++;
+    else rows.push({ item, count: 1 });
+  }
+  return rows;
 }

@@ -106,13 +106,48 @@ function SessionLink({ session }: { session: Session }) {
   );
 }
 
-/** The sessions whose branch or run names this ticket, newest first, each one click from its dialogue. */
-function TicketSessions({ row, project }: { row: TicketRow; project: string }) {
-  const sessions = useApi(
+/** The sessions whose branch, worktree, run or first prompt names the ticket, newest first. */
+function useTicketSessions(project: string, row: TicketRow) {
+  return useApi(
     "/api/v1/sessions",
     { query: { project, issue: row.id ?? "", limit: 20 } },
     { enabled: row.id != null, refetchInterval: TICKETS_REFRESH_MS },
   );
+}
+
+/**
+ * What a ticket's card offers next to its readiness: its newest session, one click from its
+ * dialogue, and Start while the ticket is free to pick up and no session of it is still open.
+ */
+function CardAction({
+  project,
+  slug,
+  row,
+  rows,
+}: {
+  project: string;
+  slug: string;
+  row: TicketRow;
+  rows: readonly TicketRow[];
+}) {
+  const sessions = useTicketSessions(project, row);
+  const newest = sessions.data?.items[0];
+  const open = newest != null && newest.status !== "ended";
+  const start = canStartTicket(row) && !open && (
+    <StartTicketButton project={project} slug={slug} row={row} rows={rows} />
+  );
+  if (!newest) return start || null;
+  return (
+    <span className="ah-row ah-wrap" style={{ gap: 8 }}>
+      <SessionLink session={newest} />
+      {start}
+    </span>
+  );
+}
+
+/** The sessions whose branch or run names this ticket, newest first, each one click from its dialogue. */
+function TicketSessions({ row, project }: { row: TicketRow; project: string }) {
+  const sessions = useTicketSessions(project, row);
   if (!row.id) return <span className="ah-subtle">—</span>;
   if (sessions.isPending) return <Skeleton width={90} height={18} />;
   if (sessions.isError) {
@@ -254,24 +289,29 @@ function TicketsTable({
     label: string;
     width?: number;
     nowrap?: boolean;
+    className?: string;
     cell: (row: TicketRow) => ReactNode;
   }[] = [
-    { label: "Ticket", width: 140, nowrap: true, cell: (row) => <TicketId row={row} /> },
-    { label: "Scope", width: 120, nowrap: true, cell: (row) => <ScopeCell row={row} /> },
-    { label: "Title", cell: (row) => <TitleCell row={row} child={isChild(row)} /> },
-    { label: "Status", width: 120, nowrap: true, cell: (row) => <StateBadge row={row} /> },
+    { label: "Ticket", width: 110, nowrap: true, cell: (row) => <TicketId row={row} /> },
+    { label: "Scope", width: 90, nowrap: true, cell: (row) => <ScopeCell row={row} /> },
+    {
+      label: "Title",
+      className: "ah-ticket-title-col",
+      cell: (row) => <TitleCell row={row} child={isChild(row)} />,
+    },
+    { label: "Status", width: 110, nowrap: true, cell: (row) => <StateBadge row={row} /> },
     { label: "Assignee", width: 110, cell: (row) => <Assignee row={row} /> },
     { label: "Blocked by", width: 110, cell: (row) => <Blockers row={row} data={data} /> },
-    { label: "ACs", width: 150, cell: (row) => <Acs row={row} acPasses={acPasses} /> },
+    { label: "ACs", width: 120, cell: (row) => <Acs row={row} acPasses={acPasses} /> },
     {
       label: "Sessions",
-      width: 170,
+      width: 150,
       nowrap: true,
       cell: (row) => <TicketSessions row={row} project={project} />,
     },
     {
       label: "Readiness",
-      width: 200,
+      width: 180,
       cell: (row) => (
         <span className="ah-row ah-wrap" style={{ gap: 8 }}>
           <ReadinessText row={row} rows={data.tickets} external={data.planning.external_blockers} />
@@ -286,7 +326,12 @@ function TicketsTable({
         <thead>
           <tr>
             {columns.map((c) => (
-              <th key={c.label} scope="col" style={c.width ? { width: c.width } : undefined}>
+              <th
+                key={c.label}
+                scope="col"
+                className={c.className}
+                style={c.width ? { width: c.width } : undefined}
+              >
                 {c.label}
               </th>
             ))}
@@ -302,7 +347,12 @@ function TicketsTable({
               data-child={isChild(row) || undefined}
             >
               {columns.map((c) => (
-                <td key={c.label} className={c.nowrap ? "ah-nowrap" : undefined}>
+                <td
+                  key={c.label}
+                  className={
+                    [c.nowrap && "ah-nowrap", c.className].filter(Boolean).join(" ") || undefined
+                  }
+                >
                   {c.cell(row)}
                 </td>
               ))}
@@ -381,6 +431,9 @@ export function TicketsTab({
     canStartTicket(row) ? (
       <StartTicketButton project={project} slug={slug} row={row} rows={data.tickets} />
     ) : null;
+  const cardAction: TicketAction = (row) => (
+    <CardAction project={project} slug={slug} row={row} rows={data.tickets} />
+  );
   return (
     <div className="ah-stack" style={{ gap: 12 }}>
       <TicketNotice tickets={data} onRefresh={onRefresh} refreshing={refreshing} />
@@ -397,7 +450,7 @@ export function TicketsTab({
             tickets={data.tickets}
             planning={data.planning}
             acPasses={acPasses}
-            ticketAction={ticketAction}
+            ticketAction={cardAction}
           />
           <TicketsTable
             data={data}

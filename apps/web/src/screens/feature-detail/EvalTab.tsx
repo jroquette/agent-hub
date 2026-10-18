@@ -1,3 +1,4 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
@@ -18,7 +19,7 @@ import {
   Tooltip,
   type Status,
 } from "../../components";
-import { ApiProblem, useApi } from "../../lib/api";
+import { ApiProblem, apiCommand, apiKey, useApi } from "../../lib/api";
 import { brainRoute } from "../../lib/brainLinks";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtDateTime } from "../../lib/format";
@@ -32,11 +33,6 @@ import { useCreateAgentSession, useHubSessionStart } from "../sessions-list/quer
 type EvalRecord = components["schemas"]["EvalRecord"];
 type AgentSessionStatus = components["schemas"]["AgentSessionStatus"];
 
-function Ids({ ids }: { ids: readonly string[] }) {
-  if (ids.length === 0) return <span className="ah-subtle">—</span>;
-  return <span className="ah-mono ah-small">{ids.join(", ")}</span>;
-}
-
 function Scope({ acs }: { acs: EvalRecord["acs"] }) {
   if (acs === "all") return <span>All ACs</span>;
   if (acs.length === 0) return <span className="ah-subtle">—</span>;
@@ -45,6 +41,53 @@ function Scope({ acs }: { acs: EvalRecord["acs"] }) {
       {acs.length} AC{acs.length === 1 ? "" : "s"}
     </span>
   );
+}
+
+/** How an eval is named: a legacy single `eval.md` reads as that file, not as "legacy". */
+function deliveryLabel(record: EvalRecord): string {
+  return record.legacy ? fileName(record.path) : record.delivery;
+}
+
+/** Who ran an eval, from its `provenance`, in words; null when the note does not say. */
+export function ranBy(provenance: string | null | undefined): string | null {
+  if (!provenance) return null;
+  const known: Record<string, string> = {
+    agent: "Agent",
+    "agent-evaluator": "Evaluator agent",
+    owner: "You (owner sign-off)",
+  };
+  return known[provenance] ?? provenance;
+}
+
+/**
+ * What an eval evaluated: the whole feature (all ACs, no ticket, or only the feature's epics,
+ * since evaluating the epic is evaluating the feature), else its tickets.
+ */
+export function evalScope(record: EvalRecord, epics: readonly string[]): string {
+  const own = record.tickets.filter((t) => !epics.includes(t));
+  if (record.acs === "all" || own.length === 0) return FEATURE_SCOPE;
+  return own.join(", ");
+}
+
+/** The evals grouped by scope, the whole feature first, then the tickets in plan order; newest first. */
+export function evalHistory(
+  evals: readonly EvalRecord[],
+  tickets: readonly string[],
+  epics: readonly string[],
+): { scope: string; evals: EvalRecord[] }[] {
+  const groups = new Map<string, EvalRecord[]>();
+  for (const e of evals) {
+    const scope = evalScope(e, epics);
+    groups.set(scope, [...(groups.get(scope) ?? []), e]);
+  }
+  const rank = (scope: string) => {
+    if (scope === FEATURE_SCOPE) return -1;
+    const at = tickets.indexOf(scope.split(", ")[0] ?? scope);
+    return at === -1 ? tickets.length : at;
+  };
+  return [...groups.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([scope, list]) => ({ scope, evals: [...list].reverse() }));
 }
 
 function fileName(path: string): string {
@@ -121,6 +164,10 @@ function writeRun(key: string, run: StoredRun | null) {
 
 const scopeLabel = (scope: string) => (scope === FEATURE_SCOPE ? "whole feature" : scope);
 
+/** The whole feature's name, with its epic when it has one: evaluating the epic is evaluating it. */
+const featureName = (epics: readonly string[]) =>
+  epics.length > 0 ? `Whole feature · ${epics.join(", ")} epic` : "Whole feature";
+
 /** The first message of an evaluator run: the hub-workflow evaluator, one scope, nothing else. */
 export function evalPrompt(project: string, slug: string, scope: string): string {
   const what = scope === FEATURE_SCOPE ? "the whole feature" : `ticket ${scope}`;
@@ -158,12 +205,21 @@ function EvalRunStrip({
   tickets,
   evals,
   onShow,
+  primary,
+  epics,
+  caption,
 }: {
   project: string;
   slug: string;
   tickets: readonly string[];
   evals: readonly EvalRecord[];
+  /** What the row says on its left, before the action: the eval count. */
+  caption?: ReactNode;
   onShow: (delivery: string) => void;
+  /** The tab's main action (no eval yet); otherwise re-running is secondary to reading. */
+  primary: boolean;
+  /** The feature's epics: not a scope of their own, they are the whole feature. */
+  epics: readonly string[];
 }) {
   const key = runKey(project, slug);
   const { tz } = usePreferences();
@@ -229,26 +285,31 @@ function EvalRunStrip({
   };
 
   const action = `Evaluate ${scopeLabel(shownScope)}`;
+  const scopes = tickets.filter((t) => !epics.includes(t));
+  const variant = primary ? "primary" : "default";
   return (
-    <section className="ah-card ah-pad ah-stack" style={{ gap: 10 }} aria-label="Evaluate">
-      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-        <b>Evaluate</b>
-        <span className="ah-small ah-muted">Scope</span>
-        <SegmentedControl
-          label="Evaluation scope"
-          value={shownScope}
-          disabled={inFlight}
-          onChange={setScope}
-          options={[
-            { id: FEATURE_SCOPE, label: "Whole feature" },
-            ...tickets.map((t) => ({ id: t, label: t })),
-          ]}
-        />
+    <section className="ah-stack" style={{ gap: 8 }} aria-label="Evaluate">
+      <div className="ah-row ah-wrap" style={{ gap: 10 }}>
+        {caption}
         <span className="ah-grow" />
+        {scopes.length > 1 || (scopes.length > 0 && epics.length > 0) ? (
+          <SegmentedControl
+            label="Evaluation scope"
+            value={shownScope}
+            disabled={inFlight}
+            onChange={setScope}
+            options={[
+              { id: FEATURE_SCOPE, label: featureName(epics) },
+              ...scopes.map((t) => ({ id: t, label: t })),
+            ]}
+          />
+        ) : (
+          epics.length > 0 && <span className="ah-small ah-muted">{featureName(epics)}</span>
+        )}
         {blocked ? (
           <Tooltip label={blocked}>
             <Button
-              variant="primary"
+              variant={variant}
               icon="flask-conical"
               disabled
               aria-label={`${action}. ${blocked}`}
@@ -257,19 +318,18 @@ function EvalRunStrip({
             </Button>
           </Tooltip>
         ) : (
-          <Button
-            variant="primary"
-            icon="flask-conical"
-            disabled={create.isPending}
-            onClick={() => void evaluate()}
-          >
-            {create.isPending ? "Starting…" : action}
-          </Button>
+          <Tooltip label="Re-runs every check and gate in scope and writes a new eval. Existing evals are kept.">
+            <Button
+              variant={variant}
+              icon="flask-conical"
+              disabled={create.isPending}
+              onClick={() => void evaluate()}
+            >
+              {create.isPending ? "Starting…" : action}
+            </Button>
+          </Tooltip>
         )}
       </div>
-      <span className="ah-small ah-muted">
-        Re-runs every check and gate in scope and writes a new eval. Existing evals are kept.
-      </span>
       {start.unavailable && (
         <Banner tone="warning" boxed>
           <b>{start.unavailable.title}.</b> {start.unavailable.detail}
@@ -285,7 +345,7 @@ function EvalRunStrip({
         />
       )}
       {run && (
-        <div className="ah-row ah-wrap ah-small" style={{ gap: 10 }}>
+        <div className="ah-card ah-pad ah-row ah-wrap ah-small" style={{ gap: 10 }}>
           <span className="ah-row ah-wrap" role="status" style={{ gap: 10 }}>
             <StatusBadge status={look?.status ?? "queued"} label={look?.label ?? "Starting…"} />
             {look?.note && <span className="ah-muted">{look.note}</span>}
@@ -322,6 +382,110 @@ function EvalRunStrip({
   );
 }
 
+/* ---------- The owner's sign-off ---------- */
+
+/**
+ * The owner confirms the owner steps of a SHIP-WITH-OWNER-STEPS eval are done: the server writes
+ * an `owner-signoff` SHIP eval over the ACs that waited, and the Evaluate step turns done. It is
+ * the page's one "waiting on you" place, above the tabs.
+ */
+export function OwnerSignOff({
+  project,
+  slug,
+  reason,
+  onShow,
+}: {
+  project: string;
+  slug: string;
+  reason: string;
+  onShow: (delivery: string) => void;
+}) {
+  const client = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const path = { path: { project, slug } };
+  const signOff = useMutation<EvalRecord, ApiProblem>({
+    mutationFn: () => apiCommand("/api/v1/features/{project}/{slug}/owner-signoff", path),
+    onSuccess: (written) => {
+      setConfirming(false);
+      onShow(written.delivery);
+      for (const key of [
+        apiKey("/api/v1/features"),
+        apiKey("/api/v1/features/{project}/{slug}", path),
+        apiKey("/api/v1/features/{project}/{slug}/tickets", path),
+      ]) {
+        void client.invalidateQueries({ queryKey: key });
+      }
+    },
+  });
+  const action = confirming ? (
+    <span className="ah-row" style={{ gap: 8 }}>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          setConfirming(false);
+        }}
+      >
+        Cancel
+      </Button>
+      <Button
+        size="sm"
+        variant="primary"
+        icon="check"
+        disabled={signOff.isPending}
+        onClick={() => {
+          signOff.mutate();
+        }}
+      >
+        {signOff.isPending ? "Signing off…" : "Yes, I did them"}
+      </Button>
+    </span>
+  ) : (
+    <Button
+      size="sm"
+      variant="primary"
+      icon="check"
+      onClick={() => {
+        setConfirming(true);
+      }}
+    >
+      Mark owner steps done
+    </Button>
+  );
+  return (
+    <section aria-label="Owner steps">
+      <Banner tone="warning" boxed icon="hand" action={action}>
+        <span className="ah-stack" style={{ gap: 2 }}>
+          <span>
+            <b>Waiting on you</b>
+            <span className="ah-muted">
+              {" "}
+              · {reason.replace(/\s*\(SHIP-WITH-OWNER-STEPS\)/, "")}
+            </span>
+          </span>
+          {confirming && (
+            <span className="ah-small ah-muted">
+              Confirm you did every owner step the eval lists. This writes evals/owner-signoff.md
+              with verdict SHIP, signed by you; existing evals are kept.
+            </span>
+          )}
+          {signOff.error && (
+            <ProblemError
+              compact
+              title="Could not sign off the owner steps"
+              detail={signOff.error.detail ?? signOff.error.title}
+              status={signOff.error.status || undefined}
+              onRetry={() => {
+                signOff.mutate();
+              }}
+            />
+          )}
+        </span>
+      </Banner>
+    </section>
+  );
+}
+
 /* ---------- The selected eval ---------- */
 
 /** A frontmatter time as the app writes times; a bare date (no time) stays as it is. */
@@ -329,7 +493,16 @@ function evaluatedText(value: string, tz: ReturnType<typeof usePreferences>["tz"
   return value.includes("T") && !Number.isNaN(Date.parse(value)) ? fmtDateTime(value, tz) : value;
 }
 
-function EvalCard({ project, record }: { project: string; record: EvalRecord }) {
+function EvalCard({
+  project,
+  record,
+  named,
+}: {
+  project: string;
+  record: EvalRecord;
+  /** Name the delivery: there are several evals to tell apart. */
+  named: boolean;
+}) {
   const { addReference, references } = useDiscuss();
   const { tz } = usePreferences();
   const pointed = references.some((r) => r.id === `eval:${record.delivery}`);
@@ -343,17 +516,22 @@ function EvalCard({ project, record }: { project: string; record: EvalRecord }) 
         {record.verdict && (
           <StatusBadge status={VERDICT_STATUS[record.verdict]} label={record.verdict} />
         )}
-        <b className="ah-mono">{record.delivery}</b>
-        <span className="ah-small ah-muted">
+        {named && <b className="ah-mono">{deliveryLabel(record)}</b>}
+        <span className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 6 }}>
           {[
-            record.tickets.join(", "),
-            record.acs === "all"
-              ? "all ACs"
-              : `${String(record.acs.length)} AC${record.acs.length === 1 ? "" : "s"}`,
-            record.evaluated_at ? evaluatedText(record.evaluated_at, tz) : "",
+            record.evaluated_at ? `Evaluated ${evaluatedText(record.evaluated_at, tz)}` : null,
+            ranBy(record.provenance) ? `by ${String(ranBy(record.provenance))}` : null,
+            record.tickets.length > 0 ? record.tickets.join(", ") : null,
+            record.acs === "all" || record.acs.length > 0 ? <Scope acs={record.acs} /> : null,
+            record.prs.length > 0 ? record.prs.join(", ") : null,
           ]
-            .filter(Boolean)
-            .join(" · ")}
+            .filter((part) => part !== null)
+            .map((part, i) => (
+              <span key={i}>
+                {i > 0 && "· "}
+                {part}
+              </span>
+            ))}
         </span>
         {record.commit && <IdChip id={record.commit} short={record.commit.slice(0, 7)} />}
         <span className="ah-grow" />
@@ -371,9 +549,6 @@ function EvalCard({ project, record }: { project: string; record: EvalRecord }) 
           Open in Brain
         </Link>
       </div>
-      <span className="ah-small ah-muted">
-        <PathText path={`brain/${record.path}`} max={80} dimDir />
-      </span>
       {record.problem ? (
         <ProblemError title="This eval could not be read" detail={record.problem} />
       ) : (
@@ -382,6 +557,13 @@ function EvalCard({ project, record }: { project: string; record: EvalRecord }) 
           project={project}
           path={record.path}
           missing={`No ${fileName(record.path)} yet.`}
+          foldFrontmatter={{
+            lead: (
+              <span className="ah-small ah-muted">
+                <PathText path={`brain/${record.path}`} max={80} dimDir />
+              </span>
+            ),
+          }}
         />
       )}
     </article>
@@ -395,6 +577,8 @@ export interface EvalTabProps {
   slug: string;
   /** The feature's tickets: the scopes a run can take besides the whole feature. */
   tickets: readonly string[];
+  /** The feature's epics (`planning.epics`): evaluating one is evaluating the whole feature. */
+  epics?: readonly string[];
   /** `FeatureDetail.evals`: one per delivery, as the server orders them. */
   evals: readonly EvalRecord[];
   /** The delivery shown below the list (`pickEval`). */
@@ -406,9 +590,36 @@ export interface EvalTabProps {
  * The Eval tab (AC-136.32): a run of the evaluator, every delivery's eval (never only the last
  * one) with its verdict and scope, and the selected eval's note read in place.
  */
-export function EvalTab({ project, slug, tickets, evals, selected, onSelect }: EvalTabProps) {
+export function EvalTab({
+  project,
+  slug,
+  tickets,
+  epics = [],
+  evals,
+  selected,
+  onSelect,
+}: EvalTabProps) {
+  const { tz } = usePreferences();
   const strip = (
-    <EvalRunStrip project={project} slug={slug} tickets={tickets} evals={evals} onShow={onSelect} />
+    <EvalRunStrip
+      project={project}
+      slug={slug}
+      tickets={tickets}
+      evals={evals}
+      onShow={onSelect}
+      primary={evals.length === 0}
+      epics={epics}
+      caption={
+        evals.length > 0 && (
+          <Tooltip label="Newest first per scope. The latest eval that names an AC decides it.">
+            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+            <span className="ah-small ah-muted" tabIndex={0}>
+              {evals.length} eval{evals.length === 1 ? "" : "s"} · newest first
+            </span>
+          </Tooltip>
+        )
+      }
+    />
   );
   if (evals.length === 0) {
     return (
@@ -417,39 +628,36 @@ export function EvalTab({ project, slug, tickets, evals, selected, onSelect }: E
         <div className="ah-card">
           <EmptyState icon="flask-conical" title="No evals yet.">
             The evaluator agent writes one note per delivery in{" "}
-            <span className="ah-mono">evals/&lt;delivery&gt;.md</span>. Press Evaluate above to
-            write the first one.
+            <span className="ah-mono">evals/&lt;delivery&gt;.md</span>. Press Evaluate whole feature
+            to write the first one.
           </EmptyState>
         </div>
       </div>
     );
   }
+  const history = evalHistory(evals, tickets, epics);
   const columns: { label: string; width?: number; cell: (e: EvalRecord) => ReactNode }[] = [
     {
-      label: "Delivery",
-      width: 150,
+      label: "Eval",
       cell: (e) => (
-        <span className="ah-stack" style={{ gap: 2 }}>
-          <button
-            type="button"
-            className="ah-btn ah-btn-sm ah-btn-ghost ah-mono"
-            style={{ fontWeight: 500 }}
-            aria-label={`${e.delivery}, ${e.verdict ?? "no verdict"}`}
-            aria-current={selected?.path === e.path ? "true" : undefined}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelect(e.delivery);
-            }}
-          >
-            {e.delivery}
-          </button>
-          {e.legacy && <span className="ah-small ah-muted">legacy</span>}
-        </span>
+        <button
+          type="button"
+          className="ah-btn ah-btn-sm ah-btn-ghost ah-mono"
+          style={{ fontWeight: 500 }}
+          aria-label={`${e.delivery}, ${e.verdict ?? "no verdict"}`}
+          aria-current={selected?.path === e.path ? "true" : undefined}
+          title={`brain/${e.path}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect(e.delivery);
+          }}
+        >
+          {deliveryLabel(e)}
+        </button>
       ),
     },
     {
       label: "Verdict",
-      width: 200,
       cell: (e) =>
         e.problem ? (
           <span className="ah-small" style={{ color: "var(--failed)" }}>
@@ -461,47 +669,30 @@ export function EvalTab({ project, slug, tickets, evals, selected, onSelect }: E
           <span className="ah-subtle">—</span>
         ),
     },
-    { label: "Tickets", cell: (e) => <Ids ids={e.tickets} /> },
     { label: "ACs", width: 90, cell: (e) => <Scope acs={e.acs} /> },
-    { label: "PRs", cell: (e) => <Ids ids={e.prs} /> },
     {
-      label: "Commit",
-      width: 90,
-      cell: (e) =>
-        e.commit ? (
-          <span className="ah-mono ah-small" title={e.commit}>
-            {e.commit.slice(0, 7)}
+      label: "Ran by",
+      width: 170,
+      cell: (e) => {
+        const who = ranBy(e.provenance);
+        return who ? (
+          <span className="ah-small" title={e.provenance ?? undefined}>
+            {who}
           </span>
         ) : (
           <span className="ah-subtle">—</span>
-        ),
+        );
+      },
     },
     {
       label: "Evaluated",
-      width: 110,
+      width: 170,
       cell: (e) =>
         e.evaluated_at ? (
-          <span className="ah-small">{e.evaluated_at}</span>
+          <span className="ah-small">{evaluatedText(e.evaluated_at, tz)}</span>
         ) : (
           <span className="ah-subtle">—</span>
         ),
-    },
-    {
-      label: "Note",
-      width: 140,
-      cell: (e) => (
-        <Link
-          className="ah-mono ah-small"
-          to={brainRoute(project, e.path)}
-          aria-label={`${fileName(e.path)}, the eval of ${e.delivery}`}
-          title={`brain/${e.path}`}
-          onClick={(event) => {
-            event.stopPropagation();
-          }}
-        >
-          {fileName(e.path)}
-        </Link>
-      ),
     },
   ];
   return (
@@ -518,32 +709,40 @@ export function EvalTab({ project, slug, tickets, evals, selected, onSelect }: E
               ))}
             </tr>
           </thead>
-          <tbody>
-            {evals.map((e) => (
-              <tr
-                key={e.path}
-                aria-selected={selected?.path === e.path}
-                onClick={() => {
-                  onSelect(e.delivery);
-                }}
-              >
-                {columns.map((c) => (
-                  <td key={c.label} style={{ whiteSpace: "normal" }}>
-                    {c.cell(e)}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
+
+          {history.map((group) => (
+            <tbody key={group.scope}>
+              {history.length > 1 && (
+                <tr className="ah-eval-group">
+                  <th scope="colgroup" colSpan={columns.length}>
+                    {group.scope === FEATURE_SCOPE ? featureName(epics) : group.scope}
+                    <span className="ah-subtle">
+                      {" "}
+                      · {group.evals.length} eval{group.evals.length === 1 ? "" : "s"}
+                    </span>
+                  </th>
+                </tr>
+              )}
+              {group.evals.map((e) => (
+                <tr
+                  key={e.path}
+                  aria-selected={selected?.path === e.path}
+                  onClick={() => {
+                    onSelect(e.delivery);
+                  }}
+                >
+                  {columns.map((c) => (
+                    <td key={c.label} style={{ whiteSpace: "normal" }}>
+                      {c.cell(e)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          ))}
         </table>
-        <div className="ah-table-foot">
-          <span>
-            {evals.length} eval{evals.length === 1 ? "" : "s"} · the latest eval that names an AC
-            decides it · select one to read it below
-          </span>
-        </div>
       </div>
-      {selected && <EvalCard project={project} record={selected} />}
+      {selected && <EvalCard project={project} record={selected} named />}
     </div>
   );
 }

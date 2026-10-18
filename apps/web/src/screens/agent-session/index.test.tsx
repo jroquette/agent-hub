@@ -109,6 +109,11 @@ async function bodyOf(request: Request | undefined): Promise<unknown> {
 const posts = (requests: Request[], suffix: string) =>
   requests.filter((r) => r.method === "POST" && new URL(r.url).pathname === `${SESSION}${suffix}`);
 
+/** Opens the header's "⋯" menu, where close, fork, delete and the observed session live. */
+async function openSessionMenu() {
+  await userEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+}
+
 describe("AgentSessionScreen (screenshot-thumbnail)", () => {
   const SHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
   const shotLog = () => [
@@ -237,6 +242,7 @@ describe("AgentSessionScreen (transcript)", () => {
     await screen.findByText("Starting.");
     expect(screen.getByText(/Ended · closed/)).toBeInTheDocument();
     expect(() => view.stream(STREAM)).toThrow();
+    await openSessionMenu();
     expect(screen.getByRole("button", { name: "Delete session" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Close session" })).toBeNull();
   });
@@ -254,6 +260,7 @@ describe("AgentSessionScreen (transcript)", () => {
     await screen.findByText("Starting.");
     expect(screen.queryByRole("button", { name: /^Resume/ })).toBeNull();
 
+    await openSessionMenu();
     await userEvent.click(await screen.findByRole("button", { name: "Fork…" }));
     const dialog = screen.getByRole("dialog", { name: "Fork session" });
     expect(within(dialog).getByRole("group", { name: "Fork" })).toHaveTextContent("Run the tests");
@@ -287,6 +294,7 @@ describe("AgentSessionScreen (transcript)", () => {
       await waitFor(() => {
         expect(view.requests.some((r) => r.url.includes("/capabilities"))).toBe(true);
       });
+      await openSessionMenu();
       expect(screen.queryByRole("button", { name: "Fork…" })).toBeNull();
       view.unmount();
     }
@@ -301,6 +309,7 @@ describe("AgentSessionScreen (transcript)", () => {
     );
     await screen.findByText("Starting.");
 
+    await openSessionMenu();
     await userEvent.click(screen.getByRole("button", { name: "Delete session" }));
     const dialog = screen.getByRole("alertdialog");
     await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
@@ -349,11 +358,22 @@ describe("AgentSessionScreen (transcript)", () => {
     expect(screen.getByRole("textbox", { name: "Message Claude" })).toBeDisabled();
   });
 
-  it("links the agent session to its observed session", async () => {
-    renderChat();
+  it("says there are no events when the hub's hooks never reported the session", async () => {
+    renderChat(routes({ [SESSION]: anAgentSession({ observed_session_id: null }) }));
 
-    const link = await screen.findByRole("link", { name: /Observed session/ });
-    expect(link).toHaveAttribute("href", `/sessions/${anId(1, "5091b986")}`);
+    expect(await screen.findByText("No events")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Events" })).toBeNull();
+  });
+
+  it("links the agent session to its observed session", async () => {
+    const view = renderChat(
+      routes({ [SESSION]: anAgentSession({ observed_session_id: anId(1, "5091b986") }) }),
+    );
+
+    await userEvent.click(await screen.findByRole("link", { name: "Events" }));
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/sessions/${anId(1, "5091b986")}`);
+    });
   });
 });
 
@@ -435,6 +455,7 @@ describe("AgentSessionScreen (layout)", () => {
     expect(within(header).getByRole("heading", { level: 1 })).toBeInTheDocument();
     expect(within(header).getByText("Running")).toBeInTheDocument();
     expect(within(header).getByRole("group", { name: /Cost and tokens/ })).toBeInTheDocument();
+    await userEvent.click(within(header).getByRole("button", { name: "Session actions" }));
     expect(within(header).getByRole("button", { name: "Close session" })).toBeInTheDocument();
 
     const scroller = conversation.closest(".as-scroll");
@@ -463,7 +484,12 @@ function stubScrolling() {
   ) {
     return CARD_TOP[this.dataset.requestId ?? ""] ?? 0;
   });
-  const writes = vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation((value) => {
+  const writes = vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (
+    this: Element,
+    value,
+  ) {
+    // The live feed above the composer scrolls on its own, not the conversation.
+    if (this.closest(".as-live")) return;
     scrolled.top = Math.min(value, 600);
   });
   vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(() => scrolled.top);
@@ -1227,7 +1253,14 @@ describe("AgentSessionScreen (axe)", () => {
     const animated = [...css.matchAll(/([^{}]+)\{[^{}]*\banimation:(?!\s*none)[^;]+;/g)].map(
       (match) => match[1]?.trim(),
     );
-    expect(animated).toEqual([".as-caret", ".as-working::before", ".as-spin", ".as-drawer"]);
+    expect(animated).toEqual([
+      ".as-caret",
+      ".as-working::before",
+      ".as-spin",
+      ".as-drawer",
+      ".as-live-pulse",
+      ".as-feed-running > .as-feed-call .as-feed-mark",
+    ]);
     const reduced =
       /@media \(prefers-reduced-motion: reduce\) \{\s*([^{]+)\{\s*animation: none;/.exec(css);
     expect(reduced?.[1]?.split(",").map((selector) => selector.trim())).toEqual(animated);
@@ -1342,9 +1375,9 @@ describe("AgentSessionScreen (changed-files)", () => {
       }),
     );
 
-    const button = await screen.findByRole("button", { name: /^Changed files/ });
+    const button = await screen.findByRole("button", { name: /^Review changes:/ });
     expect(button).toHaveAccessibleName(
-      "Changed files: 1 file, 1 lines added, 1 removed, 1 to review",
+      "Review changes: 1 file, 1 lines added, 1 removed, 1 to review",
     );
     expect(button).toHaveTextContent("1 file+1−11 to review");
     await userEvent.click(button);
@@ -1386,8 +1419,8 @@ describe("AgentSessionScreen (run-files-card)", () => {
     expect(
       within(card).getByRole("button", { name: "Open src/app.py, modified, +1 −1, viewed" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Changed files/ })).toHaveAccessibleName(
-      "Changed files: 1 file, 1 lines added, 1 removed, all reviewed",
+    expect(screen.getByRole("button", { name: /^Review changes:/ })).toHaveAccessibleName(
+      "Review changes: 1 file, 1 lines added, 1 removed, all reviewed",
     );
   });
 });

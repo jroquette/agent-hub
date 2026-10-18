@@ -731,6 +731,19 @@ function ReposBlock({ project }: { project: string }) {
       ),
     },
     {
+      id: "conventions",
+      label: "Conventions",
+      render: (r) => (
+        <AppLink
+          className="ah-small"
+          href={`/projects/${encodeURIComponent(project)}/config?repo=${encodeURIComponent(r.dir)}`}
+          aria-label={`Conventions of ${r.name}`}
+        >
+          Conventions ›
+        </AppLink>
+      ),
+    },
+    {
       id: "agents",
       label: "AGENTS.md",
       render: (r) =>
@@ -758,7 +771,12 @@ function ReposBlock({ project }: { project: string }) {
   ];
   return (
     <div>
-      <h3>Repositories</h3>
+      <div className="ah-row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+        <h3>Repositories</h3>
+        <OpenLink href={`/projects/${encodeURIComponent(project)}/config`}>
+          Open hub configuration
+        </OpenLink>
+      </div>
       <Region query={repos} title="repos">
         {() => (
           <DataTable

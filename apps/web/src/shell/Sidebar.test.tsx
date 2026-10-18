@@ -31,6 +31,7 @@ describe("Sidebar", () => {
       "Brain",
       "Toolkit",
       "Health",
+      "Hub config",
       "Settings",
     ]);
     for (const group of ["Work", "Knowledge"]) {
@@ -159,7 +160,7 @@ describe("Sidebar", () => {
     const names = within(foot as HTMLElement)
       .getAllByRole("link")
       .map((link) => link.textContent);
-    expect(names).toEqual(["Health", "Settings"]);
+    expect(names).toEqual(["Health", "Hub config", "Settings"]);
   });
 
   it("opens the shortcut sheet from its footer button", () => {
