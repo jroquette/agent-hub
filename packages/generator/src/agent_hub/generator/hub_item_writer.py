@@ -32,6 +32,12 @@ never these folders: a stage or old folder a crash, a failed roll back or a fail
 (``rmtree`` after a swap or in ``remove_unit``, whose failure the write does not report since
 the unit is already right) is listed by ``hub doctor``'s ``items.leftovers``.
 
+A Studio draft is the one ``.hub-drafts`` folder server code opens: ``read_draft`` reaches
+``.hub-drafts/<id>`` the same way (a link on the way is ``link_in_path``) and reads it through
+``unit_files``' walker, hidden names included; ``remove_draft`` removes it with
+``rmtree(dir_fd=…)``, which removes a link inside it and never follows one, and reports a
+removal that fails (``HubItemWriteError``).
+
 ``EROFS``, ``EACCES`` and ``EPERM`` are ``ItemWriteRefusedError("hub_read_only")``, a link met
 ``ItemWriteRefusedError("link_in_path")``, any other failure ``HubItemWriteError``; no message
 names a path.
@@ -48,17 +54,22 @@ from typing import Final
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name, temp_name
 from agent_hub.core.item_versions.hub_item_writer import (
+    DraftFiles,
+    DraftTooLargeError,
     HubItemWriteError,
     ItemWriteRefusedError,
     check_version_names,
     checked_unit_parts,
+    draft_parts,
     plain_parts,
     rollback_failed,
     script_parts,
 )
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS
+from agent_hub.generator.unit_files import read_folder_files
 
 _ROOT_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY
 _FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -138,6 +149,40 @@ class FileSystemHubItemWriter:
                 return
             try:
                 _remove(parent, parts[-1], folder=kind is UnitKind.SKILL)
+            finally:
+                os.close(parent)
+
+    def read_draft(self, hub_path: str, draft_id: str) -> DraftFiles:
+        """The draft's files, read without following a link, within a unit's bounds."""
+        parts = draft_parts(draft_id)
+        with _opened_root(hub_path) as root, _guarded():
+            try:
+                folder = _descend(root, parts, create=False)
+            except FileNotFoundError, NotADirectoryError:
+                raise EntityNotFoundError(entity="draft", entity_id=draft_id) from None
+            try:
+                found = read_folder_files(folder)
+            finally:
+                os.close(folder)
+        if isinstance(found, UnitContent) and found.files:
+            return DraftFiles(draft_id=draft_id, content=found)
+        if isinstance(found, UnitContent) or found.kind == "missing":
+            raise EntityNotFoundError(entity="draft", entity_id=draft_id)
+        if found.kind == "too_large":
+            raise DraftTooLargeError
+        raise ItemWriteRefusedError("link_in_path")
+
+    def remove_draft(self, hub_path: str, draft_id: str) -> None:
+        """Remove the draft's folder whole, never through a link; absent is fine."""
+        drafts, name = draft_parts(draft_id)
+        with _opened_root(hub_path) as root, _guarded():
+            try:
+                parent = _descend(root, [drafts], create=False)
+            except FileNotFoundError:
+                return
+            try:
+                if _folder_exists(parent, name):
+                    shutil.rmtree(name, dir_fd=parent)
             finally:
                 os.close(parent)
 
