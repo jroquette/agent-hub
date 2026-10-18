@@ -3059,7 +3059,7 @@ def test_wraps_description_under_its_item_when_environment_line_long() -> None:
         name: {
             "access": "ask",
             "production": True,
-            "description": "shared test stack for the whole team, refreshed from the nightly"
+            "description": "shared test stack for the team, refreshed from the nightly"
             " copy of the data",
         },
         "local": {"access": "write"},
@@ -3068,7 +3068,7 @@ def test_wraps_description_under_its_item_when_environment_line_long() -> None:
     block = environments_block(text_of(HubConfig.model_validate(document), "AGENTS.md"))
 
     assert block == (
-        ENVIRONMENTS_LEAD + f"- `{name}` (ask, PRODUCTION): shared test stack for the whole team,"
+        ENVIRONMENTS_LEAD + f"- `{name}` (ask, PRODUCTION): shared test stack for the team,"
         " refreshed from the\n"
         "  nightly copy of the data\n"
         "- `local` (write)\n"
