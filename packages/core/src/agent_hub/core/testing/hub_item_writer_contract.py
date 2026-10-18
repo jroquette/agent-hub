@@ -450,7 +450,7 @@ class HubItemWriterContract:
         _check(draft.draft_id == DRAFT_ID, "the draft names its id")
         _check(draft.kind is UnitKind.SKILL, "its kind is its id's prefix")
 
-    def test_refuses_draft_link_when_draft_file_is_link(self, writer_tree: WriterTree) -> None:
+    def test_refuses_draft_when_folder_in_draft_is_link(self, writer_tree: WriterTree) -> None:
         writer_tree.write("elsewhere/SKILL.md", SKILL_V1)
         writer_tree.write(f"{DRAFT}/SKILL.md", SKILL_V1)
         writer_tree.link(f"{DRAFT}/references", "../../elsewhere")
@@ -512,7 +512,9 @@ class HubItemWriterContract:
                 else:
                     raise AssertionError(f"{draft_id}: accepted")
 
-    def test_removes_draft_when_removed(self, writer_tree: WriterTree) -> None:
+    def test_removes_draft_folder_without_following_links_when_present(
+        self, writer_tree: WriterTree
+    ) -> None:
         writer_tree.write("elsewhere/data.md", b"kept\n")
         writer_tree.write(f"{DRAFT}/SKILL.md", SKILL_V1)
         writer_tree.write(f"{DRAFT}/scripts/.x", b"hidden")
@@ -527,3 +529,40 @@ class HubItemWriterContract:
         _no_leftover(writer_tree, ".hub-drafts")
         writer_tree.writer.remove_draft(writer_tree.hub_path, DRAFT_ID)
         writer_tree.writer.remove_draft(writer_tree.hub_path, "hook-none00")
+
+    def test_refuses_draft_when_file_in_draft_is_link(self, writer_tree: WriterTree) -> None:
+        writer_tree.write("elsewhere/secret.md", b"outside\n")
+        writer_tree.write(f"{DRAFT}/SKILL.md", SKILL_V1)
+        writer_tree.link(f"{DRAFT}/references/r.md", "../../../elsewhere/secret.md")
+        _check(_draft_refusal(writer_tree) == "link_in_path", "a linked file in the draft")
+
+    def test_reports_first_problem_when_draft_has_two(self, writer_tree: WriterTree) -> None:
+        writer_tree.write("elsewhere/x.md", b"x")
+        writer_tree.write(f"{DRAFT}/a.md", b"x" * (MAX_SKILL_FILE_BYTES + 1))
+        writer_tree.link(f"{DRAFT}/z.md", "../../elsewhere/x.md")
+        other = "agent-other0"
+        writer_tree.link(f".hub-drafts/{other}/a.md", "../../elsewhere/x.md")
+        writer_tree.write(f".hub-drafts/{other}/z.md", b"x" * (MAX_SKILL_FILE_BYTES + 1))
+        _check(_draft_refusal(writer_tree) == "too_large", "the first problem in path order")
+        _check(_draft_refusal(writer_tree, other) == "link_in_path", "the link comes first")
+
+    def test_fails_removal_when_draft_path_is_file(self, writer_tree: WriterTree) -> None:
+        writer_tree.write(".hub-drafts/hook-file00", b"a file, not a folder")
+        try:
+            writer_tree.writer.remove_draft(writer_tree.hub_path, "hook-file00")
+        except HubItemWriteError as error:
+            _check("hub-drafts" not in str(error), "the error names no path")
+        else:
+            raise AssertionError("a file was removed as a draft")
+        _check(writer_tree.exists(".hub-drafts/hook-file00"), "the file stays")
+
+    def test_fails_removal_when_drafts_folder_is_file(self, writer_tree: WriterTree) -> None:
+        writer_tree.write(".hub-drafts", b"a file, not a folder")
+        try:
+            writer_tree.writer.remove_draft(writer_tree.hub_path, DRAFT_ID)
+        except HubItemWriteError as error:
+            _check("hub-drafts" not in str(error), "the error names no path")
+        else:
+            raise AssertionError("a draft was removed below a file")
+        _check(_draft_refusal(writer_tree) == "not_found", "no draft is read below a file")
+        _check(writer_tree.exists(".hub-drafts"), "the file stays")

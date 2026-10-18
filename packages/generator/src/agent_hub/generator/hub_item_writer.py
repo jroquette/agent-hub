@@ -34,9 +34,11 @@ the unit is already right) is listed by ``hub doctor``'s ``items.leftovers``.
 
 A Studio draft is the one ``.hub-drafts`` folder server code opens: ``read_draft`` reaches
 ``.hub-drafts/<id>`` the same way (a link on the way is ``link_in_path``) and reads it through
-``unit_files``' walker, hidden names included; ``remove_draft`` removes it with
-``rmtree(dir_fd=…)``, which removes a link inside it and never follows one, and reports a
-removal that fails (``HubItemWriteError``).
+``unit_files``' walker, hidden names included (only a link or a special file in it is
+``link_in_path``; any other read failure is ``HubItemWriteError``); ``remove_draft`` renames it
+aside to a temp name, then removes it with ``rmtree(dir_fd=…)``, which removes a link inside it
+and never follows one (a failed rename is ``HubItemWriteError``; a failed ``rmtree`` leaves the
+temp-named folder, as ``remove_unit`` does).
 
 ``EROFS``, ``EACCES`` and ``EPERM`` are ``ItemWriteRefusedError("hub_read_only")``, a link met
 ``ItemWriteRefusedError("link_in_path")``, any other failure ``HubItemWriteError``; no message
@@ -160,8 +162,12 @@ class FileSystemHubItemWriter:
                 folder = _descend(root, parts, create=False)
             except FileNotFoundError, NotADirectoryError:
                 raise EntityNotFoundError(entity="draft", entity_id=draft_id) from None
+            except OSError:
+                raise HubItemWriteError("the draft could not be read") from None
             try:
                 found = read_folder_files(folder)
+            except OSError:
+                raise HubItemWriteError("the draft could not be read") from None
             finally:
                 os.close(folder)
         if isinstance(found, UnitContent) and found.files:
@@ -181,8 +187,7 @@ class FileSystemHubItemWriter:
             except FileNotFoundError:
                 return
             try:
-                if _folder_exists(parent, name):
-                    shutil.rmtree(name, dir_fd=parent)
+                _remove(parent, name, folder=True)
             finally:
                 os.close(parent)
 

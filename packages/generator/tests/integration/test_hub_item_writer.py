@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent, UnitFile
@@ -292,14 +293,70 @@ def test_reports_failure_when_draft_removal_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hub = _hub(tmp_path, {f"{DRAFT}/hooks.json": b"{}"})
-
-    def failing(*_: Any, **__: Any) -> None:
-        raise OSError(errno.EIO, os.strerror(errno.EIO))
-
-    monkeypatch.setattr(shutil, "rmtree", failing)
+    monkeypatch.setattr(os, "rename", _failing_on(os.rename, call=1))
 
     with pytest.raises(HubItemWriteError) as raised:
         FileSystemHubItemWriter().remove_draft(str(hub), "hook-abc123")
 
     assert _files(hub) == {f"{DRAFT}/hooks.json": b"{}"}
+    assert "hub-drafts" not in str(raised.value)
+
+
+def test_renames_draft_aside_when_removing_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = _hub(tmp_path, {f"{DRAFT}/hooks.json": b"{}"})
+    removed: list[str] = []
+    real = shutil.rmtree
+
+    def rmtree(path: str, *args: Any, **kwargs: Any) -> None:
+        removed.append(path)
+        real(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", rmtree)
+
+    FileSystemHubItemWriter().remove_draft(str(hub), "hook-abc123")
+
+    assert os.listdir(hub / ".hub-drafts") == []
+    assert len(removed) == 1
+    assert is_leftover_name(removed[0])
+
+
+def test_reports_failure_when_draft_read_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = _hub(tmp_path, {f"{DRAFT}/hooks.json": b"{}"})
+    monkeypatch.setattr(os, "read", _failing_on(os.read, call=1))
+
+    with pytest.raises(HubItemWriteError) as raised:
+        FileSystemHubItemWriter().read_draft(str(hub), "hook-abc123")
+
+    assert "hub-drafts" not in str(raised.value)
+
+
+def test_reports_failure_when_draft_name_not_utf8(tmp_path: Path) -> None:
+    hub = _hub(tmp_path, {f"{DRAFT}/hooks.json": b"{}"})
+    descriptor = os.open(bytes(hub / DRAFT) + b"/\xff.sh", os.O_WRONLY | os.O_CREAT, 0o600)
+    os.close(descriptor)
+
+    with pytest.raises(HubItemWriteError):
+        FileSystemHubItemWriter().read_draft(str(hub), "hook-abc123")
+
+
+def test_reports_failure_when_draft_folder_cannot_be_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = _hub(tmp_path, {f"{DRAFT}/hooks.json": b"{}"})
+    real = os.open
+
+    def refusing(path: Any, *args: Any, **kwargs: Any) -> int:
+        if path == "hook-abc123":
+            raise OSError(errno.EACCES, os.strerror(errno.EACCES))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", refusing)
+
+    with pytest.raises(HubItemWriteError) as raised:
+        FileSystemHubItemWriter().read_draft(str(hub), "hook-abc123")
+
     assert "hub-drafts" not in str(raised.value)
