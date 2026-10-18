@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useMutationState, type MutationState } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -14,6 +14,8 @@ import {
   ProblemError,
   SegmentedControl,
   Skeleton,
+  StatusBadge,
+  Tooltip,
   copyText,
   useCopied,
   type IconName,
@@ -23,6 +25,8 @@ import { brainRoute } from "../../lib/brainLinks";
 import { safeHref } from "../../lib/safeHref";
 import { useDiscuss, type DiscussReference } from "../../shell/discuss";
 import { FilterMenu } from "../features/parts";
+import { SESSIONS_OFF_TYPE } from "../sessions-list/control";
+import { useAgentCapabilities } from "../sessions-list/queries";
 import { useProjectRepos } from "../project-overview/queries";
 import { useAcCitations, type AcCitations, type Citation } from "./acCitations";
 import {
@@ -44,7 +48,7 @@ export type Pass = "yes" | "owner" | "none";
 const PASS: Record<Pass, { icon: IconName; tone: string; label: string; title: string }> = {
   yes: { icon: "circle-check", tone: "done", label: "Passes", title: "Its check passes" },
   owner: { icon: "hand", tone: "waiting", label: "Owner step", title: "Waits on a manual check" },
-  none: { icon: "circle-dashed", tone: "idle", label: "Not passing", title: "Not passing yet" },
+  none: { icon: "clock", tone: "idle", label: "Not passing", title: "Not passing yet" },
 };
 export const passOf = (ac: AcRow): Pass => (ac.passes ? "yes" : ac.manual ? "owner" : "none");
 
@@ -77,13 +81,13 @@ export function allCommands(rows: AcRow[]): string {
 }
 
 /** Sends one criterion to the feature's Discuss conversation; a labelled button, not an icon. */
-function DiscussAc({ ac, slug, long }: { ac: AcRow; slug: string; long?: boolean }) {
+function DiscussAc({ ac, slug }: { ac: AcRow; slug: string }) {
   const { addReference, references } = useDiscuss();
   const pointed = references.some((r) => r.id === `ac:${ac.id}`);
   return (
     <Button
       size="sm"
-      variant={long ? "default" : "ghost"}
+      variant="ghost"
       icon={pointed ? "check" : "message-square"}
       aria-label={pointed ? `${ac.id} is in the next message` : `Discuss ${ac.id} with Claude`}
       title={
@@ -96,7 +100,7 @@ function DiscussAc({ ac, slug, long }: { ac: AcRow; slug: string; long?: boolean
         addReference(acReference(ac, slug));
       }}
     >
-      {pointed ? "In next message" : long ? `Discuss ${ac.id} with Claude` : "Discuss"}
+      {pointed ? "In next message" : "Discuss"}
     </Button>
   );
 }
@@ -495,87 +499,199 @@ function seconds(ms: number): string {
   return ms < 1000 ? `${String(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
-/** Why a run could not start, in words: a locked browser, the container, or the API's own. */
+function clock(total: number): string {
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m)}:${String(s).padStart(2, "0")}`;
+}
+
+const RUN_TIMEOUT = "10 min";
+const LOCKED =
+  "Locked in this browser. Open the link hub web printed when it started (it ends with ?token=…) once.";
+const OFF = "Checks cannot run from the agent-hub container. Run hub web on your machine.";
+
+/** Why a check cannot run from this page, read before any click: a locked browser or the
+ * container. A driver problem (no claude) does not matter: a check is a plain command. */
+function runBlocked(problem: ApiProblem | null | undefined): string | null {
+  if (problem?.status === 401) return LOCKED;
+  if (problem?.status === 404 && problem.type === SESSIONS_OFF_TYPE) return OFF;
+  return null;
+}
+
+/** Why a started run failed, in words. */
 function runProblem(problem: ApiProblem): string {
-  if (problem.status === 401)
-    return "Running checks is locked in this browser: open the link hub web printed when it started (it ends with ?token=…) once.";
-  if (problem.status === 404 && problem.type === "urn:agent-hub:problem:run-control-off")
-    return "Checks cannot run from the agent-hub container. Run hub web on your machine.";
-  return problem.detail ?? problem.title;
+  return runBlocked(problem) ?? problem.detail ?? problem.title;
+}
+
+/** Seconds since `start`, ticking while `on`. */
+function useElapsed(on: boolean, start: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    const id = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [on]);
+  return start === null ? 0 : Math.max(0, Math.floor((now - start) / 1000));
+}
+
+function outputLines(text: string): number {
+  return text === "" ? 0 : text.replace(/\n$/, "").split("\n").length;
 }
 
 /**
- * The AC's command with a "Run it" button: the server runs the command features.json records
- * for this AC (the browser only names the AC) in the repo's checkout, and the result shows
- * below: passed or failed, the exit code, how long it took and the output. Nothing is recorded.
+ * "Check it yourself": the AC's command, and "Run check": the server runs the command
+ * features.json records for this AC (the browser only names the AC) in the repo's checkout.
+ * The result is this run only, never the record's evidence, and says so. The run lives in the
+ * query client's mutation cache under the AC, so it survives the card closing and reopening.
  */
 function CheckRun({ ac, detail, command }: { ac: AcRow; detail: Detail; command: string }) {
+  const key = ["ac-check", detail.project, detail.slug, ac.id];
   const run = useMutation<AcCheckRun, ApiProblem>({
+    mutationKey: key,
+    gcTime: 30 * 60_000,
     mutationFn: () =>
       apiCommand("/api/v1/features/{project}/{slug}/acs/{ac}/check-runs", {
         path: { project: detail.project, slug: detail.slug, ac: ac.id },
       }),
   });
-  const result = run.data;
+  const runs = useMutationState({
+    filters: { mutationKey: key },
+    select: (m) => m.state as MutationState<AcCheckRun, ApiProblem>,
+  });
+  const last = runs.at(-1);
+  const pending = last?.status === "pending";
+  const result = last?.status === "success" ? last.data : undefined;
+  const failure = last?.status === "error" ? last.error : null;
+  const elapsed = useElapsed(pending, pending ? last.submittedAt : null);
+  const capabilities = useAgentCapabilities();
+  const blocked = runBlocked(capabilities.error);
+  const where = ac.repo ?? "the repo";
+
+  const announce = pending
+    ? `Running ${ac.id}'s check…`
+    : result
+      ? result.passed
+        ? `${ac.id}'s check passed, ${seconds(result.duration_ms)}.`
+        : result.timed_out
+          ? `${ac.id}'s check timed out after ${RUN_TIMEOUT}.`
+          : `${ac.id}'s check failed, exit ${String(result.exit_code)}, ${seconds(result.duration_ms)}.`
+      : "";
+  const label = result ? "Run check again" : "Run check";
   return (
     <div className="ah-stack" style={{ gap: 8 }}>
       <CodeBlock code={command} prompt="$" wrap label={`Verification of ${ac.id}`} />
       <div className="ah-row ah-wrap" style={{ gap: 10 }}>
-        <Button
-          size="sm"
-          variant="primary"
-          icon={run.isPending ? "loader" : result ? "rotate-ccw" : "play"}
-          className={run.isPending ? "ah-ac-running" : undefined}
-          disabled={run.isPending}
-          title={`Runs this command in the ${ac.repo ?? "project's"} checkout and shows its output; nothing is recorded`}
-          onClick={() => {
-            run.mutate();
-          }}
-        >
-          {run.isPending ? "Running…" : result ? "Run again" : "Run it"}
-        </Button>
-        {run.isPending && (
-          <span className="ah-small ah-muted">
-            Running in <span className="ah-mono">{ac.repo ?? "the repo"}</span>; a test suite can
-            take a while.
-          </span>
-        )}
-        {!run.isPending && result && (
-          <span
-            className="ah-ac-run-verdict"
-            style={{ color: result.passed ? "var(--done)" : "var(--failed)" }}
-            role="status"
+        {blocked ? (
+          <Tooltip label={blocked}>
+            <Button
+              size="sm"
+              variant="primary"
+              icon="play"
+              disabled
+              aria-label={`${label}. ${blocked}`}
+            >
+              {label}
+            </Button>
+          </Tooltip>
+        ) : (
+          <Button
+            size="sm"
+            variant={result ? "default" : "primary"}
+            icon={result ? "rotate-ccw" : "play"}
+            aria-disabled={pending || undefined}
+            onClick={() => {
+              if (!pending) run.mutate();
+            }}
           >
-            <Icon name={result.passed ? "circle-check" : "circle-x"} size="sm" />
-            {result.passed
-              ? "Passed"
-              : result.timed_out
-                ? "Timed out"
-                : `Failed (exit ${String(result.exit_code)})`}
-            <span className="ah-subtle">
-              {" "}
-              · {seconds(result.duration_ms)} · in <span className="ah-mono">{result.repo}</span>
+            {pending ? "Running…" : label}
+          </Button>
+        )}
+        {pending ? (
+          <span className="ah-row ah-small ah-muted" style={{ gap: 8 }}>
+            <StatusBadge status="running" label={`Running · ${clock(elapsed)}`} />
+            <span>
+              in <span className="ah-mono">{where}</span>. Stops after {RUN_TIMEOUT}.
             </span>
           </span>
-        )}
-        {!run.isPending && run.error && (
-          <span className="ah-small" style={{ color: "var(--failed)" }} role="alert">
-            <Icon name="circle-alert" size="sm" /> {runProblem(run.error)}
-          </span>
+        ) : blocked ? (
+          <span className="ah-small ah-muted">{blocked}</span>
+        ) : (
+          !result && (
+            <span className="ah-small ah-muted">
+              Runs in <span className="ah-mono">{where}</span> on this machine. The result is not
+              recorded.
+            </span>
+          )
         )}
       </div>
-      {!run.isPending && result && (
-        <div className="ah-ac-run-out" data-passed={result.passed || undefined}>
-          {result.truncated && (
-            <div className="ah-small ah-subtle">Long output: only its end is shown.</div>
-          )}
-          {/* The output scrolls, so the keyboard must reach it (axe scrollable-region-focusable). */}
-          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-          <pre tabIndex={0} aria-label={`Output of ${ac.id}'s check`}>
-            {result.output || "(no output)"}
-          </pre>
+      <div className="ah-sr" role="status" aria-live="polite">
+        {announce}
+      </div>
+      {failure && (
+        <div className="ah-small" style={{ color: "var(--failed)" }} role="alert">
+          <Icon name="circle-alert" size="sm" /> The check could not start: {runProblem(failure)}
         </div>
       )}
+      {result && !pending && <RunResult ac={ac} result={result} />}
+    </div>
+  );
+}
+
+function RunResult({ ac, result }: { ac: AcRow; result: AcCheckRun }) {
+  const lines = outputLines(result.output);
+  const at = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const [shownAt] = useState(at);
+  return (
+    <div className="ah-ac-run">
+      <div className="ah-row ah-wrap ah-small" style={{ gap: 8 }}>
+        <span className="ah-muted">This run</span>
+        <StatusBadge
+          status={result.passed ? "passed" : "failed"}
+          label={
+            result.passed
+              ? "Passed"
+              : result.timed_out
+                ? `Timed out after ${RUN_TIMEOUT}`
+                : `Failed · exit ${String(result.exit_code)}`
+          }
+        />
+        <span className="ah-subtle">
+          {seconds(result.duration_ms)} · <span className="ah-mono">{result.repo}</span>
+          {result.branch && (
+            <>
+              {" "}
+              on <span className="ah-mono">{result.branch}</span>
+            </>
+          )}
+          {result.commit && (
+            <>
+              {" "}
+              @ <span className="ah-mono">{result.commit}</span>
+            </>
+          )}{" "}
+          · {shownAt}
+        </span>
+      </div>
+      <details className="ah-ac-run-out" open={!result.passed}>
+        <summary>
+          Output · {lines} line{lines === 1 ? "" : "s"}
+        </summary>
+        {result.truncated && (
+          <div className="ah-small ah-subtle">Long output: only its last 200 KB is shown.</div>
+        )}
+        {/* The output scrolls, so the keyboard must reach it (axe scrollable-region-focusable). */}
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+        <pre tabIndex={0} aria-label={`Output of ${ac.id}'s check`}>
+          {result.output || "(no output)"}
+        </pre>
+      </details>
+      <div className="ah-small ah-subtle">
+        Not recorded. <span className="ah-mono">/evaluate</span> records evidence.
+      </div>
     </div>
   );
 }
@@ -596,50 +712,24 @@ function AcCard({
   const list = citations.byAc.get(ac.id) ?? [];
   return (
     <div className="ah-ac-card">
-      <div className="ah-row ah-wrap" style={{ gap: 8 }}>
-        <span className="ah-mono" style={{ fontWeight: 600 }}>
-          {ac.id}
-        </span>
-        <StatusCell ac={ac} />
-        <span className="ah-grow" />
-        <Button
-          size="sm"
-          variant="ghost"
-          icon={copied ? "check" : "link"}
-          onClick={() => {
-            const url = new URL(window.location.href);
-            url.searchParams.set("doc", "acs");
-            url.searchParams.set("ac", ac.id);
-            url.hash = "";
-            copyText(url.toString());
-            markCopied();
-          }}
+      <div className="ah-ac-card-top">
+        <Section title="What must be true" icon="list-checks">
+          <WhatMustBeTrue text={ac.description} />
+        </Section>
+        <Section
+          title="How it was proven"
+          icon="flask-conical"
+          aside={
+            facts && (
+              <DerivedLabel how="Read by agent-hub from the evidence text in features.json; the full text is below.">
+                read from the evidence text
+              </DerivedLabel>
+            )
+          }
         >
-          {copied ? "Copied" : "Copy link"}
-        </Button>
-        <DiscussAc ac={ac} slug={detail.slug} long />
+          <HowProven ac={ac} facts={facts} detail={detail} githubOf={githubOf} />
+        </Section>
       </div>
-      <Section title="What must be true" icon="list-checks">
-        <WhatMustBeTrue text={ac.description} />
-        {ac.repo && (
-          <div className="ah-small ah-subtle">
-            In <span className="ah-mono">{ac.repo}</span>
-          </div>
-        )}
-      </Section>
-      <Section
-        title="How it was proven"
-        icon="flask-conical"
-        aside={
-          facts && (
-            <DerivedLabel how="Read by agent-hub from the evidence text in features.json; the full text is below.">
-              read from the evidence text
-            </DerivedLabel>
-          )
-        }
-      >
-        <HowProven ac={ac} facts={facts} detail={detail} githubOf={githubOf} />
-      </Section>
       <Section title="Check it yourself" icon="terminal">
         {ac.command && !ac.manual ? (
           <CheckRun ac={ac} detail={detail} command={ac.command} />
@@ -665,6 +755,24 @@ function AcCard({
       >
         <CitationList citations={list} loading={citations.loading} detail={detail} />
       </Section>
+      <div className="ah-row">
+        <span className="ah-grow" />
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={copied ? "check" : "link"}
+          onClick={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.set("doc", "acs");
+            url.searchParams.set("ac", ac.id);
+            url.hash = "";
+            copyText(url.toString());
+            markCopied();
+          }}
+        >
+          {copied ? "Copied" : `Copy link to ${ac.id}`}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -773,9 +881,8 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
       <p className="ah-small ah-muted ah-ac-hint">
         <Icon name="message-square" size="sm" />
         <span>
-          Each criterion has a <b>Discuss</b> button: it attaches that criterion to your next
-          message for Claude in the panel on the right. Open a row to see how it was proven and
-          where it is cited.
+          Open a criterion to see how it was proven and to run its check. Discuss attaches it to
+          your next message for Claude.
         </span>
       </p>
       <div className="ah-table-wrap">
@@ -833,12 +940,16 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
                     </td>
                     <td className="ah-ac-desc">
                       <div className="ah-ac-crit">
-                        <span className="ah-ac-id ah-mono">{ac.id}</span>
+                        <Link
+                          to={`?doc=acs&ac=${encodeURIComponent(ac.id)}`}
+                          className="ah-ac-id ah-mono"
+                          title={`Link to ${ac.id}`}
+                        >
+                          {ac.id}
+                        </Link>
                         {ac.repo && <span className="ah-fm-chip">{ac.repo}</span>}
                       </div>
-                      <div className="ah-ac-clamp" data-open={expanded || undefined}>
-                        {ac.description}
-                      </div>
+                      <div className="ah-ac-clamp">{ac.description}</div>
                     </td>
                     <td>
                       <EvidenceSummary ac={ac} facts={facts} githubOf={githubOf} />
@@ -855,8 +966,7 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
                   </tr>
                   {expanded && (
                     <tr style={{ cursor: "default" }} className="ah-ac-detail-row">
-                      <td />
-                      <td colSpan={COLS - 1}>
+                      <td colSpan={COLS}>
                         <AcCard ac={ac} detail={detail} citations={citations} githubOf={githubOf} />
                       </td>
                     </tr>

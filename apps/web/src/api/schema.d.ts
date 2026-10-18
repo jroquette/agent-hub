@@ -1410,8 +1410,12 @@ export interface components {
     AcCheckRun: {
       /** Ac */
       ac: string;
+      /** Branch */
+      branch: string | null;
       /** Command */
       command: string;
+      /** Commit */
+      commit: string | null;
       /** Duration Ms */
       duration_ms: number;
       /** Exit Code */

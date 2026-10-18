@@ -8,9 +8,31 @@
             "title": "Ac",
             "type": "string"
           },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
           "command": {
             "title": "Command",
             "type": "string"
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
           },
           "duration_ms": {
             "title": "Duration Ms",
@@ -52,6 +74,8 @@
           "ac",
           "command",
           "repo",
+          "branch",
+          "commit",
           "exit_code",
           "passed",
           "timed_out",

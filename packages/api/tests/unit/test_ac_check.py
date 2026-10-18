@@ -1,5 +1,6 @@
 """``AcCheckRunner``: runs the command features.json records for an AC, in its repo's checkout."""
 
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -38,6 +39,23 @@ def test_a_passing_check_answers_exit_zero_and_its_output_from_the_repo(tmp_path
     assert run.repo == "app"
     assert str(tmp_path / "app") in run.output
     assert "ok" in run.output
+    assert run.branch is None
+    assert run.commit is None
+
+
+def test_a_run_names_the_branch_and_commit_it_ran_on(tmp_path: Path) -> None:
+    models = _models(tmp_path, _ac("AC-1", "true"))
+    app = tmp_path / "app"
+    for argv in (
+        ["init", "-q", "-b", "main"],
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"],
+    ):
+        subprocess.run(["git", *argv], cwd=app, check=True)  # noqa: S603, S607
+
+    run = AcCheckRunner(models).run("p", "f", "AC-1")
+
+    assert run.branch == "main"
+    assert run.commit is not None
 
 
 def test_a_failing_check_answers_its_exit_code_and_stderr(tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
-"""Run an acceptance criterion's check from the web (playground): "Run it" on the AC card.
+"""Run an acceptance criterion's check from the web (playground): "Run check" on the AC card.
 
 The browser names the criterion, never the command: the command is the one ``features.json``
 records for that AC (``AcRow.command``), read here through the hub read models. A manual AC, or
@@ -6,7 +6,8 @@ one with no command, is refused (409). The command runs with ``/bin/sh -c`` in t
 the AC's repo (``<hub>/../<repo dir>``; with no repo on the AC, the project's only repo), stdin
 empty, stdout and stderr merged, with this process's environment minus ``LINEAR_API_KEY``. It
 runs in its own process group, which is killed at the timeout. The answer carries the exit code,
-the duration and the output, its tail kept when it is longer than ``MAX_OUTPUT_BYTES``.
+the duration, the checkout's branch and short commit, and the output, its tail kept when it is
+longer than ``MAX_OUTPUT_BYTES``.
 
 Nothing is recorded: the run proves nothing to the hub (that is ``/evaluate``'s evidence); it
 only lets the owner see the check pass or fail. The route is a run write: it needs the session
@@ -39,6 +40,8 @@ class AcCheckRun(BaseModel):
     ac: str
     command: str
     repo: str
+    branch: str | None
+    commit: str | None
     exit_code: int | None
     passed: bool
     timed_out: bool
@@ -80,6 +83,7 @@ class AcCheckRunner:
         if not ac.command:
             raise AcCheckError(409, "No check recorded", f"{ac_id} records no command.")
         repo, cwd = self._checkout(project, ac.repo)
+        branch, commit = _git_head(cwd)
         started = time.monotonic()
         output, code, timed_out = self._execute(ac.command, cwd)
         duration = int((time.monotonic() - started) * 1000)
@@ -89,6 +93,8 @@ class AcCheckRunner:
             ac=ac.id,
             command=ac.command,
             repo=repo,
+            branch=branch,
+            commit=commit,
             exit_code=code,
             passed=code == 0 and not timed_out,
             timed_out=timed_out,
@@ -133,3 +139,25 @@ class AcCheckRunner:
             output, _ = child.communicate()
             return output, None, True
         return output, child.returncode, False
+
+
+def _git_head(cwd: Path) -> tuple[str | None, str | None]:
+    """The checkout's branch and short commit, None for each one git cannot tell."""
+
+    def ask(*args: str) -> str | None:
+        try:
+            done = subprocess.run(  # noqa: S603 -- a fixed git argv
+                ["git", *args],  # noqa: S607 -- git from PATH, as the CLI uses it
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except OSError, subprocess.TimeoutExpired:
+            return None
+        out = done.stdout.strip()
+        return out if done.returncode == 0 and out else None
+
+    branch = ask("rev-parse", "--abbrev-ref", "HEAD")
+    return (None if branch == "HEAD" else branch), ask("rev-parse", "--short", "HEAD")

@@ -515,31 +515,82 @@ describe("FeatureDetailScreen", () => {
       expect(write).toHaveBeenCalledWith("uv run pytest -k case_2");
     });
 
-    it("runs an AC's check from its card and shows the exit code and output (playground)", async () => {
+    const failedRun = {
+      [`POST ${API}/acs/AC-48.2/check-runs`]: {
+        ac: "AC-48.2",
+        command: "uv run pytest -k case_2",
+        repo: "agent-hub",
+        branch: "main",
+        commit: "0f4d1f7",
+        exit_code: 1,
+        passed: false,
+        timed_out: false,
+        duration_ms: 4200,
+        output: "1 failed in 0.4s",
+        truncated: false,
+      },
+    };
+
+    async function runCheck() {
+      const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
+      const check = within(table).getByRole("region", { name: "Check it yourself" });
+      await userEvent.click(within(check).getByRole("button", { name: "Run check" }));
+      await within(check).findByText("Failed · exit 1");
+      return check;
+    }
+
+    it("runs an AC's check and shows this run's result, not the record's (playground)", async () => {
+      open(failedRun);
+
+      const check = await runCheck();
+
+      expect(check).toHaveTextContent("This run");
+      expect(check).toHaveTextContent("main @ 0f4d1f7");
+      expect(check).toHaveTextContent("Not recorded.");
+      expect(within(check).getByLabelText("Output of AC-48.2's check")).toHaveTextContent(
+        "1 failed in 0.4s",
+      );
+      expect(within(check).getByText("AC-48.2's check failed, exit 1, 4.2 s.")).toHaveAttribute(
+        "aria-live",
+        "polite",
+      );
+      expect(within(check).getByRole("button", { name: "Run check again" })).toBeInTheDocument();
+    });
+
+    it("keeps an AC's last run when its card closes and opens again (playground)", async () => {
+      open(failedRun);
+      await runCheck();
+      const table = screen.getByRole("table", { name: "Acceptance criteria" });
+
+      await userEvent.click(within(table).getByRole("button", { name: "Collapse AC-48.2" }));
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
+
+      expect(within(table).getByText("Failed · exit 1")).toBeInTheDocument();
+    });
+
+    it("says before any click that checks are locked in this browser (playground)", async () => {
       open({
-        [`POST ${API}/acs/AC-48.2/check-runs`]: {
-          ac: "AC-48.2",
-          command: "uv run pytest -k case_2",
-          repo: "agent-hub",
-          exit_code: 1,
-          passed: false,
-          timed_out: false,
-          duration_ms: 4200,
-          output: "1 failed in 0.4s",
-          truncated: false,
-        },
+        "/api/v1/agent-sessions/capabilities": aProblem({
+          status: 401,
+          title: "Session cookie required",
+        }),
       });
 
       const table = await screen.findByRole("table", { name: "Acceptance criteria" });
       await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
       const check = within(table).getByRole("region", { name: "Check it yourself" });
-      await userEvent.click(within(check).getByRole("button", { name: "Run it" }));
 
-      expect(await within(check).findByText(/Failed \(exit 1\)/)).toBeInTheDocument();
-      expect(within(check).getByLabelText("Output of AC-48.2's check")).toHaveTextContent(
-        "1 failed in 0.4s",
-      );
-      expect(within(check).getByRole("button", { name: "Run again" })).toBeInTheDocument();
+      expect(
+        await within(check).findByRole("button", { name: /^Run check\. Locked in this browser/ }),
+      ).toBeDisabled();
+    });
+
+    it("has no serious axe violations with a run's result open (a11y, playground)", async () => {
+      const { container } = open(failedRun);
+      await runCheck();
+
+      expect(await seriousViolations(container)).toEqual([]);
     });
 
     it("marks a manual AC's verification as an owner step (records)", async () => {
