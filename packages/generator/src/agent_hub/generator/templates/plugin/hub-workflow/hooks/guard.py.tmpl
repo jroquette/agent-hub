@@ -12,9 +12,10 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         command, raw, joined or with its quotes removed, in a scanned session variable's value (the infra
         selectors, the usual stage and connection names, credentials.env and guard.blocked_words_env names),
         in a file tool's path (file_path, notebook_path, path, Grep's glob, Glob's pattern, WebFetch's url),
-        or in the contents of a .env* or guard.blocked_words_files file that a Read, a Grep (a folder walked,
-        no links, .git and node_modules skipped) or a Bash token (glob tokens expanded; not after ls, test,
-        [, stat) reads; a secret file is never opened, so it keeps the secret-file reason)
+        or in the contents of a .env* or guard.blocked_words_files file (as named or linked to) that a Read, a
+        Grep (its path or the cwd walked, no links, BLOCKED_WALK_SKIPPED and .claude/worktrees skipped) or a
+        Bash token (braces and globs expanded; not after ls, test, [, stat) reads; a secret file, by any case
+        or link, is never opened, so it keeps the secret-file reason)
 ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment, anywhere
         after the tool (aws's s3 … rm and cloudformation … deploy too, quoted or not); with guard.infra, a
         command it would let through that holds a character other than ASCII letters, digits, space, tab,
@@ -1105,7 +1106,7 @@ BLOCKED_UNCHECKED_REASON = "blocked words not checked: {}; confirm this call"
 BLOCKED_CONFIG_CAUSE = "{} cannot be used (fix it: docs/design/environments.md)"
 BLOCKED_TEXT_CAP = 1 << 20  # characters of a command the rule scans; a longer one asks (AM-7)
 BLOCKED_TOO_LARGE = "the command is over 1 MiB (too large)"
-BLOCKED_SCAN_BUDGET = 0.3  # seconds for the command's views and the session variables together
+BLOCKED_SCAN_BUDGET = 0.3  # seconds for the command's views, the session variables and the files together
 BLOCKED_OUT_OF_TIME = "out of time (300 ms)"
 BLOCKED_CHUNK = 1 << 16  # characters searched between two looks at the clock
 BLOCKED_WORD_MAX_CHARS = 64  # the longest blocked word (the reader's bound)
@@ -1178,7 +1179,16 @@ def _scanned_variables(cfg: Config, environ: dict) -> list[str]:
 BLOCKED_FILE_CAP = 1 << 20  # bytes of one listed file; a larger one asks
 BLOCKED_FILES_CAP = 64  # listed files one call reads (a Grep walk's, a Bash call's tokens and globs)
 BLOCKED_BYTES_CAP = 4 << 20  # bytes of the listed files one call reads together
-BLOCKED_WALK_SKIPPED = (".git", "node_modules")
+# The folders a Grep walk skips, as ripgrep's usual ignores do (plus .claude/worktrees below).
+BLOCKED_WALK_SKIPPED = frozenset((
+    ".git", "node_modules", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache",
+    ".ruff_cache", "dist", "build", ".terraform", ".next", "target",
+))
+BLOCKED_BRACES_CAP = 64  # words a Bash token's braces expand to; more asks (too many files)
+BLOCKED_HIDDEN_NAME = "<a listed file>"  # a name read from disk that is not plain
+# A plain segment of a path read from disk: no run of 20 letters and digits (a key's shape).
+BLOCKED_PLAIN_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,64}")
+BLOCKED_KEY_RUN = re.compile(r"[A-Za-z0-9]{20}")
 BLOCKED_FILE_TOO_LARGE = "{} is over 1 MiB (too large)"
 BLOCKED_NOT_REGULAR = "{} is not a regular file"
 BLOCKED_TOO_MANY = "over 64 files to read (too many files)"
@@ -1214,10 +1224,27 @@ def _trailing_match(entry: str, path: str) -> bool:
 def _listed_file(path: str, cfg: Config) -> bool:
     """Whether the rule reads path's contents: its last component starts with `.env`, or a
     guard.blocked_words_files glob matches it; never a file _secret_path calls secret."""
-    name = os.path.basename(path.rstrip("/")).lower()
-    if not name or _secret_path(path, cfg):
+    try:
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        real = path
+    forms = list(dict.fromkeys((path, real)))
+    if any(_secret_path(form, cfg) or _secret_path(form.lower(), cfg) for form in forms):
         return False
-    return name.startswith(".env") or any(_trailing_match(entry, path) for entry, _ in cfg.blocked_files)
+    for form in forms:
+        name = os.path.basename(form.rstrip("/")).lower()
+        if name and (name.startswith(".env") or any(_trailing_match(e, form) for e, _ in cfg.blocked_files)):
+            return True
+    return False
+
+
+def _disk_shown(shown: str) -> str:
+    """A path read from disk as a reason shows it: as found when every segment is plain, else
+    BLOCKED_HIDDEN_NAME, so a file name never carries a key into a reason."""
+    for segment in shown.split("/"):
+        if segment and (not BLOCKED_PLAIN_SEGMENT.fullmatch(segment) or BLOCKED_KEY_RUN.search(segment)):
+            return BLOCKED_HIDDEN_NAME
+    return shown
 
 
 class _BlockedScan:
@@ -1230,6 +1257,23 @@ class _BlockedScan:
         self.deadline = time.monotonic() + BLOCKED_SCAN_BUDGET
         self.cwd = cwd or os.getcwd()
         self.read = 0
+
+    def tick(self) -> None:
+        """One more folder entry examined: past the deadline, the scan stops (out of time)."""
+        if time.monotonic() > self.deadline:
+            raise BlockedScanBudgetSpent
+
+    def entries(self, folder: str) -> list[os.DirEntry]:
+        """folder's entries, sorted by name, the deadline checked per entry; [] when unreadable."""
+        found = []
+        try:
+            with os.scandir(folder) as listing:
+                for entry in listing:
+                    self.tick()
+                    found.append(entry)
+        except (OSError, ValueError):
+            return []
+        return sorted(found, key=lambda entry: entry.name)
 
     def hit(self, text: str) -> str | None:
         return _blocked_hit(self.pattern, text, self.deadline)
@@ -1294,44 +1338,73 @@ def _add_listed(found: dict[str, str], path: str, shown: str, cfg: Config) -> No
             raise BlockedScanUnchecked(BLOCKED_TOO_MANY)
 
 
-def _grep_glob_passes(rel: str, grep_glob: str) -> bool:
-    """Whether a walked file passes Grep's glob filter; a filter the rule does not read as a
-    plain glob (braces, a `!` negation) passes everything, so it only adds files."""
+def _grep_glob_passes(rels: tuple[str, ...], grep_glob: str) -> bool:
+    """Whether a walked file passes Grep's glob filter, against its path from the walked folder
+    and from the event's cwd (ripgrep anchors a glob with `/` there); a filter the rule does not
+    read as a plain glob (braces, a `!` negation) passes everything, so it only adds files."""
     if not grep_glob or "{" in grep_glob or grep_glob.startswith("!"):
         return True
-    rel, pattern = rel.lower(), grep_glob.lower()
+    pattern = grep_glob.lower()
     plain = pattern[3:] if pattern.startswith("**/") else pattern
-    return fnmatch(os.path.basename(rel), plain) or fnmatch(rel, pattern) or fnmatch(rel, plain)
+    for rel in (rel.lower() for rel in rels):
+        if fnmatch(os.path.basename(rel), plain) or fnmatch(rel, pattern) or fnmatch(rel, plain):
+            return True
+    return False
+
+
+def _entry_is(entry: os.DirEntry, kind: str) -> bool:
+    """entry.is_dir() (kind "dir", links followed), its is_dir without following ("folder") or
+    is_symlink() ("link"); False when the system refuses to say (a /proc entry)."""
+    try:
+        if kind == "link":
+            return entry.is_symlink()
+        return entry.is_dir(follow_symlinks=kind == "dir")
+    except OSError:
+        return False
+
+
+def _skipped_folder(entry: os.DirEntry, parent: str) -> bool:
+    return entry.name in BLOCKED_WALK_SKIPPED or (
+        entry.name == "worktrees" and os.path.basename(parent) == ".claude")
 
 
 def _grep_walk(scan: _BlockedScan, root: str, shown: str, grep_glob: str) -> dict[str, str]:
-    """The listed files under a Grep folder that pass its glob: no link followed, .git and
-    node_modules skipped, the deadline checked per folder."""
+    """The listed files under a Grep folder that pass its glob: no link followed, the
+    BLOCKED_WALK_SKIPPED folders and .claude/worktrees skipped, the deadline checked per entry;
+    an explicit stack, so no depth can overflow."""
     found: dict[str, str] = {}
-    for folder, dirs, names in os.walk(root):
-        if time.monotonic() > scan.deadline:
-            raise BlockedScanBudgetSpent
-        dirs[:] = sorted(d for d in dirs if d not in BLOCKED_WALK_SKIPPED)
-        for name in sorted(names):
-            path = os.path.join(folder, name)
-            rel = os.path.relpath(path, root)
-            if not os.path.islink(path) and _grep_glob_passes(rel, grep_glob):
-                _add_listed(found, path, os.path.join(shown, rel), scan.cfg)
+    stack = [root]
+    while stack:
+        folder = stack.pop()
+        folders = []
+        for entry in scan.entries(folder):
+            if _entry_is(entry, "link"):
+                continue
+            if _entry_is(entry, "folder"):
+                if not _skipped_folder(entry, folder):
+                    folders.append(entry.path)
+                continue
+            rel = os.path.relpath(entry.path, root)
+            if _grep_glob_passes((rel, os.path.relpath(entry.path, scan.cwd)), grep_glob):
+                _add_listed(found, entry.path, _disk_shown(os.path.normpath(os.path.join(shown, rel))), scan.cfg)
+        stack.extend(reversed(folders))
     return found
 
 
 def _file_tool_found(scan: _BlockedScan, tool: str, ti: dict) -> tuple[str, str] | None:
     """(word, where) for a word in a file tool's path fields, else in the contents of the listed
-    file a Read or Grep reads (a Grep folder walked)."""
+    file a Read or Grep reads (a Grep folder walked; with no path, the cwd)."""
     for field in BLOCKED_PATH_FIELDS + BLOCKED_TOOL_PATH_FIELDS.get(tool, ()):
         value = _str(ti.get(field))
         word = scan.hit(value) if value else None
         if word:
             return word, f"the path {_infra_value(value)}"
-    shown = _str(ti.get("file_path")) if tool == "Read" else _str(ti.get("path")) if tool == "Grep" else ""
-    if not shown:
+    if tool not in ("Read", "Grep"):
         return None
-    path = scan.resolve(shown)
+    shown = _str(ti.get("file_path" if tool == "Read" else "path"))
+    if not shown and tool == "Read":
+        return None
+    path = scan.resolve(shown) if shown else scan.cwd
     if tool == "Grep" and os.path.isdir(path):
         return scan.files(_grep_walk(scan, path, shown, _str(ti.get("glob"))))
     found: dict[str, str] = {}
@@ -1339,26 +1412,59 @@ def _file_tool_found(scan: _BlockedScan, tool: str, ti: dict) -> tuple[str, str]
     return scan.files(found)
 
 
+def _braces(token: str) -> list[str]:
+    """token with each simple brace list (`{a,b}`, not nested) expanded, as bash does, at most
+    BLOCKED_BRACES_CAP words (more asks: too many files)."""
+    words, done = [token], []
+    while words:
+        word = words.pop()
+        found = re.search(r"\{([^{}]*,[^{}]*)\}", word)
+        if not found:
+            done.append(word)
+        else:
+            words.extend(word[:found.start()] + alt + word[found.end():] for alt in reversed(found.group(1).split(",")))
+        if len(words) + len(done) > BLOCKED_BRACES_CAP:
+            raise BlockedScanUnchecked(BLOCKED_TOO_MANY)
+    return done
+
+
+def _expanded(scan: _BlockedScan, path: str) -> list[str]:
+    """The paths a glob path names, one segment at a time through scan.entries (the deadline
+    checked per entry); a name starting with `.` only for a segment that does; no recursion."""
+    head, *segments = path.split("/")
+    paths = [head or "/"]
+    for index, segment in enumerate(segments):
+        if not segment:
+            continue
+        if not any(c in segment for c in "*?["):
+            paths = [os.path.join(p, segment) for p in paths]
+            continue
+        last = index == len(segments) - 1
+        paths = [
+            entry.path for p in paths for entry in scan.entries(p)
+            if (segment.startswith(".") or not entry.name.startswith("."))
+            and fnmatchcase(entry.name, segment) and (last or _entry_is(entry, "dir"))
+        ]
+    return paths
+
+
 def _bash_listed(scan: _BlockedScan, cmd: str) -> dict[str, str]:
-    """The listed files a Bash command's tokens name from the event's cwd (glob tokens
-    expanded), in every segment but one led by ls, test, [ or stat."""
+    """The listed files a Bash command's tokens name from the event's cwd (braces and glob
+    tokens expanded), in every segment but one led by ls, test, [ or stat."""
     found: dict[str, str] = {}
     for seg in _segments(cmd.replace("\\\n", "")):
         words = seg.split()
         if not words or words[0] in SAFE_ON_SECRETS:
             continue
-        for tok in _tokens(seg):
-            if time.monotonic() > scan.deadline:
-                raise BlockedScanBudgetSpent
+        for tok in (word for token in _tokens(seg) for word in _braces(token)):
+            scan.tick()
             path = scan.resolve(tok)
             if not any(c in tok for c in "*?["):
                 _add_listed(found, path, tok, scan.cfg)
                 continue
-            for match in glob.iglob(path):
-                if time.monotonic() > scan.deadline:
-                    raise BlockedScanBudgetSpent
+            for match in _expanded(scan, path):
                 shown = match if os.path.isabs(os.path.expanduser(tok)) else os.path.relpath(match, scan.cwd)
-                _add_listed(found, match, shown, scan.cfg)
+                _add_listed(found, match, _disk_shown(shown), scan.cfg)
     return found
 
 
