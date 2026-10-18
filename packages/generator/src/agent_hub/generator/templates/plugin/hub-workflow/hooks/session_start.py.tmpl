@@ -9,7 +9,9 @@ to it, within one 10 s deadline inside the hook's 20 s; the brief is capped at 8
 When it cannot run, the mini brief stands in: one header line naming the fallback and its cause
 (no version, bad platform.repository (never echoed), no uv, resolve failed, failed (exit N), failed (no output), failed (cannot start),
 timed out; failed for any other error), brain/now.md (a regular file only) capped at 2500
-characters and the latest 3 journal files. The mini brief uses no git and no network."""
+characters, the latest 3 journal files, then the environments of hub.json and hub.local.json
+(name, access, PRODUCTION; at most 60 lines), with a line naming hub.local.json when it exists
+but cannot be used. The mini brief uses no git and no network."""
 
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from hubhooks import emit, load_config, read_input, run_hook
+    from hubhooks import Config, emit, load_config, read_input, run_hook
     from stdlib_reader import PlatformSection
 except Exception as error:  # a partial install: skip, never error the session
     print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
@@ -38,6 +40,8 @@ BRIEF_CAP = 8000
 NOW_CAP = 2500
 SNAPSHOT_CAP = 2500
 JOURNAL_COUNT = 3
+ENVIRONMENT_LINES = 60
+UNUSABLE_LOCAL = "{file} is unusable: your own environments are not shown"
 
 
 def release_source(repository: str | None, version: str) -> str:
@@ -114,8 +118,25 @@ def latest_journal(hub: Path) -> list[str]:
     return days[::-1][:JOURNAL_COUNT]
 
 
-def mini_brief(hub: Path, cause: str) -> str:
-    """The fallback brief: its header (with the cause), now.md capped, the latest journal files."""
+def environment_lines(cfg: Config) -> list[str]:
+    """The mini brief's Environments section: one line per effective environment (names are
+    safe segments, so they print as code spans), then the unusable-file line; none without
+    either."""
+    lines = []
+    for environment in cfg.environments[:ENVIRONMENT_LINES]:
+        flags = ", PRODUCTION" if environment.production else ""
+        lines.append(f"- `{environment.name}` ({environment.access}{flags})")
+    more = len(cfg.environments) - ENVIRONMENT_LINES
+    if more > 0:
+        lines.append(f"… {more} more: ./hub env list")
+    if cfg.local_file_problem:
+        lines.append(UNUSABLE_LOCAL.format(file=cfg.local_file_problem))
+    return ["## Environments", *lines] if lines else []
+
+
+def mini_brief(hub: Path, cause: str, cfg: Config) -> str:
+    """The fallback brief: its header (with the cause), now.md capped, the latest journal files,
+    the environments of `cfg`."""
     parts = [f"# Brief (fallback: hub brief {cause})"]
     now = hub / "brain" / "now.md"
     try:
@@ -126,6 +147,7 @@ def mini_brief(hub: Path, cause: str) -> str:
     days = latest_journal(hub)
     if days:
         parts.append("Latest journal: " + ", ".join(days))
+    parts.append("\n".join(environment_lines(cfg)))
     return "\n\n".join(part for part in parts if part)
 
 
@@ -139,7 +161,7 @@ def main() -> None:
         brief, cause = pinned_brief(hub, cfg.hub_file.platform)
     except Exception:  # an unforeseen error still leaves the session its mini brief
         brief, cause = "", "failed"
-    ctx = brief or mini_brief(hub, cause)
+    ctx = brief or mini_brief(hub, cause, cfg)
     snap = hub / "brain" / "auto" / "workspace" / "session-snapshot.md"
     if data.get("source") == "compact" and snap.exists():
         try:

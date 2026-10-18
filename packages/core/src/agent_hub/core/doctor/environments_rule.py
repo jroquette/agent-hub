@@ -1,4 +1,4 @@
-"""``environments.production``: one finding per production environment (docs/design/environments.md).
+"""``environments.production``: one finding per production environment (environments.md).
 
 Each production environment of ``hub.json`` and the developer's ``hub.local.json`` is named at
 its source, the file its effective ``access`` comes from: a warning when the agent may write

@@ -55,9 +55,7 @@ def shown(findings: object) -> list[Shown]:
 
 
 def selected(config: HubConfig) -> Selection:
-    selection = select_rules(
-        (environments_rule.ENVIRONMENTS_PRODUCTION,), config=config, only=()
-    )
+    selection = select_rules((environments_rule.ENVIRONMENTS_PRODUCTION,), config=config, only=())
     assert isinstance(selection, Selection)
     return selection
 
