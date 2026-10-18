@@ -49,6 +49,10 @@ def no_caller_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
+    # No background maintenance or gc: they write into `.git` while a test digests it (AGH-313).
+    (home / ".gitconfig").write_text(
+        "[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n", encoding="utf-8"
+    )
 
 
 @pytest.fixture
@@ -140,6 +144,13 @@ def work_tree(tmp_path: Path) -> Path:
     git([*COMMIT_CONFIG, "commit", "-q", "-m", "init"], cwd=root)
     write(root, {"ignored.txt": "no\n", "notes.md": "untracked\n"})
     return root
+
+
+def test_runs_no_git_maintenance_when_fixture_commits(work_tree: Path) -> None:
+    # A commit may start git's background maintenance, which writes `.git/objects/maintenance.lock`
+    # while a test digests the tree (AGH-313).
+    assert git(["config", "--get", "maintenance.auto"], cwd=work_tree) == b"false\n"
+    assert git(["config", "--get", "gc.auto"], cwd=work_tree) == b"0\n"
 
 
 def test_lists_like_git_when_work_tree(work_tree: Path) -> None:
