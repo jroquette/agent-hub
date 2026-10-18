@@ -16,7 +16,7 @@ import {
 import { useNow } from "../../lib/clock";
 import { Compare } from "./Compare";
 import { authorWords, canRestore, originIcon, originWords, shortHash, stateNotice } from "./model";
-import { RestoreDialog } from "./RestoreDialog";
+import { RestoreDialog, type RestoreOutcome } from "./RestoreDialog";
 import {
   useItemVersions,
   type HistoryTarget,
@@ -73,7 +73,8 @@ function VersionsBody({ target }: { target: HistoryTarget }) {
   const [picked, setPicked] = useState<string[]>([]);
   const [comparing, setComparing] = useState<[ItemVersion, ItemVersion] | null>(null);
   const [restoring, setRestoring] = useState<ItemVersion | null>(null);
-  const [restored, setRestored] = useState<string | null>(null);
+  const [restored, setRestored] = useState<RestoreOutcome | null>(null);
+  const compareId = useId();
   const toggle = (id: string) => {
     setPicked((was) => (was.includes(id) ? was.filter((p) => p !== id) : [...was, id].slice(-2)));
   };
@@ -94,7 +95,8 @@ function VersionsBody({ target }: { target: HistoryTarget }) {
       </div>
     );
   }
-  if (versions.isError) {
+  // A failed refresh keeps the list it already shows; only a first read without data replaces it.
+  if (versions.isError && versions.data === undefined) {
     if (versions.error.status === 404) {
       return (
         <EmptyState icon="circle-dashed" title="No history for this item">
@@ -116,21 +118,31 @@ function VersionsBody({ target }: { target: HistoryTarget }) {
 
   const page = versions.data.pages[0];
   if (page === undefined) return null;
+  const refreshFailed = versions.isError ? versions.error : null;
   const notice = stateNotice(page.state);
   const restorable = canRestore(page.state);
   return (
     <div className="ah-stack ah-history-body">
       <UnitLine page={page} />
+      {refreshFailed && (
+        <ProblemError
+          title="Could not refresh the history"
+          detail={refreshFailed.detail}
+          status={refreshFailed.status}
+          onRetry={() => void versions.refetch()}
+          compact
+        />
+      )}
       {restored && (
         <Banner
-          tone="info"
-          icon="circle-check"
+          tone={restored.warning ? "warning" : "info"}
+          icon={restored.warning ? "triangle-alert" : "circle-check"}
           boxed
           onDismiss={() => {
             setRestored(null);
           }}
         >
-          {restored}
+          {restored.text}
         </Banner>
       )}
       {notice && (
@@ -239,6 +251,7 @@ function VersionsBody({ target }: { target: HistoryTarget }) {
             size="sm"
             icon="git-compare"
             disabled={picked.length !== 2}
+            id={compareId}
             onClick={startCompare}
           >
             Compare
@@ -258,9 +271,9 @@ function VersionsBody({ target }: { target: HistoryTarget }) {
           onClose={() => {
             setRestoring(null);
           }}
-          onRestored={(words) => {
+          onRestored={(outcome) => {
             setRestoring(null);
-            setRestored(words);
+            setRestored(outcome);
           }}
         />
       )}
@@ -271,6 +284,8 @@ function VersionsBody({ target }: { target: HistoryTarget }) {
           newer={comparing[1]}
           onClose={() => {
             setComparing(null);
+            // Back to the control that opened it (it stays in the page).
+            document.getElementById(compareId)?.focus();
           }}
         />
       )}

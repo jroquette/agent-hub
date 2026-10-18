@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { anItemVersion, anItemVersionContent } from "../../testing/builders";
-import { authorWords, folderDiff, originWords, shortHash, writeProblemWords } from "./model";
+import {
+  COMPARE_MAX_LINES,
+  authorWords,
+  compareChanges,
+  folderDiff,
+  originWords,
+  shortHash,
+  writeProblemWords,
+} from "./model";
 import { ApiProblem } from "../../lib/api";
 
 const OLDER = anItemVersion({
@@ -88,5 +96,29 @@ describe("item history model", () => {
         new ApiProblem({ status: 503, title: "Busy", code: "written_not_recorded" }),
       ),
     ).toContain("not recorded");
+  });
+
+  it("compare_any_two keeps a diff whole at exactly the line budget", () => {
+    // Three header lines and COMPARE_MAX_LINES - 3 added lines: the budget, not past it.
+    const text = Array.from({ length: COMPARE_MAX_LINES - 3 }, () => "x").join("\n");
+    const [change] = compareChanges([], [{ path: "a.md", executable: false, size: 1, text }]);
+
+    expect(change?.diff?.split("\n")).toHaveLength(COMPARE_MAX_LINES);
+    expect(change?.hiddenLines).toBe(0);
+  });
+
+  it("puts a failed write and a lost race in words", () => {
+    const failed = (detail: string) =>
+      new ApiProblem({ status: 500, title: "Item write failed", detail, code: "write_failed" });
+    const rollback =
+      "The write failed and the old folder could not be put back; hub doctor lists what was left beside it. Nothing was recorded.";
+
+    expect(writeProblemWords(failed(rollback))).toBe(rollback);
+    expect(
+      writeProblemWords(new ApiProblem({ status: 500, title: "x", code: "write_failed" })),
+    ).toBe("The write failed; the item is as it was.");
+    expect(
+      writeProblemWords(new ApiProblem({ status: 503, title: "Busy", code: "version_race" })),
+    ).toBe("Another write took this item's next version first. Nothing was written; try again.");
   });
 });

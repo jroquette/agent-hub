@@ -1,6 +1,8 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+import * as diffs from "../agent-session/model";
 
 import {
   anItemVersion,
@@ -10,7 +12,14 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { HistoryPanel } from ".";
+import { COMPARE_MAX_LINES } from "./model";
 import type { HistoryTarget } from "./queries";
+
+// The real diff, counted: Compare must compute it once per pair, not on every render.
+vi.mock("../agent-session/model", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../agent-session/model")>();
+  return { ...real, unifiedDiff: vi.fn(real.unifiedDiff) };
+});
 
 const AGENT = "/api/v1/projects/demo/skills/agent/hub-workflow/evaluator/versions";
 const SKILL = "/api/v1/projects/demo/skills/skill/hub-workflow/feature/versions";
@@ -143,5 +152,113 @@ describe("Compare", () => {
     expect(pick("22222222")).toBeChecked();
     expect(pick("11111111")).toBeChecked();
     expect(screen.getByRole("button", { name: "Compare" })).toBeEnabled();
+  });
+
+  it("compare_any_two cuts the diffs at the line budget and says how many lines are left", async () => {
+    // One line past the budget: three header lines and COMPARE_MAX_LINES - 2 added lines.
+    const big = Array.from({ length: COMPARE_MAX_LINES - 2 }, (_, i) => `line ${String(i)}`).join(
+      "\n",
+    );
+    renderPanel(
+      {
+        kind: "item",
+        project: "demo",
+        item: { kind: "skill", source: "hub-workflow", name: "feature" },
+      },
+      {
+        [SKILL]: anItemVersionPage({ items: THREE }),
+        [`${SKILL}/${id(1)}`]: anItemVersionContent({ id: id(1), files: [] }),
+        [`${SKILL}/${id(2)}`]: anItemVersionContent({
+          id: id(2),
+          files: [
+            { path: "a.md", executable: false, size: big.length, text: big },
+            { path: "b.md", executable: false, size: 3, text: "two" },
+          ],
+        }),
+      },
+    );
+
+    await compare("11111111", "22222222");
+
+    const diff = await screen.findByLabelText("Changes to a.md");
+    expect(diff.querySelectorAll(":scope > span")).toHaveLength(COMPARE_MAX_LINES);
+    expect(screen.getByText("1 more line — too large to show here")).toBeInTheDocument();
+    // The budget is spent: b.md is listed, not diffed.
+    expect(screen.queryByLabelText("Changes to b.md")).toBeNull();
+    expect(screen.getByText("Diff not shown — too large to show here.")).toBeInTheDocument();
+  });
+
+  it("compare_any_two computes the diffs once when the panel renders again", async () => {
+    const unified = vi.mocked(diffs.unifiedDiff);
+    renderPanel(
+      {
+        kind: "item",
+        project: "demo",
+        item: { kind: "skill", source: "hub-workflow", name: "feature" },
+      },
+      {
+        [SKILL]: anItemVersionPage({ items: THREE }),
+        [`${SKILL}/${id(1)}`]: anItemVersionContent({ id: id(1) }),
+        [`${SKILL}/${id(3)}`]: anItemVersionContent({
+          id: id(3),
+          files: [{ path: "SKILL.md", executable: false, size: 4, text: "new\n" }],
+        }),
+      },
+    );
+
+    const user = await compare("11111111", "33333333");
+    await screen.findByLabelText("Changes to SKILL.md");
+    const calls = unified.mock.calls.length;
+    expect(calls).toBeGreaterThan(0);
+    // Picking another version re-renders the panel and Compare with it.
+    await user.click(screen.getByRole("checkbox", { name: picked("22222222") }));
+
+    expect(screen.getByLabelText("Changes to SKILL.md")).toBeInTheDocument();
+    expect(unified.mock.calls.length).toBe(calls);
+  });
+
+  it("compare_any_two names the binary file when only its bytes differ", async () => {
+    const binary = { path: "logo.png", executable: false, size: 64, text: null };
+    renderPanel(
+      {
+        kind: "item",
+        project: "demo",
+        item: { kind: "skill", source: "hub-workflow", name: "feature" },
+      },
+      {
+        [SKILL]: anItemVersionPage({ items: THREE }),
+        [`${SKILL}/${id(1)}`]: anItemVersionContent({ id: id(1), files: [binary] }),
+        [`${SKILL}/${id(2)}`]: anItemVersionContent({ id: id(2), files: [binary] }),
+      },
+    );
+
+    await compare("11111111", "22222222");
+
+    const region = await screen.findByRole("region", { name: "From 11111111 to 22222222" });
+    await within(region).findByText(/differ in bytes the app cannot show/);
+    expect(region).toHaveTextContent("in the binary file logo.png.");
+    expect(region).not.toHaveTextContent("same content");
+  });
+
+  it("compare moves focus to its heading and back to Compare when closed", async () => {
+    renderPanel(
+      {
+        kind: "item",
+        project: "demo",
+        item: { kind: "skill", source: "hub-workflow", name: "feature" },
+      },
+      {
+        [SKILL]: anItemVersionPage({ items: THREE }),
+        [`${SKILL}/${id(1)}`]: anItemVersionContent({ id: id(1) }),
+        [`${SKILL}/${id(2)}`]: anItemVersionContent({ id: id(2) }),
+      },
+    );
+
+    const user = await compare("11111111", "22222222");
+
+    expect(screen.getByRole("heading", { name: "From 11111111 to 22222222" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Close compare" }));
+    expect(screen.queryByRole("region", { name: "From 11111111 to 22222222" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Compare" })).toHaveFocus();
   });
 });

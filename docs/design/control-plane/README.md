@@ -81,8 +81,10 @@ AGH-201 (control-plane clarity) changes the design further
 - **Brain.** `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=` replace the design's
   `/brain/notes` (no backlinks); `brain/auto/` is never listed or served. Feature detail adds Spec, Research, Plan,
   Eval and Criteria tabs over the same note route.
-- **Security.** Only the two learning POSTs need the server's own `Origin`, a same-origin fetch and a JSON body
-  (E9); the CSP is unchanged.
+- **Security.** The strict writes need the server's own `Origin`, a same-origin fetch and a JSON body (E9,
+  `STRICT_WRITES`): the two learning POSTs, the workflow run commands and gate decision, and the two restores
+  (AGH-297). The agent-session routes (AGH-165) need the launch cookie and the server's own `Origin` too, and so do
+  the restores ([API.md](../../API.md#local-security)); the CSP is unchanged.
 
 ## Design system
 
