@@ -368,7 +368,7 @@ def test_gives_same_bytes_when_merge_run_twice() -> None:
     assert len(json.loads(once)["hooks"]["Stop"]) == 2
 
 
-def test_gives_same_bytes_when_replace_run_twice() -> None:
+def test_gives_same_bytes_when_hook_edited_in_place_twice() -> None:
     settings = json.dumps(
         {
             "hooks": {
@@ -380,14 +380,15 @@ def test_gives_same_bytes_when_replace_run_twice() -> None:
             }
         }
     ).encode()
-    drafts = (_hooks("PreToolUse", "changed", "Bash"), _hooks("Stop", "moved"))
-
-    for content in drafts:
-        draft = read_draft_item(UnitKind.HOOK, _files({"hooks.json": content}))
-        assert draft.hooks is not None
-        once = replace_hook(settings, HookAt("PreToolUse", 1), draft.hooks)
-        assert replace_hook(once, HookAt("PreToolUse", 1), draft.hooks) == once
-        assert once != dump_json(json.loads(settings))
+    # A hook edited in place sits where it was, so replacing it again changes nothing; a moved
+    # hook's replay is told by its draft_id (test_publish_draft), not by replace_hook.
+    draft = read_draft_item(
+        UnitKind.HOOK, _files({"hooks.json": _hooks("PreToolUse", "changed", "Bash")})
+    )
+    assert draft.hooks is not None
+    once = replace_hook(settings, HookAt("PreToolUse", 1), draft.hooks)
+    assert replace_hook(once, HookAt("PreToolUse", 1), draft.hooks) == once
+    assert once != dump_json(json.loads(settings))
 
 
 def test_keeps_emptied_group_when_it_holds_other_keys() -> None:
@@ -438,3 +439,52 @@ def test_refuses_rename_when_sibling_unit_exists() -> None:
         existing=[".claude/skills/beta", SKILL_UNIT],
     )
     assert elsewhere.unit.unit_path == "plugin/demo/skills/beta"
+
+
+def test_replaces_hook_when_draft_hook_already_in_its_group() -> None:
+    # The review's probe: the draft's hook is already in the group, the edited one still goes.
+    settings = json.dumps(
+        {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Edit",
+                        "hooks": [
+                            {"type": "command", "command": "one"},
+                            {"type": "command", "command": "two"},
+                        ],
+                    }
+                ]
+            }
+        }
+    ).encode()
+    draft = read_draft_item(
+        UnitKind.HOOK, _files({"hooks.json": _hooks("PreToolUse", "two", "Edit")})
+    )
+    assert draft.hooks is not None
+
+    written = replace_hook(settings, HookAt("PreToolUse", 1), draft.hooks)
+
+    assert json.loads(written)["hooks"]["PreToolUse"][0]["hooks"] == [
+        {"type": "command", "command": "two"},
+        {"type": "command", "command": "two"},
+    ]
+
+
+def test_removes_hook_when_moved_to_event_already_holding_its_group() -> None:
+    settings = json.dumps(
+        {
+            "hooks": {
+                "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "a"}]}],
+                "Stop": [{"hooks": [{"type": "command", "command": "stop"}]}],
+            }
+        }
+    ).encode()
+    draft = read_draft_item(UnitKind.HOOK, _files({"hooks.json": _hooks("Stop", "stop")}))
+    assert draft.hooks is not None
+
+    written = replace_hook(settings, HookAt("PreToolUse", 1), draft.hooks)
+
+    assert json.loads(written) == {
+        "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "stop"}]}]}
+    }
