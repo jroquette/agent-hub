@@ -173,6 +173,7 @@ def _get_paths(app: Any, slug: str) -> list[str]:
         "source": "hub-workflow",
         "name": "alpha",
         "file_id": "0" * 16,
+        "version_id": "01929a4e-7a11-7c00-8a00-00000000b001",
     }
     paths = []
     for path, methods in app.openapi()["paths"].items():
