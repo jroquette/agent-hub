@@ -51,6 +51,7 @@ const GO: Record<string, string> = {
   k: "/knowledge/learnings",
   f: "/features",
   h: "/health",
+  c: "/config",
   ",": "/settings",
 };
 

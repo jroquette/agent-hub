@@ -11,7 +11,10 @@ from typing import Annotated
 from fastapi import Depends, Request
 from pydantic import BaseModel, ValidationError
 
+from agent_hub.api.ac_check import AcCheckRunner
 from agent_hub.api.change_feed import ChangeFeed
+from agent_hub.api.feature_names import FeatureNames
+from agent_hub.api.linear_connection import LinearConnection
 from agent_hub.api.rfc9457 import InvalidParameterError, NotImplementedInBuildError
 from agent_hub.api.settings import ApiSettings
 from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
@@ -19,6 +22,7 @@ from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.links import AgentSessionLinkLookup
 from agent_hub.core.brain.brain_path import DEFAULT_ACCEPT_FOLDER
 from agent_hub.core.events.event_reader import EventReader
+from agent_hub.core.features.owner_signoff import SignOffOwnerSteps
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.learnings.learning import Learning, LearningDetail
@@ -51,6 +55,10 @@ class ApiPorts:
     run_control: ControlWorkflowRun | None = None
     workflow_gates: WorkflowGates | None = None
     gate_decisions: DecideWorkflowGate | None = None
+    linear: LinearConnection | None = None
+    owner_signoff: SignOffOwnerSteps | None = None
+    feature_names: FeatureNames | None = None
+    ac_checks: AcCheckRunner | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -74,6 +82,14 @@ def event_read_models(request: Request) -> EventReadModels:
 def hub_read_models(request: Request) -> HubReadModels:
     """The hub read models, or 501 when not wired."""
     port = _ports(request).hub_read_models
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def owner_signoff(request: Request) -> SignOffOwnerSteps:
+    """The owner's sign-off of a feature's owner steps, or 501 when not wired."""
+    port = _ports(request).owner_signoff
     if port is None:
         raise _unwired(request)
     return port
@@ -217,6 +233,30 @@ def collector_ports(request: Request) -> CollectorPorts:
     return CollectorPorts(counters=ports.counters, reader=ports.event_reader)
 
 
+def linear_connection(request: Request) -> LinearConnection:
+    """The Linear connection of Settings, or 501 when not wired."""
+    port = _ports(request).linear
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def feature_names(request: Request) -> FeatureNames:
+    """The feature nicknames on this machine, or 501 when not wired."""
+    port = _ports(request).feature_names
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def ac_checks(request: Request) -> AcCheckRunner:
+    """The runner of an AC's recorded check, or 501 when not wired."""
+    port = _ports(request).ac_checks
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
 def api_settings(request: Request) -> ApiSettings:
     """The settings ``create_app`` was given."""
     settings: ApiSettings = request.app.state.settings
@@ -242,6 +282,7 @@ def parse_filter[M: BaseModel](model: type[M], **fields: object) -> M:
 
 EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
 HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
+OwnerSignOffDep = Annotated[SignOffOwnerSteps, Depends(owner_signoff)]
 WorkflowReadsDep = Annotated[WorkflowReads, Depends(workflow_reads)]
 RunStartsDep = Annotated[StartWorkflowRun, Depends(run_starts)]
 RunControlDep = Annotated[ControlWorkflowRun, Depends(run_control)]
@@ -253,5 +294,8 @@ LearningDecisionsDep = Annotated[LearningDecisions, Depends(learning_decisions)]
 StreamPortsDep = Annotated[StreamPorts, Depends(stream_ports)]
 CollectorPortsDep = Annotated[CollectorPorts, Depends(collector_ports)]
 SettingsDep = Annotated[ApiSettings, Depends(api_settings)]
+LinearConnectionDep = Annotated[LinearConnection, Depends(linear_connection)]
+FeatureNamesDep = Annotated[FeatureNames, Depends(feature_names)]
+AcChecksDep = Annotated[AcCheckRunner, Depends(ac_checks)]
 AgentSessionControlDep = Annotated[AgentSessionCommands, Depends(agent_session_control)]
 CloudSessionsDep = Annotated[CloudSessionCommands, Depends(cloud_sessions)]

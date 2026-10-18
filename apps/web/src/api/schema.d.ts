@@ -30,7 +30,8 @@ export interface paths {
     };
     /**
      * List Agent Sessions
-     * @description Agent sessions, newest first.
+     * @description Agent sessions, newest first; with ``wrote``, the ones that changed that file (a path
+     *     relative to any workdir, such as ``brain/features/<slug>/spec.md``).
      */
     get: operations["list_agent_sessions_api_v1_agent_sessions_get"];
     put?: never;
@@ -474,6 +475,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/feature-names": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Feature Names
+     * @description The nicknames the owner gave features on this machine (the slug stays the identity).
+     */
+    get: operations["list_feature_names_api_v1_feature_names_get"];
+    /**
+     * Set Feature Name
+     * @description Give a feature a nickname, or clear it with an empty name.
+     */
+    put: operations["set_feature_name_api_v1_feature_names_put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/features": {
     parameters: {
       query?: never;
@@ -508,6 +533,48 @@ export interface paths {
     get: operations["get_feature_api_v1_features__project___slug__get"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/features/{project}/{slug}/acs/{ac}/check-runs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Run Ac Check
+     * @description Run the check ``features.json`` records for one AC in its repo's checkout and answer its
+     *     exit code and output (nothing is recorded; 409 for a manual AC or one with no command).
+     */
+    post: operations["run_ac_check_api_v1_features__project___slug__acs__ac__check_runs_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/features/{project}/{slug}/owner-signoff": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Sign Off Owner Steps
+     * @description The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over
+     *     the ACs that waited on them (409 when no AC waits, or one is not covered by a SHIP).
+     */
+    post: operations["sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -574,6 +641,46 @@ export interface paths {
      * @description Forget a hub; its events stay in the store.
      */
     delete: operations["remove_hub_api_v1_hubs__hub_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/hubs/{hub_id}/doctor-fix": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Fix Hub Findings
+     * @description Run ``hub doctor --fix`` in the hub: every auto-fixable finding; nothing committed.
+     */
+    post: operations["fix_hub_findings_api_v1_hubs__hub_id__doctor_fix_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/hubs/{hub_id}/platform-sync": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Sync Hub Platform
+     * @description Pin the hub to the running release and run ``hub sync`` in it; nothing is committed.
+     */
+    post: operations["sync_hub_platform_api_v1_hubs__hub_id__platform_sync_post"];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -793,6 +900,46 @@ export interface paths {
      */
     get: operations["get_brain_note_api_v1_projects__project__brain_note_get"];
     put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/config": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Project Config
+     * @description The project's hub config: team (``hub.json``) and local (``hub.local.json``) values.
+     */
+    get: operations["get_project_config_api_v1_projects__project__config_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/config/local": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Put Project Local Config
+     * @description Save this developer's ``hub.local.json`` values; the team's ``hub.json`` is untouched.
+     */
+    put: operations["put_project_local_config_api_v1_projects__project__config_local_put"];
     post?: never;
     delete?: never;
     options?: never;
@@ -1100,6 +1247,34 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/tracker/linear": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Linear Connection
+     * @description Whether hub web reads Linear, as whom, or why not (checked against Linear).
+     */
+    get: operations["get_linear_connection_api_v1_tracker_linear_get"];
+    /**
+     * Connect Linear
+     * @description Check a Linear API key and save it on this machine when Linear accepts it.
+     */
+    put: operations["connect_linear_api_v1_tracker_linear_put"];
+    post?: never;
+    /**
+     * Disconnect Linear
+     * @description Forget the key saved from Settings.
+     */
+    delete: operations["disconnect_linear_api_v1_tracker_linear_delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/workflow-runs": {
     parameters: {
       query?: never;
@@ -1269,6 +1444,34 @@ export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
     /**
+     * AcCheckRun
+     * @description One run of an AC's check: what ran, where, and what it answered.
+     */
+    AcCheckRun: {
+      /** Ac */
+      ac: string;
+      /** Branch */
+      branch: string | null;
+      /** Command */
+      command: string;
+      /** Commit */
+      commit: string | null;
+      /** Duration Ms */
+      duration_ms: number;
+      /** Exit Code */
+      exit_code: number | null;
+      /** Output */
+      output: string;
+      /** Passed */
+      passed: boolean;
+      /** Repo */
+      repo: string;
+      /** Timed Out */
+      timed_out: boolean;
+      /** Truncated */
+      truncated: boolean;
+    };
+    /**
      * AcCounts
      * @description Passing and total acceptance criteria, and how many are owner steps.
      */
@@ -1352,6 +1555,16 @@ export interface components {
     /** @enum {string} */
     ActorKind: "main" | "subagent";
     /**
+     * AgentModelView
+     * @description A plugin agent's tier, when ``models.agents`` moves it off its template's.
+     */
+    AgentModelView: {
+      /** Agent */
+      agent: string;
+      /** Tier */
+      tier: string;
+    };
+    /**
      * AgentSession
      * @description One session ``hub web`` started (or one cloud start, ``kind="cloud"``).
      *
@@ -1359,8 +1572,17 @@ export interface components {
      *     start when the id is given, P13); ``observed_session_id`` is that Session's id once it has
      *     been observed, else ``null`` (a twin may never arrive, D2). ``last_seq`` is the last
      *     persisted record's ``seq``. ``cost_usd`` and ``usage`` add up the turns' results (an estimate).
+     *     ``last_prompt`` and ``last_reply`` are the latest ``user.message`` and assistant ``text`` of
+     *     the stored (redacted) log as one line of at most 280 characters, the reply's markdown
+     *     marks dropped; ``changed_files`` the files changed, latest change first, at most 200
+     *     (``digest``).
      */
     AgentSession: {
+      /**
+       * Changed Files
+       * @default []
+       */
+      changed_files: components["schemas"]["ChangedFile"][];
       /** Claude Session Id */
       claude_session_id?: string | null;
       /** Cloud Id */
@@ -1373,6 +1595,10 @@ export interface components {
       id: string;
       /** @default local */
       kind: components["schemas"]["AgentSessionKind"];
+      /** Last Prompt */
+      last_prompt?: string | null;
+      /** Last Reply */
+      last_reply?: string | null;
       /**
        * Last Seq
        * @default 0
@@ -1629,6 +1855,18 @@ export interface components {
       usage: components["schemas"]["Usage"] | null;
     };
     /**
+     * ChangedFile
+     * @description A file the session's tool calls changed (``Edit``, ``MultiEdit``, ``Write``,
+     *     ``NotebookEdit``, subagents' included); ``last_change_id`` is the ``tool_use_id`` of the
+     *     latest change to it, the id the chat's review marks compare with.
+     */
+    ChangedFile: {
+      /** Last Change Id */
+      last_change_id: string;
+      /** Path */
+      path: string;
+    };
+    /**
      * CloudMessage
      * @description ``POST /agent-sessions/cloud/{cloud_id}/messages``: a one-shot follow-up.
      */
@@ -1706,6 +1944,21 @@ export interface components {
       transcript_lines_skipped: number;
       /** Transcript Refused */
       transcript_refused: number;
+    };
+    /**
+     * ConfigFileView
+     * @description One of the two files: its path and, when it cannot be used, its problems.
+     */
+    ConfigFileView: {
+      /** Name */
+      name: string;
+      /** Path */
+      path: string;
+      /**
+       * Problems
+       * @default []
+       */
+      problems: string[];
     };
     /**
      * ContextCost
@@ -1788,6 +2041,31 @@ export interface components {
      */
     DiagnosticSeverity: "info" | "warning";
     /**
+     * DoctorFixRequest
+     * @description The empty JSON body of the fix: a cross-site form cannot send one (S7).
+     */
+    DoctorFixRequest: Record<string, never>;
+    /**
+     * DoctorFixResult
+     * @description What one fix did, and what the check after it found.
+     */
+    DoctorFixResult: {
+      /** Changed Files */
+      changed_files: string[];
+      /** Errors Left */
+      errors_left: number | null;
+      /** Exit Code */
+      exit_code: number;
+      /** Hub Id */
+      hub_id: string;
+      /** Ok */
+      ok: boolean;
+      /** Output */
+      output: string[];
+      /** Warnings Left */
+      warnings_left: number | null;
+    };
+    /**
      * DriverCapabilities
      * @description What this machine can do: whether sessions can start (and why not), the engine, the
      *     ``claude`` version, the model aliases offered, and the cloud commands the CLI lists.
@@ -1835,8 +2113,9 @@ export interface components {
      * @description One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.
      *
      *     ``path`` is relative to the hub's ``brain/``. ``acs`` is the AC ids evaluated or ``"all"``;
-     *     ``evaluated_at`` is the frontmatter's text (an ISO date or time). ``problem`` says why the
-     *     file could not be read or parsed; its other fields are then empty.
+     *     ``evaluated_at`` is the frontmatter's text (an ISO date or time). ``provenance`` says who ran
+     *     it (e.g. ``agent``, ``agent-evaluator``, ``owner``), None when the note does not say.
+     *     ``problem`` says why the file could not be read or parsed; its other fields are then empty.
      */
     EvalRecord: {
       /** Acs */
@@ -1853,6 +2132,8 @@ export interface components {
       path: string;
       /** Problem */
       problem: string | null;
+      /** Provenance */
+      provenance?: string | null;
       /** Prs */
       prs: string[];
       /** Tickets */
@@ -1991,6 +2272,38 @@ export interface components {
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
+    };
+    /**
+     * FeatureName
+     * @description One feature's nickname.
+     */
+    FeatureName: {
+      /** Name */
+      name: string;
+      /** Project */
+      project: string;
+      /** Slug */
+      slug: string;
+    };
+    /**
+     * FeatureNameBody
+     * @description ``PUT /feature-names``: the feature and its new name ("" clears it).
+     */
+    FeatureNameBody: {
+      /** Name */
+      name: string;
+      /** Project */
+      project: string;
+      /** Slug */
+      slug: string;
+    };
+    /**
+     * FeatureNamesView
+     * @description ``GET /feature-names``: every nickname set on this machine.
+     */
+    FeatureNamesView: {
+      /** Items */
+      items: components["schemas"]["FeatureName"][];
     };
     /** @enum {string} */
     FeaturePhase:
@@ -2184,6 +2497,27 @@ export interface components {
       state: components["schemas"]["StepState"];
     };
     /**
+     * GuardConfigView
+     * @description The guard's lists: the blocked entries are layered, the rest are team only.
+     */
+    GuardConfigView: {
+      /** Ask Before Edit */
+      ask_before_edit: string[];
+      blocked_words: components["schemas"]["LayeredList"];
+      blocked_words_env: components["schemas"]["LayeredList"];
+      blocked_words_files: components["schemas"]["LayeredList"];
+      /** Deny Hosts */
+      deny_hosts: string[];
+      /** Deny Paths */
+      deny_paths: string[];
+      /** Infra On */
+      infra_on: boolean;
+      /** Readable Env Files */
+      readable_env_files: string[];
+      /** Secret Env Files */
+      secret_env_files: string[];
+    };
+    /**
      * HookAccepted
      * @description ``POST /events/hooks``: how many events the envelope added and how many were known.
      */
@@ -2268,6 +2602,44 @@ export interface components {
     };
     /** @enum {string} */
     HookState: "synced" | "not synced";
+    /**
+     * HubConfigView
+     * @description The whole Hub config screen of one project.
+     */
+    HubConfigView: {
+      /** Agent Models */
+      agent_models: components["schemas"]["AgentModelView"][];
+      author_email: components["schemas"]["SourcedValue"];
+      author_name: components["schemas"]["SourcedValue"];
+      branch_prefix: components["schemas"]["SourcedValue"];
+      /** Conventions */
+      conventions: [
+        components["schemas"]["PatternView"],
+        components["schemas"]["PatternView"],
+        components["schemas"]["PatternView"],
+      ];
+      default_branch: components["schemas"]["SourcedValue"];
+      guard: components["schemas"]["GuardConfigView"];
+      /** Hub Path */
+      hub_path: string;
+      /** Hub Repo */
+      hub_repo: string;
+      local_file: components["schemas"]["ConfigFileView"];
+      /** Model Tiers */
+      model_tiers: {
+        [key: string]: string;
+      };
+      /** Modules */
+      modules: string[];
+      /** Platform Version */
+      platform_version: string;
+      /** Project */
+      project: string;
+      /** Repos */
+      repos: components["schemas"]["RepoConfigView"][];
+      team_file: components["schemas"]["ConfigFileView"];
+      tracker: components["schemas"]["TrackerConfigView"];
+    };
     /**
      * HubCreate
      * @description ``POST /hubs``: the absolute path of a hub to register.
@@ -2356,6 +2728,18 @@ export interface components {
      */
     ItemKind: "skill" | "agent" | "hook";
     "JsonValue-Input": unknown;
+    /** @enum {string} */
+    KeySource: "environment" | "settings";
+    /**
+     * LayeredList
+     * @description A list the team sets and this developer adds to.
+     */
+    LayeredList: {
+      /** Local */
+      local: string[];
+      /** Team */
+      team: string[];
+    };
     /**
      * Learning
      * @description A learning; ``text`` is its title (120 characters at most, redacted).
@@ -2517,6 +2901,46 @@ export interface components {
       path: string | null;
     };
     /**
+     * LinearAccountView
+     * @description The key's user and workspace.
+     */
+    LinearAccountView: {
+      /** Email */
+      email: string;
+      /** Name */
+      name: string;
+      /** Url */
+      url: string;
+      /** Workspace */
+      workspace: string;
+    };
+    /**
+     * LinearConnectionView
+     * @description ``GET /tracker/linear``: whether hub web reads Linear, as whom, or why not.
+     */
+    LinearConnectionView: {
+      account: components["schemas"]["LinearAccountView"] | null;
+      /** Checked At */
+      checked_at: string | null;
+      /** Connected */
+      connected: boolean;
+      /** Key Path */
+      key_path: string;
+      /** Problem */
+      problem: string | null;
+      /** Problem Kind */
+      problem_kind: string | null;
+      source: components["schemas"]["KeySource"] | null;
+    };
+    /**
+     * LinearKeyBody
+     * @description ``PUT /tracker/linear``: a Linear personal API key.
+     */
+    LinearKeyBody: {
+      /** Api Key */
+      api_key: string;
+    };
+    /**
      * LiveTile
      * @description A session tile of the Live sessions screen.
      *
@@ -2609,6 +3033,35 @@ export interface components {
       turns: number;
       /** Waiting Reason */
       waiting_reason?: string | null;
+    };
+    /**
+     * LocalSettings
+     * @description What the screen edits; an empty text or ``None`` removes the key from the file.
+     */
+    LocalSettings: {
+      /** Author Email */
+      author_email?: string | null;
+      /** Author Name */
+      author_name?: string | null;
+      /**
+       * Blocked Words
+       * @default []
+       */
+      blocked_words: string[];
+      /**
+       * Blocked Words Env
+       * @default []
+       */
+      blocked_words_env: string[];
+      /**
+       * Blocked Words Files
+       * @default []
+       */
+      blocked_words_files: string[];
+      /** Branch Prefix */
+      branch_prefix?: string | null;
+      /** Transport */
+      transport?: ("api" | "mcp") | null;
     };
     /**
      * LockFacts
@@ -2888,6 +3341,21 @@ export interface components {
       /** Title */
       title?: string | null;
     };
+    /** @enum {string} */
+    PatternSource: "repo" | "project" | "default" | "commit_title";
+    /**
+     * PatternView
+     * @description An effective convention pattern, which layer sets it, and a rendered example.
+     */
+    PatternView: {
+      /** Example */
+      example: string | null;
+      /** Pattern */
+      pattern: string;
+      source: components["schemas"]["PatternSource"];
+      /** Where */
+      where: string;
+    };
     /**
      * PermissionDecision
      * @description ``POST /{id}/permissions/{request_id}`` (E7).
@@ -2927,6 +3395,31 @@ export interface components {
       /** Index */
       index: number;
       rule: components["schemas"]["pydantic__types__JsonValue"];
+    };
+    /**
+     * PlatformSyncRequest
+     * @description The empty JSON body of the sync: a cross-site form cannot send one (S7).
+     */
+    PlatformSyncRequest: Record<string, never>;
+    /**
+     * PlatformSyncResult
+     * @description What one platform sync did: the pin before and after, and ``hub sync``'s report.
+     */
+    PlatformSyncResult: {
+      /** Changed Files */
+      changed_files: string[];
+      /** Exit Code */
+      exit_code: number;
+      /** Hub Id */
+      hub_id: string;
+      /** Ok */
+      ok: boolean;
+      /** Output */
+      output: string[];
+      /** Previous Version */
+      previous_version: string | null;
+      /** Version */
+      version: string;
     };
     /**
      * Problem
@@ -3182,6 +3675,30 @@ export interface components {
       name: string;
       /** Source */
       source: string;
+    };
+    /**
+     * RepoConfigView
+     * @description One repo of ``hub.json`` with its effective branch and conventions.
+     */
+    RepoConfigView: {
+      branch: components["schemas"]["PatternView"];
+      /** Check */
+      check: string;
+      /** Check Fast */
+      check_fast: string | null;
+      /** Check Fast Timeout */
+      check_fast_timeout: number | null;
+      commit_title: components["schemas"]["PatternView"];
+      default_branch: components["schemas"]["SourcedValue"];
+      /** Dir */
+      dir: string;
+      /** Github */
+      github: string;
+      /** Index */
+      index: number;
+      pr_title: components["schemas"]["PatternView"];
+      /** Role */
+      role: string;
     };
     /**
      * RepoView
@@ -3868,6 +4385,19 @@ export interface components {
       state: "fresh" | "stale" | "never";
     };
     /**
+     * SourcedValue
+     * @description An effective value (None when no source gives one) and where it comes from.
+     */
+    SourcedValue: {
+      source: components["schemas"]["ValueSource"];
+      /** Team Value */
+      team_value?: string | null;
+      /** Value */
+      value: string | null;
+      /** Where */
+      where: string;
+    };
+    /**
      * Stage
      * @description A state of the run's machine; any stage before ``REPORTED`` can end in ``FAILED``.
      * @enum {string}
@@ -4149,6 +4679,27 @@ export interface components {
       output: number;
     };
     /**
+     * TrackerConfigView
+     * @description How the hub reaches its tracker.
+     */
+    TrackerConfigView: {
+      /** Blocked Label */
+      blocked_label: string | null;
+      /** Failed Label */
+      failed_label: string;
+      /** Kind */
+      kind: string;
+      /** Ready Label */
+      ready_label: string;
+      /** Review State */
+      review_state: string;
+      /** Started State */
+      started_state: string;
+      /** Teams */
+      teams: string[];
+      transport: components["schemas"]["SourcedValue"];
+    };
+    /**
      * TrackerProblem
      * @description Why Linear was not read, as RFC 9457 members: ``type`` is
      *     ``urn:agent-hub:problem:tracker-<kind>``, ``status`` Linear's HTTP status (or 503 when it did
@@ -4223,6 +4774,8 @@ export interface components {
       pointer: string;
     };
     /** @enum {string} */
+    ValueSource: "team" | "local" | "git" | "derived" | "default";
+    /** @enum {string} */
     Verdict: "SHIP" | "SHIP-WITH-OWNER-STEPS" | "NO-SHIP";
     /**
      * Workdir
@@ -4286,6 +4839,11 @@ export interface components {
       document: {
         [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
       };
+      /**
+       * Inputs
+       * @default []
+       */
+      inputs: components["schemas"]["WorkflowInputView"][];
       /** Layer Count */
       layer_count: number;
       /** Layers */
@@ -4299,6 +4857,15 @@ export interface components {
       /** Revision */
       revision: number;
       source: components["schemas"]["WorkflowOrigin"];
+      /** Step Types */
+      step_types?: {
+        [key: string]: number;
+      };
+      /**
+       * Steps
+       * @default []
+       */
+      steps: components["schemas"]["WorkflowStepView"][];
     };
     /**
      * WorkflowGate
@@ -4321,6 +4888,20 @@ export interface components {
       text: components["schemas"]["TextUse"];
       /** Workflow */
       workflow: string;
+    };
+    /**
+     * WorkflowInputView
+     * @description An input a run of the workflow takes: what to pass to ``hub workflow run``.
+     */
+    WorkflowInputView: {
+      /** Description */
+      description?: string | null;
+      /** Name */
+      name: string;
+      /** Required */
+      required: boolean;
+      /** Type */
+      type: string;
     };
     /**
      * WorkflowNodeView
@@ -4420,12 +5001,38 @@ export interface components {
     };
     WorkflowRunStatus: "running" | components["schemas"]["RunStatus"];
     /**
+     * WorkflowStepView
+     * @description A step as the catalog outlines it: declaration order, a repeat's body nested (its ids
+     *     without the ``<group>__`` prefix) and its round cap.
+     */
+    WorkflowStepView: {
+      /**
+       * Body
+       * @default []
+       */
+      body: components["schemas"]["WorkflowStepView"][];
+      /** Description */
+      description?: string | null;
+      /** Id */
+      id: string;
+      /** Max Iterations */
+      max_iterations?: number | null;
+      /** Type */
+      type: string;
+    };
+    /**
      * WorkflowSummary
-     * @description A workflow of a project's hub, and where it comes from (``source``).
+     * @description A workflow of a project's hub, and where it comes from (``source``). ``step_types``
+     *     counts every step by type, a ``loop_group``'s body included; ``inputs`` is what a run takes.
      */
     WorkflowSummary: {
       /** Description */
       description: string | null;
+      /**
+       * Inputs
+       * @default []
+       */
+      inputs: components["schemas"]["WorkflowInputView"][];
       /** Layer Count */
       layer_count: number;
       /** Name */
@@ -4437,6 +5044,15 @@ export interface components {
       /** Revision */
       revision: number;
       source: components["schemas"]["WorkflowOrigin"];
+      /** Step Types */
+      step_types?: {
+        [key: string]: number;
+      };
+      /**
+       * Steps
+       * @default []
+       */
+      steps: components["schemas"]["WorkflowStepView"][];
     };
     agent_hub__core__json_form__JsonValue:
       | {
@@ -4504,6 +5120,7 @@ export interface operations {
       query?: {
         project?: string | null;
         status?: components["schemas"]["AgentSessionStatus"] | null;
+        wrote?: string | null;
       };
       header?: never;
       path?: never;
@@ -5535,6 +6152,86 @@ export interface operations {
       };
     };
   };
+  list_feature_names_api_v1_feature_names_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FeatureNamesView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  set_feature_name_api_v1_feature_names_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FeatureNameBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FeatureName"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   list_features_api_v1_features_get: {
     parameters: {
       query?: {
@@ -5594,6 +6291,89 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["FeatureDetail"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  run_ac_check_api_v1_features__project___slug__acs__ac__check_runs_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+        ac: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AcCheckRun"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EvalRecord"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
@@ -5754,6 +6534,94 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  fix_hub_findings_api_v1_hubs__hub_id__doctor_fix_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        hub_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DoctorFixRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DoctorFixResult"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  sync_hub_platform_api_v1_hubs__hub_id__platform_sync_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        hub_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlatformSyncRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlatformSyncResult"];
+        };
       };
       /** @description A client error, as an RFC 9457 problem */
       "4XX": {
@@ -6278,6 +7146,90 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["BrainNote"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_project_config_api_v1_projects__project__config_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HubConfigView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  put_project_local_config_api_v1_projects__project__config_local_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LocalSettings"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HubConfigView"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
@@ -6914,6 +7866,126 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SettingsView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_linear_connection_api_v1_tracker_linear_get: {
+    parameters: {
+      query?: {
+        fresh?: boolean;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LinearConnectionView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  connect_linear_api_v1_tracker_linear_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LinearKeyBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LinearConnectionView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  disconnect_linear_api_v1_tracker_linear_delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LinearConnectionView"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

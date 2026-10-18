@@ -7,6 +7,7 @@ import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
 import { HealthScreen } from "./screens/health";
+import { HubConfigPickerScreen, HubConfigScreen } from "./screens/hub-config";
 import { KnowledgePhase3Screen } from "./screens/knowledge-phase3";
 import { LearningsScreen } from "./screens/learnings";
 import { NotFoundScreen } from "./screens/not-found";
@@ -22,6 +23,7 @@ import { SkillDetailScreen, SkillsPickerScreen, SkillsScreen } from "./screens/s
 import { EditDraftScreen, NewDraftScreen, StudioScreen } from "./screens/skills/Studio";
 import { WelcomeScreen } from "./screens/welcome";
 import { WorkflowDetailScreen, WorkflowsScreen } from "./screens/workflows";
+import { NewWorkflowScreen } from "./screens/workflows/NewWorkflow";
 import { AppShell } from "./shell/AppShell";
 
 /**
@@ -56,6 +58,8 @@ export const appRoutes: RouteObject[] = [
           { index: true, element: <PortfolioScreen /> },
           { path: "projects/:project", element: <ProjectOverviewScreen /> },
           { path: "projects/:project/brain/*", element: <BrainScreen /> },
+          { path: "projects/:project/config", element: <HubConfigScreen /> },
+          { path: "config", element: <HubConfigPickerScreen /> },
           { path: "projects/:project/skills", element: <SkillsScreen /> },
           { path: "projects/:project/skills/new/:kind", element: <NewDraftScreen /> },
           { path: "projects/:project/skills/drafts/:draftId", element: <StudioScreen /> },
@@ -80,6 +84,7 @@ export const appRoutes: RouteObject[] = [
           { path: "features", element: <FeaturesScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
           { path: "workflows", element: <WorkflowsScreen /> },
+          { path: "workflows/new", element: <NewWorkflowScreen /> },
           { path: "workflows/:project/:name", element: <WorkflowDetailScreen /> },
           { path: "health", element: <HealthScreen /> },
           { path: "*", element: <NotFoundScreen /> },

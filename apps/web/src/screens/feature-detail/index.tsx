@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -22,11 +22,14 @@ import { usePreferences } from "../../lib/preferences";
 import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
+import { FeatureNameField, RenameButton, useFeatureNames } from "../features/names";
 import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
+import { ApproveRecord } from "./ApproveRecord";
+import { QuestionsLink } from "./QuestionsBlock";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
-import { EvalTab, pickEval } from "./EvalTab";
+import { EvalTab, OwnerSignOff, pickEval } from "./EvalTab";
 import { RecordSummary, summaryRequest } from "./RecordSummary";
 import { StateBadge } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
@@ -83,6 +86,15 @@ function tabOf(doc: string | null, phase: FeaturePhase | undefined): string {
   return phase ? PHASE_TAB[phase] : "acs";
 }
 
+/**
+ * The feature's ticket ids, bare and once each: a spec may note prose beside an id
+ * ("AGH-200 (provisional id: …)"), which is not part of the id.
+ */
+export function ticketIds(issues: readonly string[]): string[] {
+  const ids = issues.map((issue) => /^[A-Z][A-Z0-9]*-\d+/.exec(issue.trim())?.[0] ?? issue.trim());
+  return [...new Set(ids.filter(Boolean))];
+}
+
 /** An AC description as a sentence, so the callout's next sentence reads on. */
 function ownerLine(text: string | undefined): string {
   if (!text) return "";
@@ -126,6 +138,7 @@ function RecordTab({
         <Icon name="file-text" size="sm" />
         <span className="ah-mono ah-small">brain/{record.path}</span>
         <span className="ah-grow" />
+        <QuestionsLink project={detail.project} path={record.path} />
         <SegmentedControl
           label="Show the record"
           value={view}
@@ -151,24 +164,32 @@ function RecordTab({
           Open in Brain
         </Link>
       </div>
-      {view === "humans" ? (
-        <RecordSummary
-          key={record.path}
-          project={detail.project}
-          record={meta.name}
-          recordPath={record.path}
-          onReadRecord={(anchor) => {
-            onView("agent", anchor);
-          }}
-        />
-      ) : (
-        <NoteView
-          key={record.path}
-          project={detail.project}
-          path={record.path}
-          missing={`No ${file} yet.`}
-        />
-      )}
+      <ApproveRecord
+        project={detail.project}
+        slug={detail.slug}
+        record={meta.name}
+        path={`brain/${record.path}`}
+        tickets={ticketIds(detail.issues)}
+      >
+        {view === "humans" ? (
+          <RecordSummary
+            key={record.path}
+            project={detail.project}
+            record={meta.name}
+            recordPath={record.path}
+            onReadRecord={(anchor) => {
+              onView("agent", anchor);
+            }}
+          />
+        ) : (
+          <NoteView
+            key={record.path}
+            project={detail.project}
+            path={record.path}
+            missing={`No ${file} yet.`}
+          />
+        )}
+      </ApproveRecord>
     </div>
   );
 }
@@ -277,7 +298,7 @@ function featureDiscussTarget(
       detail.acs
         ? `Acceptance criteria: ${String(detail.acs.passing)} of ${String(detail.acs.total)} passing.${open.length ? ` Not passing yet: ${open.map(describe).join("; ")}.` : ""}`
         : "",
-      detail.issues.length ? `Its Linear tickets: ${detail.issues.join(", ")}.` : "",
+      detail.issues.length ? `Its Linear tickets: ${ticketIds(detail.issues).join(", ")}.` : "",
       `I am looking at its ${TAB_LABEL[tab] ?? tab} tab.`,
       "When a change touches several records (spec, plan, criteria), keep them consistent with each other.",
     ]
@@ -286,7 +307,46 @@ function featureDiscussTarget(
   };
 }
 
+/** Why the Evaluate step waits on the owner's steps (SHIP-WITH-OWNER-STEPS); null otherwise. */
+function ownerWait(steps: readonly { name: string; meta: string | null; reason: string | null }[]) {
+  const step = steps.find((s) => s.name === "evaluate");
+  if (step?.meta !== "waiting: owner steps") return null;
+  return step.reason ?? "Some ACs wait on owner steps.";
+}
+
 /** Feature detail (spec 17, D23): golden path, owner steps, acceptance criteria. */
+/** The feature's nickname as the title, the slug beside it; the pencil renames it. */
+function FeatureHeading({ project, slug }: { project: string; slug: string }) {
+  const nameOf = useFeatureNames();
+  const [editing, setEditing] = useState(false);
+  const name = nameOf({ project, slug });
+  if (editing) {
+    return (
+      <FeatureNameField
+        feature={{ project, slug }}
+        name={name}
+        className="fd-name-input"
+        onDone={() => {
+          setEditing(false);
+        }}
+      />
+    );
+  }
+  return (
+    <span className="ah-row" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}>
+      <h1 className={name ? "ah-h1" : "ah-h1 ah-mono"}>{name ?? slug}</h1>
+      {name && <span className="ah-mono ah-small ah-subtle">{slug}</span>}
+      <RenameButton
+        slug={slug}
+        named={name !== null}
+        onClick={() => {
+          setEditing(true);
+        }}
+      />
+    </span>
+  );
+}
+
 export function FeatureDetailScreen() {
   const { project = "", slug = "" } = useParams();
   const feature = useFeature(project, slug);
@@ -295,7 +355,11 @@ export function FeatureDetailScreen() {
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
   const tab = tabOf(params.get("doc"), feature.data?.phase);
-  const tickets = useFeatureTickets(project, slug, tab === "tickets" && feature.isSuccess);
+  const tickets = useFeatureTickets(
+    project,
+    slug,
+    (tab === "tickets" || tab === "eval") && feature.isSuccess,
+  );
   const selectedEval = pickEval(feature.data?.evals ?? [], params.get("eval"));
   useDiscussTarget(featureDiscussTarget(feature.data, tab, selectedEval?.path));
 
@@ -321,6 +385,8 @@ export function FeatureDetailScreen() {
 
   const detail = feature.data;
   const owners = detail.ac_rows.filter((ac) => passOf(ac) === "owner");
+  const waitReason = ownerWait(detail.golden_path.steps);
+  const issueIds = ticketIds(detail.issues);
   const setTab = (id: string) => {
     setParams(
       (current) => {
@@ -344,7 +410,7 @@ export function FeatureDetailScreen() {
     {
       id: "tickets",
       label: "Tickets",
-      count: tickets.data?.tickets.length ?? detail.issues.length,
+      count: tickets.data?.tickets.length ?? issueIds.length,
     },
   ];
   let body: ReactNode;
@@ -365,7 +431,8 @@ export function FeatureDetailScreen() {
       <EvalTab
         project={detail.project}
         slug={detail.slug}
-        tickets={detail.issues}
+        tickets={issueIds}
+        epics={tickets.data?.planning.epics ?? []}
         evals={detail.evals}
         selected={selectedEval}
         onSelect={(delivery) => {
@@ -403,7 +470,7 @@ export function FeatureDetailScreen() {
     <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
       <div className="ah-stack" style={{ gap: 6 }}>
         <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-          <h1 className="ah-h1">{detail.slug}</h1>
+          <FeatureHeading project={detail.project} slug={detail.slug} />
           {detail.verdict && (
             <StatusBadge
               status={VERDICT_STATUS[detail.verdict]}
@@ -423,21 +490,25 @@ export function FeatureDetailScreen() {
           {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
-          <TicketChips ids={detail.issues} rows={tickets.data?.tickets ?? []} />
+          <TicketChips ids={issueIds} rows={tickets.data?.tickets ?? []} />
           {detail.acs && (
             <>
-              <span style={{ width: 1, height: 16, background: "var(--border)" }} />
+              {issueIds.length > 0 && (
+                <span style={{ width: 1, height: 16, background: "var(--border)" }} />
+              )}
               <AcBar acs={detail.acs} width={180} ownerIds={owners.map((ac) => ac.id)} />
             </>
           )}
         </div>
       </div>
-      <div className="ah-card" style={{ padding: "16px 20px 14px" }}>
-        <div className="ah-row" style={{ marginBottom: 10 }}>
+      <section
+        className="ah-stack"
+        style={{ gap: 10, marginTop: 8 }}
+        aria-label="Where the feature is"
+      >
+        <div className="ah-row" style={{ gap: 8 }}>
           <b className="ah-small">Golden path</b>
-          <DerivedLabel how="Each step is derived from the record files, the tickets' status in Linear when it was read, and the review and eval records; Shipped needs GitHub, not connected in this version.">
-            Phase · derived from the record and the tickets
-          </DerivedLabel>
+          <DerivedLabel how="Each step is derived from the record files, the tickets' status in Linear when it was read, and the review and eval records; Shipped needs GitHub, not connected in this version. Hover a step for its details." />
         </div>
         <GoldenPathStepper
           steps={detail.golden_path.steps}
@@ -446,16 +517,36 @@ export function FeatureDetailScreen() {
           }}
           selectLabel={(step) => `Open the ${TAB_LABEL[STEP_TAB[step]] ?? step} of ${step}`}
         />
-      </div>
-      {owners.length > 0 && (
-        <Banner tone="warning" boxed icon="hand">
-          <b>
-            {owners.length} owner step{owners.length === 1 ? "" : "s"} left:{" "}
-            {owners.map((ac) => ac.id).join(", ")}
-          </b>{" "}
-          {ownerLine(owners[0]?.description)} Recorded in features.json as passes:false (manual
-          owner step).
-        </Banner>
+      </section>
+      {waitReason ? (
+        <OwnerSignOff
+          project={detail.project}
+          slug={detail.slug}
+          reason={waitReason}
+          onShow={(delivery) => {
+            setParams(
+              (current) => {
+                const next = new URLSearchParams(current);
+                next.set("doc", "eval");
+                next.set("eval", delivery);
+                return next;
+              },
+              { replace: true },
+            );
+          }}
+        />
+      ) : (
+        owners.length > 0 && (
+          <Banner tone="warning" boxed icon="hand">
+            <b>
+              Waiting on you: {owners.length} owner step{owners.length === 1 ? "" : "s"} left
+            </b>
+            <span className="ah-muted">
+              {" "}
+              · {owners.map((ac) => ac.id).join(", ")}. {ownerLine(owners[0]?.description)}
+            </span>
+          </Banner>
+        )
       )}
       <Tabs tabs={tabs} value={tab} onChange={setTab} label="Feature record" />
       <div style={{ paddingTop: 4 }}>{body}</div>

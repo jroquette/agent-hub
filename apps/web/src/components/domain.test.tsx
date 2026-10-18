@@ -223,11 +223,8 @@ describe("ProjectCard and ActivityFeed", () => {
     render(<ProjectCard p={card} onOpen={onOpen} />);
 
     expect(screen.getByText("Sync pending")).toHaveAttribute("title", "hub.lock 0.3.0, pin 0.4.0");
-    expect(screen.getByText("Open PRs").nextElementSibling).toHaveAttribute(
-      "title",
-      "GitHub is not connected in this version.",
-    );
-    expect(screen.getByText("Ready issues").nextElementSibling).toHaveTextContent("—");
+    expect(screen.getByText(/GitHub and Linear are not connected/)).toBeInTheDocument();
+    expect(screen.getByText("Doctor warnings")).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("article"), { key: "Enter" });
     expect(onOpen).toHaveBeenCalled();
   });
@@ -439,27 +436,40 @@ describe("GoldenPathStepper", () => {
       "partial",
       "blocked",
     ]);
-    expect(steps[4]).toHaveTextContent("ImplementIn progress1/17 tickets · 3/36 ACs");
-    expect(steps[5]).toHaveTextContent(
-      "ReviewUnknownLinear not connectedTicket status from Linear not loaded yet",
+    // Only the step in focus (the first not done) shows its meta; the rest is on demand.
+    const metaOf = (li: HTMLElement | undefined) =>
+      [...(li?.querySelectorAll(".ah-golden-meta") ?? [])].map((m) => m.textContent);
+    expect(metaOf(steps[0])).toEqual(["Done"]);
+    expect(metaOf(steps[4])).toEqual(["In progress", "1/17 tickets · 3/36 ACs"]);
+    expect(metaOf(steps[5])).toEqual(["Unknown"]);
+    expect(metaOf(steps[7])).toEqual(["Blocked"]);
+    // Every step's meta and reason stay in its description (and tooltip).
+    expect(screen.getByText("Review", { selector: ".ah-golden-name" })).toHaveAccessibleDescription(
+      "Review: unknown · Linear not connected (Ticket status from Linear not loaded yet; open the Tickets tab.)",
     );
-    expect(steps[6]).toHaveTextContent(
-      "EvaluatePartialpartial: covers 3 of 36 ACsImplement is not done",
-    );
-    expect(steps[7]).toHaveTextContent("ShippedBlockedReview is unknown");
-    expect(steps[1]).toHaveTextContent("ResearchSkippedno research.md");
+    expect(
+      screen.getByText("Shipped", { selector: ".ah-golden-name" }),
+    ).toHaveAccessibleDescription("Shipped: blocked (Review is unknown)");
   });
 
-  it("draws progress and shows the count when there is no meta (golden)", () => {
+  it("shows the count of the step in focus when it has no meta (golden)", () => {
     render(
       <GoldenPathStepper
         steps={[aGoldenStep({ name: "implement", meta: null, progress: { done: 2, total: 8 } })]}
       />,
     );
 
-    const step = screen.getByRole("listitem");
-    expect(step).toHaveTextContent("2/8");
-    expect(step.querySelector("[data-progress]")).toHaveAttribute("data-progress", "25");
+    expect(screen.getByRole("listitem")).toHaveTextContent("2/8");
+  });
+
+  it("reads an owner wait as waiting on you", () => {
+    render(
+      <GoldenPathStepper
+        steps={[aGoldenStep({ name: "evaluate", state: "current", meta: "waiting: owner steps" })]}
+      />,
+    );
+
+    expect(screen.getByText("Waiting on you")).toBeInTheDocument();
   });
 
   it("never shows a step done after a gate that is not done (golden)", () => {

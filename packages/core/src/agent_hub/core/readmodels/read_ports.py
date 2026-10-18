@@ -14,6 +14,7 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event import EventType
 from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
 from agent_hub.core.features.ticket_view import FeatureTickets
+from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import FindingView
 from agent_hub.core.hubs.registered_hub import HubView
 from agent_hub.core.learnings.learning import Learning
@@ -182,6 +183,10 @@ class HubReadModels(Protocol):
 
     def project_repos(self, project: str) -> Page[RepoView]:
         """The project's repos."""
+        ...
+
+    def hub_config(self, project: str) -> HubConfigView:
+        """The project's team and local config values, each with its source."""
         ...
 
     def list_features(self, scope: Scope) -> Page[FeatureView]:

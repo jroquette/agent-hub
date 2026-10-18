@@ -39,9 +39,18 @@ describe("ShortcutSheet (chat-shortcuts)", () => {
       "Deny oldest: Ctrl Alt ⌫",
       "Allow / deny focused: a d",
       "Focus message: Shift Esc",
+      "Show / hide steps: Ctrl Alt .",
       "Recall last prompt: ↑",
       "Stop (empty box): Esc",
     ]);
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("ShortcutSheet (steps)", () => {
+  it("AC-PG-32.2: lists the Steps drawer's shortcut in the Chat group", () => {
+    render(<ShortcutSheet onClose={vi.fn()} />);
+
+    expect(group("Chat")).toContain("Show / hide steps: Ctrl Alt .");
   });
 });

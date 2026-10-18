@@ -1,6 +1,6 @@
 """``InMemoryAgentSessionStore``: the ``AgentSessionStore`` port over dictionaries."""
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Unpack
 
@@ -11,8 +11,9 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
     EndReason,
 )
+from agent_hub.core.agent_sessions.authorship import wrote as changed_file
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, StoreSequenceError
-from agent_hub.core.agent_sessions.records import LogRecord
+from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.agent_sessions.store import AgentSessionFields
 
 
@@ -64,6 +65,7 @@ class InMemoryAgentSessionStore:
         project: str | None = None,
         status: AgentSessionStatus | None = None,
         kind: AgentSessionKind | None = None,
+        wrote: str | None = None,
         limit: int = 200,
     ) -> tuple[AgentSession, ...]:
         """Matching sessions, newest first."""
@@ -73,16 +75,32 @@ class InMemoryAgentSessionStore:
             if (project is None or session.project == project)
             and (status is None or session.status == status)
             and (kind is None or session.kind == kind)
+            and (wrote is None or self._wrote(session.id, wrote))
         ]
         matching.sort(key=lambda session: (session.created_at, session.id), reverse=True)
         return tuple(matching[:limit])
 
+    def _wrote(self, agent_session_id: str, path: str) -> bool:
+        return any(
+            record.kind == "tool.call" and changed_file(record.body, path)
+            for record in self._records.get(agent_session_id, [])
+        )
+
     def records(
-        self, agent_session_id: str, *, after: int = 0, limit: int = 200
+        self,
+        agent_session_id: str,
+        *,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Collection[RecordKind] | None = None,
     ) -> tuple[LogRecord, ...]:
-        """Records after ``after``, in ``seq`` order."""
+        """Records after ``after``, in ``seq`` order (of ``kinds`` only, when given)."""
         self.get(agent_session_id)
-        later = [record for record in self._records[agent_session_id] if record.seq > after]
+        later = [
+            record
+            for record in self._records[agent_session_id]
+            if record.seq > after and (kinds is None or record.kind in kinds)
+        ]
         return tuple(later[:limit])
 
     def link_of(self, project: str, claude_session_id: str) -> str | None:
