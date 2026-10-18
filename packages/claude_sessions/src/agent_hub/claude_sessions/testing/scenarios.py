@@ -63,7 +63,10 @@ class HoldStep(_Frozen):
 
 
 class ResultStep(_Frozen):
-    """The ``result`` message that ends the turn."""
+    """The ``result`` message that ends the turn; ``cost_usd`` is this turn's own cost.
+
+    The stub reports the running total of the process, as Claude Code does in ``total_cost_usd``.
+    """
 
     kind: Literal["result"] = "result"
     cost_usd: float = 0.0012

@@ -38,7 +38,6 @@ import contextlib
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
-from decimal import Decimal
 from functools import partial
 from typing import Final, Protocol
 
@@ -171,12 +170,6 @@ def _sum_usage(total: TokenUsage | None, more: TokenUsage | None) -> TokenUsage 
         cache_read=total.cache_read + more.cache_read,
         cache_write=total.cache_write + more.cache_write,
     )
-
-
-def _sum_cost(total: Decimal | None, more: Decimal | None) -> Decimal | None:
-    if more is None:
-        return total
-    return more if total is None else total + more
 
 
 def _event_body(event: DriverEvent) -> dict[str, JsonValue]:
@@ -1065,7 +1058,8 @@ class AgentSessionControl:
             live.answered.add(request_id)
         session = live.session
         fields: AgentSessionFields = {
-            "cost_usd": _sum_cost(session.cost_usd, result.cost_usd),
+            # Claude Code reports the session's running total (kept on --resume), not the turn's.
+            "cost_usd": session.cost_usd if result.cost_usd is None else result.cost_usd,
             "usage": _sum_usage(session.usage, result.usage),
         }
         fields |= await self._title_fields(live)
