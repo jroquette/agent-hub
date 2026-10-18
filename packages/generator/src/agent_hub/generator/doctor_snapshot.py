@@ -35,6 +35,7 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
+from agent_hub.core.item_versions.hub_item_writer import DRAFTS_FOLDER
 from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS
 from agent_hub.generator.built_json import base_hooks_block
 from agent_hub.generator.doctor_tree import read_checkout, read_doctor_tree
@@ -92,8 +93,8 @@ def build_doctor_snapshot(
 
 # The folders a unit's temp entries sit in: ``.claude`` (its hook files), its skills and agents,
 # and below ``plugin/<p>/`` its skills, agents, hooks and hook scripts; then each
-# ``workflows/<pack>``.
-_CLAUDE_FOLDERS = (".claude", ".claude/skills", ".claude/agents")
+# ``workflows/<pack>``; and ``.hub-drafts``, where a draft removal renames a draft aside first.
+_CLAUDE_FOLDERS = (".claude", ".claude/skills", ".claude/agents", DRAFTS_FOLDER)
 _PLUGIN = "plugin"
 _PLUGIN_FOLDERS = ("skills", "agents", "hooks", "scripts")
 
