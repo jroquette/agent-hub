@@ -28,7 +28,11 @@ from agent_hub.core.item_versions.item_version import (
     VersionAuthor,
     VersionOrigin,
 )
-from agent_hub.core.item_versions.record_and_write import NoAuthor, RecordAndWrite
+from agent_hub.core.item_versions.record_and_write import (
+    ItemWrittenUnrecordedError,
+    NoAuthor,
+    RecordAndWrite,
+)
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 from agent_hub.core.item_versions.unit_hash import file_hash
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
@@ -454,3 +458,29 @@ def test_raises_when_race_lost_every_try() -> None:
     # The unit is written, but its version lost every race (the next read records it).
     assert rig.hub.skill_files[AGENT] == SCOUT
     assert rig.origins()[-1] == (VersionOrigin.EXTERNAL, file_hash(EDITED))
+
+
+def test_says_written_unrecorded_when_race_lost_after_write() -> None:
+    rig = _raced_rig(EDITED, losses=0)
+    rig.step.write(HUB, _agent(), _scout(NEWER), origin=VersionOrigin.PUBLISH)
+    assert isinstance(rig.store, _RacedStore)
+    rig.store.losses = ATTEMPTS
+
+    with pytest.raises(ItemWrittenUnrecordedError) as raised:
+        rig.step.write(HUB, _agent(), _scout(SCOUT), origin=VersionOrigin.PUBLISH)
+
+    assert isinstance(raised.value, ItemVersionSequenceError)
+    assert AGENT not in str(raised.value)
+    assert rig.hub.skill_files[AGENT] == SCOUT
+
+
+def test_writes_nothing_when_race_lost_before_write() -> None:
+    rig = _raced_rig(EDITED, losses=ATTEMPTS)
+
+    with pytest.raises(ItemVersionSequenceError) as raised:
+        rig.step.write(HUB, _agent(), _scout(NEWER), origin=VersionOrigin.PUBLISH)
+
+    # The disk's content could not be recorded first, so the unit is left as it was.
+    assert not isinstance(raised.value, ItemWrittenUnrecordedError)
+    assert rig.hub.skill_files[AGENT] == SCOUT
+    assert rig.writer.writes == []

@@ -21,9 +21,10 @@ the write's version, and the next read reads the unit again. In this order:
    more (step 3's row stays: it is a true fact about the disk);
 6. the written content is recorded with the origin given and the author, unless it is too large
    or a secret match (``versioned: false`` and that ``reason``). A record failing after the
-   write succeeded (every ``seq`` race lost, ``ItemVersionSequenceError``; the database busy past
-   its timeout) fails the request although the disk changed; the next read records the written
-   content as ``external``.
+   write succeeded (every ``seq`` race lost, ``ItemWrittenUnrecordedError``; the database busy
+   past its timeout) fails the request although the disk changed; the next read records the
+   written content as ``external``. A race lost at step 3 is the plain
+   ``ItemVersionSequenceError``: nothing was written.
 
 Accepted: the lock holds only this process's captures. Another process can capture the written
 content as ``external`` between the write and its record, so one write can show as an
@@ -48,7 +49,7 @@ from agent_hub.core.item_versions.item_version_ports import (
 )
 from agent_hub.core.item_versions.secret_match import has_secret_match
 from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent
-from agent_hub.core.item_versions.version_store import ItemVersionStore
+from agent_hub.core.item_versions.version_store import ItemVersionSequenceError, ItemVersionStore
 from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, MAX_SKILL_FILE_BYTES
 
 
@@ -60,6 +61,14 @@ class NoAuthor:
 
 
 type AuthorLookup = Callable[[str], VersionAuthor | NoAuthor]
+
+
+class ItemWrittenUnrecordedError(ItemVersionSequenceError):
+    """The unit was written, but every race for its version's ``seq`` was lost: the disk holds
+    the new content and no version records it yet (the next read records it as ``external``)."""
+
+    def __init__(self, lost: ItemVersionSequenceError) -> None:
+        super().__init__(lost.project, lost.unit_path, expected=lost.expected, got=lost.got)
 
 
 class RecordAndWrite:
@@ -109,15 +118,18 @@ class RecordAndWrite:
             reason = _unversioned(content)
             if reason is not None:
                 return ItemWriteResult(changed=True, versioned=False, reason=reason, version=None)
-            version = append_next(
-                self._store,
-                unit,
-                content,
-                origin=origin,
-                clock=self._clock,
-                author=author,
-                restored_from=restored_from,
-            )
+            try:
+                version = append_next(
+                    self._store,
+                    unit,
+                    content,
+                    origin=origin,
+                    clock=self._clock,
+                    author=author,
+                    restored_from=restored_from,
+                )
+            except ItemVersionSequenceError as lost:
+                raise ItemWrittenUnrecordedError(lost) from lost
             return ItemWriteResult(
                 changed=True, versioned=True, reason=None, version=version_view(version)
             )
