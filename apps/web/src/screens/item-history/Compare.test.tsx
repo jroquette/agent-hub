@@ -261,4 +261,34 @@ describe("Compare", () => {
     expect(screen.queryByRole("region", { name: "From 11111111 to 22222222" })).toBeNull();
     expect(screen.getByRole("button", { name: "Compare" })).toHaveFocus();
   });
+
+  it("compare_any_two names a same-size binary file beside other changes", async () => {
+    const binary = { path: "logo.png", executable: false, size: 64, text: null };
+    renderPanel(
+      {
+        kind: "item",
+        project: "demo",
+        item: { kind: "skill", source: "hub-workflow", name: "feature" },
+      },
+      {
+        [SKILL]: anItemVersionPage({ items: THREE }),
+        [`${SKILL}/${id(1)}`]: anItemVersionContent({
+          id: id(1),
+          files: [{ path: "SKILL.md", executable: false, size: 3, text: "one" }, binary],
+        }),
+        [`${SKILL}/${id(2)}`]: anItemVersionContent({
+          id: id(2),
+          files: [{ path: "SKILL.md", executable: false, size: 3, text: "two" }, binary],
+        }),
+      },
+    );
+
+    await compare("11111111", "22222222");
+
+    const region = await screen.findByRole("region", { name: "From 11111111 to 22222222" });
+    await within(region).findByLabelText("Changes to SKILL.md");
+    expect(region).toHaveTextContent(
+      "They may also differ in bytes the app cannot show, in the binary file logo.png.",
+    );
+  });
 });

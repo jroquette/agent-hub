@@ -12,6 +12,7 @@ import {
   type ItemVersionPage,
 } from "../../testing/builders";
 import { useSkillCatalog, useSkillDetail, useSkillFile } from "../skills/queries";
+import { useWorkflow, useWorkflows } from "../workflows/queries";
 import { HistoryPanel } from ".";
 import type { HistoryTarget } from "./queries";
 
@@ -165,17 +166,33 @@ describe("RestoreDialog", () => {
   });
 
   it("says when the item already holds the version and nothing was written", async () => {
+    // The server's no-op answer: nothing written, so nothing versioned either.
     renderPanel({
       [VERSIONS]: hookPage(),
-      [RESTORE]: { changed: false, versioned: true, reason: null, version: null },
+      [RESTORE]: { changed: false, versioned: false, reason: null, version: null },
     });
 
     const { user, dialog } = await openRestore();
     await user.click(within(dialog).getByRole("button", { name: "Restore" }));
 
-    expect(
-      await screen.findByText("The item already holds 11111111: nothing was written."),
-    ).toBeInTheDocument();
+    const said = await screen.findByText("The item already holds 11111111: nothing was written.");
+    // A neutral notice, not a warning.
+    const banner = said.closest(".ah-banner");
+    expect(banner).toHaveClass("ah-banner-info");
+    expect(banner).not.toHaveClass("ah-banner-warning");
+  });
+
+  it("warns when the restored content was written but not versioned", async () => {
+    renderPanel({
+      [VERSIONS]: hookPage(),
+      [RESTORE]: { changed: true, versioned: false, reason: "secret", version: null },
+    });
+
+    const { user, dialog } = await openRestore();
+    await user.click(within(dialog).getByRole("button", { name: "Restore" }));
+
+    const said = await screen.findByText("Restored 11111111, but not versioned: secret.");
+    expect(said.closest(".ah-banner")).toHaveClass("ah-banner-warning");
   });
 
   it("a11y restore dialog has no serious violations and works from the keyboard", async () => {
@@ -287,5 +304,57 @@ describe("RestoreDialog", () => {
     expect(await screen.findByText("Could not refresh the history")).toBeInTheDocument();
     expect(screen.getByText(/Restored 11111111/)).toBeInTheDocument();
     expect(screen.getByRole("table", { name: /Versions of/ })).toBeInTheDocument();
+  });
+
+  it("reads the workflows list and the project's workflow again after a workflow restore", async () => {
+    const WF = "/api/v1/workflows/demo/review";
+    const WF_VERSIONS = `${WF}/versions`;
+    const LIST = "/api/v1/workflows";
+    const OTHER = "/api/v1/workflows/other/review";
+    function Reads() {
+      useWorkflows(null);
+      useWorkflow("demo", "review");
+      useWorkflow("other", "review");
+      return null;
+    }
+    const { requests } = renderWithApi(
+      <>
+        <Reads />
+        <HistoryPanel target={{ kind: "workflow", project: "demo", name: "review" }} />
+      </>,
+      {
+        routes: {
+          [WF_VERSIONS]: anItemVersionPage({
+            items: two,
+            unit_kind: "workflow",
+            unit_path: "workflows/demo/review.yaml",
+          }),
+          [LIST]: {},
+          [WF]: {},
+          [OTHER]: {},
+          [`POST ${WF_VERSIONS}/${OLD}/restore`]: {
+            changed: true,
+            versioned: true,
+            reason: null,
+            version: two[0],
+          },
+        },
+      },
+    );
+    const gets = (path: string) =>
+      requests.filter((r) => r.method === "GET" && new URL(r.url).pathname === path).length;
+
+    const { user, dialog } = await openRestore();
+    await vi.waitFor(() => {
+      expect([LIST, WF, OTHER, WF_VERSIONS].map(gets)).toEqual([1, 1, 1, 1]);
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Restore" }));
+
+    await screen.findByText(/Restored 11111111/);
+    await vi.waitFor(() => {
+      expect([LIST, WF, WF_VERSIONS].map(gets)).toEqual([2, 2, 2]);
+    });
+    // Another project's workflow is not this unit's.
+    expect(gets(OTHER)).toBe(1);
   });
 });
