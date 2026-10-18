@@ -2,9 +2,10 @@
 
 The pin (``platform.version``) is rewritten in place, so the rest of ``hub.json`` keeps its
 formatting; then this server's own ``hub sync`` (the running release) reapplies the templates and
-writes ``hub.lock``. When the sync fails (a conflict, exit 3, or any other error) the old
-``hub.json`` is put back, so the hub is left as it was. Nothing is committed: the changed files
-stay in the hub's checkout for the owner to review in a hub PR.
+writes ``hub.lock``. When the sync fails (a conflict, exit 3, or any other error) only the old
+``hub.json`` is put back: the managed files ``hub sync`` already wrote before it failed stay as
+they are, for the owner to review. Nothing is committed: the changed files stay in the hub's
+checkout for the owner to review in a hub PR.
 """
 
 import json
@@ -122,7 +123,10 @@ def sync_platform(
     run: Runner = _run,
     program: Sequence[str] | None = None,
 ) -> PlatformSyncResult:
-    """Pin the hub at ``hub_path`` to ``running_version`` and run ``hub sync`` there."""
+    """Pin the hub at ``hub_path`` to ``running_version`` and run ``hub sync`` there.
+
+    A failed sync puts back the old ``hub.json`` only; what ``hub sync`` wrote before failing stays.
+    """
     hub = Path(hub_path)
     path = hub / HUB_JSON
     try:
@@ -143,6 +147,7 @@ def sync_platform(
         exit_code, output = 1, (f"hub sync could not start: {error.strerror or error}",)
     ok = exit_code == 0
     if not ok and updated != original:
+        # Only the pin is undone: the managed files the failed sync wrote stay for the owner.
         _write(path, original)
     return PlatformSyncResult(
         hub_id=hub_id,

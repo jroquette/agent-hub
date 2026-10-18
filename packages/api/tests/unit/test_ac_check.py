@@ -1,12 +1,18 @@
 """``AcCheckRunner``: runs the command features.json records for an AC, in its repo's checkout."""
 
+import os
+import signal
 import subprocess
+import sys
+import time
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from agent_hub.api import ac_check
 from agent_hub.api.ac_check import AcCheckError, AcCheckRunner
 from agent_hub.core.readmodels.read_ports import HubReadModels
 
@@ -162,3 +168,86 @@ def test_refuses_with_reason_when_ac_has_no_command_to_run(
         runner.run("p", "f", "AC-1")
 
     assert (raised.value.status, raised.value.title, raised.value.detail) == (409, title, detail)
+
+
+def test_hides_linear_key_from_check_when_parent_environment_has_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LINEAR_API_KEY", "lin" + "_api_" + "x" * 20)
+    monkeypatch.setenv("AC_CHECK_MARKER", "kept")
+    runner = AcCheckRunner(_models(tmp_path, _ac("AC-1", "env")))
+
+    run = runner.run("p", "f", "AC-1")
+
+    assert run.passed
+    assert "AC_CHECK_MARKER=kept" in run.output.splitlines()
+    assert not any(line.startswith("LINEAR_API_KEY=") for line in run.output.splitlines())
+
+
+def test_keeps_output_tail_when_output_is_longer_than_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ac_check, "MAX_OUTPUT_BYTES", 8)
+    runner = AcCheckRunner(_models(tmp_path, _ac("AC-1", "printf 'head-0123456789-TAIL1234'")))
+
+    run = runner.run("p", "f", "AC-1")
+
+    assert run.truncated
+    assert run.output == "TAIL1234"
+
+
+def _gone(pid: int) -> bool:
+    """True when ``pid`` no longer runs (absent, or a zombie nobody reaped yet)."""
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
+    except OSError:
+        return True
+    return state in {"Z", "X"}
+
+
+@pytest.fixture
+def escaped(tmp_path: Path) -> Iterator[Path]:
+    """The pid file a check's escaped process writes; that process is killed afterwards."""
+    pid_file = tmp_path / "escaped.pid"
+    yield pid_file
+    if pid_file.exists():
+        pid = int(pid_file.read_text(encoding="utf-8"))
+        if not _gone(pid):
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_kills_background_grandchild_in_group_when_past_timeout(tmp_path: Path) -> None:
+    pid_file = tmp_path / "grandchild.pid"
+    command = f"sleep 30 & echo $! > {pid_file}; sleep 30"
+    runner = AcCheckRunner(_models(tmp_path, _ac("AC-1", command)), timeout=0.5)
+
+    started = time.monotonic()
+    run = runner.run("p", "f", "AC-1")
+
+    assert time.monotonic() - started < 10
+    assert (run.timed_out, run.exit_code, run.passed) == (True, None, False)
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 5
+    while not _gone(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _gone(pid)
+
+
+def test_answers_timed_out_promptly_when_escaped_process_holds_output_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, escaped: Path
+) -> None:
+    # A process that left the check's group keeps its stdout open after the group is killed.
+    monkeypatch.setattr(ac_check, "DRAIN_SECONDS", 0.5)
+    leave = (
+        "import os, sys, time; os.setsid(); "
+        f"open({str(escaped)!r}, 'w').write(str(os.getpid())); time.sleep(30)"
+    )
+    command = f'echo before; {sys.executable} -c "{leave}" & sleep 30'
+    runner = AcCheckRunner(_models(tmp_path, _ac("AC-1", command)), timeout=1.0)
+
+    started = time.monotonic()
+    run = runner.run("p", "f", "AC-1")
+
+    assert time.monotonic() - started < 10
+    assert (run.timed_out, run.exit_code, run.passed) == (True, None, False)
+    assert "before" in run.output

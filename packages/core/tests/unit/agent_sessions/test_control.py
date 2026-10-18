@@ -1489,6 +1489,29 @@ async def test_folds_stored_logs_without_digest_when_first_swept(make_rig: MakeR
     assert rig.store.get(untouched.id).last_prompt is None
 
 
+async def test_folds_stored_logs_on_next_sweep_when_first_fold_fails(
+    make_rig: MakeRig,
+) -> None:
+    store = FailingStore()
+    before = make_rig(replies={"Edit.": EDIT_TURN}, store=store)
+    created = await before.create("Edit.")
+    await before.until(lambda: "tool.call" in before.kinds(created.id))
+    before.driver.release(before.handle())
+    await before.until_status(created.id, "idle")
+    await before.control.shutdown()
+    store.update(created.id, last_prompt=None, last_reply=None, changed_files=())
+    rig = make_rig(store=store)
+    store.broken = True
+
+    with pytest.raises(OSError, match="disk full"):
+        await rig.control.sweep(rig.clock(), purge=False)
+    store.broken = False
+    await rig.control.sweep(rig.clock.advance(1), purge=False)
+
+    again = store.get(created.id)
+    assert (again.last_prompt, again.last_reply) == ("Edit.", "Done.")
+
+
 async def test_folds_log_again_when_reopened(make_rig: MakeRig) -> None:
     rig = make_rig(replies={"Edit.": EDIT_TURN}, past_sessions=(PAST,))
     created = await rig.create("Edit.", resume_session_id=PAST.session_id)

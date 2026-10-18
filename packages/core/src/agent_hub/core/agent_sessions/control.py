@@ -627,12 +627,14 @@ class AgentSessionControl:
     async def sweep(self, now: datetime | None = None, *, purge: bool = True) -> None:
         """Apply time (P9): deny requests past their deadline (``by: timeout``), end sessions
         idle past the idle timeout (``idle_timeout``) and, with ``purge``, remove sessions that
-        ended more than the retention ago (AC-165.53)."""
+        ended more than the retention ago (AC-165.53).
+
+        The stored sessions' digests are folded once (``_digest_stored``, over the store's
+        default page of 200), marked done only when the fold succeeds: a failed fold is tried
+        again at the next sweep, and its error is raised after the rest of this sweep ran."""
         now = now or self._clock()
         await self._name(now)
-        if not self._digested:
-            self._digested = True
-            await self._digest_stored()
+        failed_fold = None if self._digested else await self._digest_stored_once()
         for live in list(self._live.values()):
             if live.pump is not None and live.pump.done() and not live.ended:
                 # The pump died without ending the session (cancelled): reclaim it.
@@ -649,6 +651,8 @@ class AgentSessionControl:
         if purge:
             cutoff = now - self._limits.retention
             await asyncio.to_thread(self._store.purge_ended_before, cutoff)
+        if failed_fold is not None:
+            raise failed_fold
 
     async def shutdown(self) -> None:
         """End every live session ``server_stopped`` (P12), in parallel; no session starts
@@ -851,6 +855,15 @@ class AgentSessionControl:
                 digest.add(record)
             after = page[-1].seq
         return digest
+
+    async def _digest_stored_once(self) -> Exception | None:
+        """``_digest_stored``, marked done when it succeeds; its error, or None."""
+        try:
+            await self._digest_stored()
+        except Exception as error:  # noqa: BLE001 -- the sweep raises it once it is done
+            return error
+        self._digested = True
+        return None
 
     async def _digest_stored(self) -> None:
         """Give the stored sessions whose log holds records but whose digest is empty (they

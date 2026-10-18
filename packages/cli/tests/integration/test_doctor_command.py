@@ -2055,3 +2055,66 @@ def test_rewrites_brain_note_when_fix_given(
     assert note.read_text(encoding="utf-8") == f"# Note\n\n{own}\n[in ../demo-api/LEAK.md:1]\n"
     assert (api / "LEAK.md").read_text(encoding="utf-8") == f"{BRAIN_LINE}\n"
     assert "fixed brain/note.md: 1 lines now point at the repo" in result.stderr
+
+
+OWN_LINES = "\n".join(
+    f"Own brain line {n}, which no repo file holds at all, kept as it is." for n in range(3)
+)
+
+
+def _leaking_note(hub: Path, checkout: CheckoutFactory) -> Path:
+    """A brain note with its own lines and one line ``../demo-api/LEAK.md`` also holds."""
+    note = hub / "brain/note.md"
+    note.write_text(f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n", encoding="utf-8")
+    (checkout("demo-api") / "LEAK.md").write_text(f"{BRAIN_LINE}\n", encoding="utf-8")
+    checkout("demo-web")
+    return note
+
+
+def test_replaces_brain_note_whole_keeping_its_mode_when_fix_given(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    tmp_path: Path,
+) -> None:
+    # The new text goes to a file beside the note that then replaces it: the note's old inode
+    # (here held by a hard link) is never truncated, and the note keeps its mode.
+    note = _leaking_note(demo_two_repo_hub, demo_checkout)
+    note.chmod(0o640)
+    old_inode = tmp_path / "old-note.md"
+    old_inode.hardlink_to(note)
+    before = sorted(p.name for p in note.parent.iterdir())
+
+    result = run_doctor(demo_two_repo_hub, "--fix", "--only", "brain.leak")
+
+    assert result.exit_code == 0, result.output
+    assert note.read_text(encoding="utf-8") == (
+        f"# Note\n\n{OWN_LINES}\n[in ../demo-api/LEAK.md:1]\n"
+    )
+    assert os.stat(note).st_mode & 0o777 == 0o640
+    assert old_inode.read_text(encoding="utf-8") == f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n"
+    assert sorted(p.name for p in note.parent.iterdir()) == before
+
+
+def test_keeps_old_brain_note_when_its_replacement_fails(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    note = _leaking_note(demo_two_repo_hub, demo_checkout)
+    before = sorted(p.name for p in note.parent.iterdir())
+
+    def fail_replace(source: object, target: object) -> None:
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(doctor_command.os, "replace", fail_replace)
+
+    result = run_doctor(demo_two_repo_hub, "--fix", "--only", "brain.leak")
+
+    assert result.exit_code == 1, result.output
+    assert note.read_text(encoding="utf-8") == f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n"
+    assert "could not fix brain/note.md: Input/output error" in result.stderr
+    assert sorted(p.name for p in note.parent.iterdir()) == before
