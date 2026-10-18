@@ -29,11 +29,14 @@ from agent_hub.core.item_versions.item_version import (
     VersionAuthor,
     VersionOrigin,
 )
+from agent_hub.core.item_versions.publish_rules import Destination
 from agent_hub.core.item_versions.record_and_write import (
     ItemWrittenRaceLostError,
     ItemWrittenUnrecordedError,
     NoAuthor,
+    Placement,
     RecordAndWrite,
+    UnitReads,
 )
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 from agent_hub.core.item_versions.unit_hash import file_hash
@@ -544,3 +547,96 @@ def test_raises_store_error_when_store_fails_before_write() -> None:
 
     assert rig.hub.skill_files[AGENT] == SCOUT
     assert rig.writer.writes == []
+
+
+ALPHA: Final = "plugin/demo/skills/alpha"
+BETA: Final = "plugin/demo/skills/beta"
+DRAFT_ID: Final = "skill-abc123"
+
+
+def _skill(path: str) -> ItemUnit:
+    return ItemUnit(project=PROJECT, unit_path=path, kind=UnitKind.SKILL)
+
+
+def _renamed(content: UnitContent) -> Placement:
+    def place(reads: UnitReads, *, replayed: bool) -> Destination:
+        assert not replayed
+        assert isinstance(reads[ALPHA], UnitContent)
+        assert reads[BETA] == UnreadUnit(kind="missing")
+        return Destination(unit=_skill(BETA), content=content, removed=_skill(ALPHA))
+
+    return place
+
+
+def test_records_old_unit_then_moves_when_renamed() -> None:
+    rig = _Rig({f"{ALPHA}/SKILL.md": b"# alpha\n", f"{ALPHA}/.cache/data": b"cached"})
+    renamed = UnitContent(files=(UnitFile(path="SKILL.md", content=b"# beta\n"),))
+
+    result = rig.step.publish(
+        HUB,
+        [_skill(ALPHA), _skill(BETA)],
+        _renamed(renamed),
+        confirm_managed=False,
+        draft_id=DRAFT_ID,
+    )
+
+    assert {path: rig.hub.skill_files[path] for path in rig.hub.skill_files} == {
+        f"{BETA}/SKILL.md": b"# beta\n",
+        f"{BETA}/.cache/data": b"cached",
+    }
+    assert [version.origin for version in rig.store.page(PROJECT, ALPHA)] == [
+        VersionOrigin.EXTERNAL
+    ]
+    published = rig.store.page(PROJECT, BETA)
+    assert [(v.origin, v.first, v.draft_id, v.author) for v in published] == [
+        (VersionOrigin.PUBLISH, True, DRAFT_ID, AUTHOR)
+    ]
+    assert result.version is not None
+    assert result.version.draft_id == DRAFT_ID
+
+
+def test_answers_replayed_when_disk_holds_this_drafts_publish() -> None:
+    rig = _Rig({AGENT: SCOUT})
+    seen: list[bool] = []
+
+    def place(reads: UnitReads, *, replayed: bool) -> Destination:
+        seen.append(replayed)
+        on_disk = reads[AGENT]
+        assert isinstance(on_disk, UnitContent)
+        return Destination(unit=_agent(), content=on_disk if replayed else _scout(NEWER))
+
+    first = rig.step.publish(HUB, [_agent()], place, confirm_managed=False, draft_id=DRAFT_ID)
+    again = rig.step.publish(HUB, [_agent()], place, confirm_managed=False, draft_id=DRAFT_ID)
+    other = rig.step.publish(
+        HUB, [_agent()], place, confirm_managed=False, draft_id="agent-zzz999"
+    )
+
+    assert seen == [False, True, False]
+    assert (first.changed, again.changed, other.changed) == (True, False, False)
+    assert rig.hub.skill_files[AGENT] == NEWER
+    assert [version.origin for version in reversed(rig.store.page(PROJECT, AGENT))] == [
+        VersionOrigin.EXTERNAL,
+        VersionOrigin.PUBLISH,
+    ]
+
+
+def test_refuses_existing_script_when_other_bytes() -> None:
+    hooks = "plugin/demo/hooks/hooks.json"
+    script = "plugin/demo/scripts/check.sh"
+    rig = _Rig({script: b"#!/bin/sh\necho other\n"})
+    unit = ItemUnit(project=PROJECT, unit_path=hooks, kind=UnitKind.HOOK)
+
+    def place(reads: UnitReads, *, replayed: bool) -> Destination:
+        del reads, replayed
+        return Destination(
+            unit=unit,
+            content=_file("hooks.json", b'{"hooks": {}}\n'),
+            scripts=(UnitFile(path=script, content=b"#!/bin/sh\necho mine\n"),),
+        )
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.step.publish(HUB, [unit], place, confirm_managed=False, draft_id="hook-abc123")
+
+    assert refused.value.code == "item_exists"
+    assert rig.writer.writes == []
+    assert rig.store.last(PROJECT, hooks) is None
