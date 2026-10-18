@@ -229,7 +229,8 @@ Phase 2 adds the read side and the live ingestion, all in core, with no I/O:
   `HubFileReader.read_unit` and appends an `external` version to the `ItemVersionStore`; `build_app` opens the
   SQLite store on the app's database and passes one capture to `hub_read_models` and to `ReadWorkflows`
   (`workflows/workflow_reads.py`), whose list and detail hand each hub workflow's file (never a built-in) marked
-  with the discovery's listing fingerprint.
+  with its own entry of the discovery's listing fingerprint; one list request shares one `CaptureBudget` across its
+  hubs.
 - **Doctor snapshot.** The doctor tree reader moved from `cli` to `generator` (`doctor_snapshot.py`,
   `build_doctor_snapshot`; `hub_config_files.py` for `hub.json`, `hub.lock` and `hub.local.json`), so `hub doctor` and
   the Health screen run the same rules on the same snapshot; git stays in the composition roots and is injected.
