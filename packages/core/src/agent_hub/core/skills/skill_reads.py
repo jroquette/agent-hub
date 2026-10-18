@@ -9,6 +9,10 @@ entry), so a warm read is one listing walk plus the usage join. Items and bundle
 found by id only: an id the fold did not issue is ``EntityNotFoundError`` (entity ``skill`` or
 ``skill file``); on a cold memo an item the listing alone rules out (``may_hold``) answers so
 before any file is read.
+
+With ``capture`` (AGH-295, D2), the catalog hands every unit its items are versioned in (each
+once: the hooks of one file share it) to ``CaptureItemVersions`` with the unit's stat mark, and
+the detail its one item's unit; ``unit_of`` names an item's unit without capturing.
 """
 
 import re
@@ -18,6 +22,13 @@ from collections.abc import Mapping
 from typing import Final, Protocol
 
 from agent_hub.core.hubs.hub_registry import HubFileReader, UnreadHubFile
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions, UnitMark
+from agent_hub.core.item_versions.item_units import (
+    ItemUnit,
+    SourceIndex,
+    unit_fingerprint,
+    unit_of_item,
+)
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_catalog import build_catalog, catalog_reads, may_hold
 from agent_hub.core.skills.skill_sources import (
@@ -105,6 +116,7 @@ class SkillReads:
     """Catalog, detail and bundled file reads of a hub's skills (``HubReadModels.skill_*``).
 
     ``usage`` gives the 30-day counts joined by bare name; without it every count is zero.
+    ``capture`` records the units read (see the module doc); without it nothing is recorded.
     """
 
     def __init__(
@@ -113,9 +125,11 @@ class SkillReads:
         usage: SkillUsageSource | None = None,
         *,
         memo_entries: int = MEMO_ENTRIES,
+        capture: CaptureItemVersions | None = None,
     ) -> None:
         self._reader = reader
         self._usage = usage
+        self._capture = capture
         self._entries = memo_entries
         # One fold per (hub, project), with the fingerprint it was built from: a stale fold is
         # replaced, never kept beside the fresh one.
@@ -124,7 +138,8 @@ class SkillReads:
 
     def catalog(self, *, project: str, hub_path: str) -> SkillCatalog:
         """The hub's catalog with usage joined."""
-        folded = self._folded(project, hub_path)
+        sources, folded = self._folded(project, hub_path)
+        self._capture_items(project, hub_path, sources, *folded.catalog.items)
         usage = self._project_usage(project)
         items = tuple(
             item.model_copy(update={"usage": _usage_of(item, usage)})
@@ -136,7 +151,8 @@ class SkillReads:
         self, *, project: str, hub_path: str, kind: ItemKind, source: str, name: str
     ) -> SkillDetail:
         """One item by its id, with usage joined."""
-        detail = self._detail(project, hub_path, kind=kind, source=source, name=name)[1]
+        sources, _, detail = self._detail(project, hub_path, kind=kind, source=source, name=name)
+        self._capture_items(project, hub_path, sources, detail)
         usage = _usage_of(detail, self._project_usage(project))
         return detail.model_copy(update={"usage": usage})
 
@@ -157,7 +173,7 @@ class SkillReads:
         )
         if not _FILE_ID.fullmatch(file_id):
             raise missing
-        folded, detail = self._detail(project, hub_path, kind=kind, source=source, name=name)
+        _, folded, detail = self._detail(project, hub_path, kind=kind, source=source, name=name)
         path = folded.files.get(detail.id, {}).get(file_id)
         bundled = next((found for found in detail.files if found.id == file_id), None)
         if path is None or bundled is None or bundled.link:
@@ -172,12 +188,33 @@ class SkillReads:
             raise missing
         return _bundled_text(bundled, read)
 
+    def unit_of(
+        self, project: str, hub_path: str, *, kind: ItemKind, source: str, name: str
+    ) -> ItemUnit | None:
+        """The unit the item is versioned in, or None (a link, local settings); an unknown item
+        is ``EntityNotFoundError``. Reads no unit."""
+        sources, _, detail = self._detail(project, hub_path, kind=kind, source=source, name=name)
+        return unit_of_item(detail, SourceIndex(sources), project=project)
+
+    def _capture_items(
+        self, project: str, hub_path: str, sources: SkillSources, *items: CatalogItem
+    ) -> None:
+        if self._capture is None:
+            return
+        index = SourceIndex(sources)
+        units: dict[str, tuple[ItemUnit, UnitMark]] = {}
+        for item in items:
+            unit = unit_of_item(item, index, project=project)
+            if unit is not None and unit.unit_path not in units:
+                units[unit.unit_path] = (unit, unit_fingerprint(index, unit))
+        self._capture.capture(project, hub_path, units.values())
+
     def _project_usage(self, project: str) -> SkillUsage | None:
         return None if self._usage is None else self._usage.skill_usage(project)
 
     def _detail(
         self, project: str, hub_path: str, *, kind: ItemKind, source: str, name: str
-    ) -> tuple[FoldedCatalog, SkillDetail]:
+    ) -> tuple[SkillSources, FoldedCatalog, SkillDetail]:
         wanted = item_id(kind, source, name)
         if not (_NAME.fullmatch(source) and _NAME.fullmatch(name)):
             raise EntityNotFoundError(entity=SKILL_ENTITY, entity_id=wanted)
@@ -190,12 +227,12 @@ class SkillReads:
         detail = folded.details.get(wanted)
         if detail is None:
             raise EntityNotFoundError(entity=SKILL_ENTITY, entity_id=wanted)
-        return folded, detail
+        return sources, folded, detail
 
-    def _folded(self, project: str, hub_path: str) -> FoldedCatalog:
+    def _folded(self, project: str, hub_path: str) -> tuple[SkillSources, FoldedCatalog]:
         sources = self._reader.skill_sources(hub_path)
         found = self._memoized(project, hub_path, sources)
-        return self._fold(project, hub_path, sources) if found is None else found
+        return sources, self._fold(project, hub_path, sources) if found is None else found
 
     def _memoized(self, project: str, hub_path: str, sources: SkillSources) -> FoldedCatalog | None:
         key = (hub_path, project)

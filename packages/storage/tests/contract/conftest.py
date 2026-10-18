@@ -6,8 +6,10 @@ import pytest
 
 from agent_hub.core.agent_sessions.store import AgentSessionStore
 from agent_hub.core.events.event_store import EventStore
+from agent_hub.core.item_versions.version_store import ItemVersionStore
 from agent_hub.storage.agent_session_store import open_agent_session_store
 from agent_hub.storage.event_store import open_event_store
+from agent_hub.storage.item_version_store import open_item_version_store
 
 
 @pytest.fixture
@@ -18,3 +20,8 @@ def event_store(tmp_path: Path) -> EventStore:
 @pytest.fixture
 def agent_session_store(tmp_path: Path) -> AgentSessionStore:
     return open_agent_session_store(tmp_path / "events.db")
+
+
+@pytest.fixture
+def item_version_store(tmp_path: Path) -> ItemVersionStore:
+    return open_item_version_store(tmp_path / "events.db")

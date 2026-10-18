@@ -2,11 +2,11 @@
 
 ``hub.json`` and ``hub.local.json`` go through ``hub_config_files``, the lock and the doctor
 snapshot through ``doctor_snapshot``, feature folders through ``feature_files``, brain notes
-through ``brain_files``, skills, agents and hooks through ``skill_files``. The hub's
-``hub.local.json`` is the one in the registered folder (``hub doctor`` reads the main
-checkout's, the same folder for a hub registered at its main checkout). The developer's branch
-prefix comes from the files alone unless ``read_git`` is given: git stays with the composition
-root, which may pass a reader of ``git config`` in the hub.
+through ``brain_files``, skills, agents and hooks through ``skill_files``, a versioned unit whole
+through ``unit_files``. The hub's ``hub.local.json`` is the one in the registered folder
+(``hub doctor`` reads the main checkout's, the same folder for a hub registered at its main
+checkout). The developer's branch prefix comes from the files alone unless ``read_git`` is
+given: git stays with the composition root, which may pass a reader of ``git config`` in the hub.
 """
 
 import os
@@ -26,7 +26,9 @@ from agent_hub.core.hub_config.effective_identity import (
 from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
-from agent_hub.core.hubs.hub_registry import BrainListing, UnreadHubFile
+from agent_hub.core.hubs.hub_registry import BrainListing, UnreadHubFile, UnreadUnit
+from agent_hub.core.item_versions.item_version import UnitKind
+from agent_hub.core.item_versions.unit_content import UnitContent
 from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, SkillLimits, SkillSources
 from agent_hub.generator.brain_files import (
     brain_file_size,
@@ -38,6 +40,7 @@ from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, read_lock
 from agent_hub.generator.feature_files import read_feature_folder, read_feature_folders
 from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes, read_local_json
 from agent_hub.generator.skill_files import list_skill_sources, read_skill_file
+from agent_hub.generator.unit_files import read_unit
 
 HUB_JSON: Final = "hub.json"
 NOW_PATH: Final = ("brain", "now.md")
@@ -161,6 +164,12 @@ class HubFileSystem:
     def read_skill_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
         """The bytes of the hub-relative ``path`` under the skill roots, or why not."""
         return read_skill_file(Path(hub_path), path, max_bytes=max_bytes)
+
+    def read_unit(
+        self, hub_path: str, unit_path: str, *, kind: UnitKind
+    ) -> UnitContent | UnreadUnit:
+        """The unit at the hub-relative ``unit_path`` read whole, no link followed, or why not."""
+        return read_unit(Path(hub_path), unit_path, kind=kind)
 
 
 def _unread_or_bytes(read: bytes | UnreadFile) -> bytes | UnreadHubFile:
