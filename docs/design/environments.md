@@ -79,17 +79,18 @@ tightens); the brief, `hub env list`, doctor and setup show it.
   names listed in [SPEC.md](../SPEC.md) (`AWS_PROFILE`, `STAGE`, `DATABASE_URL`, …), every declared `credentials.env`
   and every `guard.blocked_words_env` name (no other value, no name). A match denies every Bash call of the session.
 - **Paths:** `file_path`, `notebook_path`, `path`, Grep's `glob`, Glob's `pattern` and WebFetch's `url`.
-- **Contents** of files whose last component starts with `.env` or that match a `blocked_words_files` glob (no `/`:
-  the last component; with `/`: a trailing run of segments, so `config/*.json` matches any repo's or worktree's
-  copy), read through Read, Grep (a directory `path` is walked, no links, `.git` and `node_modules` skipped) and Bash
-  (every token naming such a file from the event's cwd, glob tokens expanded; not `ls`, `test`, `[`, `stat`).
+- **Contents** of files whose last component (as named or linked to) starts with `.env` or matches a
+  `blocked_words_files` glob (no `/`: the last component; with `/`: a trailing run of segments, so `config/*.json`
+  matches any repo's copy), read through Read, Grep (its `path`, or the cwd, walked without following links) and Bash
+  (each token naming such a file from the event's cwd, braces and globs expanded; not `ls`, `test`, `[`, `stat`).
 - **Order:** the rule runs first on every surface; a deny is final (the project extension does not run) and wins over
   any `access` and any `guard.infra.allow` match. It never opens a file the secret-file rule treats as secret: that
   file keeps the secret-file reason, unless its path or the command text holds a word. `prod_markers` is unchanged.
-- **Bounds:** a regular file only (`O_NONBLOCK`, `S_ISREG`), read as latin-1 bytes; 1 MiB per command text or file,
-  64 files and 4 MiB per call, 300 ms for the views, variables and files together. Over a bound, or not a regular
-  file: **ask**, with a reason starting `blocked words not checked` and naming the cause (`too large`, `too many
-  files`, `out of time`, `not a regular file`); an unreadable file: no verdict.
+- **Bounds:** regular files only (`O_NONBLOCK`, `S_ISREG`), as latin-1; 1 MiB per command or file, 64 listed files
+  and 4 MiB per call, 300 ms (checked per folder entry) in all. Over one, or not regular: **ask** `blocked words not
+  checked: <cause>` (`too large`, `too many files`, `out of time`, `not a regular file`); a listed name that is a
+  folder, or unreadable: no verdict. Walks skip `.git`, `node_modules`, `.claude/worktrees`, `.venv`, `venv`,
+  `__pycache__`, `.tox`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `dist`, `build`, `.terraform`, `.next`, `target`.
 - **Layers:** the CLI, doctor and the brief union `hub.json` and `hub.local.json`; the hooks also add a `hub.json`
   named by `$HUB_CONFIG`. No layer removes an entry; an empty list adds nothing.
 - **Fail closed:** a list that is not a list, a bad item or an unknown `guard` key in any layer makes the guard ask on
@@ -124,9 +125,9 @@ agent's machine holds. The guard runs only on Bash, Read, Grep, Glob, Edit, Writ
 2. **`CLAUDE_ENV_FILE`:** variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` reach Bash only; the guard
    hook sees neither them nor the variable, so they are not scanned. Shell and settings `env` variables are.
 3. **Plugin-cache mode with `$HUB_CONFIG`** has no identity home, so it reads no `hub.local.json`.
-4. Not checked: MCP tools, WebSearch, subagent (Task) prompts; files a program opens without the command naming them
-   (`python sync.py` reading `config/app.json`, `find … -exec cat`); tool output; obfuscation (`$'\x70rod'`, a built
-   name); Grep's search regex and edit contents.
+4. Not checked: MCP tools, WebSearch, Task prompts; files a program opens without the command naming them from the
+   cwd (`python sync.py` reading `config/app.json`, `find … -exec cat`, `cd dir && cat file`, `$PWD` or a variable in
+   a path, `git show REV:path`); tool output; obfuscation (`$'\x70rod'`); Grep's search regex and edit contents.
 
 ## Invariants
 
