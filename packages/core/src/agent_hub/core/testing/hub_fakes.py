@@ -111,6 +111,9 @@ class FakeHub:
     skill_links: dict[str, str] = field(default_factory=dict)
     skill_specials: frozenset[str] = frozenset()
     executable: frozenset[str] = frozenset()
+    # The item folders ``items.leftovers`` scanned, and the temp entries found in them.
+    item_folders: tuple[str, ...] = ()
+    item_leftovers: tuple[str, ...] = ()
 
 
 def _listed(path: str) -> bool:
@@ -183,6 +186,8 @@ class FakeHubFileReader:
             repos=(),
             local=local,
             workflow_folders=hub.folders,
+            item_leftovers=hub.item_leftovers,
+            item_folders=hub.item_folders,
         )
 
     def modified_times(self, hub_path: str, paths: Sequence[str]) -> tuple[int | None, ...]:

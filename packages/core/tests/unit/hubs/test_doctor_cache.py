@@ -158,3 +158,16 @@ def test_watches_at_most_three_levels_when_workflow_paths_nest_deeply() -> None:
     assert {"workflows", "workflows/demo", "workflows/demo/fixtures", deep} <= watched
     assert "workflows/demo/fixtures/a" not in watched
     assert "workflows/demo/fixtures/a/b" not in watched
+
+
+def test_runs_again_when_item_folder_changes() -> None:
+    # AGH-297: items.leftovers scans the item folders by name, so a temp entry appearing in one
+    # (the folder's time) makes the run stale.
+    reader = a_reader(item_folders=("plugin/demo/skills",), mtimes={"plugin/demo/skills": 1})
+    cache = DoctorCache(reader, running_version=RUNNING, clock=Clock())
+
+    cache.findings(HUB)
+    reader.hubs[HUB].mtimes["plugin/demo/skills"] = 2
+    cache.findings(HUB)
+
+    assert reader.snapshots == {HUB: 2}
