@@ -17,6 +17,7 @@ from agent_hub.core.item_versions.hub_item_writer import (
     HubItemWriter,
     ItemWriteRefusedError,
     check_version_names,
+    checked_carry_parts,
     checked_unit_parts,
     draft_parts,
     plain_parts,
@@ -37,6 +38,8 @@ from agent_hub.core.testing.hub_fakes import FakeHub
 type _UnitKey = tuple[str, str]
 
 _NOT_FOLDER: Final = "Not a directory"
+_NOT_FILE: Final = "the script is not a file"
+_EXISTS: Final = "the unit already exists"
 _TOO_DEEP: Final = "the folder is deeper than a unit"
 _TOO_MANY: Final = "the folder holds too many names"
 
@@ -120,10 +123,18 @@ class FakeHubItemWriter:
                     raise ItemWriteRefusedError("link_in_path")
 
     def write_unit(
-        self, hub_path: str, unit_path: str, content: UnitContent, *, kind: UnitKind
+        self,
+        hub_path: str,
+        unit_path: str,
+        content: UnitContent,
+        *,
+        kind: UnitKind,
+        carry_from: str | None = None,
     ) -> None:
-        """Make the unit equal to ``content``, keeping a folder's hidden entries."""
+        """Make the unit equal to ``content``, keeping a folder's hidden entries (or moving
+        ``carry_from``'s in)."""
         parts = checked_unit_parts(unit_path, kind)
+        checked_carry_parts(unit_path, carry_from, kind=kind)
         if kind is not UnitKind.SKILL and [file.path for file in content.files] != [parts[-1]]:
             msg = "a file unit holds one file named after it"
             raise ValueError(msg)
@@ -133,15 +144,20 @@ class FakeHubItemWriter:
         if kind is not UnitKind.SKILL:
             _put(hub, unit_path, content.files[0].content, executable=content.files[0].executable)
         else:
-            below = f"{unit_path}/"
-            carried = [p for p in _under(hub, below) if _carried(p.removeprefix(below))]
-            _check_folder_write(hub, unit_path, content, carried=carried)
-            for path in _under(hub, below):
-                if path not in carried:
-                    _drop(hub, path)
-            for file in content.files:
-                _put(hub, below + file.path, file.content, executable=file.executable)
+            if carry_from is not None:
+                self.check_targets(hub_path, [carry_from])
+            _write_folder(hub, unit_path, content, carry_from=carry_from)
         self.writes.append((hub_path, unit_path))
+
+    def read_script(self, hub_path: str, path: str) -> bytes | None:
+        """The script's bytes from ``skill_files``, None when absent."""
+        script_parts(path)
+        self.check_targets(hub_path, [path])
+        hub = self._hub(hub_path)
+        if path in hub.skill_specials:
+            raise HubItemWriteError(_NOT_FILE)
+        content = hub.skill_files.get(path)
+        return None if content is None else content[: MAX_SKILL_FILE_BYTES + 1]
 
     def write_file(
         self, hub_path: str, path: str, content: bytes, *, executable: bool = False
@@ -213,6 +229,26 @@ class FakeHubItemWriter:
         return self.hubs.setdefault(hub_path, FakeHub())
 
 
+def _write_folder(
+    hub: FakeHub, unit_path: str, content: UnitContent, *, carry_from: str | None
+) -> None:
+    """Make the folder equal to ``content`` with its own hidden entries, or, with
+    ``carry_from``, an absent folder with that folder's moved in."""
+    below = f"{unit_path}/"
+    source = below if carry_from is None else f"{carry_from}/"
+    if carry_from is not None and (unit_path in hub.skill_files or _under(hub, below)):
+        raise HubItemWriteError(_EXISTS)
+    carried = [p for p in _under(hub, source) if _carried(p.removeprefix(source))]
+    _check_folder_write(hub, source.removesuffix("/"), content, carried=carried)
+    for path in _under(hub, below):
+        if path not in carried:
+            _drop(hub, path)
+    for path in carried if carry_from is not None else ():
+        _move(hub, path, below + path.removeprefix(source))
+    for file in content.files:
+        _put(hub, below + file.path, file.content, executable=file.executable)
+
+
 def _check_folder_write(
     hub: FakeHub, unit_path: str, content: UnitContent, *, carried: list[str]
 ) -> None:
@@ -258,6 +294,17 @@ def _drop(hub: FakeHub, path: str) -> None:
     hub.skill_links.pop(path, None)
     hub.skill_specials = hub.skill_specials - {path}
     hub.executable = hub.executable - {path}
+
+
+def _move(hub: FakeHub, source: str, target: str) -> None:
+    """Move one entry (file, link or special) with its bit."""
+    if source in hub.skill_files:
+        _put(hub, target, hub.skill_files[source], executable=source in hub.executable)
+    if source in hub.skill_links:
+        hub.skill_links[target] = hub.skill_links[source]
+    if source in hub.skill_specials:
+        hub.skill_specials = hub.skill_specials | {target}
+    _drop(hub, source)
 
 
 def _put(hub: FakeHub, path: str, content: bytes, *, executable: bool) -> None:
