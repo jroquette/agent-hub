@@ -65,6 +65,10 @@ export class ApiProblem extends Error {
   readonly detail: string | null;
   readonly type: string;
   readonly instance: string | null;
+  /** The extension member `code` (an item write's refusal, AGH-297), when the problem names one. */
+  readonly code: string | null;
+  /** The extension member `reason`, in words, when the problem names one. */
+  readonly reason: string | null;
 
   constructor(problem: {
     status: number;
@@ -72,6 +76,8 @@ export class ApiProblem extends Error {
     detail?: string | null | undefined;
     type?: string | undefined;
     instance?: string | null | undefined;
+    code?: string | null | undefined;
+    reason?: string | null | undefined;
   }) {
     super(problem.detail ? `${problem.title}: ${problem.detail}` : problem.title);
     this.name = "ApiProblem";
@@ -80,6 +86,8 @@ export class ApiProblem extends Error {
     this.detail = problem.detail ?? null;
     this.type = problem.type ?? "about:blank";
     this.instance = problem.instance ?? null;
+    this.code = problem.code ?? null;
+    this.reason = problem.reason ?? null;
   }
 }
 
@@ -110,6 +118,8 @@ function problemFrom(response: Response, body: unknown): ApiProblem {
       detail: body.detail,
       type: body.type,
       instance: body.instance,
+      code: typeof body.code === "string" ? body.code : null,
+      reason: typeof body.reason === "string" ? body.reason : null,
     });
   }
   return new ApiProblem({
