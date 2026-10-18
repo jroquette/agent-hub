@@ -489,6 +489,26 @@ async def test_keeps_carried_cumulative_cost_when_reopened_session_reports_total
     assert reopened.cost_usd == Decimal("0.07")
 
 
+async def test_adds_restarted_cumulative_cost_to_stored_when_reopened_process_lost_total(
+    make_rig: MakeRig,
+) -> None:
+    # The first process died before writing its cost-state line: the reopened one restarts at 0.
+    replies = {"Say hello.": _turn_costing("0.05"), "Go on.": _turn_costing("0.02")}
+    rig = make_rig(replies=replies | {"More.": _turn_costing("0.03")}, past_sessions=(PAST,))
+    created = await rig.create("Say hello.", resume_session_id=PAST.session_id)
+    await rig.until_status(created.id, "idle")
+    await rig.control.close(created.id)
+
+    await rig.control.send(created.id, SendMessage(text="Go on."))
+    await rig.until(lambda: rig.kinds(created.id).count("result") == 2)
+    reopened = await rig.until_status(created.id, "idle")
+    await rig.control.send(created.id, SendMessage(text="More."))
+    await rig.until(lambda: rig.kinds(created.id).count("result") == 3)
+    later = await rig.until_status(created.id, "idle")
+
+    assert (reopened.cost_usd, later.cost_usd) == (Decimal("0.07"), Decimal("0.08"))
+
+
 async def test_keeps_stored_cumulative_cost_when_result_has_no_cost(make_rig: MakeRig) -> None:
     rig = make_rig(replies={"One.": _turn_costing("0.01"), "Two.": _turn_costing(None)})
     created = await rig.create("One.")
