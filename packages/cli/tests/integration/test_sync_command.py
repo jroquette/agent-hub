@@ -1756,3 +1756,84 @@ def test_leaves_pack_deleted_when_lock_keeps_its_entries(
     assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
     assert not (demo_hub / PACK).exists()
     assert tree_digest(demo_hub) == before
+
+
+# AGH-282 (spec D-prodflag, AM-8): one line per production environment of hub.json, after the
+# report in every outcome that prints one; hub.local.json is never read.
+PRODUCTION_LINE = "production environment: live (access read, hub.json)"
+
+
+def declare_environments(root: Path) -> None:
+    """Give the hub's ``hub.json`` the spec's ``W`` and plant the developer's ``Lc``, whose own
+    environment is production too: sync must not name it."""
+    document = json.loads((root / "hub.json").read_bytes())
+    declared = builders.an_environments_document()
+    document["environments"] = declared["environments"]
+    document["repos"][0]["services"] = declared["repos"][0]["services"]
+    document["guard"]["blocked_words"] = declared["guard"]["blocked_words"]
+    document["guard"]["blocked_words_files"] = declared["guard"]["blocked_words_files"]
+    (root / "hub.json").write_bytes(dump_json(document))
+    local = builders.a_local_environments_document()
+    local["environments"]["jane-cloud"]["production"] = True
+    (root / "hub.local.json").write_bytes(dump_json(local))
+
+
+def test_prints_production_line_when_hub_declares_one(
+    demo_hub: Path, run_sync: SyncRunner, *, tree_digest: TreeDigest
+) -> None:
+    declare_environments(demo_hub)
+
+    first = run_sync(demo_hub)
+
+    assert (first.exit_code, first.stderr) == (0, ""), first.output
+    assert first.stdout.splitlines() == ["updated AGENTS.md", "updated hub.lock", PRODUCTION_LINE]
+    assert "jane-cloud" not in first.stdout
+    synced = tree_digest(demo_hub)
+
+    again = run_sync(demo_hub)
+    clean = run_sync(demo_hub, "--check")
+
+    for result in (again, clean):
+        assert (result.exit_code, result.stdout, result.stderr) == (
+            0,
+            f"up to date\n{PRODUCTION_LINE}\n",
+            "",
+        ), result.output
+    assert tree_digest(demo_hub) == synced
+
+    expected = make_pending(demo_hub, _restored)
+    pending = run_sync(demo_hub, "--check")
+
+    assert (pending.exit_code, pending.stderr) == (4, ""), pending.output
+    assert pending.stdout.splitlines() == [*map(would, expected), PRODUCTION_LINE]
+
+
+def test_prints_nothing_on_stdout_when_production_and_conflict(
+    demo_hub: Path, run_sync: SyncRunner, *, tree_digest: TreeDigest
+) -> None:
+    declare_environments(demo_hub)
+    assert run_sync(demo_hub).exit_code == 0
+    (demo_hub / "Makefile").write_bytes(b"# edited by hand\n")
+    before = tree_digest(demo_hub)
+
+    for args in [(), ("--check",)]:
+        result = run_sync(demo_hub, *args)
+
+        assert (result.exit_code, result.stdout) == (3, ""), result.output
+        assert PRODUCTION_LINE not in result.stderr
+    assert tree_digest(demo_hub) == before
+
+
+def test_prints_no_production_line_when_no_environment(
+    demo_hub: Path, run_sync: SyncRunner
+) -> None:
+    document = json.loads((demo_hub / "hub.json").read_bytes())
+    document["environments"] = {"production": {"access": "write"}}
+    (demo_hub / "hub.json").write_bytes(dump_json(document))
+
+    first = run_sync(demo_hub)
+    again = run_sync(demo_hub)
+
+    assert (first.exit_code, first.stderr) == (0, ""), first.output
+    assert first.stdout.splitlines() == ["updated AGENTS.md", "updated hub.lock"]
+    assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
