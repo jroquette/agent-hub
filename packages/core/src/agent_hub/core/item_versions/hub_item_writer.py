@@ -15,11 +15,18 @@ Synchronous. ``HubItemWriterContract`` checks every implementation:
   not hold gone (a link among them removed, never followed), and the target's hidden entries
   (which no version records) carried over unchanged. A version holding a hidden name is a
   caller bug (``ValueError``): the reader never records one. A completed or failed write never
-  leaves a mix of old and new files, but for a failed roll back (below).
+  leaves a mix of old and new files, but for a failed roll back (below). With ``carry_from`` (a
+  skill rename's old folder, a sibling of the unit), the hidden entries moved into the new folder
+  are that folder's instead (the owner's PR 3 decision); the unit must be absent then, else
+  ``HubItemWriteError`` (``failed``) before anything moves, and a failed write moves them back.
 - ``write_file`` writes one new hook's script, ``plugin/<p>/scripts/…`` (no hidden segment),
   the same way as a file unit.
+- ``read_script`` reads a hook script ``write_file`` may write (None when absent; a link on the
+  way or at it ``link_in_path``, another non-regular file ``HubItemWriteError``), at most one byte
+  past ``MAX_SKILL_FILE_BYTES``: enough to tell it from a draft's script.
 - ``remove_unit`` removes a unit (a rename's old unit), a skill folder whole, its hidden entries
-  too (PR 3 decides whether a rename carries them); an absent one is fine.
+  too (a rename has carried them to the new folder first, through ``carry_from``); an absent one
+  is fine.
 - ``read_draft`` reads a Studio draft, ``.hub-drafts/<draft_id>/``, whole (``DraftFiles``),
   bounded as a skill folder unit (S8) but with its hidden names, which publish refuses:
   ``EntityNotFoundError`` (entity ``draft``) when the folder is missing, empty or no folder,
@@ -197,6 +204,21 @@ def script_parts(path: str) -> tuple[str, ...]:
     return parts
 
 
+def checked_carry_parts(
+    unit_path: str, carry_from: str | None, *, kind: UnitKind
+) -> tuple[str, ...] | None:
+    """``carry_from``'s segments when it is a skill folder beside ``unit_path`` (another name in
+    the same folder), None when it is None; else ``ValueError`` naming no path."""
+    if carry_from is None:
+        return None
+    parts = checked_unit_parts(carry_from, UnitKind.SKILL)
+    target = checked_unit_parts(unit_path, kind)
+    if kind is not UnitKind.SKILL or parts[:-1] != target[:-1] or parts == target:
+        msg = "carry_from is not a sibling skill folder"
+        raise ValueError(msg)
+    return parts
+
+
 def check_version_names(content: UnitContent) -> None:
     """Refuse a folder version holding a hidden name (``ValueError``, naming no path): the
     reader never records one, and the swap keeps the disk's hidden entries."""
@@ -218,9 +240,20 @@ class HubItemWriter(Protocol):
         ...
 
     def write_unit(
-        self, hub_path: str, unit_path: str, content: UnitContent, *, kind: UnitKind
+        self,
+        hub_path: str,
+        unit_path: str,
+        content: UnitContent,
+        *,
+        kind: UnitKind,
+        carry_from: str | None = None,
     ) -> None:
-        """Make the unit at ``unit_path`` equal to ``content``."""
+        """Make the unit at ``unit_path`` equal to ``content``; a skill written with
+        ``carry_from`` takes that sibling folder's hidden entries."""
+        ...
+
+    def read_script(self, hub_path: str, path: str) -> bytes | None:
+        """The hook script ``path``'s bytes (``script_parts``), None when absent."""
         ...
 
     def write_file(
