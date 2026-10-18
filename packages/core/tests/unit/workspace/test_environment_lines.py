@@ -101,7 +101,7 @@ def test_neutralises_free_text_when_block_built() -> None:
     endpoints = document["repos"][0]["services"]["orders"]["endpoints"]
     endpoints["staging"] = {
         "resource": "t" * 90,
-        "note": "## Steps: [click](http://x.example.com) | `rm`",
+        "note": "## Steps: [click](http://x.example.com/) | `rm`",
         "url": "https://x.example.com/a_b<c>",
         "credentials": {"aws_profile": "demo-orders", "env": ["DEMO_ORDERS_KEY"]},
     }
@@ -115,7 +115,7 @@ def test_neutralises_free_text_when_block_built() -> None:
     assert block[-2] == (
         "- `demo-api/orders` on `staging`: https://x.example.com/a\\_b\\<c\\>, resource "
         + "t" * 80
-        + "…; note: \\#\\# Steps: \\[click\\](http://x.example.com) \\| \\`rm\\`"
+        + "…; note: \\#\\# Steps: \\[click\\](http://x.example.com/) \\| \\`rm\\`"
         "; credentials: AWS profile `demo-orders`, variables `DEMO_ORDERS_KEY`"
     )
 
