@@ -1,7 +1,4 @@
-from agent_hub.core.hub_config.effective_environments import (
-    EffectiveEnvironments,
-    effective_environments,
-)
+from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import (
@@ -9,15 +6,8 @@ from agent_hub.core.testing.builders import (
     a_local_environments_document,
     an_environments_document,
 )
-from agent_hub.core.workspace.environment_lines import (
-    NO_ENVIRONMENTS_LINE,
-    environment_json,
-    environments_json,
-    list_lines,
-    production_line,
-    production_lines,
-    show_lines,
-)
+from agent_hub.core.workspace import environment_lines
+from agent_hub.core.workspace.environment_lines import production_line, production_lines
 
 
 def test_names_access_and_file_when_environment_production() -> None:
@@ -56,7 +46,7 @@ def test_lists_nothing_when_no_environment_production() -> None:
     assert production_lines(effective_environments(plain, LocalConfig())) == ()
 
 
-def _w_and_lc() -> EffectiveEnvironments:
+def _w_and_lc() -> environment_lines.EffectiveEnvironments:
     """The spec's ``W`` and ``Lc``, with ``Lc`` tightening ``staging`` to ``read``."""
     config = HubConfig.model_validate(an_environments_document())
     local_document = a_local_environments_document()
@@ -66,7 +56,7 @@ def _w_and_lc() -> EffectiveEnvironments:
 
 def test_lists_one_line_per_environment_when_list_built() -> None:
     # AGH-287 (AC-277.22): name, access, PRODUCTION and source, then the services per repo.
-    assert list_lines(_w_and_lc()) == (
+    assert environment_lines.list_lines(_w_and_lc()) == (
         "local (write, hub.json): docker compose stack on this machine",
         "staging (read, hub.local.json)",
         "live (read, PRODUCTION, hub.json)",
@@ -82,27 +72,27 @@ def test_lists_one_line_per_environment_when_list_built() -> None:
 def test_shows_credentials_and_endpoints_when_show_built() -> None:
     view = _w_and_lc()
 
-    assert show_lines(view, "live") == (
+    assert environment_lines.show_lines(view, "live") == (
         "live (read, PRODUCTION, hub.json)",
         "  aws profile: demo-live-ro",
         "  credential variables: DEMO_LIVE_DB_URL",
         "  endpoints:",
         "    demo-api api: https://api.example.com",
     )
-    assert show_lines(view, "staging") == (
+    assert environment_lines.show_lines(view, "staging") == (
         "staging (read, hub.local.json)",
         "  aws profile: demo-staging",
         "  endpoints:",
         "    demo-api api: https://api.staging.example.com",
         "    demo-api orders: resource demo-orders-staging",
     )
-    assert show_lines(view, "jane-cloud") == (
+    assert environment_lines.show_lines(view, "jane-cloud") == (
         "jane-cloud (write, hub.local.json)",
         "  aws profile: jane-sandbox",
         "  endpoints:",
         "    demo-api api: https://api.jane.example.com (hub.local.json)",
     )
-    assert show_lines(view, "qa") is None
+    assert environment_lines.show_lines(view, "qa") is None
 
 
 def test_shows_description_and_no_endpoint_when_environment_bare() -> None:
@@ -110,7 +100,7 @@ def test_shows_description_and_no_endpoint_when_environment_bare() -> None:
     document["environments"] = {"qa": {"access": "ask", "description": "a shared test stack"}}
     view = effective_environments(HubConfig.model_validate(document), LocalConfig())
 
-    assert show_lines(view, "qa") == (
+    assert environment_lines.show_lines(view, "qa") == (
         "qa (ask, hub.json)",
         "  description: a shared test stack",
         "  endpoints: none",
@@ -120,16 +110,16 @@ def test_shows_description_and_no_endpoint_when_environment_bare() -> None:
 def test_suggests_names_when_no_environment_declared() -> None:
     view = effective_environments(HubConfig.model_validate(a_hub_document()), LocalConfig())
 
-    assert list_lines(view) == (NO_ENVIRONMENTS_LINE,)
-    assert NO_ENVIRONMENTS_LINE.startswith(
+    assert environment_lines.list_lines(view) == (environment_lines.NO_ENVIRONMENTS_LINE,)
+    assert environment_lines.NO_ENVIRONMENTS_LINE.startswith(
         "no environments declared; for example: ./hub env add local --access write"
     )
     for name in ("local", "staging", "production"):
-        assert name in NO_ENVIRONMENTS_LINE
+        assert name in environment_lines.NO_ENVIRONMENTS_LINE
 
 
 def test_builds_json_with_names_only_when_view_given() -> None:
-    data = environments_json(_w_and_lc())
+    data = environment_lines.environments_json(_w_and_lc())
 
     assert isinstance(data, dict)
     assert list(data) == [
@@ -170,10 +160,10 @@ def test_builds_json_with_names_only_when_view_given() -> None:
 def test_builds_show_json_when_name_declared() -> None:
     view = _w_and_lc()
 
-    data = environment_json(view, "live")
+    data = environment_lines.environment_json(view, "live")
 
     assert isinstance(data, dict)
-    assert data["environment"] == environments_json(view)["environments"][2]  # type: ignore[index,call-overload]
+    assert data["environment"] == environment_lines.environments_json(view)["environments"][2]  # type: ignore[index,call-overload]
     assert data["endpoints"] == [
         {
             "repo": "demo-api",
@@ -186,4 +176,4 @@ def test_builds_show_json_when_name_declared() -> None:
             "source": "hub.json",
         }
     ]
-    assert environment_json(view, "qa") is None
+    assert environment_lines.environment_json(view, "qa") is None
