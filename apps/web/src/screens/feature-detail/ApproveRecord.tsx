@@ -1,10 +1,22 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
 import { Button, Icon, MenuItem, Popover } from "../../components";
 import { ApiProblem, apiPost, useApi } from "../../lib/api";
+import { useBrainNote } from "../brain/queries";
 import { agentSessionHref } from "../sessions-list/control";
+import { OpenQuestions } from "./QuestionsBlock";
+import {
+  approvalMessage,
+  countLine,
+  openQuestions,
+  outcomeOf,
+  type Answers,
+} from "./openQuestions";
+import { ANSWERS_MAX_BYTES, useAnswerDrafts } from "./useAnswerDrafts";
+
+export { approvalMessage } from "./openQuestions";
 
 type AgentSession = components["schemas"]["AgentSession"];
 
@@ -75,20 +87,13 @@ export function featureSessions(
     );
 }
 
-/** The message the approval sends: which record, and that the work goes on from it. */
-export function approvalMessage(record: string, path: string): string {
-  return [
-    `I approve the ${record} (\`${path}\`) as it is now.`,
-    "Treat it as approved and go on with the next step of the feature.",
-  ].join(" ");
-}
-
 /**
  * Approve a feature record (spec, research, plan) from its tab, at the end of the record
  * (`children`): the approval goes as a message to the session that wrote the record, so that
  * session goes on from where it asked. The target is the one the owner picked for this feature,
  * else the newest session that wrote the file (`?wrote=`), else the newest one naming the feature;
- * the arrow picks another one.
+ * the arrow picks another one. When the record has open questions, they sit above the bar with
+ * a box each; the answers (or "accept the recommendation" for a blank one) go with the approval.
  */
 export function ApproveRecord({
   project,
@@ -120,6 +125,11 @@ export function ApproveRecord({
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<AgentSession | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sentAnswers, setSentAnswers] = useState<Answers>({});
+  const note = useBrainNote(project, path.replace(/^brain\//, ""));
+  const markdown = note.data?.markdown;
+  const questions = useMemo(() => (markdown ? openQuestions(markdown) : []), [markdown]);
+  const drafts = useAnswerDrafts(project, slug, record, questions);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -154,15 +164,25 @@ export function ApproveRecord({
       setOpen(true);
       return;
     }
+    const answers = drafts.answers;
+    const text = approvalMessage(record, path, questions, answers);
+    if (new TextEncoder().encode(text).length > ANSWERS_MAX_BYTES) {
+      setError(
+        "Your answers are too long for one message (over 64 KiB). Shorten the longest ones.",
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
     void apiPost(
       "/api/v1/agent-sessions/{agent_session_id}/messages",
-      { text: approvalMessage(record, path) },
+      { text },
       { path: { agent_session_id: target.id } },
     )
       .then(() => {
         writePicked(project, slug, target.id);
+        setSentAnswers(answers);
+        drafts.clear();
         setSent(target);
       })
       .catch((cause: unknown) => {
@@ -203,13 +223,19 @@ export function ApproveRecord({
       </>
     );
 
+  const answered = questions.filter((q) => outcomeOf(q, drafts.answers) === "answered").length;
+  const withAnswers = (n: number) =>
+    n === 0 ? "" : ` with ${String(n)} answer${n === 1 ? "" : "s"}`;
+  const sentCount = questions.filter((q) => outcomeOf(q, sentAnswers) === "answered").length;
+
   const bar = () => {
     if (sent) {
       return (
         <div className="ah-row ah-wrap ah-small" style={{ gap: 8 }} role="status">
           <Icon name="check" size="sm" style={{ color: "var(--done)" }} />
           <span>
-            Approval of the {record} sent to <b>{sessionName(sent)}</b>.
+            Approval of the {record} sent to <b>{sessionName(sent)}</b>
+            {withAnswers(sentCount)}.
           </span>
           <Link to={agentSessionHref(sent.id)}>Open session</Link>
         </div>
@@ -217,67 +243,75 @@ export function ApproveRecord({
     }
     const wroteIt = target !== null && wrote.some((s) => s.id === target.id);
     return (
-      <div
-        className="ah-row ah-wrap ah-small"
-        style={{ gap: 8 }}
-        role="group"
-        aria-label={`Approve the ${record}`}
-      >
-        <Button
-          size="sm"
-          variant="primary"
-          icon="check"
-          disabled={busy}
-          onClick={approve}
-          title={
-            target
-              ? `Send "${approvalMessage(record, path)}" to ${sessionName(target)}`
-              : "Pick the session that worked on this feature"
-          }
-        >
-          Approve {record}
-        </Button>
-        <span data-approve-picker style={{ position: "relative" }} className="ah-row">
-          <button
-            type="button"
-            className="ah-btn ah-btn-ghost ah-btn-sm"
-            aria-haspopup="true"
-            aria-expanded={open}
-            aria-label={`Approval goes to: ${target ? sessionName(target) : "no session picked"}`}
-            onClick={() => {
-              setOpen(!open);
-            }}
-          >
-            <span className="ah-muted">to</span>
-            <span>{target ? sessionName(target) : "pick a session"}</span>
-            {wroteIt && <span className="ah-subtle">· wrote it</span>}
-            <Icon name="chevron-down" size="sm" />
-          </button>
-          <Popover
-            open={open}
-            label="Session that gets the approval"
-            style={{
-              bottom: 30,
-              left: 0,
-              minWidth: 320,
-              maxWidth: 440,
-            }}
-          >
-            {section(`Wrote ${path.split("/").pop() ?? record}`, wrote)}
-            {section(`Worked on ${slug}`, related)}
-            {section(`Other sessions in ${project}`, others)}
-            {all.length === 0 && wrote.length === 0 && (
-              <div className="ah-muted ah-small" style={{ padding: "6px 10px" }}>
-                No session in {project} yet.
-              </div>
-            )}
-          </Popover>
-        </span>
-        {error && (
-          <span role="alert" style={{ color: "var(--failed)" }}>
-            {error}
-          </span>
+      <div className="ah-stack" style={{ gap: 6 }}>
+        {questions.length > 0 && (
+          <span className="ah-small ah-muted">{countLine(questions, drafts.answers)}</span>
         )}
+        <div
+          className="ah-row ah-wrap ah-small"
+          style={{ gap: 8 }}
+          role="group"
+          aria-label={`Approve the ${record}`}
+        >
+          <Button
+            size="sm"
+            variant="primary"
+            icon="check"
+            disabled={busy}
+            onClick={approve}
+            title={
+              target
+                ? questions.length > 0
+                  ? `Send the approval and your answers to ${sessionName(target)}`
+                  : `Send "${approvalMessage(record, path)}" to ${sessionName(target)}`
+                : "Pick the session that worked on this feature"
+            }
+          >
+            {busy ? "Sending approval…" : `Approve ${record}${withAnswers(answered)}`}
+          </Button>
+          <span data-approve-picker style={{ position: "relative" }} className="ah-row">
+            <button
+              type="button"
+              className="ah-btn ah-btn-ghost ah-btn-sm"
+              aria-haspopup="true"
+              aria-expanded={open}
+              disabled={busy}
+              aria-label={`Approval goes to: ${target ? sessionName(target) : "no session picked"}`}
+              onClick={() => {
+                setOpen(!open);
+              }}
+            >
+              <span className="ah-muted">to</span>
+              <span>{target ? sessionName(target) : "pick a session"}</span>
+              {wroteIt && <span className="ah-subtle">· wrote it</span>}
+              <Icon name="chevron-down" size="sm" />
+            </button>
+            <Popover
+              open={open}
+              label="Session that gets the approval"
+              style={{
+                bottom: 30,
+                left: 0,
+                minWidth: 320,
+                maxWidth: 440,
+              }}
+            >
+              {section(`Wrote ${path.split("/").pop() ?? record}`, wrote)}
+              {section(`Worked on ${slug}`, related)}
+              {section(`Other sessions in ${project}`, others)}
+              {all.length === 0 && wrote.length === 0 && (
+                <div className="ah-muted ah-small" style={{ padding: "6px 10px" }}>
+                  No session in {project} yet.
+                </div>
+              )}
+            </Popover>
+          </span>
+          {error && (
+            <span role="alert" style={{ color: "var(--failed)" }}>
+              {error}
+            </span>
+          )}
+        </div>
       </div>
     );
   };
@@ -285,6 +319,16 @@ export function ApproveRecord({
   return (
     <>
       {children}
+      {questions.length > 0 && (
+        <OpenQuestions
+          questions={questions}
+          answers={sent ? sentAnswers : drafts.answers}
+          changed={drafts.changed}
+          onAnswer={drafts.set}
+          disabled={busy}
+          sent={sent !== null}
+        />
+      )}
       {bar()}
     </>
   );

@@ -25,6 +25,7 @@ import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell
 import { FeatureNameField, RenameButton, useFeatureNames } from "../features/names";
 import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
 import { ApproveRecord } from "./ApproveRecord";
+import { QuestionsLink } from "./QuestionsBlock";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
@@ -137,6 +138,7 @@ function RecordTab({
         <Icon name="file-text" size="sm" />
         <span className="ah-mono ah-small">brain/{record.path}</span>
         <span className="ah-grow" />
+        <QuestionsLink project={detail.project} path={record.path} />
         <SegmentedControl
           label="Show the record"
           value={view}
