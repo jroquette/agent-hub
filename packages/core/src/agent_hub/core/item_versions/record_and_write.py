@@ -21,10 +21,10 @@ the write's version, and the next read reads the unit again. In this order:
    more (step 3's row stays: it is a true fact about the disk);
 6. the written content is recorded with the origin given and the author, unless it is too large
    or a secret match (``versioned: false`` and that ``reason``). A record failing after the
-   write succeeded (every ``seq`` race lost, ``ItemWrittenUnrecordedError``; the database busy
-   past its timeout) fails the request although the disk changed; the next read records the
-   written content as ``external``. A race lost at step 3 is the plain
-   ``ItemVersionSequenceError``: nothing was written.
+   write succeeded (every ``seq`` race lost, ``ItemWrittenRaceLostError``; the store failing, as
+   a database busy past its timeout does) raises ``ItemWrittenUnrecordedError``: the request fails
+   although the disk changed, and the next read records the written content as ``external``. A
+   race lost or a store failure at step 3 is raised as it is: nothing was written.
 
 Accepted: the lock holds only this process's captures. Another process can capture the written
 content as ``external`` between the write and its record, so one write can show as an
@@ -36,6 +36,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hubs.hub_registry import HubFileReader
 from agent_hub.core.item_versions.append_version import append_next, unit_hash
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
@@ -63,12 +64,24 @@ class NoAuthor:
 type AuthorLookup = Callable[[str], VersionAuthor | NoAuthor]
 
 
-class ItemWrittenUnrecordedError(ItemVersionSequenceError):
-    """The unit was written, but every race for its version's ``seq`` was lost: the disk holds
-    the new content and no version records it yet (the next read records it as ``external``)."""
+class ItemWrittenUnrecordedError(AgentHubError):
+    """The unit was written, but its version could not be recorded: the disk holds the new
+    content and no version records it yet (the next read records it as ``external``). The
+    store's error is the ``__cause__``; no path is named."""
+
+    def __init__(self, cause: str = "the version could not be recorded") -> None:
+        self.cause = cause
+        super().__init__(f"item written, not recorded: {cause}")
+
+
+class ItemWrittenRaceLostError(ItemWrittenUnrecordedError, ItemVersionSequenceError):
+    """``ItemWrittenUnrecordedError`` because every race for the version's ``seq`` was lost."""
 
     def __init__(self, lost: ItemVersionSequenceError) -> None:
-        super().__init__(lost.project, lost.unit_path, expected=lost.expected, got=lost.got)
+        ItemVersionSequenceError.__init__(
+            self, lost.project, lost.unit_path, expected=lost.expected, got=lost.got
+        )
+        self.cause = "every race for its seq was lost"
 
 
 class RecordAndWrite:
@@ -129,7 +142,10 @@ class RecordAndWrite:
                     restored_from=restored_from,
                 )
             except ItemVersionSequenceError as lost:
-                raise ItemWrittenUnrecordedError(lost) from lost
+                raise ItemWrittenRaceLostError(lost) from lost
+            except AgentHubError as failed:
+                # The store's adapter errors are domain errors (a busy or unreadable database).
+                raise ItemWrittenUnrecordedError from failed
             return ItemWriteResult(
                 changed=True, versioned=True, reason=None, version=version_view(version)
             )
