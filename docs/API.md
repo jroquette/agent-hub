@@ -106,14 +106,15 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   effective identity; `reason` says what is missing), `link_in_path` (a component of the unit's path is a link),
   `unit_unreadable` (the unit on disk cannot be read whole, so it could not be recorded first),
   `secret_unversioned` (the unit on disk has a secret match) or `managed_confirmation_required` (`hub.lock` manages
-  the unit and the body did not say `confirm_managed: true`). The disk's content may already be recorded as an
+  the unit and the body did not say `confirm_managed: true`; only the JSON `true` confirms, `1` or `"yes"` is a
+  422). The disk's content may already be recorded as an
   `external` version when a managed refusal answers. A body field the model does not know → 422. A write that fails →
   500 "Item write failed", `code` `write_failed` and `kind` `failed` (the unit is as it was) or `rollback_failed` (a
   folder swap could not put the old folder back; `hub doctor`'s `items.leftovers` lists what is left beside it); a
   stored version that does not decode → 500 `corrupt_version`. A race for the unit's next version lost three times
   → 503 with `Retry-After: 1` and `written`: `false` with `code` `version_race` when nothing was written yet, `true`
-  with `code` `written_not_recorded` when the unit was written but its version not stored (the next read records it
-  as `external`). No problem names a path.
+  with `code` `written_not_recorded` when the unit was written but its version not stored (the race lost, or the
+  database busy or unreadable, after the write; the next read records it as `external`). No problem names a path.
 
 ## Pagination
 
