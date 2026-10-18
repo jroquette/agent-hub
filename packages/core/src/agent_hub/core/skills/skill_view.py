@@ -160,6 +160,16 @@ type StepType = Literal["agent", "script", "gate", "human"]
 type SkillFrontmatterValue = str | tuple[str, ...] | dict[str, str]
 
 
+def text_of(content: bytes) -> str | None:
+    """A file's text, or None for a binary file (a NUL, or not UTF-8)."""
+    if b"\x00" in content:
+        return None
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def item_id(kind: ItemKind, source: str, name: str) -> str:
     """The stable id of an item (L5): ``<kind>/<source>/<name>``."""
     return f"{kind.value}/{source}/{name}"
