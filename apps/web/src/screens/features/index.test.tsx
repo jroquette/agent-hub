@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -508,5 +511,260 @@ describe("FeaturesScreen", () => {
     await screen.findByRole("link", { name: "told" });
     expect(rowOf("told")).toHaveTextContent("Your steps are left · Publish the plugin release.");
     expect(groupOf(/^Needs you · 1$/)).toHaveTextContent("1 wait on your steps");
+  });
+});
+
+// Vitest runs from apps/web and does not process CSS imports, so the rules are read as files.
+const cssOf = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
+const ruleOf = (css: string, selector: string): string => {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rule = new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`).exec(css);
+  if (!rule?.[1]) throw new Error(`no rule ${selector}`);
+  return rule[1];
+};
+
+function facetCount(option: RegExp): string | null | undefined {
+  return screen.getByRole("checkbox", { name: option }).closest("label")?.querySelector(".ah-count")
+    ?.textContent;
+}
+
+describe("FeaturesScreen (playground delivery)", () => {
+  const noted = aFeature({
+    slug: "noted",
+    issues: ["AGH-200 (provisional id: the Linear connector was unreachable)", "AGH-201"],
+  });
+
+  it("shows only the tracker id in the Issues cell, on one line, with the full entry in its tooltip (AC-PG-6.1)", async () => {
+    open({ "/api/v1/features": aPage([noted, aFeature({ slug: "plain", issues: ["AGH-7"] })]) });
+
+    await screen.findByRole("link", { name: "noted" });
+    const row = rowOf("noted");
+    const id = within(row).getByText("AGH-200");
+    expect(id).toHaveStyle({ whiteSpace: "nowrap" });
+    expect(id.textContent).toBe("AGH-200");
+    const wrap = id.closest<HTMLElement>(".ah-tip-wrap");
+    if (!wrap) throw new Error("no tooltip around the id");
+    expect(within(wrap).getByRole("tooltip")).toHaveTextContent(
+      "AGH-200 (provisional id: the Linear connector was unreachable)",
+    );
+    expect(within(rowOf("plain")).getByText("AGH-7").closest(".ah-tip-wrap")).toBeNull();
+    // The shared tooltip shows on hover and on focus inside its wrapper.
+    expect(cssOf("src/styles/bundle.css")).toContain(
+      ".ah-tip-wrap:not(:hover):not(:focus-within) > .ah-tip:not(.ah-tip-open)",
+    );
+  });
+
+  it("does not make the issue id a focus stop, so keyboard focus moves from the row past its tooltip (AC-PG-6.1)", async () => {
+    open({ "/api/v1/features": aPage([noted]) });
+
+    await screen.findByRole("link", { name: "noted" });
+    const row = rowOf("noted");
+    const id = within(row).getByText("AGH-200");
+    expect(id).not.toHaveAttribute("tabindex");
+    const wrap = id.closest(".ah-tip-wrap");
+    if (!wrap) throw new Error("no tooltip around the id");
+
+    row.focus();
+    await userEvent.tab();
+    expect(within(row).getByRole("button", { name: "Give noted a name" })).toHaveFocus();
+    await userEvent.tab();
+    expect(within(row).getByRole("button", { name: "1 more issue" })).toHaveFocus();
+    expect(wrap.contains(document.activeElement)).toBe(false);
+    // The keyboard user reads the id only, in the row's name.
+    expect(row).toHaveAccessibleName(/issues AGH-200, AGH-201$/);
+  });
+
+  it("caps the All issues popover at 360 px and wraps long entries inside it (AC-PG-6.2)", async () => {
+    open({ "/api/v1/features": aPage([noted]) });
+
+    await screen.findByRole("link", { name: "noted" });
+    const row = rowOf("noted");
+    await userEvent.click(within(row).getByRole("button", { name: "1 more issue" }));
+
+    const popover = within(row).getByRole("dialog", { name: "All issues" });
+    expect(popover).toHaveStyle({ maxWidth: "360px" });
+    const long = within(popover).getByText(
+      "AGH-200 (provisional id: the Linear connector was unreachable)",
+    );
+    expect(long.getAttribute("style")).toContain("overflow-wrap: anywhere");
+  });
+
+  it("keeps a very long slug inside the Feature column, cut with an ellipsis, with the full slug in its title (AC-PG-6.3)", async () => {
+    const slug = `very-long-${"slug-".repeat(24)}end`;
+    open({ "/api/v1/features": aPage([aFeature({ slug })]) });
+
+    const link = await screen.findByRole("link", { name: slug });
+    expect(link).toHaveClass("ft-row-title");
+    expect(link).toHaveAttribute("title", slug);
+    expect(link.closest(".ft-row-main")).not.toBeNull();
+    expect(link.closest("li")).not.toHaveAttribute("style");
+
+    const css = cssOf("src/screens/features/features.css");
+    expect(ruleOf(css, ".ft-row")).toMatch(/grid-template-columns: 16px minmax\(0, 1fr\) auto;/);
+    expect(ruleOf(css, ".ft-row-main")).toMatch(/min-width: 0;/);
+    const title = ruleOf(css, ".ft-row-title");
+    expect(title).toMatch(/min-width: 0;/);
+    expect(title).toMatch(/white-space: nowrap;/);
+    expect(title).toMatch(/text-overflow: ellipsis;/);
+  });
+
+  it("narrows the list by Step and counts each step under the current search (AC-PG-16.2)", async () => {
+    const { router } = open();
+
+    await userEvent.click(await screen.findByRole("button", { name: /^Step:/ }));
+    expect(facetCount(/^Plan/)).toBe("1");
+    expect(facetCount(/^Evaluate/)).toBe("1");
+    expect(facetCount(/^Shipped/)).toBe("0");
+
+    await userEvent.type(screen.getByRole("searchbox", { name: "Find features" }), "agh-49");
+    await userEvent.click(screen.getByRole("button", { name: /^Step:/ }));
+    expect(facetCount(/^Plan/)).toBe("0");
+    expect(facetCount(/^Evaluate/)).toBe("1");
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /^Evaluate/ }));
+    expect(router.state.location.search).toBe("?q=agh-49&phase=evaluate");
+    expect(screen.getByRole("link", { name: "layered-memory" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "tracker-team-cap" })).not.toBeInTheDocument();
+  });
+
+  it("narrows the list by Repo, with counts that follow the search (AC-PG-16.2)", async () => {
+    const { router } = open();
+
+    await userEvent.click(await screen.findByRole("button", { name: /^Repo:/ }));
+    expect(facetCount(/^agent-hub/)).toBe("3");
+    expect(facetCount(/^tradeSentinel/)).toBe("1");
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /^tradeSentinel/ }));
+    expect(router.state.location.search).toBe("?repo=tradeSentinel");
+    expect(screen.getByRole("link", { name: "broken-record" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "control-plane" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 4 features");
+
+    await userEvent.type(screen.getByRole("searchbox", { name: "Find features" }), "layered");
+    await userEvent.click(screen.getByRole("button", { name: /^Repo:/ }));
+    expect(facetCount(/^agent-hub/)).toBe("1");
+    expect(facetCount(/^tradeSentinel/)).toBe("0");
+  });
+
+  it("shows the Repo filter only when the features span more than one repo (AC-PG-16.2)", async () => {
+    open({
+      "/api/v1/features": aPage([aFeature(), aFeature({ slug: "other", size: "spike" })]),
+    });
+
+    await screen.findByRole("link", { name: "other" });
+    expect(screen.getByRole("button", { name: /^Step:/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Size:/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Repo:/ })).not.toBeInTheDocument();
+  });
+
+  it("narrows the list by Size, with counts that follow the search (AC-PG-16.2)", async () => {
+    const { router } = open();
+
+    await userEvent.click(await screen.findByRole("button", { name: /^Size:/ }));
+    expect(facetCount(/^spike/)).toBe("1");
+    expect(facetCount(/^bounded/)).toBe("1");
+    expect(facetCount(/^architectural/)).toBe("2");
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /^bounded/ }));
+    expect(router.state.location.search).toBe("?size=bounded");
+    expect(screen.getByRole("link", { name: "tracker-team-cap" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "control-plane" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /^bounded/ }));
+    await userEvent.type(screen.getByRole("searchbox", { name: "Find features" }), "agh-49");
+    await userEvent.click(screen.getByRole("button", { name: /^Size:/ }));
+    expect(facetCount(/^architectural/)).toBe("1");
+    expect(facetCount(/^bounded/)).toBe("0");
+  });
+
+  it("titles a named feature with its nickname in the UI font and puts the slug beside it in mono (AC-PG-28.2)", async () => {
+    open({
+      "/api/v1/feature-names": {
+        items: [{ project: "agent-hub", slug: "layered-memory", name: "Layered memory" }],
+      },
+    });
+
+    const title = await screen.findByRole("link", { name: "Layered memory" });
+    expect(title).toHaveClass("ft-row-title");
+    expect(title).toHaveAttribute("data-named");
+    expect(title.nextElementSibling).toHaveClass("ft-row-slug");
+    expect(title.nextElementSibling).toHaveTextContent("layered-memory");
+    expect(screen.getByRole("link", { name: "control-plane" })).not.toHaveAttribute("data-named");
+
+    const css = cssOf("src/screens/features/features.css");
+    expect(ruleOf(css, ".ft-row-title")).toMatch(/font-family: var\(--font-mono\);/);
+    expect(ruleOf(css, ".ft-row-title[data-named]")).toMatch(/font-family: var\(--font-sans\);/);
+    expect(ruleOf(css, ".ft-row-slug")).toMatch(/font-family: var\(--font-mono\);/);
+  });
+
+  describe("renaming inline (AC-PG-28.3)", () => {
+    function withNames() {
+      const names = [{ project: "agent-hub", slug: "layered-memory", name: "Layered memory" }];
+      const saved: unknown[] = [];
+      const view = open({
+        "/api/v1/feature-names": () => ({ items: names }),
+        // Only the emptying case saves: the API then forgets the name.
+        "PUT /api/v1/feature-names": (request: Request) => {
+          void request
+            .clone()
+            .json()
+            .then((body) => saved.push(body));
+          names.splice(0);
+          return { project: "agent-hub", slug: "layered-memory", name: "" };
+        },
+      });
+      return { ...view, saved };
+    }
+
+    it("shows the pencil on hover or focus and reaches it with Tab from the row (AC-PG-28.3)", async () => {
+      open();
+
+      await screen.findByRole("link", { name: "layered-memory" });
+      const row = rowOf("layered-memory");
+      row.focus();
+      await userEvent.tab();
+      expect(within(row).getByRole("button", { name: "Give layered-memory a name" })).toHaveFocus();
+
+      const css = cssOf("src/screens/features/names.css");
+      expect(ruleOf(css, ".ft-row .ft-rename")).toMatch(/opacity: 0;/);
+      expect(css).toMatch(
+        /\.ft-row:hover \.ft-rename,\n\.ft-row:focus-within \.ft-rename,\n\.ft-row \.ft-rename:focus-visible \{\n {2}opacity: 1;/,
+      );
+    });
+
+    it("cancels the edit with Esc and saves nothing (AC-PG-28.3)", async () => {
+      const { requests } = withNames();
+
+      await screen.findByRole("link", { name: "Layered memory" });
+      await userEvent.click(screen.getByRole("button", { name: "Rename layered-memory" }));
+      const field = screen.getByRole("textbox", { name: "Name for layered-memory" });
+      expect(field).toHaveValue("Layered memory");
+      await userEvent.type(field, " changed{Escape}");
+
+      expect(
+        screen.queryByRole("textbox", { name: "Name for layered-memory" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Layered memory" })).toBeInTheDocument();
+      expect(requests.some((r) => r.method === "PUT")).toBe(false);
+    });
+
+    it("goes back to the slug when the name is emptied and saved with Enter (AC-PG-28.3)", async () => {
+      const { saved } = withNames();
+
+      await screen.findByRole("link", { name: "Layered memory" });
+      await userEvent.click(screen.getByRole("button", { name: "Rename layered-memory" }));
+      await userEvent.clear(screen.getByRole("textbox", { name: "Name for layered-memory" }));
+      await userEvent.keyboard("{Enter}");
+
+      const link = await screen.findByRole("link", { name: "layered-memory" });
+      expect(link).not.toHaveAttribute("data-named");
+      expect(screen.queryByRole("link", { name: "Layered memory" })).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Give layered-memory a name" }),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(saved).toEqual([{ project: "agent-hub", slug: "layered-memory", name: "" }]);
+      });
+    });
   });
 });
