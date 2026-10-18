@@ -13,7 +13,10 @@ Against the app at ``--url`` (``make run`` or ``make up``), it:
    you; and one waiting on a guard ask;
 4. collects a failed ``hub run`` (``hub collect --runs``) and an ended session's transcript
    (``hub collect --transcript``, on branch ``demo/agh-7-demo-feature``, proposing the inbox
-   note) into the same database.
+   note) into the same database;
+5. stores an ended chat ``hub web`` drove (id ``CHAT_SESSION``, fixed: the playground export
+   captures its screen at ``/agent-sessions/<id>``), with its log, through the agent session
+   store (``agent_hub.storage``) of the same database.
 
 Everything is synthetic, built from ``agent_hub.core.testing``; nothing is read from
 ``~/.claude``. ``--via compose`` runs ``hub`` and writes the files inside the Compose service
@@ -29,11 +32,17 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 import httpx
 
+from agent_hub.core.agent_sessions import record_text
+from agent_hub.core.agent_sessions.agent_session import AgentSession, AgentSessionStatus, EndReason
+from agent_hub.core.agent_sessions.digest import SessionDigest
+from agent_hub.core.agent_sessions.records import LogRecord, RecordBy, RecordKind
+from agent_hub.core.sessions.session import TokenUsage
 from agent_hub.core.testing.hook_inputs import a_hook_input
 from agent_hub.core.testing.run_lines import run_lines_failed_in_verify
 from agent_hub.core.testing.transcript_lines import (
@@ -61,6 +70,11 @@ ASK_SESSION = "demo-ask"
 STUCK_SESSION = "demo-stuck"
 BACKFILL_SESSION = "demo-ended"
 FAILED_RUN = "5e6f7a8b"
+# The ended chat hub web drove: one fixed id (a UUID, as the routes take), so a second run finds
+# it and the playground export (scripts/playground_export.py) opens /agent-sessions/<it>.
+CHAT_SESSION = "019a0000-de30-7000-8000-00000000c4a7"
+CHAT_CLAUDE_SESSION = "4f1c2b7e-6d1a-4c55-9e0f-3b8a2d9c0e17"
+CHAT_WORKDIR = "d3e0a91c7b5f2468"
 FEATURE = "export-button"
 ISSUE = "AGH-7"
 # The feature's branch and worktree name the issue, so sessions read "AGH-7 · /feature".
@@ -112,6 +126,8 @@ class Target(Protocol):
 
     def hub(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]: ...
 
+    def python(self, arguments: Sequence[str], stdin: str) -> subprocess.CompletedProcess[str]: ...
+
 
 def _run(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -134,6 +150,9 @@ class LocalTarget:
     def hub(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return self._runner([str(Path(sys.executable).with_name("hub")), *arguments], None)
 
+    def python(self, arguments: Sequence[str], stdin: str) -> subprocess.CompletedProcess[str]:
+        return self._runner([sys.executable, *arguments], stdin)
+
 
 class ComposeTarget:
     """``hub`` and files inside the running Compose service, through ``docker compose exec``."""
@@ -153,6 +172,9 @@ class ComposeTarget:
 
     def hub(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return self._runner([*self._exec, "hub", *arguments], None)
+
+    def python(self, arguments: Sequence[str], stdin: str) -> subprocess.CompletedProcess[str]:
+        return self._runner([*self._exec, "python", *arguments], stdin)
 
 
 def compose_running() -> bool:
@@ -343,6 +365,136 @@ def demo_transcript(now: datetime) -> str:
     return transcript_text(lines)
 
 
+def demo_chat(now: datetime) -> tuple[AgentSession, list[LogRecord]]:
+    """The ended chat ``hub web`` drove: the owner asks why the export test fails, the agent runs
+    it, fixes the header, runs it again and answers; the owner closes it. The records are the
+    stored (redacted) copies, and the session holds their digest, as the control leaves them."""
+    start = now - timedelta(hours=3)
+    test = {"command": "make test", "description": "Run the tests"}
+    edit = {
+        "file_path": f"{DEMO_CWD}/src/export.py",
+        "old_string": "header = sorted(columns)",
+        "new_string": "header = list(columns)",
+    }
+    steps: list[tuple[RecordKind, RecordBy, dict[str, Any]]] = [
+        ("user.message", "web", {"text": "Why does the CSV export test fail? Fix it."}),
+        ("init", "driver", {"session_id": CHAT_CLAUDE_SESSION, "model": "sonnet"}),
+        ("text", "driver", {"block": 0, "text": "I'll run the tests to see the failure."}),
+        ("tool.call", "driver", {"tool_use_id": "toolu_chat_1", "name": "Bash", "input": test}),
+        (
+            "tool.result",
+            "driver",
+            {
+                "tool_use_id": "toolu_chat_1",
+                "content": "FAILED tests/test_export.py::test_csv_header - columns out of order",
+                "is_error": True,
+            },
+        ),
+        (
+            "text",
+            "driver",
+            {
+                "block": 0,
+                "text": "The header is sorted, the rows are not. I'll build both from "
+                "the same column list.",
+            },
+        ),
+        ("tool.call", "driver", {"tool_use_id": "toolu_chat_2", "name": "Edit", "input": edit}),
+        (
+            "tool.result",
+            "driver",
+            {"tool_use_id": "toolu_chat_2", "content": "The file was updated.", "is_error": False},
+        ),
+        ("tool.call", "driver", {"tool_use_id": "toolu_chat_3", "name": "Bash", "input": test}),
+        (
+            "tool.result",
+            "driver",
+            {"tool_use_id": "toolu_chat_3", "content": "12 passed", "is_error": False},
+        ),
+        (
+            "text",
+            "driver",
+            {
+                "block": 0,
+                "text": "Fixed: `src/export.py` now builds the CSV header from the table's "
+                "column list, so it follows the rows' order. `make test` passes.",
+            },
+        ),
+        (
+            "result",
+            "driver",
+            {
+                "subtype": "success",
+                "terminal_reason": "completed",
+                "cost_usd": "0.0421",
+                "usage": {"input": 18400, "output": 920, "cache_read": 52000, "cache_write": 3100},
+                "duration_ms": 48200,
+                "num_turns": 4,
+            },
+        ),
+        ("close", "web", {"reason": EndReason.CLOSED.value}),
+        ("exited", "driver", {"code": 0}),
+    ]
+    records = [
+        record_text.redacted(
+            LogRecord(seq=seq, at=start + timedelta(seconds=15 * seq), kind=kind, by=by, body=body)
+        )
+        for seq, (kind, by, body) in enumerate(steps, start=1)
+    ]
+    ended = records[-1].at
+    session = AgentSession(
+        id=CHAT_SESSION,
+        project=DEMO_PROJECT,
+        workdir_id=CHAT_WORKDIR,
+        workdir_label=DEMO_REPO,
+        claude_session_id=CHAT_CLAUDE_SESSION,
+        status=AgentSessionStatus.ENDED,
+        mode="default",
+        model="sonnet",
+        title="Fix the CSV export test",
+        created_at=start,
+        updated_at=ended,
+        ended_at=ended,
+        end_reason=EndReason.CLOSED,
+        cost_usd=Decimal("0.0421"),
+        usage=TokenUsage(input=18400, output=920, cache_read=52000, cache_write=3100),
+    )
+    return session.model_copy(update=SessionDigest.of_records(records).fields()), records
+
+
+# Run by the target's Python (the workspace's, or the Compose service's, which has no scripts/):
+# stores the chat of the JSON on stdin in the database at argv[1], unless it is there already.
+STORE_CHAT = """\
+import json, sys
+from pathlib import Path
+from agent_hub.core.agent_sessions.agent_session import AgentSession
+from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError
+from agent_hub.core.agent_sessions.records import LogRecord
+from agent_hub.storage.agent_session_store import open_agent_session_store
+
+chat = json.load(sys.stdin)
+session = AgentSession.model_validate(chat["session"])
+store = open_agent_session_store(Path(sys.argv[1]))
+try:
+    store.get(session.id)
+except AgentSessionNotFoundError:
+    store.create(session.model_copy(update={"last_seq": 0}))
+    store.append(session.id, [LogRecord.model_validate(record) for record in chat["records"]])
+"""
+
+
+def store_chat(target: Target, *, db_path: str, now: datetime) -> None:
+    """Store ``demo_chat`` in the database at ``db_path`` (found there: left as it is)."""
+    session, records = demo_chat(now)
+    chat = {
+        "session": session.model_dump(mode="json"),
+        "records": [record.model_dump(mode="json") for record in records],
+    }
+    stored = target.python(["-c", STORE_CHAT, db_path], json.dumps(chat))
+    if stored.returncode != 0:
+        raise SeedError(f"storing the demo chat failed: {stored.stderr.strip()[-300:]}")
+
+
 # The ticket plan (``features.json`` ``tickets``): T1 is AGH-7 in Linear, T2 and T3 are not
 # created yet; each waits on the one before, and each AC names the ticket that delivers it.
 TICKETS = (
@@ -460,6 +612,7 @@ def seed(client: httpx.Client, target: Target, *, db_path: str, now: datetime) -
     transcript = target.workdir / "transcripts" / f"{session_ids(now)[2]}.jsonl"
     target.write(transcript, demo_transcript(now))
     _checked_hub(target, ["collect", "--transcript", str(transcript), *labels])
+    store_chat(target, db_path=db_path, now=now)
 
 
 def main(

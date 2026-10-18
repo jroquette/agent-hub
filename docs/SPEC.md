@@ -625,6 +625,37 @@ keyboard-reachable node panel) and shows its document read-only. Run detail draw
 node with its state, attempt, skip cause and failure kind (issue-to-pr runs keep their stage pipeline), and the
 Workflow runs list filters by workflow and failure kind.
 
+**Playground delivery (AGH-314, built).** What the owner validated in the live playground of 2026-10-17/18
+([ADR 0036](adr/0036-live-playground-and-auto-mode.md)), delivered as one change; the writes and runs it adds are
+[ADR 0040](adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md):
+
+- **Sessions** reads as an inbox: a summary strip of counts that filters the list, then Needs you, Working, Your turn
+  and Finished (the latest five, more on request), each a table with a status badge, a Chat or Terminal tag, what the
+  session does in plain words and one visible action. A driven chat carries its last prompt, last reply (redacted,
+  280 characters) and changed files (`agent_sessions` columns, migration 0006). `GET /agent-sessions?wrote=<path>`
+  lists the sessions whose tool calls wrote a file.
+- **Chat**: a header with Review changes, an Events link and a Session actions menu; a one-line live activity bar and
+  a Steps drawer (Ctrl/Cmd+Alt+.); Changed files opens on the net diff of every change; a turn's result ends every
+  message folded into it. An ended terminal session can be continued in the chat from its detail.
+- **Features** groups Needs you, In progress, Evaluated and Shipped with search and filters; a feature can get a
+  nickname kept on this machine (`GET`/`PUT /feature-names`). **Feature detail**: a calm golden path, one Waiting on
+  you banner with the owner sign-off (`POST /features/{project}/{slug}/owner-signoff`, a SHIP eval with `provenance:
+  owner`), an Eval tab with history per scope and who ran each eval, Approve at the end of the spec, research and plan
+  with the spec's open questions, ticket sessions on each ticket, and Run on an AC's recorded check (with Claude by
+  default, or `POST …/acs/{ac}/check-runs`, never recorded).
+- **Workflows** lists one plain row per workflow (`step_types`, `inputs` and an outline in the API) and a detail as a
+  step list; New workflow asks a Claude session to write and validate the YAML in the hub.
+- **Settings** connects Linear with a key kept on this machine (`GET`/`PUT`/`DELETE /tracker/linear`; the environment
+  still wins) and syncs a hub pinned to another release (`POST /hubs/{id}/platform-sync`); **Health** counts the
+  findings `hub doctor --fix` fixes (it rewrites every `brain.leak` on the brain side) and runs it
+  (`POST /hubs/{id}/doctor-fix`). Neither commits in the hub.
+- **Hub config** (`/projects/{project}/config`, sidebar, `g c`) shows per repo the default branch, the branch, commit
+  and PR title patterns, the checks, who commits, guard and blocked words, the tracker and the models, each with its
+  layer (`GET /projects/{project}/config`), and edits the developer's `hub.local.json`
+  (`PUT /projects/{project}/config/local`).
+- The Portfolio, Brain note frontmatter and the shell's scrolling are calmer; every screen above has a visual test on
+  the demo data ([TESTING.md](TESTING.md)).
+
 ## Data sources and event model
 
 Almost all of the data already exists. The platform normalizes five sources into a single event stream per session.

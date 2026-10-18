@@ -625,6 +625,9 @@ PROJECT_BRANCH_READERS = {
     "core/src/agent_hub/core/doctor/instruction_rules.py": 1,
     # the project's branch in the control plane's Project overview header
     "core/src/agent_hub/core/hubs/hub_read_models.py": 1,
+    # Hub config shows the project's branch as its own layer (read, and its key named as the
+    # value's source), so it cannot go through default_branch_for, which hides where it came from
+    "core/src/agent_hub/core/hub_config/config_view.py": 2,
     # the hub repo's branch a learning decision's pull request targets (ADR 0024)
     "api/src/agent_hub/api/composition.py": 1,
     # the hub checkout's branch in the brief

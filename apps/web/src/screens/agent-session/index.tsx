@@ -6,7 +6,6 @@ import { useNavigate, useParams } from "react-router";
 import {
   AppLink,
   Banner,
-  Button,
   ConfirmDialog,
   EmptyState,
   Icon,
@@ -20,10 +19,14 @@ import { sessionControlUnavailable } from "../sessions-list/control";
 import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
+import { liveActivity, turnSteps } from "./liveActivity";
+import { LiveActivityBar, StepsPanel, StepsToggle } from "./LiveActivityBar";
+import { readStored, writeStored } from "../../lib/storage";
 import { CostMeter } from "./CostMeter";
 import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
 import { useResolvedThreads } from "./ReviewDiff";
 import { reviewThreads } from "./review";
+import { SessionMenu } from "./SessionMenu";
 import {
   isTerminal,
   useAgentSession,
@@ -108,6 +111,26 @@ function useChatKeys(pending: readonly string[], composer: { current: HTMLElemen
   }, [composer]);
 }
 
+/** Whether the Steps drawer was left open, in this browser. */
+const STEPS_OPEN_KEY = "ah.chat.steps";
+
+/** Ctrl/Cmd+Alt+. shows or hides the Steps drawer, from anywhere on the page (the key's code:
+ * Option+. types "≥" on a Mac). */
+function useStepsKey(toggle: () => void) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.repeat || event.isComposing || event.defaultPrevented || modalOpen()) return;
+      if (!event.altKey || !(event.ctrlKey || event.metaKey) || event.code !== "Period") return;
+      event.preventDefault();
+      toggle();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [toggle]);
+}
+
 /**
  * The chat view of a session `hub web` drives (D10, `/agent-sessions/:id`): the snapshot and the
  * log, then the live stream; the transcript, todos, cost meter, status, permission cards and the
@@ -133,6 +156,12 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  // The Steps drawer opens as it was last left, in this browser.
+  const [liveOpen, setLiveOpen] = useState(() => readStored(STEPS_OPEN_KEY) === "open");
+  const composer = useRef<HTMLTextAreaElement | null>(null);
+  const stepsTrigger = useRef<HTMLElement | null>(null);
+  // Restored on load, the drawer leaves the keyboard in the composer.
+  const [stepsFocus, setStepsFocus] = useState(false);
   // The file a card in the conversation asked for; the nonce re-opens it in an open drawer.
   const [filePick, setFilePick] = useState<{ path: string | null; nonce: number }>({
     path: null,
@@ -143,13 +172,38 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const closeFiles = useCallback(() => {
     setFilesOpen(false);
   }, []);
+  // One drawer at a time: opening one closes the other.
+  const closePanels = useCallback(() => {
+    setFilesOpen(false);
+    setLiveOpen(false);
+  }, []);
+  const setSteps = useCallback((open: boolean) => {
+    writeStored(STEPS_OPEN_KEY, open ? "open" : "closed");
+    setLiveOpen(open);
+    if (open) {
+      stepsTrigger.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setStepsFocus(true);
+      setFilesOpen(false);
+    } else {
+      // Focus goes back to what opened it, else to the composer.
+      (stepsTrigger.current ?? composer.current)?.focus({ preventScroll: true });
+    }
+  }, []);
+  const closeLive = useCallback(() => {
+    setSteps(false);
+  }, [setSteps]);
+  const toggleSteps = useCallback(() => {
+    setSteps(!liveOpen);
+  }, [liveOpen, setSteps]);
+  useStepsKey(toggleSteps);
   const openFile = useCallback((path: string | null) => {
     setFilePick((before) => ({ path, nonce: before.nonce + 1 }));
+    setLiveOpen(false);
     setFilesOpen(true);
   }, []);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const follow = useStickToBottom(scroller);
-  const composer = useRef<HTMLTextAreaElement | null>(null);
   // The chords answer tool permissions only (AC-234.29): a question or plan card ahead of them is skipped.
   const pending = pendingPermissions(transcript.state).filter(
     (id) => transcript.state.permissions[id]?.requestKind === "tool",
@@ -218,6 +272,8 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   }
 
   const status = state.status ?? session.status;
+  const activity = liveActivity(state);
+  const steps = turnSteps(state);
   const ended = isTerminal(status);
   const mode = state.mode ?? session.mode;
   const model = state.model ?? session.model ?? null;
@@ -254,6 +310,14 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
               {session.title ?? "Untitled session"}
             </h1>
             <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
+            <span className="ah-grow" />
+            <StepsToggle
+              steps={steps}
+              open={liveOpen}
+              onToggle={() => {
+                setSteps(!liveOpen);
+              }}
+            />
             {files.length > 0 && (
               <ChangedFilesChip
                 files={files}
@@ -265,52 +329,50 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 }}
               />
             )}
-            <span className="ah-grow" />
-            {session.claude_session_id && (
+            {session.observed_session_id ? (
               <AppLink
                 className="ah-row ah-small"
-                style={{ gap: 4 }}
-                href={`/sessions/${encodeURIComponent(session.claude_session_id)}`}
+                href={`/sessions/${encodeURIComponent(session.observed_session_id)}`}
+                style={{ gap: 4, fontWeight: 500 }}
+                title="Timeline, tools, errors and raw events of this session"
               >
                 <Icon name="activity" size="sm" />
-                Observed session {short(session.claude_session_id)}
+                Events
               </AppLink>
-            )}
-            {canFork && (
-              <Button
-                size="sm"
-                icon="git-branch"
-                onClick={() => {
-                  setForking(true);
-                }}
-              >
-                Fork…
-              </Button>
-            )}
-            {ended ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                icon="file-x"
-                disabled={busy}
-                onClick={() => {
-                  setConfirmDelete(true);
-                }}
-              >
-                Delete session
-              </Button>
             ) : (
-              <Button
-                size="sm"
-                icon="x"
-                disabled={busy}
-                onClick={() => {
-                  act(commands.close);
-                }}
+              <span
+                className="ah-row ah-small ah-subtle"
+                style={{ gap: 4 }}
+                title="The hub's hooks have sent no event for this session yet. They run only in a folder whose .claude/settings.json has them (the hub folder), so a session started in a repo folder has no timeline."
               >
-                Close session
-              </Button>
+                <Icon name="activity" size="sm" />
+                No events
+              </span>
             )}
+            <SessionMenu
+              busy={busy}
+              onFork={
+                canFork
+                  ? () => {
+                      setForking(true);
+                    }
+                  : undefined
+              }
+              onClose={
+                ended
+                  ? undefined
+                  : () => {
+                      act(commands.close);
+                    }
+              }
+              onDelete={
+                ended
+                  ? () => {
+                      setConfirmDelete(true);
+                    }
+                  : undefined
+              }
+            />
           </div>
           <div className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 12 }}>
             <span>
@@ -342,12 +404,14 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           follow={follow}
           screenshotUrl={screenshotUrl}
           messageScreenshots={messageScreenshots}
-          onActivityOpen={closeFiles}
+          onActivityOpen={closePanels}
           files={files}
           reviewed={review.reviewed}
           onOpenFile={openFile}
           sidePanel={
-            filesOpen ? (
+            liveOpen && steps.end !== null ? (
+              <StepsPanel steps={steps} onClose={closeLive} focusOnOpen={stepsFocus} />
+            ) : filesOpen ? (
               <FilesPanel
                 files={files}
                 sessionId={agentSessionId}
@@ -371,6 +435,13 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
       </OldestPendingContext.Provider>
       <footer className="as-footer">
         <div className="as-column">
+          <LiveActivityBar
+            activity={activity}
+            open={liveOpen}
+            onToggle={() => {
+              setSteps(!liveOpen);
+            }}
+          />
           <Composer
             status={status}
             mode={mode}

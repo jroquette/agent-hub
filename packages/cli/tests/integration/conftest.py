@@ -950,7 +950,10 @@ class DemoWorkspace:
         """Push one commit to ``repo``'s origin (``files``: path → content and mode); its sha."""
         pusher = self.base / "pusher"
         shutil.rmtree(pusher, ignore_errors=True)
-        self.git(self.base, "clone", "-q", str(self.origin(repo)), str(pusher))
+        # No auto-maintenance in the throwaway clone: a detached one still writes in its .git
+        # while the rmtree below removes it (Directory not empty).
+        options = [arg for key, value in _NO_MAINTENANCE for arg in ("-c", f"{key}={value}")]
+        self.git(self.base, "clone", "-q", *options, str(self.origin(repo)), str(pusher))
         written = dict(files or {"CHANGES.md": (f"{self.origin_head(repo)}\n".encode(), 0o644)})
         for path, (content, mode) in written.items():
             target = pusher / path

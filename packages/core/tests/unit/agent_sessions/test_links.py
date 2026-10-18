@@ -4,10 +4,10 @@ import pytest
 
 from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus
 from agent_hub.core.agent_sessions.driver import PermissionRequest
-from agent_hub.core.agent_sessions.links import AgentSessionLink, AgentSessionLinks
+from agent_hub.core.agent_sessions.links import AgentSessionLink, AgentSessionLinks, prompt_issue
 from agent_hub.core.testing.agent_session_rig import Rig
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
-from agent_hub.core.testing.read_model_builders import an_agent_session
+from agent_hub.core.testing.read_model_builders import a_log_record, an_agent_session
 
 pytestmark = pytest.mark.anyio
 
@@ -49,3 +49,38 @@ async def test_prefers_live_link_and_shows_waiting_when_permission_pending(
 
     assert waiting == AgentSessionLink(agent_session_id=created.id, waiting=True)
     assert links.link_of("demo", claude_id) == AgentSessionLink(agent_session_id=created.id)
+
+
+@pytest.mark.parametrize(
+    ("text", "issue"),
+    [
+        ("/feature AGH-305\n\nI am the owner…", "AGH-305"),
+        ("  /hub:feature agh-7 and more", "AGH-7"),
+        ("/feature", None),
+        ("Fix AGH-305 please", None),
+        ("/feature AGH-0", None),
+        (None, None),
+    ],
+)
+def test_reads_issue_when_first_prompt_names_one(text: str | None, issue: str | None) -> None:
+    assert prompt_issue(text) == issue
+
+
+def test_carries_prompt_issue_when_first_prompt_names_ticket() -> None:
+    store = InMemoryAgentSessionStore()
+    session_id = "01929a4e-0000-7000-8000-00000000a002"
+    store.create(an_agent_session(id=session_id, claude_session_id=CLAUDE_ID, last_seq=0))
+    links = AgentSessionLinks(lambda project, claude_id: None, store)
+    before = links.link_of("demo", CLAUDE_ID)
+    store.append(
+        session_id,
+        [
+            a_log_record("user.message", seq=1, body={"text": "/feature DEM-305\n\nContext."}),
+            a_log_record("user.message", seq=2, body={"text": "/feature DEM-9"}),
+        ],
+    )
+
+    assert before == AgentSessionLink(agent_session_id=session_id)
+    assert links.link_of("demo", CLAUDE_ID) == AgentSessionLink(
+        agent_session_id=session_id, prompt_issue="DEM-305"
+    )

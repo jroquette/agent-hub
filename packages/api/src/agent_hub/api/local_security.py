@@ -39,7 +39,8 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # (AC-213.18) runs the CLI and resumes the run, so it is one of them.
 RUN_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/(workflow-runs(/[^/]+/(cancel|resume|abandon))?"
-    r"|approvals/[^/]+/decision)$"
+    r"|approvals/[^/]+/decision"
+    r"|features/[^/]+/[^/]+/acs/[^/]+/check-runs)$"
 )
 # The item writes (AGH-295, S7, D13) write into a hub's working tree: strict too, and they need
 # the launch's cookie (``session_access``, which answers 409 ``hub_read_only`` in the container).
@@ -57,6 +58,12 @@ STRICT_WRITES = re.compile(
 HUB_REGISTRY_WRITES = (
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs$")),
     ("DELETE", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+$")),
+    # Rewrites the hub's pin and runs ``hub sync`` in it.
+    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+/platform-sync$")),
+    # Runs ``hub doctor --fix`` in the hub: rewrites brain notes, never a repo.
+    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+/doctor-fix$")),
+    # Rewrites the developer's hub.local.json (the Hub config screen).
+    ("PUT", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/local$")),
 )
 # The routes with a larger body cap: a session's first prompt may carry a PNG screenshot (at
 # most ``MAX_SCREENSHOT_BYTES`` decoded, 5 MiB of base64), and a later message up to

@@ -12,6 +12,7 @@ from decimal import Decimal
 from agent_hub.core.agent_sessions.agent_session import (
     AgentSession,
     AgentSessionStatus,
+    ChangedFile,
     EndReason,
 )
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, StoreSequenceError
@@ -149,6 +150,49 @@ class AgentSessionStoreContract:
         _check((updated.cost_usd, updated.usage) == (Decimal("0.0123"), usage), "cost kept")
         _check(updated.claude_session_id == CLAUDE_ID, "the Claude session id is linked")
 
+    def test_keeps_digest_when_updated(self, agent_session_store: AgentSessionStore) -> None:
+        agent_session_store.create(_session(FIRST))
+        files = (
+            ChangedFile(path="/repo/b.py", last_change_id="toolu_2"),
+            ChangedFile(path="/repo/a.py", last_change_id="toolu_1"),
+        )
+
+        updated = agent_session_store.update(
+            FIRST, last_prompt="Fix it.", last_reply="Fixed.", changed_files=files
+        )
+
+        _check(updated == agent_session_store.get(FIRST), "update answers the stored session")
+        _check(
+            (updated.last_prompt, updated.last_reply, updated.changed_files)
+            == ("Fix it.", "Fixed.", files),
+            f"the digest reads back in order: {updated}",
+        )
+        _check(agent_session_store.list()[0].changed_files == files, "the list shows it too")
+
+    def test_starts_with_empty_digest_when_created(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST))
+
+        stored = agent_session_store.get(FIRST)
+
+        _check(
+            (stored.last_prompt, stored.last_reply, stored.changed_files) == (None, None, ()),
+            f"no digest yet: {stored}",
+        )
+
+    def test_pages_only_kinds_when_kinds_given(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST))
+        agent_session_store.append(FIRST, _records(1, 8))
+
+        first = agent_session_store.records(FIRST, limit=3, kinds={"user.message", "text"})
+        rest = agent_session_store.records(FIRST, after=first[-1].seq, kinds={"text"})
+
+        _check([record.seq for record in first] == [1, 3, 5], f"kinds kept: {first}")
+        _check([record.seq for record in rest] == [7], f"after a filtered page: {rest}")
+
     def test_lists_newest_first_when_filtered(self, agent_session_store: AgentSessionStore) -> None:
         agent_session_store.create(_session(FIRST, 0))
         agent_session_store.create(_session(SECOND, 1, project="other"))
@@ -163,6 +207,28 @@ class AgentSessionStoreContract:
         _check(_ids(idle) == [SECOND, FIRST], "filtered by status")
         _check(_ids(store.list(kind="cloud")) == [THIRD], "filtered by kind")
         _check(_ids(store.list(limit=1)) == [THIRD], "at most limit")
+
+    def test_lists_only_writers_of_a_file_when_wrote_given(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        hub = "/work/agent-hub-hub/brain/features/real_cost/spec.md"
+
+        def call(seq: int, name: str, path: str) -> LogRecord:
+            body = {"tool_use_id": f"t{seq}", "name": name, "input": {"file_path": path}}
+            return a_log_record("tool.call", seq, body=body)
+
+        store = agent_session_store
+        for minutes, agent_session_id in enumerate((FIRST, SECOND, THIRD)):
+            store.create(_session(agent_session_id, minutes))
+        store.append(FIRST, [call(1, "Write", hub)])
+        store.append(SECOND, [call(1, "Read", hub)])
+        store.append(THIRD, [call(1, "Edit", hub), call(2, "Write", "/w/xbrain/features/a.md")])
+
+        spec = "brain/features/real_cost/spec.md"
+        _check(_ids(store.list(wrote=spec)) == [THIRD, FIRST], "the writers, newest first")
+        _check(_ids(store.list(wrote=hub)) == [THIRD, FIRST], "an absolute path too")
+        _check(_ids(store.list(wrote="brain/features/real%cost/spec.md")) == [], "% is literal")
+        _check(_ids(store.list(wrote="brain/features/a.md")) == [], "a whole path segment")
 
     def test_finds_link_when_claude_session_id_known(
         self, agent_session_store: AgentSessionStore

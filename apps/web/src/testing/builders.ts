@@ -954,6 +954,7 @@ export function aSuggestions(): PermissionSuggestion[] {
 /** An idle local agent session in the hub's workdir, linked to Claude session `anId(1, "5091b986")`. */
 export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSession {
   return {
+    changed_files: [],
     claude_session_id: anId(1, "5091b986"),
     cloud_id: null,
     cost_usd: "0.0012",
@@ -962,6 +963,8 @@ export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSess
     ended_at: null,
     id: anId(1, "0192a5e5"),
     kind: "local",
+    last_prompt: null,
+    last_reply: null,
     last_seq: 4,
     mode: "default",
     model: "sonnet",
@@ -1474,12 +1477,20 @@ export function aBundledFileText(overrides: Partial<BundledFileText> = {}): Bund
 export function aWorkflowSummary(overrides: Partial<WorkflowSummary> = {}): WorkflowSummary {
   return {
     description: "Plans, builds and documents a feature, then asks for a review.",
+    inputs: [{ name: "feature", type: "string", required: true, description: "What to build." }],
     layer_count: 3,
     name: "feature-flow",
     node_count: 4,
     project: "agent-hub",
     revision: 3,
     source: "hub",
+    step_types: { agent: 1, shell: 1, script: 1, approval: 1 },
+    steps: [
+      { id: "plan", type: "agent", description: "Writes the plan.", body: [] },
+      { id: "build", type: "shell", body: [] },
+      { id: "docs", type: "script", body: [] },
+      { id: "review", type: "approval", body: [] },
+    ],
     ...overrides,
   };
 }

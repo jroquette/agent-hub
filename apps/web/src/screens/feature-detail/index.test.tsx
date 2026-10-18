@@ -7,6 +7,10 @@ import { seriousViolations } from "../../testing/axe";
 import {
   aBrainNote,
   aBrainTree,
+  aCapabilities,
+  aWorkdir,
+  anAgentSession,
+  anId,
   aFeatureDetail,
   aFeatureRecord,
   aFeatureTickets,
@@ -18,7 +22,7 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
-import { FeatureDetailScreen } from "./index";
+import { FeatureDetailScreen, ticketIds } from "./index";
 import { FEATURE_REFRESH_MS, TICKETS_REFRESH_MS } from "./queries";
 
 const API = "/api/v1/features/agent-hub/layered-memory";
@@ -149,6 +153,19 @@ function open(
   return renderWithApi(ui, { routes: { [API]: detail, [NOTE]: records, ...extra }, path, route });
 }
 
+describe("ticketIds", () => {
+  it("keeps the bare id once when the spec notes prose beside it", () => {
+    expect(
+      ticketIds(["AGH-200 (provisional id: renumber if Linear assigns another)", "AGH-200"]),
+    ).toEqual(["AGH-200"]);
+    expect(ticketIds(["AGH-48", " AGH-49 ", "not an id"])).toEqual([
+      "AGH-48",
+      "AGH-49",
+      "not an id",
+    ]);
+  });
+});
+
 describe("FeatureDetailScreen", () => {
   it("shows the header with verdict, issues and the AC bar", async () => {
     open();
@@ -187,10 +204,9 @@ describe("FeatureDetailScreen", () => {
   it("calls out the owner steps left", async () => {
     open();
 
-    const callout = await screen.findByText("1 owner step left: AC-48.13");
-    expect(callout.closest('[role="status"]')).toHaveTextContent(
-      "memory loads. Recorded in features.json",
-    );
+    const callout = await screen.findByText("Waiting on you: 1 owner step left");
+    expect(callout.closest('[role="status"]')).toHaveTextContent("AC-48.13");
+    expect(callout.closest('[role="status"]')).toHaveTextContent("memory loads.");
   });
 
   it("shows every AC row at once, with no Show all fold (AC-269.12)", async () => {
@@ -470,11 +486,9 @@ describe("FeatureDetailScreen", () => {
       expect(table).toHaveTextContent("agh-48");
       expect(table).toHaveTextContent("agh-49");
       expect(table).toHaveTextContent("NO-SHIP");
-      expect(
-        within(table).getByRole("link", { name: "agh-49.md, the eval of agh-49" }),
-      ).toHaveAttribute(
-        "href",
-        "/projects/agent-hub/brain/features/layered-memory/evals/agh-49.md",
+      expect(within(table).getByRole("button", { name: /^agh-49,/ })).toHaveAttribute(
+        "title",
+        "brain/features/layered-memory/evals/agh-49.md",
       );
     });
 
@@ -503,6 +517,133 @@ describe("FeatureDetailScreen", () => {
       expect(proven).toHaveTextContent("test run 2");
       await userEvent.click(within(check).getByRole("button", { name: "Copy command" }));
       expect(write).toHaveBeenCalledWith("uv run pytest -k case_2");
+    });
+
+    const failedRun = {
+      [`POST ${API}/acs/AC-48.2/check-runs`]: {
+        ac: "AC-48.2",
+        command: "uv run pytest -k case_2",
+        repo: "agent-hub",
+        branch: "main",
+        commit: "0f4d1f7",
+        exit_code: 1,
+        passed: false,
+        timed_out: false,
+        duration_ms: 4200,
+        output: "1 failed in 0.4s",
+        truncated: false,
+      },
+    };
+
+    async function runCheck() {
+      window.localStorage.clear();
+      const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
+      const check = within(table).getByRole("region", { name: "Check it yourself" });
+      await userEvent.click(
+        within(check).getByRole("button", { name: "Choose how to run the check" }),
+      );
+      await userEvent.click(within(check).getByRole("button", { name: /^Run in terminal/ }));
+      await within(check).findByText("Failed · exit 1");
+      return check;
+    }
+
+    it("runs an AC's check with Claude by default, in the AC's repo folder (playground)", async () => {
+      window.localStorage.clear();
+      const created = anAgentSession({ id: anId(9, "0192a5e5"), status: "running" });
+      const repo = aWorkdir({
+        kind: "repo",
+        label: "agent-hub",
+        repo: "agent-hub",
+        workdir_id: "w-repo",
+      });
+      const view = open({
+        "/api/v1/agent-sessions/capabilities": aCapabilities(),
+        "/api/v1/agent-sessions/workdirs": { items: [aWorkdir(), repo], warnings: [] },
+        "POST /api/v1/agent-sessions": created,
+        [`/api/v1/agent-sessions/${created.id}`]: created,
+      });
+
+      const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
+      const check = within(table).getByRole("region", { name: "Check it yourself" });
+      const run = await within(check).findByRole("button", { name: "Run with Claude" });
+      await waitFor(() => {
+        expect(run).toBeEnabled();
+      });
+      await userEvent.click(run);
+
+      const post = await waitFor(() => {
+        const found = view.requests.find(
+          (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+        );
+        if (!found) throw new Error("no POST");
+        return found;
+      });
+      const body = JSON.parse(await post.clone().text()) as Record<string, unknown>;
+      expect(body).toMatchObject({ project: "agent-hub", workdir_id: "w-repo", mode: "default" });
+      expect(String(body.prompt)).toContain("uv run pytest -k case_2");
+      expect(await within(check).findByText("Claude is running the check")).toBeInTheDocument();
+      expect(within(check).getByRole("link", { name: /Open chat/ })).toHaveAttribute(
+        "href",
+        `/agent-sessions/${created.id}`,
+      );
+    });
+
+    it("runs an AC's check and shows this run's result, not the record's (playground)", async () => {
+      open(failedRun);
+
+      const check = await runCheck();
+
+      expect(check).toHaveTextContent("This run");
+      expect(check).toHaveTextContent("main @ 0f4d1f7");
+      expect(check).toHaveTextContent("Not recorded.");
+      expect(within(check).getByLabelText("Output of AC-48.2's check")).toHaveTextContent(
+        "1 failed in 0.4s",
+      );
+      expect(within(check).getByText("AC-48.2's check failed, exit 1, 4.2 s.")).toHaveAttribute(
+        "aria-live",
+        "polite",
+      );
+      expect(within(check).getByRole("button", { name: "Run in terminal" })).toBeInTheDocument();
+    });
+
+    it("keeps an AC's last run when its card closes and opens again (playground)", async () => {
+      open(failedRun);
+      await runCheck();
+      const table = screen.getByRole("table", { name: "Acceptance criteria" });
+
+      await userEvent.click(within(table).getByRole("button", { name: "Collapse AC-48.2" }));
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
+
+      expect(within(table).getByText("Failed · exit 1")).toBeInTheDocument();
+    });
+
+    it("says before any click that checks are locked in this browser (playground)", async () => {
+      window.localStorage.clear();
+      open({
+        "/api/v1/agent-sessions/capabilities": aProblem({
+          status: 401,
+          title: "Session cookie required",
+        }),
+      });
+
+      const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
+      const check = within(table).getByRole("region", { name: "Check it yourself" });
+
+      expect(
+        await within(check).findByRole("button", {
+          name: /^Run with Claude\. Locked in this browser/,
+        }),
+      ).toBeDisabled();
+    });
+
+    it("has no serious axe violations with a run's result open (a11y, playground)", async () => {
+      const { container } = open(failedRun);
+      await runCheck();
+
+      expect(await seriousViolations(container)).toEqual([]);
     });
 
     it("marks a manual AC's verification as an owner step (records)", async () => {
