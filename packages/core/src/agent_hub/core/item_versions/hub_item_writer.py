@@ -28,7 +28,8 @@ Synchronous. ``HubItemWriterContract`` checks every implementation:
   Claude session wrote it): never followed through a link, each file's executable bit from the
   opened file.
 - ``remove_draft`` removes that folder whole, a link inside it removed and never followed, a link
-  at the folder or the drafts folder refused (``link_in_path``); an absent draft is fine.
+  at the folder or the drafts folder refused (``link_in_path``), a file at the draft's path or a
+  ``.hub-drafts`` that is a file a ``HubItemWriteError``; an absent draft is fine.
 
 A refusal is ``ItemWriteRefusedError`` (``hub_read_only`` or ``link_in_path``); any other I/O
 failure is ``HubItemWriteError``. Its ``kind`` is ``failed`` when the unit was left as it was,
