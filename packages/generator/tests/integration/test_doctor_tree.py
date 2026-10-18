@@ -142,6 +142,13 @@ def work_tree(tmp_path: Path) -> Path:
     return root
 
 
+def test_runs_no_git_maintenance_when_fixture_commits(work_tree: Path) -> None:
+    # A commit may start git's background maintenance, which writes `.git/objects/maintenance.lock`
+    # while a test digests the tree (AGH-313).
+    assert git(["config", "--get", "maintenance.auto"], cwd=work_tree) == b"false\n"
+    assert git(["config", "--get", "gc.auto"], cwd=work_tree) == b"0\n"
+
+
 def test_lists_like_git_when_work_tree(work_tree: Path) -> None:
     raw = git(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=work_tree)
 
