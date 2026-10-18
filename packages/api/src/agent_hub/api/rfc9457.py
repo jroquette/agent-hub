@@ -42,6 +42,10 @@ from agent_hub.core.agent_sessions.errors import (
 from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
 from agent_hub.core.brain.brain_path import BrainPathError
 from agent_hub.core.errors import AgentHubError, EventConflictError
+from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
+from agent_hub.core.item_versions.record_and_write import ItemWrittenUnrecordedError
+from agent_hub.core.item_versions.unit_content import CorruptVersionError
+from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
 from agent_hub.core.learnings.brain_change_requests import (
     ChangeRequestConflictError,
     ChangeRequestError,
@@ -269,6 +273,69 @@ def _hub_read_only_problem(error: HubReadOnlyError) -> Problem:
         error.reason,
         {"code": "hub_read_only", "reason": error.reason},
     )
+
+
+# Item writes (AGH-295, S4, S7): a refusal names its ``code`` and the reason in words; a failure
+# names no path (the writer's causes never do, and the detail is fixed here anyway).
+ITEM_WRITE_REFUSED = "Item write refused"
+
+
+def item_write_refused_problem(error: ItemWriteRefusedError) -> Problem:
+    """``ItemWriteRefusedError``: 409 with members ``code`` and ``reason``."""
+    return Problem(
+        409, ITEM_WRITE_REFUSED, error.reason, {"code": error.code, "reason": error.reason}
+    )
+
+
+def _item_write_failed_problem(error: HubItemWriteError) -> Problem:
+    if error.kind == "rollback_failed":
+        detail = (
+            "The write failed and the old folder could not be put back; hub doctor lists what "
+            "was left beside it. Nothing was recorded."
+        )
+    else:
+        detail = "The write failed; the item is as it was and nothing was recorded."
+    return Problem(500, "Item write failed", detail, {"code": "write_failed", "kind": error.kind})
+
+
+def _corrupt_version_problem(_: CorruptVersionError) -> Problem:
+    return Problem(
+        500,
+        "Stored version unreadable",
+        "The stored version could not be read back; nothing was written.",
+        {"code": "corrupt_version"},
+    )
+
+
+def _version_race_problem(_: ItemVersionSequenceError) -> Problem:
+    return Problem(
+        503,
+        "Item version busy",
+        "Another reader recorded a version of this item at the same time; nothing was written. "
+        "Try again.",
+        {"code": "version_race", "written": False},
+        {"Retry-After": "1"},
+    )
+
+
+def _written_unrecorded_problem(_: ItemWrittenUnrecordedError) -> Problem:
+    return Problem(
+        503,
+        "Item written, version not recorded",
+        "The item was written, but its version could not be recorded; the next read records it "
+        "as changed outside the app. Reload the history before trying again.",
+        {"code": "written_not_recorded", "written": True},
+        {"Retry-After": "1"},
+    )
+
+
+ITEM_WRITE_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
+    ItemWriteRefusedError: item_write_refused_problem,
+    HubItemWriteError: _item_write_failed_problem,
+    CorruptVersionError: _corrupt_version_problem,
+    ItemVersionSequenceError: _version_race_problem,
+    ItemWrittenUnrecordedError: _written_unrecorded_problem,
+}
 
 
 _PULL_REQUEST_FAILED = "Could not open the pull request"
@@ -595,6 +662,7 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     ChangeRequestFailedError: _change_request_failed_problem,
     ChangeRequestTimeoutError: _change_request_timeout_problem,
     **AGENT_SESSION_PROBLEMS,
+    **ITEM_WRITE_PROBLEMS,
 }
 
 

@@ -19,6 +19,7 @@ from agent_hub.api.local_security import (
     allowed_hosts,
     allowed_origins,
     is_hub_registry_write,
+    is_item_write,
     is_json_media_type,
     is_run_write,
     is_strict_write,
@@ -306,6 +307,36 @@ def test_turns_run_commands_off_when_sessions_off(
     assert response.status_code == 404
     assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"
     assert listed.status_code != 404
+
+
+ITEM_WRITES = (
+    "/api/v1/projects/demo/skills/skill/demo/alpha/versions/0199f0a0-0000-7000-8000-00000000000a/restore",
+    "/api/v1/projects/demo/skills/hook/project/pre-tool-use-1/versions/v-1/restore",
+    "/api/v1/workflows/demo/review/versions/0199f0a0-0000-7000-8000-00000000000a/restore",
+)
+
+
+@pytest.mark.parametrize("path", ITEM_WRITES)
+def test_is_item_write_when_restore_path_posted(path: str) -> None:
+    assert is_item_write("POST", path)
+    assert is_strict_write("POST", path)
+    assert not is_run_write("POST", path)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", ITEM_WRITES[0]),
+        ("POST", "/api/v1/projects/demo/skills/skill/demo/alpha/versions/v-1"),
+        ("POST", "/api/v1/projects/demo/skills/skill/alpha/versions/v-1/restore"),
+        ("POST", "/api/v1/projects/demo/skills/skill/demo/alpha/versions/v-1/restore/extra"),
+        ("POST", "/api/v1/workflows/demo/review/versions//restore"),
+        ("POST", "/api/v1/workflows/demo/a/b/versions/v-1/restore"),
+    ],
+)
+def test_keeps_other_checks_when_not_item_write(method: str, path: str) -> None:
+    assert not is_item_write(method, path)
+    assert not is_strict_write(method, path)
 
 
 async def _body_length_app(scope: Scope, receive: Receive, send: Send) -> None:
