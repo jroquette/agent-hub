@@ -104,8 +104,6 @@ export function Compare({
         <Skeleton lines={4} />
       </div>
     );
-  } else if (changes.length > 0) {
-    body = changes.map((change) => <Change key={change.path} change={change} />);
   } else if (older.content_hash === newer.content_hash) {
     body = (
       <p className="ah-small ah-muted" style={{ margin: 0 }}>
@@ -113,20 +111,34 @@ export function Compare({
       </p>
     );
   } else {
-    // Different hashes and nothing the web can tell apart: a binary file of the same size.
+    // The hashes differ: a binary file of the same size may differ without the web seeing it.
     const binaries = unshownBinaries(before.data.files, after.data.files);
+    const named =
+      binaries.length > 0 ? (
+        <>
+          , in {binaries.length === 1 ? "the binary file" : "one of the binary files"}{" "}
+          <span className="ah-mono">{binaries.join(", ")}</span>.
+        </>
+      ) : (
+        "."
+      );
     body = (
-      <p className="ah-small ah-muted" style={{ margin: 0 }}>
-        These versions differ in bytes the app cannot show
-        {binaries.length > 0 ? (
-          <>
-            , in {binaries.length === 1 ? "the binary file" : "one of the binary files"}{" "}
-            <span className="ah-mono">{binaries.join(", ")}</span>.
-          </>
+      <>
+        {changes.map((change) => (
+          <Change key={change.path} change={change} />
+        ))}
+        {changes.length === 0 ? (
+          <p className="ah-small ah-muted" style={{ margin: 0 }}>
+            These versions differ in bytes the app cannot show{named}
+          </p>
         ) : (
-          "."
+          binaries.length > 0 && (
+            <p className="ah-small ah-muted" style={{ margin: 0 }}>
+              They may also differ in bytes the app cannot show{named}
+            </p>
+          )
         )}
-      </p>
+      </>
     );
   }
 

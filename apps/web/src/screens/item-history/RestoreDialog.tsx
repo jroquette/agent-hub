@@ -79,7 +79,10 @@ export function RestoreDialog({
       { versionId: version.id, confirmManaged: managed },
       {
         onSuccess: (result) => {
-          onRestored({ text: restoredWords(version, result), warning: !result.versioned });
+          onRestored({
+            text: restoredWords(version, result),
+            warning: result.changed && !result.versioned,
+          });
         },
         onError: (error) => {
           if (error.code === "managed_confirmation_required") setManaged(true);

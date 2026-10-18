@@ -160,13 +160,21 @@ export function compareChanges(
   });
 }
 
-/** Binary files both versions hold with the same size and bit: their bytes may still differ. */
+/** Binary files both versions hold with the same size and bit, so not listed as changed: their
+ * bytes may still differ. */
 export function unshownBinaries(older: readonly VersionFile[], newer: readonly VersionFile[]) {
   const after = new Map(newer.map((file) => [file.path, file]));
   return older
     .filter((a) => {
       const b = after.get(a.path);
-      return b !== undefined && a.text === null && b.text === null;
+      // A size or bit change already lists the file as changed.
+      return (
+        b !== undefined &&
+        a.text === null &&
+        b.text === null &&
+        a.size === b.size &&
+        a.executable === b.executable
+      );
     })
     .map((file) => file.path);
 }
