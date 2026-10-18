@@ -175,14 +175,18 @@ describe("reduceTranscript (transcript)", () => {
     });
   });
 
-  it("adds up cost and tokens when turn results arrive", () => {
-    const state = run([record("result", { seq: 1 }), record("result", { seq: 2 })]);
+  it("shows the latest running cost and adds up tokens when turn results arrive", () => {
+    // Each result carries Claude Code's running total for the session: 0.01, 0.02, 0.03 a turn.
+    const result = (seq: number, cost: string | null) =>
+      record("result", { seq, body: { ...aLogRecord("result").body, cost_usd: cost } });
+    const state = run([result(1, "0.01"), result(2, "0.03"), result(3, "0.06")]);
 
     expect(state.meter).toEqual({
-      costUsd: 0.0024,
-      usage: { input: 24, output: 10, cache_read: 0, cache_write: 0 },
-      turns: 2,
+      costUsd: 0.06,
+      usage: { input: 36, output: 15, cache_read: 0, cache_write: 0 },
+      turns: 3,
     });
+    expect(run([result(4, null)], state).meter.costUsd).toBe(0.06);
   });
 
   it("records a decision on the request when the permission is answered", () => {

@@ -118,7 +118,7 @@ export interface TodoView {
 }
 
 export interface MeterView {
-  /** The sum of the turns' estimated costs (USD), null before the first result. */
+  /** The latest result's estimated cost (USD): Claude Code's running total; null before one. */
   costUsd: number | null;
   usage: TokenUsage | null;
   turns: number;
@@ -711,10 +711,8 @@ function applyResult(state: TranscriptState, record: LogRecord): TranscriptState
   const add = (key: keyof TokenUsage) =>
     (before?.[key] ?? 0) + (usage ? (num(usage, key) ?? 0) : 0);
   const meter: MeterView = {
-    costUsd:
-      cost === null
-        ? state.meter.costUsd
-        : Math.round(((state.meter.costUsd ?? 0) + cost) * 1e6) / 1e6,
+    // A result's cost is already the session's running total, not the turn's own.
+    costUsd: cost ?? state.meter.costUsd,
     usage:
       usage || before
         ? {
