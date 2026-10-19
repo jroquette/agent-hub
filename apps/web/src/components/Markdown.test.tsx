@@ -613,23 +613,23 @@ describe("highlight walker (AC-234.31)", () => {
 
 describe("Markdown refs", () => {
   const refs = (text: string) => {
-    const at = text.indexOf("TIP-1");
+    const at = text.indexOf("DEM-1");
     if (at < 0) return null;
     return [
       text.slice(0, at),
-      { label: "TIP-1", href: "https://linear.app/x/issue/TIP-1" },
+      { label: "DEM-1", href: "https://linear.app/x/issue/DEM-1" },
       text.slice(at + 5),
     ];
   };
 
   it("links what refs names in text and in a whole code span, never inside a link", () => {
     render(
-      <Markdown source={"See TIP-1, `TIP-1` and [TIP-1 here](https://example.com)."} refs={refs} />,
+      <Markdown source={"See DEM-1, `DEM-1` and [DEM-1 here](https://example.com)."} refs={refs} />,
     );
     const links = screen.getAllByRole("link");
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
-      "https://linear.app/x/issue/TIP-1",
-      "https://linear.app/x/issue/TIP-1",
+      "https://linear.app/x/issue/DEM-1",
+      "https://linear.app/x/issue/DEM-1",
       "https://example.com",
     ]);
     expect(links[1]?.querySelector("code")).not.toBeNull();

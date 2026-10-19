@@ -13,7 +13,7 @@ describe("fileKind", () => {
     ["/Users/me/.claude/projects/-Users-me-app/memory/MEMORY.md", "learning"],
     ["/Users/me/hub/brain/decisions/0007-retries.md", "learning"],
     ["/Users/me/hub/brain/features/claims/spec.md", "feature"],
-    ["/Users/me/hub/brain/features/claims/reviews/TIP-1/quality-r1.json", "feature"],
+    ["/Users/me/hub/brain/features/claims/reviews/DEM-1/quality-r1.json", "feature"],
     ["/tmp/notes.md", "scratch"],
     ["/private/tmp/claude-501/out.json", "scratch"],
     ["/var/folders/x1/T/scratch.md", "scratch"],

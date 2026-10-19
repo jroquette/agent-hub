@@ -137,7 +137,7 @@ def test_refuses_limit_when_events_page_limit_out_of_range(recorded_app: Any, li
 
 def test_answers_repo_changes_of_the_session_when_read(recorded_app: Any) -> None:
     recorded_app.control.repo_changes_answer = SessionRepoChanges(
-        repos=(RepoChanges(root="/hubs/api", label="api", branch="tip-1", base="origin/main"),),
+        repos=(RepoChanges(root="/hubs/api", label="api", branch="dem-1", base="origin/main"),),
         warnings=("web could not be read by git",),
     )
 

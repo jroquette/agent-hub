@@ -34,7 +34,7 @@ def _git(cwd: Path, env: dict[str, str], *args: str) -> None:
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
-    """A clone on branch ``tip-1`` with two commits past ``origin/main`` and local changes."""
+    """A clone on branch ``dem-1`` with two commits past ``origin/main`` and local changes."""
     env = _env(tmp_path)
     bare = tmp_path / "origin.git"
     _git(tmp_path, env, "init", "--bare", "--initial-branch=main", str(bare))
@@ -48,7 +48,7 @@ def checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     _git(work, env, "commit", "-m", "base")
     _git(work, env, "push", "origin", "main")
     _git(work, env, "remote", "set-head", "origin", "main")
-    _git(work, env, "checkout", "-b", "tip-1")
+    _git(work, env, "checkout", "-b", "dem-1")
     (work / "app.py").write_text("a\nB\nc\n")
     _git(work, env, "commit", "-am", "change b")
     _git(work, env, "rm", "-q", "tests.py")
@@ -70,7 +70,7 @@ def test_reads_every_change_against_the_fork_when_anyone_made_it(
 
     changes = GitRepoChanges(environ=env).read(str(work), label="work")
 
-    assert (changes.branch, changes.base) == ("tip-1", "origin/main")
+    assert (changes.branch, changes.base) == ("dem-1", "origin/main")
     assert [commit.subject for commit in changes.commits] == ["drop tests, add new", "change b"]
     files = {Path(file.path).name: file for file in changes.files}
     assert {name: file.status for name, file in files.items()} == {
@@ -133,13 +133,13 @@ def test_compares_with_that_branch_when_a_worktree_started_from_a_branch(
     tmp_path: Path, start: str
 ) -> None:
     work, env = _stacked(tmp_path)
-    tree = work / ".claude" / "worktrees" / "tip-2"
-    _git(work, env, "worktree", "add", "-q", "-b", "tip-2", str(tree), start)
+    tree = work / ".claude" / "worktrees" / "dem-2"
+    _git(work, env, "worktree", "add", "-q", "-b", "dem-2", str(tree), start)
     (tree / "tip2.py").write_text("t\n")
     _git(tree, env, "add", ".")
     _git(tree, env, "commit", "-m", "tip 2")
 
-    changes = GitRepoChanges(environ=env).read(str(tree), label="app/tip-2")
+    changes = GitRepoChanges(environ=env).read(str(tree), label="app/dem-2")
 
     assert changes.base == start
     assert [os.path.basename(file.path) for file in changes.files] == ["tip2.py"]
@@ -164,23 +164,23 @@ def test_compares_with_where_it_started_when_a_branch_is_pushed_with_its_upstrea
 
 def test_reads_recorded_commits_when_the_worktree_was_removed(tmp_path: Path) -> None:
     work, env = _stacked(tmp_path)
-    tree = work / ".claude" / "worktrees" / "tip-3"
-    _git(work, env, "worktree", "add", "-q", "-b", "tip-3", str(tree), "origin/main")
+    tree = work / ".claude" / "worktrees" / "dem-3"
+    _git(work, env, "worktree", "add", "-q", "-b", "dem-3", str(tree), "origin/main")
     (tree / "tip3.py").write_text("t\n")
     _git(tree, env, "add", ".")
     _git(tree, env, "commit", "-m", "tip 3")
     reader = GitRepoChanges(environ=env)
-    live = reader.read(str(tree), label="app/tip-3")
+    live = reader.read(str(tree), label="app/dem-3")
     _git(work, env, "worktree", "remove", "--force", str(tree))
-    _git(work, env, "branch", "-D", "tip-3")
+    _git(work, env, "branch", "-D", "dem-3")
     assert live.base_sha is not None
     assert live.head_sha is not None
 
     recorded = reader.read_recorded(
         str(work),
-        label="app/tip-3",
+        label="app/dem-3",
         root=str(tree),
-        branch="tip-3",
+        branch="dem-3",
         base=live.base,
         base_sha=live.base_sha,
         head_sha=live.head_sha,

@@ -361,7 +361,7 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 **Repositories and pull requests**
 
 - **AC-377.22** Given git read a repository, when the Code tab shows, then it lists the repository with its branch,
-  its base and how many commits (`tip-1 → origin/main · 0 commits`), a link to its pull request (`PR #7`, opens in a
+  its base and how many commits (`dem-1 → origin/main · 0 commits`), a link to its pull request (`PR #7`, opens in a
   new tab) and where it stands; the list shows on the Code tab only.
 - **AC-377.23** Given a repository's pull request and its state, when the state is read, then it says "In sync with
   the pull request", "N file(s) changed since the pull request", "Commits not in the pull request yet", "N files not

@@ -43,8 +43,8 @@ const file = (path: string, fields: Partial<RepoFileChange> = {}): RepoFileChang
 const repo = (fields: Partial<RepoChanges> = {}): RepoChanges => ({
   source: "worktree",
   root: "/w/api",
-  label: "api/tip-1",
-  branch: "tip-1",
+  label: "api/dem-1",
+  branch: "dem-1",
   base: "origin/main",
   base_sha: "f0",
   commits: [
@@ -135,7 +135,7 @@ describe("withRepoChanges", () => {
 
 describe("repoSummary", () => {
   it("names the branch, its base and how many commits", () => {
-    expect(repoSummary([repo()])).toBe("api/tip-1: tip-1 against origin/main · 2 commits");
+    expect(repoSummary([repo()])).toBe("api/dem-1: dem-1 against origin/main · 2 commits");
     expect(repoSummary(undefined)).toBeNull();
   });
 });

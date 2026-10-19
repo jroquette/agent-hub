@@ -142,19 +142,19 @@ describe("background agents in a log without task records", () => {
   it("reads a launched agent as running until its handback, with its calls", () => {
     const working = run([
       ...turn,
-      ...launch(2, "e", "Re-evaluate DEMO-1563"),
+      ...launch(2, "e", "Re-evaluate DEM-63"),
       ended,
       idle,
       call(91, "b1", "Bash", { command: "make check" }, "e"),
     ]);
     const activity = liveActivity(working);
     expect(activity?.phase).toBe("background");
-    expect(activity?.calls.map((c) => c.label)).toEqual(["evaluator · Re-evaluate DEMO-1563"]);
+    expect(activity?.calls.map((c) => c.label)).toEqual(["evaluator · Re-evaluate DEM-63"]);
     expect(runningTasks(working).map((t) => t.id)).toEqual(["age"]);
 
     const done = run([
       ...turn,
-      ...launch(2, "e", "Re-evaluate DEMO-1563"),
+      ...launch(2, "e", "Re-evaluate DEM-63"),
       ended,
       idle,
       call(91, "h", "SubagentHandback", { message: "SHIP" }, "e"),
