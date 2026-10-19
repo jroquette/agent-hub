@@ -489,13 +489,16 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   groups (dependency layers), a recommended order (topological, then priority, then plan order), waiting tickets with
   their blockers, cycles, blockers outside the feature and the critical path. It is a recommendation; the runner still
   decides (ADR 0014). A canceled ticket no longer blocks and is left out of every count.
-- **Golden path.** Computed once in core and served on the list and the detail: Spec, Research, Plan, Tickets,
-  Implement, Review, Evaluate, Shipped, each `done`, `current`, `partial`, `pending`, `skipped`, `blocked` or
-  `unknown`, with progress and a reason. A step is done only when the whole feature satisfies it (every ticket
-  created; every ticket delivered, that is In Review or Done in Linear or with an approved review record (with no
-  tickets, every AC passing); every ticket reviewed, that is Done in Linear or with an approved
-  review record; the latest eval of every AC a SHIP, none waiting on owner steps; every ticket Done), and never while an earlier step is not. Without
-  Linear, the ticket-based steps are `unknown`, never done.
+- **Golden path.** Computed once in core and served on the list and the detail: the feature's own steps Spec, UX
+  design, Research, Plan, Tickets, Build, Acceptance, Shipped (a ticket's implement, review and eval are the ticket's,
+  not the feature's), each `done`, `current`, `partial`, `pending`, `skipped`, `blocked`, `unknown` or `unrecorded`,
+  with progress and a reason. A step is done only when the whole feature satisfies it (the spec written, a brief alone
+  leaving Spec current; every `ux-*.md` approved, or none when a later record exists (skipped); every ticket created;
+  every ticket merged, Done in Linear; the latest whole-feature eval (`acs: all`) a SHIP, or a SHIP-WITH-OWNER-STEPS
+  whose owner steps the owner signed off; Build and Acceptance done), and never while an earlier step is not. Ticket
+  evals never make Acceptance done: with none whole-feature it reads "Not recorded" with the ACs they cover. Plan's
+  meta is the plan's version. Without Linear, Build and Shipped are `unknown`, never done
+  ([ADR 0042](adr/0042-two-level-feature-and-ticket-flows.md), proposed).
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
   scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it
   decides. A legacy `eval.md` is read as one delivery, `legacy`. The Eval tab lists every delivery.
