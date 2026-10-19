@@ -13,6 +13,7 @@ import { Outlet, useNavigate } from "react-router";
 import { usePreferences } from "../lib/preferences";
 import { useScope } from "../lib/scope";
 import { useFeaturesNeedingYou } from "../screens/features/queries";
+import { useHasWorkflowRuns } from "../screens/runs-list/queries";
 import { usePageScope } from "./pageScope";
 import { CommandPalette } from "./CommandPalette";
 import { DiscussProvider, useDiscuss } from "./discuss";
@@ -126,6 +127,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
   const { health, counts } = useGlobalStream();
   const [featureScope] = useScope();
   const featuresNeedingYou = useFeaturesNeedingYou(featureScope);
+  const hasRuns = useHasWorkflowRuns();
   const [palette, setPalette] = useState<{ query: string } | null>(null);
   const [sheet, setSheet] = useState(false);
   const discuss = useDiscuss();
@@ -173,6 +175,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
             features: featuresNeedingYou,
             health: counts?.doctor_errors ?? undefined,
           }}
+          showRuns={hasRuns}
           onShortcuts={actions.openShortcuts}
         />
         <TopBar

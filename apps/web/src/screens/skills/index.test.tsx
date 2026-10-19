@@ -165,7 +165,7 @@ describe("SkillsScreen states", () => {
 
     expect(screen.getByRole("heading", { level: 1, name: "Toolkit" })).toBeInTheDocument();
     expect(await screen.findByRole("article", { name: "feature" })).toBeInTheDocument();
-    expect(paths(requests)).toEqual([CATALOG]);
+    expect(paths(requests)).toEqual([CATALOG, "/api/v1/workflows"]);
   });
 
   it("keeps the filters of the URL when the catalog opens", async () => {
