@@ -11,10 +11,15 @@ import { seriousViolations } from "../../testing/axe";
 import {
   aCapabilities,
   aCatalogItem,
+  aFeature,
+  aFeatureTickets,
   aPage,
   aProjectDetail,
   aProjectSummary,
+  aSession,
+  aSessionLabel,
   aSkillCatalog,
+  aTicketRow,
   aDeltaFrame,
   aLogRecord,
   aPermissionRequest,
@@ -1615,5 +1620,100 @@ describe("AgentSessionScreen (hub-slash-menu)", () => {
       ["/fix", "/agent-researcher", "/compact"],
     );
     expect(screen.getByRole("option", { name: "/fix, from the hub" })).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (background-tasks)", () => {
+  const TASK_STOP = `${SESSION}/tasks/t1/stop`;
+  const backgroundLog = () => [
+    aLogRecord("init", { seq: 1 }),
+    aLogRecord("user.message", { seq: 2, body: { text: "Run the checks in the background." } }),
+    aLogRecord("task", {
+      seq: 3,
+      body: {
+        task_id: "t1",
+        status: "running",
+        description: "Rerun the checks",
+        task_type: "local_bash",
+      },
+    }),
+    aLogRecord("result", { seq: 4, body: { subtype: "success" } }),
+  ];
+  const backgroundRoutes = () =>
+    routes({
+      [SESSION]: anAgentSession({ status: "idle", last_seq: 4 }),
+      [EVENTS]: { items: backgroundLog(), next_after: null },
+      [`POST ${TASK_STOP}`]: anAgentSession({ status: "idle", last_seq: 4 }),
+    });
+
+  it("reads an idle session with a task running as at work, and the header chip opens the drawer", async () => {
+    renderChat(backgroundRoutes());
+
+    expect(await screen.findByText("Background · 1 command")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Background tasks, 1 running" }));
+
+    const drawer = screen.getByRole("complementary", { name: "Background tasks" });
+    expect(within(drawer).getByText("Rerun the checks")).toBeInTheDocument();
+  });
+
+  it("stops a running task from the drawer with an empty JSON body", async () => {
+    const view = renderChat(backgroundRoutes());
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Background tasks, 1 running" }),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop Rerun the checks" }));
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/tasks/t1/stop")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/tasks/t1/stop")[0])).toEqual({});
+  });
+
+  it("lists the task in the live bar between turns, which opens the drawer", async () => {
+    renderChat(backgroundRoutes());
+
+    const bar = await screen.findByRole("region", { name: "Live activity" });
+    expect(bar).toHaveTextContent("Running in the background: 1 command");
+    await userEvent.click(within(bar).getByRole("button"));
+
+    expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
+  });
+
+  it("closes the conversation with a card that opens the drawer", async () => {
+    renderChat(backgroundRoutes());
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "1 background command running" }),
+    );
+
+    expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (session-name)", () => {
+  it("names a session on a ticket by the ticket's title and links its feature", async () => {
+    const observed = anId(1, "5091b986");
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ observed_session_id: observed, title: "Run the tests" }),
+        [`/api/v1/sessions/${observed}`]: aSession({
+          id: observed,
+          label: aSessionLabel({ issue: "AGH-202", branch: "dev/agh-202-ticket-summaries" }),
+        }),
+        "/api/v1/features": aPage([aFeature({ issues: ["AGH-202"] })]),
+        "/api/v1/features/agent-hub/control-plane/tickets": aFeatureTickets({
+          tickets: [aTicketRow()],
+        }),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "AGH-202: Serve the ticket summaries" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /control-plane/ })).toHaveAttribute(
+      "href",
+      "/features/agent-hub/control-plane",
+    );
   });
 });
