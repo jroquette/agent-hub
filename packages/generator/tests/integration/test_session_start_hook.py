@@ -723,3 +723,46 @@ def test_adds_no_environments_when_none_declared(
     completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
 
     assert context_of(completed) == expected_mini_brief("no uv")
+
+
+# An environment name with a secret's shape (assembled at run time, so the repo holds none). The
+# CLI refuses it, so `hub brief` fails and the mini brief is what the agent reads.
+SECRET_NAME = "AK" + "IA" + "A" * 16
+
+
+@pytest.mark.parametrize("layer", ["hub.json", "hub.local.json"])
+def test_hides_secret_shaped_name_when_brief_fails(
+    layer: str, hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path
+) -> None:
+    secret = {SECRET_NAME: {"access": "write", "production": True}}
+    if layer == "hub.json":
+        document = an_environments_document()
+        document["platform"]["version"] = VERSION
+        document["environments"] |= secret
+        (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    else:
+        write_environments(hub, local=json.dumps({"environments": secret}))
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    context = context_of(completed)
+    assert context == (
+        f"{expected_mini_brief('no uv')}\n\n{MINI_ENVIRONMENTS}\n- `<hidden>` (write, PRODUCTION)"
+    )
+    assert SECRET_NAME not in completed.stdout.decode()
+
+
+def test_cuts_environments_when_over_sixty(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path
+) -> None:
+    document = a_hub_document()
+    document["platform"]["version"] = VERSION
+    document["environments"] = {f"e{index}": {"access": "read"} for index in range(1, 62)}
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    shown = "\n".join(f"- `e{index}` (read)" for index in range(1, 61))
+    assert context_of(completed) == (
+        f"{expected_mini_brief('no uv')}\n\n## Environments\n{shown}\n… 1 more: ./hub env list"
+    )

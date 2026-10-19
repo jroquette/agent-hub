@@ -508,11 +508,11 @@ ENVIRONMENTS_BLOCK = [
     " variables `DEMO_LIVE_DB_URL`",
     "- `jane-cloud` (write, hub.local.json); credentials: AWS profile `jane-sandbox`",
     "Endpoints:",
-    "- `api/api` on `local`: http://localhost:8000",
-    "- `api/api` on `staging`: https://api.staging.example.com",
-    "- `api/api` on `live`: https://api.example.com",
-    "- `api/api` on `jane-cloud`: https://api.jane.example.com",
-    "- `api/orders` on `staging`: resource demo-orders-staging",
+    "- `api/api` on `local`: `http://localhost:8000`",
+    "- `api/api` on `staging`: `https://api.staging.example.com`",
+    "- `api/api` on `live`: `https://api.example.com`",
+    "- `api/api` on `jane-cloud`: `https://api.jane.example.com`",
+    "- `api/orders` on `staging`: resource `demo-orders-staging`",
     "Blocked words (the guard denies them): `prod`, `production`, `demo-live`",
 ]
 # A synthetic value in a credential variable: the brief names the variable, never its value.
