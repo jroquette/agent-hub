@@ -230,8 +230,15 @@ def set_command(
 def remove_command(name: Name, *, local: Local = False) -> None:
     """Remove an environment no endpoint uses."""
 
-    def edit(document: Document, _files: _Files) -> Document | EditRefusal:
-        return remove_environment(document, name, file=_file(is_local=local))
+    def edit(document: Document, files: _Files) -> Document | EditRefusal:
+        edited = remove_environment(document, name, file=_file(is_local=local))
+        if not isinstance(edited, EditRefusal) and not local and name in files.local.environments:
+            # Removed from hub.json, the local tightening would become an environment of its own.
+            return EditRefusal(
+                f"{LOCAL_FILE} still holds {name}; remove it there first:"
+                f" ./hub env remove {name} --local"
+            )
+        return edited
 
     _write(edit, is_local=local, action=f"removed environment {name}", environment=None)
 
@@ -264,7 +271,7 @@ def service_add_command(
     if note is not None:
         endpoint["note"] = note
 
-    def edit(document: Document, _files: _Files) -> Document | EditRefusal:
+    def edit(document: Document, files: _Files) -> Document | EditRefusal:
         return add_endpoint(
             document,
             repo=repo,
@@ -274,6 +281,7 @@ def service_add_command(
             kind=kind,
             file=_file(is_local=local),
             creates_repo=local,
+            known_repos=[item.dir for item in files.config.repos],
         )
 
     _write(
@@ -392,5 +400,11 @@ def _checked(edited: Document, files: _Files, *, is_local: bool) -> tuple[HubCon
         config = checked
     across = local_environment_problems(config, local)
     if across:
-        fail(*local_lines(across))
+        # A hub.json change refused for the developer's file says so before that file's lines.
+        prefix = (
+            ()
+            if is_local
+            else (f"{FILE_LABEL}: not changed: {LOCAL_FILE} would no longer be valid",)
+        )
+        fail(*prefix, *local_lines(across))
     return config, local

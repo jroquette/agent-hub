@@ -21,6 +21,8 @@ from agent_hub.core.testing.builders import (
 )
 
 AWS_KEY = "AK" + "IA" + "A" * 16
+# A synthetic JWT shape: three base64url parts, the first two starting as a JSON object does.
+JWT = "eyJ" + "a" * 20 + ".eyJ" + "b" * 20 + "." + "c" * 20
 SYNC_HINT = "run ./hub sync to update AGENTS.md"
 PRODUCTION_LINE = "production environment: live (access read, hub.json)"
 
@@ -38,10 +40,15 @@ def pinned(document: dict[str, Any]) -> dict[str, Any]:
 
 @pytest.fixture
 def hub(tmp_path: Path) -> Path:
-    """A hub with the spec's ``W`` and no ``hub.local.json``."""
+    """A hub with the spec's ``W``, comment keys in its maps, and no ``hub.local.json``."""
     root = tmp_path / "hub"
     root.mkdir()
-    (root / "hub.json").write_bytes(hub_bytes(pinned(an_environments_document())))
+    document = pinned(an_environments_document())
+    document["environments"]["_note"] = "a comment, not an environment"
+    services = document["repos"][0]["services"]
+    services["_note"] = "a comment, not a service"
+    services["api"]["endpoints"]["_note"] = "a comment, not an endpoint"
+    (root / "hub.json").write_bytes(hub_bytes(document))
     return root
 
 
@@ -247,6 +254,45 @@ def test_adds_local_environment_when_local_flag_given(hub: Path) -> None:
         ("set", "qa", "--access", "ask"),
         ("set", "live", "--access", "ask", "--local"),
         ("remove", "jane-cloud", "--local"),
+        (
+            "service",
+            "add",
+            "demo-api",
+            "cache",
+            "--env",
+            "local",
+            "--url",
+            "https://x.example.com/#k",
+        ),
+        (
+            "service",
+            "add",
+            "demo-api",
+            "cache",
+            "--env",
+            "local",
+            "--url",
+            "http://localhost:6379",
+            "--note",
+            f"token {JWT}",
+        ),
+        (
+            "service",
+            "add",
+            AWS_KEY,
+            "cache",
+            "--env",
+            "jane-cloud",
+            "--url",
+            "http://localhost:1",
+            "--local",
+        ),
+        ("add", "_x", "--access", "ask"),
+        ("set", "_note", "--access", "ask"),
+        ("remove", "_note"),
+        ("service", "add", "demo-api", "_cache", "--env", "local", "--url", "http://localhost:1"),
+        ("service", "remove", "demo-api", "_note"),
+        ("service", "remove", "demo-api", "api", "--env", "_note"),
     ],
     ids=[
         "add-existing",
@@ -256,15 +302,24 @@ def test_adds_local_environment_when_local_flag_given(hub: Path) -> None:
         "add-long-description",
         "add-secret-description",
         "add-secret-name",
-        "add-bad-profile",
-        "add-bad-variable",
-        "service-url-user-info",
-        "service-url-query",
+        "add-secret-bad-profile",
+        "add-secret-bad-variable",
+        "service-secret-url-user-info",
+        "service-secret-url-query",
         "remove-used",
         "remove-unknown",
         "set-unknown",
         "set-local-looser",
         "remove-local-used",
+        "service-secret-url-fragment",
+        "service-secret-jwt-note",
+        "service-secret-local-repo-dir",
+        "add-comment-key",
+        "set-comment-key",
+        "remove-comment-key",
+        "service-add-comment-service",
+        "service-remove-comment-service",
+        "service-remove-comment-env",
     ],
 )
 def test_exits_one_when_add_refused(local_hub: Path, args: tuple[str, ...]) -> None:
@@ -275,7 +330,7 @@ def test_exits_one_when_add_refused(local_hub: Path, args: tuple[str, ...]) -> N
     assert (result.exit_code, result.stdout) == (1, ""), result.output
     assert result.stderr.count("\n") >= 1
     assert snapshot(local_hub) == before
-    for secret in (AWS_KEY, "pw@", "token=x"):
+    for secret in (AWS_KEY, "pw@", "token=x", "#k", JWT):
         assert secret not in result.output
 
 
@@ -541,7 +596,8 @@ def test_exits_one_when_service_env_undeclared(local_hub: Path) -> None:
         assert (result.exit_code, result.stdout) == (1, ""), result.output
     assert committed.stderr.startswith("hub.json: repos[0].services.cache.endpoints")
     assert own.stderr.startswith("hub.local.json: repos[0].services.cache.endpoints.staging: ")
-    assert unknown_repo.stderr.startswith("hub.local.json: repos[1].dir: ")
+    # Refused before the local file's check: a dir not in hub.json is never written there.
+    assert unknown_repo.stderr == "no repo demo-web in hub.json\n"
     assert snapshot(local_hub) == before
 
 
@@ -573,3 +629,85 @@ def test_exits_one_when_local_file_unusable(hub: Path) -> None:
         assert (result.exit_code, result.stdout) == (1, ""), result.output
         assert result.stderr.startswith("hub.local.json: $: ")
     assert snapshot(hub) == before
+
+
+def test_names_refusal_when_secret_repo_dir_or_comment_key_given(local_hub: Path) -> None:
+    repo = run_env(
+        local_hub,
+        "service",
+        "add",
+        AWS_KEY,
+        "cache",
+        "--env",
+        "jane-cloud",
+        "--url",
+        "http://localhost:1",
+        "--local",
+    )
+    comment = run_env(local_hub, "add", "_x", "--access", "ask")
+
+    assert repo.stderr == "no repo <name> in hub.json\n"
+    assert comment.stderr == "_x: a name starting with _ is a comment key; choose another name\n"
+
+
+def test_refuses_remove_when_local_file_tightens_environment(local_hub: Path) -> None:
+    document = json.loads((local_hub / "hub.json").read_bytes())
+    document["environments"]["qa"] = {"access": "ask"}
+    (local_hub / "hub.json").write_bytes(hub_bytes(document))
+    local = json.loads((local_hub / "hub.local.json").read_bytes())
+    local["environments"]["qa"] = {"access": "read"}
+    (local_hub / "hub.local.json").write_bytes(hub_bytes(local))
+    before = snapshot(local_hub)
+
+    result = run_env(local_hub, "remove", "qa")
+
+    assert (result.exit_code, result.stdout) == (1, ""), result.output
+    assert result.stderr == (
+        "hub.local.json still holds qa; remove it there first: ./hub env remove qa --local\n"
+    )
+    assert snapshot(local_hub) == before
+
+
+def test_says_local_file_refused_when_hub_json_change_breaks_it(local_hub: Path) -> None:
+    before = snapshot(local_hub)
+
+    result = run_env(local_hub, "set", "staging", "--access", "read")
+
+    assert (result.exit_code, result.stdout) == (1, ""), result.output
+    assert result.stderr == (
+        "hub.json: not changed: hub.local.json would no longer be valid\n"
+        "hub.local.json: environments.staging.access: may only tighten hub.json's read\n"
+    )
+    assert snapshot(local_hub) == before
+
+
+def test_refuses_write_when_file_is_symlink(local_hub: Path, tmp_path: Path) -> None:
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    for name in ("hub.json", "hub.local.json"):
+        (local_hub / name).rename(dotfiles / name)
+        (local_hub / name).symlink_to(dotfiles / name)
+    targets = snapshot(dotfiles)
+
+    committed = run_env(local_hub, "add", "qa", "--access", "ask")
+    own = run_env(local_hub, "add", "jane-box", "--access", "write", "--local")
+
+    assert (committed.exit_code, committed.stdout) == (1, ""), committed.output
+    assert committed.stderr == "hub.json: is a symlink; edit its target\n"
+    assert (own.exit_code, own.stdout) == (1, ""), own.output
+    assert own.stderr == "hub.local.json: is a symlink; edit its target\n"
+    assert snapshot(dotfiles) == targets
+    assert all((local_hub / name).is_symlink() for name in ("hub.json", "hub.local.json"))
+
+
+def test_hides_secret_repo_dir_when_local_file_names_one(hub: Path) -> None:
+    (hub / "hub.local.json").write_bytes(
+        hub_bytes({"repos": [{"dir": AWS_KEY, "services": {}}]})
+    )
+
+    result = run_env(hub, "list")
+
+    assert (result.exit_code, result.stdout) == (1, ""), result.output
+    assert result.stderr == (
+        "hub.local.json: repos[0].dir: repo dir \"<name>\" is not in hub.json's repos\n"
+    )
