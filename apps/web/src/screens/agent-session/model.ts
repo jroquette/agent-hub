@@ -178,7 +178,11 @@ export interface TaskView {
   /** The call that started it, when known. */
   toolUseId: string | null;
   startedAt: string;
+  /** When it ended; null while it runs. */
+  endedAt: string | null;
   status: "running" | "completed" | "failed" | "stopped";
+  /** What runs it, as the CLI names it: `local_bash`, `local_agent`, `remote_agent`... */
+  type: string | null;
 }
 
 export interface TranscriptState {
@@ -793,14 +797,17 @@ function applyTask(state: TranscriptState, record: LogRecord): TranscriptState {
   const status = str(record.body, "status");
   if (!id || status === null || !TASK_STATUSES.has(status)) return state;
   const known = state.tasks[id];
+  const endedAt = status === "running" ? null : record.at;
   const task: TaskView = known
-    ? { ...known, status: status as TaskView["status"] }
+    ? { ...known, status: status as TaskView["status"], endedAt }
     : {
         id,
         description: str(record.body, "description"),
         toolUseId: str(record.body, "tool_use_id"),
         startedAt: record.at,
+        endedAt,
         status: status as TaskView["status"],
+        type: str(record.body, "task_type"),
       };
   return { ...state, tasks: { ...state.tasks, [id]: task } };
 }
@@ -808,6 +815,20 @@ function applyTask(state: TranscriptState, record: LogRecord): TranscriptState {
 /** The tasks still running, oldest first. */
 export function runningTasks(state: TranscriptState): TaskView[] {
   return Object.values(state.tasks).filter((task) => task.status === "running");
+}
+
+/** Whether a task is a shell command (else an agent). */
+export const isCommandTask = (task: TaskView) => task.type === "local_bash";
+
+/** "2 agents", "1 command", "1 agent, 2 commands": what a set of tasks is, in words. */
+export function tasksInWords(tasks: TaskView[]): string {
+  const commands = tasks.filter(isCommandTask).length;
+  const agents = tasks.length - commands;
+  const parts = [
+    agents > 0 ? `${String(agents)} ${agents === 1 ? "agent" : "agents"}` : null,
+    commands > 0 ? `${String(commands)} ${commands === 1 ? "command" : "commands"}` : null,
+  ];
+  return parts.filter(Boolean).join(", ");
 }
 
 function applySettings(state: TranscriptState, record: LogRecord): TranscriptState {

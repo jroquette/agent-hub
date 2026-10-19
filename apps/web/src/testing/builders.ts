@@ -1046,6 +1046,7 @@ const RECORD_BODIES: Record<RecordKind, LogRecord["body"]> = {
     description: "Review the change",
     status: "running",
     task_id: "task-1",
+    task_type: "local_agent",
     tool_use_id: "toolu_02",
   },
   "permission.request": {
