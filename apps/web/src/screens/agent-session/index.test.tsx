@@ -479,10 +479,10 @@ const CARD_TOP: Record<string, number> = { "req-1": 300, "req-2": 700 };
 function stubScrolling() {
   vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1000);
   vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(400);
-  vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    return CARD_TOP[this.dataset.requestId ?? ""] ?? 0;
+  // A card's box against the scroller's (at 0): its place in the content less the scroll.
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    const card = this instanceof HTMLElement ? CARD_TOP[this.dataset.requestId ?? ""] : undefined;
+    return DOMRect.fromRect({ y: card === undefined ? 0 : card - scrolled.top });
   });
   const writes = vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (
     this: Element,
