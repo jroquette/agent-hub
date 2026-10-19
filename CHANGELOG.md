@@ -18,6 +18,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   (AGH-286). `hub doctor`'s new `environments.production` rule names each production environment: a warning for
   `write` or `ask` access, info for `read`; turn it off or retune it in `doctor.rules`. Environment and service text
   now refuses line-separator and bidi characters, and a secret-shaped blocked word is refused.
+- The guard asks before a `hub env` that changes the environments (`add`, `set`, `remove`, `service add|remove`;
+  `list` and `show` pass) and before an edit or shell write of `hub.local.json` (AGH-288). The README's guard section
+  explains blocked words.
 
 ## [0.17.0] - 2026-10-19
 
