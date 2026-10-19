@@ -194,6 +194,54 @@ def test_allows_command_when_no_bash_rule_matches(evaluate: Evaluate) -> None:
     assert verdicts == dict.fromkeys(verdicts)
 
 
+# AGH-277 (AC-277.20): a mutating `hub env` changes the environments agents see, so it asks
+# first, however the launcher is reached; reading them does not.
+ENV_COMMAND_REASON = (
+    "hub env {} changes the agents' environments (hub.json or hub.local.json); confirm"
+)
+ENV_COMMAND_WRITES = {
+    "./hub env add x --access write": "add",
+    "hub env set live --access write": "set",
+    "./hub env service remove demo-api api": "service remove",
+    "uvx --from x hub env remove y": "remove",
+    "./hub env service add demo-api cache --env local --url redis://localhost:6379": "service add",
+    "git status && './hub' env add qa --access ask": "add",
+    # quotes and backslashes the shell removes (the blocked-words rule's command views)
+    './hub "env" add x': "add",
+    "./hub 'env' add x": "add",
+    "./hub env 'add' x": "add",
+    "hub\\ env add x": "add",
+    "./h''ub env add x": "add",
+    "./hub env a''dd x": "add",
+    "./hub env ad\\d x": "add",
+    "./hub env service 'remove' demo-api api": "service remove",
+}
+ENV_COMMAND_READS = [
+    "./hub env list",
+    "./hub env show staging",
+    "hub env list --json",
+    "./hub env show live --json",
+    './hub "env" list',
+    "./hub env 'show' staging",
+    "h''ub env l''ist",
+]
+
+
+def test_asks_when_env_command_mutates(evaluate: Evaluate) -> None:
+    verdicts = verdicts_of(evaluate, [bash(command) for command in ENV_COMMAND_WRITES])
+
+    assert verdicts == {
+        bash(command): ("ask", ENV_COMMAND_REASON.format(verb))
+        for command, verb in ENV_COMMAND_WRITES.items()
+    }
+
+
+def test_passes_when_env_command_reads(evaluate: Evaluate) -> None:
+    verdicts = verdicts_of(evaluate, [bash(command) for command in ENV_COMMAND_READS])
+
+    assert verdicts == dict.fromkeys(verdicts)
+
+
 # AC-45.6: the spec's legacy table, then the quoted and wrapped forms of AC-45.14.
 LEGACY_INFRA_COMMANDS = [
     "terraform apply x",
@@ -3003,6 +3051,37 @@ def test_allows_launcher_when_run_or_read(guarded_hub: Path, guard: Guard) -> No
         assert guard(hooks, runs) == [None] * len(runs)
 
 
+# AGH-277 (AC-277.20): hub.local.json widens the developer's environments and blocked lists, so
+# an Edit or Write of it, and a Bash write of it from the hub, ask first.
+def test_asks_when_local_file_written(guarded_hub: Path, guard: Guard) -> None:
+    local = guarded_hub / "hub.local.json"
+    runs: list[tuple[dict[str, Any], Path]] = [
+        (
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(local), "old_string": "a", "new_string": "b"},
+            },
+            guarded_hub,
+        ),
+        (
+            {"tool_name": "Write", "tool_input": {"file_path": str(local), "content": "{}"}},
+            guarded_hub,
+        ),
+        bash_run("echo {} > hub.local.json", guarded_hub),
+    ]
+    named = [str(local), str(local), "hub.local.json"]
+
+    verdicts = guard(guarded_hub / HOOKS, runs)
+
+    missed = [
+        (event, verdict)
+        for (event, _), path, verdict in zip(runs, named, verdicts, strict=True)
+        if verdict is None or verdict[0] != "ask" or path not in verdict[1]
+    ]
+    assert len(runs) == 3
+    assert missed == []
+
+
 # AGH-31 (AC-31.5): the probe kickoff Reads, as written in the rendered kickoff, is denied by the
 # guard itself, from the hub, from a hub worktree and with no hub.json above the cwd.
 def test_denies_guard_probe_when_kickoff_path_read(
@@ -3619,6 +3698,7 @@ RULE_EVENTS: tuple[tuple[str, dict[str, Any], str | None], ...] = (
     ("Bash", {"command": "rm tests/test_a.py"}, "test_bash_edit"),
     ("Bash", {"command": "echo x > brain/notes.md"}, "brain_curated"),
     ("Bash", {"command": "git status"}, None),
+    ("Bash", {"command": "./hub env add qa --access ask"}, "env_command"),
     ("Read", {"file_path": "app/.env"}, "secret_file"),
     ("Grep", {"pattern": "KEY", "glob": "**/.env"}, "secret_file"),
     (
