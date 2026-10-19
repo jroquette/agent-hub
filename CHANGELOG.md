@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- Base skill `plain-language` (AGH-319): rules for text that people read (chat, PR bodies and replies, tracker
+  comments, handoffs, summaries, brain notes), in the reader's language. `AGENTS.md` gains cross-repo rule 6, which
+  points to it; `/summarize`, `/handoff`, `/feature` and `/deliver` cite it. `hub sync` adds the skill and its link
+  after you bump `platform.version`.
+
 ## [0.17.0] - 2026-10-19
 
 ### Added
