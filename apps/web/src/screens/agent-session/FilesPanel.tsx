@@ -440,10 +440,13 @@ function FileDetail({
   const body = useRef<HTMLDivElement>(null);
   const section = useRef<HTMLElement>(null);
   const takesFocus = onBack !== null;
-  // Markdown reads rendered first, other files as their final result; the choice stays picked as
-  // you step through the files when the next one offers it.
+  // Markdown reads rendered first, other files as their final result. The drawer keeps one
+  // choice for markdown and one for code, so stepping from a diff to a note still renders it.
   const text = markdownText(file);
-  const [view, setView] = useState<DetailView>(text !== null ? "preview" : "final");
+  const [proseView, setProseView] = useState<DetailView>("preview");
+  const [codeView, setCodeView] = useState<DetailView>("final");
+  const view = text !== null ? proseView : codeView;
+  const setView = text !== null ? setProseView : setCodeView;
   const showPreview = text !== null && view === "preview";
   const showNet = !showPreview && file.net !== null && view !== "changes";
   const views = [
