@@ -10,6 +10,8 @@ from agent_hub.core.features.feature_reviews import REVIEW_HEAD_BYTES
 from agent_hub.core.features.feature_status import (
     HEAD_BYTES,
     MAX_PLAN_BYTES,
+    MAX_UX_FILES,
+    UX_HEAD_BYTES,
     FeatureFolder,
     RecordHead,
 )
@@ -365,6 +367,54 @@ def test_lists_brief_as_a_record_file(tmp_path: Path, monkeypatch: pytest.Monkey
 
     assert "brief.md" in read.files
     assert reads.bytes == 0
+
+
+# AGH-323 (two-level-flows AC-1.3, P2): the folder's own ux-*.md heads, at most 50, 4 KiB each.
+def test_reads_ux_design_heads(tmp_path: Path) -> None:
+    folder = a_feature(
+        features_of(tmp_path),
+        "demo-feature",
+        {"ux-b.md": b"---\nstatus: draft\n---\n", "ux-a.md": b"u" * (UX_HEAD_BYTES + 10)},
+    )
+    (folder / "sub").mkdir()
+    (folder / "sub" / "ux-c.md").write_bytes(b"---\nstatus: approved\n---\n")
+    (folder / "ux-notes.txt").write_bytes(b"not a design\n")
+    (folder / ".ux-hidden.md").write_bytes(b"hidden\n")
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.ux_designs == (
+        RecordHead(name="ux-a.md", head=b"u" * UX_HEAD_BYTES, problem=None),
+        RecordHead(name="ux-b.md", head=b"---\nstatus: draft\n---\n", problem=None),
+    )
+    assert read.ux_skipped == 0
+    assert UX_HEAD_BYTES == 4096
+
+
+def test_counts_ux_designs_over_the_cap_as_skipped(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    for index in range(MAX_UX_FILES + 1):
+        (folder / f"ux-{index:02}.md").write_bytes(b"---\n---\n")
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert len(read.ux_designs) == MAX_UX_FILES
+    assert read.ux_designs[-1].name == "ux-49.md"
+    assert read.ux_skipped == 1
+    assert MAX_UX_FILES == 50
+
+
+def test_lists_linked_ux_design_with_its_problem(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    secret = tmp_path / "secret.md"
+    secret.write_bytes(b"---\nstatus: approved\n---\n")
+    (folder / "ux-linked.md").symlink_to(secret)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.ux_designs == (
+        RecordHead(name="ux-linked.md", head=None, problem="not a regular file"),
+    )
 
 
 # AGH-323 (two-level-flows P1): plan.md is read whole up to MAX_PLAN_BYTES, so its amendments are seen.
