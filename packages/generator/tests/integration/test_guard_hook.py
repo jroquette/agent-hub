@@ -4324,6 +4324,93 @@ def test_asks_when_scan_budget_spent(decide: Decide) -> None:
     assert verdicts == [unchecked("out of time (300 ms)")] * 2
 
 
+# AGH-302: the secret-file rule stays linear in the command's length, so a quote-dense command gets
+# its verdict well inside the hook's 10 s timeout, past which Claude Code goes on with no verdict.
+# argv: hub and a file holding one event. Prints [decide's verdict, the seconds it took].
+DECIDE_TIMED = """
+import json, time
+from pathlib import Path
+import guard
+from hubhooks import load_config
+hub, event = Path(sys.argv[1]), sys.argv[2]
+with open(event, encoding="utf-8") as fh:
+    event = json.load(fh)
+cfg = load_config(hub)
+started = time.perf_counter()
+verdict = guard.decide(event, cfg, None)
+print(json.dumps([verdict, time.perf_counter() - started]))
+"""
+GUARD_HOOK_TIMEOUT = 10.0
+QUOTE_DENSE_BUDGET = 1.0  # seconds; a linear scan takes a fraction of it on 3.9
+# Under the cap, the blocked-word scan takes about 2/3 of its 300 ms on 3.9: a slower machine asks.
+QUOTE_DENSE_ALLOWED = (None, unchecked("out of time (300 ms)"))
+
+
+@pytest.mark.serial
+@pytest.mark.parametrize(
+    ("command", "verdicts"),
+    [
+        pytest.param("echo " + "'a" * 400_000, QUOTE_DENSE_ALLOWED, id="400k-pairs"),
+        pytest.param(
+            "echo " + "'a" * (BLOCKED_TEXT_CAP // 2),
+            (unchecked("the command is over 1 MiB (too large)"),),
+            id="over-cap",
+        ),
+    ],
+)
+def test_decides_in_time_when_command_quote_dense(
+    command: str,
+    verdicts: tuple[tuple[str, str] | None, ...],
+    blocked_hub: Path,
+    *,
+    tmp_path: Path,
+    hook_python: str,
+    run_python: Callable[..., Any],
+) -> None:
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps(bash_call(command)), encoding="utf-8")
+
+    try:
+        found, seconds = run_python(
+            hook_python,
+            DECIDE_TIMED,
+            path=blocked_hub / HOOKS,
+            args=[str(blocked_hub), str(event)],
+            cwd=tmp_path,
+            env={"HOME": str(tmp_path)},
+            timeout=GUARD_HOOK_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        found, seconds = "no verdict", GUARD_HOOK_TIMEOUT
+
+    assert seconds < QUOTE_DENSE_BUDGET
+    assert (tuple(found) if found else found) in verdicts
+
+
+# AGH-302: _secret_tokens finds SECRET_TOKEN.finditer's matches (the regex stays as their
+# definition): the tickets' shapes, then seeded random text over the characters the regex reads.
+SCAN_AS_REGEX = r"""
+import json, random
+import guard
+cases = [
+    "cat .env", "cat a/.env b/.env.local", "x/'.env' <.env \"id_rsa\"", "a.a..env)", "'a/b.pem&c",
+    "..env..env/", "'a" * 50 + ".env", "a/'b/.env.x.", "<'x.key", "-.env .env.example id_ecdsa.pub",
+]
+rnd = random.Random(302)
+alphabet = [*"a./'\"<-_ \t&)>|;1\u00e9", ".env", "..env", ".pem", ".key", "id_rsa", "id_ecdsa"]
+for _ in range(20000):
+    cases.append("".join(rnd.choice(alphabet) for _ in range(rnd.randint(0, 24))))
+regex = [[m.group(0) for m in guard.SECRET_TOKEN.finditer(c)] for c in cases]
+print(json.dumps([c for c, want in zip(cases, regex) if guard._secret_tokens(c) != want]))
+"""
+
+
+def test_matches_regex_when_scanning_secret_tokens(
+    blocked_hub: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    assert run_python(hook_python, SCAN_AS_REGEX, path=blocked_hub / HOOKS) == []
+
+
 # D-order (AC-277.17): the AGH-45 synthetic ``I`` (guard.infra) beside blocked words.
 def with_infra_and_words(words: Sequence[str]) -> dict[str, Any]:
     document = builders.an_environments_document()
