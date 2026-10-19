@@ -10,6 +10,7 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.generator.render_hub import render_hub
 
 SKILL = "plugin/hub-workflow/skills/plain-language/SKILL.md"
+NOTICE = "plugin/hub-workflow/NOTICE"
 # AC-4: the skill's sections, in order; AC-7: no other heading (no word list or dictionary).
 SECTIONS = [
     "Text for people and text for agents",
@@ -112,3 +113,9 @@ def test_keeps_plain_language_size_when_skill_rendered(skill_text: str) -> None:
     assert len(lines) <= MAX_SKILL_LINES
     assert not [line for line in lines if line.startswith("|")]
     assert [line for line in lines if line.startswith("##")] == [f"## {name}" for name in SECTIONS]
+
+
+def test_credits_simple_english_when_notice_rendered(demo_config: HubConfig) -> None:
+    notice = rendered_text(demo_config, NOTICE)
+    assert notice.count("skills/plain-language") == 1
+    assert notice.count("AminBlg/SimpleEnglish") == 1
