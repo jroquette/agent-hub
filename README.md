@@ -469,7 +469,11 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 
 - editing the guard's own files (`plugin/hub-workflow/hooks/`, `plugin/<project>/hooks/`, `.claude/settings*.json`,
   `hub.json`, `hub.local.json`, `hub.lock`), or removing or moving their folders;
-- a `hub env` that changes the environments (`add`, `set`, `remove`, `service add|remove`); `list` and `show` pass;
+- a `hub env` that changes the environments (`add`, `set`, `remove`, `service add|remove`, quoted or escaped too);
+  `list` and `show` pass. Text that only mentions one asks as well (`grep 'hub env add'`, `git commit -m '… hub env
+  add'`). Not seen: the module form (`python -m agent_hub.cli env …`), a verb fed through stdin or a launcher in a
+  variable (`h=./hub; $h env add`), and shell writes to `hub.local.json` through `python -c`, `dd`, `install` or
+  `rsync`, as for `hub.json`;
 - removing assertions from a test, or adding skip, xfail, quarantine or fixme markers;
 - deleting or `sed`-editing test files from the shell;
 - writing in `brain/` outside `now.md`, `journal/`, `_inbox/`, `auto/` and `features/`;
