@@ -16,6 +16,7 @@ import {
 import { fmtAgo, fmtClock, fmtDuration, fmtInt, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
+import { useTicketSlugs } from "../features/queries";
 import { agentSessionHref } from "../sessions-list/control";
 import { ContinueInChat } from "./ContinueInChat";
 import type { Session } from "./queries";
@@ -53,7 +54,8 @@ export function Header({ session, now, staleSince }: HeaderProps) {
   const open = isOpen(session);
   const subagent = Boolean(session.parent_session_id);
   const segments = session.segments.length;
-  const { title } = sessionIdentity(session);
+  const slugs = useTicketSlugs(session.project);
+  const { title } = sessionIdentity(session, slugs);
   const label = session.label ?? null;
   const where = [label?.repo ?? session.repo, label?.branch].filter(Boolean).join(" · ") || "—";
   const actors = actorsLine(session.actors);
