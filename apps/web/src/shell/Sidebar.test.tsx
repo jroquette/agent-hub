@@ -49,6 +49,35 @@ describe("Sidebar", () => {
     }
   });
 
+  it("turns Portfolio into the overview of the project in scope", () => {
+    renderSidebar("/sessions?scope=agent-hub");
+
+    expect(screen.queryByRole("link", { name: "Portfolio" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Overview · agent-hub" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub",
+    );
+  });
+
+  it("marks the overview as the page only on the project's own overview", () => {
+    const { unmount } = renderSidebar("/projects/other%20hub?scope=agent-hub");
+    const overview = screen.getByRole("link", { name: "Overview · other hub" });
+    expect(overview).toHaveAttribute("href", "/projects/other%20hub");
+    expect(overview).toHaveAttribute("aria-current", "page");
+    unmount();
+
+    renderSidebar("/projects/agent-hub/brain/now.md");
+    expect(screen.getByRole("link", { name: "Overview · agent-hub" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("keeps Portfolio at the root when All projects is in scope", () => {
+    renderSidebar("/sessions");
+
+    expect(screen.getByRole("link", { name: "Portfolio" })).toHaveAttribute("href", "/");
+  });
+
   it("shows Brain under Knowledge for the project in scope", () => {
     renderSidebar("/sessions?scope=agent-hub");
 

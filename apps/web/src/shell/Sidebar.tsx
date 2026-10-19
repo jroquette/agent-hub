@@ -16,6 +16,26 @@ export interface SidebarCounts {
 
 type CountKey = keyof SidebarCounts;
 
+const OVERVIEW_ID = "portfolio";
+
+/**
+ * The top item: the Portfolio with All projects in scope, else the overview of the project open or
+ * in scope, so a project's own page is one click away, as Brain and Toolkit are.
+ */
+export function overviewItem(
+  open: string | null,
+  scope: string | null,
+): { label: string; to: string; icon: IconName } {
+  const project = open ?? scope;
+  return project === null
+    ? { label: "Portfolio", to: "/", icon: "layout-dashboard" }
+    : {
+        label: `Overview · ${project}`,
+        to: `/projects/${encodeURIComponent(project)}`,
+        icon: "folder-kanban",
+      };
+}
+
 const BRAIN_ID = "brain";
 /** Where Brain goes with All projects in scope: a project picker. */
 const BRAIN_PICKER = "/knowledge/brain";
@@ -73,7 +93,8 @@ interface NavGroup {
 }
 
 /**
- * The sitemap (D20, AGH-201 D3), regrouped by what the developer comes to do: Portfolio on top, the
+ * The sitemap (D20, AGH-201 D3), regrouped by what the developer comes to do: Portfolio on top (the
+ * project overview once a project is open or in scope, see `overviewItem`), the
  * agents' Work (Sessions carries the live badge, ADR 0033; Workflow runs shows once a workflow has
  * run), the project's Knowledge as flat items (Brain and Skills follow the project in scope, see
  * `brainLink` and `skillsLink`), and the hub's own Health and Settings in the footer. Metrics,
@@ -81,7 +102,7 @@ interface NavGroup {
  */
 export const NAV: readonly NavGroup[] = [
   {
-    items: [{ id: "portfolio", label: "Portfolio", to: "/", icon: "layout-dashboard" }],
+    items: [{ id: OVERVIEW_ID, label: "Portfolio", to: "/", icon: "layout-dashboard" }],
   },
   {
     group: "Work",
@@ -168,6 +189,9 @@ export function Sidebar({ counts, showRuns = true, onShortcuts }: SidebarProps) 
   const skillsTo = skillsLink(openSkills?.params.project ?? null, scope);
   const openConfig = useMatch("/projects/:project/*");
   const configTo = configLink(openConfig?.params.project ?? null, scope);
+  const overview = overviewItem(openConfig?.params.project ?? null, scope);
+  const resolve = (item: NavItem): NavItem =>
+    item.id === OVERVIEW_ID ? { ...item, ...overview } : item;
   const itemTo = (item: NavItem): string =>
     item.id === BRAIN_ID
       ? brainTo
@@ -177,14 +201,15 @@ export function Sidebar({ counts, showRuns = true, onShortcuts }: SidebarProps) 
           ? configTo
           : item.to;
 
-  const renderItem = (item: NavItem) => {
+  const renderItem = (navItem: NavItem) => {
+    const item = resolve(navItem);
     if (item.onlyWhenAny && !showRuns) return null;
     const count = item.countKey ? counts[item.countKey] : undefined;
     return (
       <NavLink
         key={item.id}
         to={itemTo(item)}
-        end={item.to === "/"}
+        end={item.id === OVERVIEW_ID}
         className="ah-nav-item"
         title={item.label}
         aria-label={accessibleName(item, count)}
