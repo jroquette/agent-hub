@@ -172,12 +172,14 @@ export interface CopyButtonProps {
   /** The accessible name before copying ("Copy command"); "Copied" or "Copy failed" for 1.5 s after. */
   label: string;
   className?: string | undefined;
+  /** The icon alone, `label` as its tooltip: for a tight row. Same feedback, announced. */
+  compact?: boolean | undefined;
 }
 /**
  * A small ghost "Copy" button that copies `text`, then shows and announces "Copied" only when the
  * clipboard took it, and "Copy failed" otherwise, for a moment.
  */
-export function CopyButton({ text, label, className }: CopyButtonProps) {
+export function CopyButton({ text, label, className, compact = false }: CopyButtonProps) {
   const [shown, markShown] = useCopied();
   const [ok, setOk] = useState(true);
   const mounted = useRef(true);
@@ -195,6 +197,7 @@ export function CopyButton({ text, label, className }: CopyButtonProps) {
         variant="ghost"
         icon={shown ? (ok ? "check" : "circle-alert") : "copy"}
         className={className}
+        title={compact ? outcome || label : undefined}
         onClick={() => {
           void writeClipboard(text).then((copied) => {
             if (!mounted.current) return;
@@ -204,7 +207,7 @@ export function CopyButton({ text, label, className }: CopyButtonProps) {
         }}
         aria-label={outcome || label}
       >
-        {outcome || "Copy"}
+        {!compact && (outcome || "Copy")}
       </Button>
       <span className="ah-sr" role="status">
         {outcome}

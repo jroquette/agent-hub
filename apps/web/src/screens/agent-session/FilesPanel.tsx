@@ -280,33 +280,77 @@ function Breakable({ text }: { text: string }) {
   );
 }
 
-/** The folder every listed file is under, the session's worktree (its branch) in bold when the
- * folder is inside it, the home folder as `~`; the full path one click away. */
+/** One line that fits its width, however the list is resized: cut in the middle with an
+ * ellipsis, its `tail` (a file's extension, a folder's last name) always shown; the whole text
+ * on hover. Measured by the browser, not by characters, so it follows the split. */
+function FitText({
+  text,
+  tail,
+  className,
+}: {
+  text: string;
+  tail: number;
+  className?: string | undefined;
+}) {
+  const cut = Math.max(0, text.length - tail);
+  return (
+    <span className={cx("as-fit", className)} title={text}>
+      <span className="as-fit-head">{text.slice(0, cut)}</span>
+      <span className="as-fit-tail">{text.slice(cut)}</span>
+    </span>
+  );
+}
+
+/** How much of a file name stays whole: its extension and the few characters before it. */
+const nameTail = (name: string) => {
+  const dot = name.lastIndexOf(".");
+  return Math.min(name.length, (dot > 0 ? name.length - dot : 0) + 6);
+};
+/** How much of a folder stays whole: its last name (at most 28 characters). */
+const folderTail = (folder: string) =>
+  Math.min(folder.length, Math.min(28, folder.length - folder.lastIndexOf("/")));
+
+const WORKTREE = /^(.*\/)?([^/]+)\/\.claude\/worktrees\/([^/]+)(\/.*)?$/;
+const HOME = /^(?:\/Users\/[^/]+|\/home\/[^/]+)(?=\/|$)/;
+
+/** The folder every listed file is under, on one line: a worktree as its repo and its name (the
+ * branch's folder, in bold), else the session's folder in bold when the root is inside it, else
+ * the path with the home folder as `~`. The full path on hover and one click away. */
 function RootLine({ base, workdirLabel }: { base: string; workdirLabel: string | undefined }) {
   const path = base.slice(0, -1);
-  // A worktree is labelled `<repo>/<name>` and lives in `<repo>/.claude/worktrees/<name>/`; a
-  // repo or the hub is labelled with its folder's name.
-  const slash = workdirLabel?.indexOf("/") ?? -1;
-  const marker = !workdirLabel
-    ? null
-    : slash > 0
-      ? `/${workdirLabel.slice(0, slash)}/.claude/worktrees/${workdirLabel.slice(slash + 1)}/`
-      : `/${workdirLabel}/`;
-  const at = marker ? `${path}/`.indexOf(marker) : -1;
-  let lead = "";
-  let rest = path.replace(/^(?:\/Users\/[^/]+|\/home\/[^/]+)(?=\/|$)/, "~");
-  if (marker && at >= 0 && workdirLabel) {
-    lead = workdirLabel;
-    rest = path.slice(at + marker.length - 1);
+  const worktree = WORKTREE.exec(path);
+  let body;
+  if (worktree) {
+    const [, , repo = "", name = "", rest = ""] = worktree;
+    body = (
+      <>
+        <span className="as-files-root-repo">{repo}</span>
+        <Icon name="git-branch" size="sm" />
+        <FitText text={name} tail={Math.min(name.length, 12)} className="as-files-root-lead" />
+        {rest && <FitText text={rest} tail={folderTail(rest)} className="as-files-root-rest" />}
+      </>
+    );
+  } else {
+    const marker = workdirLabel ? `/${workdirLabel}/` : null;
+    const at = marker ? `${path}/`.indexOf(marker) : -1;
+    if (marker && workdirLabel && at >= 0) {
+      const rest = path.slice(at + marker.length - 1);
+      body = (
+        <>
+          <FitText text={workdirLabel} tail={12} className="as-files-root-lead" />
+          {rest && <FitText text={rest} tail={folderTail(rest)} className="as-files-root-rest" />}
+        </>
+      );
+    } else {
+      const shown = path.replace(HOME, "~");
+      body = <FitText text={shown} tail={folderTail(shown)} className="as-files-root-rest" />;
+    }
   }
   return (
-    <div className="as-files-root ah-small">
+    <div className="as-files-root ah-small" title={path}>
       <span className="ah-subtle">In</span>
-      <span className="as-files-root-path">
-        {lead && <b>{lead}</b>}
-        <Breakable text={rest} />
-      </span>
-      <CopyButton text={path} label="Copy folder path" className="as-files-copy" />
+      {body}
+      <CopyButton text={path} label="Copy folder path" className="as-files-copy" compact />
     </div>
   );
 }
@@ -413,9 +457,7 @@ function FileList({
           {folder && (
             <div className="as-files-folder ah-small">
               <Icon name="folder" size="sm" />
-              <span>
-                <Breakable text={folder.slice(0, -1)} />
-              </span>
+              <FitText text={folder.slice(0, -1)} tail={folderTail(folder.slice(0, -1))} />
             </div>
           )}
           <ul aria-label={folder ? `Folder ${folder.slice(0, -1)}` : undefined}>
@@ -443,9 +485,11 @@ function FileList({
                     }}
                   >
                     <KindBadge created={file.created} />
-                    <span className="as-files-nav-name">
-                      <Breakable text={name.slice(name.lastIndexOf("/") + 1)} />
-                    </span>
+                    <FitText
+                      text={name.slice(name.lastIndexOf("/") + 1)}
+                      tail={nameTail(name.slice(name.lastIndexOf("/") + 1))}
+                      className="as-files-nav-name"
+                    />
                     <OpenThreads path={file.path} />
                     <Stats added={file.added} removed={file.removed} />
                   </button>
