@@ -41,7 +41,14 @@ import {
 } from "./filters";
 import { skillRoute as skillRouteOf } from "./queries";
 import { newWorkflowRoute } from "./routes";
-import { HookStateTags, KIND_ICON, KIND_NAME, OriginText, SkillCard } from "./SkillCard";
+import {
+  ContinueDraft,
+  HookStateTags,
+  KIND_ICON,
+  KIND_NAME,
+  OriginText,
+  SkillCard,
+} from "./SkillCard";
 import { WorkflowList } from "../workflows";
 import { newDraftRoute, studioRoute } from "./Studio";
 import { openDrafts, type StoredDraft } from "./studioDrafts";
@@ -210,28 +217,6 @@ function DraftsCard({
   );
 }
 
-/** "Continue draft" on an item that has an open edit draft. */
-function ContinueDraft({
-  project,
-  draft,
-  name,
-}: {
-  project: string;
-  draft: StoredDraft;
-  name: string;
-}) {
-  return (
-    <AppLink
-      href={studioRoute(project, draft.draftId)}
-      className="ah-continue-draft"
-      aria-label={`Continue your draft of ${name} in the Studio`}
-    >
-      <Icon name="file-pen" size="sm" />
-      Continue draft
-    </AppLink>
-  );
-}
-
 /** A hook as one row: matcher, command, name, where it comes from and its state. */
 function HookRow({
   item,
@@ -266,7 +251,7 @@ function HookRow({
               {item.diagnostics_count}
             </span>
           )}
-          {draft && <ContinueDraft project={project} draft={draft} name={item.name} />}
+          {draft && <ContinueDraft href={studioRoute(project, draft.draftId)} name={item.name} />}
         </span>
       </article>
     </li>
