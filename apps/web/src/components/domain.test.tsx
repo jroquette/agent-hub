@@ -494,9 +494,7 @@ describe("GoldenPathStepper", () => {
       acceptance: "Acceptance",
       shipped: "Shipped",
     });
-    expect(Object.keys(GOLDEN_STEP_LABEL)).toEqual(
-      aGoldenPath().steps.map((step) => step.name),
-    );
+    expect(Object.keys(GOLDEN_STEP_LABEL)).toEqual(aGoldenPath().steps.map((step) => step.name));
   });
 
   it("shows Not recorded for an unrecorded step (AC-1.6)", () => {

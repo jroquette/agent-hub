@@ -302,7 +302,9 @@ describe("FeaturesScreen", () => {
     const bar = within(row).getByRole("img", { name: /^Golden path: Plan\./ });
     const name = bar.getAttribute("aria-label") ?? "";
     expect(name).toContain("Build: unknown (Linear not connected)");
-    expect(name).toContain("Acceptance: partial · Ticket evals cover 2 of 9 ACs (Plan is not done)");
+    expect(name).toContain(
+      "Acceptance: partial · Ticket evals cover 2 of 9 ACs (Plan is not done)",
+    );
     expect(name).toContain("Shipped: blocked (Plan is not done)");
     expect(
       [...bar.querySelectorAll("[data-state]")].map((s) => s.getAttribute("data-state")),
