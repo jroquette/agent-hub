@@ -23,7 +23,6 @@ there too. ``events`` drains that queue until ``Exited``.
 import asyncio
 import base64
 import os
-import re
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import suppress
@@ -39,6 +38,7 @@ from claude_agent_sdk import (
 )
 
 from agent_hub.claude_sessions.capabilities import CapabilityCache, Runner, bounded_runner, detect
+from agent_hub.claude_sessions.invocations import SessionNames, cli_prompt
 from agent_hub.claude_sessions.message_mapping import EventMapper
 from agent_hub.claude_sessions.options import MAX_BUFFER_BYTES, claude_path, sdk_options
 from agent_hub.claude_sessions.permission_bridge import INTERRUPTED, PermissionBridge
@@ -70,14 +70,6 @@ NOT_STARTED: Final = "claude did not start"
 
 type ClientFactory = Callable[..., ClaudeSDKClient]
 
-# The composer offers each subagent as ``/agent-<name>``; the CLI calls one on ``@agent-<name>``.
-_AGENT_COMMAND = re.compile(r"^/(?=agent-[\w:.@-]+(?:\s|$))")
-
-
-def _prompt(text: str) -> str:
-    """``text`` as the CLI reads it: a leading ``/agent-<name>`` becomes its ``@agent-<name>``."""
-    return _AGENT_COMMAND.sub("@", text, count=1)
-
 
 @dataclass
 class _Session:
@@ -92,6 +84,7 @@ class _Session:
     closing: bool = False
     closed: asyncio.Event = field(default_factory=asyncio.Event)
     exited: bool = False
+    names: SessionNames = field(default_factory=SessionNames)
 
     def emit(self, event: DriverEvent) -> None:
         """Queue ``event`` (nothing after ``Exited``) and count the turns still open."""
@@ -189,7 +182,9 @@ class ClaudeSdkSessionDriver:
             with suppress(Exception):
                 await client.disconnect()
             raise SessionsUnavailableError(NOT_STARTED) from failed
-        session = _Session(client=client, bridge=bridge, queue=queue)
+        session = _Session(
+            client=client, bridge=bridge, queue=queue, names=SessionNames.from_server_info(info)
+        )
         pid = None if info is None else info.get("pid")
         session.pid = pid if isinstance(pid, int) and pid > 0 else None
         handle = DriverHandle(f"claude-{uuid.uuid4().hex}")
@@ -204,7 +199,7 @@ class ClaudeSdkSessionDriver:
         turn."""
         session = self._open(handle)
         session.turns += 1
-        text = _prompt(text)
+        text = cli_prompt(text, session.names)
         try:
             if images:
                 await session.client.query(_single(_user_message(text, images)))
