@@ -314,7 +314,7 @@ function Thread({
           ))}
         </ol>
       )}
-      {!closed && (onReply || count > 0) && (
+      {!closed && (onReply !== undefined || count > 0) && (
         <footer className="as-thread-foot">
           {onReply && replying ? (
             <div className="as-thread-reply-row">
