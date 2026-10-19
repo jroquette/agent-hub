@@ -29,6 +29,7 @@ from agent_hub.core.scenarios.action_document import (
 )
 from agent_hub.core.workflows.catalog import WorkflowFile
 from agent_hub.core.workflows.document import WorkflowLoadError, WorkflowProblem
+from agent_hub.generator.git_answers import git_answer
 from agent_hub.generator.workflow_discovery import (
     PackPathError,
     read_inside_pack,
@@ -67,14 +68,63 @@ class ActionDiscovery:
 
 
 def discover_actions(hub_root: Path) -> ActionDiscovery:
-    """The hub's actions; a missing ``actions/`` reads as none. Every action is a draft here."""
+    """The hub's actions, each a draft unless committed; a missing ``actions/`` reads as none."""
     scan = _Scan(hub_root=hub_root)
     folder = hub_root / HUB_ACTIONS_FOLDER
     if folder.is_symlink():
         scan.problem(folder, "the actions folder is a link; it is not read")
     else:
         scan.root(folder)
-    return ActionDiscovery(actions=tuple(scan.found), problems=tuple(scan.problems))
+    uncommitted = _uncommitted(hub_root) if scan.found else None
+    actions = tuple(
+        entry.model_copy(update={"draft": _is_draft(entry, uncommitted)}) for entry in scan.found
+    )
+    return ActionDiscovery(actions=actions, problems=tuple(scan.problems))
+
+
+def _uncommitted(hub_root: Path) -> frozenset[str] | None:
+    """The hub-relative paths under ``actions/`` that differ from ``HEAD`` (staged, changed,
+    untracked or ignored; a folder ends in ``/``), from one ``git status``; ``None`` when the
+    hub is not in a git checkout or git cannot answer."""
+    prefix = git_answer(("rev-parse", "--show-prefix"), cwd=hub_root)
+    if prefix is None or prefix[0] != 0:
+        return None
+    status = git_answer(
+        (
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignored=matching",
+            "--",
+            HUB_ACTIONS_FOLDER,
+        ),
+        cwd=hub_root,
+    )
+    if status is None or status[0] != 0:
+        return None
+    # Porcelain paths are relative to the repository's top; the hub may sit below it.
+    hub_prefix = os.fsdecode(prefix[1]).strip("\n")
+    paths: set[str] = set()
+    records = iter(status[1].split(b"\0"))
+    for record in records:
+        if not record:
+            continue
+        # ``XY <path>``; a rename or copy is followed by a record holding its source path alone.
+        paths.add(os.fsdecode(record[3:]).removeprefix(hub_prefix))
+        if record[:1] in {b"R", b"C"} or record[1:2] in {b"R", b"C"}:
+            paths.add(os.fsdecode(next(records, b"")).removeprefix(hub_prefix))
+    return frozenset(paths)
+
+
+def _is_draft(entry: ActionEntry, uncommitted: frozenset[str] | None) -> bool:
+    if uncommitted is None:
+        return True
+    return any(
+        path in uncommitted
+        or any(folder.endswith("/") and path.startswith(folder) for folder in uncommitted)
+        for path in (entry.document_path, entry.script_path)
+    )
 
 
 @dataclass(kw_only=True, slots=True)
