@@ -991,6 +991,7 @@ export function aSuggestions(): PermissionSuggestion[] {
 export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSession {
   return {
     changed_files: [],
+    review_targets: [],
     claude_session_id: anId(1, "5091b986"),
     cloud_id: null,
     cost_usd: "0.0012",

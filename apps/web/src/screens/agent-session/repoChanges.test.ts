@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { changedFiles, type ToolView } from "./model";
-import { repoSummary, withRepoChanges, type RepoChanges, type RepoFileChange } from "./repoChanges";
+import {
+  repoSummary,
+  repoState,
+  withRepoChanges,
+  type RepoChanges,
+  type RepoFileChange,
+} from "./repoChanges";
 
 const tool = (id: string, name: string, input: Record<string, unknown>): ToolView => ({
   id,
@@ -35,6 +41,7 @@ const file = (path: string, fields: Partial<RepoFileChange> = {}): RepoFileChang
 });
 
 const repo = (fields: Partial<RepoChanges> = {}): RepoChanges => ({
+  source: "worktree",
   root: "/w/api",
   label: "api/tip-1",
   branch: "tip-1",
@@ -130,5 +137,52 @@ describe("repoSummary", () => {
   it("names the branch, its base and how many commits", () => {
     expect(repoSummary([repo()])).toBe("api/tip-1: tip-1 against origin/main · 2 commits");
     expect(repoSummary(undefined)).toBeNull();
+  });
+});
+
+describe("repoState", () => {
+  const pull = (fields: Partial<NonNullable<RepoChanges["pull_request"]>> = {}) => ({
+    number: 545,
+    url: "https://github.com/acme/ui/pull/545",
+    state: "OPEN",
+    head_sha: "h1",
+    ...fields,
+  });
+
+  it.each([
+    ["no pull request yet", repo({ head_sha: "h1", files: [] }), "No pull request yet"],
+    [
+      "in sync",
+      repo({ head_sha: "h1", files: [], pull_request: pull() }),
+      "In sync with the pull request",
+    ],
+    [
+      "uncommitted since the PR",
+      repo({
+        head_sha: "h1",
+        pull_request: pull(),
+        files: [file("/w/api/a.py", { uncommitted: true })],
+      }),
+      "1 file changed since the pull request",
+    ],
+    [
+      "local commits the PR lacks",
+      repo({ head_sha: "h2", pull_request: pull() }),
+      "Commits not in the pull request yet",
+    ],
+    ["merged", repo({ pull_request: pull({ state: "MERGED" }) }), "Pull request merged"],
+    ["worktree removed", repo({ source: "recorded" }), "Worktree removed: its recorded commits"],
+    [
+      "uncommitted, no PR",
+      repo({
+        files: [
+          file("/w/api/a.py", { uncommitted: true }),
+          file("/w/api/b.py", { uncommitted: true }),
+        ],
+      }),
+      "2 files not committed",
+    ],
+  ])("%s", (_, given, text) => {
+    expect(repoState(given).text).toBe(text);
   });
 });

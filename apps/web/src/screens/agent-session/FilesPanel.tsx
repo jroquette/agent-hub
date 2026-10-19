@@ -9,8 +9,17 @@ import {
   type KeyboardEvent,
 } from "react";
 
-import { Button, CopyButton, Icon, Markdown, SegmentedControl, Tabs } from "../../components";
+import {
+  Button,
+  CopyButton,
+  Icon,
+  Markdown,
+  SegmentedControl,
+  StatusBadge,
+  Tabs,
+} from "../../components";
 import { cx } from "../../lib/cx";
+import { githubPullHref } from "../../lib/safeHref";
 import { readStored, writeStored } from "../../lib/storage";
 import { useDrawerWidth, useListWidth } from "./DrawerResize";
 import { ReviewCommentsContext, ReviewDiff, type ReviewComments } from "./ReviewDiff";
@@ -26,7 +35,7 @@ import {
 import { commonDir, type ChangedFile, type FileChange } from "./model";
 import { useRepoCommitDiff } from "./queries";
 import { writtenText } from "./netDiff";
-import type { FileCommit } from "./repoChanges";
+import { repoState, type FileCommit, type RepoChanges } from "./repoChanges";
 
 /** What each tab says about its files, under the tabs. */
 const KIND_NOTE: Record<FileKind, string> = {
@@ -844,6 +853,9 @@ export interface FilesPanelProps {
   workdirLabel?: string | undefined;
   /** The branch and base git compared the code with (`repoSummary`), when it read the repos. */
   repoNote?: string | null | undefined;
+  /** The repositories git read for the review: each shows its branch, base, pull request and
+   * where it stands against it. */
+  repos?: readonly RepoChanges[] | undefined;
 }
 
 /**
@@ -862,6 +874,7 @@ export function FilesPanel({
   comments,
   workdirLabel,
   repoNote,
+  repos,
 }: FilesPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const [panel, setPanel] = useState<HTMLElement | null>(null);
@@ -1009,6 +1022,9 @@ export function FilesPanel({
               </p>
             </div>
           )}
+          {(kind?.kind ?? "code") === "code" && repos && repos.length > 0 && (
+            <RepoList repos={repos} />
+          )}
           <div
             className={cx("as-files-body", wide && "as-files-split")}
             style={wide ? list.style : undefined}
@@ -1044,6 +1060,46 @@ export function FilesPanel({
         </ReviewCommentsContext.Provider>
       )}
     </aside>
+  );
+}
+
+const REPO_TONE = { done: "done", waiting: "waiting", muted: "ended" } as const;
+
+/** One line per repository of the review: its folder, branch and base, its pull request (a
+ * link) and where it stands against it. */
+function RepoList({ repos }: { repos: readonly RepoChanges[] }) {
+  return (
+    <ul className="as-files-repos ah-small" aria-label="Repositories">
+      {repos.map((repo) => {
+        const state = repoState(repo);
+        const pull = repo.pull_request;
+        const href = pull ? githubPullHref(pull.url) : null;
+        const count = repo.commits.length;
+        return (
+          <li key={repo.root} className="as-files-repo">
+            <Icon name="git-branch" size="sm" />
+            <span className="as-files-repo-name" title={repo.root}>
+              <b>{repo.branch ?? repo.label}</b>
+              {repo.base && <span className="ah-subtle"> → {repo.base}</span>}
+              <span className="ah-subtle">
+                {" "}
+                · {String(count)}
+                {repo.truncated ? "+" : ""} {count === 1 ? "commit" : "commits"}
+              </span>
+            </span>
+            {pull &&
+              (href ? (
+                <a href={href} target="_blank" rel="noopener noreferrer">
+                  PR #{pull.number} <span className="ah-sr">(opens in a new tab)</span>
+                </a>
+              ) : (
+                <span>PR #{pull.number}</span>
+              ))}
+            <StatusBadge status={REPO_TONE[state.tone]} label={state.text} quiet />
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
