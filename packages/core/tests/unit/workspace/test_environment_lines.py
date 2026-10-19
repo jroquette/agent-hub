@@ -193,6 +193,8 @@ def test_shows_url_and_resource_as_code_when_block_built(
     block = brief_block(effective_environments(config, LocalConfig()))
 
     assert block[-2] == f"- `demo-api/orders` on `staging`: {shown}"
+
+
 def _w_and_lc() -> environment_lines.EffectiveEnvironments:
     """The spec's ``W`` and ``Lc``, with ``Lc`` tightening ``staging`` to ``read``."""
     config = HubConfig.model_validate(an_environments_document())
