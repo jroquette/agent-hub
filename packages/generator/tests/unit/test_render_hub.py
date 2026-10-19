@@ -2820,9 +2820,11 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-59: re-pinned when rule 4 named the script variables.
 # AGH-23: re-pinned when "What lives here" gained the superpowers bullet.
 # AGH-48: re-pinned when "Brain rules" gained the routing list.
-DEMO_AGENTS_SHA256 = "ecdf8e1bb61d43d68dde3ee146208b750daaf9d03b3ea577c1f48b507c44ac66"
+# AGH-319: re-pinned when Cross-repo rules gained rule 6 (plain-language) and two lines
+# were shortened.
+DEMO_AGENTS_SHA256 = "8ef7ad3e57f1f54af00cd361ed373759277205464765b967aa501c4b585f9c83"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "bf6e98407e1fb28b30cd7dfbf3ae3e71cbfe23c6ab179843eb05757115bec556",
+    "AGENTS.md": "deb951e68e5c1f71fbf1230deab6ffc41b2649a9bc8fdf3cfd031fdbd26a4e6c",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
