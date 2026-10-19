@@ -85,7 +85,7 @@ Chosen option: 1.
 - Bad: two more writers of config files that were write-once; `hub env` guards against concurrent edits but a writer
   between its check and its replace can still be overwritten (a narrow window, stated in environments.md).
 - Bad: blind spots: variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` reach Bash but not the guard
-  hook; `hub run`'s implement sessions run without the hub's hooks (an older gap, AGH-278); plugin-cache mode with
+  hook; plugin-cache mode with
   `$HUB_CONFIG` reads no `hub.local.json`; MCP tools, WebSearch and subagent (Task) prompts are not checked, nor files
   a program opens without the command naming them (`python sync.py` reading `config/app.json`, `find … -exec cat`),
   tool output, obfuscated names, Grep's search regex and edit contents.
