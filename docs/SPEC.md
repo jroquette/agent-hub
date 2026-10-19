@@ -657,6 +657,29 @@ Workflow runs list filters by workflow and failure kind.
 - The Portfolio, Brain note frontmatter and the shell's scrolling are calmer; every screen above has a visual test on
   the demo data ([TESTING.md](TESTING.md)).
 
+**Playground delivery 2 (AGH-384, built).** What the owner validated in the playground after v0.17.0, as one
+change; the live-session limit is [ADR 0041](adr/0041-no-live-session-limit-in-the-playground.md):
+
+- **Features** leads In progress with the features that need you (a warning, or a live session waiting on you), and
+  the sidebar badges Features with their count. **Feature detail**: per ticket an AC meter and a last PR column
+  (`TicketRow.pr_url`, from its review record), AC links into Criteria with a hover preview, the evals folded by
+  ticket as a tree with a Waiting on you callout, and the owner sign-off of one eval's owner steps (SHIP or NO-SHIP
+  with a note). A ticket blocked only by one in review starts on the blocker's branch:
+  `hub worktree --stack-on <PR url>` creates that repo's worktree from the pull request's head branch and the other repos' from their default
+  branch (`--base BRANCH` starts every repo from one branch); a session belongs to the issue its first prompt names.
+- **Session review**: the changed files split by kind (Code, Reviews & specs, Learnings, Scratch; only code is
+  reviewed and counted), read from git per repository (`GET /agent-sessions/{id}/repo-changes`: the branch against
+  the branch it was started from, files, commits, `…/repo-changes/commit` for one commit's diff of a file), with each
+  repository's pull request and state; what a read found is recorded on the session (`review_targets`, migration
+  0007), so the review outlives its worktree.
+- **Chat**: opens at the latest message or the pending card; open questions answered by options; links to URLs,
+  pull requests, tickets and review files; the slash menu holds the hub's skills and agents anywhere in the message.
+  Background agents and commands stay visible after a turn (task records, a Background drawer, a closing card,
+  `POST /agent-sessions/{id}/tasks/{task_id}/stop`), and a session on a ticket is named by the ticket.
+- **Toolkit** holds Workflows as a tab (`/workflows` redirects), with kind tabs, a filter toolbar and Your drafts;
+  **Hub config** shows one view of the values agents use and who set each. Generated hubs' `/feature` has
+  implementers change files with Edit or Write only.
+
 ## Data sources and event model
 
 Almost all of the data already exists. The platform normalizes five sources into a single event stream per session.
