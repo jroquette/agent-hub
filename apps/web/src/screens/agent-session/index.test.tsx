@@ -10,8 +10,11 @@ import { AppShell } from "../../shell/AppShell";
 import { seriousViolations } from "../../testing/axe";
 import {
   aCapabilities,
+  aCatalogItem,
   aPage,
+  aProjectDetail,
   aProjectSummary,
+  aSkillCatalog,
   aDeltaFrame,
   aLogRecord,
   aPermissionRequest,
@@ -1536,5 +1539,81 @@ describe("AgentSessionScreen (review-comments)", () => {
     const panel = screen.getByRole("complementary", { name: "Changed files" });
     expect(within(panel).getByText("+a = 2", { exact: false })).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: /^Comment on/ })).toBeNull();
+  });
+});
+
+describe("AgentSessionScreen (chat-refs)", () => {
+  it("links a ticket Claude names to Linear, never one in your own message", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 3 }),
+        [EVENTS]: {
+          items: [
+            aLogRecord("init", { seq: 1 }),
+            aLogRecord("user.message", { seq: 2, body: { text: "Where is AGH-7?" } }),
+            aLogRecord("text", { seq: 3, body: { block: 0, text: "Moved AGH-7 to review." } }),
+          ],
+          next_after: null,
+        },
+        "/api/v1/projects/agent-hub": aProjectDetail(),
+        "/api/v1/tracker/linear": {
+          connected: true,
+          source: "settings",
+          account: {
+            name: "Ada Example",
+            email: "ada@example.com",
+            workspace: "Example",
+            url: "https://linear.app/example",
+          },
+          problem: null,
+          problem_kind: null,
+          checked_at: "2026-10-17T12:00:00Z",
+          key_path: "/home/dev/.config/agent-hub/linear-api-key",
+        },
+      }),
+    );
+
+    const link = await screen.findByRole("link", { name: /^AGH-7\b/ });
+    expect(link).toHaveAttribute("href", "https://linear.app/example/issue/AGH-7");
+    expect(screen.getAllByRole("link", { name: /^AGH-7\b/ })).toHaveLength(1);
+    expect(screen.getByText("Where is AGH-7?")).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (hub-slash-menu)", () => {
+  it("lists the hub's skills and agents first in the / menu, tagged from the hub", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 2 }),
+        [EVENTS]: {
+          items: [
+            aLogRecord("init", {
+              seq: 1,
+              body: { slash_commands: ["compact", "hub-workflow:fix"] },
+            }),
+            aLogRecord("result", { seq: 2, body: { subtype: "success" } }),
+          ],
+          next_after: null,
+        },
+        "/api/v1/projects/agent-hub/skills": aSkillCatalog({
+          project: "agent-hub",
+          items: [
+            aCatalogItem({ name: "fix", description: "Fix a bug" }),
+            aCatalogItem({ kind: "agent", name: "researcher", mode: null }),
+          ],
+        }),
+      }),
+    );
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "/");
+
+    const options = within(screen.getByRole("listbox", { name: "Commands" })).getAllByRole(
+      "option",
+    );
+    expect(options.map((option) => option.querySelector(".as-slash-command")?.textContent)).toEqual(
+      ["/fix", "/agent-researcher", "/compact"],
+    );
+    expect(screen.getByRole("option", { name: "/fix, from the hub" })).toBeInTheDocument();
   });
 });
