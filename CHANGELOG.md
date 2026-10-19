@@ -13,10 +13,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub brief` prints an `## Environments` block (both files: access, `PRODUCTION`, source, credential names, endpoints
+  and blocked words, at most 60 lines), and the hooks' fallback brief lists the environments' names and access
+  (AGH-286). `hub doctor`'s new `environments.production` rule names each production environment: a warning for
+  `write` or `ask` access, info for `read`; turn it off or retune it in `doctor.rules`. Environment and service text
+  now refuses line-separator and bidi characters, and a secret-shaped blocked word is refused.
 - `hub setup` has an environments step (AGH-289): on a terminal without `--yes` it asks whether to declare your own
   environments, then each one's name, access and whether it is production (no unless you answer `y`), and adds them to
   `hub.local.json` only, checked as `hub env add --local` checks them. An `environments` item lists the declared
-  environments, with a `production environment:` sub-line per production one; a hub with none prints no line.
+  environments, with a `production environment:` sub-line per production one; a hub with none prints no line,
+  and a `hub.local.json` that conflicts with `hub.json` makes it missing (exit 1).
 
 ## [0.17.0] - 2026-10-19
 

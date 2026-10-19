@@ -5,7 +5,8 @@
 docs/design/project-config.md § Versioning: a pin other than the running ``hub`` is only a
 ``platform.version`` finding (the pinned release judges the rest, the developer's
 ``hub.local.json`` included); every other problem is a ``config.schema`` finding, and so is each
-problem of ``hub.local.json``. ``config.identity`` names the branch prefix a developer gets
+problem of ``hub.local.json``, its environments, repos and services against a valid ``hub.json``
+included. ``config.identity`` names the branch prefix a developer gets
 when no file sets one (docs/design/developer-identity.md). ``config.stop_gate`` names each repo
 whose ``check_fast`` is absent, empty or blank: the Stop hook has no fast gate to run for it.
 """
@@ -24,6 +25,7 @@ from agent_hub.core.hub_config.doctor_rules import (
     Severity,
 )
 from agent_hub.core.hub_config.document_check import check_hub_document
+from agent_hub.core.hub_config.effective_environments import local_environment_problems
 from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
@@ -71,7 +73,11 @@ def _config_schema(snapshot: DoctorSnapshot) -> Iterable[Finding]:
     if isinstance(config, ConfigFailure) and config.pin is not None:
         return ()
     hub = config.problems if isinstance(config, ConfigFailure) else ()
-    local = () if isinstance(snapshot.local, LocalConfig) else snapshot.local
+    local = snapshot.local
+    if isinstance(local, LocalConfig):
+        # Both files valid: the local one must not loosen or redefine what hub.json declares,
+        # as the CLI refuses it (effective_or_problems).
+        local = local_environment_problems(config, local) if isinstance(config, HubConfig) else ()
     return (
         *(_schema_finding(CONFIG_PATH, problem, fix=CONFIG_SCHEMA_FIX) for problem in hub),
         *(_schema_finding(LOCAL_FILE, problem, fix=LOCAL_FILE_FIX) for problem in local),
