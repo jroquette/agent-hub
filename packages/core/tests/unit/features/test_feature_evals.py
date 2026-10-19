@@ -9,6 +9,7 @@ from agent_hub.core.features.feature_evals import (
     LEGACY_DELIVERY,
     NOTE_SUFFIX,
     EvalCoverage,
+    acceptance_eval,
     eval_coverage,
     eval_records,
 )
@@ -468,3 +469,85 @@ def test_reads_who_ran_eval_when_provenance_given(
     (record,) = eval_records((an_eval("acme-1520.md", **fields),), None, slug=SLUG)
 
     assert (record.provenance, record.problem) == (expected, None)
+
+
+# two-level-flows AC-1.6 (AGH-323): the acceptance eval is the latest whole-feature eval.
+def test_acceptance_eval_is_latest_with_all_scope_when_ticket_evals_mixed() -> None:
+    heads = [
+        an_eval(
+            "feature.md", type="eval", verdict="SHIP", acs="all", evaluated_at="2026-10-01"
+        ),
+        an_eval(
+            "agh-1.md",
+            type="eval",
+            verdict="NO-SHIP",
+            tickets="[AGH-1]",
+            evaluated_at="2026-10-05",
+        ),
+    ]
+
+    first = acceptance_eval(eval_records(heads, None, slug=SLUG))
+    heads.append(
+        an_eval(
+            "feature-r2.md", type="eval", verdict="NO-SHIP", acs="all", evaluated_at="2026-10-06"
+        )
+    )
+    second = acceptance_eval(eval_records(heads, None, slug=SLUG))
+
+    assert first is not None
+    assert (first.delivery, first.verdict) == ("feature", "SHIP")
+    assert second is not None
+    assert (second.delivery, second.verdict) == ("feature-r2", "NO-SHIP")
+
+
+def test_acceptance_eval_is_none_when_only_ticket_evals() -> None:
+    heads = (
+        an_eval("agh-1.md", type="eval", verdict="SHIP", tickets="[AGH-1]"),
+        an_eval("agh-2.md", type="eval", verdict="SHIP", acs="[AC-7.1, AC-7.2]"),
+        an_eval("broken.md", verdict="SHIP"),
+    )
+
+    assert acceptance_eval(eval_records(heads, None, slug=SLUG)) is None
+
+
+# Amendment A6: a legacy eval.md with no scope frontmatter is a whole-feature eval.
+def test_legacy_eval_without_scope_is_whole_feature_when_no_frontmatter() -> None:
+    found = acceptance_eval(eval_records((), b"# Eval\n\n**Verdict: SHIP.**\n", slug=SLUG))
+
+    assert found is not None
+    assert (found.delivery, found.verdict, found.legacy) == ("legacy", "SHIP", True)
+
+
+def test_legacy_eval_with_listed_acs_is_not_whole_feature_when_scope_listed() -> None:
+    listed = b"---\nacs: [AC-7.1]\n---\n**Verdict: SHIP.**\n"
+    tickets = b"---\ntickets: [AGH-1]\n---\n**Verdict: SHIP.**\n"
+    every = b"---\nacs: all\n---\n**Verdict: NO-SHIP.**\n"
+
+    assert acceptance_eval(eval_records((), listed, slug=SLUG)) is None
+    assert acceptance_eval(eval_records((), tickets, slug=SLUG)) is None
+    found = acceptance_eval(eval_records((), every, slug=SLUG))
+    assert found is not None
+    assert found.verdict == "NO-SHIP"
+
+
+def test_acceptance_ties_go_to_the_conservative_verdict_when_same_instant() -> None:
+    heads = (
+        an_eval("feature.md", type="eval", verdict="SHIP", acs="all", evaluated_at="2026-10-06"),
+        an_eval(
+            "pr-api-3.md", type="eval", verdict="NO-SHIP", acs="all", evaluated_at="2026-10-06"
+        ),
+    )
+
+    found = acceptance_eval(eval_records(heads, None, slug=SLUG))
+
+    assert found is not None
+    assert (found.delivery, found.verdict) == ("pr-api-3", "NO-SHIP")
+
+
+def test_acceptance_eval_prefers_evals_file_when_legacy_also_whole() -> None:
+    heads = (an_eval("feature.md", type="eval", verdict="SHIP-WITH-OWNER-STEPS", acs="all"),)
+
+    found = acceptance_eval(eval_records(heads, b"**Verdict: NO-SHIP.**\n", slug=SLUG))
+
+    assert found is not None
+    assert (found.delivery, found.verdict) == ("feature", "SHIP-WITH-OWNER-STEPS")
