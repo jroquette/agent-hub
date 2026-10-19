@@ -173,6 +173,7 @@ def _get_paths(app: Any, slug: str) -> list[str]:
         "source": "hub-workflow",
         "name": "alpha",
         "file_id": "0" * 16,
+        "version_id": "01929a4e-7a11-7c00-8a00-00000000b001",
     }
     paths = []
     for path, methods in app.openapi()["paths"].items():
@@ -216,8 +217,8 @@ def test_leaves_key_never_exposed_when_linear_echoes_it(
     logged = caplog.text + "".join(repr(record.args) for record in caplog.records)
     assert sentinel not in logged
     # The key goes to Linear only as the Authorization header, read from the environment: the
-    # two reads above and the route sweep's.
-    assert world.linear.count == 3
+    # two reads above, the route sweep's tickets read and its Settings connection check.
+    assert world.linear.count == 4
     for _url, headers, document in world.linear.requests:
         assert headers["Authorization"] == sentinel
         assert sentinel not in json.dumps(document)

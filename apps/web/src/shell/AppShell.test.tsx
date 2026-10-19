@@ -81,6 +81,16 @@ describe("AppShell", () => {
     expect(router.state.location.pathname).toBe("/runs");
   });
 
+  it("AC-PG-38.2 opens Hub config with g c", () => {
+    const { router } = renderWithApi(<AppShell />, { routes });
+
+    fireEvent.keyDown(document.body, { key: "g" });
+    fireEvent.keyDown(document.body, { key: "c" });
+
+    // /config opens the project in scope's configuration, else the project picker.
+    expect(router.state.location.pathname).toBe("/config");
+  });
+
   it("one-tab: g s opens Sessions and g l, kept from Live, opens its grid", () => {
     const { router } = renderWithApi(<AppShell />, { routes });
 

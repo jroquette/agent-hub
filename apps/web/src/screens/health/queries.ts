@@ -1,7 +1,8 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
-import { apiKey, useApi } from "../../lib/api";
+import type { components } from "../../api/schema";
+import { apiKey, apiPost, useApi, type ApiProblem } from "../../lib/api";
 import { useGlobalStream } from "../../shell/GlobalStream";
 
 /** Doctor findings of every registered hub, or of the scoped project (D22: run on request). */
@@ -26,4 +27,16 @@ export function useLiveFindings(): void {
     }
     seen.current = errors;
   }, [client, errors]);
+}
+
+type DoctorFixResult = components["schemas"]["DoctorFixResult"];
+
+/** `POST /hubs/{id}/doctor-fix`: `hub doctor --fix` in the hub, then the findings read again. */
+export function useFixHub() {
+  const client = useQueryClient();
+  return useMutation<DoctorFixResult, ApiProblem, string>({
+    mutationFn: (hubId) =>
+      apiPost("/api/v1/hubs/{hub_id}/doctor-fix", {}, { path: { hub_id: hubId } }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["api"] }),
+  });
 }

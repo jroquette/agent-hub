@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import Any
 from unittest.mock import Mock
 
@@ -5,6 +6,7 @@ import pytest
 
 from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionList,
+    AgentSessionStatus,
     CloudSessionList,
     MessageAccepted,
     ResumableList,
@@ -13,9 +15,12 @@ from agent_hub.core.agent_sessions.agent_session import (
 from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
-from agent_hub.core.agent_sessions.records import LogRecordPage
+from agent_hub.core.agent_sessions.records import LogRecord, LogRecordPage
+from agent_hub.core.testing.agent_session_rig import build_rig
+from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
 from agent_hub.core.testing.read_model_builders import (
     AGENT_SESSION_ID,
+    STARTED,
     WORKDIR_ID,
     a_cloud_session,
     a_log_record,
@@ -180,3 +185,94 @@ def test_passes_cloud_commands_when_cloud_routes_called(
     assert (started.status_code, followed.status_code) == (201, 200)
     assert followed.json()["followups"] == 1
     assert cloud.follow_up.await_args.args[0] == "cse_01synthetic"
+
+
+WRITERS_SPEC = "brain/features/real_cost/spec.md"
+WRITERS_ABSOLUTE = f"/work/demo-hub/{WRITERS_SPEC}"
+OLDEST, READER, NEWEST, OTHER = (f"01929a4e-7a11-7c00-8a00-00000000c00{n}" for n in range(1, 5))
+
+
+def _tool_call(seq: int, name: str, path: str) -> LogRecord:
+    body = {"tool_use_id": f"t{seq}", "name": name, "input": {"file_path": path}}
+    return a_log_record("tool.call", seq, body=body)
+
+
+def _writers_store() -> InMemoryAgentSessionStore:
+    """Four ended sessions, a minute apart: the oldest wrote the spec, the next only read it,
+    the newest edited it, and the last wrote a file whose path only ends like it."""
+    store = InMemoryAgentSessionStore()
+    calls = {
+        OLDEST: [_tool_call(1, "Write", WRITERS_ABSOLUTE)],
+        READER: [_tool_call(1, "Read", WRITERS_ABSOLUTE)],
+        NEWEST: [_tool_call(1, "Edit", WRITERS_ABSOLUTE)],
+        OTHER: [_tool_call(1, "Write", "/work/demo-hub/xbrain/features/real_cost/spec.md")],
+    }
+    for minutes, (agent_session_id, records) in enumerate(calls.items()):
+        at = STARTED + timedelta(minutes=minutes)
+        store.create(
+            an_agent_session(
+                id=agent_session_id,
+                created_at=at,
+                updated_at=at,
+                last_seq=0,
+                status=AgentSessionStatus.ENDED,
+                claude_session_id=None,
+            )
+        )
+        store.append(agent_session_id, records)
+    return store
+
+
+# AC-PG-33.1: ?wrote=<path> lists only the sessions with a tool call that wrote or edited that
+# file, newest first; a relative path and the absolute one agree, and only whole segments match.
+@pytest.mark.parametrize("wrote", [WRITERS_SPEC, WRITERS_ABSOLUTE])
+def test_lists_only_writers_newest_first_when_wrote_given(wired: Any, wrote: str) -> None:
+    wired.wire(agent_sessions=build_rig(store=_writers_store()).control)
+
+    response = wired.client.get(BASE, params={"wrote": wrote})
+
+    assert response.status_code == 200, response.text
+    assert [item["id"] for item in response.json()["items"]] == [NEWEST, OLDEST]
+
+
+# AC-PG-33.1: without wrote, every session is listed, newest first.
+def test_lists_every_session_newest_first_when_wrote_absent(wired: Any) -> None:
+    wired.wire(agent_sessions=build_rig(store=_writers_store()).control)
+
+    response = wired.client.get(BASE)
+
+    assert [item["id"] for item in response.json()["items"]] == [OTHER, NEWEST, READER, OLDEST]
+
+
+# AC-PG-33.1: a path no session wrote lists nothing; a partial segment never matches.
+@pytest.mark.parametrize("wrote", ["features/real_cost/plan.md", "cost/spec.md"])
+def test_lists_nothing_when_no_session_wrote_path(wired: Any, wrote: str) -> None:
+    wired.wire(agent_sessions=build_rig(store=_writers_store()).control)
+
+    response = wired.client.get(BASE, params={"wrote": wrote})
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+# AC-PG-33.1: the route passes wrote on to the control as given.
+def test_passes_wrote_when_sessions_listed(wired: Any, ports: tuple[Mock, Mock]) -> None:
+    control, _ = ports
+
+    response = wired.client.get(BASE, params={"wrote": WRITERS_SPEC, "project": "demo"})
+
+    assert response.status_code == 200
+    control.list_sessions.assert_awaited_once_with(project="demo", status=None, wrote=WRITERS_SPEC)
+
+
+# AC-PG-33.1: an empty or too long wrote is refused before the control is called.
+@pytest.mark.parametrize("wrote", ["", "x" * 1025])
+def test_refuses_wrote_when_empty_or_too_long(
+    wired: Any, ports: tuple[Mock, Mock], wrote: str
+) -> None:
+    control, _ = ports
+
+    response = wired.client.get(BASE, params={"wrote": wrote})
+
+    assert response.status_code == 400
+    assert control.list_sessions.await_count == 0

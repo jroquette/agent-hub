@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useId, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import type { components } from "../api/schema";
@@ -17,8 +17,6 @@ import {
   type Status,
 } from "./status";
 import { CodeBlock } from "./trace";
-
-const NOT_CONNECTED = (source: string) => `${source} is not connected in this version.`;
 
 /* ---------- Session tile (the Sessions grid) ---------- */
 export interface LiveSession {
@@ -410,8 +408,40 @@ export interface ProjectCardData {
   costSpark: number[];
   costPrev?: number[] | undefined;
 }
-const HEALTH_COLOR = { ok: "var(--done)", warning: "var(--waiting)", error: "var(--failed)" };
+const HEALTH_BADGE = {
+  ok: { status: "done", label: "Healthy" },
+  warning: { status: "waiting", label: "Doctor warnings" },
+  error: { status: "failed", label: "Doctor errors" },
+} as const;
+
+/** One figure of a project card: a label above, the value below, an optional note under it. */
+function CardStat({
+  label,
+  hint,
+  children,
+  note,
+}: {
+  label: string;
+  hint?: string | undefined;
+  children: ReactNode;
+  note?: ReactNode;
+}) {
+  return (
+    <div className="ah-pcard-stat">
+      <div className="ah-pcard-k" title={hint}>
+        {label}
+      </div>
+      <div className="ah-pcard-v">{children}</div>
+      {note && <div className="ah-pcard-note">{note}</div>}
+    </div>
+  );
+}
+
 export function ProjectCard({ p, onOpen }: { p: ProjectCardData; onOpen?: () => void }) {
+  const health = p.health ? HEALTH_BADGE[p.health] : null;
+  const missing = [p.prs === null && "GitHub", p.ready === null && "Linear"].filter(
+    (name): name is string => Boolean(name),
+  );
   return (
     // Cards open their project on click or Enter, as in the design.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -425,21 +455,20 @@ export function ProjectCard({ p, onOpen }: { p: ProjectCardData; onOpen?: () => 
         if (e.key === "Enter" && e.target === e.currentTarget) onOpen?.();
       }}
     >
-      <div className="ah-row">
-        <Tooltip label={p.healthLabel}>
-          <span
-            className="ah-health"
-            role="img"
-            style={{ background: p.health ? HEALTH_COLOR[p.health] : "var(--idle)" }}
-            aria-label={p.healthLabel}
-          />
-        </Tooltip>
-        <h3 className="ah-h3" style={{ fontSize: 15 }}>
-          {p.name}
-        </h3>
-        <span className="ah-mono ah-subtle ah-small">{p.team}</span>
+      <div className="ah-pcard-head">
+        <div className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
+          <div className="ah-row" style={{ gap: 8 }}>
+            <h3 className="ah-h3" style={{ fontSize: 16 }}>
+              {p.name}
+            </h3>
+            {p.team && <span className="ah-small ah-subtle">{p.team}</span>}
+          </div>
+          <div className="ah-small ah-subtle">
+            {p.hub} · {p.repos.length} {p.repos.length === 1 ? "repo" : "repos"} · platform{" "}
+            {p.version}
+          </div>
+        </div>
         <span className="ah-grow" />
-        <span className="ah-mono ah-small ah-subtle">v{p.version}</span>
         {p.syncPending && (
           <span
             className="ah-badge ah-badge-waiting"
@@ -449,25 +478,65 @@ export function ProjectCard({ p, onOpen }: { p: ProjectCardData; onOpen?: () => 
             Sync pending
           </span>
         )}
+        <Tooltip label={p.healthLabel}>
+          <span role="img" aria-label={p.healthLabel}>
+            {health ? (
+              <StatusBadge status={health.status} label={health.label} />
+            ) : (
+              <StatusBadge status="idle" label="Not checked" quiet />
+            )}
+          </span>
+        </Tooltip>
       </div>
       <div className="ah-pcard-grid">
-        <div>
-          <div className="ah-pcard-k">Live sessions</div>
-          <div className="ah-pcard-v">
-            {p.live > 0 && <span className="ah-dot ah-pulse" style={{ color: "var(--live)" }} />}
-            {p.live}
-          </div>
-        </div>
-        <div style={{ gridColumn: "span 2" }}>
-          <div className="ah-pcard-k">Runs in progress · {p.runsInProgress}</div>
-          <div className="ah-pcard-v" style={{ height: 20 }}>
-            <MiniStageBar counts={p.stages} failed={p.failedNow ?? 0} />
-          </div>
-        </div>
-        <div>
-          <div className="ah-pcard-k">Open PRs</div>
-          <div className="ah-pcard-v" title={p.prs === null ? NOT_CONNECTED("GitHub") : undefined}>
-            {p.prs ?? "—"}
+        <CardStat label="Live sessions" hint="Now">
+          {p.live > 0 && <span className="ah-dot ah-pulse" style={{ color: "var(--live)" }} />}
+          {p.live}
+        </CardStat>
+        <CardStat
+          label="Runs in flight"
+          hint="Now"
+          note={
+            p.runsInProgress > 0 ? (
+              <span style={{ display: "block", width: 96, height: 8 }}>
+                <MiniStageBar counts={p.stages} failed={p.failedNow ?? 0} />
+              </span>
+            ) : undefined
+          }
+        >
+          {p.runsInProgress}
+        </CardStat>
+        <CardStat label="Failed runs · 7 d">
+          <span style={{ color: p.failed7d ? "var(--failed)" : undefined }}>
+            {p.failed7d > 0 && <Icon name="circle-x" size="sm" />}
+            {p.failed7d}
+          </span>
+        </CardStat>
+        <CardStat
+          label="Cost · 7 d"
+          hint="Estimated from transcripts"
+          note={
+            p.costDelta && (
+              <span className="ah-pcard-delta" data-tone={p.costDeltaTone ?? "neutral"}>
+                {p.costDelta}
+              </span>
+            )
+          }
+        >
+          {fmtMoney(p.cost)}
+          {p.costSpark.length > 1 && (
+            <Sparkline
+              data={p.costSpark}
+              prev={p.costPrev}
+              width={72}
+              height={18}
+              label="Daily cost, this week vs last week"
+            />
+          )}
+        </CardStat>
+        {p.prs !== null && (
+          <CardStat label="Open PRs">
+            {p.prs}
             {p.ciLabel && (
               <span
                 className="ah-small"
@@ -480,53 +549,21 @@ export function ProjectCard({ p, onOpen }: { p: ProjectCardData; onOpen?: () => 
                 {p.ciLabel}
               </span>
             )}
-          </div>
-        </div>
-        <div>
-          <div className="ah-pcard-k">Failed runs · 7 d</div>
-          <div className="ah-pcard-v" style={{ color: p.failed7d ? "var(--failed)" : undefined }}>
-            {p.failed7d}
-          </div>
-        </div>
-        <div>
-          <div className="ah-pcard-k">Ready issues</div>
-          <div
-            className="ah-pcard-v"
-            title={p.ready === null ? NOT_CONNECTED("Linear") : undefined}
-          >
-            {p.ready ?? "—"}
-          </div>
-        </div>
-        <div style={{ gridColumn: "span 3" }}>
-          <div className="ah-pcard-k">Cost this week vs last</div>
-          <div className="ah-row" style={{ justifyContent: "space-between" }}>
-            <div className="ah-pcard-v">
-              {fmtMoney(p.cost)}
-              {p.costDelta && (
-                <span className="ah-delta" data-tone={p.costDeltaTone ?? "neutral"}>
-                  {p.costDelta}
-                </span>
-              )}
-            </div>
-            <Sparkline
-              data={p.costSpark.length ? p.costSpark : [0]}
-              prev={p.costPrev}
-              width={120}
-              height={22}
-              label="Daily cost, this week vs last week"
-            />
-          </div>
-        </div>
+          </CardStat>
+        )}
+        {p.ready !== null && <CardStat label="Ready issues">{p.ready}</CardStat>}
       </div>
-      <div
-        className="ah-row ah-small ah-subtle"
-        style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}
-      >
-        <Icon name="book" size="sm" />
-        {p.repos.join(" · ")}
-        <span className="ah-grow" />
-        <span>{p.hub}</span>
-      </div>
+      {missing.length > 0 && (
+        <div className="ah-pcard-foot">
+          <Icon name="info" size="sm" />
+          {missing.join(" and ")} {missing.length === 1 ? "is" : "are"} not connected in this
+          version:{" "}
+          {[p.prs === null && "open PRs and CI", p.ready === null && "ready issues"]
+            .filter(Boolean)
+            .join(" and ")}{" "}
+          will show here.
+        </div>
+      )}
     </article>
   );
 }
@@ -545,8 +582,11 @@ export interface ActivityEntry {
   kind: ActivityKind;
   text: string;
   node?: ReactNode;
+  /** Empty when the page shows one project only: the name would repeat on every row. */
   project: string;
   age: string;
+  /** How many identical events in a row this line stands for. */
+  count?: number | undefined;
 }
 export function ActivityFeed({ items }: { items: ActivityEntry[] }) {
   return (
@@ -558,9 +598,14 @@ export function ActivityFeed({ items }: { items: ActivityEntry[] }) {
             <Icon name={icon} size="sm" style={{ color: `var(--${color})` }} />
             <span>
               {item.node ?? item.text}
-              <div className="ah-subtle" style={{ fontSize: 12 }}>
-                {item.project}
-              </div>
+              {(item.count ?? 1) > 1 && (
+                <span className="ah-subtle ah-small"> · {item.count} times</span>
+              )}
+              {item.project && (
+                <div className="ah-subtle" style={{ fontSize: 12 }}>
+                  {item.project}
+                </div>
+              )}
             </span>
             <span className="ah-mono ah-subtle" style={{ fontSize: 12 }}>
               {item.age}
@@ -838,11 +883,11 @@ export function goldenStepSummary(step: GoldenStep): string {
   return `${head}${meta ? ` · ${meta}` : ""}${reason}`;
 }
 
-function progressPercent(step: GoldenStep): number | null {
-  if (!step.progress || step.progress.total <= 0) return null;
-  return Math.round(
-    (100 * Math.min(step.progress.done, step.progress.total)) / step.progress.total,
-  );
+/** The one short line the step in focus shows under its state; the owner's wait reads as theirs. */
+function focusMeta(step: GoldenStep): string | null {
+  if (step.meta?.startsWith("waiting: owner")) return "Waiting on you";
+  if (step.meta) return step.meta;
+  return step.progress ? `${String(step.progress.done)}/${String(step.progress.total)}` : null;
 }
 
 const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
@@ -856,8 +901,9 @@ const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
 };
 
 /**
- * The golden path of a feature as the server computes it (S8): each step's name, its state as
- * text, its meta, its progress and the reason it is not done.
+ * The golden path of a feature as the server computes it (S8), kept calm: each step shows its dot,
+ * its name and its state as text; only the step in focus (the first one not done) adds one short
+ * line. Every step's meta, progress and reason are in its tooltip and its accessible description.
  */
 export function GoldenPathStepper({
   steps,
@@ -872,62 +918,55 @@ export function GoldenPathStepper({
   /** The accessible name of a step's button; "Open <step>" by default. */
   selectLabel?: ((step: FeaturePhase) => string) | undefined;
 }) {
+  const baseId = useId();
+  const shown = shownGoldenSteps(steps);
+  const focus = shown.find((s) => s.state !== "done" && s.state !== "skipped")?.name;
   return (
     <ol
       className="ah-golden"
       style={{ listStyle: "none", margin: 0, padding: 0 }}
       aria-label={label}
     >
-      {shownGoldenSteps(steps).map((step) => {
+      {shown.map((step) => {
         const icon = GOLDEN_STATE_ICON[step.state];
-        const percent = progressPercent(step);
-        const count = step.progress
-          ? `${String(step.progress.done)}/${String(step.progress.total)}`
-          : null;
+        const summary = goldenStepSummary(step);
+        const descId = `${baseId}-${step.name}`;
+        const meta = step.name === focus ? focusMeta(step) : null;
         return (
           <li key={step.name} className="ah-golden-step" data-state={step.state}>
             {/* Only the dot fades: faded text would fail the contrast check (axe). */}
             <span className="ah-golden-dot" style={DOT_STYLE[step.state]} aria-hidden="true">
               {icon && <Icon name={icon} />}
             </span>
-            {onSelect ? (
-              <button
-                type="button"
-                className="ah-golden-name ah-golden-select"
-                aria-label={selectLabel?.(step.name) ?? `Open ${GOLDEN_STEP_LABEL[step.name]}`}
-                onClick={() => {
-                  onSelect(step.name);
-                }}
-              >
-                {GOLDEN_STEP_LABEL[step.name]}
-              </button>
-            ) : (
-              <span className="ah-golden-name">{GOLDEN_STEP_LABEL[step.name]}</span>
-            )}
+            <Tooltip label={summary}>
+              {onSelect ? (
+                <button
+                  type="button"
+                  className="ah-golden-name ah-golden-select"
+                  aria-label={selectLabel?.(step.name) ?? `Open ${GOLDEN_STEP_LABEL[step.name]}`}
+                  aria-describedby={descId}
+                  onClick={() => {
+                    onSelect(step.name);
+                  }}
+                >
+                  {GOLDEN_STEP_LABEL[step.name]}
+                </button>
+              ) : (
+                // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+                <span className="ah-golden-name" tabIndex={0} aria-describedby={descId}>
+                  {GOLDEN_STEP_LABEL[step.name]}
+                </span>
+              )}
+            </Tooltip>
+            <span id={descId} hidden>
+              {summary}
+            </span>
             <span className="ah-golden-meta" style={{ fontSize: 11, fontWeight: 500 }}>
               {GOLDEN_STATE_TEXT[step.state]}
             </span>
-            {(step.meta ?? count) && (
+            {meta && (
               <span className="ah-golden-meta" style={{ fontSize: 11 }}>
-                {step.meta ?? count}
-              </span>
-            )}
-            {percent !== null && step.state !== "done" && (
-              <span
-                aria-hidden="true"
-                data-progress={percent}
-                style={{
-                  display: "block",
-                  height: 3,
-                  marginRight: 8,
-                  borderRadius: 2,
-                  background: `linear-gradient(90deg, var(--done) ${String(percent)}%, var(--surface-sunken) ${String(percent)}%)`,
-                }}
-              />
-            )}
-            {step.reason && step.state !== "done" && (
-              <span className="ah-golden-meta" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                {step.reason}
+                {meta}
               </span>
             )}
           </li>

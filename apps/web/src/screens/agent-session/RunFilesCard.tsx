@@ -83,7 +83,7 @@ export function RunFilesCard({ files, reviewed, onOpenFile }: RunFilesCardProps)
             onOpenFile(null);
           }}
         >
-          Review
+          Review changes
           <Icon name="chevron-right" size="sm" />
         </button>
       </header>

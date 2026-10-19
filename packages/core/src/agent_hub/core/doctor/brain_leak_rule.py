@@ -57,21 +57,21 @@ def _brain_lines(hub: HubFiles, *, min_length: int) -> dict[str, tuple[str, int]
         text = text_of(hub.entries.get(path))
         if text is None:
             continue
-        for number, line in _prose_lines(text_lines(text)):
+        for number, line in prose_lines(text_lines(text)):
             trimmed = line.strip()
             if len(trimmed) >= min_length:
                 lines.setdefault(trimmed, (path, number))
     return lines
 
 
-def _prose_lines(lines: tuple[str, ...]) -> Iterator[tuple[int, str]]:
+def prose_lines(lines: tuple[str, ...]) -> Iterator[tuple[int, str]]:
     """The lines outside frontmatter and fenced blocks, not table rows, by line number."""
-    for number, line in unfenced_lines(lines, start=_frontmatter_end(lines)):
+    for number, line in unfenced_lines(lines, start=frontmatter_end(lines)):
         if not line.lstrip().startswith(_TABLE_ROW):
             yield number, line
 
 
-def _frontmatter_end(lines: tuple[str, ...]) -> int:
+def frontmatter_end(lines: tuple[str, ...]) -> int:
     """How many lines the frontmatter takes: 0 when there is none, or it is never closed."""
     if not lines or lines[0].strip() != FRONTMATTER_MARKER:
         return 0

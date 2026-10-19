@@ -34,7 +34,10 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   four AGH-232 added (`RUN_COMMAND_PATHS`, all POST): `/workflow-runs` and `/workflow-runs/{run_id}/cancel|resume|abandon`
   ([Workflow run commands](#workflow-run-commands)), and the two AGH-231 added (`GATE_PATHS`):
   `GET /approvals/{approval_id}/gate` and `POST /approvals/{approval_id}/decision`
-  ([Workflow gate decisions](#workflow-gate-decisions)). A test fails on any other path.
+  ([Workflow gate decisions](#workflow-gate-decisions)), and the six AGH-297 added (`ITEM_VERSION_PATHS`): `GET`
+  `/projects/{project}/skills/{kind}/{source}/{name}/versions[/{version_id}]` and
+  `/workflows/{project}/{name}/versions[/{version_id}]`, and `POST .../versions/{version_id}/restore` of each
+  ([Skills](#skills), [Workflows](#workflows)). A test fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -94,6 +97,24 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   `[A-Za-z0-9_-]{1,128}` or a `file_id` that is not 16 hex characters → 400 "Invalid request parameter" naming it,
   before any file is read; an unknown project, an item the catalog does not hold or a file id its detail did not
   issue → 404 (entity `project`, `skill` or `skill file`); a bundled file over 256 KiB → 413 "Skill file too large".
+  The version history routes (Skills and Workflows) answer the same 400s, and 400 for a `version_id` that is not a
+  lowercase UUID, before anything is read; an item with no unit (a link, a built-in) → 404 (entity `item history`); a
+  version id of another unit, or unknown → 404 (entity `item version`). No problem names a path.
+- The restores ([Skills](#skills), [Workflows](#workflows)): a refusal is a 409 "Item write refused" whose extension
+  members `code` and `reason` say why, nothing written and no `restore` version recorded: `hub_read_only` (the hub
+  folder is not writable, and always in the container, before the cookie is checked), `no_author` (the hub has no
+  effective identity; `reason` says what is missing), `link_in_path` (a component of the unit's path is a link),
+  `unit_unreadable` (the unit on disk cannot be read whole, so it could not be recorded first),
+  `secret_unversioned` (the unit on disk has a secret match) or `managed_confirmation_required` (`hub.lock` manages
+  the unit and the body did not say `confirm_managed: true`; only the JSON `true` confirms, `1` or `"yes"` is a
+  422). The disk's content may already be recorded as an
+  `external` version when a managed refusal answers. A body field the model does not know → 422. A write that fails →
+  500 "Item write failed", `code` `write_failed` and `kind` `failed` (the unit is as it was) or `rollback_failed` (a
+  folder swap could not put the old folder back; `hub doctor`'s `items.leftovers` lists what is left beside it); a
+  stored version that does not decode → 500 `corrupt_version`. A race for the unit's next version lost three times
+  → 503 with `Retry-After: 1` and `written`: `false` with `code` `version_race` when nothing was written yet, `true`
+  with `code` `written_not_recorded` when the unit was written but its version not stored (the race lost, or the
+  database busy or unreadable, after the write; the next read records it as `external`). No problem names a path.
 
 ## Pagination
 
@@ -136,8 +157,9 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
 - Nested paths only for ownership (`/api/v1/sessions/{session_id}/events`). Methods keep their HTTP meaning: `GET`
   reads, `POST` creates or triggers an action (`POST /api/v1/hubs`, `POST /api/v1/events/hooks`), `PATCH` updates part
   of a resource, `DELETE` removes it. The only writes are registering and removing a hub, posting hook envelopes,
-  since AGH-201 the two learning decisions, and since AGH-165 the agent-session commands. Since AGH-296 the Toolkit
-  and Workflows `GET`s also record item versions in agent-hub's database (never in the hub, see Skills).
+  since AGH-201 the two learning decisions, since AGH-165 the agent-session commands, and since AGH-297 the restore
+  of an item's version, the first route that writes into a hub's working tree (see Skills). Since AGH-296 the
+  Toolkit and Workflows `GET`s also record item versions in agent-hub's database (never in the hub, see Skills).
 
 ## Sessions
 
@@ -321,12 +343,14 @@ text or a value the browser sent):
 
 ## Skills
 
-Three GET routes serve a hub's skills, agents and hooks, read from its files on request (the hub tree under
-`plugin/` and `.claude/`, through `HubFileReader.skill_sources` and `read_skill_file`, never through a link). They
-never write the hub; the catalog and the detail record a version of each unit they show in agent-hub's database
-(`item_versions`, AGH-295: a baseline the first time, a new version when its content changed; never a unit with a
-secret match or past the bounds), and a capture that cannot write within the database's busy timeout answers 503.
-POST, PUT, PATCH and DELETE answer 405; no route runs a script, a hook or a command.
+Three GET routes (and the two version history reads below) serve a hub's skills, agents and hooks, read from its
+files on request (the hub tree under `plugin/` and `.claude/`, through `HubFileReader.skill_sources` and
+`read_skill_file`, never through a link). The GETs never write the hub (the restore below does); the catalog, the
+detail and the version list
+record a version of each unit they show in agent-hub's database (`item_versions`, AGH-295: a baseline the first time,
+a new version when its content changed; never a unit with a secret match or past the bounds), and a capture that
+cannot write within the database's busy timeout answers 503.
+Other methods answer 405; no route runs a script, a hook or a command.
 
 - `GET /api/v1/projects/{project}/skills` → `SkillCatalog`: `items` (each with `id` `kind/source/name`, `kind`,
   `source`, `name`, one-line `description`, `origin`, `mode`, `invocation`, hub-relative `source_path`,
@@ -341,6 +365,27 @@ POST, PUT, PATCH and DELETE answer 405; no route runs a script, a hook or a comm
   and, for a hook, `hook` (event, matcher, type, command, timeout, active, state).
 - `GET /api/v1/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` → `BundledFileText`: id, path,
   role, size and `text`, or `binary: true` and no text for a file with a NUL or that is not UTF-8.
+- `GET /api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions[?limit=…&cursor=…]` → `ItemVersionPage`:
+  the versions of the item's unit (a skill's folder, an agent's file, a hook's whole file) newest first, `limit` 1 to
+  200 (default 50) with a cursor ([Pagination](#pagination)), each `{id, origin, first, author, recorded_at,
+  content_hash, size, restored_from, draft_id}` (`author` `{name, email}`, `null` for `external`); plus `next_cursor`,
+  `total_estimate`, `state` (`ok`, `too_large`, `secret` or `unreadable`: what the disk holds now), `managed` (per
+  `hub.lock`), `unit_path`, `unit_kind` and `shared_by` (the items the unit holds: every hook of one file lists the
+  same versions). The list captures its unit first (as the detail does, sharing its memo), so a changed unit shows
+  its new version; a unit past the bounds or with a secret match keeps its earlier versions listed.
+- `GET /api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}` → `ItemVersionContent`: `id`,
+  `unit_kind` and `files` (`path`, `executable`, `size`, and `text`, `null` for a binary file); a file unit has one
+  file named after it. Only a version of the item's own unit is served.
+- `POST /api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}/restore` with
+  `{confirm_managed?}` → 200 `ItemWriteResult` `{changed, versioned, reason, version}`: writes the version back into
+  the hub (a skill's folder is made equal to it, its files' executable bits and all, files and now-empty folders the
+  version does not hold removed, the folder's hidden entries kept; a hook's whole file, so every hook in it) and
+  records a `restore` version naming it in `restored_from`, by the hub's effective identity (`author`). One write runs
+  at a time in the server. Before it writes, the disk's content is recorded as an `external` version when it differs
+  from the last one, so a hand edit stays restorable. A version equal to the disk answers `changed: false` and writes
+  and records nothing; content with a secret match or past the bounds is written with `versioned: false` and its
+  `reason` (`secret`, `too_large`). A strict write that needs the launch cookie ([Local security](#local-security));
+  its refusals are listed under [Errors](#errors). It never runs git: the hub's working tree shows the change.
 
 Items and files are addressed by ids the server issues (`file_id` is 16 hex characters of the sha256 of the file's
 hub-relative path), never by a client path. Bounds: 500 items per kind, 200 bundled files per skill, 2,000 hooks,
@@ -365,6 +410,12 @@ fingerprint (path, size and mtime of each entry of its `workflows/` and the buil
   keys left out not filled in). An unknown project is a 404 (entity `project`); an unknown workflow, or one listed as a
   problem, is a 404 (entity `workflow`, id `<project>/<name>`). A parameter over 200 characters is a 400. The routes
   answer 501 only in a build where the workflow reads are not wired.
+- `GET /api/v1/workflows/{project}/{name}/versions[?limit=…&cursor=…]` and `.../versions/{version_id}` → a hub
+  workflow file's `ItemVersionPage` and one version's `ItemVersionContent`, as for the [Skills](#skills) routes
+  (`unit_kind` `workflow`, `shared_by` 1). A built-in has no history (404, entity `item history`).
+- `POST /api/v1/workflows/{project}/{name}/versions/{version_id}/restore` with `{confirm_managed?}` → 200
+  `ItemWriteResult`: writes the version back into the hub workflow's file, the pack's other files left as they are,
+  as the [Skills](#skills) restore does (the same gates and problems).
 
 ## Workflow run commands
 
@@ -452,12 +503,15 @@ it answers 404 `urn:agent-hub:problem:run-control-off`.
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
-run commands need that cookie too ([Workflow run commands](#workflow-run-commands)); every other route is unchanged
-and needs no cookie.
+run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, and a gate's decision) and the restores
+(`ITEM_WRITES`) need that cookie too ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
+[Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
+minted and the hubs are mounted read-only) a restore answers 409 `hub_read_only` before the cookie is checked.
 
-The two learning decisions, which reach the network, and the four workflow run commands and a workflow gate's
-decision, which start or stop processes, take a strict rule on top (`STRICT_WRITES` in `agent_hub/api/local_security.py`), checked before the
-route runs, so a refused request pushes, stores and starts nothing:
+The two learning decisions, which reach the network, the four workflow run commands and a workflow gate's decision,
+which start or stop processes, and the two restores (`ITEM_WRITES`), which write into a hub's tree, take a strict rule
+on top (`STRICT_WRITES` in `agent_hub/api/local_security.py`), checked before the route runs, so a refused request
+pushes, stores, writes and starts nothing:
 
 - `Origin` is required and must equal `http://<Host>`, the server's own origin (403 "Forbidden origin" when absent or
   different);

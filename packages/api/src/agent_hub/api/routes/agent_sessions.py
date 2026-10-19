@@ -39,6 +39,8 @@ SessionIdPath = Annotated[UUID, Path()]
 RequestIdPath = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
 RequiredProject = Annotated[str, Query(min_length=1, max_length=MAX_PROJECT_CHARS)]
 WorkdirParam = Annotated[str, Query(pattern=WORKDIR_ID_PATTERN)]
+MAX_WROTE_CHARS = 1024
+WroteParam = Annotated[str | None, Query(min_length=1, max_length=MAX_WROTE_CHARS)]
 
 
 @router.get("/workdirs")
@@ -67,9 +69,11 @@ async def list_agent_sessions(
     *,
     project: ProjectParam = None,
     status: AgentSessionStatus | None = None,
+    wrote: WroteParam = None,
 ) -> AgentSessionList:
-    """Agent sessions, newest first."""
-    return await control.list_sessions(project=project, status=status)
+    """Agent sessions, newest first; with ``wrote``, the ones that changed that file (a path
+    relative to any workdir, such as ``brain/features/<slug>/spec.md``)."""
+    return await control.list_sessions(project=project, status=status, wrote=wrote)
 
 
 @router.post("", status_code=201)

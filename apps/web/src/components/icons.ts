@@ -891,6 +891,32 @@ export const ICONS = {
     ["path", { d: "M6 2v14a2 2 0 0 0 2 2h14" }],
     ["path", { d: "M18 22V8a2 2 0 0 0-2-2H2" }],
   ],
+  "sliders-horizontal": [
+    ["path", { d: "M10 5H3" }],
+    ["path", { d: "M12 19H3" }],
+    ["path", { d: "M14 3v4" }],
+    ["path", { d: "M16 17v4" }],
+    ["path", { d: "M21 12h-9" }],
+    ["path", { d: "M21 19h-5" }],
+    ["path", { d: "M21 5h-7" }],
+    ["path", { d: "M8 10v4" }],
+    ["path", { d: "M8 12H3" }],
+  ],
+  users: [
+    ["path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" }],
+    ["path", { d: "M16 3.128a4 4 0 0 1 0 7.744" }],
+    ["path", { d: "M22 21v-2a4 4 0 0 0-3-3.87" }],
+    ["circle", { cx: "9", cy: "7", r: "4" }],
+  ],
+  laptop: [
+    [
+      "path",
+      {
+        d: "M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z",
+      },
+    ],
+    ["path", { d: "M20.054 15.987H3.946" }],
+  ],
 } as const satisfies Record<string, IconNode>;
 
 /** A Lucide icon name the app bundles. */

@@ -100,6 +100,46 @@ def test_lists_each_project_workflow_and_problem_when_hubs_registered() -> None:
     ]
 
 
+def test_counts_steps_by_type_and_lists_inputs_when_listed() -> None:
+    rounds = {
+        "version": 1,
+        "name": "rounds",
+        "revision": 1,
+        "inputs": {
+            "issue": {"required": True, "description": "The issue"},
+            "tries": {"type": "integer", "default": 2},
+        },
+        "nodes": [
+            {"id": "prep", "type": "shell", "command": ["true"]},
+            {
+                "id": "loop",
+                "type": "loop_group",
+                "max_iterations": 2,
+                "until_bash": ["true"],
+                "depends_on": ["prep"],
+                "nodes": [
+                    {"id": "work", "type": "agent", "prompt": "Work"},
+                    {"id": "ok", "type": "approval", "message": "OK?", "depends_on": ["work"]},
+                ],
+            },
+        ],
+    }
+    catalog = ReadWorkflows(
+        Hubs(("demo", "/hubs/demo")),
+        lambda _: Files((WorkflowFile("workflows/demo/rounds.yaml", "rounds", rounds),)),
+    ).list_workflows(Scope())
+
+    assert catalog.problems == ()
+    (item,) = catalog.items
+    assert item.step_types == {"shell": 1, "loop_group": 1, "agent": 1, "approval": 1}
+    assert [(step.id, step.max_iterations) for step in item.steps] == [("prep", None), ("loop", 2)]
+    assert [step.id for step in item.steps[1].body] == ["work", "ok"]
+    assert [(i.name, i.type, i.required, i.description) for i in item.inputs] == [
+        ("issue", "string", True, "The issue"),
+        ("tries", "integer", False, None),
+    ]
+
+
 def test_lists_one_project_when_scope_names_it() -> None:
     catalog = reads().list_workflows(Scope(project="other"))
 
@@ -227,9 +267,9 @@ def test_captures_hub_files_when_listed() -> None:
     assert last is not None
     assert (last.seq, last.first, last.kind) == (1, True, UnitKind.WORKFLOW)
     assert store.last("demo", "workflows/demo/broken.yaml") is None
-    assert reads.unit_of("demo", "ship") == ItemUnit(
-        project="demo", unit_path=SHIP_FILE, kind=UnitKind.WORKFLOW
-    )
+    marked = reads.marked_workflow_unit("demo", "ship")
+    assert marked is not None
+    assert marked.unit == ItemUnit(project="demo", unit_path=SHIP_FILE, kind=UnitKind.WORKFLOW)
 
 
 def test_no_unit_when_workflow_builtin() -> None:
@@ -240,10 +280,10 @@ def test_no_unit_when_workflow_builtin() -> None:
     reads.list_workflows(Scope())
     reads.get_workflow("demo", "ship")
 
-    assert reads.unit_of("demo", "ship") is None
+    assert reads.marked_workflow_unit("demo", "ship") is None
     assert reader.unit_reads == []
     with pytest.raises(EntityNotFoundError):
-        reads.unit_of("demo", "nope")
+        reads.marked_workflow_unit("demo", "nope")
     assert store.last("demo", "<builtin>/base/ship.yaml") is None
 
 
@@ -258,3 +298,26 @@ def test_versions_json_file_when_json_workflow() -> None:
     last = store.last("demo", json_file)
     assert last is not None
     assert (last.kind, last.size) == (UnitKind.WORKFLOW, len(b'{"name": "ship"}\n'))
+
+
+def test_marks_workflow_unit_as_detail_captures_when_hub_file() -> None:
+    files = Files((WorkflowFile(SHIP_FILE, "ship", SHIP),))
+    reader = FakeHubFileReader({"/hubs/demo": FakeHub(skill_files={SHIP_FILE: b"x"})})
+    capture = CaptureItemVersions(
+        InMemoryItemVersionStore(), reader, lambda: datetime(2026, 10, 18, tzinfo=UTC)
+    )
+    reads = ReadWorkflows(Hubs(("demo", "/hubs/demo")), lambda _hub: files, capture=capture)
+    reads.get_workflow("demo", "ship")
+    read_before = len(reader.unit_reads)
+
+    marked = reads.marked_workflow_unit("demo", "ship")
+
+    assert marked is not None
+    assert (marked.hub_path, marked.unit.unit_path, marked.shared_by) == (
+        "/hubs/demo",
+        SHIP_FILE,
+        1,
+    )
+    # The same mark as the detail's: the memo answers without reading the file again.
+    capture.capture("demo", marked.hub_path, [(marked.unit, marked.mark)])
+    assert (read_before, len(reader.unit_reads)) == (1, 1)

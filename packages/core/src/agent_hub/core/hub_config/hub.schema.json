@@ -266,6 +266,9 @@
         },
         "workflows.valid": {
           "$ref": "#/$defs/RuleSettings"
+        },
+        "items.leftovers": {
+          "$ref": "#/$defs/RuleSettings"
         }
       },
       "title": "DoctorRules",

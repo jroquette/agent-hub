@@ -14,6 +14,7 @@ from typing import Any
 
 from agent_hub.core.brain.brain_note import BrainEntry
 from agent_hub.core.brain.brain_path import NOTE_SUFFIX, is_personal_folder
+from agent_hub.core.doctor.finding import Read
 from agent_hub.core.doctor.run_rules import Selection
 from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, LockAbsent, LockState
 from agent_hub.core.features.feature_status import FeatureFolder
@@ -111,6 +112,9 @@ class FakeHub:
     skill_links: dict[str, str] = field(default_factory=dict)
     skill_specials: frozenset[str] = frozenset()
     executable: frozenset[str] = frozenset()
+    # The item folders ``items.leftovers`` scanned, and the temp entries found in them.
+    item_folders: tuple[str, ...] = ()
+    item_leftovers: tuple[str, ...] = ()
 
 
 def _listed(path: str) -> bool:
@@ -166,8 +170,10 @@ class FakeHubFileReader:
         selection: Selection,
         local: LocalConfig | tuple[ConfigProblem, ...],
     ) -> DoctorSnapshot:
-        """A snapshot of the hub's ``files``, every one listed; no repo checkout, no hooks."""
-        del selection
+        """A snapshot of the hub's ``files``, every one listed; no repo checkout, no hooks; the
+        item leftovers only when a selected rule reads the item folders, as the real reader."""
+        reads = {read for rule in selection.rules for read in rule.reads}
+        item_folders = Read.ITEM_FOLDERS in reads
         hub = self._hub(hub_path)
         self.snapshots[hub_path] = self.snapshots.get(hub_path, 0) + 1
         entries = {
@@ -183,6 +189,8 @@ class FakeHubFileReader:
             repos=(),
             local=local,
             workflow_folders=hub.folders,
+            item_leftovers=hub.item_leftovers if item_folders else None,
+            item_folders=hub.item_folders if item_folders else (),
         )
 
     def modified_times(self, hub_path: str, paths: Sequence[str]) -> tuple[int | None, ...]:

@@ -889,6 +889,30 @@ def _linked_service(links: dict[tuple[str, str], AgentSessionLink]) -> FoldedEve
     )
 
 
+def test_takes_issue_from_first_prompt_when_branch_and_worktree_name_none() -> None:
+    links = {("demo", "s-web"): AgentSessionLink(agent_session_id="a-1", prompt_issue="DEM-305")}
+    store = InMemoryEventStore()
+    store.append(a_session_events("s-web", ended=False))
+    service = FoldedEventReadModels(
+        store,
+        now=Clock(SCENARIO_START + timedelta(minutes=8)),
+        agent_session_link_of=lambda project, session_id: links.get((project, session_id)),
+        label_rules_of={"demo": LabelRules(teams=("DEM",))}.get,
+    )
+
+    found = service.list_sessions(SessionFilter(issue="dem-305")).items
+    one = service.get_session("s-web").label
+    links[("demo", "s-web")] = AgentSessionLink(agent_session_id="a-1", prompt_issue="XYZ-1")
+    other_team = service.list_sessions(SessionFilter(issue="XYZ-1")).items
+
+    assert [s.id for s in found] == ["s-web"]
+    assert found[0].label is not None
+    assert found[0].label.issue == "DEM-305"
+    assert one is not None
+    assert one.issue == "DEM-305"
+    assert other_team == ()
+
+
 def test_carries_agent_session_id_when_link_known_agent_session_link() -> None:
     service = _linked_service({("demo", "s-web"): AgentSessionLink(agent_session_id="a-1")})
 

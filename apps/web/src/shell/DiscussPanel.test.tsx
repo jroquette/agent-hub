@@ -141,6 +141,16 @@ describe("DiscussPanel", () => {
     );
   });
 
+  it("AC-PG-38.3 says in words that a pointed-at row goes in the next message", async () => {
+    renderPanel();
+
+    await userEvent.click(screen.getByRole("button", { name: "point" }));
+
+    const refs = await screen.findByRole("group", { name: "References for the next message" });
+    expect(refs).toHaveTextContent("Next message is about");
+    expect(refs).toHaveTextContent("AC-7");
+  });
+
   it("starts the conversation with a starter's message in one click (AC-269.16)", async () => {
     const withStarter: DiscussTarget = {
       ...feature,
