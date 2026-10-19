@@ -257,7 +257,7 @@ def _entries(
 
 
 def _load(pack_root: Path, path: Path) -> LoadedWorkflow | WorkflowFileError:
-    content = _read_inside(pack_root, path)
+    content = read_inside_pack(pack_root, path)
     if isinstance(content, str):
         return WorkflowFileError(source=str(path), line=None, reason=content)
     try:
@@ -266,7 +266,7 @@ def _load(pack_root: Path, path: Path) -> LoadedWorkflow | WorkflowFileError:
         return error
 
 
-def _read_inside(pack_root: Path, path: Path) -> bytes | str:
+def read_inside_pack(pack_root: Path, path: Path) -> bytes | str:
     """The file's bytes (one past the cap at most, so the loader sees it too large), or why not:
     its real path must stay inside the pack and be a regular file, read without blocking (checked,
     then opened: the module docstring's limit)."""
