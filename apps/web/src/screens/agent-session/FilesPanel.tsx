@@ -8,13 +8,32 @@ import {
   type KeyboardEvent,
 } from "react";
 
-import { Button, Icon, SegmentedControl } from "../../components";
+import { Button, Icon, Markdown, SegmentedControl, Tabs, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
 import { readStored, writeStored } from "../../lib/storage";
 import { useDrawerWidth } from "./DrawerResize";
 import { ReviewCommentsContext, ReviewDiff, type ReviewComments } from "./ReviewDiff";
 import { DiffText, TOOL_STATE } from "./ToolCallCard";
+import { FILE_KINDS, fileKind, isMarkdown, isReviewable, type FileKind } from "./fileKind";
 import { commonDir, type ChangedFile, type FileChange } from "./model";
+import { writtenText } from "./netDiff";
+
+/** Each kind of file as its review tab shows it. */
+const KIND_TAB: Record<FileKind, { label: string; icon: IconName }> = {
+  code: { label: "Code", icon: "git-pull-request" },
+  plan: { label: "Plans", icon: "list-checks" },
+  learning: { label: "Learnings", icon: "lightbulb" },
+  scratch: { label: "Scratch", icon: "pencil" },
+};
+
+/** What each tab says about its files, under the tabs. */
+const KIND_NOTE: Record<FileKind, string> = {
+  code: "The files of your repo this session changed: what goes in the pull request.",
+  plan: "The plans Claude wrote for this work. They stay on this machine.",
+  learning: "What Claude proposes to remember. They reach the brain only once you accept them.",
+  scratch:
+    "Notes Claude wrote for itself (temporary folders, its own settings). Nothing to review.",
+};
 
 /** The DOM id of the files drawer, for the header button's `aria-controls`. */
 export const FILES_PANEL_ID = "as-files-panel";
@@ -166,7 +185,45 @@ function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
   );
 }
 
-type DetailView = "final" | "changes";
+type DetailView = "preview" | "final" | "changes";
+
+const isApplied = (change: FileChange) => change.state !== "error" && change.state !== "denied";
+
+/** The markdown a file ends with, when the session wrote it whole; null otherwise. */
+function markdownText(file: ChangedFile): string | null {
+  if (!isMarkdown(file.path)) return null;
+  return writtenText(
+    file.changes.filter(isApplied).map((change) => ({
+      name: change.tool.name,
+      input: change.tool.input,
+      diff: change.diff,
+      numbered: change.numbered,
+    })),
+  );
+}
+
+/** A leading `---` YAML block, apart from the body it heads. */
+function splitFrontmatter(text: string): { frontmatter: string | null; body: string } {
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(text);
+  return match
+    ? { frontmatter: match[1] ?? "", body: text.slice(match[0].length) }
+    : { frontmatter: null, body: text };
+}
+
+/** A markdown file as it reads: its frontmatter as fields, its body rendered. */
+function PreviewBlock({ text }: { text: string }) {
+  const { frontmatter, body } = splitFrontmatter(text);
+  return (
+    <div className="as-files-preview">
+      {frontmatter !== null && (
+        <pre className="as-files-frontmatter ah-mono ah-small" aria-label="Frontmatter">
+          {frontmatter}
+        </pre>
+      )}
+      <Markdown source={body} />
+    </div>
+  );
+}
 
 /** How many review threads on a file are still open, as a small speech-bubble count. */
 function OpenThreads({ path }: { path: string }) {
@@ -383,9 +440,20 @@ function FileDetail({
   const body = useRef<HTMLDivElement>(null);
   const section = useRef<HTMLElement>(null);
   const takesFocus = onBack !== null;
-  // The final result first; "Each change" stays picked as you step through the files.
-  const [view, setView] = useState<DetailView>("final");
-  const showNet = file.net !== null && view === "final";
+  // Markdown reads rendered first, other files as their final result; the choice stays picked as
+  // you step through the files when the next one offers it.
+  const text = markdownText(file);
+  const [view, setView] = useState<DetailView>(text !== null ? "preview" : "final");
+  const showPreview = text !== null && view === "preview";
+  const showNet = !showPreview && file.net !== null && view !== "changes";
+  const views = [
+    ...(text !== null ? [{ id: "preview", label: "Preview" }] : []),
+    ...(file.net ? [{ id: "final", label: "Final result" }] : []),
+    ...(text !== null || file.net
+      ? [{ id: "changes", label: `Each change (${String(file.changes.length)})` }]
+      : []),
+  ];
+  const current = showPreview ? "preview" : showNet ? "final" : "changes";
   useEffect(() => {
     if (body.current) body.current.scrollTop = 0;
   }, [file.path]);
@@ -446,23 +514,22 @@ function FileDetail({
         </div>
       </header>
       <div className="as-files-detail-body" ref={body}>
-        {file.net ? (
+        {views.length > 1 ? (
           <div className="as-files-summary ah-row">
             <SegmentedControl
               label="Show"
-              value={showNet ? "final" : "changes"}
+              value={current}
               onChange={(id) => {
                 setView(id as DetailView);
               }}
-              options={[
-                { id: "final", label: "Final result" },
-                { id: "changes", label: `Each change (${String(file.changes.length)})` },
-              ]}
+              options={views}
             />
             <span className="ah-small ah-muted">
-              {showNet
-                ? `All ${String(file.changes.length)} changes in this session, as one diff`
-                : "Oldest first"}
+              {showPreview
+                ? "The file as it ends, rendered"
+                : showNet
+                  ? `All ${String(file.changes.length)} changes in this session, as one diff`
+                  : "Oldest first"}
             </span>
           </div>
         ) : (
@@ -472,8 +539,9 @@ function FileDetail({
               : `${String(file.changes.length)} changes in this session, oldest first`}
           </p>
         )}
+        {showPreview && <PreviewBlock text={text} />}
         {showNet && <NetBlock file={file} path={name} />}
-        {!showNet &&
+        {current === "changes" &&
           file.changes.map((change, index) => (
             <ChangeBlock
               key={change.tool.id}
@@ -524,6 +592,7 @@ export function FilesPanel({
   const own = useReviewed(sessionId);
   const review = shared ?? own;
   const [picked, setPicked] = useState<string | null>(initialPath);
+  const [tab, setTab] = useState<FileKind | null>(null);
   // Opened on a file, the keyboard goes to that file; else to the drawer's heading.
   const [focusFile, setFocusFile] = useState(initialPath !== null);
   useEffect(() => {
@@ -539,19 +608,34 @@ export function FilesPanel({
     setFocusFile(initialPath !== null);
   }, [pickNonce, initialPath]);
 
-  const root = useMemo(() => commonDir(files.map((file) => file.path)), [files]);
+  // One tab per kind of file the session changed: the code first, Claude's scratch last.
+  const kinds = useMemo(
+    () =>
+      FILE_KINDS.map((kind) => ({
+        kind,
+        files: files.filter((file) => fileKind(file.path) === kind),
+      })).filter((group) => group.files.length > 0),
+    [files],
+  );
+  // A file picked (from a card in the conversation, too) shows in its own tab.
+  const pickedKind =
+    picked !== null && files.some((file) => file.path === picked) ? fileKind(picked) : null;
+  const kind = kinds.find((group) => group.kind === (pickedKind ?? tab)) ?? kinds[0];
+  const shown = useMemo(() => kind?.files ?? [], [kind]);
+
+  const root = useMemo(() => commonDir(shown.map((file) => file.path)), [shown]);
   // One file alone keeps its folder in view: the root is then its parent's parent.
   const base =
-    files.length === 1 ? root.slice(0, root.lastIndexOf("/", root.length - 2) + 1) : root;
+    shown.length === 1 ? root.slice(0, root.lastIndexOf("/", root.length - 2) + 1) : root;
   const nameOf = (path: string) => path.slice(base.length);
   const added = files.reduce((sum, file) => sum + file.added, 0);
   const removed = files.reduce((sum, file) => sum + file.removed, 0);
 
   // Wide, a file is always open (the first by default); narrow, only the one you picked.
-  const known = files.some((file) => file.path === picked) ? picked : null;
-  const selected = known ?? (wide ? (files[0]?.path ?? null) : null);
-  const position = files.findIndex((file) => file.path === selected);
-  const open = position >= 0 ? files[position] : undefined;
+  const known = shown.some((file) => file.path === picked) ? picked : null;
+  const selected = known ?? (wide ? (shown[0]?.path ?? null) : null);
+  const position = shown.findIndex((file) => file.path === selected);
+  const open = position >= 0 ? shown[position] : undefined;
 
   // Back to the list, with the keyboard on the row of the file you left.
   const backToList = () => {
@@ -617,10 +701,28 @@ export function FilesPanel({
         <p className="ah-muted as-files-empty">Claude has not changed any file yet.</p>
       ) : (
         <ReviewCommentsContext.Provider value={comments ?? null}>
+          {kinds.length > 1 && kind && (
+            <div className="as-files-tabs">
+              <Tabs
+                label="Kind of file"
+                value={kind.kind}
+                onChange={(id) => {
+                  setTab(id as FileKind);
+                  setPicked(null);
+                }}
+                tabs={kinds.map((group) => ({
+                  id: group.kind,
+                  ...KIND_TAB[group.kind],
+                  count: group.files.length,
+                }))}
+              />
+              <p className="ah-small ah-muted">{KIND_NOTE[kind.kind]}</p>
+            </div>
+          )}
           <div className={cx("as-files-body", wide && "as-files-split")}>
             {(wide || !open) && (
               <FileList
-                files={files}
+                files={shown}
                 nameOf={nameOf}
                 base={base}
                 selected={selected}
@@ -633,12 +735,12 @@ export function FilesPanel({
                 file={open}
                 name={nameOf(open.path)}
                 position={position}
-                total={files.length}
+                total={shown.length}
                 review={review}
                 onBack={wide ? null : backToList}
                 focusRequest={focusFile ? pickNonce : null}
                 onStep={(by) => {
-                  setPicked(files[position + by]?.path ?? selected);
+                  setPicked(shown[position + by]?.path ?? selected);
                 }}
               />
             )}
@@ -663,7 +765,8 @@ export interface ChangedFilesChipProps {
 export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFilesChipProps) {
   const added = files.reduce((sum, file) => sum + file.added, 0);
   const removed = files.reduce((sum, file) => sum + file.removed, 0);
-  const due = files.filter((file) => !isViewed(review, file)).length;
+  // Claude's scratch is not for review: it never waits on you.
+  const due = files.filter((file) => isReviewable(file.path) && !isViewed(review, file)).length;
   const count = `${String(files.length)} ${files.length === 1 ? "file" : "files"}`;
   return (
     <button
