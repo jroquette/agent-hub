@@ -186,8 +186,8 @@ def test_refuses_effort_when_not_a_level(
 
     message = str(raised.value)
     assert message.startswith(PREFIX)
-    assert "x" * 120 in message
-    assert "x" * 121 not in message
+    assert effort[:120] in message
+    assert effort[:121] not in message
     assert not (hub / ".agent-runs").exists()
 
 
