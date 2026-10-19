@@ -258,7 +258,7 @@ function Acs({ row, acPasses }: { row: TicketRow; acPasses?: AcPasses | undefine
               <Link
                 className="ah-row ah-mono ah-small"
                 style={{ gap: 4 }}
-                to={{ search: `?ac=${encodeURIComponent(ac)}` }}
+                to={{ search: `?doc=acs&ac=${encodeURIComponent(ac)}` }}
                 title={`Open ${ac} in Criteria${acPasses ? (passes ? " · passing" : " · not passing yet") : ""}`}
               >
                 {acPasses && <Icon name={passes ? "circle-check" : "clock"} size="sm" />}
