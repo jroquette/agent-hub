@@ -26,6 +26,7 @@ RELEASED_IDS = (
     "config.identity",
     "repos.agents",
     "config.stop_gate",
+    "environments.production",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",
@@ -59,6 +60,7 @@ DESIGN_SEVERITIES = {
     "brain.memory": Severity.WARNING,
     "sandbox.workflow": Severity.ERROR,
     "workflows.valid": Severity.ERROR,
+    "environments.production": Severity.WARNING,
     "items.leftovers": Severity.WARNING,
 }
 

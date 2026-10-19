@@ -37,6 +37,7 @@ RULE_TABLE_IDS = [
     "config.identity",
     "repos.agents",
     "config.stop_gate",
+    "environments.production",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",

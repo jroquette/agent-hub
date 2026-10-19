@@ -41,6 +41,7 @@ from agent_hub.core.hub_config.platform_repository import (
 from agent_hub.core.hub_config.workspace_repos import workspace_repos
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.runner import brief
+from agent_hub.core.workspace.environment_lines import escaped_text
 from agent_hub.core.workspace.shown_conventions import (
     ShownConventions,
     shown_conventions,
@@ -107,8 +108,8 @@ _ENVIRONMENTS_LEAD: Final = (
     " `./hub env list`."
 )
 # An environment's description is the project's free text: each Markdown-significant character
-# is escaped, and so is a block marker opening a wrapped line, so it renders as plain text.
-_MARKDOWN_SIGNIFICANT: Final = re.compile(r"([\\`*_\[\]<>#|~])")
+# is escaped (``escaped_text``, as the brief does), and so is a block marker opening a wrapped
+# line, so it renders as plain text.
 _LINE_MARKER: Final = re.compile(r"^( *)(?:([-+=])|([0-9]+)([.)]))")
 _SERVICES_LEAD: Final = "Services by repo:"
 # The conventions' block in ``AGENTS.md``: its lead paragraph and each key as a repo line names
@@ -385,7 +386,7 @@ def _environments_section(config: HubConfig) -> str:
             _filled_after(
                 f"- `{name}` ({environment.access}"
                 f"{', PRODUCTION' if environment.production else ''})"
-                + (f": {_escaped(environment.description)}" if environment.description else ""),
+                + (f": {escaped_text(environment.description)}" if environment.description else ""),
                 lead="",
             )
         )
@@ -398,11 +399,6 @@ def _environments_section(config: HubConfig) -> str:
     )
     by_repo = f"\n\n{_SERVICES_LEAD}\n\n{services}" if services else ""
     return f"\n\n## Environments and services\n\n{_ENVIRONMENTS_LEAD}\n\n{environments}{by_repo}"
-
-
-def _escaped(text: str) -> str:
-    """``text`` with a backslash before each Markdown-significant character."""
-    return _MARKDOWN_SIGNIFICANT.sub(r"\\\1", text)
 
 
 def _inert_lines(item: str) -> str:

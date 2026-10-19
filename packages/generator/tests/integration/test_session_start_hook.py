@@ -26,7 +26,11 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND, pinned_release_command
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import (
+    a_hub_document,
+    a_local_environments_document,
+    an_environments_document,
+)
 from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
     REPOSITORY_CASES,
@@ -666,3 +670,99 @@ def test_ties_custom_source_to_release_command_when_rendered(
     )
     assert expected is not None
     assert ["uvx", "--from", source, "hub"] == expected.split()
+
+
+MINI_ENVIRONMENTS = (
+    "## Environments\n- `local` (write)\n- `staging` (ask)\n- `live` (read, PRODUCTION)"
+)
+UNUSABLE_LOCAL = "hub.local.json is unusable: your own environments are not shown"
+
+
+def write_environments(hub: Path, *, local: str | None) -> None:
+    """``hub.json`` with the spec's ``W`` (pinned to ``VERSION``), and ``local`` as the bytes of
+    ``hub.local.json`` in the hub, the hook root's identity home (absent when ``None``)."""
+    document = an_environments_document()
+    document["platform"]["version"] = VERSION
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    if local is not None:
+        (hub / "hub.local.json").write_text(local, encoding="utf-8")
+
+
+def test_lists_environments_when_brief_fails(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path
+) -> None:
+    # AC-277.8: the mini brief lists both files' names, access and PRODUCTION.
+    local = a_local_environments_document()
+    local["environments"]["staging"] = {"access": "read"}
+    write_environments(hub, local=json.dumps(local))
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == (
+        expected_mini_brief("no uv") + "\n\n## Environments\n- `local` (write)\n- `staging` (read)"
+        "\n- `live` (read, PRODUCTION)\n- `jane-cloud` (write)"
+    )
+
+
+def test_names_unusable_local_file_when_brief_fails(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path
+) -> None:
+    # AC-277.34 (AM-11): hub.json's environments, and a line naming the unusable file.
+    write_environments(hub, local="{not json")
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == (
+        f"{expected_mini_brief('no uv')}\n\n{MINI_ENVIRONMENTS}\n{UNUSABLE_LOCAL}"
+    )
+
+
+def test_adds_no_environments_when_none_declared(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path
+) -> None:
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == expected_mini_brief("no uv")
+
+
+# An environment name with a secret's shape (assembled at run time, so the repo holds none). The
+# CLI refuses it, so `hub brief` fails and the mini brief is what the agent reads.
+SECRET_NAME = "AK" + "IA" + "A" * 16
+
+
+@pytest.mark.parametrize("layer", ["hub.json", "hub.local.json"])
+def test_hides_secret_shaped_name_when_brief_fails(
+    layer: str, hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path
+) -> None:
+    secret = {SECRET_NAME: {"access": "write", "production": True}}
+    if layer == "hub.json":
+        document = an_environments_document()
+        document["platform"]["version"] = VERSION
+        document["environments"] |= secret
+        (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    else:
+        write_environments(hub, local=json.dumps({"environments": secret}))
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    context = context_of(completed)
+    assert context == (
+        f"{expected_mini_brief('no uv')}\n\n{MINI_ENVIRONMENTS}\n- `<hidden>` (write, PRODUCTION)"
+    )
+    assert SECRET_NAME not in completed.stdout.decode()
+
+
+def test_cuts_environments_when_over_sixty(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path
+) -> None:
+    document = a_hub_document()
+    document["platform"]["version"] = VERSION
+    document["environments"] = {f"e{index}": {"access": "read"} for index in range(1, 62)}
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    shown = "\n".join(f"- `e{index}` (read)" for index in range(1, 61))
+    assert context_of(completed) == (
+        f"{expected_mini_brief('no uv')}\n\n## Environments\n{shown}\n… 1 more: ./hub env list"
+    )
