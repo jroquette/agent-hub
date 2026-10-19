@@ -61,7 +61,10 @@ def setup(
     *,
     yes: Annotated[
         bool,
-        typer.Option("--yes", help="Write a new hub.local.json without asking."),
+        typer.Option(
+            "--yes",
+            help="Write a new hub.local.json without asking, and ask no environment question.",
+        ),
     ] = False,
 ) -> None:
     """Set up this machine for the hub: tools, identity, environments, repos, then hub doctor."""
