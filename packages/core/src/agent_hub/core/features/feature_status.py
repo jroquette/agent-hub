@@ -64,6 +64,10 @@ RECORD_FILES: Final = (SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL, BRIEF)
 HEAD_BYTES: Final = 65_536
 # ``plan.md`` is read whole up to this size, so its ``## Amendments`` at the end is seen (P1).
 MAX_PLAN_BYTES: Final = 262_144
+# The UX designs are the folder's own ``ux-*.md`` files: at most this many, their head only (P2).
+UX_PREFIX: Final = "ux-"
+MAX_UX_FILES: Final = 50
+UX_HEAD_BYTES: Final = 4096
 _VERDICT_LINE_CHARS: Final = 200
 _SIZES: Final = ("spike", "bounded", "architectural")
 
@@ -100,7 +104,8 @@ class FeatureFolder:
     ``evals`` and ``reviews`` hold the heads of ``evals/*.md`` and ``reviews/*.md`` sorted by
     name; ``evals_skipped`` and ``reviews_skipped`` count the files left unread over the cap.
     ``plan`` holds ``plan.md`` whole, None when absent or larger than ``MAX_PLAN_BYTES``
-    (``plan_too_large`` then says so).
+    (``plan_too_large`` then says so). ``ux_designs`` holds the heads of the folder's own
+    ``ux-*.md`` sorted by name; ``ux_skipped`` counts those left unread over ``MAX_UX_FILES``.
     """
 
     slug: str
@@ -114,6 +119,8 @@ class FeatureFolder:
     reviews_skipped: int = 0
     plan: bytes | None = None
     plan_too_large: bool = False
+    ux_designs: tuple[RecordHead, ...] = ()
+    ux_skipped: int = 0
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
