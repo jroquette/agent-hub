@@ -142,7 +142,7 @@ describe("SlashMenu (slash-menu)", () => {
     await userEvent.type(box, "/");
 
     // axe scrollable-region-focusable: the list scrolls once the hub's items fill it.
-    expect(container.querySelector(".as-slash")).toHaveAttribute("tabindex", "0");
+    expect(container.querySelector(".as-slash-list")).toHaveAttribute("tabindex", "0");
     await userEvent.keyboard("{Tab}");
     expect(box).toHaveValue("/fix ");
     expect(box).toHaveFocus();

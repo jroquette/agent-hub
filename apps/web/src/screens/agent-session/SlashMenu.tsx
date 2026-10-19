@@ -203,10 +203,10 @@ export function SlashMenu({ id, options, active, onPick }: SlashMenuProps) {
     if (option && "scrollIntoView" in option) option.scrollIntoView({ block: "nearest" });
   }, [activeId]);
   return (
-    // In the tab order, so its scroll is reachable by keyboard once the hub's items make it scroll
-    // (axe scrollable-region-focusable); the composer's arrows still move the active option.
-    <div className="as-slash" tabIndex={0}>
-      <div id={id} role="listbox" aria-label="Commands" className="as-slash-list">
+    <div className="as-slash">
+      {/* The list scrolls and is in the tab order, so its scroll is reachable by keyboard once the
+          hub's items fill it (axe scrollable-region-focusable); the composer still drives it. */}
+      <div id={id} role="listbox" aria-label="Commands" className="as-slash-list" tabIndex={0}>
         {options.map((option, i) => (
           <div
             key={option.command}
