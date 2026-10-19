@@ -4342,6 +4342,11 @@ def test_asks_when_event_unreadable(
     assert [(c.returncode, c.stdout, c.stderr) for c in empty + without] == [(0, b"", b"")] * (
         len(EMPTY_STDINS) * 2 + len(UNREADABLE_STDINS)
     )
+    # A blocked-list problem with no usable word (a string, not a list) asks too.
+    problem = builders.a_hub_document()
+    problem["guard"]["blocked_words"] = "prod"
+    write_hub_json(blocked_hub, problem)
+    assert asked_once(run(b"[]")) == ("ask", UNREADABLE_ASK)
 
 
 def test_asks_when_event_nested_too_deep(
