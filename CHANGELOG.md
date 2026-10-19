@@ -23,6 +23,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `hub.local.json` only, checked as `hub env add --local` checks them. An `environments` item lists the declared
   environments, with a `production environment:` sub-line per production one; a hub with none prints no line,
   and a `hub.local.json` that conflicts with `hub.json` makes it missing (exit 1).
+- Base skill `plain-language` (AGH-319): rules for text that people read (chat, PR bodies and replies, tracker
+  comments, handoffs, summaries, brain notes), in the reader's language. `AGENTS.md` gains cross-repo rule 6, which
+  points to it; `/summarize`, `/handoff`, `/feature` and `/deliver` cite it. To make room for rule 6, workflow step 3
+  and the outside-content brain rule are each shortened to one line, with the same meaning. `hub sync` adds the skill
+  and its link after you bump `platform.version`.
 
 ## [0.17.0] - 2026-10-19
 
