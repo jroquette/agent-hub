@@ -1408,6 +1408,48 @@ class TestScriptEnvironment:
         assert not worktree.exists()
 
 
+class TestBase:
+    """``--base``: a task stacked on a blocker's branch that is still in review."""
+
+    def test_creates_from_blocker_branch_when_base_given(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        blocker = "jdoe/dem-6-y"
+        stacked = demo_workspace.origin_head("demo-api")
+        demo_workspace.git(demo_workspace.origin("demo-api"), "branch", blocker, stacked)
+        trunk = demo_workspace.advance("demo-api")
+
+        result = run_command(
+            demo_workspace.hub, "worktree", NAME, "--only", "demo-api", "--base", blocker
+        )
+
+        assert result.exit_code == 0, result.output
+        worktree = demo_workspace.worktree("demo-api", NAME)
+        assert result.stdout.splitlines()[0] == (
+            f"created  {worktree} ({BRANCH} from origin/{blocker})"
+        )
+        assert demo_workspace.git(worktree, "branch", "--show-current") == BRANCH
+        assert demo_workspace.git(worktree, "rev-parse", "HEAD") == stacked
+        assert stacked != trunk
+
+    def test_refuses_base_when_removing(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        result = run_command(demo_workspace.hub, "worktree", "--remove", NAME, "--base", "x")
+
+        assert_refused(result, "--base applies to creating worktrees, not to --remove")
+        assert_untouched(demo_workspace)
+
+    def test_refuses_base_when_git_refuses_its_name(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        result = run_command(demo_workspace.hub, "worktree", NAME, "--base", "bad..name")
+
+        assert result.exit_code == 2
+        assert "bad..name" in unstyle(result.stderr)
+        assert_untouched(demo_workspace)
+
+
 class TestNoFetch:
     """AGH-134: ``--no-fetch``, the sandbox's escape hatch after a bare ``git fetch``."""
 

@@ -83,7 +83,7 @@ class WorktreeTask:
     """One task's checked inputs: the name, each repo's branch and base, and the repos to touch.
 
     ``branches`` maps each of ``repos`` to its task branch, ``bases`` to
-    ``origin/<its default branch>``.
+    ``origin/<its default branch>`` (or ``origin/<base>`` when the task is stacked on a branch).
     """
 
     name: str
@@ -123,6 +123,7 @@ def worktree_task(
     fetch_options: tuple[str, ...] = (),
     repos: Sequence[str] | None = None,
     fetch: bool = True,
+    base: str | None = None,
 ) -> WorktreeTask:
     """The task named ``name`` in the hub's repos (or ``only``, or the ``repos`` subset), checked.
 
@@ -140,7 +141,9 @@ def worktree_task(
     ``WorktreeUsageError`` for a name not shaped like the issue, an unknown ``only`` or
     ``repos`` dir, or a branch git refuses; ``ValueError`` when both ``only`` and ``repos`` are
     given. ``fetch`` False skips the fetch: each new worktree starts from the base as already
-    fetched (``create_worktree``).
+    fetched (``create_worktree``). ``base`` (``hub worktree --base``) starts each new worktree
+    from ``origin/<base>`` instead of the default branch: a task stacked on a branch still in
+    review; git refusing the name raises ``WorktreeUsageError``.
     """
     if only is not None and repos is not None:
         msg = "worktree_task takes only or repos, not both"
@@ -160,7 +163,10 @@ def worktree_task(
         )
         for repo in touched
     }
-    for branch in dict.fromkeys(branches.values()):
+    checked_names = dict.fromkeys(branches.values())
+    if base is not None:
+        checked_names[base] = None
+    for branch in checked_names:
         checked = runner(
             [git, "check-ref-format", "--branch", branch],
             cwd=hub,
@@ -176,7 +182,10 @@ def worktree_task(
     return WorktreeTask(
         name=name,
         branches=branches,
-        bases={repo: f"origin/{config.default_branch_for(repo)}" for repo in touched},
+        bases={
+            repo: f"origin/{base if base is not None else config.default_branch_for(repo)}"
+            for repo in touched
+        },
         workspace=hub.parent,
         hub=hub,
         repos=touched,
