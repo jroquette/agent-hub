@@ -71,6 +71,8 @@ hub doctor [--only RULE]… [--json]   # checks rules, links, dead references an
 hub validate-output review|eval FILE   # checks one agent JSON output: a review round or an eval
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub env list|show|add|set|remove|service … [--local] [--json]   # the declared environments and services: list, show, or change hub.json (--local: hub.local.json), no prompt
+hub action list|plan|run …   # the hub's actions: list them with their draft state, show one call's plan and decision, run one (AGH-350)
+hub scenario list|plan|run|findings …   # the hub's scenarios: plan before anything runs, run in regression or interactive mode, list findings (AGH-350)
 hub worktree NAME [--only REPO] [--remove] [--no-fetch]   # isolated worktrees for one task (--remove removes them; --no-fetch starts from the already-fetched base)
 hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
@@ -364,6 +366,42 @@ Edit, Write, MultiEdit, NotebookEdit and WebFetch. Accepted limits: false positi
 reading `config/app.json`, `find … -exec cat`), tool output, obfuscation past the three views, Grep's search regex and
 edit contents; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen; `hub run`'s implement
 sessions run without the hub's hooks (AGH-278).
+
+### Scenarios and actions (AGH-350)
+
+A project can drive its own system, step by step, through the workflow engine, so that a walk developers now do by
+hand (send a message, wait, read a table, fix data, retry) is written down, runs the same way twice and is audited.
+The contract is [design/scenarios.md](design/scenarios.md); the decision is
+[ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md), which partially supersedes ADR 0038's "`access` is an
+instruction" for actions and for the deterministic nodes of a workflow that declares an environment.
+
+- **Actions** are the project's own scripts in the hub's `actions/<pack>/`, each declaring its `effect` (`read`,
+  `write` or `destroy`), typed inputs (a `service` input resolves to that service's endpoint in the bound environment)
+  and an output schema. A script reads one JSON object on stdin and prints one JSON value; in `plan` mode it changes
+  nothing. An action runs only when it is committed in the hub; a new or changed one is a draft. agent-hub ships no
+  built-in action and no infra client.
+- **Scenarios** are workflow documents with `kind: scenario` in the hub's `scenarios/<pack>/`, built only from
+  `action`, `expect` (poll a read action until a condition holds or a timeout), `approval`, `wait`, `loop_group` and
+  `include` nodes, passing values on with `capture` and `$CTX`.
+- **The access policy** lives in core and decides every action before it runs, from the environment's effective
+  access (`hub.local.json` only tightens), the effect and who proposed the step: an undeclared environment and a
+  production write or destroy are denied; access `read` allows reads only, `ask` asks before writes and destroys,
+  `write` asks before destroys; a write an agent proposed always asks; a draft is denied. No key or flag turns an ask
+  into an allow. `hub scenario plan` shows each step, where it goes, its effect and the decision before anything runs;
+  a deny refuses the start and an ask is an approval gate.
+- **Credentials:** an environment (or an endpoint) may name a git-ignored dotenv file, `credentials.env_file`. Only
+  the action runner reads it, when an action starts, and injects its variables into that action's process alone;
+  values are redacted from the action's output and appear in no event, record or plan. Declared credential names are
+  removed from every agent session, and the guard denies agents any read of a declared env file.
+- **Modes:** `hub scenario run --mode regression` starts no agent and fails on the first divergence; `interactive`
+  (the default) pauses, and hub web starts one read-only investigation session that may read the hub, run read
+  actions, write draft actions and propose findings and workaround options, each with its plan. The developer picks
+  an option, retries or stops; nothing runs before the pick. Findings become tracker issues or inbox notes.
+- **Process workflows** may declare `environment`: their `action`, `shell` and `script` nodes get the same policy
+  (`shell` and `script` take `effect`, default `write`). Their agent nodes get only a **best-effort** guard check
+  (an ask when a command or URL names an endpoint of a read-only or production environment), and the docs and the run
+  view say so. Scenario runs are local only in v1, and a scenario run is a WorkflowRun that is always called a
+  scenario run.
 
 ## Layer 2: control plane and observability
 
