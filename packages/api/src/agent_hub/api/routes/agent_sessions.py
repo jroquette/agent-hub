@@ -37,6 +37,7 @@ DEFAULT_EVENTS_LIMIT = 200
 
 SessionIdPath = Annotated[UUID, Path()]
 RequestIdPath = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
+TaskIdPath = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
 RequiredProject = Annotated[str, Query(min_length=1, max_length=MAX_PROJECT_CHARS)]
 WorkdirParam = Annotated[str, Query(pattern=WORKDIR_ID_PATTERN)]
 MAX_WROTE_CHARS = 1024
@@ -128,6 +129,14 @@ async def interrupt_agent_session(
 ) -> AgentSession:
     """Interrupt the running turn; its result follows on the stream."""
     return await control.interrupt(str(agent_session_id))
+
+
+@router.post("/{agent_session_id:uuid}/tasks/{task_id}/stop", status_code=202)
+async def stop_agent_session_task(
+    agent_session_id: SessionIdPath, task_id: TaskIdPath, control: AgentSessionControlDep
+) -> AgentSession:
+    """Stop a background task (an agent or a command); its end follows on the stream."""
+    return await control.stop_task(str(agent_session_id), task_id)
 
 
 @router.post("/{agent_session_id:uuid}/permissions/{request_id}")

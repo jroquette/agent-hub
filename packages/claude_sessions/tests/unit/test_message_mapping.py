@@ -395,7 +395,7 @@ def test_maps_killed_as_stopped_when_task_updated_terminal() -> None:
 
 
 @pytest.mark.parametrize(
-    ("task_id", "status"), [("task-1", "running"), ("task-1", None), ("", "completed")]
+    ("task_id", "status"), [("task-1", "pending"), ("task-1", None), ("", "completed")]
 )
 def test_maps_nothing_when_task_updated_not_terminal_or_unnamed(task_id: str, status: Any) -> None:
     message = TaskUpdatedMessage(
@@ -403,6 +403,18 @@ def test_maps_nothing_when_task_updated_not_terminal_or_unnamed(task_id: str, st
     )
 
     assert EventMapper().to_events(message) == []
+
+
+def test_maps_running_again_when_task_updated_running() -> None:
+    message = TaskUpdatedMessage(
+        subtype="task_updated",
+        data={},
+        task_id="task-1",
+        patch={"status": "running"},
+        status="running",
+    )
+
+    assert EventMapper().to_events(message) == [TaskEvent(task_id="task-1", status="running")]
 
 
 def test_maps_nothing_when_task_progress_received() -> None:

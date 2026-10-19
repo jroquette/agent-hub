@@ -11647,6 +11647,72 @@
         ]
       }
     },
+    "/api/v1/agent-sessions/{agent_session_id}/tasks/{task_id}/stop": {
+      "post": {
+        "description": "Stop a background task (an agent or a command); its end follows on the stream.",
+        "operationId": "stop_agent_session_task_api_v1_agent_sessions__agent_session_id__tasks__task_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Stop Agent Session Task",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
     "/api/v1/approvals": {
       "get": {
         "description": "Approvals, oldest first.",

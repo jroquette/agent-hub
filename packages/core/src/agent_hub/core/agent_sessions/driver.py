@@ -331,6 +331,11 @@ class SessionDriver(Protocol):
         """End the running turn; its ``TurnResult`` follows. No-op between turns."""
         ...
 
+    async def stop_task(self, handle: DriverHandle, task_id: str) -> None:
+        """Stop a running task (a background agent or command); its ``TaskEvent`` with
+        ``stopped`` follows. The turn, if one runs, goes on."""
+        ...
+
     async def answer_permission(
         self, handle: DriverHandle, request_id: str, answer: DriverAnswer
     ) -> None:

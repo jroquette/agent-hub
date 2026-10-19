@@ -1040,6 +1040,19 @@ async def test_keeps_idle_session_until_its_tasks_end_when_idle_limit_passes(
     assert (task.by, task.body["status"]) == ("driver", "running")
 
 
+async def test_stops_running_task_only_when_asked(make_rig: MakeRig) -> None:
+    started = TaskEvent(task_id="task-1", status="running", description="Review")
+    rig = make_rig(replies={"Review.": (started,)})
+    created = await rig.create("Review.")
+    await rig.until_status(created.id, "idle")
+
+    await rig.control.stop_task(created.id, "task-1")
+    await rig.control.stop_task(created.id, "task-unknown")
+
+    stops = [call.args for call in rig.driver.calls if call.method == "stop_task"]
+    assert stops == [("task-1",)]
+
+
 async def test_purges_ended_after_retention_when_swept(make_rig: MakeRig) -> None:
     rig = make_rig(limits=SessionLimits(retention_days=30, idle_seconds=86_400))
     old = await rig.create()

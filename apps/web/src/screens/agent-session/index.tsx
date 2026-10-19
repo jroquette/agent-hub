@@ -438,7 +438,11 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           onOpenFile={openFile}
           sidePanel={
             backgroundOpen ? (
-              <BackgroundPanel tasks={tasks} onClose={closeBackground} />
+              <BackgroundPanel
+                tasks={tasks}
+                onClose={closeBackground}
+                onStop={cloud || ended ? undefined : commands.stopTask}
+              />
             ) : liveOpen && steps.end !== null ? (
               <StepsPanel steps={steps} onClose={closeLive} focusOnOpen={stepsFocus} />
             ) : filesOpen ? (

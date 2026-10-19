@@ -88,6 +88,7 @@ AGENT_SESSION_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/{agent_session_id}/stream"),
         ("post", "/{agent_session_id}/messages"),
         ("post", "/{agent_session_id}/interrupt"),
+        ("post", "/{agent_session_id}/tasks/{task_id}/stop"),
         ("post", "/{agent_session_id}/permissions/{request_id}"),
         ("post", "/{agent_session_id}/settings"),
         ("post", "/{agent_session_id}/close"),

@@ -78,6 +78,7 @@ def _url(path: str) -> str:
     filled = (
         path.replace("{agent_session_id}", AGENT_SESSION_ID)
         .replace("{request_id}", "req-1")
+        .replace("{task_id}", "task-1")
         .replace("{cloud_id}", "cse_01synthetic")
     )
     return f"{PREFIX}{filled}"
@@ -109,7 +110,7 @@ def _control() -> Mock:
     control.delete.return_value = None
     control.events.return_value = LogRecordPage(items=(), next_after=None)
     control.send.return_value = MessageAccepted(seq=5)
-    for method in ("interrupt", "answer", "change_settings", "close"):
+    for method in ("interrupt", "stop_task", "answer", "change_settings", "close"):
         getattr(control, method).return_value = session
     return control
 
