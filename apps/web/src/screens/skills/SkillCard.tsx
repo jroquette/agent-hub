@@ -161,6 +161,20 @@ export interface SkillCardProps {
   draftHref?: string | undefined;
 }
 
+/** "Continue draft" on an item that has an open edit draft: its Studio page. */
+export function ContinueDraft({ href, name }: { href: string; name: string }) {
+  return (
+    <AppLink
+      href={href}
+      className="ah-continue-draft"
+      aria-label={`Continue your draft of ${name} in the Studio`}
+    >
+      <Icon name="file-pen" size="sm" />
+      Continue draft
+    </AppLink>
+  );
+}
+
 /** A catalog card: rendered as a list item, so place it in a `<ul>`. The kind is said by the
  * tab around it, so the card does not repeat it; only the name link and Copy take a Tab stop. */
 export function SkillCard({
@@ -181,16 +195,7 @@ export function SkillCard({
             {linked ? <AppLink href={skillRoute(project, item)}>{item.name}</AppLink> : item.name}
           </h3>
           <span className="ah-grow" />
-          {draftHref && (
-            <AppLink
-              href={draftHref}
-              className="ah-continue-draft"
-              aria-label={`Continue your draft of ${item.name} in the Studio`}
-            >
-              <Icon name="file-pen" size="sm" />
-              Continue draft
-            </AppLink>
-          )}
+          {draftHref && <ContinueDraft href={draftHref} name={item.name} />}
         </header>
         {item.kind === "hook" ? (
           <code className="ah-skill-command" title={item.description ?? undefined}>
