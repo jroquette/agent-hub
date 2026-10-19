@@ -4,7 +4,11 @@ import pytest
 
 from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
 from agent_hub.core.brain.brain_path import BrainPathError
+from agent_hub.core.hub_config.config_view import HubConfigView, hub_config_view
+from agent_hub.core.hub_config.local_config import LocalConfig
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.projects.project_views import ProjectDetail, ProjectNow, RepoView, TrackerView
+from agent_hub.core.testing.builders import a_conventions_document
 from agent_hub.core.testing.read_model_builders import (
     HUB_ID,
     a_brain_note,
@@ -122,3 +126,42 @@ def test_rejects_note_path_when_out_of_bounds(wired: Any, note_path: str) -> Non
     response = wired.client.get("/api/v1/projects/demo/brain/note", params={"path": note_path})
 
     assert response.status_code == 400
+
+
+def _config() -> HubConfigView:
+    return hub_config_view(
+        hub_path="/home/demo/demo-hub",
+        config=HubConfig.model_validate(a_conventions_document()),
+        local=LocalConfig(),
+        read_git=lambda _keys: {},
+    )
+
+
+# AC-PG-38.1: GET /projects/{project}/config answers the project's config view: per repo its
+# branch, patterns with examples and checks; the tracker and the models, each with its source.
+def test_answers_config_view_when_project_config_requested(wired: Any) -> None:
+    wired.hubs.configs["demo"] = _config()
+
+    response = wired.client.get("/api/v1/projects/demo/config")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body == _config().model_dump(mode="json")
+    assert [(repo["dir"], repo["check_fast"], repo["check"]) for repo in body["repos"]] == [
+        ("demo-api", "make check-fast", "make check"),
+        ("demo-web", "make check-fast", "make check"),
+    ]
+    assert body["repos"][1]["pr_title"]["example"] == "DEM-42: feat(api): add the hub config view"
+    assert body["repos"][0]["default_branch"]["source"] == "default"
+    assert body["tracker"]["transport"]["source"] == "default"
+    assert body["model_tiers"] == {"small": "haiku", "medium": "sonnet", "large": "opus"}
+    assert body["author_email"]["source"] == "team"
+    assert wired.hubs.calls == [("hub_config", "demo")]
+
+
+# AC-PG-38.1: an unknown project answers 404.
+def test_answers_not_found_when_config_of_unknown_project_requested(wired: Any) -> None:
+    response = wired.client.get("/api/v1/projects/nope/config")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No project with id 'nope'."

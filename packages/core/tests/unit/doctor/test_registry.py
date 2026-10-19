@@ -30,6 +30,7 @@ RELEASED_IDS = (
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",
+    "items.leftovers",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.
@@ -60,6 +61,7 @@ DESIGN_SEVERITIES = {
     "sandbox.workflow": Severity.ERROR,
     "workflows.valid": Severity.ERROR,
     "environments.production": Severity.WARNING,
+    "items.leftovers": Severity.WARNING,
 }
 
 

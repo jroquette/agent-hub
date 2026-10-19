@@ -8,7 +8,7 @@ import type { components, paths } from "../api/schema";
 
 export type ProblemDetails = components["schemas"]["ProblemDetails"];
 
-type Operation<P extends keyof paths, M extends "get" | "post" | "delete"> = NonNullable<
+type Operation<P extends keyof paths, M extends "get" | "post" | "put" | "delete"> = NonNullable<
   paths[P][M]
 >;
 
@@ -18,6 +18,9 @@ export type GetPath = {
 }[keyof paths];
 export type PostPath = {
   [P in keyof paths]: [NonNullable<paths[P]["post"]>] extends [never] ? never : P;
+}[keyof paths];
+export type PutPath = {
+  [P in keyof paths]: [NonNullable<paths[P]["put"]>] extends [never] ? never : P;
 }[keyof paths];
 export type DeletePath = {
   [P in keyof paths]: [NonNullable<paths[P]["delete"]>] extends [never] ? never : P;
@@ -65,6 +68,12 @@ export class ApiProblem extends Error {
   readonly detail: string | null;
   readonly type: string;
   readonly instance: string | null;
+  /** The extension member `code` (an item write's refusal, AGH-297), when the problem names one. */
+  readonly code: string | null;
+  /** The extension member `reason`, in words, when the problem names one. */
+  readonly reason: string | null;
+  /** The field problems of a 422 (`errors`: a JSON path and a message each), when it lists them. */
+  readonly errors: readonly { pointer: string; message: string }[];
 
   constructor(problem: {
     status: number;
@@ -72,6 +81,9 @@ export class ApiProblem extends Error {
     detail?: string | null | undefined;
     type?: string | undefined;
     instance?: string | null | undefined;
+    code?: string | null | undefined;
+    reason?: string | null | undefined;
+    errors?: readonly { pointer: string; message: string }[] | undefined;
   }) {
     super(problem.detail ? `${problem.title}: ${problem.detail}` : problem.title);
     this.name = "ApiProblem";
@@ -80,6 +92,9 @@ export class ApiProblem extends Error {
     this.detail = problem.detail ?? null;
     this.type = problem.type ?? "about:blank";
     this.instance = problem.instance ?? null;
+    this.code = problem.code ?? null;
+    this.reason = problem.reason ?? null;
+    this.errors = problem.errors ?? [];
   }
 }
 
@@ -102,6 +117,16 @@ export function toProblem(error: unknown): ApiProblem {
   });
 }
 
+function fieldErrors(body: object): { pointer: string; message: string }[] {
+  const raw = (body as { errors?: unknown }).errors;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item: unknown) => {
+    if (typeof item !== "object" || item === null) return [];
+    const { pointer, message } = item as { pointer?: unknown; message?: unknown };
+    return typeof pointer === "string" && typeof message === "string" ? [{ pointer, message }] : [];
+  });
+}
+
 function problemFrom(response: Response, body: unknown): ApiProblem {
   if (isProblemBody(body)) {
     return new ApiProblem({
@@ -110,6 +135,9 @@ function problemFrom(response: Response, body: unknown): ApiProblem {
       detail: body.detail,
       type: body.type,
       instance: body.instance,
+      code: typeof body.code === "string" ? body.code : null,
+      reason: typeof body.reason === "string" ? body.reason : null,
+      errors: fieldErrors(body),
     });
   }
   return new ApiProblem({
@@ -153,6 +181,7 @@ async function send(
 
 const GET = client.GET as unknown as LooseMethod;
 const POST = client.POST as unknown as LooseMethod;
+const PUT = client.PUT as unknown as LooseMethod;
 const DELETE = client.DELETE as unknown as LooseMethod;
 
 /** GETs `path`; resolves with its body or rejects with an ApiProblem. */
@@ -171,6 +200,15 @@ export async function apiPost<P extends PostPath>(
   params?: ParamsOf<Operation<P, "post">>,
 ): Promise<SuccessOf<Operation<P, "post">>> {
   return (await send(POST, path, { params, body })) as SuccessOf<Operation<P, "post">>;
+}
+
+/** PUTs `body` to `path`; resolves with the answer or rejects with an ApiProblem. */
+export async function apiPut<P extends PutPath>(
+  path: P,
+  body: BodyOf<Operation<P, "put">>,
+  params?: ParamsOf<Operation<P, "put">>,
+): Promise<SuccessOf<Operation<P, "put">>> {
+  return (await send(PUT, path, { params, body })) as SuccessOf<Operation<P, "put">>;
 }
 
 /** POSTs an empty JSON object to a command route that takes no body (a run's cancel, resume or

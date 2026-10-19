@@ -12,8 +12,10 @@ for each driver event.
   ``End``.
 - ``Interrupt`` denies what is pending and marks the turn as ending: until its ``TurnResult``
   a message is refused with ``SessionBusyError`` (AC-165.17).
-- Messages sent during a turn queue behind it (``turns`` counts them); a ``TurnResult`` ends
-  one turn, and the session is ``idle`` once none is left.
+- Messages sent during a turn count as turns, but Claude Code folds a message sent mid-turn
+  into the running turn, so one ``TurnResult`` can answer several: it ends them all and the
+  session is ``idle``. When the CLI does play a message as a turn of its own after that result,
+  its first activity (text, thinking, a tool, todos) makes the session ``running`` again.
 - ``Exited`` ends a live session: ``failed`` unless the code is 0 (an unknown code is a
   failure, since nothing asked the process to stop).
 """
@@ -27,7 +29,13 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
     EndReason,
 )
-from agent_hub.core.agent_sessions.driver import DriverEvent, Exited, PermissionRequest, TurnResult
+from agent_hub.core.agent_sessions.driver import (
+    ACTIVITY_EVENTS,
+    DriverEvent,
+    Exited,
+    PermissionRequest,
+    TurnResult,
+)
 from agent_hub.core.agent_sessions.errors import (
     SessionBusyError,
     SessionTerminalError,
@@ -153,9 +161,9 @@ def _after_event(state: SessionState, event: DriverEvent) -> SessionState:
         case PermissionRequest(request_id=request_id):
             return _settled(state, pending=state.pending | {request_id})
         case TurnResult():
-            return _settled(
-                state, turns=max(state.turns - 1, 0), pending=frozenset(), interrupting=False
-            )
+            return _settled(state, turns=0, pending=frozenset(), interrupting=False)
+        case _ if state.turns == 0 and isinstance(event, ACTIVITY_EVENTS):
+            return _settled(state, turns=1)
         case Exited(code=0):
             return _ended(EndReason.CLOSED)
         case Exited():

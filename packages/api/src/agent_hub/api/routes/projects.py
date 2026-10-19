@@ -5,9 +5,11 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query
 
 from agent_hub.api.dependencies import HubReadModelsDep
+from agent_hub.api.local_settings import LocalSettings, write_local_settings
 from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES
 from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.brain.brain_path import MAX_PATH_CHARS
+from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.projects.project_views import (
     ProjectDetail,
     ProjectNow,
@@ -44,6 +46,21 @@ def get_project_now(project: ProjectPath, models: HubReadModelsDep) -> ProjectNo
 def list_project_repos(project: ProjectPath, models: HubReadModelsDep) -> Page[RepoView]:
     """The project's repos."""
     return models.project_repos(project)
+
+
+@router.get("/projects/{project}/config")
+def get_project_config(project: ProjectPath, models: HubReadModelsDep) -> HubConfigView:
+    """The project's hub config: team (``hub.json``) and local (``hub.local.json``) values."""
+    return models.hub_config(project)
+
+
+@router.put("/projects/{project}/config/local")
+def put_project_local_config(
+    project: ProjectPath, settings: LocalSettings, models: HubReadModelsDep
+) -> HubConfigView:
+    """Save this developer's ``hub.local.json`` values; the team's ``hub.json`` is untouched."""
+    write_local_settings(models.hub_config(project).hub_path, settings)
+    return models.hub_config(project)
 
 
 @router.get("/projects/{project}/brain")

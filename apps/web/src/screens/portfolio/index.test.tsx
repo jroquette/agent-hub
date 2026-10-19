@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -82,20 +85,31 @@ describe("PortfolioScreen", () => {
     expect(within(needs).getAllByRole("link")).toHaveLength(6);
   });
 
-  it("shows live, runs in flight and estimated cost on cards with dashes for unconnected sources", async () => {
+  it("shows live, runs in flight and estimated cost on cards and says once which sources are not connected", async () => {
     renderWithApi(<PortfolioScreen />, { routes });
 
     const card = await screen.findByRole("article", { name: "Project agent-hub" });
     expect(within(card).getByText("Live sessions").nextSibling).toHaveTextContent("2");
-    expect(within(card).getByText("Runs in progress · 2")).toBeInTheDocument();
+    expect(within(card).getByText("Runs in flight").nextSibling).toHaveTextContent("2");
     expect(within(card).getByText("$10.50")).toBeInTheDocument();
-    const prs = within(card).getByText("Open PRs").nextElementSibling;
-    expect(prs).toHaveTextContent("—CI —");
-    expect(prs).toHaveAttribute("title", "GitHub is not connected in this version.");
-    const ready = within(card).getByText("Ready issues").nextElementSibling;
-    expect(ready).toHaveTextContent("—");
-    expect(ready).toHaveAttribute("title", "Linear is not connected in this version.");
-    expect(screen.getAllByText("Cost estimated from transcripts")).toHaveLength(2);
+    expect(within(card).queryByText("Open PRs")).not.toBeInTheDocument();
+    expect(within(card).getByText(/GitHub and Linear are not connected/)).toBeInTheDocument();
+    expect(screen.getByText("Cost is estimated from transcripts")).toBeInTheDocument();
+  });
+
+  it("collapses proposed learnings of a project into one Triage line", async () => {
+    renderWithApi(<PortfolioScreen />, {
+      routes: {
+        ...routes,
+        "/api/v1/needs-you": aPage([
+          aNeedsYouItem({ kind: "learning", verb: "Review learning", context: "A" }),
+          aNeedsYouItem({ kind: "learning", verb: "Review learning", context: "B" }),
+        ]),
+      },
+    });
+
+    expect(await screen.findByText("Triage 2 learnings")).toBeInTheDocument();
+    expect(screen.queryByText("Review learning")).not.toBeInTheDocument();
   });
 
   it("orders cards by items that need you, then live sessions", async () => {
@@ -156,7 +170,7 @@ describe("PortfolioScreen", () => {
     await user.click(await screen.findByRole("button", { name: "Health" }));
     expect(screen.queryByText("Run AGH-79 failed")).not.toBeInTheDocument();
     expect(screen.getByText("New doctor error")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Approvals" }));
+    await user.click(screen.getByRole("button", { name: "Learnings" }));
     expect(screen.getByText("Nothing happened in this period.")).toBeInTheDocument();
   });
 
@@ -243,7 +257,7 @@ describe("PortfolioScreen", () => {
       expect(screen.getByText(/No session\s+is running\./)).toBeInTheDocument();
       expect(screen.getByText("Nothing happened in this period.")).toBeInTheDocument();
       expect(screen.getByText(/No sessions yet\. Start Claude Code in/)).toBeInTheDocument();
-      expect(screen.getAllByText("No previous period to compare").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("First period tracked").length).toBeGreaterThan(0);
     });
 
     it("shows the live count in the empty copy when sessions run", async () => {
@@ -319,5 +333,96 @@ describe("PortfolioScreen", () => {
     await screen.findByRole("article", { name: "Project agent-hub" });
     await screen.findByText("Run AGH-79 failed at Verifying");
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("PortfolioScreen (playground delivery)", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  const oneProject = aPage([aProjectSummary({ live_sessions: 2 })]);
+
+  it("states the header values once and shows totals below the cards with two projects (AC-PG-29.3)", async () => {
+    renderWithApi(<PortfolioScreen />, { routes });
+
+    await screen.findByRole("article", { name: "Project agent-hub" });
+    expect(
+      screen.getByText("2 projects · 5 sessions running · 3 runs in flight"),
+    ).toBeInTheDocument();
+    const sums = screen.getByRole("region", { name: "Totals · 7 d" });
+    expect(within(sums).getByText("Estimated cost · 7 d")).toBeInTheDocument();
+    expect(within(sums).getByText("Failed runs · 7 d")).toBeInTheDocument();
+    for (const card of screen.getAllByRole("article")) {
+      expect(card.compareDocumentPosition(sums) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it("shows no totals with a single project (AC-PG-29.3)", async () => {
+    renderWithApi(<PortfolioScreen />, { routes: { ...routes, "/api/v1/projects": oneProject } });
+
+    await screen.findByRole("article", { name: "Project agent-hub" });
+    expect(
+      screen.getByText("1 project · 2 sessions running · 1 run in flight"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Totals · 7 d" })).not.toBeInTheDocument();
+  });
+
+  const railActivity = aPage([
+    anActivityItem({ kind: "approval", text: "Approval answered for AGH-131", href: null }),
+    anActivityItem({ kind: "failed", text: "Run AGH-79 failed", href: null }),
+    anActivityItem({ kind: "failed", text: "Run AGH-79 failed", href: null }),
+    anActivityItem({ kind: "failed", text: "Run AGH-79 failed", href: null }),
+    anActivityItem({ kind: "learning", text: "Learning accepted", href: null }),
+  ]);
+
+  it("drops answered approvals from the rail and collapses repeats into one row with a count (AC-PG-29.4)", async () => {
+    renderWithApi(<PortfolioScreen />, {
+      routes: { ...routes, "/api/v1/activity": railActivity },
+    });
+
+    const rail = (await screen.findByRole("heading", { name: "Activity" })).closest("section");
+    if (!rail) throw new Error("no rail");
+    await within(rail).findByText("Learning accepted");
+    expect(within(rail).queryByText("Approval answered for AGH-131")).not.toBeInTheDocument();
+    expect(within(rail).getAllByText("Run AGH-79 failed")).toHaveLength(1);
+    expect(within(rail).getByText("· 3 times")).toBeInTheDocument();
+    expect(within(rail).getAllByText("agent-hub")).toHaveLength(2);
+  });
+
+  it("hides the project name on rail rows when the page shows one project (AC-PG-29.4)", async () => {
+    renderWithApi(<PortfolioScreen />, {
+      routes: { ...routes, "/api/v1/projects": oneProject, "/api/v1/activity": railActivity },
+    });
+
+    const rail = (await screen.findByRole("heading", { name: "Activity" })).closest("section");
+    if (!rail) throw new Error("no rail");
+    await within(rail).findByText("Learning accepted");
+    await screen.findByRole("article", { name: "Project agent-hub" });
+    expect(within(rail).queryByText("agent-hub")).not.toBeInTheDocument();
+  });
+
+  it("lays the cards out with auto-fit at 480 px and stacks the rail below 1100 px (AC-PG-29.4)", async () => {
+    renderWithApi(<PortfolioScreen />, { routes });
+
+    const card = await screen.findByRole("article", { name: "Project agent-hub" });
+    const grid = card.parentElement?.parentElement;
+    expect(grid?.getAttribute("style")).toMatch(
+      /grid-template-columns: repeat\(auto-fit, minmax\(min\(480px, 100%\), 1fr\)\)/,
+    );
+    expect(card.closest(".ah-pf-layout")).not.toBeNull();
+
+    // Vitest does not process CSS imports, so the media rule is read from the file.
+    const css = readFileSync(join(process.cwd(), "src/styles/bundle.css"), "utf8");
+    expect(css).toMatch(
+      /@media \(max-width: 1100px\) \{\s*\.ah-pf-layout \{\s*grid-template-columns: minmax\(0, 1fr\);/,
+    );
+  });
+
+  it("shows no feature, so it reads no feature nicknames (AC-PG-28.2)", async () => {
+    const { requests } = renderWithApi(<PortfolioScreen />, { routes });
+
+    await screen.findByRole("article", { name: "Project agent-hub" });
+    expect(requests.some((r) => r.url.includes("/api/v1/feature-names"))).toBe(false);
   });
 });

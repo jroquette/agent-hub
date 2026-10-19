@@ -1,55 +1,147 @@
-import { useState } from "react";
+import "./features.css";
+
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
   AsOfStamp,
-  DataTable,
+  Button,
   DerivedLabel,
+  GOLDEN_STEP_LABEL,
   EmptyState,
+  FacetMenu,
+  FilterChip,
   Icon,
+  Kbd,
   Popover,
   ProblemError,
   Skeleton,
-  StatusBadge,
   Tooltip,
 } from "../../components";
 import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
+import { readStored, writeStored } from "../../lib/storage";
+import { useRowKeys } from "../../lib/useRowKeys";
 import { useCollectorState } from "../../shell/GlobalStream";
-import { GOLDEN_PATH_ORDER, GoldenPathBar, waitsOnOwner } from "./GoldenPathBar";
-import { AcBar, FilterMenu, PHASES, VERDICT_STATUS, phaseIndex } from "./parts";
+import { typingIn } from "../../shell/goSequence";
+import { GOLDEN_PATH_ORDER, GoldenPathBar } from "./GoldenPathBar";
+import {
+  GROUPS,
+  byGroupOrder,
+  issueId,
+  matchesQuery,
+  missesLinear,
+  reasonOf,
+  type GroupId,
+  type Reason,
+} from "./groups";
+import { FeatureNameField, RenameButton, useFeatureNames } from "./names";
+import { AcBar, PHASES } from "./parts";
 import { useFeatures } from "./queries";
+
+export { issueId } from "./groups";
 
 type Feature = components["schemas"]["FeatureView"];
 
-const FILTERS = ["phase", "verdict", "repo", "size"] as const;
+const FILTERS = ["phase", "repo", "size", "verdict"] as const;
 type FilterKey = (typeof FILTERS)[number];
-
 const NO_VERDICT = "none";
+const SIZES = ["spike", "bounded", "architectural"] as const;
 
-function matches(f: Feature, key: FilterKey, value: string): boolean {
+/** Shipped shows this many rows until the owner asks for more. */
+export const SHIPPED_PREVIEW = 5;
+
+const TONE_COLOR: Record<NonNullable<Reason["tone"]>, string> = {
+  blocked: "var(--blocked)",
+  failed: "var(--failed)",
+  waiting: "var(--waiting)",
+  done: "var(--done)",
+};
+
+const listOf = (raw: string | null): string[] => (raw ? raw.split(",").filter(Boolean) : []);
+
+function matches(f: Feature, key: FilterKey, values: string[]): boolean {
   switch (key) {
     case "phase":
-      return f.phase === value;
+      return values.includes(f.phase);
     case "verdict":
-      return value === NO_VERDICT ? f.verdict === null : f.verdict === value;
+      return values.some((v) => (v === NO_VERDICT ? f.verdict === null : f.verdict === v));
     case "repo":
-      return f.repos.includes(value);
+      return f.repos.some((r) => values.includes(r));
     case "size":
-      return f.size === value;
+      return f.size !== null && values.includes(f.size);
   }
 }
 
-const shipped = (f: Feature) => f.phase === "shipped";
+export const featureHref = (f: Pick<Feature, "project" | "slug">) =>
+  `/features/${encodeURIComponent(f.project)}/${encodeURIComponent(f.slug)}`;
 
-/** In progress first, furthest along first, shipped last (spec 17). */
-function byProgress(a: Feature, b: Feature): number {
+const COLLAPSED_KEY = "ah.features.collapsed";
+
+function readCollapsed(): Set<GroupId> {
+  try {
+    const value: unknown = JSON.parse(readStored(COLLAPSED_KEY) ?? "[]");
+    const stored: unknown[] = Array.isArray(value) ? value : [];
+    return new Set(GROUPS.map((g) => g.id).filter((id) => id !== "needs" && stored.includes(id)));
+  } catch {
+    return new Set();
+  }
+}
+
+function useCollapsed(): [Set<GroupId>, (id: GroupId) => void] {
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggle = (id: GroupId) => {
+    const next = new Set(collapsed);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    writeStored(COLLAPSED_KEY, JSON.stringify([...next]));
+    setCollapsed(next);
+  };
+  return [collapsed, toggle];
+}
+
+/** `/` focuses the search; Esc in it clears, then leaves. */
+function SearchField({ value, onChange }: { value: string; onChange: (q: string) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.defaultPrevented) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || typingIn(event.target)) return;
+      event.preventDefault();
+      ref.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
   return (
-    Number(shipped(a)) - Number(shipped(b)) ||
-    phaseIndex(b.phase) - phaseIndex(a.phase) ||
-    a.slug.localeCompare(b.slug)
+    <div className="ah-search ft-search">
+      <Icon name="search" size="sm" />
+      <input
+        ref={ref}
+        type="search"
+        className="ah-input"
+        aria-label="Find features"
+        placeholder="Find by name, issue or repo"
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          if (value) onChange("");
+          else event.currentTarget.blur();
+        }}
+      />
+      {!value && (
+        <span className="ft-search-kbd" aria-hidden="true">
+          <Kbd>/</Kbd>
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -58,9 +150,14 @@ function IssuesCell({ issues }: { issues: string[] }) {
   const [open, setOpen] = useState(false);
   const [first, ...rest] = issues;
   if (!first) return <span className="ah-subtle">—</span>;
+  const firstId = issueId(first);
   return (
-    <span className="ah-row" style={{ gap: 4, position: "relative" }}>
-      <span className="ah-mono ah-small">{first}</span>
+    <span className="ah-row" style={{ gap: 4, position: "relative", flexWrap: "nowrap" }}>
+      <Tooltip label={firstId === first.trim() ? undefined : first}>
+        <span className="ah-mono ah-small" style={{ whiteSpace: "nowrap" }}>
+          {firstId}
+        </span>
+      </Tooltip>
       {rest.length > 0 && (
         <button
           type="button"
@@ -86,11 +183,11 @@ function IssuesCell({ issues }: { issues: string[] }) {
       <Popover
         open={open}
         label="All issues"
-        style={{ top: 28, left: 0, minWidth: 140, padding: 8 }}
+        style={{ top: 28, left: 0, minWidth: 140, maxWidth: 360, padding: 8 }}
       >
         <span className="ah-stack" style={{ gap: 4 }}>
           {issues.map((id) => (
-            <span key={id} className="ah-mono ah-small">
+            <span key={id} className="ah-mono ah-small" style={{ overflowWrap: "anywhere" }}>
               {id}
             </span>
           ))}
@@ -100,140 +197,392 @@ function IssuesCell({ issues }: { issues: string[] }) {
   );
 }
 
-/** The Evaluate step's own meta when it is not done, so a verdict is not read as the whole feature's. */
-function verdictScope(f: Feature): string | null {
-  const evaluate = f.golden_path.steps.find((s) => s.name === "evaluate");
-  return evaluate && evaluate.state !== "done" ? (evaluate.meta ?? null) : null;
-}
-
-/** The eval's verdict line without its markdown, for the badge's tooltip. */
-const plainVerdictLine = (line: string) => line.replace(/\*\*|`/g, "").trim();
-
-export const featureHref = (f: Pick<Feature, "project" | "slug">) =>
-  `/features/${encodeURIComponent(f.project)}/${encodeURIComponent(f.slug)}`;
-
 function AcCell({ f }: { f: Feature }) {
-  if (f.problem) {
-    return (
-      <Tooltip label={`${f.problem}. Fix it in a hub PR.`}>
-        <span className="ah-row" style={{ gap: 4 }}>
-          <Icon name="octagon-x" size="sm" style={{ color: "var(--blocked)" }} title={f.problem} />
-          <span className="ah-subtle">—</span>
-        </span>
-      </Tooltip>
-    );
-  }
-  if (!f.acs) return <span className="ah-subtle">—</span>;
-  return <AcBar acs={f.acs} />;
+  if (f.problem || !f.acs) return <span className="ah-subtle">—</span>;
+  return <AcBar acs={f.acs} width={96} />;
 }
 
-/** Features list (spec 17, D23): golden path, ACs and verdict of each feature record. */
+/** Everything the row's cells show, for keyboard and screen-reader users: the bars are not tab stops. */
+function rowLabel(f: Feature, reason: Reason, name: string | null): string {
+  const acs =
+    f.acs && !f.problem
+      ? `ACs ${String(f.acs.passing + f.acs.owner_steps)} of ${String(f.acs.total)}`
+      : null;
+  const issues = f.issues.length ? `issues ${f.issues.map(issueId).join(", ")}` : null;
+  return [
+    name ? `${name} (${f.slug})` : f.slug,
+    reason.line,
+    `golden path at ${GOLDEN_STEP_LABEL[f.phase]}`,
+    acs,
+    `verdict ${f.verdict ?? "none"}`,
+    issues,
+  ]
+    .filter(Boolean)
+    .join(". ");
+}
+
+function FeatureRow({
+  f,
+  name,
+  reason,
+  showProject,
+  onOpen,
+}: {
+  f: Feature;
+  name: string | null;
+  reason: Reason;
+  showProject: boolean;
+  onOpen: (href: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const href = featureHref(f) + (reason.doc ? `?doc=${reason.doc}` : "");
+  const lineId = `ft-line-${f.project}-${f.slug}`;
+  const tags = [...(showProject ? [f.project] : []), ...f.repos.filter((r) => r !== f.project)];
+  return (
+    // The row is one keyboard stop (Enter opens), as the Sessions inbox rows are.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+    <li
+      className="ft-row"
+      data-tone={reason.tone ?? undefined}
+      data-muted={reason.group === "shipped" || undefined}
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+      tabIndex={0}
+      data-nav-row=""
+      aria-label={rowLabel(f, reason, name)}
+      onClick={() => {
+        onOpen(href);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && event.target === event.currentTarget) onOpen(href);
+      }}
+    >
+      <span
+        className="ft-row-lead"
+        aria-hidden="true"
+        style={reason.tone ? { color: TONE_COLOR[reason.tone] } : undefined}
+      >
+        {reason.icon && <Icon name={reason.icon} size="sm" />}
+      </span>
+      <div className="ft-row-main">
+        <div className="ft-row-head">
+          {editing ? (
+            <FeatureNameField
+              feature={f}
+              name={name}
+              onDone={() => {
+                setEditing(false);
+              }}
+            />
+          ) : (
+            <>
+              <Link
+                to={href}
+                className="ft-row-title"
+                data-named={name ? "" : undefined}
+                title={name ? `${name} · ${f.slug}` : f.slug}
+                aria-describedby={lineId}
+                tabIndex={-1}
+                onClick={(event) => {
+                  event.stopPropagation();
+                }}
+              >
+                {name ?? f.slug}
+              </Link>
+              {name && <span className="ft-row-slug">{f.slug}</span>}
+              <RenameButton
+                slug={f.slug}
+                named={name !== null}
+                onClick={() => {
+                  setEditing(true);
+                }}
+              />
+            </>
+          )}
+          {tags.map((tag) => (
+            <span key={tag} className="ft-row-tag">
+              {tag}
+            </span>
+          ))}
+        </div>
+        <div
+          id={lineId}
+          className="ft-row-line"
+          title={reason.line}
+          style={
+            reason.tone === "failed" || reason.tone === "blocked"
+              ? { color: TONE_COLOR[reason.tone] }
+              : undefined
+          }
+        >
+          {reason.line}
+        </div>
+      </div>
+      <div className="ft-row-meta">
+        <span className="ft-col-issues">
+          <IssuesCell issues={f.issues} />
+        </span>
+        <GoldenPathBar path={f.golden_path} compact />
+        <AcCell f={f} />
+      </div>
+    </li>
+  );
+}
+
+/** The group's hint: for Needs you, how many of each kind, so the reason is read at a glance. */
+function hintOf(id: GroupId, rows: Feature[]): string {
+  const meta = GROUPS.find((g) => g.id === id);
+  if (id !== "needs") return meta?.hint ?? "";
+  const ranks = rows.map((f) => reasonOf(f).rank);
+  const count = (rank: number) => ranks.filter((r) => r === rank).length;
+  return [
+    [count(2), "wait on your steps"],
+    [count(1), "no ship"],
+    [count(0), "record cannot be read"],
+  ]
+    .filter(([n]) => Number(n) > 0)
+    .map(([n, words]) => `${String(n)} ${String(words)}`)
+    .join(" · ");
+}
+
+/** The column titles at the top of each group's card; the first card also explains them. */
+function ColumnHeads({ withHints }: { withHints: boolean }) {
+  const head = (label: string, hint: string, className?: string) => (
+    <span className={className}>
+      <span className="ah-row" style={{ gap: 4, flexWrap: "nowrap" }}>
+        {label}
+        {withHints && (
+          <Tooltip label={hint}>
+            <span
+              role="img"
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+              tabIndex={0}
+              aria-label={`${label}: ${hint}`}
+              style={{ display: "inline-flex" }}
+            >
+              <Icon name="info" size="sm" />
+            </span>
+          </Tooltip>
+        )}
+      </span>
+    </span>
+  );
+  return (
+    <div className="ft-cols">
+      <span aria-hidden="true" />
+      <span>Feature</span>
+      <div className="ft-cols-meta">
+        {head("Issues", "The tracker issues of the feature.", "ft-col-issues")}
+        {head(
+          "Golden path",
+          `One segment per step: ${GOLDEN_PATH_ORDER}. Derived from the record files, the tickets' status read from Linear, and the review and eval records.`,
+        )}
+        {head(
+          "ACs",
+          "Acceptance criteria passing, of the total. Owner steps are counted and hatched in amber.",
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Group({
+  nameOf,
+  id,
+  rows,
+  collapsed,
+  onToggle,
+  showProject,
+  onOpen,
+  filtered,
+  withHints,
+}: {
+  nameOf: (f: Feature) => string | null;
+  withHints: boolean;
+  id: GroupId;
+  rows: Feature[] | null;
+  collapsed: boolean;
+  onToggle: () => void;
+  showProject: boolean;
+  onOpen: (href: string) => void;
+  filtered: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const meta = GROUPS.find((g) => g.id === id) ?? GROUPS[0];
+  if (!meta) return null;
+  const headId = `ft-group-${id}`;
+  const open = !collapsed;
+  const count = rows === null ? "…" : String(rows.length);
+  const preview = id === "shipped" && !expanded && !filtered;
+  const shown = rows && preview ? rows.slice(0, SHIPPED_PREVIEW) : rows;
+  const hidden = (rows?.length ?? 0) - (shown?.length ?? 0);
+  return (
+    <section className="ft-group" aria-labelledby={headId} data-group={id}>
+      <div className="ft-group-head">
+        <h2 className="ft-group-title">
+          <button
+            type="button"
+            id={headId}
+            className="ft-group-toggle"
+            aria-expanded={open}
+            onClick={onToggle}
+          >
+            <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
+            {meta.title} · <span className="ft-group-count">{count}</span>
+          </button>
+        </h2>
+        {open && (rows?.length ? hintOf(id, rows) : meta.hint) && (
+          <span className="ft-group-hint">{rows?.length ? hintOf(id, rows) : meta.hint}</span>
+        )}
+      </div>
+      {open &&
+        (shown === null ? (
+          <ul className="ft-rows ft-card" aria-hidden="true">
+            {Array.from({ length: 3 }, (_, i) => (
+              <li key={i} className="ft-row" style={{ cursor: "default" }}>
+                <span className="ft-row-lead" />
+                <div className="ft-row-main">
+                  <Skeleton width="40%" />
+                  <Skeleton width="60%" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : shown.length === 0 ? (
+          <div className="ft-empty">{meta.empty}</div>
+        ) : (
+          <>
+            <div className="ft-card">
+              <ColumnHeads withHints={withHints} />
+              <ul className="ft-rows" aria-labelledby={headId}>
+                {shown.map((f) => (
+                  <FeatureRow
+                    key={`${f.project}/${f.slug}`}
+                    f={f}
+                    name={nameOf(f)}
+                    reason={reasonOf(f)}
+                    showProject={showProject}
+                    onOpen={onOpen}
+                  />
+                ))}
+              </ul>
+            </div>
+            {hidden > 0 && (
+              <button
+                type="button"
+                className="ft-more-link"
+                onClick={() => {
+                  setExpanded(true);
+                }}
+              >
+                Show {hidden} more shipped feature{hidden === 1 ? "" : "s"}
+              </button>
+            )}
+          </>
+        ))}
+    </section>
+  );
+}
+
+/** Features list (spec 17, D23) as an inbox: what needs you, what is moving, what shipped. */
 export function FeaturesScreen() {
   const [scope] = useScope();
   const features = useFeatures(scope);
+  const nameOf = useFeatureNames();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
+  const [collapsed, toggle] = useCollapsed();
+  const screenRef = useRef<HTMLDivElement>(null);
+  useRowKeys(screenRef);
 
-  const all = [...(features.data?.items ?? [])].sort(byProgress);
+  const all = features.data?.items ?? [];
+  const q = params.get("q") ?? "";
   const active = FILTERS.flatMap((key) => {
-    const value = params.get(key);
-    return value === null ? [] : [{ key, value }];
+    const values = listOf(params.get(key));
+    return values.length ? [{ key, values }] : [];
   });
-  const rows = all.filter((f) => active.every(({ key, value }) => matches(f, key, value)));
-  const shippedCount = all.filter(shipped).length;
-  const waitingCount = all.filter((f) => waitsOnOwner(f.golden_path)).length;
-  const inProgress = all.length - shippedCount - waitingCount;
-  const setFilter = (key: FilterKey, value: string | null) => {
+  const filtered = q.trim() !== "" || active.length > 0;
+  const rows = all.filter(
+    (f) =>
+      matchesQuery(f, q, nameOf(f)) && active.every(({ key, values }) => matches(f, key, values)),
+  );
+  const byGroup = new Map<GroupId, Feature[]>(GROUPS.map((g) => [g.id, []]));
+  for (const f of rows) byGroup.get(reasonOf(f).group)?.push(f);
+  for (const list of byGroup.values()) list.sort(byGroupOrder);
+
+  const update = (changes: Partial<Record<FilterKey | "q", string | null>>) => {
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
-        if (value === null) next.delete(key);
-        else next.set(key, value);
+        for (const [key, value] of Object.entries(changes)) {
+          if (value === null || value === "") next.delete(key);
+          else next.set(key, value);
+        }
         return next;
       },
       { replace: true },
     );
   };
-  const clearFilters = () => {
-    setParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        for (const key of FILTERS) next.delete(key);
-        return next;
-      },
-      { replace: true },
-    );
+  const toggleValue = (key: FilterKey, id: string) => {
+    const values = listOf(params.get(key));
+    const next = values.includes(id) ? values.filter((v) => v !== id) : [...values, id];
+    update({ [key]: next.join(",") || null });
+  };
+  const clearAll = () => {
+    update({ q: null, phase: null, repo: null, size: null, verdict: null });
+  };
+  const countFor = (key: FilterKey, test: (f: Feature) => boolean) =>
+    all.filter(
+      (f) =>
+        test(f) &&
+        matchesQuery(f, q, nameOf(f)) &&
+        active.every((a) => a.key === key || matches(f, a.key, a.values)),
+    ).length;
+  const facet = (
+    key: FilterKey,
+    ids: readonly { id: string; label: string }[],
+    count: (id: string) => number,
+  ) => {
+    const chosen = listOf(params.get(key));
+    return ids.map((o) => ({ ...o, count: count(o.id), checked: chosen.includes(o.id) }));
   };
   const repos = [...new Set(all.flatMap((f) => f.repos))].sort();
+  const projects = new Set(all.map((f) => f.project));
+  const verdicts = listOf(params.get("verdict"));
+  const onOpen = (href: string) => void navigate(href);
+  // The first open card with rows explains the columns; the others only name them.
+  const firstCard = GROUPS.find(
+    (g) => !collapsed.has(g.id) && (byGroup.get(g.id)?.length ?? 0) > 0,
+  )?.id;
 
   return (
-    <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
-      <div className="ah-row ah-wrap">
+    <div ref={screenRef} style={{ padding: "16px 32px 40px" }} className="ah-stack">
+      <div className="ft-head">
         <h1 className="ah-h1">Features</h1>
-        {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
-        <span className="ah-grow" />
-        <FilterMenu
-          label="Phase"
-          value={params.get("phase")}
-          options={PHASES.map((p) => ({ id: p.id, label: p.label }))}
-          onChange={(v) => {
-            setFilter("phase", v);
-          }}
-        />
-        <FilterMenu
-          label="Verdict"
-          value={params.get("verdict")}
-          options={[
-            { id: "SHIP", label: "SHIP" },
-            { id: "SHIP-WITH-OWNER-STEPS", label: "SHIP-WITH-OWNER-STEPS" },
-            { id: "NO-SHIP", label: "NO-SHIP" },
-            { id: NO_VERDICT, label: "Not evaluated" },
-          ]}
-          onChange={(v) => {
-            setFilter("verdict", v);
-          }}
-        />
-        <FilterMenu
-          label="Repo"
-          value={params.get("repo")}
-          options={repos.map((r) => ({ id: r, label: r }))}
-          onChange={(v) => {
-            setFilter("repo", v);
-          }}
-        />
-        <FilterMenu
-          label="Size"
-          value={params.get("size")}
-          options={["spike", "bounded", "architectural"].map((s) => ({ id: s, label: s }))}
-          onChange={(v) => {
-            setFilter("size", v);
-          }}
-        />
+        {features.isSuccess && all.length > 0 && (
+          <p className="ft-summary">
+            {GROUPS.map((g) => {
+              const n = all.filter((f) => reasonOf(f).group === g.id).length;
+              return (
+                <span key={g.id} data-group={g.id}>
+                  <b>{n}</b> {g.summary}
+                </span>
+              );
+            })}
+            <DerivedLabel how="Grouped from the golden path, derived from the record files, the tickets' status read from Linear, and the review and eval records.">
+              derived
+            </DerivedLabel>
+          </p>
+        )}
+        {state === "offline" ? (
+          <AsOfStamp stale time={fmtClock(asOf, tz)} />
+        ) : (
+          features.isError &&
+          features.data && <AsOfStamp stale time={fmtClock(new Date(features.dataUpdatedAt), tz)} />
+        )}
       </div>
-      <div className="ah-small ah-muted" style={{ marginBottom: 8 }}>
-        {features.isPending ? (
-          <Skeleton width={280} />
-        ) : features.isSuccess && all.length > 0 ? (
-          <span>
-            <b style={{ color: "var(--text)" }}>
-              {all.length} feature{all.length === 1 ? "" : "s"}
-            </b>{" "}
-            {waitingCount > 0 && (
-              <>
-                {" · "}
-                <b style={{ color: "var(--text)" }}>
-                  <Icon name="hand" size="sm" style={{ verticalAlign: "-3px" }} /> {waitingCount}{" "}
-                  waiting for you
-                </b>
-              </>
-            )}{" "}
-            · {inProgress} in progress · {shippedCount} shipped · furthest along first
-          </span>
-        ) : null}
-      </div>
-      {features.isError ? (
+      {features.isError && !features.data ? (
         <ProblemError
           title={features.error.title}
           detail={features.error.detail}
@@ -250,117 +599,119 @@ export function FeaturesScreen() {
         </div>
       ) : (
         <>
-          <DataTable<Feature>
-            caption="Features"
-            rowKey={(f) => `${f.project}/${f.slug}`}
-            rows={rows}
-            loading={features.isPending}
-            onRowClick={(f) => void navigate(featureHref(f))}
-            empty={
-              <div className="ah-small ah-muted" style={{ padding: 16 }}>
-                No features match these filters.{" "}
-                <button
-                  type="button"
-                  className="ah-btn ah-btn-sm ah-btn-ghost"
-                  onClick={clearFilters}
-                >
-                  Clear filters
-                </button>
-              </div>
-            }
-            columns={[
-              {
-                id: "slug",
-                label: "Feature",
-                width: "26%",
-                render: (f) => (
-                  <span className="ah-stack" style={{ gap: 2 }}>
-                    <Link
-                      to={featureHref(f)}
-                      className="ah-mono"
-                      style={{ fontWeight: 500 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                      }}
-                    >
-                      {f.slug}
-                    </Link>
-                    <span className="ah-small ah-subtle">
-                      {f.project}
-                      {f.repos.length && f.repos[0] !== f.project ? ` · ${f.repos.join(", ")}` : ""}
-                    </span>
+          <div className="ft-toolbar" role="group" aria-label="Filters">
+            <SearchField
+              value={q}
+              onChange={(value) => {
+                update({ q: value });
+              }}
+            />
+            <FacetMenu
+              label="Step"
+              options={facet(
+                "phase",
+                PHASES.map((p) => ({ id: p.id, label: p.label })),
+                (id) => countFor("phase", (f) => f.phase === id),
+              )}
+              onToggle={(id) => {
+                toggleValue("phase", id);
+              }}
+              onClear={() => {
+                update({ phase: null });
+              }}
+            />
+            {repos.length > 1 && (
+              <FacetMenu
+                label="Repo"
+                options={facet(
+                  "repo",
+                  repos.map((r) => ({ id: r, label: r })),
+                  (id) => countFor("repo", (f) => f.repos.includes(id)),
+                )}
+                onToggle={(id) => {
+                  toggleValue("repo", id);
+                }}
+                onClear={() => {
+                  update({ repo: null });
+                }}
+              />
+            )}
+            <FacetMenu
+              label="Size"
+              options={facet(
+                "size",
+                SIZES.map((s) => ({ id: s, label: s })),
+                (id) => countFor("size", (f) => f.size === id),
+              )}
+              onToggle={(id) => {
+                toggleValue("size", id);
+              }}
+              onClear={() => {
+                update({ size: null });
+              }}
+            />
+            {verdicts.map((v) => (
+              <FilterChip
+                key={v}
+                k="Verdict"
+                value={v === NO_VERDICT ? "Not evaluated" : v}
+                onRemove={() => {
+                  toggleValue("verdict", v);
+                }}
+              />
+            ))}
+            {filtered && (
+              <Button size="sm" variant="ghost" icon="x" onClick={clearAll}>
+                Clear filters
+              </Button>
+            )}
+            {filtered && features.isSuccess && (
+              <span className="ah-small ah-muted" role="status">
+                {rows.length} of {all.length} feature{all.length === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+          {features.isSuccess && filtered && rows.length === 0 ? (
+            <div className="ft-empty">
+              No features match these filters.{" "}
+              <Button size="sm" variant="ghost" onClick={clearAll}>
+                Clear filters
+              </Button>
+            </div>
+          ) : (
+            <div className="ft-groups">
+              {features.isSuccess && missesLinear(all) && (
+                <p className="ft-notice" role="note">
+                  <Icon name="info" size="sm" />
+                  <span>
+                    Ticket status is not read from Linear on this list, so Review and Shipped show
+                    as unknown. A feature&apos;s Tickets tab reads it.
                   </span>
-                ),
-              },
-              {
-                id: "issues",
-                label: "Issues",
-                width: 140,
-                render: (f) => <IssuesCell issues={f.issues} />,
-              },
-              {
-                id: "size",
-                label: "Size",
-                width: 120,
-                render: (f) =>
-                  f.size ? (
-                    <span className="ah-fm-chip">{f.size}</span>
-                  ) : (
-                    <span className="ah-subtle">—</span>
-                  ),
-              },
-              {
-                id: "phase",
-                label: (
-                  <span className="ah-row" style={{ gap: 4 }}>
-                    Golden path
-                    <DerivedLabel how="Derived from the record files, the tickets' status read from Linear, and the review and eval records.">
-                      derived
-                    </DerivedLabel>
-                  </span>
-                ),
-                hint: `One segment per step, left to right: ${GOLDEN_PATH_ORDER}. Focus or hover the bar for each step's state.`,
-                render: (f) => <GoldenPathBar path={f.golden_path} />,
-              },
-              {
-                id: "acs",
-                label: "ACs",
-                width: 180,
-                hint: "Acceptance criteria passing, of the total. A full bar never hides a manual step: owner steps are counted and hatched in amber.",
-                render: (f) => <AcCell f={f} />,
-              },
-              {
-                id: "verdict",
-                label: "Verdict",
-                width: 200,
-                hint: "The verdict of the latest eval.md; “—” when the feature has no eval yet.",
-                render: (f) => {
-                  if (!f.verdict) return <span className="ah-subtle">—</span>;
-                  const scope = verdictScope(f);
-                  return (
-                    <span className="ah-stack" style={{ gap: 2, alignItems: "flex-start" }}>
-                      <Tooltip
-                        label={f.verdict_line ? plainVerdictLine(f.verdict_line) : "From eval.md"}
-                      >
-                        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-                        <span tabIndex={0}>
-                          <StatusBadge status={VERDICT_STATUS[f.verdict]} label={f.verdict} />
-                        </span>
-                      </Tooltip>
-                      {scope && <span className="ah-small ah-subtle">{scope}</span>}
-                    </span>
-                  );
-                },
-              },
-            ]}
-            footer={
-              features.isSuccess ? (
-                <span>
-                  {rows.length} of {all.length} feature{all.length === 1 ? "" : "s"}
-                </span>
-              ) : undefined
-            }
-          />
+                </p>
+              )}
+              {GROUPS.map((g) => {
+                const list = features.isSuccess ? (byGroup.get(g.id) ?? []) : null;
+                if (filtered && list?.length === 0) return null;
+                const withHints = g.id === firstCard;
+                return (
+                  <Group
+                    key={g.id}
+                    nameOf={nameOf}
+                    id={g.id}
+                    rows={list}
+                    collapsed={collapsed.has(g.id)}
+                    onToggle={() => {
+                      toggle(g.id);
+                    }}
+                    showProject={projects.size > 1}
+                    onOpen={onOpen}
+                    filtered={filtered}
+                    withHints={withHints}
+                  />
+                );
+              })}
+            </div>
+          )}
         </>
       )}
     </div>

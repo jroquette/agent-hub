@@ -19,6 +19,9 @@ BODIES: dict[tuple[str, str], object] = {
         "hook": {"hook_event_name": "Stop"},
     },
     ("post", "/api/v1/hubs"): {"path": "/home/demo/demo-hub"},
+    ("post", "/api/v1/hubs/{hub_id}/platform-sync"): {},
+    ("post", "/api/v1/hubs/{hub_id}/doctor-fix"): {},
+    ("post", "/api/v1/features/{project}/{slug}/acs/{ac}/check-runs"): {},
     ("post", "/api/v1/learnings/{learning_id}/accept"): {"target": "learnings/"},
     ("post", "/api/v1/learnings/{learning_id}/reject"): {"reason": "Duplicate of another note"},
     ("post", "/api/v1/approvals/{approval_id}/decision"): {"decision": "approve"},
@@ -42,6 +45,12 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/workflow-runs/{run_id}/cancel"): {},
     ("post", "/api/v1/workflow-runs/{run_id}/resume"): {},
     ("post", "/api/v1/workflow-runs/{run_id}/abandon"): {},
+    # A restore is a strict write too (AGH-295, D13).
+    (
+        "post",
+        "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}/restore",
+    ): {},
+    ("post", "/api/v1/workflows/{project}/{name}/versions/{version_id}/restore"): {},
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
@@ -59,7 +68,16 @@ def _concrete(path: str) -> str:
     # Run commands take the CLI's run ids only.
     if path.endswith(("/cancel", "/resume", "/abandon")):
         path = path.replace("{run_id}", "run-1")
-    names = ("hub_id", "project", "session_id", "run_id", "approval_id", "learning_id", "slug")
+    names = (
+        "hub_id",
+        "project",
+        "session_id",
+        "run_id",
+        "approval_id",
+        "learning_id",
+        "slug",
+        "ac",
+    )
     for name in (*names, "request_id", "cloud_id"):
         path = path.replace(f"{{{name}}}", f"{name}-1")
     return path

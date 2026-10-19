@@ -10,7 +10,8 @@ from agent_hub.core.testing.fakes import (
     InMemoryEventStore,
     InMemoryTrackerClient,
 )
-from agent_hub.core.testing.item_version_fakes import InMemoryItemVersionStore
+from agent_hub.core.testing.hub_item_writer_contract import WriterTree
+from agent_hub.core.testing.item_version_fakes import InMemoryItemVersionStore, InMemoryWriterTree
 from agent_hub.core.testing.skill_sources_contract import SkillTree
 from agent_hub.core.testing.skill_trees import InMemorySkillTree
 from agent_hub.core.testing.tracker_reader_fakes import (
@@ -55,3 +56,8 @@ def skill_tree() -> SkillTree:
 @pytest.fixture
 def item_version_store() -> ItemVersionStore:
     return InMemoryItemVersionStore()
+
+
+@pytest.fixture
+def writer_tree() -> WriterTree:
+    return InMemoryWriterTree()

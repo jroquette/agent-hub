@@ -10,6 +10,7 @@ import {
   aTicketRow,
   aWorkdir,
   anAgentSession,
+  aSession,
   anId,
   renderWithApi,
   type ApiRoutes,
@@ -106,5 +107,37 @@ describe("StartTicket", () => {
     >;
     expect(body).toMatchObject({ project: "agent-hub", mode: "acceptEdits", fork: false });
     expect(String(body.prompt)).toMatch(/^\/feature AGH-2\n/);
+  });
+
+  it("links the ticket's open session on its card instead of Start (sessions)", async () => {
+    const card = () => {
+      const found = document.querySelector('[data-node-id="T2"]');
+      if (!(found instanceof HTMLElement)) throw new Error("no card T2");
+      return within(found);
+    };
+    renderWithApi(
+      <TicketsTab
+        project="agent-hub"
+        slug="claims"
+        data={aFeatureTickets({
+          tickets: [done, ready, waiting],
+          planning: aTicketPlan({ layers: [["T1"], ["T2"], ["T3"]], can_start: ["T2"] }),
+        })}
+        onRefresh={() => undefined}
+      />,
+      {
+        routes: {
+          ...driving,
+          "/api/v1/sessions": (request: Request) =>
+            new URL(request.url).searchParams.get("issue") === "AGH-2"
+              ? aPage([aSession({ id: "sess-2", status: "waiting" })])
+              : aPage([]),
+        },
+      },
+    );
+
+    const link = await card().findByRole("link", { name: /Waiting/ });
+    expect(link).toHaveAttribute("href", "/sessions/sess-2");
+    expect(card().queryByRole("button", { name: "Start AGH-2" })).toBe(null);
   });
 });

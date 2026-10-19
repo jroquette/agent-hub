@@ -19,6 +19,7 @@ from agent_hub.api.local_security import (
     allowed_hosts,
     allowed_origins,
     is_hub_registry_write,
+    is_item_write,
     is_json_media_type,
     is_run_write,
     is_strict_write,
@@ -308,6 +309,36 @@ def test_turns_run_commands_off_when_sessions_off(
     assert listed.status_code != 404
 
 
+ITEM_WRITES = (
+    "/api/v1/projects/demo/skills/skill/demo/alpha/versions/0199f0a0-0000-7000-8000-00000000000a/restore",
+    "/api/v1/projects/demo/skills/hook/project/pre-tool-use-1/versions/v-1/restore",
+    "/api/v1/workflows/demo/review/versions/0199f0a0-0000-7000-8000-00000000000a/restore",
+)
+
+
+@pytest.mark.parametrize("path", ITEM_WRITES)
+def test_is_item_write_when_restore_path_posted(path: str) -> None:
+    assert is_item_write("POST", path)
+    assert is_strict_write("POST", path)
+    assert not is_run_write("POST", path)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", ITEM_WRITES[0]),
+        ("POST", "/api/v1/projects/demo/skills/skill/demo/alpha/versions/v-1"),
+        ("POST", "/api/v1/projects/demo/skills/skill/alpha/versions/v-1/restore"),
+        ("POST", "/api/v1/projects/demo/skills/skill/demo/alpha/versions/v-1/restore/extra"),
+        ("POST", "/api/v1/workflows/demo/review/versions//restore"),
+        ("POST", "/api/v1/workflows/demo/a/b/versions/v-1/restore"),
+    ],
+)
+def test_keeps_other_checks_when_not_item_write(method: str, path: str) -> None:
+    assert not is_item_write(method, path)
+    assert not is_strict_write(method, path)
+
+
 async def _body_length_app(scope: Scope, receive: Receive, send: Send) -> None:
     # Not started as a context manager: the client sends no lifespan messages.
     body = await Request(scope, receive).body()
@@ -392,3 +423,153 @@ def test_caps_message_body_at_message_cap_when_images_may_be_pasted() -> None:
     assert over.json()["detail"] == (
         f"Request bodies are limited to {AGENT_SESSION_MESSAGE_BODY_BYTES} bytes."
     )
+
+
+# The playground's writes that rewrite a hub's files (AC-PG-23.3, AC-PG-37.1, AC-PG-38.4).
+PLAYGROUND_HUB_WRITES = (
+    ("POST", "/api/v1/hubs/hub-1/platform-sync"),
+    ("POST", "/api/v1/hubs/hub-1/doctor-fix"),
+    ("PUT", "/api/v1/projects/demo/config/local"),
+)
+CHECK_RUN = "/api/v1/features/demo/demo-feature/acs/AC-7.1/check-runs"
+
+
+# AC-PG-23.3, AC-PG-37.1: platform-sync, doctor-fix and the local config write take the hub
+# registry's checks.
+@pytest.mark.parametrize(("method", "path"), PLAYGROUND_HUB_WRITES)
+def test_marks_hub_registry_write_when_playground_hub_write(method: str, path: str) -> None:
+    assert is_hub_registry_write(method, path)
+    assert not is_strict_write(method, path)
+
+
+# AC-PG-23.3, AC-PG-37.1: only those exact method and path shapes are marked.
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/hubs/hub-1/platform-sync"),
+        ("POST", "/api/v1/hubs/a/b/platform-sync"),
+        ("POST", "/api/v1/hubs/hub-1/platform-sync/extra"),
+        ("GET", "/api/v1/hubs/hub-1/doctor-fix"),
+        ("POST", "/api/v1/hubs/hub-1/doctor-fixes"),
+        ("GET", "/api/v1/projects/demo/config/local"),
+        ("POST", "/api/v1/projects/demo/config/local"),
+        ("PUT", "/api/v1/projects/a/b/config/local"),
+        ("GET", "/api/v1/projects/demo/config"),
+    ],
+)
+def test_keeps_default_checks_when_not_playground_hub_write(method: str, path: str) -> None:
+    assert not is_hub_registry_write(method, path)
+
+
+# AC-PG-23.3, AC-PG-37.1: a missing Origin is refused on those writes, as on the registry's.
+@pytest.mark.parametrize(("method", "path"), PLAYGROUND_HUB_WRITES)
+def test_refuses_playground_hub_write_when_origin_missing(
+    client: TestClient, method: str, path: str
+) -> None:
+    client.headers.pop("Origin", None)
+
+    response = client.request(method, path, json={})
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden origin"
+
+
+# AC-PG-23.3, AC-PG-37.1: another loopback origin, even of this machine, is refused too.
+@pytest.mark.parametrize(("method", "path"), PLAYGROUND_HUB_WRITES)
+@pytest.mark.parametrize("origin", ["http://localhost:7420", "http://127.0.0.1:7421", "null"])
+def test_refuses_playground_hub_write_when_origin_not_exactly_this_server(
+    client: TestClient, *, method: str, path: str, origin: str
+) -> None:
+    response = client.request(method, path, json={}, headers={"Origin": origin})
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden origin"
+
+
+# AC-PG-23.3, AC-PG-37.1: a cross-site fetch is refused even with this server's Origin.
+@pytest.mark.parametrize(("method", "path"), PLAYGROUND_HUB_WRITES)
+def test_refuses_playground_hub_write_when_fetch_site_cross_site(
+    client: TestClient, method: str, path: str
+) -> None:
+    headers = {**OWN_JSON, "Sec-Fetch-Site": "cross-site"}
+
+    response = client.request(method, path, json={}, headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden fetch site"
+
+
+# AC-PG-23.3: the hub POSTs need a JSON body; the local config PUT is checked by origin only.
+@pytest.mark.parametrize(
+    ("method", "path", "status"),
+    [
+        ("POST", "/api/v1/hubs/hub-1/platform-sync", 415),
+        ("POST", "/api/v1/hubs/hub-1/doctor-fix", 415),
+    ],
+)
+def test_refuses_playground_hub_post_when_body_not_json(
+    client: TestClient, *, method: str, path: str, status: int
+) -> None:
+    headers = {**OWN_JSON, "Content-Type": "text/plain"}
+
+    response = client.request(method, path, content=b"{}", headers=headers)
+
+    assert response.status_code == status
+
+
+# AC-PG-23.3, AC-PG-37.1: from this server's own page, the write passes the checks.
+@pytest.mark.parametrize(("method", "path"), PLAYGROUND_HUB_WRITES)
+def test_passes_playground_hub_write_when_own_origin_and_json(
+    client: TestClient, method: str, path: str
+) -> None:
+    response = client.request(method, path, json={}, headers=OWN_JSON)
+
+    assert response.status_code not in {403, 415}
+
+
+# AC-PG-37.1: an AC's check run starts a process, so it is a strict run write.
+def test_marks_strict_run_write_when_post_to_check_run() -> None:
+    assert is_run_write("POST", CHECK_RUN)
+    assert is_strict_write("POST", CHECK_RUN)
+    assert not is_run_write("GET", CHECK_RUN)
+    assert not is_run_write("POST", "/api/v1/features/demo/a/b/acs/AC-7.1/check-runs")
+    assert not is_run_write("POST", f"{CHECK_RUN}/extra")
+
+
+# AC-PG-37.1: the check run takes the strict rule (own Origin, same-origin fetch, JSON body).
+@pytest.mark.parametrize(
+    ("headers", "status"),
+    [
+        ({"Content-Type": "application/json"}, 403),
+        ({**OWN_JSON, "Origin": "http://127.0.0.1:7421"}, 403),
+        ({**OWN_JSON, "Sec-Fetch-Site": "same-site"}, 403),
+        ({**OWN_JSON, "Content-Type": "text/plain"}, 415),
+        (OWN_JSON, 501),
+    ],
+)
+def test_applies_strict_rule_when_check_run_sent(
+    client: TestClient, headers: dict[str, str], status: int
+) -> None:
+    response = client.post(CHECK_RUN, content=b"{}", headers=headers)
+
+    assert response.status_code == status
+
+
+# AC-PG-37.1: the check run needs the launch's cookie, as the other run writes.
+def test_requires_launch_cookie_when_check_run_sent(client: TestClient) -> None:
+    client.cookies.clear()
+
+    response = client.post(CHECK_RUN, content=b"{}", headers=OWN_JSON)
+
+    assert response.status_code == 401
+    assert response.json()["type"] == "urn:agent-hub:problem:agent-session-unauthorized"
+
+
+# AC-PG-37.1: with sessions off (the container), no check run starts.
+def test_turns_check_run_off_when_sessions_off(api_settings: ApiSettings, web_dist: Path) -> None:
+    app = create_app(replace(api_settings, sessions_off=True), web_dist=web_dist)
+    with TestClient(app, base_url="http://127.0.0.1:7420") as off:
+        response = off.post(CHECK_RUN, content=b"{}", headers=OWN_JSON)
+
+    assert response.status_code == 404
+    assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"

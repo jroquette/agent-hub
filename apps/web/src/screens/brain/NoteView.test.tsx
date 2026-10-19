@@ -1,4 +1,6 @@
-import { screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -88,6 +90,61 @@ describe("NoteView", () => {
       "The frontmatter could not be read: unclosed frontmatter",
     );
     expect(screen.queryByRole("list", { name: "Frontmatter" })).not.toBeInTheDocument();
+  });
+
+  it("AC-PG-12.1 shows values up to 48 characters as single-line chips with the full text on hover", async () => {
+    const exact = "x".repeat(48);
+    open({ [NOTE]: aBrainNote({ frontmatter: { owner: exact, tags: ["a", "b"] } }) });
+
+    const chips = within(await screen.findByRole("list", { name: "Frontmatter" })).getAllByRole(
+      "listitem",
+    );
+    expect(chips).toHaveLength(2);
+    expect(chips[0]).toHaveClass("ah-fm-chip");
+    expect(chips[0]).toHaveAttribute("title", exact);
+    expect(chips[1]).toHaveAttribute("title", "a, b");
+    expect(screen.queryByRole("definition")).not.toBeInTheDocument();
+    // Read as a file: Vitest runs from apps/web and jsdom applies no stylesheet.
+    const css = readFileSync("src/styles/bundle.css", "utf8");
+    expect(css).toMatch(/\.ah-fm-chip\s*\{[^}]*white-space:\s*nowrap/);
+    expect(css).toMatch(/\.ah-fm-chip\s*\{[^}]*overflow:\s*hidden/);
+    expect(css).toMatch(/\.ah-fm-chip\s*\{[^}]*text-overflow:\s*ellipsis/);
+  });
+
+  it("AC-PG-12.2 lists values over 48 characters full-width between the chips and the body", async () => {
+    const long = "y".repeat(49);
+    const { container } = open({
+      [NOTE]: aBrainNote({ frontmatter: { type: "index", summary: long } }),
+    });
+
+    await screen.findByRole("heading", { level: 1, name: "Brain" });
+    const chips = screen.getByRole("list", { name: "Frontmatter" });
+    expect(chips).toHaveTextContent("type: index");
+    expect(chips).not.toHaveTextContent(long);
+    const fields = container.querySelector('dl[aria-label="Frontmatter, long fields"]');
+    expect(fields).not.toBeNull();
+    expect(fields).toHaveClass("ah-fm-long");
+    expect(within(fields as HTMLElement).getByRole("term")).toHaveTextContent("summary");
+    expect(within(fields as HTMLElement).getByRole("definition")).toHaveTextContent(long);
+    const heading = screen.getByRole("heading", { level: 1, name: "Brain" });
+    expect(
+      chips.compareDocumentPosition(fields as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      (fields as Node).compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const css = readFileSync("src/styles/bundle.css", "utf8");
+    expect(css).toMatch(/\.ah-fm-long dd\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  });
+
+  it("AC-PG-12.2 shows only the long fields list when every value is over 48 characters", async () => {
+    const { container } = open({
+      [NOTE]: aBrainNote({ frontmatter: { summary: "z".repeat(60) } }),
+    });
+
+    await screen.findByRole("heading", { level: 1, name: "Brain" });
+    expect(screen.queryByRole("list", { name: "Frontmatter" })).not.toBeInTheDocument();
+    expect(container.querySelector('dl[aria-label="Frontmatter, long fields"]')).not.toBeNull();
   });
 
   it.each([

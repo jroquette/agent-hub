@@ -32,13 +32,20 @@ def test_lists_repo_agents_as_rule_settings_when_schema_shipped() -> None:
     properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
 
     assert properties["repos.agents"] == {"$ref": "#/$defs/RuleSettings"}
-    assert list(properties)[-5:] == [
+    assert list(properties)[-6:] == [
         "repos.agents",
         "config.stop_gate",
         "brain.memory",
         "sandbox.workflow",
         "workflows.valid",
+        "items.leftovers",
     ]
+
+
+def test_lists_items_leftovers_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["items.leftovers"] == {"$ref": "#/$defs/RuleSettings"}
 
 
 def test_lists_workflows_valid_as_rule_settings_when_schema_shipped() -> None:
