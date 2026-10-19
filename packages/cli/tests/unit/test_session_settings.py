@@ -9,6 +9,7 @@ import pytest
 from agent_hub.cli.session_settings import (
     HubHooksError,
     hub_hooks_settings,
+    session_settings_path,
     write_session_settings,
 )
 from agent_hub.core.runner.session_settings import hooks_settings
@@ -34,71 +35,143 @@ def settings_file(hub: Path) -> Path:
     return path
 
 
-def no_settings(hub: Path) -> Path:
+def with_guard_command(hub: Path, command: str) -> None:
+    hub_hooks(hub)
+    document = a_hub_settings_document()
+    document["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = command
+    settings_file(hub).write_text(json.dumps(document), encoding="utf-8")
+
+
+def no_settings(hub: Path) -> str:
     hub.mkdir()
-    return hub / ".claude" / "settings.json"
+    return str(hub / ".claude" / "settings.json")
 
 
-def too_large(hub: Path) -> Path:
+def too_large(hub: Path) -> str:
     path = settings_file(hub)
     path.write_bytes(b" " * 1_048_577)
-    return path
+    return str(path)
 
 
-def not_json(hub: Path) -> Path:
+def not_json(hub: Path) -> str:
     path = settings_file(hub)
     path.write_bytes(b"{")
-    return path
+    return str(path)
 
 
-def no_hooks(hub: Path) -> Path:
+def no_hooks(hub: Path) -> str:
     path = settings_file(hub)
     path.write_bytes(b'{"env": {}}')
-    return path
+    return str(path)
 
 
-def guard_absent(hub: Path) -> Path:
+def lone_surrogate(hub: Path) -> str:
+    path = settings_file(hub)
+    path.write_bytes(b'{"hooks": {"Stop": [{"hooks": [{"command": "echo \\ud800"}]}]}}')
+    return str(path)
+
+
+def guard_absent(hub: Path) -> str:
     hub_hooks(hub)
-    path = hub / "plugin" / "hub-workflow" / "hooks" / "guard.py"
-    path.unlink()
-    return path
+    (hub / "plugin" / "hub-workflow" / "hooks" / "guard.py").unlink()
+    return "plugin/hub-workflow/hooks/guard.py"
 
 
-def shell_character_in_hub(hub: Path) -> Path:
+def script_above_hub(hub: Path) -> str:
+    with_guard_command(hub, 'python3 "$CLAUDE_PROJECT_DIR/../outside.py"')
+    (hub.parent / "outside.py").write_bytes(b"")
+    return "../outside.py"
+
+
+def script_at_root(hub: Path) -> str:
+    with_guard_command(hub, 'cat "$CLAUDE_PROJECT_DIR//etc/hostname"')
+    return "/etc/hostname"
+
+
+def leftover_variable(hub: Path) -> str:
+    with_guard_command(hub, 'python3 "${CLAUDE_PROJECT_DIR}/x.py"')
+    return str(settings_file(hub))
+
+
+def unquoted_variable(hub: Path) -> str:
+    with_guard_command(hub, "python3 $CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks/guard.py")
+    return str(settings_file(hub))
+
+
+def valid_hooks(hub: Path) -> str:
     hub_hooks(hub)
-    return hub
+    return str(hub)
 
 
-def named(path: Path, message: str) -> bool:
-    return str(path) in message or json.dumps(str(path)) in message
+def named(text: str, message: str) -> bool:
+    return text in message or json.dumps(text) in message
 
 
 @pytest.mark.parametrize(
-    ("folder", "broken"),
+    ("folder", "broken", "words"),
     [
-        ("hub", no_settings),
-        ("hub", too_large),
-        ("hub", not_json),
-        ("hub", no_hooks),
-        ("hub", guard_absent),
-        ('h"ub', shell_character_in_hub),
+        ("hub", no_settings, "is missing"),
+        ("hub", too_large, "larger than"),
+        ("hub", not_json, "not valid JSON"),
+        ("hub", no_hooks, 'no "hooks" object'),
+        ("hub", lone_surrogate, "lone surrogate"),
+        ("hub", guard_absent, "is missing"),
+        ("hub", script_above_hub, "is outside the hub"),
+        ("hub", script_at_root, "is outside the hub"),
+        ("hub", leftover_variable, "CLAUDE_PROJECT_DIR"),
+        ("hub", unquoted_variable, "outside double quotes"),
+        ('h"ub', valid_hooks, "holds"),
+        ("h\udcffub", valid_hooks, "not UTF-8"),
     ],
-    ids=["no-settings", "too-large", "not-json", "no-hooks", "script-missing", "hub-path"],
+    ids=[
+        "no-settings",
+        "too-large",
+        "not-json",
+        "no-hooks",
+        "lone-surrogate",
+        "script-missing",
+        "script-above-hub",
+        "script-at-root",
+        "leftover-variable",
+        "unquoted-variable",
+        "hub-path",
+        "hub-path-not-utf8",
+    ],
 )
 def test_names_the_problem_when_hub_hooks_cannot_be_wired(
-    tmp_path: Path, folder: str, broken: Callable[[Path], Path]
+    tmp_path: Path, *, folder: str, broken: Callable[[Path], str], words: str
 ) -> None:
     hub = tmp_path / folder
-    path = broken(hub)
+    text = broken(hub)
 
     with pytest.raises(HubHooksError) as raised:
         hub_hooks_settings(hub, "medium")
 
     message = str(raised.value)
     assert message.startswith(PREFIX)
-    assert named(path, message)
+    assert named(text, message)
+    assert words in message
     assert "\n" not in message
     assert not (hub / ".agent-runs").exists()
+
+
+def test_names_only_capped_script_path_when_script_missing(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    script = "a" * 300 + ".py"
+    with_guard_command(hub, f'python3 "$CLAUDE_PROJECT_DIR/{script}"')
+
+    with pytest.raises(HubHooksError) as raised:
+        hub_hooks_settings(hub, "medium")
+
+    message = str(raised.value)
+    assert "a" * 120 in message
+    assert "a" * 121 not in message
+    assert str(tmp_path) not in message
+
+
+def test_refuses_effort_when_not_a_level(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="effort"):
+        session_settings_path(tmp_path, "../medium")
 
 
 def mode_of(path: Path) -> int:
@@ -157,3 +230,15 @@ def test_replaces_link_when_settings_file_is_a_link(tmp_path: Path) -> None:
     assert stat.S_ISREG(os.lstat(written).st_mode)
     assert written.read_bytes() == hub_hooks_settings(hub, "medium")
     assert target.read_bytes() == b"kept\n"
+
+
+def test_tightens_folder_mode_when_settings_folder_is_loose(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub_hooks(hub)
+    folder = hub / ".agent-runs" / "session-settings"
+    folder.mkdir(parents=True)
+    folder.chmod(0o777)
+
+    write_session_settings(hub, "medium")
+
+    assert mode_of(folder) == 0o700
