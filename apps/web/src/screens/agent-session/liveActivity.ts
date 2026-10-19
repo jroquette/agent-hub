@@ -10,6 +10,7 @@ import { resultText } from "./ToolCallCard";
 import {
   diffStats,
   isCommandTask,
+  sessionTasks,
   toolDiff,
   toolState,
   toolSummary,
@@ -247,7 +248,7 @@ function taskRow(state: TranscriptState, task: TaskView): TaskRow {
 
 /** The session's tasks: the running ones oldest first, the ended ones latest ended first. */
 export function backgroundTasks(state: TranscriptState): { running: TaskRow[]; done: TaskRow[] } {
-  const all = Object.values(state.tasks).map((task) => taskRow(state, task));
+  const all = sessionTasks(state).map((task) => taskRow(state, task));
   return {
     running: all.filter((row) => row.task.status === "running"),
     done: all
