@@ -53,7 +53,9 @@ def _rewritten(value: JsonValue, *, prefix: str, scripts: list[str], is_command:
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [_rewritten(item, prefix=prefix, scripts=scripts, is_command=False) for item in value]
+        return [
+            _rewritten(item, prefix=prefix, scripts=scripts, is_command=False) for item in value
+        ]
     if is_command and isinstance(value, str):
         scripts.extend(_SCRIPT.findall(value))
         return value.replace(PROJECT_DIR, prefix)

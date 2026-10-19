@@ -101,7 +101,6 @@ def test_names_the_problem_when_hub_hooks_cannot_be_wired(
     assert not (hub / ".agent-runs").exists()
 
 
-
 def mode_of(path: Path) -> int:
     return stat.S_IMODE(os.lstat(path).st_mode)
 

@@ -1,11 +1,12 @@
-"""The hooks-only ``--settings`` file of a session whose cwd is a repo: read, check, write (AGH-278).
+"""The hooks-only ``--settings`` file of a repo-cwd session: read, check, write (AGH-278).
 
 ``hub_hooks_settings`` reads the hub's ``.claude/settings.json`` (at most ``MAX_SETTINGS_BYTES``:
 it sits in a folder a session can write), builds the file with core's ``hooks_settings`` and
 checks that each hook script it names is a regular file in the hub. ``write_session_settings``
-writes the result to ``session_settings_path``, ``<hub>/.agent-runs/session-settings/<effort>.json``:
-one path per hub and effort, so the dry run can name the path a live run writes. Every problem
-is a ``HubHooksError`` of one line naming the file.
+writes the result to ``session_settings_path``,
+``<hub>/.agent-runs/session-settings/<effort>.json``: one path per hub and effort, so the dry
+run can name the path a live run writes. Every problem is a ``HubHooksError`` of one line
+naming the file.
 """
 
 import contextlib
