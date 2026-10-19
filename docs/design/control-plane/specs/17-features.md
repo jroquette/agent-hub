@@ -151,8 +151,8 @@ otherwise, this list wins. Each item is an acceptance criterion.
   issue: the issue their run names, else the one their branch or worktree names for the hub's tracker teams.
 - **AC-268.19 Ticket sessions.** Given the Tickets table, then each ticket lists its sessions (asked by its issue), each
   linked to its detail (or its chat when driven), with its status (as the Sessions list shows it) and start time.
-- **AC-268.20 Scope column.** Given ticket titles with a conventional-commit scope, then the scope has its own column,
-  so the chips and the titles line up across rows.
+- **AC-268.20 No scope column.** Given the Tickets table, then the title shows its words without the
+  conventional-commit prefix and there is no Scope column (it was empty for most tickets and told the owner nothing).
 - **AC-268.21 Start a ticket.** Given a created ticket that can start now, then its card and row offer Start, which
   starts a Claude session in the hub folder that works that one ticket with `/feature` from its workspace step and
   opens its chat; disabled, with the reason, when this machine cannot drive Claude or the hub has no folder.

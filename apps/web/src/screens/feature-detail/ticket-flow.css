@@ -416,12 +416,6 @@ a.ah-flow-card-title:hover > span:last-child {
 .ah-ticket-table .ah-flow-epic-tag {
   flex: none;
 }
-/* In its own column the scope chip sits on the row's first line, like the badges beside it. */
-.ah-ticket-table .ah-ticket-scope {
-  margin-right: 0;
-  line-height: 20px;
-  vertical-align: top;
-}
 .ah-ticket-title[data-child="true"] {
   padding-left: 4px;
 }
