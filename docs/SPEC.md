@@ -531,7 +531,8 @@ replaces Live sessions and the separate list of driven sessions (design in
 work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub web`:
 
 - **Playground.** `make playground` runs a conductor `hub web` (7420, from a copy of the checkout taken at each
-  start) that drives the sessions, and `make live`: the checkout's API on 7421, restarted on each Python change, and
+  start) that drives the sessions, with no limit on live ones (`--sessions-max 0`,
+  [ADR 0041](adr/0041-no-live-session-limit-in-the-playground.md)), and `make live`: the checkout's API on 7421, restarted on each Python change, and
   the web app on 5173, whose proxy sends the agent-session routes to the conductor, so a change never ends a session.
   One address (`/__playground/session?token=`) signs the browser in. The dev app's shake and New session start in
   the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps never offer it.
