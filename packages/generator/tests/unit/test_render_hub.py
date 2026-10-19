@@ -127,6 +127,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/onboard/reference.md",
     "plugin/hub-workflow/skills/overengineering-review/SKILL.md",
     "plugin/hub-workflow/skills/overengineering-review/references/patterns.md",
+    "plugin/hub-workflow/skills/plain-language/SKILL.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
     "plugin/hub-workflow/skills/refactor/SKILL.md",
     "plugin/hub-workflow/skills/release/SKILL.md",
@@ -198,6 +199,7 @@ BASE_SKILLS = (
     "learn",
     "onboard",
     "overengineering-review",
+    "plain-language",
     "recall",
     "refactor",
     "release",
@@ -314,12 +316,13 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
     # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix, the ten AGH-99
-    # skills, AGH-274's two review skills and ux-designer agent, and /summarize: 29, sorted by path.
+    # skills, AGH-274's two review skills and ux-designer agent, /summarize, and AGH-319's
+    # `plain-language`: 30, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 29
+    assert len(rendered.links) == 30
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -2024,6 +2027,7 @@ SKILL_FRONTMATTER_KEYS = {
     "learn": ["name", "description", "disable-model-invocation", "argument-hint"],
     "onboard": ["name", "description", "disable-model-invocation", "argument-hint"],
     "overengineering-review": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "plain-language": ["name", "description"],
     "recall": ["name", "description", "argument-hint"],
     "refactor": ["name", "description", "disable-model-invocation", "argument-hint"],
     "release": ["name", "description", "disable-model-invocation", "argument-hint"],
