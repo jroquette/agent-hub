@@ -253,3 +253,65 @@ def test_cannot_read_when_the_commit_is_unknown(checkout: tuple[Path, dict[str, 
 
     with pytest.raises(RepoChangesError):
         GitRepoChanges(environ=env).commit_diff(str(work), sha="0" * 40, paths=["app.py"])
+
+
+def _rev(cwd: Path, env: dict[str, str], ref: str) -> str:
+    found = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", ref],  # noqa: S607
+        cwd=cwd,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return found.stdout.strip()
+
+
+def test_reads_the_pushed_branch_when_the_recorded_head_is_no_longer_here(
+    tmp_path: Path,
+) -> None:
+    work, env = _stacked(tmp_path)
+    gone = work / ".claude" / "worktrees" / "batatinha"
+
+    recorded = GitRepoChanges(environ=env).read_recorded(
+        str(work),
+        label="app/batatinha",
+        root=str(gone),
+        branch="batatinha",
+        base="origin/main",
+        base_sha=_rev(work, env, "origin/main"),
+        head_sha="2" * 40,
+    )
+
+    assert recorded.head_sha == _rev(work, env, "origin/batatinha")
+    assert [commit.subject for commit in recorded.commits] == ["batatinha"]
+    assert [file.path for file in recorded.files] == [str(gone / "batatinha.py")]
+
+
+@pytest.mark.parametrize(("base", "head"), [("--all", None), (None, "--all")])
+def test_cannot_read_when_a_recorded_commit_reads_as_an_option(
+    tmp_path: Path, base: str | None, head: str | None
+) -> None:
+    work, env = _stacked(tmp_path)
+    main = _rev(work, env, "origin/main")
+
+    with pytest.raises(RepoChangesError):
+        GitRepoChanges(environ=env).read_recorded(
+            str(work),
+            label="app/x",
+            root=str(work / "x"),
+            branch=None,
+            base="origin/main",
+            base_sha=base or main,
+            head_sha=head or main,
+        )
+
+
+@pytest.mark.parametrize("sha", ["--all", "--output=x"])
+def test_cannot_read_a_commit_when_its_sha_reads_as_an_option(
+    checkout: tuple[Path, dict[str, str]], sha: str
+) -> None:
+    work, env = checkout
+
+    with pytest.raises(RepoChangesError):
+        GitRepoChanges(environ=env).commit_diff(str(work), sha=sha, paths=["app.py"])
