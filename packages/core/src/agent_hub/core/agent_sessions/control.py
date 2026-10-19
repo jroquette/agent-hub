@@ -79,6 +79,7 @@ from agent_hub.core.agent_sessions.driver import (
     PermissionRequest,
     SessionDriver,
     StartSpec,
+    TaskEvent,
     TextDelta,
     ToolCall,
     ToolResult,
@@ -643,7 +644,7 @@ class AgentSessionControl:
                 if expired(open_request.view, now):
                     await self._time_out(live, request_id)
             idle_since = live.idle_since
-            idle = live.state.status == AgentSessionStatus.IDLE
+            idle = live.state.status == AgentSessionStatus.IDLE and not live.tasks
             if idle and idle_since is not None and now - idle_since >= self._limits.idle:
                 await asyncio.shield(self._ending(live, EndReason.IDLE_TIMEOUT, by="timeout"))
         if purge:
@@ -694,6 +695,7 @@ class AgentSessionControl:
             and live.session.kind == "local"
             and live.state.status == AgentSessionStatus.IDLE
             and not live.requests
+            and not live.tasks
             and live.idle_since is not None
         ]
         if not waiting:
@@ -1054,6 +1056,7 @@ class AgentSessionControl:
             await self._emit(live, "error", {"message": message}, by="server")
 
     async def _on_event(self, live: LiveSession, event: DriverEvent) -> None:
+        self._track_task(live, event)
         match event:
             case TextDelta(block=block, text=text):
                 async with live.emit_lock:
@@ -1073,6 +1076,18 @@ class AgentSessionControl:
                 await self._emit(live, "error", _event_body(event), by="driver")
             case _:
                 await self._emit(live, event.kind, _event_body(event), by="driver")
+
+    def _track_task(self, live: LiveSession, event: DriverEvent) -> None:
+        """Keep the session's running tasks (its record is logged as any other event). The idle
+        timeout counts from the last task's end, since the session was at work until then."""
+        if not isinstance(event, TaskEvent):
+            return
+        if event.status == "running":
+            live.tasks.add(event.task_id)
+        elif event.task_id in live.tasks:
+            live.tasks.discard(event.task_id)
+            if not live.tasks and live.idle_since is not None:
+                live.idle_since = self._clock()
 
     async def _on_init(self, live: LiveSession, event: InitEvent) -> None:
         await self._emit(live, "init", _event_body(event), by="driver")

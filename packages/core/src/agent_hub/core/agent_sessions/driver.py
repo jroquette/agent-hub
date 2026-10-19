@@ -175,6 +175,23 @@ class Todos(DriverModel):
     items: tuple[TodoItem, ...]
 
 
+# Where a task (a subagent, often in the background) stands: ``running`` once started, then one
+# of the ends.
+type TaskStatus = Literal["running", "completed", "failed", "stopped"]
+
+
+class TaskEvent(DriverModel):
+    """A task Claude started (a subagent, a background command) started or ended. A background
+    task runs on after the turn that started it ends, so this is what says the session is still
+    at work while it reads as idle. ``tool_use_id`` is the call that started it, when known."""
+
+    kind: Literal["task"] = "task"
+    task_id: str
+    status: TaskStatus
+    description: str | None = None
+    tool_use_id: str | None = None
+
+
 class PermissionSuggestion(DriverModel):
     """A rule Claude suggests for "always allow"; ``index`` is its position in the request,
     ``rule`` is passed back to the CLI verbatim. Only ``localSettings`` ones are offered (D5)."""
@@ -239,6 +256,7 @@ type DriverEvent = Annotated[
     | ToolCall
     | ToolResult
     | Todos
+    | TaskEvent
     | PermissionRequest
     | TurnResult
     | DriverError

@@ -70,6 +70,42 @@ describe("liveActivity", () => {
   });
 });
 
+describe("background agents", () => {
+  const idle: StreamItem = { type: "status", status: { status: "idle" } };
+  const task = (seq: number, id: string, status: string, extra: object = {}) =>
+    record("task", { seq, body: { task_id: id, status, ...extra } });
+  const launched = [
+    message,
+    running,
+    call(2, "a", "Agent", { subagent_type: "reviewer", description: "quality review" }),
+    task(3, "t1", "running", { description: "quality review", tool_use_id: "a" }),
+    record("tool.result", { seq: 4, body: { tool_use_id: "a", content: "launched" } }),
+    task(5, "t2", "running", { description: "spec review" }),
+    record("result", { seq: 6, body: { subtype: "success" } }),
+    idle,
+  ];
+
+  it("reads an idle session with agents still running as working in the background", () => {
+    const activity = liveActivity(run(launched));
+    expect(activity?.phase).toBe("background");
+    expect(activity?.calls.map((c) => c.label)).toEqual([
+      "spec review",
+      "reviewer · quality review",
+    ]);
+    expect(activity?.turnStartedAt).toBe(activity?.calls[1]?.startedAt);
+  });
+
+  it("is null again once every background agent ended", () => {
+    const state = run([...launched, task(7, "t1", "completed"), task(8, "t2", "stopped")]);
+    expect(liveActivity(state)).toBeNull();
+  });
+
+  it("forgets the agents when the process exits", () => {
+    const state = run([...launched, record("exited", { seq: 7, body: { code: 0 } })]);
+    expect(liveActivity(state)).toBeNull();
+  });
+});
+
 describe("turn feed", () => {
   it("lists the turn's calls with the first lines of their output and how many more", () => {
     const output = ["a", "b", "c", "d", "e", "f"].join("\n");

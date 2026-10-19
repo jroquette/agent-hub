@@ -1042,6 +1042,12 @@ const RECORD_BODIES: Record<RecordKind, LogRecord["body"]> = {
   },
   "tool.result": { content: "edited", is_error: false, tool_use_id: "toolu_01" },
   todos: { items: [{ active_form: null, content: "Fix the test", status: "in_progress" }] },
+  task: {
+    description: "Review the change",
+    status: "running",
+    task_id: "task-1",
+    tool_use_id: "toolu_02",
+  },
   "permission.request": {
     request_id: "req-1",
     request_kind: "tool",

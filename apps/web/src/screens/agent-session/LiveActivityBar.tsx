@@ -23,6 +23,7 @@ const PHASE: Record<LivePhase, { icon: IconName; text: string }> = {
   tool: { icon: "terminal", text: "Running" },
   thinking: { icon: "lightbulb", text: "Thinking" },
   planning: { icon: "clipboard-list", text: "Planning" },
+  background: { icon: "network", text: "Working in the background" },
 };
 
 const since = (iso: string | null | undefined, now: number): number | null => {
@@ -34,6 +35,8 @@ const since = (iso: string | null | undefined, now: number): number | null => {
 function headline(activity: LiveActivity): string {
   const { phase, calls } = activity;
   const subagents = calls.filter((call) => call.subagent).length;
+  if (phase === "background")
+    return `${String(calls.length)} background ${calls.length === 1 ? "agent" : "agents"} running`;
   if (phase === "subagents")
     return `${PHASE.subagents.text}: ${String(subagents)} ${subagents === 1 ? "agent" : "agents"}`;
   if (phase === "tool") {
@@ -249,7 +252,7 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
   const { stalled } = quietness(activity, now);
   const subagent = activity.calls.find((call) => call.subagent);
   const detail =
-    activity.phase === "subagents"
+    activity.phase === "subagents" || activity.phase === "background"
       ? subagent?.label
       : activity.phase === "tool"
         ? activity.calls[0]?.label
@@ -294,7 +297,14 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
         {detail && <span className="as-live-detail ah-muted">{detail}</span>}
         <span className="ah-grow" />
         {turn !== null && (
-          <span className="ah-muted ah-num" title="Time since your message started this turn">
+          <span
+            className="ah-muted ah-num"
+            title={
+              activity.phase === "background"
+                ? "Time since the oldest background agent started"
+                : "Time since your message started this turn"
+            }
+          >
             <Icon name="timer" size="sm" /> {elapsed(turn)}
           </span>
         )}
