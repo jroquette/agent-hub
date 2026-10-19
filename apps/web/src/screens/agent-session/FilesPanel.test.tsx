@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChangedFilesChip, FilesPanel, reviewedKey } from "./FilesPanel";
 import { changedFiles, type ToolView } from "./model";
+import { withRepoChanges } from "./repoChanges";
+import { commentMessage } from "./review";
 
 const tool = (id: string, name: string, input: Record<string, unknown>): ToolView => ({
   id,
@@ -452,5 +454,128 @@ describe("FilesPanel (long names)", () => {
     render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: /test_order_cover/ }));
     expect(screen.getByRole("button", { name: "Copy file path" })).toBeInTheDocument();
+  });
+});
+
+describe("FilesPanel (pull request)", () => {
+  const prFiles = () =>
+    withRepoChanges(
+      filesOf([
+        tool("t1", "Edit", { file_path: "/w/api/app.py", old_string: "b", new_string: "B" }),
+      ]),
+      [
+        {
+          root: "/w/api",
+          label: "api",
+          branch: "tip-1",
+          base: "origin/main",
+          base_sha: "f0",
+          commits: [
+            {
+              sha: "c2abcdef0",
+              subject: "Add d",
+              author: "Ana",
+              authored_at: "2026-10-19T15:00:00Z",
+            },
+            {
+              sha: "c1abcdef0",
+              subject: "Change b",
+              author: "Ana",
+              authored_at: "2026-10-19T14:00:00Z",
+            },
+          ],
+          files: [
+            {
+              path: "/w/api/app.py",
+              status: "modified",
+              added: 2,
+              removed: 1,
+              diff: "--- a/app.py\n+++ b/app.py\n@@ -40,3 +40,4 @@\n a\n-b\n+B\n c\n+d",
+              binary: false,
+              fingerprint: "fp1",
+              commits: [
+                { sha: "c2abcdef0", added: 1, removed: 0 },
+                { sha: "c1abcdef0", added: 1, removed: 1 },
+              ],
+              uncommitted: true,
+            },
+            {
+              path: "/w/api/gone.py",
+              status: "deleted",
+              added: 0,
+              removed: 1,
+              diff: "--- a/gone.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-x",
+              binary: false,
+              fingerprint: "fp2",
+              commits: [],
+              uncommitted: false,
+            },
+          ],
+          truncated: false,
+        },
+      ],
+    );
+
+  it("opens a file on git's diff against the base, its commits and Claude's changes a click away", async () => {
+    render(<FilesPanel files={prFiles()} sessionId="s1" onClose={vi.fn()} />);
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(
+      within(list)
+        .getAllByRole("button")
+        .filter((button) => button.dataset.filePath !== undefined)
+        .map((button) => button.textContent),
+    ).toEqual(["Mapp.py+2−1", "Dgone.py+0−1"]);
+
+    await userEvent.click(screen.getByRole("button", { name: /app\.py/ }));
+
+    expect(screen.getByRole("button", { name: "Final result" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText(/Against origin\/main/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Final diff of app.py")).toHaveTextContent("+d");
+
+    await userEvent.click(screen.getByRole("button", { name: "Commits (3)" }));
+    const history = screen.getByRole("list", { name: "Commits that changed this file" });
+    expect(
+      within(history)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      expect.stringContaining("Uncommitted changes"),
+      expect.stringContaining("c2abcdeAdd d+1−0"),
+      expect.stringContaining("c1abcdeChange b+1−1"),
+    ]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Each change (1)" }));
+    expect(screen.getByLabelText("Change 1 to app.py")).toBeInTheDocument();
+  });
+
+  it("anchors a comment on git's diff to the file's final diff, with its real line numbers", async () => {
+    const user = userEvent.setup();
+    const onComment = vi.fn(() => Promise.resolve());
+    render(
+      <FilesPanel
+        files={prFiles()}
+        sessionId="s1"
+        onClose={vi.fn()}
+        initialPath="/w/api/app.py"
+        comments={{ threads: [], resolved: { resolved: new Set(), toggle: vi.fn() }, onComment }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Comment on line 43" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Comment on Line 43" }),
+      "Why d?{Meta>}{Enter}{/Meta}",
+    );
+
+    expect(onComment).toHaveBeenCalledWith(
+      commentMessage(
+        { path: "/w/api/app.py", change: 0, side: "new", start: 43, end: 43 },
+        "+d",
+        "Why d?",
+      ),
+    );
   });
 });

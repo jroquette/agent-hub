@@ -36,7 +36,9 @@ import {
   useSessionAbout,
   useAgentTranscript,
   useCapabilities,
+  useRepoChanges,
 } from "./queries";
+import { repoSummary, withRepoChanges } from "./repoChanges";
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
@@ -238,7 +240,12 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const { state } = transcript;
   const { tools, permissions } = state;
   // Only the calls and their permissions change the list, not every streamed text delta.
-  const files = useMemo(() => changedFiles({ tools, permissions }), [tools, permissions]);
+  const ownFiles = useMemo(() => changedFiles({ tools, permissions }), [tools, permissions]);
+  // Git's view of the session's repositories, read again as Claude changes files and turns end.
+  const repoVersion = `${state.status ?? ""}|${ownFiles.map((file) => file.lastChangeId).join(",")}`;
+  const repoChanges = useRepoChanges(agentSessionId, repoVersion);
+  const repos = repoChanges.data?.repos;
+  const files = useMemo(() => withRepoChanges(ownFiles, repos), [ownFiles, repos]);
   const threads = useMemo(
     () => reviewThreads(state.entries, state.sending),
     [state.entries, state.sending],
@@ -466,6 +473,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 sessionId={agentSessionId}
                 onClose={closeFiles}
                 workdirLabel={session.workdir_label}
+                repoNote={repoSummary(repos)}
                 review={review}
                 initialPath={filePick.path}
                 pickNonce={filePick.nonce}

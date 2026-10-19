@@ -1550,6 +1550,39 @@ body.as-resizing .as-drawer {
   background: var(--waiting-soft);
   color: var(--waiting);
 }
+.as-files-kind-d {
+  background: var(--failed-soft);
+  color: var(--failed);
+}
+.as-files-commits {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.as-files-commit {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 10px;
+  row-gap: 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+.as-files-commit:nth-child(odd) {
+  background: var(--surface-sunken);
+}
+.as-files-commit-sha {
+  color: var(--text-muted);
+}
+.as-files-commit-subject {
+  overflow-wrap: anywhere;
+}
+.as-files-commit-meta {
+  grid-column: 2 / -1;
+}
 .as-files-name {
   min-width: 0;
   overflow-wrap: anywhere;

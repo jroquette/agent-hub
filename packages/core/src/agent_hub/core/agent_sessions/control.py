@@ -124,6 +124,12 @@ from agent_hub.core.agent_sessions.records import (
     StreamPosition,
     UserMessageBody,
 )
+from agent_hub.core.agent_sessions.repo_changes import (
+    RepoChangesError,
+    RepoChangesReader,
+    SessionRepoChanges,
+    repo_roots,
+)
 from agent_hub.core.agent_sessions.screenshot import decode_screenshot
 from agent_hub.core.agent_sessions.session_state import (
     Answer,
@@ -271,6 +277,10 @@ class AgentSessionCommands(Protocol):
         """One session, with its open permission request while live (E10)."""
         ...
 
+    async def repo_changes(self, agent_session_id: str) -> SessionRepoChanges:
+        """What the session's repositories change against their base branch."""
+        ...
+
     async def delete(self, agent_session_id: str) -> None:
         """Remove an ended session and its log (L4); a live one raises."""
         ...
@@ -341,6 +351,7 @@ class AgentSessionControl:
         new_claude_session_id: Callable[[], str] = _uuid4,
         observed_sessions: ObservedSessionLookup | None = None,
         session_title: Callable[[str, str], str | None] | None = None,
+        repo_changes: RepoChangesReader | None = None,
     ) -> None:
         self._driver = driver
         self._store = store
@@ -352,6 +363,7 @@ class AgentSessionControl:
         self._new_claude_session_id = new_claude_session_id
         self._observed_sessions = observed_sessions
         self._session_title = session_title
+        self._repo_changes = repo_changes
         self._live: dict[str, LiveSession] = {}
         # Per CLI process: what its reported running cost adds to (see ``_session_cost``).
         self._cost_bases: weakref.WeakKeyDictionary[LiveSession, Decimal] = (
@@ -395,6 +407,35 @@ class AgentSessionControl:
     async def snapshot(self, agent_session_id: str) -> AgentSession:
         """One session, with its open permission request while live (E10)."""
         return (await self._with_twins([await self._session(agent_session_id)]))[0]
+
+    async def repo_changes(self, agent_session_id: str) -> SessionRepoChanges:
+        """Each listed repo or worktree the session started in or changed a file in, as git
+        reads it against its base branch (``repo_changes``); empty without a reader, or when the
+        session's project or workdir is gone. A repository git cannot read is named in
+        ``warnings``."""
+        session = await self._session(agent_session_id)
+        reader = self._repo_changes
+        if reader is None:
+            return SessionRepoChanges()
+        try:
+            listing = await self._listing(session.project)
+        except Exception:  # noqa: BLE001 -- an unknown project reads as no repository
+            return SessionRepoChanges()
+        roots = repo_roots(
+            listing,
+            workdir_id=session.workdir_id,
+            paths=(file.path for file in session.changed_files),
+        )
+        repos = []
+        warnings = []
+        for root in roots:
+            try:
+                repos.append(
+                    await asyncio.to_thread(reader.read, root.path, label=root.workdir.label)
+                )
+            except RepoChangesError:
+                warnings.append(f"{root.workdir.label} could not be read by git")
+        return SessionRepoChanges(repos=tuple(repos), warnings=tuple(warnings))
 
     async def _session(self, agent_session_id: str) -> AgentSession:
         """The live view of a session, else its stored record (no twin lookup)."""
