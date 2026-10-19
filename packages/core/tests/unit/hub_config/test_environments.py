@@ -204,6 +204,7 @@ def test_rejects_description_when_over_eighty_characters() -> None:
 # Characters a reader may take as a line break (U+0085, U+2028, U+2029), the other C1 controls,
 # and the bidi controls that reorder what a reader sees.
 INVISIBLE_BREAKS = [
+    "\u061c",
     "\x80",
     "\x85",
     "\x9f",
