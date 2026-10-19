@@ -6,26 +6,38 @@ signs off from the app: a new eval ``brain/features/<slug>/evals/owner-signoff.m
 that waited on owner steps as its scope. Being dated now, it is the latest eval of those ACs, so
 the Evaluate step turns done (``feature_evals``' order). A sign-off is refused while any AC is
 not covered by a SHIP (an agent must evaluate it first) or when no AC waits on owner steps.
+
+The owner can also settle one eval only (``delivery``): the sign-off then covers the ACs of that
+SHIP-WITH-OWNER-STEPS eval that still wait on owner steps, carries its tickets (so it is listed
+with them), and the rest of the feature does not have to be covered yet. Its ``decision`` is
+``done`` (verdict SHIP) or ``more_work``: the owner found more to do before the delivery ships,
+which writes a NO-SHIP over those ACs, so they read as open until an agent evaluates them again.
+The owner's optional ``note`` (what was done, or what is left) goes into the note's body.
 """
 
 from collections.abc import Callable, Iterable
 from datetime import datetime
-from typing import Final, Protocol
+from typing import Final, Literal, Protocol
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.features.feature_evals import (
     EVALS_FOLDER,
     NOTE_SUFFIX,
+    EvalCoverage,
     eval_coverage,
     eval_records,
 )
 from agent_hub.core.features.feature_record import FeatureRecordFile, record_from_bytes
 from agent_hub.core.features.feature_status import FeatureFolder
-from agent_hub.core.features.feature_view import EvalRecord
+from agent_hub.core.features.feature_view import EvalRecord, Verdict
+from agent_hub.core.features.scope_rules import named_scope, ticket_aliases
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 
 SIGNOFF_DELIVERY: Final = "owner-signoff"
 MAX_SIGNOFFS: Final = 99
+MAX_NOTE_CHARS: Final = 2_000
+
+type OwnerDecision = Literal["done", "more_work"]
 
 
 class OwnerSignOffError(AgentHubError):
@@ -72,26 +84,107 @@ def signoff_name(existing: Iterable[str]) -> str:
 
 
 def signoff_note(
-    *, slug: str, delivery: str, acs: tuple[str, ...], sources: tuple[str, ...], at: datetime
+    *,
+    slug: str,
+    delivery: str,
+    acs: tuple[str, ...],
+    sources: tuple[str, ...],
+    at: datetime,
+    tickets: tuple[str, ...] = (),
+    decision: OwnerDecision = "done",
+    note: str | None = None,
 ) -> str:
-    """The eval note of the owner's sign-off."""
+    """The eval note of the owner's sign-off (``more_work``: the owner's NO-SHIP)."""
     listed = ", ".join(acs)
     from_evals = ", ".join(sources) or "the latest eval"
+    verdict = _VERDICT_OF[decision]
+    ticket_line = f"tickets: [{', '.join(tickets)}]\n" if tickets else ""
+    if decision == "done":
+        title = f"# Owner sign-off: {slug}"
+        lead = (
+            "**Verdict: SHIP.** The owner confirmed in agent-hub that the owner steps listed in "
+            f"{from_evals} are done."
+        )
+        footer = f"ACs signed off: {listed}."
+    else:
+        title = f"# Owner review: {slug}"
+        lead = (
+            "**Verdict: NO-SHIP.** The owner checked the owner steps listed in "
+            f"{from_evals} in agent-hub and found more work is needed before this ships."
+        )
+        footer = f"ACs reopened: {listed}."
+    body = f"\n\n## Owner's note\n\n{note}\n" if note else ""
     return (
         "---\n"
         "type: eval\n"
         f"feature: {slug}\n"
         f"delivery: {delivery}\n"
-        "verdict: SHIP\n"
+        f"verdict: {verdict}\n"
+        f"{ticket_line}"
         f"acs: [{listed}]\n"
         f"evaluated_at: {at.isoformat(timespec='seconds')}\n"
         "provenance: owner\n"
         "---\n\n"
-        f"# Owner sign-off: {slug}\n\n"
-        "**Verdict: SHIP.** The owner confirmed in agent-hub that the owner steps listed in "
-        f"{from_evals} are done.\n\n"
-        f"ACs signed off: {listed}.\n"
+        f"{title}\n\n"
+        f"{lead}\n\n"
+        f"{footer}\n"
+        f"{body}"
     )
+
+
+_VERDICT_OF: Final[dict[str, Verdict]] = {"done": "SHIP", "more_work": "NO-SHIP"}
+
+
+def _clean_note(note: str | None) -> str | None:
+    """The owner's note without trailing spaces, cut to ``MAX_NOTE_CHARS``; None when empty."""
+    if note is None:
+        return None
+    text = "\n".join(line.rstrip() for line in note.strip()[:MAX_NOTE_CHARS].splitlines())
+    return text.strip() or None
+
+
+type _Scope = tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]
+
+
+def _feature_scope(evals: tuple[EvalRecord, ...], coverage: EvalCoverage) -> _Scope:
+    """The whole feature's sign-off: every AC waiting on owner steps, once all are covered."""
+    if coverage.uncovered:
+        raise OwnerSignOffError(
+            f"{len(coverage.uncovered)} ACs are not covered by a SHIP; evaluate them first"
+        )
+    if not coverage.owner_steps:
+        raise OwnerSignOffError("no AC waits on owner steps")
+    sources = tuple(
+        found.delivery
+        for found in evals
+        if found.verdict == "SHIP-WITH-OWNER-STEPS" and found.problem is None
+    )
+    return coverage.owner_steps, sources, ()
+
+
+def _eval_scope(
+    evals: tuple[EvalRecord, ...],
+    coverage: EvalCoverage,
+    *,
+    record: FeatureRecordFile,
+    delivery: str,
+) -> _Scope:
+    """One eval's sign-off: the ACs it names that still wait on owner steps, with its tickets."""
+    source = next((found for found in evals if found.delivery == delivery), None)
+    if source is None:
+        raise OwnerSignOffError(f"no eval {delivery[:64]} in this feature")
+    if source.verdict != "SHIP-WITH-OWNER-STEPS" or source.problem is not None:
+        raise OwnerSignOffError(f"{source.delivery} is not a SHIP-WITH-OWNER-STEPS eval")
+    named = named_scope(
+        acs=source.acs,
+        tickets=source.tickets,
+        live=tuple(ac for ac in record.acs if not ac.withdrawn),
+        aliases=ticket_aliases(record.tickets),
+    )
+    acs = tuple(ac for ac in coverage.owner_steps if ac in (named or ()))
+    if not acs:
+        raise OwnerSignOffError(f"no AC of {source.delivery} waits on owner steps")
+    return acs, (source.delivery,), source.tickets
 
 
 class SignOffOwnerSteps:
@@ -110,7 +203,15 @@ class SignOffOwnerSteps:
         self._writer = writer
         self._clock = clock
 
-    def __call__(self, project: str, slug: str) -> EvalRecord:
+    def __call__(
+        self,
+        project: str,
+        slug: str,
+        *,
+        delivery: str | None = None,
+        decision: OwnerDecision = "done",
+        note: str | None = None,
+    ) -> EvalRecord:
         missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
         try:
             hub_path = self._hubs.hub_path_of(project)
@@ -125,36 +226,39 @@ class SignOffOwnerSteps:
             raise OwnerSignOffError("features.json is missing or invalid")
         evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
         coverage = eval_coverage(evals, record.acs, tickets=record.tickets)
-        if coverage.uncovered:
-            raise OwnerSignOffError(
-                f"{len(coverage.uncovered)} ACs are not covered by a SHIP; evaluate them first"
-            )
-        if not coverage.owner_steps:
-            raise OwnerSignOffError("no AC waits on owner steps")
-        sources = tuple(
-            found.delivery
-            for found in evals
-            if found.verdict == "SHIP-WITH-OWNER-STEPS" and found.problem is None
-        )
-        delivery = signoff_name(found.delivery for found in evals if not found.legacy)
-        name = f"{delivery}{NOTE_SUFFIX}"
+        if delivery is None:
+            if decision != "done":
+                raise OwnerSignOffError("name the eval whose owner steps need more work")
+            acs, sources, tickets = _feature_scope(evals, coverage)
+        else:
+            acs, sources, tickets = _eval_scope(evals, coverage, record=record, delivery=delivery)
+        name_of_delivery = signoff_name(found.delivery for found in evals if not found.legacy)
+        name = f"{name_of_delivery}{NOTE_SUFFIX}"
         at = self._clock()
         text = signoff_note(
-            slug=folder.slug, delivery=delivery, acs=coverage.owner_steps, sources=sources, at=at
+            slug=folder.slug,
+            delivery=name_of_delivery,
+            acs=acs,
+            sources=sources,
+            at=at,
+            tickets=tickets,
+            decision=decision,
+            note=_clean_note(note),
         )
         try:
             self._writer.create_eval(hub_path, slug=folder.slug, name=name, text=text)
         except FileExistsError:
             raise OwnerSignOffError("a sign-off was just written; reload the feature") from None
         return EvalRecord(
-            delivery=delivery,
+            delivery=name_of_delivery,
             path=f"features/{folder.slug}/{EVALS_FOLDER}/{name}",
-            verdict="SHIP",
-            tickets=(),
-            acs=coverage.owner_steps,
+            verdict=_VERDICT_OF[decision],
+            tickets=tickets,
+            acs=acs,
             prs=(),
             commit=None,
             evaluated_at=at.isoformat(timespec="seconds"),
             legacy=False,
             problem=None,
+            provenance="owner",
         )

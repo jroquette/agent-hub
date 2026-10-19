@@ -55,10 +55,13 @@ type ParamsOf<Op> = Op extends { parameters: infer Prm }
 /** The path and query parameters of a GET of `P`. */
 export type ApiParams<P extends GetPath> = ParamsOf<Operation<P, "get">>;
 
-type BodyOf<Op> = Op extends {
-  requestBody: { content: { "application/json": infer B } };
-}
-  ? B
+/** The JSON body of an operation, required or optional (`requestBody?: never` has none). */
+type BodyOf<Op> = Op extends { requestBody?: infer R }
+  ? [NonNullable<R>] extends [never]
+    ? undefined
+    : NonNullable<R> extends { content: { "application/json": infer B } }
+      ? B
+      : undefined
   : undefined;
 
 /** An RFC 9457 problem the API answered with, or a network failure (status 0). */

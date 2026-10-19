@@ -280,24 +280,27 @@ function AcLink({
   );
 }
 
-/** How many of the ticket's ACs pass, the same meter as its card; the ids fold under it. */
-function Acs({
-  row,
+/**
+ * How many of a list of ACs pass, the same meter as a ticket's card; the ids fold under it. The
+ * Tickets table shows a ticket's ACs with it, the Eval table an eval's.
+ */
+export function AcList({
+  ids,
   acPasses,
   acRows,
 }: {
-  row: TicketRow;
+  ids: readonly string[];
   acPasses?: AcPasses | undefined;
   acRows?: ReadonlyMap<string, AcRow> | undefined;
 }) {
-  if (row.acs.length === 0) return <span className="ah-subtle">—</span>;
+  if (ids.length === 0) return <span className="ah-subtle">—</span>;
   return (
     <details className="ah-ticket-acs">
       <summary className="ah-small">
-        <AcCount row={row} acPasses={acPasses} />
+        <AcCount row={{ acs: ids }} acPasses={acPasses} />
       </summary>
       <ul className="ah-stack">
-        {row.acs.map((ac) => (
+        {ids.map((ac) => (
           <li key={ac}>
             <AcLink id={ac} row={acRows?.get(ac)} passes={acPasses?.[ac]} />
           </li>
@@ -357,7 +360,7 @@ function TicketsTable({
     {
       label: "ACs",
       width: 150,
-      cell: (row) => <Acs row={row} acPasses={acPasses} acRows={acRows} />,
+      cell: (row) => <AcList ids={row.acs} acPasses={acPasses} acRows={acRows} />,
     },
     {
       label: "Sessions",
