@@ -98,6 +98,33 @@ At the live-sessions limit, a start or a reopen first ends the local session idl
 request or a cloud one is the start refused (429 `limit`). With `--sessions-max 0` (the playground's conductor) no
 session is ended or refused for the limit.
 
+**No live-session limit (AGH-383, [ADR 0041](../adr/0041-no-live-session-limit-in-the-playground.md))**
+
+**Session limits (core)**
+
+- **AC-383.1** Given `SessionLimits`, when `sessions_max` is 0, then it is accepted and means no limit on live
+  sessions.
+- **AC-383.2** Given `sessions_max` 1 to 16, when the limits are built, then they are accepted as before; -1 and 17
+  are refused.
+- **AC-383.3** Given no limit (`sessions_max` 0) and an idle session beside running ones, when another session starts,
+  then none is ended for the limit: the idle one stays idle and the running ones keep running.
+- **AC-383.4** Given no limit and 17 running sessions (more than the 16 ceiling), when another session starts, then it
+  is not refused and starts idle.
+- **AC-383.5** Given a limit of 2 with both sessions running, when a third starts, then it is refused
+  (`LiveLimitError`, limit 2), and starts once one closes (unchanged behavior).
+
+**hub web (cli)**
+
+- **AC-383.6** Given `hub web --sessions-max 0`, when it starts, then it serves with no session limit (`sessions_max`
+  0); its help says "Live agent sessions; 0: no limit."
+- **AC-383.7** Given `AGENT_HUB_SESSIONS_MAX=0`, when `hub web` starts, then it serves with no session limit.
+- **AC-383.8** Given `--sessions-max -1` or `17`, when `hub web` starts, then it refuses the value.
+
+**make playground**
+
+- **AC-383.9** Given `make playground`, when it starts the conductor, then it passes `AGENT_HUB_SESSIONS_MAX=0` (with
+  `AGENT_HUB_SESSION_IDLE_SECONDS=86400`).
+
 ### Links
 
 `AgentSessionLinks.link_of(project, claude_session_id)` (live sessions first, then the store) gives the folded

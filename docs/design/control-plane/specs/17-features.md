@@ -166,14 +166,147 @@ otherwise, this list wins. Each item is an acceptance criterion.
   review, not merged" below) instead of "Waiting on X", and it offers the same Start (default, not primary), which
   first confirms the risk in a dialog, then starts a session that creates the worktree from X's pull request branch
   and opens a pull request stacked on it.
+
+---
+
+## Departures (AGH-374, what needs you)
+
+**Features list**
+
+- **AC-374.1** Given features with a broken record, a NO-SHIP verdict or owner steps left, when the Features list
+  opens, then there is no "Needs you" group: each sits in In progress with a warning on its row (the edge and line in
+  the blocked tone for a broken record, failed for NO-SHIP, waiting for owner steps), and a feature with no warning
+  has no tone.
+- **AC-374.2** Given rows that need the owner in In progress, when the group is open, then its hint reads "What needs
+  you first, then furthest along and most ACs passing" followed by how many of each kind ("1 session waits on you · 1
+  your turn in a session · 1 wait on your steps · 1 no ship · 1 record cannot be read", only the kinds present), and
+  the page summary starts with "N need you".
+- **AC-374.3** Given a live session (not a subagent) whose issue (its label's, else the tile's, any case) is one of
+  the feature's issues, or whose title names the feature's slug, when it waits on a permission or a question, then the
+  feature's row reads "A session waits on you · <reason>" ("a permission prompt" when the session gives none); when
+  its turn ended, the row reads "Your turn in a session · <last action>". A busy session, a subagent or a session on
+  other work flags nothing, and a shipped feature is never flagged.
+- **AC-374.4** Given several sessions waiting on the same feature, when the row is drawn, then a session waiting on a
+  permission wins over one whose turn ended, then the most recent.
+- **AC-374.5** Given rows that need the owner, when In progress is sorted, then they lead it in this order: a session
+  waiting on you, your turn in a session, a broken record, NO-SHIP, owner steps; then the rest, furthest along and
+  most ACs passing first.
+- **AC-374.6** Given a row whose session waits on you, when the owner opens it, then the feature opens
+  (`/features/<project>/<slug>`, no `?doc=`), not the session's chat.
+
+**Sidebar**
+
+- **AC-374.7** Given features that need the owner (a session waiting on you, a broken record, NO-SHIP, owner steps),
+  when the sidebar is shown, then Features carries a badge with their count, named "Features, N need you", counted
+  from the same features and live sessions the list reads; there is no count until the features are read, and the
+  count still comes when the live sessions cannot be read.
+
+## Departures (AGH-376, tickets, ACs and evals)
+
+**Ticket pull requests (core and API)**
+
+- **AC-376.1** Given a ticket's review record (`reviews/<ticket>.md`) whose `pr` is `<repo>#<n>` (the repo's `dir` or
+  its GitHub name, any case) or a `https://github.com/<owner>/<repo>/pull/<n>` URL, when the feature's tickets are
+  read, then the ticket's row carries `pr_url`, the GitHub URL resolved with the hub's repos (matched by the ticket's
+  id, else its plan key); `#pending`, a repo the hub does not have and a malformed record give none, and a later
+  record of the same ticket wins.
+
+**Tickets tab**
+
+- **AC-376.2** Given the Tickets table, when it shows a ticket's ACs, then every ticket shows the same AC meter as the
+  flow card ("N/M ACs passing") whatever the number of ACs, with the AC ids folded under it, each with its status as
+  icon and text (Passes, Owner step, Not passing).
+- **AC-376.3** Given a ticket with a pull request, when the Tickets table is shown, then its last column, PR, links it
+  as "PR #<n>", opening GitHub in a new tab ("PR #<n> of <ticket> (opens GitHub in a new tab)"); a URL that is not a
+  GitHub pull request shows as plain text titled "Link not shown: only GitHub pull request links are opened"; a ticket
+  without one shows "—" with the reason in its tooltip.
+- **AC-376.4** Given a ticket with a pull request, when its flow card is drawn, then the card's progress row links "PR
+  #<n>" the same way.
+- **AC-376.5** Given the Tickets table, then there is no Scope column and the title shows its words without the
+  conventional-commit prefix.
+- **AC-376.6** Given a card of the flow, then it leads with the id, the Linear status (or "Not created") and the
+  title's words; below, a status line with the readiness only when it adds to the Linear status ("Can start now",
+  "Waiting on X", "Started before X was done", "Reviewed · waiting for Done"; nothing for a done ticket) and the
+  newest session (named "Newest session: <status>, started <day>, <time>") or Start, then two fixed fact rows:
+  progress (AC meter, PR, Reviewed) and people and order (assignee, After X, "Critical path").
+- **AC-376.7** Given an AC id in the Tickets tab, when it is clicked, then the Criteria tab opens on that AC
+  (`?doc=acs&ac=<id>`), even in a phase whose default tab is Tickets.
+- **AC-376.8** Given an AC id in the Tickets table, when it is hovered or focused, then the shared Tooltip shows what
+  must be true (the Then of a Given / When / Then, else the whole text, three lines at most), tied to the link with
+  `aria-describedby` and with no `title`.
+- **AC-376.9** Given the Criteria tab opened on an AC by `?ac=`, then keyboard focus moves to that AC row's toggle.
+
+**Eval tab**
+
+- **AC-376.10** Given a SHIP-WITH-OWNER-STEPS eval and a later owner SHIP sign-off, when the evals are listed, then
+  that eval reads as SHIP with "owner steps signed off" (the tooltip says what the eval said and which sign-off
+  settled it); an owner-steps eval after the sign-off, or with no sign-off at all, stays as it was; an undated eval
+  counts as before the sign-off.
+- **AC-376.11** Given evals of several scopes, when the Eval tab opens, then each group is headed by its ticket and
+  the ticket's title and folds; only the selected eval's group (or a single scope) starts open; the evals read as
+  "Eval N", the newest marked "latest", an older owner-steps one "replaced by Eval N"; each eval's ACs show as in the
+  Tickets tab ("2/3 ACs passing"); the date shows with how long ago under it.
+- **AC-376.12** Given the evals list, when the owner chooses Hide list, then the table folds and stays folded on this
+  machine ("Show list" opens it).
+- **AC-376.13** Given the latest eval of a scope is SHIP-WITH-OWNER-STEPS and no owner decision settled it, when the
+  Eval tab shows it, then one "Waiting on you" callout under its ticket ("<ticket> Eval N passed with owner steps. Did
+  you do them?") offers Needs more work and Mark owner steps done, and stays in view when its group is folded;
+  choosing one turns it into a short form with "Note (optional)" and Cancel; Cancel sends nothing.
+- **AC-376.14** Given the callout's form, when the owner confirms, then `POST .../owner-signoff` gets `{delivery,
+  decision: "done" | "more_work", note}` and the written eval is selected; the API writes an owner SHIP (done) or
+  NO-SHIP (more work) eval over that eval's waiting ACs with the note under "Owner's note", without needing the whole
+  feature covered; it refuses an eval that is unknown, not SHIP-WITH-OWNER-STEPS or already settled, `more_work`
+  without an eval, and answers 422 for an unknown decision or key; with no body it signs off every waiting AC as
+  before.
+- **AC-376.15** Given an owner decision after the latest owner-steps eval, then no callout asks again: more work reads
+  "you found more work" on the eval and "Owner: more work" on the owner's row, a sign-off reads "Owner sign-off".
+- **AC-376.16** Given evals waiting on owner steps, when the feature page opens, then its Waiting on you banner names
+  them ("1 eval passed with owner steps: AGH-48 · Eval 1") and "Review owner steps" opens the first in Eval
+  (`?doc=eval&eval=<delivery>`).
+- **AC-376.17** Given a folded ticket in the eval table, then its row fills the table's columns with its latest eval
+  (verdict, ACs, author, date), its evals fold under it, and the callout sits right under the ticket.
+
+## Departures (AGH-381, stacked tickets)
+
+**hub worktree (CLI)**
+
 - **AC-381.1 Stacked worktree, every repo.** Given a stacked start, then the session's first prompt names one exact
   command, `./hub worktree <ticket id in lowercase> --stack-on <X's pull request URL>` (no `--only`, no `--base`):
   `hub worktree` reads the pull request with `gh` and creates the worktree of the pull request's repo (the `hub.json`
   repo whose `github` is the URL's `<owner>/<repo>`) from its head branch, and every other repo's from its default
-  branch, so the blocker's repo starts on its branch even when this ticket's own work is in another repo. No step
-  asks the agent to read the branch or choose the repo.
+  branch, so the blocker's repo starts on its branch even when this ticket's own work is in another repo. No step asks
+  the agent to read the branch or choose the repo.
+- **AC-381.2** Given `hub worktree <name> --base <branch>`, when it creates the worktrees, then each new worktree
+  starts from `origin/<branch>` instead of the default branch and says so ("created <path> (<task branch> from
+  origin/<branch>)"); `--base` with `--remove` exits 2 ("--base applies to creating worktrees, not to --remove"), and
+  a branch name git refuses exits 2 naming it, before any repo is touched.
+- **AC-381.8** Given `hub worktree <name> --stack-on <url>`, when the pull request is merged or closed, comes from a
+  fork, or `gh` cannot read it, then it exits 1 with the reason; when the URL is not a GitHub pull request of a
+  `hub.json` repo, `--only` leaves the pull request's repo out, or `--stack-on` comes with `--base` or `--remove`,
+  then it exits 2; either way before any repo is touched. With `--only <the pull request's repo>` only that repo's
+  worktree is created, from the pull request's branch.
 
----
+**Tickets tab**
+
+- **AC-381.3** Given a created ticket whose only blocker not done is a ticket of this feature already started (in
+  progress) with a pull request, then it can start: it offers Start. Waiting on two tickets, or on a blocker without a
+  pull request, it cannot.
+- **AC-381.4** Given such a ticket, then its readiness reads "Can start on X's branch" instead of "Waiting on X": in
+  the table with "<X id> is in review, not merged" below, on its flow card alone; the readiness help and the legend
+  say "Can start on a blocker's branch: its only blocker is in review".
+- **AC-381.5** Given such a ticket, then its Start is a default button (not primary) named "Start <id> on <X id>'s
+  branch (<X id> is in review, not merged)"; clicking it first opens a "Start <id> on <X id>'s branch?" dialog saying
+  "<X id> is in review and not merged: its code may still change."; "Start <id>" starts the session and opens its
+  chat, Cancel starts nothing.
+- **AC-381.6** Given a stacked start, then the session's prompt says its done blockers, "Its blocker <X id> is not
+  merged yet: it is in review in <PR url>." and asks to open this ticket's pull request against X's branch.
+
+**Sessions by issue (core)**
+
+- **AC-381.7** Given a session whose first prompt names an issue of the hub's tracker teams (`/feature AGH-305`, a
+  ticket's Start) and whose folder's branch names another ticket (a session started in the hub folder takes the hub
+  checkout's branch), when it is labelled or listed by issue, then it is attributed to the issue its first prompt
+  names; a prompt issue of another team, or none, leaves the branch's issue.
 
 ## Screen 1: Features list
 

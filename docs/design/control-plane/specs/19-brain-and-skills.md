@@ -189,3 +189,88 @@ caption "Versions of <name>". Checkboxes and Restore buttons are reached with Ta
 the selection count is a polite live line. The dialog is an alert dialog with focus on Cancel; Tab reaches "Restore"
 (or "Restore anyway"). Each diff is a focusable, labelled `pre` ("Changes to <path>"), so it scrolls from the
 keyboard. axe reports no serious or critical violation in the panel, Compare or the dialog (AC-295.31).
+
+## Toolkit tabs, sidebar Portfolio and hub config (AGH-382)
+
+**Toolkit › Workflows tab (commit 10494597)**
+
+- **AC-382.1** Given a project's Toolkit, when it opens, then Workflows is a fourth tab beside Agents, Skills and
+  Hooks, and its panel says "Jobs the hub runs from start to finish without you…" and lists the project's workflows,
+  the hub's own before the built-ins, with the files that do not load.
+- **AC-382.2** Given the Toolkit's Create with Claude menu, when it opens, then its last row is "New workflow" —
+  "Steps the hub runs by itself, chaining agents and commands"; when picked, it opens
+  `/projects/:project/skills/workflows/new`.
+- **AC-382.3** Given a workflow row on the Workflows tab, when its name is clicked, then its page opens at
+  `/projects/:project/skills/workflows/:name`.
+- **AC-382.4** Given a workflow's page, when it shows, then its breadcrumbs read Portfolio › project › Toolkit ›
+  Workflows › name.
+- **AC-382.5** Given `/projects/:project/skills/workflows/new`, when opened, then the New workflow page shows; when a
+  workflow is created, then "See its steps" links to its page under the Toolkit.
+- **AC-382.6** Given an older link `/workflows`, when opened with All projects in scope, then it redirects to the
+  Toolkit project picker (`/knowledge/skills`); with a project in scope, to that project's Toolkit on its Workflows
+  tab.
+- **AC-382.7** Given an older link `/workflows/:project/:name`, when opened, then it redirects to
+  `/projects/:project/skills/workflows/:name`.
+- **AC-382.8** Given the sidebar, when it shows, then it has no Workflows item.
+- **AC-382.9** Given no workflow has run, when the sidebar shows, then Workflow runs is hidden; once a workflow run
+  exists, Workflow runs shows and links to `/runs`.
+
+**Toolkit catalog (commit 3d459347)**
+
+- **AC-382.10** Given a project's Toolkit, when it opens with no tab named, then it opens on Agents, shows one kind
+  per tab (Agents, Skills, Hooks, Workflows, the shared Tabs) and counts each tab.
+- **AC-382.11** Given the Toolkit, when another tab is chosen, then the tab is kept in `?tab=` with a push, so Back
+  returns to the previous tab; the tab is never treated as a filter (no Clear filters, no count status).
+- **AC-382.12** Given an older `?kind=` or `?view=` link, when opened, then the tab it names is selected.
+- **AC-382.13** Given a URL with filters and no tab, when opened, then the first tab with matches is selected.
+- **AC-382.14** Given a search, when typed, then the tab's items filter by name or description ignoring case, and the
+  status says "1 of 2 skills"; the other tabs' counts follow the search.
+- **AC-382.15** Given search and facets set, when Clear filters is pressed, then they clear and the tab is kept.
+- **AC-382.16** Given the filter toolbar, when it shows, then its facets are menus (Origin, Invocation, Diagnostics);
+  Invocation shows on Skills only (with Hidden for neither), and an Invocation filter does not empty the Agents tab.
+- **AC-382.17** Given a tab with no match, when the filters exclude everything, then it says "No hooks match these
+  filters." and offers the other tabs with matches (e.g. "Skills (1)").
+- **AC-382.18** Given the sort control, when Most used is chosen, then the sort is kept in the URL (`sort=used`).
+- **AC-382.19** Given the open tab, when it shows, then its kind is explained once, under the toolbar.
+- **AC-382.20** Given drafts left open in the Studio, when the Toolkit opens, then a "Your drafts" card lists them
+  apart from the filters, each with its verb ("New skill", "Editing agent"), says "Kept in this browser only", shows
+  the first three, and "Show all 4 drafts" shows the rest.
+- **AC-382.21** Given an edit draft of an item, when its card (or hook row) shows, then it offers "Continue draft"
+  ("Continue your draft of <name> in the Studio").
+- **AC-382.22** Given a card, when it shows, then it does not repeat the kind (no "subagent" line, no kind label) and
+  takes one Tab stop (origin and mode are plain text); usage says "(2 by you)".
+- **AC-382.23** Given the Toolkit, when checked with axe, then it has no serious or critical violation and states the
+  count as text.
+
+**Sidebar Portfolio (commit 89e95b3c)**
+
+- **AC-382.24** Given a project in scope, when the sidebar shows, then Portfolio becomes "Overview · <project>"
+  linking to `/projects/<project>`.
+- **AC-382.25** Given a project's page open, when the sidebar shows, then the overview names that project, and it is
+  marked as the page only on the project's own overview.
+- **AC-382.26** Given All projects in scope, when the sidebar shows, then Portfolio stays at `/`.
+
+**Hub config (commit f0115691)**
+
+- **AC-382.27** Given the hub config, when it opens, then there is one view of the values agents use: no
+  Effective/Team/Mine (Layer) switch, whatever an old `?layer=` link says, and Models is listed.
+- **AC-382.28** Given a value, when shown, then who set it is said in plain words: "Set by you", "Set by the team" or
+  "Built-in".
+- **AC-382.29** Given my value overrides the team's, when its row shows, then it says "Overrides the team's <value>".
+- **AC-382.30** Given the hub config, when it opens, then a "Where values come from" card explains the order once
+  ("You set 2 values on this machine"); Hide hides it and remembers it (`ah.config.explainer` = hidden), and "Show
+  where values come from" brings it back.
+- **AC-382.31** Given a row I may set, when shown, then it has "Change for me" (lists: "Add for me"), which opens
+  "Change my settings"; team-only rows (guard paths, tracker labels, models) have none.
+- **AC-382.32** Given the settings dialog, when saved, then the button says "Save my settings" and the confirmation
+  "Saved your settings".
+- **AC-382.33** Given a row's Ask button, when the row is hovered or focused, then it shows; once attached it stays,
+  saying "In next message".
+- **AC-382.34** Given hub.json sets only some model tiers, when Models shows, then the others are "Built-in" and the
+  set one "Set by the team".
+- **AC-382.35** Given hub.json sets only a tracker state, when Tracker shows, then Labels read "Built-in" and States
+  "Set by the team".
+- **AC-382.36** Given hub.json, when the config read model is built, then `model_tiers_set` names the tiers hub.json
+  sets and `tracker.team_set` names the labels and states it sets (empty when none).
+- **AC-382.37** Given an unreadable hub.local.json, when the config opens, then it says it "has a problem, so only the
+  team's values apply" with the line, and offers Ask Claude to fix it.

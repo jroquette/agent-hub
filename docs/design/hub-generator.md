@@ -213,6 +213,19 @@ an edit exits 3, adopt lists differences, a `hub.lock` snapshot. Loki: write `hu
 - No operation silently overwrites or deletes a project edit or an unknown path; seeded files are written once; same
   inputs, same bytes; re-runs are safe; hooks need no CLI; agent-hub holds no project-owned material.
 
+## Implementers change files with Edit or Write (AGH-378)
+
+**Generator: rendered /feature skill and AGENTS.md**
+
+- **AC-378.1** Given a hub rendered by `hub init`/`hub sync` (one team or two teams), when its `/feature` skill is
+  read, then step 6 (**Implement**) says "Each implementer changes files with the Edit or Write tool, never by a shell
+  script, so the session's review shows each change.", once, and no other line names Edit or Write.
+- **AC-378.2** Given the same hubs, when the rendered `AGENTS.md` is read, then it does not carry the rule (no "Edit
+  or Write", no "shell script"): the rule is in /feature only, since a two-team hub's AGENTS.md is at its 100-line
+  cap.
+- **AC-378.3** Given the demo hub, when `hub init` writes its `hub.lock`, then the lock matches the committed golden
+  `golden/init/demo.hub.lock`, whose `feature/SKILL.md` hash carries the new step 6.
+
 ## Decisions
 
 - [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md): ownership, lock, sync, adopt; no 3-way merge or marker blocks.
