@@ -55,7 +55,7 @@ from agent_hub.core.agent_sessions.cloud import CloudReply, CloudSessions
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.agent_sessions.links import AgentSessionLinks
 from agent_hub.core.agent_sessions.records import LogRecordPage, StreamItem, StreamPosition
-from agent_hub.core.agent_sessions.repo_changes import SessionRepoChanges
+from agent_hub.core.agent_sessions.repo_changes import RepoCommitDiff, SessionRepoChanges
 from agent_hub.core.events.event import Event
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.agent_session_rig import Rig, build_rig
@@ -756,6 +756,12 @@ class RecordingAgentSessions:
     async def repo_changes(self, agent_session_id: str) -> SessionRepoChanges:
         self._call("repo_changes", agent_session_id)
         return self.repo_changes_answer
+
+    async def repo_commit_diff(
+        self, agent_session_id: str, *, path: str, sha: str, old_path: str | None = None
+    ) -> RepoCommitDiff:
+        self._call("repo_commit_diff", agent_session_id, path, sha, old_path)
+        return RepoCommitDiff(sha=sha, path=path, diff="--- a/x\n+++ b/x")
 
     async def delete(self, agent_session_id: str) -> None:
         self._call("delete", agent_session_id)

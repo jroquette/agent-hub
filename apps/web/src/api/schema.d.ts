@@ -295,6 +295,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/agent-sessions/{agent_session_id}/repo-changes/commit": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Agent Session Repo Commit Diff
+     * @description What one commit changed in one file of the session's repositories (``path`` absolute,
+     *     ``old_path`` its name before a rename).
+     */
+    get: operations["get_agent_session_repo_commit_diff_api_v1_agent_sessions__agent_session_id__repo_changes_commit_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/agent-sessions/{agent_session_id}/settings": {
     parameters: {
       query?: never;
@@ -3955,6 +3976,25 @@ export interface components {
       subject: string;
     };
     /**
+     * RepoCommitDiff
+     * @description ``GET /agent-sessions/{id}/repo-changes/commit``: what one commit changed in one file, as a
+     *     unified diff with the file's line numbers. ``diff`` is null for a binary file or one past
+     *     ``REPO_DIFF_MAX_BYTES``, empty when the commit did not touch the file.
+     */
+    RepoCommitDiff: {
+      /**
+       * Binary
+       * @default false
+       */
+      binary: boolean;
+      /** Diff */
+      diff?: string | null;
+      /** Path */
+      path: string;
+      /** Sha */
+      sha: string;
+    };
+    /**
      * RepoConfigView
      * @description One repo of ``hub.json`` with its effective branch and conventions.
      */
@@ -6160,6 +6200,50 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SessionRepoChanges"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_agent_session_repo_commit_diff_api_v1_agent_sessions__agent_session_id__repo_changes_commit_get: {
+    parameters: {
+      query: {
+        path: string;
+        sha: string;
+        old_path?: string | null;
+      };
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RepoCommitDiff"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
