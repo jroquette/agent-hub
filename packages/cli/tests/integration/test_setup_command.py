@@ -2332,3 +2332,29 @@ class TestEnvironments:
             in changed.stderr
         )
         assert _environments_lines(changed.stdout) == []
+
+    def test_checks_ignore_when_step_creates_local_file(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The step's questions come before the ignore check, so the hub.local.json they create
+        # is checked in the same run; the gitignore item still prints before environments.
+        hub = Path(demo_workspace.hub)
+        ignore_bytes = _unignore_local_file(hub)
+        demo_workspace.init_hub_repo(None)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        result = run_setup(hub, input=_answers("y", "local2", "write", "n", ""))
+
+        assert (hub / LOCAL_FILE).exists()
+        assert _items(result.stdout)[6:9] == ["identity", "gitignore", "environments"]
+        lines = result.stdout.splitlines()
+        gitignore = lines.index(GITIGNORE_LINE)
+        assert lines[gitignore + 1] == "ok      environments: local2 (write)"
+        assert len(_check_ignore_calls(env_traced_git)) == 1
+        assert (hub / ".gitignore").read_bytes() == ignore_bytes
+        assert result.exit_code == 1
