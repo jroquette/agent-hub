@@ -11,6 +11,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub brief` prints an `## Environments` block (both files: access, `PRODUCTION`, source, credential names, endpoints
+  and blocked words, at most 60 lines), and the hooks' fallback brief lists the environments' names and access
+  (AGH-286). `hub doctor`'s new `environments.production` rule names each production environment: a warning for
+  `write` or `ask` access, info for `read`; turn it off or retune it in `doctor.rules`. Environment and service text
+  now refuses line-separator and bidi characters, and a secret-shaped blocked word is refused.
+
 ## [0.17.0] - 2026-10-19
 
 ### Added
