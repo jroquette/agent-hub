@@ -587,6 +587,69 @@ def test_asks_when_guard_crashes(
     )
 
 
+# argv: a JSON list of stdins as latin-1 text. For each, a fresh stdin for read_input(), then
+# another for read_event(); a last case whose read raises OSError. Prints both results per case.
+READ_EVENT = """\
+import io, json
+from hubhooks import read_event, read_input
+class Broken:
+    class buffer:
+        @staticmethod
+        def read():
+            raise OSError("forced")
+def stdin(raw):
+    return io.TextIOWrapper(io.BytesIO(raw))
+found = []
+for text in json.loads(sys.argv[1]):
+    raw = text.encode("latin-1")
+    sys.stdin = stdin(raw)
+    plain = read_input()
+    sys.stdin = stdin(raw)
+    found.append([plain, list(read_event())])
+sys.stdin = Broken()
+plain = read_input()
+sys.stdin = Broken()
+found.append([plain, list(read_event())])
+print(json.dumps(found))
+"""
+
+
+def test_flags_unreadable_stdin_when_event_read(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    event = bash_event("git status", elsewhere)
+    cases = [
+        b"",
+        b"  \n",
+        b"{}",
+        b"[]",
+        b'"x"',
+        b"\xff",
+        b'{"tool_name": "mcp__db__query", "tool_input": ',
+        json.dumps(event).encode(),
+    ]
+
+    found = run_python(
+        hook_python,
+        READ_EVENT,
+        path=hub / HOOKS,
+        args=[json.dumps([raw.decode("latin-1") for raw in cases])],
+        cwd=elsewhere,
+    )
+
+    assert found == [
+        [{}, [{}, False]],
+        [{}, [{}, False]],
+        [{}, [{}, False]],
+        [{}, [{}, True]],
+        [{}, [{}, True]],
+        [{}, [{}, True]],
+        [{}, [{}, True]],
+        [event, [event, False]],
+        [{}, [{}, True]],
+    ]
+
+
 @pytest.mark.parametrize(
     "name", ["post_edit", "stop_gate", "session_start", "session_end", "pre_compact"]
 )
