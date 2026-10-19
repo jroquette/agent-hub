@@ -10,11 +10,10 @@ an action gets, and the two run modes. Why: [ADR 0041](../adr/0041-scenarios-act
 ## Contract
 
 All optional and project-owned; a hub without `scenarios/`, `actions/` and `environments` behaves as before. Actions
-are `actions/<pack>/<name>.yaml`, each script under `actions/<pack>/scripts/` (by real path, no symlink); scenarios are
-`scenarios/<pack>/<name>.yaml` with `kind: scenario`. `workflows/` refuses a scenario and `scenarios/` accepts nothing
-else. Both load as workflows do (strict YAML, 256 KiB, unknown keys refused, errors name file, line and key), at most
-200 files per root. `hub init` writes one example action (`effect: read`) and one example scenario; `hub sync` never
-adds them and `hub.lock` does not list them.
+are `actions/<pack>/<name>.yaml`, scripts under `actions/<pack>/scripts/` (by real path, no symlink); scenarios are
+`scenarios/<pack>/<name>.yaml` with `kind: scenario` (only there). Both load as workflows do (strict YAML,
+256 KiB, unknown keys refused, errors name file, line and key), ≤ 200 files per root. `hub init` writes one example
+action (`effect: read`) and scenario; `hub sync` never adds them and `hub.lock` does not list them.
 
 ### Kind and node keys
 
@@ -42,8 +41,8 @@ any other is a **draft**, listed but never run (outside a git checkout, every ac
 
 ### Policy
 
-`decide(environment, effect, origin)` in core returns `allow`, `ask` or `deny` from the **effective** access (`hub.json`
-tightened by `hub.local.json`, so a local file never loosens a decision):
+`decide(effective access, production, effect, origin)` in core returns `allow`, `ask` or `deny`; the effective access is
+`hub.json`'s tightened by `hub.local.json`, so a local file never loosens a decision:
 
 | Environment | `read` | `write` | `destroy` |
 |---|---|---|---|
@@ -62,10 +61,10 @@ gate-needing steps that do not depend on each other are a plan error naming both
 
 ### Credentials
 
-- An environment's `credentials` (or an endpoint's, which wins) may name `env_file`: a dotenv file relative to the
-  workspace folder that holds the hub and its repos (`demo-api/environment/.env.staging`), ≤ 200 characters, no `..`,
-  `~` or leading `/`, no secret shape. `hub.json` accepts it, and `hub.local.json` for the developer's own environments;
-  `hub env add|set --env-file PATH [--local]` writes it. `AGENTS.md` and the brief never show it.
+- An environment's `credentials` (or an endpoint's, which wins when the action's endpoints declare exactly one set;
+  two differing sets are a plan problem) may name `env_file`: a dotenv file relative to the workspace holding the hub
+  and its repos (`demo-api/environment/.env.staging`), ≤ 200 characters, no `..`, `~`, leading `/` or secret shape, in
+  `hub.json` or `hub.local.json` (own environments), written by `hub env add|set --env-file`; never shown to agents.
 - One loader, shared by `hub action run` and the engine's action executor, reads it when an action starts: inside the
   workspace by real path, a regular file, ≤ 64 KiB and 200 variables, `NAME=value` lines (`#` comments, optional
   `export `, quotes, no interpolation). It injects **every** variable, plus `AWS_PROFILE` from `aws_profile` and the
@@ -118,9 +117,9 @@ issue after a terminal `y`; `--inbox <id>` writes a `brain/_inbox/` note (`prove
 Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), each with a `payload_keys` row:
 `action.start`/`action.end` (`action`, `content_hash`, `environment`, `service`, `effect`, `origin`, `decision`,
 `approver`, `status`, `failure_kind`), `policy.decision` (`action` or node, `environment`, `effect`, `origin`,
-`decision`, `reason_kind`), `expect.poll` (`poll`, `held`), `context.capture` (`name`), `finding` (`finding_id`,
-`step`), `workaround.start`/`workaround.end` (`workaround_id`, `option`, `steps`, `status`); `gate.request` gains
-`reason`. Args, outputs, captured values, findings and the conversation stay in the run record (`.agent-runs/`).
+`decision`, `reason_kind`), `expect.poll` (`poll` count, `held` bool), `context.capture` (`name`), `finding`
+(`finding_id`, `step`), `workaround.start`/`workaround.end` (`workaround_id`, `option` id, `steps` count, `status`);
+`gate.request` gains `reason`. Args, outputs, captured values, findings and the conversation stay in the run record.
 Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24 h, ≤ 1000 polls; action stdout ≤ 512 KiB; plan mode ≤ 60 s; ≤ 64
 `--input` values of ≤ 64 KiB; a proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; an API record read ≤ 8 MiB.
 
@@ -132,6 +131,7 @@ Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24 h, ≤ 1000 polls; action std
 4. After a divergence, steps that do not depend on it still run in that pass.
 5. Local only: cloud sessions have no `hub.local.json`, no env files and no credentials.
 6. Policy gates (`<step>__ask`) of a process workflow run show in the run's steps but not in its graph.
+7. Credential values shorter than 4 characters are not redacted: they cannot be told apart from ordinary output.
 
 ## Invariants
 

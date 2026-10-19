@@ -63,7 +63,8 @@ Chosen option: 1.
   before its process starts, with a plain reason and no value. `credentials.env` (variable names taken from the
   developer's environment) stays accepted; the env file is the recommended form. Declared `credentials.env` names and
   an `AWS_PROFILE` naming a declared profile are removed from every agent session, shell, script and `until_bash`
-  environment, hub web's driven sessions included. Every injected value is redacted from what the action prints.
+  environment, hub web's driven sessions included. Every injected value of 4 characters or more is redacted from what
+  the action prints (shorter values cannot be told apart from ordinary output).
 - **Env files are out of the agents' reach.** The guard denies, in every session (process workflows included), any
   file tool on a declared env file (resolved by real path) and any Bash command or WebFetch URL naming one (rule
   `env_file`); the investigation session's own PreToolUse hook denies the same reads and allows Bash only for

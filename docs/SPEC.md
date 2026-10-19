@@ -71,8 +71,6 @@ hub doctor [--only RULE]… [--json]   # checks rules, links, dead references an
 hub validate-output review|eval FILE   # checks one agent JSON output: a review round or an eval
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub env list|show|add|set|remove|service … [--local] [--json]   # the declared environments and services: list, show, or change hub.json (--local: hub.local.json), no prompt
-hub action list|plan|run …   # the hub's actions: list them with their draft state, show one call's plan and decision, run one (AGH-350)
-hub scenario list|plan|run|findings …   # the hub's scenarios: plan before anything runs, run in regression or interactive mode, list findings (AGH-350)
 hub worktree NAME [--only REPO] [--remove] [--no-fetch]   # isolated worktrees for one task (--remove removes them; --no-fetch starts from the already-fetched base)
 hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
@@ -386,12 +384,13 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
 - **The access policy** lives in core and decides every action before it runs, from the environment's effective
   access (`hub.local.json` only tightens), the effect and who proposed the step: an undeclared environment and a
   production write or destroy are denied; access `read` allows reads only, `ask` asks before writes and destroys,
-  `write` asks before destroys; a write an agent proposed always asks; a draft is denied. No key or flag turns an ask
-  into an allow. `hub scenario plan` shows each step, where it goes, its effect and the decision before anything runs;
+  `write` asks before destroys; a write or destroy an agent proposed is never allowed without asking, and a deny stays
+  a deny; a draft is denied. No key or flag turns an ask into an allow. `hub scenario plan` shows each step, where it goes, its effect and the decision before anything runs;
   a deny refuses the start and an ask is an approval gate.
 - **Credentials:** an environment (or an endpoint) may name a git-ignored dotenv file, `credentials.env_file`. Only
   the action runner reads it, when an action starts, and injects its variables into that action's process alone;
-  values are redacted from the action's output and appear in no event, record or plan. Declared credential names are
+  values of 4 characters or more are redacted from the action's output (shorter ones cannot be told apart from
+  ordinary output), and no value appears in an event, record or plan. Declared credential names are
   removed from every agent session, and the guard denies agents any read of a declared env file.
 - **Modes:** `hub scenario run --mode regression` starts no agent and fails on the first divergence; `interactive`
   (the default) pauses, and hub web starts one read-only investigation session that may read the hub, run read
