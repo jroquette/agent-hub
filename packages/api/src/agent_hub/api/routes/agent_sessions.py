@@ -29,7 +29,11 @@ from agent_hub.core.agent_sessions.agent_session import (
 )
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.agent_sessions.records import LogRecordPage
-from agent_hub.core.agent_sessions.repo_changes import SessionRepoChanges
+from agent_hub.core.agent_sessions.repo_changes import (
+    COMMIT_SHA_PATTERN,
+    RepoCommitDiff,
+    SessionRepoChanges,
+)
 
 router = APIRouter(prefix="/agent-sessions", tags=["agent-sessions"], responses=PROBLEM_RESPONSES)
 
@@ -103,6 +107,30 @@ async def get_agent_session_repo_changes(
     """What the repositories the session worked in change against their base branch, as git
     reads them: the pull request's files, whoever changed them."""
     return await control.repo_changes(str(agent_session_id))
+
+
+MAX_FILE_PATH_CHARS = 4096
+FilePathParam = Annotated[str, Query(min_length=1, max_length=MAX_FILE_PATH_CHARS, pattern=r"^/")]
+OldFilePathParam = Annotated[
+    str | None, Query(min_length=1, max_length=MAX_FILE_PATH_CHARS, pattern=r"^/")
+]
+CommitShaParam = Annotated[str, Query(pattern=COMMIT_SHA_PATTERN)]
+
+
+@router.get("/{agent_session_id:uuid}/repo-changes/commit")
+async def get_agent_session_repo_commit_diff(
+    agent_session_id: SessionIdPath,
+    control: AgentSessionControlDep,
+    *,
+    path: FilePathParam,
+    sha: CommitShaParam,
+    old_path: OldFilePathParam = None,
+) -> RepoCommitDiff:
+    """What one commit changed in one file of the session's repositories (``path`` absolute,
+    ``old_path`` its name before a rename)."""
+    return await control.repo_commit_diff(
+        str(agent_session_id), path=path, sha=sha, old_path=old_path
+    )
 
 
 @router.delete("/{agent_session_id:uuid}", status_code=204)

@@ -6584,6 +6584,42 @@
         "title": "RepoCommit",
         "type": "object"
       },
+      "RepoCommitDiff": {
+        "additionalProperties": false,
+        "description": "``GET /agent-sessions/{id}/repo-changes/commit``: what one commit changed in one file, as a\nunified diff with the file's line numbers. ``diff`` is null for a binary file or one past\n``REPO_DIFF_MAX_BYTES``, empty when the commit did not touch the file.",
+        "properties": {
+          "binary": {
+            "default": false,
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha",
+          "path"
+        ],
+        "title": "RepoCommitDiff",
+        "type": "object"
+      },
       "RepoConfigView": {
         "additionalProperties": false,
         "description": "One repo of ``hub.json`` with its effective branch and conventions.",
@@ -11784,6 +11820,101 @@
           }
         },
         "summary": "Get Agent Session Repo Changes",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes/commit": {
+      "get": {
+        "description": "What one commit changed in one file of the session's repositories (``path`` absolute,\n``old_path`` its name before a rename).",
+        "operationId": "get_agent_session_repo_commit_diff_api_v1_agent_sessions__agent_session_id__repo_changes_commit_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^/",
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sha",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{7,40}$",
+              "title": "Sha",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "old_path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "pattern": "^/",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Old Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoCommitDiff"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Agent Session Repo Commit Diff",
         "tags": [
           "agent-sessions"
         ]

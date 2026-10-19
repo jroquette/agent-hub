@@ -107,6 +107,22 @@ export function useRepoChanges(id: string, version: string) {
   return query;
 }
 
+/** `GET /agent-sessions/{id}/repo-changes/commit`: what one commit changed in one file. A commit
+ * never changes, so it is read once. */
+export function useRepoCommitDiff(
+  id: string,
+  { path, oldPath, sha }: { path: string; oldPath: string | null; sha: string },
+) {
+  return useApi(
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes/commit",
+    {
+      path: { agent_session_id: id },
+      query: { path, sha, ...(oldPath ? { old_path: oldPath } : {}) },
+    },
+    { retry: false, staleTime: Infinity },
+  );
+}
+
 /** What a session is about: its name and, when it is on a ticket a hub feature works on, that
  * feature. */
 export interface SessionAbout {

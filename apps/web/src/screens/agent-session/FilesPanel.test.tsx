@@ -9,6 +9,7 @@ import { ChangedFilesChip, FilesPanel, reviewedKey } from "./FilesPanel";
 import { changedFiles, type ToolView } from "./model";
 import { withRepoChanges } from "./repoChanges";
 import { commentMessage } from "./review";
+import { renderWithApi } from "../../testing/builders";
 
 const tool = (id: string, name: string, input: Record<string, unknown>): ToolView => ({
   id,
@@ -577,5 +578,35 @@ describe("FilesPanel (pull request)", () => {
         "Why d?",
       ),
     );
+  });
+
+  it("opens a commit on what it changed in the file, read from git once", async () => {
+    const commitPath = "/api/v1/agent-sessions/s1/repo-changes/commit";
+    const view = renderWithApi(<FilesPanel files={prFiles()} sessionId="s1" onClose={vi.fn()} />, {
+      routes: {
+        [commitPath]: (request: Request) => ({
+          sha: new URL(request.url).searchParams.get("sha"),
+          path: "/w/api/app.py",
+          diff: "--- a/app.py\n+++ b/app.py\n@@ -42,2 +42,3 @@\n c\n+d",
+          binary: false,
+        }),
+      },
+    });
+    await userEvent.click(screen.getByRole("button", { name: /app\.py/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Commits (3)" }));
+
+    const row = screen.getByRole("button", { name: /c2abcde/ });
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(row);
+
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByLabelText("Commit c2abcde to /w/api/app.py")).toHaveTextContent("+d");
+    const [request] = view.requests;
+    expect(new URL(request?.url ?? "").searchParams.get("path")).toBe("/w/api/app.py");
+
+    await userEvent.click(row);
+    await userEvent.click(row);
+    expect(screen.getByLabelText("Commit c2abcde to /w/api/app.py")).toBeInTheDocument();
+    expect(view.requests).toHaveLength(1);
   });
 });
