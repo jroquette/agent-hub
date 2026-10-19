@@ -400,14 +400,33 @@ describe("FilesPanel (long names)", () => {
         files={filesOf(DEEP)}
         sessionId="s1"
         onClose={vi.fn()}
-        workdirLabel="tip-1563-claims"
+        workdirLabel="api/tip-1563-claims"
       />,
     );
     const list = screen.getByRole("navigation", { name: "Files" });
-    expect(within(list).getByText("tip-1563-claims").tagName).toBe("B");
+    // The label the API gives a worktree, matched against its folder under .claude/worktrees/.
+    expect(within(list).getByText("api/tip-1563-claims").tagName).toBe("B");
     expect(within(list).getByText(/\/Lambdas/)).toBeInTheDocument();
     expect(within(list).getByRole("button", { name: "Copy folder path" })).toBeInTheDocument();
     expect(within(list).getByRole("list", { name: "Folder a" })).toBeInTheDocument();
+  });
+
+  it("bolds a repo session's folder by its label", () => {
+    render(
+      <FilesPanel
+        files={filesOf([
+          tool("r1", "Write", { file_path: "/Users/me/work/api/src/a.py", content: "a" }),
+          tool("r2", "Write", { file_path: "/Users/me/work/api/src/b/c.py", content: "c" }),
+        ])}
+        sessionId="s1"
+        onClose={vi.fn()}
+        workdirLabel="api"
+      />,
+    );
+    const root = screen.getByText("In").closest<HTMLElement>(".as-files-root");
+    if (!root) throw new Error("no root line");
+    expect(within(root).getByText("api").tagName).toBe("B");
+    expect(root).toHaveTextContent("api/src");
   });
 
   it("falls back to the full root, home as ~, without a worktree to match", () => {
