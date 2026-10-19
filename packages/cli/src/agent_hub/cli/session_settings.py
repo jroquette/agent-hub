@@ -19,7 +19,11 @@ from agent_hub.cli.errors import CliError
 from agent_hub.cli.exclusive_write import TEMP_INFIX
 from agent_hub.cli.init_report import shown_path
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
-from agent_hub.core.runner.session_settings import HUB_PATH_PROBLEM, NO_HOOKS, hooks_settings
+from agent_hub.core.runner.session_settings import (
+    HubPathError,
+    SessionSettingsError,
+    hooks_settings,
+)
 from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes
 
 SETTINGS_FOLDER: Final = (".agent-runs", "session-settings")
@@ -46,8 +50,8 @@ def hub_hooks_settings(hub: Path, effort: str) -> bytes:
     """The settings file's bytes for ``effort``, built from ``hub``'s settings; nothing is written.
 
     Raises ``HubHooksError`` when the hub's settings are missing, unreadable, too large, not JSON
-    or hold no ``hooks`` object, when a hook script they name is not a regular file in the hub,
-    or when the hub's path holds a shell character.
+    or hold no ``hooks`` object or a command core refuses, when a hook script they name is not a
+    regular file in the hub, or when the hub's path is not UTF-8 or holds a shell character.
     """
     path = hub.joinpath(*_HUB_SETTINGS)
     shown = shown_path(str(path))
@@ -57,15 +61,16 @@ def hub_hooks_settings(hub: Path, effort: str) -> bytes:
             f"{shown} is missing" if content.is_missing else content.problem.message
         )
     try:
-        source = load_json_bytes(content)
+        # Strict: a lone surrogate escape has no UTF-8 form, and is named as such.
+        source = load_json_bytes(content, strict=True)
     except InvalidJsonError as error:
         raise HubHooksError(f"{shown}: {error.message}") from None
     try:
         built, scripts = hooks_settings(source, effort=effort, hub=str(hub))
-    except ValueError as error:
-        if str(error) == NO_HOOKS:
-            raise HubHooksError(f"{shown}: {NO_HOOKS}") from None
-        raise HubHooksError(f"{HUB_PATH_PROBLEM}: {shown_path(str(hub))}") from None
+    except HubPathError as error:
+        raise HubHooksError(f"{error.reason}: {shown_path(str(hub))}") from None
+    except SessionSettingsError as error:
+        raise HubHooksError(f"{shown}: {error.reason}") from None
     root = os.path.normpath(hub)
     for script in scripts:
         found = os.path.normpath(hub / script)

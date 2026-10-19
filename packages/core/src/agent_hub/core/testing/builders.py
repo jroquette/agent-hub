@@ -232,9 +232,7 @@ def a_hub_settings_document() -> dict[str, Any]:
                     ]
                 }
             ],
-            "Notification": [
-                {"hooks": [{"type": "command", "command": "echo notified"}]}
-            ],
+            "Notification": [{"hooks": [{"type": "command", "command": "echo notified"}]}],
         },
     }
 
