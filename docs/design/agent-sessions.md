@@ -435,6 +435,155 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **AC-377.42** Given the OpenAPI document, when it is built, then the two repo-changes routes are listed with the
   agent-session paths and are behind the same access check as the others.
 
+### Chat: opening, answers, links and the slash menu (AGH-379)
+
+**Chat (agent session)**
+
+**Where the chat opens**
+
+- **AC-379.1** Given a chat that follows the bottom and has nothing waiting for you, when the earlier entries load a
+  frame after the first render, then the chat stays at its latest message and is not detached (the position read
+  before the stick-to-bottom hook's first write is not restored).
+- **AC-379.2** Given a pending card inside an activity group (a settled, contained entry that becomes the card's
+  offsetParent), when the chat opens, then it opens on that card, measured against the scroller, not near the top.
+
+**Links in Claude's replies**
+
+- **AC-379.3** Given Claude's reply names a bare URL at the end of a sentence, when it renders, then the URL is a link
+  without the sentence's full stop.
+- **AC-379.4** Given Claude's reply names `owner/repo#n`, or `repo#n` for a repo of the project, when it renders, then
+  each is a link to that pull request on GitHub; `repo#n` for a repo outside the project stays text.
+- **AC-379.5** Given Claude's reply names a ticket of the project's tracker teams, when Linear's workspace is known,
+  then the ticket links to it in Linear; else it opens its feature's page here; a ticket of another team, or one no
+  feature names without Linear, stays text.
+- **AC-379.6** Given Claude's reply names a file of the session's review by its full path, or by a tail that names one
+  file only, when it is clicked, then the file opens in the review drawer; a path that is not a file of the review
+  stays text.
+- **AC-379.7** Given a reply with nothing to link (a fraction, `and/or`), when it renders, then it is left as text.
+- **AC-379.8** Given Markdown with a refs finder, when the text names a ref in prose, in a whole code span, or inside
+  an existing link, then prose and the whole code span become links and the existing link is kept as it is; an action
+  ref renders as a button that opens it in the page.
+- **AC-379.9** Given a session whose project tracks team `AGH` and whose Linear workspace is known, when Claude's
+  reply names `AGH-7` and your own message names it too, then only Claude's mention is a link (to
+  `https://linear.app/<workspace>/issue/AGH-7`).
+
+**Slash menu**
+
+- **AC-379.10** Given the CLI's init lists subagents, when the `/` menu opens, then they follow the slash commands and
+  skills, each once, as `/agent-<name>`.
+- **AC-379.11** Given the CLI's init names `agents`, when the driver maps it, then the init event carries those
+  agents.
+- **AC-379.12** Given a `/word` at the caret, when it starts the text or follows a space, then the `/` menu opens on
+  it; past the start only when something matches, so a path such as `see /tmp/x` keeps its Enter and sends; picking a
+  command inserts it in place.
+- **AC-379.13** Given the project's hub catalog, when the menu lists options, then the hub's skills a user may call
+  show as `/name` and its agents as `/agent-name` (hooks and model-only skills left out), tagged "hub" ("…, from the
+  hub"), first; the session's own commands the hub does not offer follow (a plugin-prefixed copy of a hub item is not
+  listed twice).
+- **AC-379.14** Given a session in a repo or a worktree, when the workdirs are listed, then each such workdir carries
+  the hub's plugin folders (those holding `.claude-plugin/`, real path inside the hub); the hub's own workdir carries
+  none.
+- **AC-379.15** Given a workdir with the hub's plugins, when a session starts there or is reopened by a message, then
+  the CLI is started with those plugins (`plugins: [{type: "local", path}]`); with none, no plugin is passed.
+- **AC-379.16** Given the session knows a command or agent only by its plugin name, when a message uses the short name
+  (`/fix`, `/agent-researcher`), then it reaches the CLI as `/hub-workflow:fix` and `@agent-hub-workflow:researcher`;
+  a name the session knows as is, an ambiguous or unknown name, and `/agent-` not at the start or after a space are
+  left as typed (an unknown `/agent-x` still becomes `@agent-x`).
+- **AC-379.17** Given the CLI's `initialize` answer, when its names are read, then `commands` and `agents` are taken
+  by `name` and anything missing or malformed is ignored.
+- **AC-379.18** Given a hub item in the open menu, when its open icon is clicked or Ctrl/Cmd+Enter is pressed on the
+  active option, then its skill or agent page opens in a new tab and nothing is inserted.
+- **AC-379.19** Given the menu's options, when they render, then the command column keeps one width and the
+  description takes the rest, cut with an ellipsis. (CSS only.)
+
+**Feature detail (record approval)**
+
+- **AC-379.20** Given a spec whose open question lists options under it, when it is opened, then its answer is a
+  choice of those options, the one marked `(recommended)` tagged Recommended and picked by default, and picking
+  another sends it as the answer (`- Q1 (Cache): On disk`).
+- **AC-379.21** Given an open question without options, when it is opened, then the choices are Take the
+  recommendation (picked when the record recommends one) or Let Claude decide (picked otherwise), and Other, which
+  opens a box for a free answer ("Your own answer to Q…") and focuses it.
+- **AC-379.22** Given an option list in the record, when it is read, then each nested item gives a label, a
+  description and whether it is recommended; a wrapped line continues the last option; the marked option is the
+  recommendation when the prose names none, and the prose wins otherwise.
+- **AC-379.23** Given the chat's option row moved to the shared components, when a chat question card is answered,
+  then it behaves as before (option, Other text, Recommended tag).
+- **AC-379.24** Given the requirements analyst's template, when a hub is rendered, then it asks for one list item per
+  question and, when the answer is a choice, 2 to 4 options as a nested list with the recommended one marked; the
+  rendered goldens and lock hashes match.
+
+### Background agents and session names (AGH-380)
+
+**Sessions engine (core, claude_sessions)**
+
+- **AC-380.1** Given the SDK sends `task_started`, when it is mapped, then it becomes a running task record (task id,
+  description, the calling tool use, the CLI's `task_type`).
+- **AC-380.2** Given a `task_notification` with completed, failed or stopped, or a `task_updated` with killed, when it
+  is mapped, then the task's end is recorded (killed reads stopped); a `task_updated` that is not terminal or names no
+  task, and `task_progress`, map to nothing.
+- **AC-380.3** Given a `task_updated` saying `running` (a finished agent resumed by a message), when it is mapped,
+  then the task runs again.
+- **AC-380.4** Given an idle session with a task running, when the idle limit passes, then the session is not ended;
+  the idle timeout counts from the last task's end.
+- **AC-380.5** Given the live-session limit is reached and the only idle session has a task running, when a new
+  session is started, then that session is not ended to free a slot (the start is refused).
+- **AC-380.6** Given a running task, when it is stopped, then the CLI is asked to stop it (the SDK's `stop_task`); a
+  task not running here is left alone, with no error.
+
+**API**
+
+- **AC-380.7** Given a session, when `POST /agent-sessions/{id}/tasks/{task_id}/stop` is called, then it answers 202
+  with the session and calls the control's stop once; an unknown session answers the 404 problem; without session
+  control it answers not implemented.
+- **AC-380.8** Given the stop route, when it is called without the session cookie, with a wrong cookie or one of
+  another port, without the server's own Origin (missing, foreign, cross-site), with a body that is not JSON, or in
+  container mode with sessions off, then it is refused before any port is called, as the other session write routes
+  are.
+- **AC-380.9** Given a task id that is not 1-64 of `[A-Za-z0-9_-]`, when the stop route is called, then it is refused
+  and no port is called.
+- **AC-380.10** Given the OpenAPI document, when it is built, then the stop route is one of the agent-session paths
+  (18).
+
+**Chat (agent session)**
+
+- **AC-380.11** Given an idle session with background tasks running, when the header shows its status, then it reads
+  "Background · N agents" (and ", N commands" for commands), not Idle.
+- **AC-380.12** Given an idle session with tasks running, when the live bar shows, then it lists them oldest first as
+  working in the background ("Running in the background: 1 command"), its timer from the oldest task's start; once
+  every task ended, or the process exited, the bar is gone.
+- **AC-380.13** Given tasks ran, when the header chip shows, then it reads "Background tasks, N running" (else "N
+  done") and is hidden with none; clicking it, or the live bar between turns, opens the Background drawer.
+- **AC-380.14** Given the Background drawer, when it opens, then it lists the running tasks (agents with their calls
+  so far, commands) and folds the ended ones under Completed with their status; Esc closes it.
+- **AC-380.15** Given a running task in the drawer, when Stop is clicked, then `POST …/tasks/{task_id}/stop` is sent
+  with an empty JSON body and the button waits for the task's end; a failed stop says "Could not stop it"; without a
+  way to stop (cloud, ended) no Stop is offered.
+- **AC-380.16** Given a finished agent resumed by a message, when its task runs again, then it reads as running from
+  that moment.
+- **AC-380.17** Given tasks run, or one ended since the last message, when the conversation ends, then a card after
+  the last entry says it ("2 background tasks done, 2 running", "1 background command running") and opens the drawer;
+  with nothing new it is hidden.
+- **AC-380.18** Given a log without task records, when it holds a background `Agent` call (`run_in_background`) and
+  its subagent's calls, then the agent reads as running until its last call is a SubagentHandback (completed), a
+  TaskStop of its agent id (stopped) or the process restarts (stopped); a SendMessage to it after its end runs it
+  again; a recorded task is counted once.
+- **AC-380.19** Given the stream, when task records arrive, then the chat listens for them (every record kind of the
+  API is streamed, checked at typecheck).
+
+**Session names (sessions list, session detail, chat header)**
+
+- **AC-380.20** Given a session whose label has a ticket, when it is named, then it reads `<ticket>: <what>`: the
+  ticket's title once read, else the hub feature's slug for the ticket, else what the branch or worktree says after
+  the whole ticket id, else Claude's title; without a ticket, the title rule is unchanged.
+- **AC-380.21** Given the sessions list, when a row is on a ticket a feature works on, then it is named by the
+  feature's slug, the feature shows as a label that opens its panel, and the list never reads the feature's tickets
+  (no `/tickets` request); a title already in the cache names it.
+- **AC-380.22** Given the session detail of a session on a ticket, when it opens, then the feature's tickets are read
+  once and the heading reads the ticket's title, with the feature label linking to its panel.
+- **AC-380.23** Given a chat whose observed twin is on a ticket, when it opens, then its header and breadcrumb read
+  the ticket's name from the twin's label (the title once read) and show the feature label.
+
 ## Invariants
 
 - The platform implements no agent loop and calls no model; the children are the user's own `claude` with its own
