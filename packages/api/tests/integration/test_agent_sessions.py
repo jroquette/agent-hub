@@ -51,6 +51,7 @@ from agent_hub.core.agent_sessions.errors import (
     UnknownResumeError,
 )
 from agent_hub.core.agent_sessions.limits import SessionLimits
+from agent_hub.core.agent_sessions.repo_changes import RepoChanges, SessionRepoChanges
 from agent_hub.core.agent_sessions.screenshot import MAX_SCREENSHOT_BYTES
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL
 from agent_hub.core.testing.builders import a_png_bytes
@@ -134,6 +135,21 @@ def test_refuses_limit_when_events_page_limit_out_of_range(recorded_app: Any, li
     assert recorded_app.control.calls == []
 
 
+def test_answers_repo_changes_of_the_session_when_read(recorded_app: Any) -> None:
+    recorded_app.control.repo_changes_answer = SessionRepoChanges(
+        repos=(RepoChanges(root="/hubs/api", label="api", branch="tip-1", base="origin/main"),),
+        warnings=("web could not be read by git",),
+    )
+
+    response = recorded_app.client.get(f"{ONE}/repo-changes")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [(repo["label"], repo["base"]) for repo in body["repos"]] == [("api", "origin/main")]
+    assert body["warnings"] == ["web could not be read by git"]
+    assert recorded_app.control.calls == [("repo_changes", (AGENT_SESSION_ID,))]
+
+
 def test_answers_204_without_body_when_delete_called(recorded_app: Any) -> None:
     response = recorded_app.client.delete(ONE)
 
@@ -145,6 +161,7 @@ def test_answers_204_without_body_when_delete_called(recorded_app: Any) -> None:
     ("method", "path", "body"),
     [
         ("get", ONE, None),
+        ("get", f"{ONE}/repo-changes", None),
         ("delete", ONE, None),
         ("get", f"{ONE}/events", None),
         ("post", f"{ONE}/messages", {"text": "hi"}),
@@ -160,6 +177,7 @@ def test_answers_404_problem_when_session_not_found(
     port_method = {
         ONE: "snapshot" if method == "get" else "delete",
         f"{ONE}/events": "events",
+        f"{ONE}/repo-changes": "repo_changes",
         f"{ONE}/messages": "send",
         f"{ONE}/interrupt": "interrupt",
         f"{ONE}/tasks/task-1/stop": "stop_task",

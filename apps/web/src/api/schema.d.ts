@@ -274,6 +274,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/agent-sessions/{agent_session_id}/repo-changes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Agent Session Repo Changes
+     * @description What the repositories the session worked in change against their base branch, as git
+     *     reads them: the pull request's files, whoever changed them.
+     */
+    get: operations["get_agent_session_repo_changes_api_v1_agent_sessions__agent_session_id__repo_changes_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/agent-sessions/{agent_session_id}/settings": {
     parameters: {
       query?: never;
@@ -3885,6 +3906,55 @@ export interface components {
       source: string;
     };
     /**
+     * RepoChanges
+     * @description One repository's changes against its base. ``root`` is the folder git ran in, ``branch``
+     *     its checked-out branch (null when detached), ``base`` the ref the branch is compared with
+     *     (``origin/main``…, null when none was found: then nothing is compared and ``files`` is
+     *     empty), ``base_sha`` the commit the branch forked from. ``truncated`` says commits or files
+     *     were left out past the bounds.
+     */
+    RepoChanges: {
+      /** Base */
+      base?: string | null;
+      /** Base Sha */
+      base_sha?: string | null;
+      /** Branch */
+      branch?: string | null;
+      /**
+       * Commits
+       * @default []
+       */
+      commits: components["schemas"]["RepoCommit"][];
+      /**
+       * Files
+       * @default []
+       */
+      files: components["schemas"]["RepoFileChange"][];
+      /** Label */
+      label: string;
+      /** Root */
+      root: string;
+      /**
+       * Truncated
+       * @default false
+       */
+      truncated: boolean;
+    };
+    /**
+     * RepoCommit
+     * @description A commit of the branch since its base, newest first.
+     */
+    RepoCommit: {
+      /** Author */
+      author: string;
+      /** Authored At */
+      authored_at: string;
+      /** Sha */
+      sha: string;
+      /** Subject */
+      subject: string;
+    };
+    /**
      * RepoConfigView
      * @description One repo of ``hub.json`` with its effective branch and conventions.
      */
@@ -3908,6 +3978,60 @@ export interface components {
       /** Role */
       role: string;
     };
+    /**
+     * RepoFileChange
+     * @description A file that differs from the base: committed on the branch, staged, unstaged or
+     *     untracked. ``path`` is absolute (the repository's folder joined with git's path), as Claude's
+     *     file tools name it; ``old_path`` the name before a rename. ``diff`` is the unified diff from
+     *     the base to the working tree, with the file's line numbers; null for a binary file or one
+     *     past ``REPO_DIFF_MAX_BYTES``. ``fingerprint`` changes whenever the diff does (a review mark
+     *     is kept against it). ``commits`` are the branch's commits that touched it, newest first;
+     *     ``uncommitted`` says the working tree differs from ``HEAD`` too.
+     */
+    RepoFileChange: {
+      /** Added */
+      added: number;
+      /**
+       * Binary
+       * @default false
+       */
+      binary: boolean;
+      /**
+       * Commits
+       * @default []
+       */
+      commits: components["schemas"]["RepoFileCommit"][];
+      /** Diff */
+      diff?: string | null;
+      /** Fingerprint */
+      fingerprint: string;
+      /** Old Path */
+      old_path?: string | null;
+      /** Path */
+      path: string;
+      /** Removed */
+      removed: number;
+      status: components["schemas"]["RepoFileStatus"];
+      /**
+       * Uncommitted
+       * @default false
+       */
+      uncommitted: boolean;
+    };
+    /**
+     * RepoFileCommit
+     * @description A commit that touched a file, and the lines it added and removed there.
+     */
+    RepoFileCommit: {
+      /** Added */
+      added: number;
+      /** Removed */
+      removed: number;
+      /** Sha */
+      sha: string;
+    };
+    /** @enum {string} */
+    RepoFileStatus: "added" | "modified" | "deleted" | "renamed";
     /**
      * RepoView
      * @description A repo of the project as ``hub.json`` and its checkout describe it.
@@ -4317,6 +4441,23 @@ export interface components {
       sources_missing: components["schemas"]["EventSource"][];
       /** Summary */
       summary: components["schemas"]["SummaryLine"][];
+    };
+    /**
+     * SessionRepoChanges
+     * @description ``GET /agent-sessions/{id}/repo-changes``: each repository the session worked in, and the
+     *     ones that could not be read (``warnings``, named by folder label).
+     */
+    SessionRepoChanges: {
+      /**
+       * Repos
+       * @default []
+       */
+      repos: components["schemas"]["RepoChanges"][];
+      /**
+       * Warnings
+       * @default []
+       */
+      warnings: string[];
     };
     /**
      * SessionSegment
@@ -5979,6 +6120,46 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["AgentSession"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_agent_session_repo_changes_api_v1_agent_sessions__agent_session_id__repo_changes_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionRepoChanges"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

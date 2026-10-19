@@ -10,6 +10,7 @@
  */
 import type { components } from "../../api/schema";
 import { netDiff, type NetDiff } from "./netDiff";
+import type { RepoFileInfo } from "./repoChanges";
 
 type Schemas = components["schemas"];
 export type LogRecord = Schemas["LogRecord"];
@@ -477,8 +478,11 @@ export interface ChangedFile {
   /** The id of the latest change: a review marked before it is out of date. */
   lastChangeId: string;
   /** What the applied changes add up to, as one diff (null when they cannot be added up, or
-   * there is only one); when there is one, `added` and `removed` are its lines. */
+   * there is only one); when there is one, `added` and `removed` are its lines. Where git read
+   * the file's repository, its diff against the base branch (`repoChanges.ts`). */
   net: NetDiff | null;
+  /** What git says about the file, when it read its repository (`withRepoChanges`). */
+  repo?: RepoFileInfo;
 }
 
 /** Lines added and removed in a unified diff, headers left out. */
