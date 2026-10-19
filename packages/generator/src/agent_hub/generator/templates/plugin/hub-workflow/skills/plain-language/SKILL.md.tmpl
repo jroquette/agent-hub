@@ -1,0 +1,79 @@
+---
+name: plain-language
+description: Rules for short, clear text that people read. Use them for chat replies, PR bodies, review replies, tracker comments, handoffs, summaries and brain notes. Text for agents keeps full detail.
+---
+
+# /plain-language
+
+People skim what agents write. If a text is long and dense, they miss the decisions and the open questions.
+These rules keep text for people short and clear. They never remove a fact.
+
+## Text for people and text for agents
+
+Text for people:
+
+- chat replies to the user;
+- PR bodies and PR review replies;
+- tracker comments;
+- handoffs: `brain/now.md` and journal entries;
+- the summaries that `/summarize` writes;
+- brain notes that people read.
+
+Text for agents: feature records (`spec.md`, `research.md`, `plan.md`), `features.json`, review and eval JSON,
+prompts to subagents and their replies, and skill and agent files. These rules do not apply to them. They keep full
+detail.
+
+Commit messages, ADRs and tracker issue briefs follow the repo's own rules.
+
+## Language
+
+- Write to a person in the language of their latest message, for example pt-BR.
+- Apply the same rules in that language, adapted to its grammar.
+- Versioned text for people (PR bodies, summaries, handoffs, brain notes) uses the hub's language.
+- The hub's language is the one that `AGENTS.project.md` or the repo's `AGENTS.md` sets. If neither sets one,
+  use English.
+
+## Reply rules
+
+These apply to chat replies, review replies and tracker comments.
+
+- The first sentence gives the answer or the result.
+- No filler at the start or the end, such as "Great question" or "Hope this helps".
+- If you use a concept term, define it in a few words.
+- No em-dashes. No contractions.
+
+## Document rules
+
+These apply to all text for people.
+
+- An instruction has 20 words or fewer. A description has 25 words or fewer.
+- Put the condition before the command: "If the check fails, run X."
+- Use simple tenses and the active voice.
+- Do not hedge with "should", "would", "may" or "might". Use "can", "will" or "must".
+- Use one word for one meaning, and keep that word in the whole text.
+- No decorative words, such as "crucial", "robust" or "seamless".
+- Short, but not terse: keep the articles and the small words.
+- Use lists and headings where they help a person scan. SimpleEnglish asks for prose only in chat. We do not follow
+  that rule, because summaries and handoffs use lists and sections.
+
+## Never drop
+
+These win over every rule above. If a rule makes you drop one of them, keep it and break the rule.
+
+- facts;
+- hedges that carry meaning, such as "not verified" or "phase 1 only";
+- scope limits;
+- open questions;
+- decisions that wait for the owner.
+
+Code, paths, commands, ids and quotes stay exact. They do not count toward the word limits.
+
+## Sources
+
+This skill is our own text. It takes ideas from these sources and copies no text from them:
+
+- ASD-STE100 Simplified Technical English, Issue 9. ASD-STE100 is a trademark of ASD.
+  No text from the specification is used.
+- AminBlg/SimpleEnglish, under the MIT license.
+- danyuchn/asd-ste100-skill.
+- The "simplified-english" skill of Paperclip.
