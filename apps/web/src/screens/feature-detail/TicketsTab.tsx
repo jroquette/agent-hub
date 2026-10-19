@@ -86,7 +86,14 @@ function TitleCell({ row, child }: { row: TicketRow; child: boolean }) {
 /** How many sessions one ticket row shows before the rest fold away. */
 const SESSIONS_SHOWN = 2;
 
-function SessionLink({ session }: { session: Session }) {
+function SessionLink({
+  session,
+  context,
+}: {
+  session: Session;
+  /** What the link is to the reader ("Newest session"), leading its accessible name. */
+  context?: string | undefined;
+}) {
   const { tz } = usePreferences();
   const [status, label] = badgeOf(session);
   const day = new Date(session.started_at).toLocaleDateString("en-GB", {
@@ -105,6 +112,11 @@ function SessionLink({ session }: { session: Session }) {
       className="ah-ticket-session"
       to={rowHref(session)}
       title={`Open the session: ${facts.join(" · ")}`}
+      aria-label={
+        context
+          ? `${context}: ${label}, started ${day}, ${fmtClock(session.started_at, tz)}`
+          : undefined
+      }
     >
       <StatusBadge status={status} label={label} quiet />
       <span className="ah-small">
@@ -144,10 +156,14 @@ function CardAction({
   const start = canStartTicket(row) && !open && (
     <StartTicketButton project={project} slug={slug} row={row} rows={rows} />
   );
-  if (!newest) return start || null;
+  if (!newest) return start ? <span className="ah-flow-card-action">{start}</span> : null;
   return (
-    <span className="ah-row ah-wrap" style={{ gap: 8 }}>
-      <SessionLink session={newest} />
+    <span className="ah-flow-card-action">
+      <span className="ah-flow-card-fact">
+        <Icon name="square-terminal" size="sm" />
+        Session
+      </span>
+      <SessionLink session={newest} context="Newest session" />
       {start}
     </span>
   );

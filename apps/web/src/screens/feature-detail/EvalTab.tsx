@@ -136,7 +136,13 @@ export function settledOwnerSteps(evals: readonly EvalRecord[]): Map<string, Eva
 }
 
 /** The verdict of an eval as it reads now: an owner-steps one signed off since reads as done. */
-function VerdictBadge({ record, settledBy }: { record: EvalRecord; settledBy?: EvalRecord | undefined }) {
+function VerdictBadge({
+  record,
+  settledBy,
+}: {
+  record: EvalRecord;
+  settledBy?: EvalRecord | undefined;
+}) {
   if (!record.verdict) return null;
   if (settledBy) {
     return (

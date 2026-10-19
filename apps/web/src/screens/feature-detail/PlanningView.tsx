@@ -63,10 +63,13 @@ export function ReadinessText({
   row,
   rows,
   external,
+  brief = false,
 }: {
   row: TicketRow;
   rows: readonly TicketRow[];
   external: readonly ExternalBlocker[];
+  /** Beside the Linear status badge (the card): leave out the words the badge already says. */
+  brief?: boolean;
 }) {
   const refs = (list: readonly string[]) => <RefList refs={list} rows={rows} external={external} />;
   const help = READINESS_HELP[row.readiness];
@@ -78,6 +81,13 @@ export function ReadinessText({
         </b>
       );
     case "in_progress":
+      if (brief && !row.reviewed && row.waiting_on.length > 0) {
+        return (
+          <span title={help} style={{ color: "var(--live)" }}>
+            Started before {refs(row.waiting_on)} was done
+          </span>
+        );
+      }
       return (
         <span className="ah-stack" style={{ gap: 2 }} title={help}>
           <b style={{ fontWeight: 500, color: "var(--live)" }}>
@@ -128,6 +138,20 @@ export function ReadinessText({
           Unknown
         </span>
       );
+  }
+}
+
+/** Whether the readiness only repeats the Linear status a card's badge already shows. */
+export function readinessRepeatsState(row: TicketRow): boolean {
+  switch (row.readiness) {
+    case "done":
+    case "canceled":
+    case "unknown":
+      return true;
+    case "in_progress":
+      return !row.reviewed && row.waiting_on.length === 0;
+    default:
+      return false;
   }
 }
 
@@ -286,21 +310,6 @@ export function splitTitle(title: string): {
   return { type: match[1] ?? null, scope: match[2] ?? null, text: match[3] ?? title };
 }
 
-/** A ticket's title with its conventional prefix as a quiet chip, so the words lead. */
-export function TicketTitle({ title }: { title: string }) {
-  const { type, scope, text } = splitTitle(title);
-  return (
-    <>
-      {type && (
-        <span className="ah-ticket-scope" title={`${type}${scope ? `(${scope})` : ""}`}>
-          {scope ?? type}
-        </span>
-      )}
-      <span>{text}</span>
-    </>
-  );
-}
-
 /** A thin bar of how many of the ticket's ACs pass, with the count in words beside it. */
 export function AcMeter({
   passing,
@@ -433,9 +442,16 @@ function FlowCard({
   ticketAction?: TicketAction | undefined;
 }) {
   const action = ticketAction?.(row);
-  const after = row.blocked_by.map((edge) => edge.ref).filter((ref) => !inFlow.has(ref));
+  const note = !readinessRepeatsState(row);
+  // A blocker the status line already names ("Started before X was done") is not repeated below.
+  const named = note && row.readiness === "in_progress" ? row.waiting_on : [];
+  const after = row.blocked_by
+    .map((edge) => edge.ref)
+    .filter((ref) => !inFlow.has(ref) && !named.includes(ref));
+  const showAfter = after.length > 0 && row.readiness !== "waiting";
   const showReviewed =
     row.reviewed === true && row.readiness !== "done" && row.readiness !== "in_progress";
+  const hasEnd = row.pr_url != null || showReviewed;
   return (
     <li
       className="ah-flow-card"
@@ -446,7 +462,16 @@ function FlowCard({
     >
       <div className="ah-flow-card-head">
         <TicketIdLine row={row} />
-        <StateBadge row={row} />
+        {row.id != null || row.state != null ? (
+          <StateBadge row={row} />
+        ) : (
+          <StatusBadge
+            status="queued"
+            quiet
+            label="Not created"
+            title="Not created in Linear yet: /feature creates it, then it can be started here"
+          />
+        )}
       </div>
       <a
         className="ah-flow-card-title"
@@ -454,39 +479,52 @@ function FlowCard({
         title={row.title ?? undefined}
         aria-label={row.title ?? row.ref}
       >
-        <TicketTitle title={row.title ?? row.ref} />
+        <span>{row.title ? splitTitle(row.title).text : row.ref}</span>
       </a>
       <div className="ah-flow-card-foot">
-        <div className="ah-row ah-small" style={{ gap: 8, justifyContent: "space-between" }}>
-          <ReadinessText row={row} rows={rows} external={external} />
-          {action}
-        </div>
-        <div className="ah-flow-card-meta">
+        {(note || action) && (
+          <div className="ah-flow-card-status">
+            {note && <ReadinessText row={row} rows={rows} external={external} brief />}
+            {action}
+          </div>
+        )}
+        <div className="ah-flow-card-facts">
           <AcCount row={row} acPasses={acPasses} />
-          <TicketPrLink row={row} />
-          {showReviewed && (
-            <span className="ah-row" style={{ gap: 3, color: "var(--done)" }}>
-              <Icon name="circle-check" size="sm" />
-              reviewed
-            </span>
-          )}
-          {row.assignee && (
-            <span className="ah-row" style={{ gap: 4 }}>
-              <Icon name="user" size="sm" />
-              {row.assignee}
-            </span>
-          )}
-          {after.length > 0 && row.readiness !== "waiting" && (
-            <span>
-              after <RefList refs={after} rows={rows} external={external} />
-            </span>
-          )}
-          {critical && (
-            <span className="ah-flow-critical" title="On the longest chain of tickets not done">
-              critical path
+          {hasEnd && (
+            <span className="ah-flow-card-end">
+              <TicketPrLink row={row} />
+              {showReviewed && (
+                <span className="ah-flow-card-fact" style={{ color: "var(--done)" }}>
+                  <Icon name="circle-check" size="sm" />
+                  Reviewed
+                </span>
+              )}
             </span>
           )}
         </div>
+        {(Boolean(row.assignee) || showAfter || critical) && (
+          <div className="ah-flow-card-facts">
+            {row.assignee && (
+              <span className="ah-flow-card-fact">
+                <Icon name="user" size="sm" />
+                {row.assignee}
+              </span>
+            )}
+            {showAfter && (
+              <span>
+                After <RefList refs={after} rows={rows} external={external} />
+              </span>
+            )}
+            {critical && (
+              <span
+                className="ah-flow-critical ah-flow-card-end"
+                title="On the longest chain of tickets not done"
+              >
+                Critical path
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </li>
   );
@@ -538,7 +576,7 @@ function EpicCard({
         )}
         <StateBadge row={epic} />
         <span className="ah-flow-epic-title" title={epic.title ?? undefined}>
-          <TicketTitle title={epic.title ?? epic.ref} />
+          {epic.title ? splitTitle(epic.title).text : epic.ref}
         </span>
       </div>
       <div

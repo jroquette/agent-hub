@@ -208,11 +208,11 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
   border-left: 3px solid var(--idle);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 .ah-flow-card[data-readiness="can_start"] {
@@ -264,9 +264,55 @@ a.ah-flow-card-title:hover > span:last-child {
 .ah-flow-card-foot {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-top: 10px;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
   border-top: 1px solid var(--border);
+}
+/* The card's "now": what the readiness adds to the Linear status, and the session or Start. */
+.ah-flow-card-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--control-sm);
+  font-size: 13px;
+  line-height: 18px;
+}
+.ah-flow-card-action {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  color: var(--text-muted);
+}
+.ah-flow-card-status > .ah-flow-card-action:only-child {
+  margin-left: 0;
+}
+/* The facts in two fixed rows: progress (ACs, PR, review), then people and order. */
+.ah-flow-card-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+.ah-flow-card-facts:empty {
+  display: none;
+}
+.ah-flow-card-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.ah-flow-card-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 .ah-flow-card-meta {
   display: flex;
@@ -277,11 +323,10 @@ a.ah-flow-card-title:hover > span:last-child {
   color: var(--text-subtle);
 }
 .ah-flow-critical {
-  margin-left: auto;
-  padding: 0 6px;
-  border-radius: 999px;
-  font-size: 11px;
-  line-height: 18px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  line-height: 16px;
   color: var(--accent);
   background: var(--accent-soft);
 }
@@ -299,18 +344,6 @@ a.ah-flow-card-title:hover > span:last-child {
   border-radius: 4px;
   font: 500 11px/16px var(--font-mono);
   color: var(--text-subtle);
-}
-/* The conventional prefix of a title (feat(brand-api)) as a quiet chip before the words. */
-.ah-ticket-scope {
-  display: inline-block;
-  margin-right: 6px;
-  padding: 0 6px;
-  border-radius: 4px;
-  font: 500 11px/18px var(--font-mono);
-  vertical-align: 1px;
-  color: var(--text-muted);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
 }
 
 /* How many of a ticket's ACs pass: a short bar and the count. */

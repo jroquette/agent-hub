@@ -134,8 +134,11 @@ otherwise, this list wins. Each item is an acceptance criterion.
 - **AC-268.11 Graph.** Given the ticket flow, then its steps share the width and an edge is drawn from each blocker
   to the ticket it holds back, the critical path, plan-only and started-early edges styled apart (the node
   measuring is the workflow graph's, as a shared hook).
-- **AC-268.12 Cards.** Given a card of the flow, then it leads with the id and the title (a conventional-commit prefix
-  as a chip), with readiness and an AC meter below a divider; the legend folds beside the flow's title.
+- **AC-268.12 Cards.** Given a card of the flow, then it leads with the id, the Linear status (or "Not created") and
+  the title's words; below a divider, a status line with the readiness only when it adds to the Linear status
+  ("Can start now", "Waiting on X", "Started before X was done", "Reviewed · waiting for Done") and the newest
+  session or Start, then the facts in two fixed rows: progress (AC meter, PR, Reviewed) and people and order
+  (assignee, After X, Critical path). The legend folds beside the flow's title.
 - **AC-268.13 Table.** Given the Tickets table, then ids stay on one line, an epic is tagged in its title and its
   children are marked with a branch.
 - **AC-268.14 Done stays put.** Given a ticket that is done, when the flow is drawn, then it stays in its step, so the
