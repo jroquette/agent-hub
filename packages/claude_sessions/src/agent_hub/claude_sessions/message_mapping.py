@@ -110,11 +110,13 @@ class EventMapper:
         self._initialized = True
         model = data.get("model")
         commands = data.get("slash_commands") or []
+        agents = data.get("agents") or []
         return [
             InitEvent(
                 session_id=session_id,
                 model=model if isinstance(model, str) else None,
                 slash_commands=tuple(str(command) for command in commands),
+                agents=tuple(str(agent) for agent in agents),
             )
         ]
 

@@ -105,12 +105,14 @@ class DriverImage(DriverModel):
 
 
 class InitEvent(DriverModel):
-    """The session started its first turn: Claude's ``session_id``, the model, slash commands."""
+    """The session started its first turn: Claude's ``session_id``, the model, slash commands
+    and the subagents it can call (each offered in the composer as ``/agent-<name>``)."""
 
     kind: Literal["init"] = "init"
     session_id: str
     model: str | None = None
     slash_commands: tuple[str, ...] = ()
+    agents: tuple[str, ...] = ()
 
 
 class TextDelta(DriverModel):
