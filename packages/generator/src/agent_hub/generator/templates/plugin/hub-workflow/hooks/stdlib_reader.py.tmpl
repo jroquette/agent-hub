@@ -148,6 +148,21 @@ ENVIRONMENT_NAME = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*")
 ENVIRONMENT_NAME_MAX_CHARS = 40
 ACCESS_LEVELS = ("read", "write", "ask")
 ENV_VAR_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
+# core/secret_shapes.py's shapes that fit an environment name or a blocked word (letters, digits
+# and -_. only): the private-key, credential-assignment and Fernet shapes need a space or "=".
+# The JWT shape is the old lint's, which matches what core's linear rewrite matches; the texts
+# it runs on are at most 64 characters.
+SECRET_SHAPES = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15}",
+        r"AKIA[0-9A-Z]{16}",
+        r"\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}",
+        r"\bsk-[A-Za-z0-9_-]{20,}",
+        r"\bghp_[A-Za-z0-9]{30,}",
+        r"\blin_api_[A-Za-z0-9]{20,}",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -605,9 +620,17 @@ def _blocked_list(key: str, value: object) -> tuple[tuple[str, ...], str]:
     return tuple(value), ""
 
 
+def secret_shaped(text: str) -> bool:
+    """Whether ``text`` (a name or a word) holds a secret's shape, as core's ``secret_kind``."""
+    return any(shape.search(text) for shape in SECRET_SHAPES)
+
+
 def _is_blocked_word(item: str) -> bool:
-    return BLOCKED_WORD_MIN_CHARS <= len(item) <= BLOCKED_WORD_MAX_CHARS and bool(
-        BLOCKED_WORD.fullmatch(item)
+    # A secret-shaped word is unusable, so the guard asks, as the CLI refuses it.
+    return (
+        BLOCKED_WORD_MIN_CHARS <= len(item) <= BLOCKED_WORD_MAX_CHARS
+        and bool(BLOCKED_WORD.fullmatch(item))
+        and not secret_shaped(item)
     )
 
 
