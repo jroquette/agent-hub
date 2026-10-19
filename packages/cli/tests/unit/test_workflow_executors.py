@@ -16,7 +16,8 @@ from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.run_children import RunChildren, RunOptions
 from agent_hub.cli.workflow_executors import MAX_OUTPUT_BYTES, WorkflowExecutors
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.testing.builders import a_models_document, an_issue
+from agent_hub.core.runner.session_settings import hooks_settings
+from agent_hub.core.testing.builders import a_hub_settings_document, a_models_document, an_issue
 from agent_hub.core.testing.workflow_fakes import ListRecorder, a_plan
 from agent_hub.core.workflows.engine import MAX_PARALLEL
 from agent_hub.core.workflows.failures import NodeFailedError
@@ -90,6 +91,16 @@ def call(spec: Mapping[str, object], **options: Any) -> NodeCall:
 
 
 AGENT = {"id": "plan", "type": "agent", "prompt": "Plan it.", "model": "large"}
+
+
+def hub_hooks(hub: Path) -> None:
+    """Give ``hub`` the synthetic ``.claude/settings.json`` and an empty file per script."""
+    document = a_hub_settings_document()
+    (hub / ".claude").mkdir(parents=True, exist_ok=True)
+    (hub / ".claude" / "settings.json").write_text(json.dumps(document))
+    for script in hooks_settings(document, effort="medium", hub=str(hub))[1]:
+        (hub / script).parent.mkdir(parents=True, exist_ok=True)
+        (hub / script).touch()
 
 
 def test_runs_claude_in_hub_when_agent_node_called(tmp_path: Path, pack: Path) -> None:
@@ -404,6 +415,7 @@ def test_runs_claude_in_worktree_as_hub_run_does_when_agent_node_has_cwd(
 ) -> None:
     worktree = tmp_path / "demo-api" / ".claude" / "worktrees" / "dem-1"
     worktree.mkdir(parents=True)
+    hub_hooks(tmp_path / "hub")
     child = FakeChild([claude_result("ok")])
     config = HubConfig.model_validate(a_models_document())
     spec = {**AGENT, "model": "medium", "cwd": "../demo-api"}
@@ -418,8 +430,63 @@ def test_runs_claude_in_worktree_as_hub_run_does_when_agent_node_has_cwd(
         live=True, max_turns=40, budget=3.0, model=model, start="implement", effort="medium"
     )
     expected = children.session_argv(an_issue(), options)
-    assert child.calls[0]["argv"][3:] == expected[3:]
+    argv = child.calls[0]["argv"]
+    assert argv[3:] == expected[3:]
     assert child.calls[0]["cwd"] == worktree.resolve()
+    assert child.calls[0]["argv"][argv.index("--settings") + 1] == str(
+        tmp_path / "hub" / ".agent-runs" / "session-settings" / "medium.json"
+    )
+
+
+def test_gives_effort_only_settings_when_agent_runs_in_hub(tmp_path: Path, pack: Path) -> None:
+    child = FakeChild([claude_result("ok")])
+    spec = {**AGENT, "model": "medium"}
+
+    executors(tmp_path, pack, child).run(call(spec, prompt="Go."))
+
+    argv = child.calls[0]["argv"]
+    assert argv.count("--settings") == 1
+    assert json.loads(argv[argv.index("--settings") + 1]) == {"effortLevel": "medium"}
+    assert not (tmp_path / "hub" / ".agent-runs").exists()
+
+
+def test_gives_hub_hooks_settings_file_when_agent_runs_in_repo(tmp_path: Path, pack: Path) -> None:
+    worktree = tmp_path / "demo-api" / ".claude" / "worktrees" / "dem-1"
+    worktree.mkdir(parents=True)
+    hub_hooks(tmp_path / "hub")
+    stale = tmp_path / "hub" / ".agent-runs" / "session-settings" / "medium.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("{}")
+    child = FakeChild([claude_result("ok")])
+    spec = {**AGENT, "model": "medium", "cwd": "../demo-api"}
+
+    executors(tmp_path, pack, child).run(call(spec, prompt="Go.", cwd=str(worktree)))
+
+    argv = child.calls[0]["argv"]
+    assert argv.count("--settings") == 1
+    assert argv[argv.index("--settings") + 1] == str(stale)
+    written = json.loads(stale.read_text())
+    assert list(written) == ["effortLevel", "hooks"]
+    (guard,) = written["hooks"]["PreToolUse"][0]["hooks"]
+    assert guard["command"].startswith(f'python3 "{tmp_path}/hub/plugin/hub-workflow/hooks/')
+    assert stale.stat().st_mode & 0o777 == 0o600
+
+
+def test_fails_config_without_claude_when_repo_cwd_hub_hooks_missing(
+    tmp_path: Path, pack: Path
+) -> None:
+    worktree = tmp_path / "demo-api" / ".claude" / "worktrees" / "dem-1"
+    worktree.mkdir(parents=True)
+    (tmp_path / "hub").mkdir()
+    child = FakeChild([claude_result("ok")])
+    spec = {**AGENT, "model": "medium", "cwd": "../demo-api"}
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(spec, prompt="Go.", cwd=str(worktree)))
+
+    assert raised.value.kind == "config"
+    assert str(raised.value).startswith("cannot wire the hub's hooks")
+    assert child.calls == []
 
 
 @pytest.mark.parametrize("cwd", ["/etc", "..", "../demo-api/../..", "../demo-api/out"])

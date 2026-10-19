@@ -7,6 +7,8 @@ and unchanged: the dry run prints v0.14's lines and loads no workflow. Live, the
 and planned after the usage checks (a problem exits 1 before the tracker is read) and must take
 the inputs the parent fills (else exit 2): ``issue``, ``repo`` and ``issue_text``, and ``start``
 for ``--from verify``, which skips the implementing session through the node's ``when:``.
+Then, dry or live and before the tracker is read, a run that starts the implementing session
+checks that the hub's hooks can be wired into it (``session_settings``, AGH-278), else exits 1.
 ``--model``, ``--effort``, ``--max-turns`` and ``--budget``, when typed, win over the
 ``implement`` node's own model and limits (the built-in's are ``hub run``'s defaults). The pack is
 copied to a temporary folder at the start and read from there. The run writes ``hub run``'s
@@ -41,6 +43,7 @@ from agent_hub.cli.run_command import (
     run_setup,
 )
 from agent_hub.cli.run_log import new_run_id
+from agent_hub.cli.session_settings import HubHooksError, hub_hooks_settings
 from agent_hub.cli.workflow_command import discovered, run_delivery
 from agent_hub.cli.workflow_delivery import (
     ISSUE_TEXT,
@@ -113,6 +116,7 @@ def run(
             inputs = start_inputs(plan, values)
         except WorkflowEngineError as error:
             context.fail(str(error))
+    _check_hub_hooks(hub, effort, start=start)
     children, client = run_setup(context, hub_config, hub=hub, issue=issue, repo=repo)
     if context.get_parameter_source("model") is ParameterSource.DEFAULT:
         # Not given: the tier's model, the default itself while hub.json sets none (AGH-180).
@@ -137,3 +141,14 @@ def run(
         parent = IssueToPr(begin_live_run(children, client, options=options, run_id=new_run_id()))
         inputs[ISSUE_TEXT] = parent.issue_text
         raise typer.Exit(run_delivery(hub, parent, plan=plan, inputs=inputs, pack=pack))
+
+
+def _check_hub_hooks(hub: Path, effort: Effort, *, start: RunStart) -> None:
+    # The session runs in the worktree, under the hub's hooks: refused before any tracker read.
+    # From verify, no session starts, so nothing is checked.
+    if start != RunStart.IMPLEMENT:
+        return
+    try:
+        hub_hooks_settings(hub, effort)
+    except HubHooksError as error:
+        fail(f"hub {COMMAND}: {error}")
