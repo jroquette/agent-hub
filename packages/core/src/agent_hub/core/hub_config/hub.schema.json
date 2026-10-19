@@ -169,6 +169,12 @@
           "maxItems": 10,
           "title": "Env",
           "type": "array"
+        },
+        "env_file": {
+          "description": "A dotenv file, relative to the folder holding the hub and its repos, that only actions read; at most 200 characters, no '..', no leading '/' or '~'.",
+          "maxLength": 200,
+          "pattern": "^[!-.0-}][!-~]*$",
+          "type": "string"
         }
       },
       "title": "Credentials",
