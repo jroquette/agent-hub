@@ -2813,6 +2813,11 @@ export interface components {
       model_tiers: {
         [key: string]: string;
       };
+      /**
+       * Model Tiers Set
+       * @default []
+       */
+      model_tiers_set: string[];
       /** Modules */
       modules: string[];
       /** Platform Version */
@@ -5117,6 +5122,11 @@ export interface components {
       review_state: string;
       /** Started State */
       started_state: string;
+      /**
+       * Team Set
+       * @default []
+       */
+      team_set: string[];
       /** Teams */
       teams: string[];
       transport: components["schemas"]["SourcedValue"];

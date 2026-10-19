@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { DiscussProvider, useDiscuss } from "../../shell/discuss";
 import { seriousViolations } from "../../testing/axe";
@@ -95,6 +95,7 @@ function aConfig(overrides: Record<string, unknown> = {}) {
       blocked_label: null,
       started_state: "In Progress",
       review_state: "In Review",
+      team_set: [],
     },
     guard: {
       blocked_words: { team: ["acme-prod"], local: ["my-client"] },
@@ -108,6 +109,7 @@ function aConfig(overrides: Record<string, unknown> = {}) {
       infra_on: false,
     },
     model_tiers: { small: "haiku", medium: "sonnet", large: "opus" },
+    model_tiers_set: [],
     agent_models: [],
     modules: ["cloud"],
     platform_version: "0.2.0",
@@ -132,6 +134,10 @@ function open(path = "/projects/demo/config", routes: ApiRoutes = { [CONFIG]: aC
 }
 
 describe("HubConfigScreen", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   it("shows each repo's default branch and commit pattern with its source and an example", async () => {
     open();
 
@@ -141,16 +147,16 @@ describe("HubConfigScreen", () => {
     expect(
       within(repos).getAllByText("feat(api): add the hub config view (DEM-42)")[0],
     ).toBeVisible();
-    expect(within(repos).getAllByText("Team · repo")[0]).toBeVisible();
+    expect(within(repos).getAllByText("Set by the team")[0]).toBeVisible();
     expect(within(repos).getByText("Same as the commit title")).toBeVisible();
   });
 
-  it("says who commits and which layer set it", async () => {
+  it("says who commits and who set each value", async () => {
     open();
 
     const who = await screen.findByRole("region", { name: /Who commits/ });
     expect(within(who).getByText("me@example.com")).toBeVisible();
-    expect(within(who).getByText("Local")).toBeVisible();
+    expect(within(who).getByText("Set by you")).toBeVisible();
   });
 
   it("points Claude at the commit title row without leaving the screen", async () => {
@@ -172,7 +178,7 @@ describe("HubConfigScreen", () => {
 
     const guard = await screen.findByRole("region", { name: /Guard/ });
     expect(within(guard).queryByText("acme-prod")).toBeNull();
-    expect(within(guard).getByText("1 team · 1 yours")).toBeVisible();
+    expect(within(guard).getByText("2 words: 1 from the team, 1 added by you")).toBeVisible();
     await userEvent.click(
       within(guard).getByRole("button", { name: "Ask Claude to change blocked words" }),
     );
@@ -181,12 +187,30 @@ describe("HubConfigScreen", () => {
     expect(within(guard).getByText("acme-prod")).toBeVisible();
   });
 
-  it("shows the team's value under the Team layer even where the local one wins", async () => {
-    open("/projects/demo/config?layer=team");
+  it("names the team's value my own value overrides, on the row", async () => {
+    open();
 
     const who = await screen.findByRole("region", { name: /Who commits/ });
-    expect(within(who).getByText("jane@example.com")).toBeVisible();
-    expect(within(who).getByText(/Your local value applies/)).toHaveTextContent("me@example.com");
+    expect(within(who).getByText(/Overrides the team's/)).toHaveTextContent("jane@example.com");
+  });
+
+  it("opens my settings from a row I may set", async () => {
+    open();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Change for me: author email" }),
+    );
+    expect(screen.getByRole("dialog", { name: "Change my settings" })).toBeVisible();
+  });
+
+  it("marks a team-only value built-in when hub.json does not set it", async () => {
+    open("/projects/demo/config", {
+      [CONFIG]: aConfig({ model_tiers_set: ["large"] }),
+    });
+
+    const models = await screen.findByRole("region", { name: /Models/ });
+    expect(within(models).getAllByText("Built-in")).toHaveLength(2);
+    expect(within(models).getByText("Set by the team")).toBeVisible();
   });
 
   it("saves the local settings to hub.local.json and shows the field's problem in words", async () => {
@@ -201,10 +225,10 @@ describe("HubConfigScreen", () => {
       }),
     });
 
-    await userEvent.click(await screen.findByRole("button", { name: "Edit my local settings" }));
-    const dialog = screen.getByRole("dialog", { name: "Edit my local settings" });
+    await userEvent.click(await screen.findByRole("button", { name: "Change my settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Change my settings" });
     await userEvent.type(within(dialog).getByRole("textbox", { name: "Branch prefix" }), "nope");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Save local settings" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save my settings" }));
 
     expect(await within(dialog).findByText(/Must end with \//)).toBeVisible();
     const put = requests.find((r) => r.method === "PUT");
@@ -243,9 +267,9 @@ describe("HubConfigScreen", () => {
       }),
     });
 
-    await userEvent.click(await screen.findByRole("button", { name: "Edit my local settings" }));
-    const dialog = screen.getByRole("dialog", { name: "Edit my local settings" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Save local settings" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Change my settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Change my settings" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save my settings" }));
 
     const words = within(dialog).getByRole("textbox", { name: "Blocked words" });
     await waitFor(() => {
@@ -260,10 +284,10 @@ describe("HubConfigScreen", () => {
       "PUT /api/v1/projects/demo/config/local": aConfig(),
     });
 
-    await userEvent.click(await screen.findByRole("button", { name: "Edit my local settings" }));
-    await userEvent.click(screen.getByRole("button", { name: "Save local settings" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Change my settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save my settings" }));
 
-    expect(await screen.findByText("Saved hub.local.json")).toBeVisible();
+    expect(await screen.findByText("Saved your settings")).toBeVisible();
   });
 
   it("explains a hub.json it cannot read", async () => {
@@ -300,13 +324,12 @@ describe("HubConfigScreen", () => {
     });
   });
 
-  it("AC-PG-38.2 has no Models link or section in the Mine view", async () => {
+  it("AC-PG-38.2 shows one view of the values agents use, whatever an old layer link says", async () => {
     open("/projects/demo/config?layer=local");
 
     const rail = await screen.findByRole("navigation", { name: "On this page" });
-    expect(within(rail).queryByRole("link", { name: "Models" })).toBeNull();
-    expect(within(rail).getByRole("link", { name: "Guard" })).toBeVisible();
-    expect(screen.queryByRole("region", { name: /Models/ })).toBeNull();
+    expect(within(rail).getByRole("link", { name: "Models" })).toBeVisible();
+    expect(screen.queryByRole("radiogroup", { name: "Layer" })).toBeNull();
   });
 
   it("AC-PG-38.2 lists Models in the Effective view", async () => {
@@ -358,29 +381,17 @@ describe("HubConfigScreen", () => {
     );
   });
 
-  it("AC-PG-38.6 says the local layer is empty and offers Edit my local settings", async () => {
-    open("/projects/demo/config?layer=local", {
-      [CONFIG]: aConfig({
-        author_email: sourced(
-          "jane@example.com",
-          "team",
-          "hub.json → project.author_email",
-          "jane@example.com",
-        ),
-        guard: {
-          ...aConfig().guard,
-          blocked_words: { team: ["acme-prod"], local: [] },
-        },
-      }),
-    });
+  it("AC-PG-38.6 says once where values come from, and keeps it hidden once hidden", async () => {
+    open();
 
-    const notice = await screen.findByText(/No hub.local.json values on this machine/);
-    const banner = notice.closest("[role=status]");
-    expect(banner).not.toBeNull();
-    await userEvent.click(
-      within(banner as HTMLElement).getByRole("button", { name: "Edit my local settings" }),
-    );
-    expect(screen.getByRole("dialog", { name: "Edit my local settings" })).toBeVisible();
+    const explainer = await screen.findByRole("region", { name: "Where values come from" });
+    expect(within(explainer).getByText(/You set 2 values on this machine/)).toBeVisible();
+    await userEvent.click(within(explainer).getByRole("button", { name: "Hide" }));
+
+    expect(screen.queryByRole("region", { name: "Where values come from" })).toBeNull();
+    expect(window.localStorage.getItem("ah.config.explainer")).toBe("hidden");
+    await userEvent.click(screen.getByRole("button", { name: "Show where values come from" }));
+    expect(screen.getByRole("region", { name: "Where values come from" })).toBeVisible();
   });
 
   it("AC-PG-38.6 offers Ask Claude to fix an unreadable hub.local.json", async () => {
@@ -395,7 +406,7 @@ describe("HubConfigScreen", () => {
     });
 
     expect(
-      await screen.findByText(/hub.local.json has a problem, so your local values are ignored/),
+      await screen.findByText(/has a problem, so only the team's values apply/),
     ).toHaveTextContent("line 3: expected ','");
     await userEvent.click(screen.getByRole("button", { name: "Ask Claude to fix it" }));
     expect(screen.getByRole("list", { name: "references" })).toHaveTextContent(

@@ -155,7 +155,7 @@ export function LocalSettingsDialog({
 
   return (
     <Dialog
-      title="Edit my local settings"
+      title="Change my settings"
       size="md"
       onClose={onClose}
       pending={pending}
@@ -166,7 +166,7 @@ export function LocalSettingsDialog({
             Cancel
           </Button>
           <Button variant="primary" disabled={pending} onClick={save}>
-            {pending ? "Saving…" : "Save local settings"}
+            {pending ? "Saving…" : "Save my settings"}
           </Button>
         </>
       }
