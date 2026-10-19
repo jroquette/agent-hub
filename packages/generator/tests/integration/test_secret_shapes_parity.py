@@ -49,14 +49,14 @@ def test_judges_same_cases_when_core_and_reader_read(
     *,
     rendered_hub: Callable[[HubConfig], Path],
     demo_config: HubConfig,
-    hook_python: str,
+    each_python: str,
     run_python: Callable[..., Any],
     tmp_path: Path,
 ) -> None:
     hub = rendered_hub(demo_config)
 
     shaped = run_python(
-        hook_python, READER_CODE, path=hub / HOOKS, args=[json.dumps(list(CASES))], cwd=tmp_path
+        each_python, READER_CODE, path=hub / HOOKS, args=[json.dumps(list(CASES))], cwd=tmp_path
     )
 
     assert shaped == [secret_kind(text) is not None for text in CASES]
