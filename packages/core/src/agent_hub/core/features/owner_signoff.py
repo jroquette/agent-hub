@@ -4,7 +4,8 @@ A SHIP-WITH-OWNER-STEPS eval waits on steps only the owner can do. Once they are
 signs off from the app: a new eval ``brain/features/<slug>/evals/owner-signoff.md`` (a re-run is
 ``owner-signoff-r2``, ``-r3``...) with ``verdict: SHIP``, ``provenance: owner`` and the AC ids
 that waited on owner steps as its scope. Being dated now, it is the latest eval of those ACs, so
-the Evaluate step turns done (``feature_evals``' order). A sign-off is refused while any AC is
+the Acceptance step turns done (two-level-flows A3; ``feature_evals``' order). It is never a
+whole-feature eval, so it never sets the header verdict. A sign-off is refused while any AC is
 not covered by a SHIP (an agent must evaluate it first) or when no AC waits on owner steps.
 """
 
