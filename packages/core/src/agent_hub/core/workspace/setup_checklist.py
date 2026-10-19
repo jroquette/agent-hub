@@ -4,7 +4,8 @@ Each item prints as ``f"{state:<7} {item}: {detail}"``, then `` Fix: <fix>`` whe
 its sub-lines indented 8 spaces. The tool items read what a probe gave (``ProbeResult``); the cli
 runs the probes, git and the doctor and gives their outcome to the identity, repo and doctor
 items. No text here names a credential's value or a remote URL: the tracker item reads only
-whether ``LINEAR_API_KEY`` is set, and a repo line names ``owner/name`` and the scheme. An
+whether ``LINEAR_API_KEY`` is set, and a repo line names ``owner/name`` and the scheme; the
+environments item names environments, their access and files, never a credential. An
 identity value is free text from a file or git, so it is shown through ``one_line``: a control
 character or a bidi override is escaped, never sent to the terminal.
 """
@@ -15,10 +16,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, Literal, NamedTuple
 
+from agent_hub.core.hub_config.effective_environments import EffectiveEnvironments
 from agent_hub.core.hub_config.effective_identity import IdentityKey, Sourced, email_giver
 from agent_hub.core.hub_config.local_config import LOCAL_FILE_MAX_BYTES
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.hub_config.workspace_repos import WorkspaceRepo
+from agent_hub.core.workspace.environment_lines import production_lines
 
 PROBE_TIMEOUT_SECONDS: Final = 10.0
 UV_MINIMUM: Final = (0, 9, 0)
@@ -405,6 +408,25 @@ def write_error_item(error: str) -> ChecklistItem:
 def gitignore_item() -> ChecklistItem:
     """``gitignore``, printed only when git does not ignore ``hub.local.json``."""
     return _missing("gitignore", "hub.local.json is not ignored by git", GITIGNORE_FIX)
+
+
+def environments_item(view: EffectiveEnvironments) -> ChecklistItem | None:
+    """``environments``, always ok: each effective environment as ``<name> (<access>[,
+    PRODUCTION])``, then one production sub-line per production environment; ``None`` when
+    neither file declares one, so a hub without environments prints no line (spec AM-1)."""
+    if not view.environments:
+        return None
+    detail = ", ".join(
+        f"{item.name} ({item.access}{', PRODUCTION' if item.production else ''})"
+        for item in view.environments
+    )
+    return ChecklistItem(
+        state=State.OK,
+        item="environments",
+        detail=detail,
+        fix=None,
+        sub_lines=production_lines(view),
+    )
 
 
 def repo_item(
