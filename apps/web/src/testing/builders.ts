@@ -739,6 +739,8 @@ export function aFeatureDetail(
       aFeatureRecord({ name: "issues", present: false }),
     ],
     evals: [anEvalRecord()],
+    plan: null,
+    acceptance_eval: null,
     ...overrides,
   };
 }
