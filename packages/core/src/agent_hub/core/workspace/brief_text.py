@@ -58,7 +58,8 @@ class RepoState(BaseModel):
 
 
 class BriefInputs(BaseModel):
-    """Everything the brief shows: ``now.md``'s text and age, the journal days read, the repos."""
+    """Everything the brief shows: ``now.md``'s text and age, the journal days read, the repos,
+    and the Environments block's lines (``environment_lines.brief_block``), empty without one."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -67,6 +68,7 @@ class BriefInputs(BaseModel):
     journal: tuple[tuple[str, str], ...]
     repos: tuple[RepoState, ...]
     network: bool
+    environments: tuple[str, ...] = ()
 
 
 def now_verified(text: str) -> str | None:
@@ -111,12 +113,22 @@ def repo_line(state: RepoState, *, network: bool) -> str:
 
 
 def brief_text(inputs: BriefInputs) -> str:
-    """The whole brief, cut to ``MAX_CHARS`` (with a mark) when longer; no final line break."""
+    """The whole brief, cut to ``MAX_CHARS`` (with a mark) when longer; no final line break.
+
+    The Environments block, when given, comes after the repos and is never cut: the sections
+    before it are, so the block and the footer always fit (spec AM-10).
+    """
     parts = ["# Brief", "", "## Now", *_now_lines(inputs)]
     journal = [_journal_line(path, text) for path, text in inputs.journal]
     parts += ["", f"## Journal (last {JOURNAL_MAX_AGE} days)"]
     parts += journal or ["- (no entry in the last week)"]
     parts += ["", "## Repos", *(repo_line(repo, network=inputs.network) for repo in inputs.repos)]
+    if inputs.environments:
+        head = "\n".join(parts)
+        tail = "\n" + "\n".join(("", *inputs.environments, *_FOOTER))
+        if len(head) + len(tail) > MAX_CHARS:
+            head = head[: MAX_CHARS - len(tail) - _TRUNCATED_ROOM] + _TRUNCATED
+        return head + tail
     parts += _FOOTER
     text = "\n".join(parts)
     if len(text) > MAX_CHARS:

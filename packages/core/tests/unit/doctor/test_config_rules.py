@@ -13,7 +13,11 @@ from agent_hub.core.hub_config.local_config import LocalConfig, check_local_docu
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.json_form import dump_json
-from agent_hub.core.testing.builders import a_hub_document, a_second_repo
+from agent_hub.core.testing.builders import (
+    a_hub_document,
+    a_second_repo,
+    an_environments_document,
+)
 from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
     REPOSITORY_CASES,
@@ -292,6 +296,49 @@ def test_reports_local_problem_when_local_file_invalid(
     assert findings_of(snapshot) == [
         *(hub_findings if hub_json == "invalid" else []),
         *(local_finding(message) for message in BAD_LOCAL_MESSAGES),
+    ]
+
+
+def test_reports_local_conflict_when_local_redeclares_environment(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # AGH-286: doctor and the CLI agree on a local file that loosens or redefines a committed
+    # environment: config.schema names each problem at hub.local.json.
+    config = HubConfig.model_validate(an_environments_document())
+    local = LocalConfig.model_validate(
+        {
+            "environments": {"live": {"access": "write", "production": False}},
+            "repos": [
+                {
+                    "dir": "demo-api",
+                    "services": {
+                        "api": {"endpoints": {"staging": {"url": "https://x.example.com"}}}
+                    },
+                }
+            ],
+        }
+    )
+
+    assert findings_of(snapshot_of(config=config, local=local)) == [
+        local_finding(
+            "environments.live.production: hub.json declares live;"
+            " hub.local.json may only tighten its access"
+        ),
+        local_finding("environments.live.access: may only tighten hub.json's read"),
+        local_finding(
+            "repos[0].services.api.endpoints.staging: staging is declared in hub.json;"
+            " a local endpoint names a local environment"
+        ),
+    ]
+
+
+def test_reports_no_local_conflict_when_hub_json_invalid(snapshot_of: SnapshotFactory) -> None:
+    # Without a valid hub.json there is nothing to judge the local file against.
+    failure = failure_of(document_bytes(lambda document: document.update(shade=1)))
+    local = LocalConfig.model_validate({"environments": {"live": {"access": "write"}}})
+
+    assert findings_of(snapshot_of(config=failure, local=local)) == [
+        schema_finding("shade: Extra inputs are not permitted")
     ]
 
 

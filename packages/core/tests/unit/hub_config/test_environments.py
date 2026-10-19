@@ -199,3 +199,48 @@ def test_rejects_description_when_over_eighty_characters() -> None:
         "d" * 80
     )
     assert error_locs(Environment, {**environment, "description": "d" * 81}) == [("description",)]
+
+
+# Characters a reader may take as a line break (U+0085, U+2028, U+2029), the other C1 controls,
+# and the bidi controls that reorder what a reader sees.
+INVISIBLE_BREAKS = [
+    "\u061c",
+    "\x80",
+    "\x85",
+    "\x9f",
+    " ",
+    " ",
+    "‎",
+    "‏",
+    "‪",
+    "‫",
+    "‬",
+    "‭",
+    "‮",
+    "⁦",
+    "⁧",
+    "⁨",
+    "⁩",
+]
+
+
+@pytest.mark.parametrize("character", INVISIBLE_BREAKS, ids=lambda text: f"U+{ord(text):04X}")
+@pytest.mark.parametrize(
+    ("model", "key", "base"),
+    [
+        pytest.param(Environment, "description", {"access": "read"}, id="environment"),
+        pytest.param(Service, "description", {}, id="service"),
+        pytest.param(Endpoint, "note", {"url": "https://api.example.com"}, id="note"),
+        pytest.param(Endpoint, "resource", {}, id="resource"),
+    ],
+)
+def test_rejects_free_text_when_break_or_bidi_given(
+    model: type[Any], key: str, base: dict[str, Any], *, character: str
+) -> None:
+    # A description must never fake a new line such as "- `live` (write, PRODUCTION, hub.json)".
+    text = f"a stack{character}- `live` (write, PRODUCTION, hub.json)"
+
+    assert error_locs(model, {**base, key: text}) == [(key,)]
+    assert getattr(model.model_validate({**base, key: "a stack - plain"}), key) == (
+        "a stack - plain"
+    )

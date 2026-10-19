@@ -17,7 +17,7 @@ from agent_hub.core.hub_config.config_object import (
     absent_by_default,
 )
 from agent_hub.core.hub_config.doctor_rules import drop_map_comment_keys
-from agent_hub.core.hub_config.text_shapes import FREE_TEXT_PATTERN, SAFE_SEGMENT
+from agent_hub.core.hub_config.text_shapes import ENVIRONMENT_TEXT_PATTERN, SAFE_SEGMENT
 from agent_hub.core.secret_shapes import secret_kind
 
 MAX_NAME_CHARS: Final = 40
@@ -44,10 +44,10 @@ def _no_secret_shape(value: str) -> str:
 
 # Every string under ``environments`` and ``services`` is checked for a secret's shape.
 NoSecret = AfterValidator(_no_secret_shape)
-NoSecretText = Annotated[str, Field(min_length=1, pattern=FREE_TEXT_PATTERN), NoSecret]
+NoSecretText = Annotated[str, Field(min_length=1, pattern=ENVIRONMENT_TEXT_PATTERN), NoSecret]
 EnvironmentDescription = Annotated[
     str,
-    Field(min_length=1, max_length=MAX_DESCRIPTION_CHARS, pattern=FREE_TEXT_PATTERN),
+    Field(min_length=1, max_length=MAX_DESCRIPTION_CHARS, pattern=ENVIRONMENT_TEXT_PATTERN),
     NoSecret,
 ]
 # An environment's or a service's name: a safe segment, as repo dirs are.
@@ -83,8 +83,25 @@ MAX_BLOCKED_WORDS: Final = 200
 MAX_BLOCKED_GLOBS: Final = 100
 MAX_BLOCKED_ENV: Final = 50
 MAX_GLOB_CHARS: Final = 200
+
+
+def _no_secret_word(value: str) -> str:
+    """Reject a blocked word with a secret's shape, naming the kind and never the word: every
+    brief prints the blocked words."""
+    kind = secret_kind(value)
+    if kind is not None:
+        raise PydanticCustomError(
+            CREDENTIAL_SHAPE_ERROR,
+            "looks like a secret ({kind}); a blocked word names a place, never a credential",
+            {"kind": kind},
+        )
+    return value
+
+
 BlockedWord = Annotated[
-    str, Field(min_length=2, max_length=64, pattern=r"^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$")
+    str,
+    Field(min_length=2, max_length=64, pattern=r"^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$"),
+    AfterValidator(_no_secret_word),
 ]
 
 
