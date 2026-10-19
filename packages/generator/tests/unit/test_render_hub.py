@@ -5034,7 +5034,7 @@ AGENT_FILES_SHA256 = {
         "06346ed2d9948f63b1a2b5ac850ef73e698326316e8cabe95de39dba9f1fb2ae"
     ),
     f"{AGENTS_FOLDER}/requirements-analyst.md": (
-        "d5702ea0391a96d356ebd9e1b83195cd1828efb509dfb56cfcc611560484d063"
+        "a89674148648b6e5d17365d6e0d997e9a921c7d9f54a47fd99b63494aecc3353"
     ),
     f"{AGENTS_FOLDER}/researcher.md": (
         "f4859e0b694dff6cea2a69d29074d111c9374971f544289b134a8f0a620da9cf"

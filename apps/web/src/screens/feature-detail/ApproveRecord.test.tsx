@@ -211,7 +211,10 @@ describe("ApproveRecord", () => {
       });
 
       await userEvent.click(await screen.findByText("Signal names"));
-      await userEvent.type(screen.getByLabelText("Your answer to Q1"), "The log event.");
+      const q1 = within(screen.getByRole("group", { name: "Your answer to Q1" }));
+      expect(q1.getByRole("radio", { name: "Let Claude decide" })).toBeChecked();
+      await userEvent.click(q1.getByRole("radio", { name: "Other" }));
+      await userEvent.type(screen.getByLabelText("Your own answer to Q1"), "The log event.");
       const approve = screen.getByRole("button", { name: "Approve spec with 1 answer" });
       expect(
         screen.getByText("1 answered · 1 takes the recommendation · 2 left to Claude"),
@@ -228,8 +231,43 @@ describe("ApproveRecord", () => {
       expect(body.text).toContain("- Q1 (Signal names): The log event.");
       expect(body.text).toContain("- Q9 (Port): accept the recommendation.");
       expect(body.text).toContain("- Q2 (Wire format): no answer, use your own recommendation.");
-      expect(screen.queryByLabelText("Your answer to Q1")).toBe(null);
+      expect(screen.queryByLabelText("Your own answer to Q1")).toBe(null);
       expect(window.localStorage.getItem("ah.approve.answers.agent-hub:real-cost:spec")).toBe(null);
+    });
+
+    it("offers the spec's options as choices, the recommended one picked by default", async () => {
+      const withOptions = [
+        "# Spec",
+        "",
+        "## Open questions",
+        "",
+        "- Q1. **Cache.** Where is the price list kept?",
+        "  - **In memory** (recommended): rebuilt on start.",
+        "  - **On disk**: survives a restart.",
+        "",
+      ].join("\n");
+      const view = renderWithApi(ui(), {
+        routes: {
+          ...routes({ [`POST ${AGENT}/${author.id}/messages`]: { seq: 5 } }),
+          [NOTE]: aBrainNote({ path: "features/real-cost/spec.md", markdown: withOptions }),
+        },
+      });
+
+      const q1 = within(await screen.findByRole("group", { name: "Your answer to Q1" }));
+      expect(q1.getByRole("radio", { name: "In memory" })).toBeChecked();
+      expect(q1.getByText("Recommended")).toBeVisible();
+      expect(q1.queryByRole("radio", { name: "Take the recommendation" })).toBe(null);
+
+      await userEvent.click(q1.getByRole("radio", { name: "On disk" }));
+      expect(screen.getByText("1 answered")).toBeVisible();
+      await userEvent.click(screen.getByRole("button", { name: "Approve spec with 1 answer" }));
+
+      await screen.findByRole("status");
+      const post = view.requests.find((r) => r.method === "POST");
+      const body = JSON.parse(await (post ?? new Request("about:blank")).clone().text()) as {
+        text: string;
+      };
+      expect(body.text).toContain("- Q1 (Cache): On disk");
     });
 
     it("keeps the answers as a draft across a reload, and on a failed send", async () => {
@@ -253,14 +291,19 @@ describe("ApproveRecord", () => {
 
       expect(await screen.findByRole("alert")).toHaveTextContent("The session is busy.");
       await userEvent.click(screen.getByText("Port"));
-      expect(screen.getByLabelText("Your answer to Q9")).toHaveValue("Use 7421.");
+      expect(screen.getByLabelText("Your own answer to Q9")).toHaveValue("Use 7421.");
     });
 
     it("has no serious a11y violations with questions open (a11y)", async () => {
       const { container } = renderWithApi(ui(), { routes: routes() });
       await userEvent.click(await screen.findByText("Port"));
-      await screen.findByLabelText("Your answer to Q9");
-      expect(screen.getByLabelText("Your answer to Q9")).toHaveAttribute(
+      const q9 = within(screen.getByRole("group", { name: "Your answer to Q9" }));
+      expect(q9.getByRole("radio", { name: "Take the recommendation" })).toBeChecked();
+      await userEvent.click(q9.getByRole("radio", { name: "Other" }));
+      await waitFor(() => {
+        expect(screen.getByLabelText("Your own answer to Q9")).toHaveFocus();
+      });
+      expect(screen.getByLabelText("Your own answer to Q9")).toHaveAttribute(
         "placeholder",
         "Blank: the hook sensor's port, 7420.",
       );

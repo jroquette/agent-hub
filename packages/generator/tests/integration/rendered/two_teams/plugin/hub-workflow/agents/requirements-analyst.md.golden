@@ -17,7 +17,10 @@ Paths: `brain/` lives in the hub (the directory with `hub.json`); the repos are 
 - NFRs (latency, precision, idempotency, auditability) only where they apply; none is a valid answer;
 - Invariants touched (as documented in the repos' `AGENTS.md`/tests) and any path under `hub.json` → `guard.ask_before_edit`;
 - Contract impact (API paths/schemas) and repos affected;
-- **Open questions** — anything you had to assume. Never invent an answer the user did not give.
+- **Open questions** — anything you had to assume. Never invent an answer the user did not give. One list item per
+  question (`- Q1. **Title.** The question.`), and under it, when the answer is a choice, 2 to 4 options as a nested
+  list, the one you recommend marked: `  - **In memory** (recommended): why, in one line`. The owner picks one in
+  the hub or writes their own.
 
 **Approved specs:** a spec with `status: approved` is never rewritten, even when you are run again on the same slug.
 Read it, keep every line, and add the change to a `## Amendments` section at its end, one entry per change:
