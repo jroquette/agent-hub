@@ -11,6 +11,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- `hub web` Features and Feature detail: the golden path shows the feature's own steps, Spec, UX design, Research,
+  Plan, Tickets, Build, Acceptance and Shipped, instead of Implement, Review and Evaluate (AGH-325). A brief alone
+  keeps Spec in progress; UX design is done when every `ux-*.md` is approved; Plan shows the plan's version; Build
+  counts the tickets merged; Acceptance moves only on a whole-feature eval (`acs: all`), reading "Not recorded" with
+  the ACs the ticket evals cover until one exists, so a feature with only ticket evals no longer reads Shipped. The
+  API's `phase` values change to match; ADR 0042 records the two levels.
+
 ### Fixed
 
 - `hub web` Feature detail: the golden path's Review and Shipped steps read "Partial" once some tickets are
