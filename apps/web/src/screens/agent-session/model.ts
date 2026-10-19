@@ -170,6 +170,17 @@ export type TranscriptEntry =
   | { kind: "permission"; key: string; requestId: string }
   | { kind: "notice"; key: string; seq: number; tone: NoticeTone; text: string };
 
+/** A task Claude started (a subagent, often in the background), from its `task` records. */
+export interface TaskView {
+  id: string;
+  /** What it does, as Claude described it when it started. */
+  description: string | null;
+  /** The call that started it, when known. */
+  toolUseId: string | null;
+  startedAt: string;
+  status: "running" | "completed" | "failed" | "stopped";
+}
+
 export interface TranscriptState {
   entries: TranscriptEntry[];
   tools: Record<string, ToolView>;
@@ -197,6 +208,8 @@ export interface TranscriptState {
   sending: SendingView[];
   /** A user message started a turn whose result has not arrived. */
   turnOpen: boolean;
+  /** The tasks Claude started, by task id: a background one runs on after its turn ends. */
+  tasks: Record<string, TaskView>;
 }
 
 export function initialTranscript(): TranscriptState {
@@ -219,6 +232,7 @@ export function initialTranscript(): TranscriptState {
     reset: null,
     sending: [],
     turnOpen: false,
+    tasks: {},
   };
 }
 
@@ -771,6 +785,31 @@ function applyResult(state: TranscriptState, record: LogRecord): TranscriptState
   return next;
 }
 
+const TASK_STATUSES = new Set<string>(["running", "completed", "failed", "stopped"]);
+
+/** A task started or ended: a start is kept, an end updates the start it ends. */
+function applyTask(state: TranscriptState, record: LogRecord): TranscriptState {
+  const id = str(record.body, "task_id");
+  const status = str(record.body, "status");
+  if (!id || status === null || !TASK_STATUSES.has(status)) return state;
+  const known = state.tasks[id];
+  const task: TaskView = known
+    ? { ...known, status: status as TaskView["status"] }
+    : {
+        id,
+        description: str(record.body, "description"),
+        toolUseId: str(record.body, "tool_use_id"),
+        startedAt: record.at,
+        status: status as TaskView["status"],
+      };
+  return { ...state, tasks: { ...state.tasks, [id]: task } };
+}
+
+/** The tasks still running, oldest first. */
+export function runningTasks(state: TranscriptState): TaskView[] {
+  return Object.values(state.tasks).filter((task) => task.status === "running");
+}
+
 function applySettings(state: TranscriptState, record: LogRecord): TranscriptState {
   const mode = str(record.body, "mode");
   const model = str(record.body, "model");
@@ -958,11 +997,15 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
         str(body, "message") ?? "Error",
         "error",
       );
+    case "task":
+      return applyTask(s, record);
     case "exited": {
+      // The process took its tasks with it.
+      const t = { ...s, tasks: {} };
       const code = num(body, "code");
       return code === null || code === 0
-        ? notice(s, record.seq, "claude exited")
-        : notice(s, record.seq, `claude exited with code ${String(code)}`, "error");
+        ? notice(t, record.seq, "claude exited")
+        : notice(t, record.seq, `claude exited with code ${String(code)}`, "error");
     }
     case "log.truncated": {
       const cap = str(body, "cap");

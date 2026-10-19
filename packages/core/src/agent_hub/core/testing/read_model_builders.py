@@ -554,6 +554,12 @@ RECORD_BODIES: dict[str, dict[str, JsonValue]] = {
     },
     "tool.result": {"tool_use_id": "toolu_01", "content": "edited", "is_error": False},
     "todos": {"items": [{"content": "Fix the test", "status": "in_progress", "active_form": None}]},
+    "task": {
+        "task_id": "task-1",
+        "status": "running",
+        "description": "Review the change",
+        "tool_use_id": "toolu_02",
+    },
     "permission.request": {
         "request_id": "req-1",
         "tool": "Bash",

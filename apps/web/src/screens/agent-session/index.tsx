@@ -42,6 +42,7 @@ import {
   modeLabel,
   pendingPermissions,
   resumable,
+  runningTasks,
   type TranscriptState,
 } from "./model";
 import { useStickToBottom } from "./useStickToBottom";
@@ -309,7 +310,11 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             <h1 className="ah-h1" style={{ fontSize: 20 }}>
               {session.title ?? "Untitled session"}
             </h1>
-            <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
+            <AgentStatusBadge
+              status={status}
+              endReason={state.endReason ?? session.end_reason}
+              background={runningTasks(state).length}
+            />
             <span className="ah-grow" />
             <StepsToggle
               steps={steps}

@@ -3830,6 +3830,7 @@ export interface components {
       | "tool.call"
       | "tool.result"
       | "todos"
+      | "task"
       | "permission.request"
       | "result"
       | "error"

@@ -18,6 +18,14 @@ describe("AgentStatusBadge", () => {
   });
 });
 
+describe("AgentStatusBadge with background agents", () => {
+  it("reads an idle session with agents still running as at work", () => {
+    render(<AgentStatusBadge status="idle" background={2} />);
+
+    expect(screen.getByText("Background · 2 agents")).toBeInTheDocument();
+  });
+});
+
 describe("ReconnectBanner (composer)", () => {
   it("shows the banner while the stream is lost and hides it once it resumes", () => {
     const { rerender } = render(<ReconnectBanner connected={false} />);
