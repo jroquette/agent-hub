@@ -1774,7 +1774,7 @@ export interface components {
     /**
      * AmendmentView
      * @description One ``A<n> (<date>, <who>): <title>`` entry of the plan's ``## Amendments``; ``anchor`` is
-     *     the text of the heading it is under, which the Plan record view links to.
+     *     the text of that ``## Amendments…`` heading, which the Plan record view links to.
      */
     AmendmentView: {
       /** Anchor */
