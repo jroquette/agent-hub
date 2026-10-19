@@ -151,7 +151,9 @@ otherwise, this list wins. Each item is an acceptance criterion.
 - **AC-268.17 Header chips.** Given the feature's tickets, then each header chip shows the id with its Linear status
   and the title on hover; the "PR —" placeholder is gone while GitHub is not connected.
 - **AC-268.18 Sessions by issue.** Given `GET /sessions?issue=<id>` (any case), then it lists the sessions about that
-  issue: the issue their run names, else the one their branch or worktree names for the hub's tracker teams.
+  issue: the one their first prompt names (`/feature <id>`, a ticket's Start), else their branch or worktree, for
+  the hub's tracker teams, else the issue their run names. A session started in the hub folder takes the hub
+  checkout's branch, which can name another ticket, so the first prompt wins.
 - **AC-268.19 Ticket sessions.** Given the Tickets table, then each ticket lists its sessions (asked by its issue), each
   linked to its detail (or its chat when driven), with its status (as the Sessions list shows it) and start time.
 - **AC-268.20 No scope column.** Given the Tickets table, then the title shows its words without the
