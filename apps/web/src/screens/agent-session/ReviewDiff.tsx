@@ -21,6 +21,7 @@ import {
   replyMessage,
   type AnchorSide,
   type ReviewAnchor,
+  type ReviewMessage,
   type ReviewThread,
 } from "./review";
 
@@ -199,7 +200,18 @@ function CommentBox({
   );
 }
 
-/** One review thread: your comment and replies, Claude's answers, a reply box, Resolve. */
+/** The round initial a thread shows beside each comment, as on GitHub. */
+function Avatar({ author }: { author: ReviewMessage["author"] }) {
+  return (
+    <span className={cx("as-thread-avatar", `as-thread-avatar-${author}`)} aria-hidden="true">
+      {author === "you" ? "Y" : "C"}
+    </span>
+  );
+}
+
+/** One review thread, laid out like a GitHub conversation: a header with the lines it is on,
+ * one comment per message (avatar, author, body), and a footer to reply or resolve it. A
+ * resolved thread folds to its header until shown again. */
 function Thread({
   thread,
   resolved,
@@ -213,77 +225,100 @@ function Thread({
   const [replying, setReplying] = useState(false);
   const [shown, setShown] = useState(false);
   const label = linesLabel(thread.anchor);
-  const head = (
-    <header className="as-thread-head">
-      <Icon name={closed ? "check-check" : "message-square"} size="sm" />
-      <span>{label}</span>
-      <span className="ah-small ah-muted">
-        · {thread.messages.length} {thread.messages.length === 1 ? "message" : "messages"}
-      </span>
-      {thread.waiting && !closed && (
-        <span className="as-thread-waiting">
-          <Icon name="loader" size="sm" className="as-spin" />
-          Waiting for Claude
-        </span>
-      )}
-      <span className="ah-grow" />
-      {closed && (
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            setShown((value) => !value);
-          }}
-        >
-          {shown ? "Hide" : "Show"}
-        </Button>
-      )}
-      <Button
-        size="sm"
-        variant="ghost"
-        icon={closed ? "rotate-ccw" : "check"}
-        onClick={() => {
-          resolved.toggle(thread.key);
-          setShown(false);
-        }}
-      >
-        {closed ? "Reopen" : "Resolve"}
-      </Button>
-    </header>
-  );
+  const count = thread.messages.length;
+  const open = !closed || shown;
+  const toggleResolved = () => {
+    resolved.toggle(thread.key);
+    setShown(false);
+    setReplying(false);
+  };
   return (
     <section
       className={cx("as-thread", closed && "as-thread-resolved")}
       aria-label={`Review thread on ${label}`}
     >
-      {head}
-      {(!closed || shown) && (
-        <>
-          <ol className="as-thread-messages">
-            {thread.messages.map((message) => (
-              <li
-                key={message.key}
-                className={cx(
-                  "as-thread-message",
-                  `as-thread-${message.author}`,
-                  message.pending && "as-thread-pending",
-                )}
-              >
-                <span className="as-thread-author">
-                  {message.author === "you" ? "You" : "Claude"}
-                  {message.pending && (message.author === "you" ? " · sending…" : " · writing…")}
-                </span>
-                {message.author === "claude" ? (
-                  <Markdown source={message.text} />
-                ) : (
-                  <p className="as-thread-text">{message.text}</p>
-                )}
-              </li>
-            ))}
-          </ol>
-          {onReply &&
-            !closed &&
-            (replying ? (
+      <header className="as-thread-head">
+        <Icon name={closed ? "check-check" : "message-square"} size="sm" />
+        {closed ? (
+          <span>
+            <b>Resolved</b> <span className="ah-muted">conversation on {label}</span>
+          </span>
+        ) : (
+          <span className="as-thread-lines">{label}</span>
+        )}
+        <span className="ah-small ah-muted">
+          · {count} {count === 1 ? "comment" : "comments"}
+        </span>
+        {thread.waiting && !closed && (
+          <span className="as-thread-waiting">
+            <Icon name="loader" size="sm" className="as-spin" />
+            Waiting for Claude
+          </span>
+        )}
+        <span className="ah-grow" />
+        {closed && (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={shown ? "chevron-up" : "chevron-down"}
+              onClick={() => {
+                setShown((value) => !value);
+              }}
+            >
+              {shown ? "Hide" : "Show"}
+            </Button>
+            <Button size="sm" variant="ghost" icon="rotate-ccw" onClick={toggleResolved}>
+              Reopen
+            </Button>
+          </>
+        )}
+      </header>
+      {open && (
+        <ol className="as-thread-messages">
+          {thread.messages.map((message, index) => (
+            <li
+              key={message.key}
+              className={cx(
+                "as-thread-message",
+                `as-thread-${message.author}`,
+                message.pending && "as-thread-pending",
+              )}
+            >
+              <Avatar author={message.author} />
+              <div className="as-thread-main">
+                <div className="as-thread-meta">
+                  <span className="as-thread-author">
+                    {message.author === "you" ? "You" : "Claude"}
+                  </span>
+                  {message.author === "claude" && <span className="as-thread-badge">Agent</span>}
+                  <span className="ah-muted">
+                    {message.pending
+                      ? message.author === "you"
+                        ? "sending…"
+                        : "writing…"
+                      : index === 0
+                        ? "commented"
+                        : "replied"}
+                  </span>
+                </div>
+                <div className="as-thread-body">
+                  {message.author === "claude" ? (
+                    <Markdown source={message.text} />
+                  ) : (
+                    <p className="as-thread-text">{message.text}</p>
+                  )}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+      {!closed && (onReply || count > 0) && (
+        <footer className="as-thread-foot">
+          {onReply && replying ? (
+            <div className="as-thread-reply-row">
+              <Avatar author="you" />
               <CommentBox
                 label={`Reply on ${label}`}
                 submitLabel="Reply"
@@ -297,18 +332,30 @@ function Thread({
                   setReplying(false);
                 }}
               />
-            ) : (
-              <button
-                type="button"
-                className="as-thread-reply"
-                onClick={() => {
-                  setReplying(true);
-                }}
-              >
-                Reply…
-              </button>
-            ))}
-        </>
+            </div>
+          ) : (
+            <div className="as-thread-reply-row">
+              {onReply && (
+                <>
+                  <Avatar author="you" />
+                  <button
+                    type="button"
+                    className="as-thread-reply"
+                    onClick={() => {
+                      setReplying(true);
+                    }}
+                  >
+                    Reply…
+                  </button>
+                </>
+              )}
+              {!onReply && <span className="ah-grow" />}
+              <Button size="sm" icon="check" onClick={toggleResolved}>
+                Resolve
+              </Button>
+            </div>
+          )}
+        </footer>
       )}
     </section>
   );
