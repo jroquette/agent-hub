@@ -1406,26 +1406,58 @@ body.as-resizing .as-drawer {
   background: var(--done);
   transition: width var(--dur-base) var(--ease-out);
 }
-/* The files' root: wraps whole (the worktree in bold), with its copy button. */
+/* One line that fits: cut in the middle, its tail (extension, last folder) always whole. */
+.as-fit {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.as-fit-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.as-fit-tail {
+  flex: none;
+}
+/* The files' root on one line: repo, branch icon, worktree in bold, the rest; then copy. */
 .as-files-root {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
-  margin: 0;
-}
-.as-files-root-path {
-  flex: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
+  margin: 0;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
-.as-files-root-path > b {
+.as-files-root > .ah-subtle {
+  flex: none;
+  font-family: var(--font-sans);
+}
+.as-files-root > svg {
+  flex: none;
+  color: var(--text-subtle);
+}
+.as-files-root-repo {
+  flex: 0 1 auto;
+  min-width: 2ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-files-root-lead {
+  flex: 0 1 auto;
   color: var(--text);
   font-weight: 600;
 }
+.as-files-root-rest {
+  flex: 0 3 auto;
+  color: var(--text-subtle);
+}
 .as-files-copy {
   flex: none;
+  margin-left: auto;
 }
 .as-files-group ul {
   list-style: none;
@@ -1437,7 +1469,7 @@ body.as-resizing .as-drawer {
 }
 .as-files-folder {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   padding: 2px var(--space-2) 4px;
   color: var(--text-subtle);
@@ -1445,18 +1477,13 @@ body.as-resizing .as-drawer {
 }
 .as-files-folder > svg {
   flex: none;
-  margin-top: 2px;
-}
-.as-files-folder > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 .as-files-folder + ul {
   padding-left: var(--space-3);
 }
 .as-files-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-1);
   padding-right: var(--space-1);
   border-radius: var(--radius-md);
@@ -1473,7 +1500,7 @@ body.as-resizing .as-drawer {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
   padding: 5px var(--space-2);
   border: 0;
@@ -1492,8 +1519,6 @@ body.as-resizing .as-drawer {
 }
 .as-files-nav-name {
   flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
   font-family: var(--font-mono);
 }
 .as-files-stats {
