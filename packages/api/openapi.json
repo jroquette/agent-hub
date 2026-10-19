@@ -3122,6 +3122,14 @@
             "title": "Model Tiers",
             "type": "object"
           },
+          "model_tiers_set": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Model Tiers Set",
+            "type": "array"
+          },
           "modules": {
             "items": {
               "type": "string"
@@ -9676,6 +9684,14 @@
           "started_state": {
             "title": "Started State",
             "type": "string"
+          },
+          "team_set": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Team Set",
+            "type": "array"
           },
           "teams": {
             "items": {
