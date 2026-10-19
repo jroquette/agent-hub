@@ -205,7 +205,7 @@ function PlanVersionLine({ plan }: { plan: PlanView }) {
   if (plan.version == null) {
     return (
       <p className="ah-small ah-muted" style={{ margin: 0 }}>
-        {plan.problem ?? "The plan version could not be read."}
+        {plan.problem}
       </p>
     );
   }
