@@ -20,6 +20,7 @@ import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
 import { backgroundTasks, liveActivity, turnSteps } from "./liveActivity";
+import { FeatureChip } from "../features/FeatureChip";
 import { BackgroundCard, BackgroundChip, BackgroundPanel } from "./BackgroundTasks";
 import { LiveActivityBar, StepsPanel, StepsToggle } from "./LiveActivityBar";
 import { readStored, writeStored } from "../../lib/storage";
@@ -32,7 +33,7 @@ import {
   isTerminal,
   useAgentSession,
   useAgentSessionCommands,
-  useSessionName,
+  useSessionAbout,
   useAgentTranscript,
   useCapabilities,
 } from "./queries";
@@ -233,7 +234,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
 
   const problem = snapshot.error ?? transcript.error;
   const session = snapshot.data;
-  const name = useSessionName(session);
+  const { name, feature } = useSessionAbout(session);
   const { state } = transcript;
   const { tools, permissions } = state;
   // Only the calls and their permissions change the list, not every streamed text delta.
@@ -329,6 +330,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             <h1 className="ah-h1" style={{ fontSize: 20 }}>
               {name ?? "Untitled session"}
             </h1>
+            {feature && <FeatureChip project={feature.project} slug={feature.slug} />}
             <AgentStatusBadge
               status={status}
               endReason={state.endReason ?? session.end_reason}

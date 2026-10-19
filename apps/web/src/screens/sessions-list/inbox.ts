@@ -4,7 +4,7 @@ import {
   TOOL_ICON,
   type IconName,
   type Status,
-  type TicketSlugs,
+  type TicketLookup,
 } from "../../components";
 import { fmtDuration } from "../../lib/format";
 import { isReviewable } from "../agent-session/fileKind";
@@ -407,6 +407,6 @@ export function commonRepoOf(rows: readonly SectionRow[]): string | null {
 }
 
 /** The searchable title of a row (for aria names). */
-export function rowTitle(row: SectionRow, slugs?: TicketSlugs): string {
-  return isDriven(row) ? (row.title ?? "Untitled session") : sessionIdentity(row, slugs).title;
+export function rowTitle(row: SectionRow, tickets?: TicketLookup): string {
+  return isDriven(row) ? (row.title ?? "Untitled session") : sessionIdentity(row, tickets).title;
 }
