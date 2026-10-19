@@ -109,13 +109,13 @@ tightens); the brief, `hub env list`, doctor and setup show it.
 
 `list`, `show NAME` (both `--json`), `add NAME --access A [--production] [--description T] [--aws-profile P]
 [--credential-env VAR]…`, `set`, `remove`, `service add REPO SERVICE --env NAME (--url U | --resource R)`, `service
-remove`; `--local` writes `hub.local.json` (created when absent), else `hub.json`. None prompts. A write validates the
-result (invalid: exit 1, file unchanged), keeps every key and their order in indent 2 (a file in another indent is
-normalised once, and the output says so), refuses (exit 1) when the file changed since it was read, and replaces it
-through a temporary file in the same folder (a writer between that check and the replace is overwritten: a narrow
-window). `remove` refuses while endpoints use the environment; a committed write
-prints `run ./hub sync to update AGENTS.md`. The guard asks before a mutating `hub env` and an edit of
-`hub.local.json`; `list` and `show` pass. `hub setup`'s optional step writes only `hub.local.json`.
+remove`; `--local` writes `hub.local.json` (created mode 0644, as by `hub setup`), else `hub.json`. None prompts. A
+write validates the result (invalid: exit 1, file unchanged), keeps every key and their order in indent 2 (another
+indent is normalised once, and the output says so), refuses (exit 1) a file changed since it was read, a symlinked
+file and a `_` name (a comment key), and replaces the file through a temporary one in the same folder (a writer
+between that check and the replace is overwritten: a narrow window). `remove` refuses while endpoints use the
+environment; a committed write prints `run ./hub sync to update AGENTS.md`. The guard asks before a mutating
+`hub env` and an edit of `hub.local.json`; `list` and `show` pass. `hub setup`'s optional step writes only it.
 
 ### Known limits
 

@@ -4,8 +4,8 @@
 The readers that do not exit live in ``agent_hub.generator.hub_config_files`` (the control plane
 reads registered hubs with them too) and are re-exported here: ``read_hub_bytes``,
 ``read_local_json``, and ``read_hub_json``, whose pin is checked against the installed release.
-``load_hub_json_or_exit`` prints one line per problem and exits 1; ``local_lines`` gives the
-lines of ``hub.local.json``'s problems.
+``load_hub_json_or_exit`` prints one line per problem and exits 1; ``hub_lines`` and
+``local_lines`` give the lines of ``hub.json``'s and ``hub.local.json``'s problems.
 """
 
 from importlib.metadata import version
@@ -33,6 +33,7 @@ __all__ = [
     "LoadedHubJson",
     "load_hub_config_or_exit",
     "load_hub_json_or_exit",
+    "hub_lines",
     "local_lines",
     "read_hub_bytes",
     "read_hub_json",
@@ -71,6 +72,11 @@ def load_hub_json_or_exit(path: Path, *, missing_hint: str | None = None) -> Loa
 def load_hub_config_or_exit(path: Path) -> HubConfig:
     """The validated config in ``path``; on any problem, print its lines to stderr and exit 1."""
     return load_hub_json_or_exit(path).config
+
+
+def hub_lines(problems: tuple[ConfigProblem, ...]) -> list[str]:
+    """One ``hub.json: <path>: <message>`` line per problem."""
+    return [_line(FILE_LABEL, problem) for problem in problems]
 
 
 def local_lines(problems: tuple[ConfigProblem, ...]) -> list[str]:
