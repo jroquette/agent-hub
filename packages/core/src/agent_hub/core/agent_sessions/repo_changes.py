@@ -12,7 +12,8 @@ hold the session's folder or one of the files it changed, deepest first, so a wo
 the repo it sits in. The reading itself is the ``RepoChangesReader`` port's (``hub_git``).
 """
 
-from collections.abc import Iterable
+import os
+from collections.abc import Iterable, Sequence
 from typing import Final, Literal, Protocol
 
 from pydantic import Field
@@ -26,6 +27,9 @@ MAX_COMMITS: Final = 200
 MAX_REPO_FILES: Final = 500
 # A file's diff past this many UTF-8 bytes is left out (``diff`` null, the stats still count).
 REPO_DIFF_MAX_BYTES: Final = 512 * 1024
+
+# A commit as the routes take it: 7 to 40 hex digits, never a ref name or an option.
+COMMIT_SHA_PATTERN: Final = r"^[0-9a-f]{7,40}$"
 
 type RepoFileStatus = Literal["added", "modified", "deleted", "renamed"]
 
@@ -93,12 +97,28 @@ class SessionRepoChanges(ViewModel):
     warnings: tuple[str, ...] = ()
 
 
+class RepoCommitDiff(ViewModel):
+    """``GET /agent-sessions/{id}/repo-changes/commit``: what one commit changed in one file, as a
+    unified diff with the file's line numbers. ``diff`` is null for a binary file or one past
+    ``REPO_DIFF_MAX_BYTES``, empty when the commit did not touch the file."""
+
+    sha: str
+    path: str
+    diff: str | None = None
+    binary: bool = False
+
+
 class RepoChangesReader(Protocol):
     """Reads one listed repository's changes against its base (the ``hub_git`` adapter)."""
 
     def read(self, root: str, *, label: str) -> RepoChanges:
         """The changes of the repository checked out at ``root``; ``RepoChangesError`` when
         git cannot read it."""
+        ...
+
+    def commit_diff(self, root: str, *, sha: str, paths: Sequence[str]) -> RepoCommitDiff:
+        """What commit ``sha`` changed in ``paths`` (relative to ``root``: a file and the name it
+        had before a rename); ``RepoChangesError`` when git cannot read it (no such commit)."""
         ...
 
 
@@ -127,3 +147,13 @@ def repo_roots(
         if hit is not None and hit not in roots:
             roots.append(hit)
     return tuple(roots[:MAX_REPOS])
+
+
+def relative_to_root(root: str, path: str) -> str | None:
+    """``path`` relative to ``root`` when it is a file inside it (no ``..`` part), else None."""
+    if not _inside(path, root) or path == root:
+        return None
+    rel = os.path.relpath(path, root)
+    if rel.startswith("..") or os.path.isabs(rel) or ".." in rel.split(os.sep):
+        return None
+    return rel

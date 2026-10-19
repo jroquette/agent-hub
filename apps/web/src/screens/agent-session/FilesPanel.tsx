@@ -24,6 +24,7 @@ import {
   type FileKind,
 } from "./fileKind";
 import { commonDir, type ChangedFile, type FileChange } from "./model";
+import { useRepoCommitDiff } from "./queries";
 import { writtenText } from "./netDiff";
 import type { FileCommit } from "./repoChanges";
 
@@ -402,30 +403,96 @@ function commitWhen(iso: string): string {
     : when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-/** A file's history on its branch: the commits that touched it, newest first, and its changes
- * not committed yet. */
-function CommitsBlock({ commits, uncommitted }: { commits: FileCommit[]; uncommitted: boolean }) {
+/** What one commit changed in the file, read from git when its row opens. */
+function CommitDiff({
+  sessionId,
+  path,
+  oldPath,
+  commit,
+}: {
+  sessionId: string;
+  path: string;
+  oldPath: string | null;
+  commit: FileCommit;
+}) {
+  const query = useRepoCommitDiff(sessionId, { path, oldPath, sha: commit.sha });
+  if (query.isPending) return <p className="ah-small ah-muted">Reading the commit…</p>;
+  if (query.isError) return <p className="ah-small ah-muted">Git could not read this commit.</p>;
+  const { diff, binary } = query.data;
+  if (binary) return <p className="ah-small ah-muted">A binary file: no diff to show.</p>;
+  if (diff === null || diff === undefined)
+    return <p className="ah-small ah-muted">Too big a diff to show here.</p>;
+  if (diff === "")
+    return <p className="ah-small ah-muted">This commit changed the file under another name.</p>;
+  return <DiffText diff={diff} label={`Commit ${shortSha(commit.sha)} to ${path}`} numbered />;
+}
+
+/** A file's history on its branch: the commits that touched it, newest first, each opening on
+ * what it changed in the file, and its changes not committed yet. */
+function CommitsBlock({
+  sessionId,
+  path,
+  oldPath,
+  commits,
+  uncommitted,
+}: {
+  sessionId: string;
+  path: string;
+  oldPath: string | null;
+  commits: FileCommit[];
+  uncommitted: boolean;
+}) {
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = (sha: string) => {
+    setOpen((before) => {
+      const next = new Set(before);
+      if (next.has(sha)) next.delete(sha);
+      else next.add(sha);
+      return next;
+    });
+  };
   return (
     <ol className="as-files-commits" aria-label="Commits that changed this file">
       {uncommitted && (
-        <li className="as-files-commit as-files-commit-dirty">
-          <Icon name="pencil" size="sm" />
-          <span className="as-files-commit-subject">Uncommitted changes</span>
-          <span className="ah-small ah-muted">in the working tree</span>
+        <li className="as-files-commit">
+          <div className="as-files-commit-head">
+            <Icon name="pencil" size="sm" />
+            <span className="as-files-commit-subject">Uncommitted changes</span>
+            <span className="ah-small ah-muted">in the working tree</span>
+          </div>
         </li>
       )}
-      {commits.map((commit) => (
-        <li key={commit.sha} className="as-files-commit">
-          <code className="as-files-commit-sha ah-mono ah-small" title={commit.sha}>
-            {shortSha(commit.sha)}
-          </code>
-          <span className="as-files-commit-subject">{commit.subject}</span>
-          <Stats added={commit.added} removed={commit.removed} />
-          <span className="as-files-commit-meta ah-small ah-muted">
-            {commit.author} · {commitWhen(commit.authoredAt)}
-          </span>
-        </li>
-      ))}
+      {commits.map((commit) => {
+        const expanded = open.has(commit.sha);
+        return (
+          <li key={commit.sha} className="as-files-commit">
+            <button
+              type="button"
+              className="as-files-commit-head as-files-commit-open"
+              aria-expanded={expanded}
+              title={expanded ? "Hide what this commit changed" : "Show what this commit changed"}
+              onClick={() => {
+                toggle(commit.sha);
+              }}
+            >
+              <Icon name={expanded ? "chevron-down" : "chevron-right"} size="sm" />
+              <code className="as-files-commit-sha ah-mono ah-small" title={commit.sha}>
+                {shortSha(commit.sha)}
+              </code>
+              <span className="as-files-commit-subject">{commit.subject}</span>
+              <Stats added={commit.added} removed={commit.removed} />
+              <span className="as-files-commit-meta ah-small ah-muted">
+                {commit.author} · {commitWhen(commit.authoredAt)}
+              </span>
+            </button>
+            {expanded && (
+              <div className="as-files-commit-diff">
+                <CommitDiff sessionId={sessionId} path={path} oldPath={oldPath} commit={commit} />
+              </div>
+            )}
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -586,6 +653,7 @@ function FileDetail({
   onBack,
   onStep,
   focusRequest = null,
+  sessionId,
 }: {
   file: ChangedFile;
   name: string;
@@ -596,6 +664,8 @@ function FileDetail({
   onStep: (by: -1 | 1) => void;
   /** A card in the conversation opened this file: each new value moves the keyboard here. */
   focusRequest?: number | null;
+  /** The session, whose repositories a commit's diff is read from. */
+  sessionId: string;
 }) {
   const mark = review.reviewed[file.path];
   const viewed = mark === file.lastChangeId;
@@ -735,7 +805,13 @@ function FileDetail({
         {showPreview && <PreviewBlock text={text} />}
         {showNet && <NetBlock file={file} path={name} />}
         {current === "commits" && repo && (
-          <CommitsBlock commits={repo.commits} uncommitted={repo.uncommitted} />
+          <CommitsBlock
+            sessionId={sessionId}
+            path={file.path}
+            oldPath={repo.oldPath}
+            commits={repo.commits}
+            uncommitted={repo.uncommitted}
+          />
         )}
         {current === "changes" &&
           file.changes.map((change, index) => (
@@ -953,6 +1029,7 @@ export function FilesPanel({
                 review={review}
                 onBack={wide ? null : backToList}
                 focusRequest={focusFile ? pickNonce : null}
+                sessionId={sessionId}
                 onStep={(by) => {
                   setPicked(shown[position + by]?.path ?? selected);
                 }}

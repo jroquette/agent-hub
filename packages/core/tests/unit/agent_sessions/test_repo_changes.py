@@ -1,6 +1,6 @@
 """Which repositories a session worked in, and what ``AgentSessionControl.repo_changes`` reads."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import pytest
 
@@ -9,6 +9,8 @@ from agent_hub.core.agent_sessions.repo_changes import (
     MAX_REPOS,
     RepoChanges,
     RepoChangesError,
+    RepoCommitDiff,
+    relative_to_root,
     repo_roots,
 )
 from agent_hub.core.agent_sessions.workdirs import ResolvedWorkdir, WorkdirListing
@@ -108,6 +110,12 @@ class _Reader:
             raise RepoChangesError(label)
         return RepoChanges(root=root, label=label, branch="tip-1", base="origin/main")
 
+    def commit_diff(self, root: str, *, sha: str, paths: Sequence[str]) -> RepoCommitDiff:
+        self.read_roots.append(root)
+        if root in self._failing:
+            raise RepoChangesError(root)
+        return RepoCommitDiff(sha=sha * 2, path=paths[0], diff=f"diff of {','.join(paths)}")
+
 
 def _workdirs(project: str) -> WorkdirListing:
     if project != "demo":
@@ -163,3 +171,49 @@ async def test_without_a_reader_there_are_no_repositories(make_rig: MakeRig) -> 
     changes = await rig.control.repo_changes(session.id)
 
     assert (changes.repos, changes.warnings) == ((), ())
+
+
+async def test_a_commit_s_diff_is_read_in_the_repository_that_holds_the_file(
+    make_rig: MakeRig,
+) -> None:
+    reader = _Reader()
+    rig, session = await _ended_session_with_files(make_rig, reader)
+
+    diff = await rig.control.repo_commit_diff(
+        session.id,
+        path=f"{WORKTREE_PATH}/src/new.py",
+        sha="abc1234",
+        old_path=f"{WORKTREE_PATH}/src/old.py",
+    )
+
+    assert reader.read_roots == [WORKTREE_PATH]
+    assert (diff.path, diff.diff) == (
+        f"{WORKTREE_PATH}/src/new.py",
+        "diff of src/new.py,src/old.py",
+    )
+
+
+@pytest.mark.parametrize("path", [f"{HUB_PATH}/brain/a.md", "/etc/passwd", WORKTREE_PATH])
+async def test_a_commit_s_diff_outside_the_session_s_repositories_is_not_found(
+    make_rig: MakeRig, path: str
+) -> None:
+    rig, session = await _ended_session_with_files(make_rig, _Reader())
+
+    with pytest.raises(EntityNotFoundError):
+        await rig.control.repo_commit_diff(session.id, path=path, sha="abc1234")
+
+
+async def test_a_commit_git_cannot_read_is_not_found(make_rig: MakeRig) -> None:
+    rig, session = await _ended_session_with_files(
+        make_rig, _Reader(failing=frozenset({REPO_PATH}))
+    )
+
+    with pytest.raises(EntityNotFoundError):
+        await rig.control.repo_commit_diff(session.id, path=f"{REPO_PATH}/a.py", sha="abc1234")
+
+
+def test_relative_to_root_keeps_only_files_inside_the_root() -> None:
+    assert relative_to_root(REPO_PATH, f"{REPO_PATH}/src/a.py") == "src/a.py"
+    assert relative_to_root(REPO_PATH, REPO_PATH) is None
+    assert relative_to_root(REPO_PATH, f"{REPO_PATH}/../x.py") is None
+    assert relative_to_root(REPO_PATH, "/hubs/api-old/a.py") is None

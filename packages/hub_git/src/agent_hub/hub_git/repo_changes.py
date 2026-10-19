@@ -31,6 +31,7 @@ from agent_hub.core.agent_sessions.repo_changes import (
     RepoChanges,
     RepoChangesError,
     RepoCommit,
+    RepoCommitDiff,
     RepoFileChange,
     RepoFileCommit,
     RepoFileStatus,
@@ -219,17 +220,7 @@ class GitRepoChanges:
     def read(self, root: str, *, label: str) -> RepoChanges:
         """The changes of the checkout at ``root``; ``RepoChangesError`` when git cannot read
         it."""
-        program = shutil.which(self._git, path=self._env.get("PATH") or "")
-        if program is None:
-            raise RepoChangesError(label)
-        run = _Run(
-            launch=self._launch,
-            git=os.path.abspath(program),
-            env=self._env,
-            cwd=Path(root),
-            seconds=self._seconds,
-            clock=self._clock,
-        )
+        run = self._run(root, label=label)
         if run.text("rev-parse", "--is-inside-work-tree").strip() != "true":
             raise RepoChangesError(label)
         branch = run.text("symbolic-ref", "--quiet", "--short", "HEAD", check=False).strip()
@@ -251,6 +242,40 @@ class GitRepoChanges:
             commits=tuple(commits[:MAX_COMMITS]),
             files=files,
             truncated=truncated,
+        )
+
+    def commit_diff(self, root: str, *, sha: str, paths: Sequence[str]) -> RepoCommitDiff:
+        """What commit ``sha`` changed in ``paths`` (``git show``, renames found); the first file
+        it names, empty when it touched none of them."""
+        run = self._run(root, label=root)
+        found = run.result("rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
+        if found.returncode != 0 or not paths:
+            raise RepoChangesError(root)
+        full = found.stdout.decode().strip()
+        shown = run.text(
+            "show", "--format=", "--no-color", "--no-ext-diff", "-M", full, "--", *paths
+        )
+        patches = parse_patch(shown)
+        if not patches:
+            return RepoCommitDiff(sha=full, path=paths[0], diff="")
+        item = patches[0]
+        text = "\n".join(item.lines)
+        too_big = item.binary or len(text.encode()) > REPO_DIFF_MAX_BYTES
+        return RepoCommitDiff(
+            sha=full, path=item.path, diff=None if too_big else text, binary=item.binary
+        )
+
+    def _run(self, root: str, *, label: str) -> _Run:
+        program = shutil.which(self._git, path=self._env.get("PATH") or "")
+        if program is None:
+            raise RepoChangesError(label)
+        return _Run(
+            launch=self._launch,
+            git=os.path.abspath(program),
+            env=self._env,
+            cwd=Path(root),
+            seconds=self._seconds,
+            clock=self._clock,
         )
 
     @staticmethod

@@ -120,3 +120,32 @@ def test_without_a_base_branch_nothing_is_compared(tmp_path: Path) -> None:
     changes = GitRepoChanges(environ=env).read(str(tmp_path), label="solo")
 
     assert (changes.branch, changes.base, changes.files) == ("trunk", None, ())
+
+
+def test_reads_what_one_commit_changed_in_one_file(checkout: tuple[Path, dict[str, str]]) -> None:
+    work, env = checkout
+    reader = GitRepoChanges(environ=env)
+    app = next(f for f in reader.read(str(work), label="w").files if f.path.endswith("app.py"))
+    [commit] = app.commits
+
+    diff = reader.commit_diff(str(work), sha=commit.sha[:7], paths=["app.py"])
+
+    assert diff.sha == commit.sha
+    assert diff.diff == "--- a/app.py\n+++ b/app.py\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c"
+
+
+def test_a_commit_that_did_not_touch_the_file_has_an_empty_diff(
+    checkout: tuple[Path, dict[str, str]],
+) -> None:
+    work, env = checkout
+    reader = GitRepoChanges(environ=env)
+    first = reader.read(str(work), label="w").commits[-1]
+
+    assert reader.commit_diff(str(work), sha=first.sha, paths=["new.py"]).diff == ""
+
+
+def test_an_unknown_commit_cannot_be_read(checkout: tuple[Path, dict[str, str]]) -> None:
+    work, env = checkout
+
+    with pytest.raises(RepoChangesError):
+        GitRepoChanges(environ=env).commit_diff(str(work), sha="0" * 40, paths=["app.py"])

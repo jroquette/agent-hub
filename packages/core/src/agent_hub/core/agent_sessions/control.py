@@ -127,7 +127,9 @@ from agent_hub.core.agent_sessions.records import (
 from agent_hub.core.agent_sessions.repo_changes import (
     RepoChangesError,
     RepoChangesReader,
+    RepoCommitDiff,
     SessionRepoChanges,
+    relative_to_root,
     repo_roots,
 )
 from agent_hub.core.agent_sessions.screenshot import decode_screenshot
@@ -146,6 +148,7 @@ from agent_hub.core.agent_sessions.session_state import (
 )
 from agent_hub.core.agent_sessions.store import AgentSessionFields, AgentSessionStore
 from agent_hub.core.agent_sessions.workdirs import WorkdirListing
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.sessions.session import TokenUsage
 
 # The workdirs of a project, listed now (``api/workdir_listing.py`` over the hub registry); it
@@ -279,6 +282,12 @@ class AgentSessionCommands(Protocol):
 
     async def repo_changes(self, agent_session_id: str) -> SessionRepoChanges:
         """What the session's repositories change against their base branch."""
+        ...
+
+    async def repo_commit_diff(
+        self, agent_session_id: str, *, path: str, sha: str, old_path: str | None = None
+    ) -> RepoCommitDiff:
+        """What one commit changed in one file of the session's repositories."""
         ...
 
     async def delete(self, agent_session_id: str) -> None:
@@ -436,6 +445,35 @@ class AgentSessionControl:
             except RepoChangesError:
                 warnings.append(f"{root.workdir.label} could not be read by git")
         return SessionRepoChanges(repos=tuple(repos), warnings=tuple(warnings))
+
+    async def repo_commit_diff(
+        self, agent_session_id: str, *, path: str, sha: str, old_path: str | None = None
+    ) -> RepoCommitDiff:
+        """What commit ``sha`` changed in the file at ``path`` (and ``old_path``, its name before
+        a rename), read by git in the session's repository that holds it (``repo_changes``'s
+        repositories, plus the listed one holding ``path``). ``EntityNotFoundError`` when no
+        such repository holds the file, or git knows no such commit."""
+        session = await self._session(agent_session_id)
+        reader = self._repo_changes
+        missing = EntityNotFoundError(entity="commit", entity_id=sha)
+        if reader is None:
+            raise missing
+        try:
+            listing = await self._listing(session.project)
+        except Exception as error:  # noqa: BLE001 -- an unknown project holds no file
+            raise missing from error
+        roots = repo_roots(listing, workdir_id=session.workdir_id, paths=(path,))
+        root = next((one for one in roots if relative_to_root(one.path, path) is not None), None)
+        if root is None:
+            raise missing
+        paths = [relative_to_root(root.path, one) for one in (path, old_path) if one]
+        try:
+            diff = await asyncio.to_thread(
+                reader.commit_diff, root.path, sha=sha, paths=[one for one in paths if one]
+            )
+        except RepoChangesError as error:
+            raise missing from error
+        return diff.model_copy(update={"path": path})
 
     async def _session(self, agent_session_id: str) -> AgentSession:
         """The live view of a session, else its stored record (no twin lookup)."""
