@@ -56,6 +56,8 @@ export interface TranscriptProps {
   sidePanel?: ReactNode;
   /** A run line opened the activity drawer: the page closes its own. */
   onActivityOpen?: (() => void) | undefined;
+  /** The conversation's last line, after every entry (the background tasks' card). */
+  footer?: ReactNode;
 }
 
 /** The first render shows the latest entries only, from the oldest pending card at the latest;
@@ -283,6 +285,7 @@ export function Transcript({
   reviewed,
   onOpenFile,
   sidePanel,
+  footer,
   onActivityOpen,
 }: TranscriptProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -489,6 +492,7 @@ export function Transcript({
               </div>
             ))}
           </div>
+          {footer && <div className="as-column as-transcript-footer">{footer}</div>}
           {/* One live region stays mounted while the session lives, so its text changes are announced. */}
           {state.status !== "ended" && state.status !== "failed" && (
             <p
