@@ -144,6 +144,11 @@ describe("Sidebar", () => {
     expect(screen.getByRole("link", { name: "Health, 1 doctor error" })).toBeInTheDocument();
   });
 
+  it("badges Features with how many features need you", () => {
+    renderSidebar("/", { counts: { features: 2 } });
+    expect(screen.getByRole("link", { name: "Features, 2 need you" })).toHaveTextContent("2");
+  });
+
   it("one-tab: has one Sessions entry carrying the live badge and no Live sessions entry", () => {
     const { container } = renderSidebar("/", { counts: { live: 3 } });
 
