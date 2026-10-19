@@ -380,7 +380,12 @@ describe("FilesPanel (kinds of file)", () => {
         onToggle={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: /1 to review/ })).toBeInTheDocument();
+    // The total is the code alone, as the pull request counts it.
+    expect(
+      screen.getByRole("button", {
+        name: "Review changes: 1 file, 1 lines added, 0 removed, 1 to review",
+      }),
+    ).toBeInTheDocument();
   });
 });
 

@@ -908,8 +908,7 @@ export function FilesPanel({
   const base =
     shown.length === 1 ? root.slice(0, root.lastIndexOf("/", root.length - 2) + 1) : root;
   const nameOf = (path: string) => path.slice(base.length);
-  const added = files.reduce((sum, file) => sum + file.added, 0);
-  const removed = files.reduce((sum, file) => sum + file.removed, 0);
+  const totals = codeTotals(files);
 
   // Wide, a file is always open (the first by default); narrow, only the one you picked.
   const known = shown.some((file) => file.path === picked) ? picked : null;
@@ -960,8 +959,14 @@ export function FilesPanel({
           Changed files
         </h2>
         <span className="ah-small ah-muted">
-          {files.length} {files.length === 1 ? "file" : "files"} ·{" "}
-          <Stats added={added} removed={removed} />
+          {totals.files > 0 ? (
+            <>
+              {plural(totals.files, "code file")} ·{" "}
+              <Stats added={totals.added} removed={totals.removed} />
+            </>
+          ) : (
+            "No code changes"
+          )}
         </span>
         <span className="ah-grow" />
         <Button
@@ -1042,6 +1047,19 @@ export function FilesPanel({
   );
 }
 
+/** What the review totals: the code that goes in the pull request (git's files and the repo
+ * files Claude changed), never Claude's plans, feature records, brain notes or scratch. */
+export function codeTotals(files: readonly ChangedFile[]) {
+  const code = files.filter((file) => isReviewable(file.path));
+  return {
+    files: code.length,
+    added: code.reduce((sum, file) => sum + file.added, 0),
+    removed: code.reduce((sum, file) => sum + file.removed, 0),
+  };
+}
+
+const plural = (n: number, word: string) => `${String(n)} ${word}${n === 1 ? "" : "s"}`;
+
 export interface ChangedFilesChipProps {
   files: readonly ChangedFile[];
   review: ReviewState;
@@ -1054,11 +1072,10 @@ export interface ChangedFilesChipProps {
  * for review and quiet once all are viewed (a check). Pressed while the drawer is open.
  */
 export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFilesChipProps) {
-  const added = files.reduce((sum, file) => sum + file.added, 0);
-  const removed = files.reduce((sum, file) => sum + file.removed, 0);
-  // Only the code waits on you: Claude's plans, learnings and scratch are not for review.
+  // Only the code counts and waits on you: Claude's own files are in their tabs, not the total.
+  const { files: codeFiles, added, removed } = codeTotals(files);
   const due = files.filter((file) => isReviewable(file.path) && !isViewed(review, file)).length;
-  const count = `${String(files.length)} ${files.length === 1 ? "file" : "files"}`;
+  const count = codeFiles > 0 ? plural(codeFiles, "file") : "No code";
   return (
     <button
       type="button"
@@ -1072,7 +1089,7 @@ export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFiles
       <Icon name="git-compare" size="sm" />
       <span className="as-files-chip-label">Review changes</span>
       <span className="as-files-chip-count">{count}</span>
-      <Stats added={added} removed={removed} />
+      {codeFiles > 0 && <Stats added={added} removed={removed} />}
       {due > 0 ? (
         <span className="as-files-chip-due-count">{due} to review</span>
       ) : (
