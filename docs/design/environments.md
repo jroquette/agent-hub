@@ -100,8 +100,8 @@ tightens); the brief, `hub env list`, doctor and setup show it.
   JSON, not an object, not a regular file, over 64 KiB), until it is fixed (doctor's `config.schema` reports it); an
   absent one changes nothing. A hook event that is not a JSON object (bad UTF-8, invalid or truncated JSON, nested too
   deep for the parser, a list) makes the guard ask
-  `blocked words not checked: the tool input could not be read (not a JSON object)` while blocked words are in effect;
-  without them, nothing changes.
+  `blocked words not checked: the tool input could not be read (not a JSON object)` while blocked words, or a problem
+  with the blocked-word list, are in effect; without them, nothing changes.
 - **Reason:** ``blocked word `<w>` (guard.blocked_words, <first layer listing it>) in <where>: agents do not reach what
   a blocked word names``, `<where>` one of `the command`, `the session variable <NAME>`, `the path <path>`, `the
   contents of <path>` (the path escaped, ≤ 100 characters). Never the command, a value or a line. Rule id
