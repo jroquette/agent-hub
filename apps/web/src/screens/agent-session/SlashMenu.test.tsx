@@ -67,9 +67,13 @@ describe("slash options", () => {
       aCatalogItem({ kind: "hook", name: "guard", mode: null }),
     ];
 
-    expect(hubOptions(items)).toEqual([
-      { command: "/fix", hub: true, description: "Fix a bug" },
-      { command: "/agent-researcher", hub: true, description: items[2]?.description ?? null },
+    expect(hubOptions("demo", items).map((o) => [o.command, o.description, o.href])).toEqual([
+      ["/fix", "Fix a bug", `/projects/demo/skills/skill/${items[0]?.source ?? ""}/fix`],
+      [
+        "/agent-researcher",
+        items[2]?.description ?? null,
+        `/projects/demo/skills/agent/${items[2]?.source ?? ""}/researcher`,
+      ],
     ]);
   });
 
@@ -131,6 +135,26 @@ describe("SlashMenu (slash-menu)", () => {
 
     expect(screen.getByRole("option", { name: "/fix, from the hub" })).toHaveTextContent("hub/fix");
     expect(screen.getByRole("option", { name: "/compact" })).not.toHaveTextContent("hub");
+  });
+
+  it("opens a hub item's page in a new tab without picking it", async () => {
+    const opened = vi.spyOn(window, "open").mockReturnValue(null);
+    const fix = { ...option("/fix", true), href: "/projects/demo/skills/skill/hub-workflow/fix" };
+    const { box, container } = open({ commands: [fix, option("/compact")] });
+    await userEvent.type(box, "/");
+
+    expect(container.querySelectorAll(".as-slash-open")).toHaveLength(1);
+    const button = container.querySelector<HTMLElement>(".as-slash-open");
+    if (!button) throw new Error("no open button");
+    await userEvent.click(button);
+    expect(opened).toHaveBeenLastCalledWith(fix.href, "_blank", "noopener");
+    expect(box).toHaveValue("/");
+
+    await userEvent.keyboard("{Control>}{Enter}{/Control}");
+    expect(opened).toHaveBeenCalledTimes(2);
+    expect(box).toHaveValue("/");
+    opened.mockRestore();
+    expect(await seriousViolations(container)).toEqual([]);
   });
 
   it("closes after a space", async () => {
