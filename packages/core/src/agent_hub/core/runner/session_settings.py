@@ -7,12 +7,14 @@ keep their order. In every string under a ``command`` key, ``$CLAUDE_PROJECT_DIR
 the hub's path and ``/``, since Claude Code sets that variable to the session's cwd (the repo).
 The same source, effort and hub path always give the same bytes.
 
-A command that would still reach the repo, or run the hub's path as shell syntax, is refused
-(spec AM-1): one that names ``CLAUDE_PROJECT_DIR`` in any other spelling
-(``${CLAUDE_PROJECT_DIR}``, a bare ``$CLAUDE_PROJECT_DIR``), and one where
-``$CLAUDE_PROJECT_DIR/`` is not inside a double-quoted word. Inside double quotes only ``"``,
-``$``, a backtick and ``\\`` are not literal, so a hub path holding one of them is refused, as
-is a hub path or a command that is not UTF-8 text.
+A command is accepted only when it is plain words plus whole words of exactly the form
+``"$CLAUDE_PROJECT_DIR/<path>"`` (``<path>`` of letters, digits and ``._/@+-``), as every hub
+hook command is (spec AM-1). Once those words are set aside, any quote, backtick, ``\\``,
+``$``, ``#``, ``<<`` or ``CLAUDE_PROJECT_DIR`` left refuses the command: an allow-list, so no
+shell form (``${CLAUDE_PROJECT_DIR}``, ANSI-C quotes, substitutions, comments, heredocs) can
+reach the repo or run the hub's path as syntax. Each rewritten word stays one plain
+double-quoted word, where only ``"``, ``$``, a backtick and ``\\`` are not literal: a hub path
+holding one of them is refused, as is a hub path or a command that is not UTF-8 text.
 """
 
 import json
@@ -24,8 +26,12 @@ from agent_hub.core.json_form import JsonValue
 
 PROJECT_DIR: Final = "$CLAUDE_PROJECT_DIR/"
 _VARIABLE_NAME: Final = "CLAUDE_PROJECT_DIR"
-# The hub-relative path a command names after the variable, up to a quote or a space.
-_SCRIPT: Final = re.compile(r"\$CLAUDE_PROJECT_DIR/([^\"'\s]+)")
+# The one word a command may use the variable in, whole: its group is the hub-relative path.
+_PROJECT_WORD: Final = re.compile(r'(?<!\S)"\$CLAUDE_PROJECT_DIR/([A-Za-z0-9._/@+-]*)"(?!\S)')
+# What, outside those words, could quote, expand, comment or redirect.
+_REFUSED_CHARACTERS: Final = frozenset("'\"`\\$#")
+_REFUSED_TEXTS: Final = ("<<", _VARIABLE_NAME)
+_SHOWN_CHARS: Final = 120
 # What a double-quoted shell word would read as other than itself.
 _SHELL_CHARACTERS: Final = frozenset('"$`\\')
 
@@ -93,45 +99,24 @@ def _rewritten(
         ]
     if is_command and isinstance(value, str):
         _check_command(value, event=event)
-        scripts.extend(_SCRIPT.findall(value))
-        return value.replace(PROJECT_DIR, prefix)
+        scripts.extend(path for path in _PROJECT_WORD.findall(value) if path)
+        return _PROJECT_WORD.sub(lambda word: f'"{prefix}{word.group(1)}"', value)
     return value
 
 
 def _check_command(command: str, *, event: str) -> None:
-    where = f"a {json.dumps(event)} hook command"
+    where = f"a {_shown_event(event)} hook command"
     if not _is_utf8(command):
         raise HookCommandError(f"{where} is not UTF-8 text")
-    uses = {found.start() for found in re.finditer(re.escape(PROJECT_DIR), command)}
-    if not uses <= _double_quoted_uses(command):
-        raise HookCommandError(f"{where} uses {PROJECT_DIR} outside double quotes")
-    if _VARIABLE_NAME in command.replace(PROJECT_DIR, ""):
-        raise HookCommandError(f"{where} names {_VARIABLE_NAME} other than as {PROJECT_DIR}")
+    rest = _PROJECT_WORD.sub(" ", command)
+    if _REFUSED_CHARACTERS.intersection(rest) or any(text in rest for text in _REFUSED_TEXTS):
+        raise HookCommandError(f'{where} must use only "{PROJECT_DIR}<path>" and plain words')
 
 
-def _double_quoted_uses(command: str) -> set[int]:
-    # Where ``$CLAUDE_PROJECT_DIR/`` starts as an expansion inside double quotes, read the way
-    # a POSIX shell reads quotes and backslashes. Anything nested (``"$(echo "…")"``) is read
-    # as closing the quote, so it counts as unquoted: refused, never trusted.
-    found: set[int] = set()
-    quoted = False
-    index = 0
-    while index < len(command):
-        character = command[index]
-        if character == "\\":
-            index += 2  # the next character is taken literally
-            continue
-        if character == "'" and not quoted:
-            # A single-quoted span ends at the next quote, with nothing expanded in it.
-            end = command.find("'", index + 1)
-            index = len(command) if end < 0 else end + 1
-            continue
-        if character == '"':
-            quoted = not quoted
-        elif quoted and command.startswith(PROJECT_DIR, index):
-            found.add(index)
-        index += 1
-    return found
+def _shown_event(event: str) -> str:
+    # The event name comes from a file a session can write: shown quoted and cut at its cap.
+    cut = event[:_SHOWN_CHARS]
+    return json.dumps(cut if cut == event else f"{cut}...")
 
 
 def _is_utf8(text: str) -> bool:
