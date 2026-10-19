@@ -2,24 +2,21 @@
 
 ## Purpose
 
-A developer (or an agent) joining a project clones the hub into the folder that holds (or will hold) the project's
-repos, so they sit side by side, then runs `./hub setup` in it. It checks the tools and the tracker credential, writes
-`hub.local.json` when the hub needs one, clones the missing repos, fetches the present ones, runs `hub doctor` and lists
-what is still missing, each with its fix. Its contract: options, output, writes, git environment, exit codes (AGH-71).
+A developer or agent runs `./hub setup` in the hub beside the project's repos: it checks tools and tracker access,
+writes `hub.local.json` if needed, clones or fetches each repo, runs `hub doctor` and lists what is missing, with fixes.
 
 ## Contract
 
 ### Command
 
-- `hub setup [--yes]`, run as `./hub setup` from the hub. `--yes` (write a new `hub.local.json` without asking) is the
-  only option, besides `--help`; no `--json`, `--only` or `--no-fetch`.
+- `hub setup [--yes]`, run as `./hub setup` from the hub. `--yes` (write a new `hub.local.json` without asking, and ask
+  no environment) is the only option, besides `--help`; no `--json`, `--only` or `--no-fetch`.
 - Root: `AGENT_HUB_ROOT` when `./hub` exports it, else the cwd. No `hub.json` there: exit 2 with `<root>: not a hub: no
-  hub.json in this folder (hub setup runs in the hub folder or through ./hub)`. `hub.json` is read once; any problem,
-  a `platform.version` pin other than the running release included, prints the reader's lines and exits 1 before any
-  git call. Repos are cloned next to the root (`<root>/../<dir>`); `hub.local.json` is read and written in the identity
-  home, the main checkout ([developer-identity.md](developer-identity.md)).
-- Sections run and print in this order, each whatever failed before: tools, identity (then `gitignore`), repos, `hub
-  doctor`. The only prompt comes before the network step, so the rest runs unattended.
+  hub.json in this folder (hub setup runs in the hub folder or through ./hub)`. `hub.json` is read once; any problem (a
+  `platform.version` pin other than this release too) prints the reader's lines and exits 1 before any git call. Repos
+  go to `<root>/../<dir>`; `hub.local.json` to the identity home ([developer-identity.md](developer-identity.md)).
+- Sections run and print in this order, each whatever failed before: tools, identity (then `gitignore`), environments,
+  repos, `hub doctor`. The prompts come before the network step, so the rest runs unattended.
 
 ### Output
 
@@ -27,7 +24,7 @@ Stdout holds only the checklist, each item printed as soon as it is decided: `<s
 `<state>` being `ok` or `missing` padded to 7 columns plus one space. Sub-lines (doctor findings, `hub.local.json`
 problems, no-prefix reasons, git's problem) follow their item, indented 8 spaces. The last line is `setup: <n> ok`, or
 `setup: <m> missing, <n> ok` (items, not sub-lines). Stderr holds the identity proposal (`hub setup: proposed
-hub.local.json in <home>: <values> (<sources>)`), the prompt (`Write <home>/hub.local.json? [y/N] `) and the usage,
+hub.local.json in <home>: <values> (<sources>)`), the prompts (`Write <home>/hub.local.json? [y/N] `, …) and the usage,
 not-a-hub and config errors. A team hub, `demo-web` missing, an SSH origin, `--yes`, `gh` not logged in, no key:
 
 ```text
@@ -55,6 +52,7 @@ setup: 2 missing, 8 ok
 | `tracker` | `LINEAR_API_KEY set (transport api)`; `transport mcp: Linear through claude -p (its Linear MCP server is not checked)` | `LINEAR_API_KEY is not set (transport api)` → as the sample; `transport mcp needs claude on PATH` → the `claude` fix |
 | `identity` | `wrote hub.local.json: <values> (<sources>)` (the written keys only); `<values> (<sources>)`, sources distinct in key order | below |
 | `gitignore` | no line | `hub.local.json is not ignored by git` → `add the line hub.local.json to .gitignore and commit it; if git tracks it, also git rm --cached hub.local.json` |
+| `environments` | `<name> (<access>[, PRODUCTION])` per effective environment, joined by `, `; a sub-line `production environment: <name> (access <a>, <file>)` per production one; no line when neither file declares one | never |
 | `repo <dir>` | `present, fetched`; `cloned <owner/name> into ../<dir> (<ssh\|https>)` | below |
 | `hub doctor` | its totals line | its totals line → `fix each error below, then ./hub doctor`; its finding lines as sub-lines in both states |
 
@@ -95,8 +93,11 @@ Repo gaps, with their Fix:
   are proposed from the hub's git config; with every one valid, `--yes`, or `y`/`yes` at the prompt on a terminal,
   writes `{"project": {…}}` (keys in the order `branch_prefix`, `author_name`, `author_email`, indent 2, UTF-8, mode
   0644) through a temporary file linked to `hub.local.json`, which fails if a file appeared. An answer cut at 64 bytes
-  or not UTF-8 is a no. Then, when the file exists, `git -C <home> check-ignore -q hub.local.json` exiting 1
-  gives the `gitignore` item; any other outcome gives no line.
+  or not UTF-8 is a no. Then, after the environments step's questions, when the file exists, `git -C <home> check-ignore
+  -q hub.local.json` exiting 1 gives the `gitignore` item; any other outcome gives no line.
+- **Environments** (`setup_environments`), on a terminal without `--yes`: `Declare your own environments now
+  (hub.local.json)? [y/N] `, then names until an empty one, each with its access and `Is it production? [y/N] ` (no
+  unless `y`), written as `hub env add --local` writes; an answer past 64 bytes is asked again once, then the step ends.
 - **Repos.** Per `repos` entry, in `hub.json` order, at `<root>/../<dir>`: no entry → `git clone --quiet <url>`, the
   url over the hub origin's scheme (`git@github.com:<owner/name>.git` when `origin` is a GitHub SSH remote, else
   `https://github.com/<owner/name>.git`); a folder, or a link to one, holding `.git` → `git -C ../<dir> rev-parse
@@ -105,7 +106,6 @@ Repo gaps, with their Fix:
   `.git`) is `git cannot read`, and its timeout (10 s, a local read) `checking ../<dir> timed out`: no fetch runs
   after either. Clones and fetches are cut at 600 s, their process group killed. Only git's exit code is read.
 - **Doctor.** `hub doctor`'s check runs in process on the root, whatever the cwd, with its own reads and rules.
-- Setup writes only the clones into absent entries and a new `hub.local.json`; it deletes nothing.
 
 ### Git environment
 
@@ -125,13 +125,13 @@ usage error or not a hub. Tests replace module-level seams, none a flag or a var
 
 ## Invariants
 
-- Never overwrites: `hub.local.json`, `.gitignore`, `hub.json`, git config, a working tree and any existing
-  `../<dir>` entry stay as they are; a re-run after a clean run clones nothing and writes nothing.
+- Writes only the clones into absent entries and `hub.local.json` (a new one, then the environments answered, ADR 0038),
+  and deletes nothing: `.gitignore`, `hub.json`, git config, a working tree and any existing `../<dir>` entry stay as
+  they are; a re-run after a clean run clones nothing and, with no answer, writes nothing.
 - No credential is read beyond `LINEAR_API_KEY`'s presence, asked for or shown; no remote URL, built URL or git output
   is printed (lines name `<owner/name>` and the scheme only).
 - `hub doctor` is unchanged and stays read-only and network-free; setup calls its check.
-- Rendered files are unchanged: setup and the generator's repo lists (`repo_dirs`, `repo_githubs`) share
-  `workspace_repos`.
+- Rendered files are unchanged: setup and the generator's repo lists (`repo_dirs`, `repo_githubs`) share one list.
 
 ## Decisions
 
@@ -140,8 +140,8 @@ usage error or not a hub. Tests replace module-level seams, none a flag or a var
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md), [ADR 0008](../adr/0008-cli-as-composition-root.md): the
   checklist texts, version rule and exit rule are pure core (`workspace/setup_checklist.py`); subprocesses, the
   prompt and the write are in `cli`; the tool probe is a cli Protocol, not a port.
-- AGH-71's spec: the section order, git's output never shown, the scheme from the hub's `origin`, `hub.local.json`
-  never overwritten, doctor in process, one repo list (`workspace_repos`) shared with the generator.
+- AGH-71's spec: the section order, git's output never shown, the scheme from the hub's `origin`, doctor in process, one
+  repo list (`workspace_repos`) shared with the generator; ADR 0038 adds the environments step.
 
 ## Open questions
 
