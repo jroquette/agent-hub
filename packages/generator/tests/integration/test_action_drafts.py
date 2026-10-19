@@ -103,3 +103,30 @@ def test_clears_draft_when_action_committed(hub: Path) -> None:
 
 def test_marks_every_action_draft_when_hub_not_git(hub: Path) -> None:
     assert set(drafts(hub).values()) == {True}
+
+
+def test_marks_pack_draft_when_helper_uncommitted(hub: Path) -> None:
+    # A helper a script sources is part of every action of its pack.
+    an_action(hub, "queues", "get-queue")
+    helper = hub / "actions" / "orders" / "scripts" / "lib" / "common.sh"
+    helper.parent.mkdir(parents=True)
+    helper.write_text("DEMO=1\n", encoding="utf-8")
+    git(hub, "init", "-q", "-b", "main")
+    git(hub, "add", "actions")
+    git(hub, "commit", "-q", "-m", "actions")
+    assert set(drafts(hub).values()) == {False}
+
+    helper.write_text("DEMO=2\n", encoding="utf-8")
+    (hub / "actions" / "queues" / "scripts" / "new.sh").write_text("DEMO=3\n", encoding="utf-8")
+
+    found = {entry.ref: entry.draft for entry in discover_actions(hub).actions}
+    assert found == {
+        "orders/get-cover": True,
+        "orders/get-invoice": True,
+        "orders/get-order": True,
+        "orders/get-quote": True,
+        "queues/get-queue": True,
+    }
+    git(hub, "add", "actions")
+    git(hub, "commit", "-q", "-m", "helpers")
+    assert set(drafts(hub).values()) == {False}

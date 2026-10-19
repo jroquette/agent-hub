@@ -100,3 +100,31 @@ def test_refuses_ref_when_action_unknown_or_ambiguous(
         resolve_action(ENTRIES, ref, pack=pack)
 
     assert str(caught.value) == message
+
+
+def test_changes_action_content_hash_when_helper_byte_changes() -> None:
+    # A file a script sources is pinned too: every other file of the pack's scripts/.
+    helper = ("actions/orders/scripts/lib/common.sh", b"DEMO=1\n")
+    pinned = action_content_hash(
+        document_path="actions/orders/get-order.yaml",
+        document=DOCUMENT,
+        script_path="actions/orders/scripts/get_order.sh",
+        script=SCRIPT,
+        helpers=(helper,),
+    )
+
+    assert pinned != a_hash()
+    assert pinned == action_content_hash(
+        document_path="actions/orders/get-order.yaml",
+        document=DOCUMENT,
+        script_path="actions/orders/scripts/get_order.sh",
+        script=SCRIPT,
+        helpers=(helper,),
+    )
+    assert pinned != action_content_hash(
+        document_path="actions/orders/get-order.yaml",
+        document=DOCUMENT,
+        script_path="actions/orders/scripts/get_order.sh",
+        script=SCRIPT,
+        helpers=((helper[0], b"DEMO=2\n"),),
+    )

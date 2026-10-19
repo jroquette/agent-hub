@@ -43,12 +43,20 @@ class ActionEntry(BaseModel):
 
 
 def action_content_hash(
-    *, document_path: str, document: bytes, script_path: str, script: bytes
+    *,
+    document_path: str,
+    document: bytes,
+    script_path: str,
+    script: bytes,
+    helpers: Iterable[tuple[str, bytes]] = (),
 ) -> str:
-    """``sha256:`` over the document then the script, each as ``<path>\\0<len>\\0<bytes>``
-    (the framing of a run's snapshot hash), so a run can pin exactly what it ran."""
+    """``sha256:`` over the document, the script, then each other file of the pack's
+    ``scripts/`` in path order (``helpers``, the files a script may source), each as
+    ``<path>\\0<len>\\0<bytes>`` (the framing of a run's snapshot hash), so a run can pin
+    exactly what it ran."""
     digest = hashlib.sha256()
-    for path, data in ((document_path, document), (script_path, script)):
+    files = ((document_path, document), (script_path, script), *sorted(helpers))
+    for path, data in files:
         digest.update(f"{path}\0{len(data)}\0".encode() + data)
     return f"sha256:{digest.hexdigest()}"
 

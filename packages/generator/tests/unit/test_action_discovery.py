@@ -137,3 +137,33 @@ def test_refuses_output_format_when_schema_invalid(hub: Path) -> None:
     [(file, line, key, reason)] = _shown(found)
     assert (file, line, key) == ("actions/orders/get-order.yaml", 9, "output_format")
     assert reason.startswith("not a valid JSON Schema: type: ")
+
+
+def test_pins_helpers_when_pack_scripts_hold_more_files(hub: Path, tmp_path: Path) -> None:
+    # Every file of the pack's scripts/ is in each action's hash; __pycache__ is not.
+    _action(hub, "orders", "get-order")
+    _action(hub, "queues", "get-queue")
+    helper = _write(hub / "actions" / "orders" / "scripts" / "lib" / "common.sh", "DEMO=1\n")
+    _write(hub / "actions" / "orders" / "scripts" / "__pycache__" / "x.pyc", "cache\n")
+    before = {entry.ref: entry.content_hash for entry in discover_actions(hub).actions}
+
+    helper.write_text("DEMO=2\n", encoding="utf-8")
+    _write(hub / "actions" / "orders" / "scripts" / "__pycache__" / "y.pyc", "more cache\n")
+    after = {entry.ref: entry.content_hash for entry in discover_actions(hub).actions}
+
+    assert after["orders/get-order"] != before["orders/get-order"]
+    assert after["queues/get-queue"] == before["queues/get-queue"]
+
+    outside = _write(tmp_path / "outside.sh", "DEMO=3\n")
+    os.symlink(outside, hub / "actions" / "orders" / "scripts" / "lib" / "linked.sh")
+    found = discover_actions(hub)
+
+    assert [entry.ref for entry in found.actions] == ["queues/get-queue"]
+    assert _shown(found) == [
+        (
+            "actions/orders/get-order.yaml",
+            6,
+            "script",
+            "scripts/lib/linked.sh is a link; a pack's scripts are read by their real path",
+        )
+    ]
