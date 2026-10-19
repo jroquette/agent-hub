@@ -2629,7 +2629,8 @@ def every_text(run_workspace: Any, result: Result) -> str:
     texts = [result.stdout, result.stderr]
     texts += [path.read_text() for path in sorted(run_workspace.logs.glob("*.jsonl"))]
     for folder in (workspace.hub / ".agent-runs", workspace.hub / "brain" / "_inbox" / "runs"):
-        texts += [path.read_text() for path in sorted(folder.glob("*"))]
+        # Every file, the session settings folder's included (AGH-278).
+        texts += [path.read_text() for path in sorted(folder.rglob("*")) if path.is_file()]
     return "\n".join(texts)
 
 
