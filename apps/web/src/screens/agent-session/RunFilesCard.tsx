@@ -119,7 +119,7 @@ export function RunFilesCard({ files, reviewed, onOpenFile }: RunFilesCardProps)
                 className={cx(
                   "as-run-files-row",
                   viewed && "as-run-files-row-viewed",
-                  !reviewable && "as-run-files-row-scratch",
+                  kind === "scratch" && "as-run-files-row-scratch",
                 )}
                 data-file-path={file.path}
                 title={file.path}

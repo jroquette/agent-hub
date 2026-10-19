@@ -599,6 +599,17 @@ describe("the conversation of a chat", () => {
       toReview: 1,
     });
     expect(filesToReview([], {})).toEqual({ total: 0, toReview: 0 });
+    // Claude's plan and scratch are listed, never waiting for review.
+    expect(
+      filesToReview(
+        [
+          { path: "/repo/a.ts", last_change_id: "t1" },
+          { path: "/Users/me/.claude/plans/p.md", last_change_id: "t2" },
+          { path: "/tmp/notes.md", last_change_id: "t3" },
+        ],
+        {},
+      ),
+    ).toEqual({ total: 3, toReview: 1 });
   });
 
   it("reads no files when an older hub web sends no changed_files", () => {

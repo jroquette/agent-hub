@@ -337,19 +337,23 @@ function FileList({
   review: ReviewState;
   onSelect: (path: string) => void;
 }) {
-  const viewedCount = files.filter(
+  // Only the code is reviewed: Claude's own files carry no viewed mark and no progress.
+  const reviewable = files.filter((file) => isReviewable(file.path));
+  const viewedCount = reviewable.filter(
     (file) => review.reviewed[file.path] === file.lastChangeId,
   ).length;
   return (
     <nav className="as-files-nav" aria-label="Files">
-      <div className="as-files-progress ah-small">
-        <span>
-          {viewedCount} of {files.length} viewed
-        </span>
-        <span className="as-files-meter" aria-hidden="true">
-          <span style={{ width: `${String((viewedCount / files.length) * 100)}%` }} />
-        </span>
-      </div>
+      {reviewable.length > 0 && (
+        <div className="as-files-progress ah-small">
+          <span>
+            {viewedCount} of {reviewable.length} viewed
+          </span>
+          <span className="as-files-meter" aria-hidden="true">
+            <span style={{ width: `${String((viewedCount / reviewable.length) * 100)}%` }} />
+          </span>
+        </div>
+      )}
       {base && (
         <p className="as-files-root ah-small ah-subtle" title={base}>
           {base}
@@ -394,14 +398,16 @@ function FileList({
                     <OpenThreads path={file.path} />
                     <Stats added={file.added} removed={file.removed} />
                   </button>
-                  <ViewedToggle
-                    compact
-                    viewed={viewed}
-                    stale={mark !== undefined && !viewed}
-                    onToggle={() => {
-                      review.toggle(file);
-                    }}
-                  />
+                  {isReviewable(file.path) && (
+                    <ViewedToggle
+                      compact
+                      viewed={viewed}
+                      stale={mark !== undefined && !viewed}
+                      onToggle={() => {
+                        review.toggle(file);
+                      }}
+                    />
+                  )}
                 </li>
               );
             })}
@@ -482,13 +488,15 @@ function FileDetail({
           <Stats added={file.added} removed={file.removed} />
         </div>
         <span className="ah-grow" />
-        <ViewedToggle
-          viewed={viewed}
-          stale={mark !== undefined && !viewed}
-          onToggle={() => {
-            review.toggle(file);
-          }}
-        />
+        {isReviewable(file.path) && (
+          <ViewedToggle
+            viewed={viewed}
+            stale={mark !== undefined && !viewed}
+            onToggle={() => {
+              review.toggle(file);
+            }}
+          />
+        )}
         <div className="as-files-stepper">
           <Button
             size="sm"
@@ -768,7 +776,7 @@ export interface ChangedFilesChipProps {
 export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFilesChipProps) {
   const added = files.reduce((sum, file) => sum + file.added, 0);
   const removed = files.reduce((sum, file) => sum + file.removed, 0);
-  // Claude's scratch is not for review: it never waits on you.
+  // Only the code waits on you: Claude's plans, learnings and scratch are not for review.
   const due = files.filter((file) => isReviewable(file.path) && !isViewed(review, file)).length;
   const count = `${String(files.length)} ${files.length === 1 ? "file" : "files"}`;
   return (
