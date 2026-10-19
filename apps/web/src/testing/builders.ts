@@ -15,6 +15,7 @@ import { PreferencesProvider } from "../lib/preferences";
 
 type Schemas = components["schemas"];
 export type Session = Schemas["Session"];
+export type LiveTile = Schemas["LiveTile"];
 export type TimelineEventBody = Schemas["TimelineEvent"];
 export type WorkflowRun = Schemas["WorkflowRun"];
 export type Approval = Schemas["Approval"];
@@ -151,6 +152,38 @@ export function aSession(overrides: Partial<Session> = {}): Session {
     step: null,
     tokens: { cache_read: 1200, cache_write: 300, input: 4000, output: 900 },
     tool_counts: { Read: 4, Bash: 2 },
+    turns: 5,
+    ...overrides,
+  };
+}
+
+/** A live session tile (`GET /live-sessions`), with the same defaults as `aSession`. */
+export function aLiveTile(overrides: Partial<LiveTile> = {}): LiveTile {
+  return {
+    actors: [anActor()],
+    agent: "claude",
+    agent_session_id: null,
+    cost_usd: "1.2500",
+    derived: true,
+    errors: 0,
+    files_touched: 3,
+    group: "live",
+    guard_denials: 0,
+    id: anId(1, "5091b986"),
+    is_subagent: false,
+    issue: "AGH-48",
+    label: aSessionLabel(),
+    last_action: null,
+    last_activity_at: at(600),
+    last_tool: null,
+    problems: { by_you: 0, handled: 0, needs_you: 0, open: 0 },
+    project: "agent-hub",
+    repo: "agent-hub",
+    sources_missing: ["otel", "github", "linear"],
+    started_at: T0,
+    sparkline_60s: [],
+    status: "live",
+    tokens_total: 6400,
     turns: 5,
     ...overrides,
   };
