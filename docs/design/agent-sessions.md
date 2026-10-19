@@ -265,6 +265,149 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **AC-265.18** Given a review comment in the chat, then it reads as one (file, lines, the comment) with a link that
   opens its file in the review.
 
+### Session review: changed files and pull requests (AGH-377)
+
+**Review drawer (Changed files)**
+
+**Kinds of file**
+
+- **AC-377.1** Given a session that changed code, a plan under `~/.claude/plans/`, a brain note and a file in a
+  temporary folder, when the review drawer opens, then the changed files are split into tabs `Code`, `Plans`,
+  `Learnings` and `Scratch` (each with its count), the code first and Claude's scratch last, and the Code tab lists
+  only the code.
+- **AC-377.2** Given a markdown file in the review, when it is opened, then it opens rendered with its frontmatter
+  apart (labelled "Frontmatter"), and the diff is one click away (`Each change`).
+- **AC-377.3** Given a diff was shown for a code file in the drawer, when the next file is a markdown file, then it
+  opens rendered (`Preview` pressed), not as a diff.
+- **AC-377.4** Given a card in the conversation asks for a file of another kind (a plan), when the drawer opens on it,
+  then the drawer is on that file's tab (`Plans` selected) with the file open.
+- **AC-377.5** Given a feature's records under `brain/features/` (spec, plan, research, evals, the workflow's spec and
+  quality reviews), when the drawer opens, then they have their own tab named `Reviews & specs`, out of the Code tab
+  and its review count, and the brain's other notes (decisions, inbox…) are in `Learnings`.
+- **AC-377.6** Given the Code tab is shown and git compared the repositories, when the tab's note reads, then it says
+  "What the pull request has, whoever changed it (<branch> against <base> · <n> commits)."
+
+**Viewed marks**
+
+- **AC-377.7** Given a session with code and Claude's plans, learnings and scratch, when the drawer lists them, then
+  only the code has a `Viewed` checkbox and an "N of M viewed" progress; Claude's files have none, in the list or the
+  open file.
+
+**Names, root line and the file list**
+
+- **AC-377.8** Given files in a worktree (`<repo>/.claude/worktrees/<name>/…`), when the list shows its root, then the
+  root line shows the repo and the worktree's name in bold, the rest of the path after it, the whole path on hover,
+  and a `Copy folder path` button.
+- **AC-377.9** Given a session whose folder label is `<repo>` and files under it, when the root line shows, then the
+  label is in bold followed by the rest of the path.
+- **AC-377.10** Given files outside a worktree and the session's folder, when the root line shows, then it shows the
+  full root with the home folder as `~`.
+- **AC-377.11** Given a long file or folder name in the list, when it does not fit, then it stays on one line, cut in
+  the middle, the file keeping its extension (a folder its last name), and its whole name shows on hover.
+- **AC-377.12** Given a file is open, when its header shows, then it shows its whole path (wrapping, not cut) and a
+  `Copy file path` button copies the full path.
+- **AC-377.13** Given `CopyButton` in its compact form, when it shows, then it shows the icon alone with its label as
+  the tooltip, and the same "Copied"/"Copy failed" feedback, announced.
+- **AC-377.14** Given the drawer is wide enough for the list beside the open file, when the list's edge is focused and
+  → / ← / Home are pressed, then the list widens, narrows, resets to its default, and the width is kept in this
+  browser.
+- **AC-377.15** Given any drawer width, when the list is resized, then the open file never gets under 360px and the
+  list never over 60% of the drawer; when the drawer narrows, the open file gets its room back.
+
+**Files read from git (the pull request)**
+
+- **AC-377.16** Given git read the session's repository, when the Code tab lists files, then it lists every file git
+  says the branch changes against the base it forked from (committed or not, untracked included, deleted with `D`),
+  whoever changed them, then the session's other files.
+- **AC-377.17** Given a file git read, when it opens, then it opens on `Final result`, git's diff "Against <base>:
+  every commit and uncommitted change, as the pull request shows it", with Claude's changes still under `Each change
+  (n)`.
+- **AC-377.18** Given a file git read, when `Commits (n)` is chosen, then it lists "Uncommitted changes" first (when
+  there are), then the commits that touched the file newest first, each with its short sha, subject and lines.
+- **AC-377.19** Given a comment on git's diff of a file, when it is sent, then it anchors to the file's final diff
+  (change 0) with the file's real line numbers.
+- **AC-377.20** Given a file the session changed that git lists nowhere, when it opens, then it says the file ends as
+  it is on the base; a file with no diff to show reads as binary or too big.
+- **AC-377.21** Given a commit row in a file's Commits view, when it is pressed, then it opens on what that commit
+  changed in the file, read from git (`repo-changes/commit`), and opening it again does not read it again.
+
+**Repositories and pull requests**
+
+- **AC-377.22** Given git read a repository, when the Code tab shows, then it lists the repository with its branch,
+  its base and how many commits (`tip-1 → origin/main · 0 commits`), a link to its pull request (`PR #7`, opens in a
+  new tab) and where it stands; the list shows on the Code tab only.
+- **AC-377.23** Given a repository's pull request and its state, when the state is read, then it says "In sync with
+  the pull request", "N file(s) changed since the pull request", "Commits not in the pull request yet", "N files not
+  committed", "Pull request merged", "Pull request closed", "Worktree removed: its recorded commits" or "No pull
+  request yet".
+
+**Totals**
+
+- **AC-377.24** Given a session that changed code and Claude's brain notes, feature records or scratch, when the
+  drawer's header totals the change, then it counts the code alone ("1 code file · +1−0"), and says "No code changes"
+  when there is no code.
+
+**Header chip and sessions list**
+
+- **AC-377.25** Given code and Claude's own files changed, when the header chip reads, then its files and lines are
+  the code alone and only the code waits for review ("Review changes: 1 file, 1 lines added, 0 removed, 1 to review").
+- **AC-377.26** Given a session's changed files in the sessions list, when it counts what to review, then Claude's
+  plans and scratch are neither counted nor waiting for review.
+
+**The turn's files card**
+
+- **AC-377.27** Given a turn that only edits files an earlier turn created, when its files card shows, then it says
+  "Edited N file(s)", not created.
+- **AC-377.28** Given a turn that changed code, a plan and scratch, when its files card shows, then the code comes
+  first labelled as what "goes in the pull request", then Claude's plans, learnings and scratch under their own
+  labels, the scratch "not for review" (no review dot).
+
+**Review threads**
+
+- **AC-377.29** Given a review thread with your comment, Claude's answer and a reply being sent, when it shows, then
+  it reads like a GitHub conversation: a header with its lines and "N comments", each comment with its avatar, author
+  ("You" / "Claude" with an `Agent` badge) and "commented" (first), "replied" or "sending…"/"writing…", and a footer
+  with `Reply…` and `Resolve`.
+- **AC-377.30** Given an open thread, when `Resolve` is pressed, then it folds to its header "Resolved conversation on
+  <lines>", `Show` opens it again (read-only, no reply), and `Reopen` brings back `Resolve`.
+
+**API: repo-changes (`GET /api/v1/agent-sessions/{id}/repo-changes`, `…/repo-changes/commit`)**
+
+- **AC-377.31** Given a session that changed files in a repository's worktree (not the hub), when repo-changes is
+  read, then each repository the session worked in is read by git once (its own repo first), the hub never is, and a
+  repository git cannot read is named in `warnings`.
+- **AC-377.32** Given a checkout on a branch with commits, staged, unstaged and untracked changes, when git reads it,
+  then every file that differs from the fork point is listed with its status, lines, final diff, its commits and
+  whether it is uncommitted, and each file's fingerprint changes when its diff does.
+- **AC-377.33** Given a session whose calls name a listed worktree (a command run there, a subagent sent there) but
+  whose file tools changed nothing there, when repo-changes is read, then that worktree is read; a repo's main
+  checkout named in passing is not, nor a text that only starts like a worktree path.
+- **AC-377.34** Given a worktree started from another branch, when git reads it, then its base is the branch it was
+  started from (its reflog's `Created from`, else an upstream that is not its own pushed copy), the remote's default
+  only without either, and nothing without any base.
+- **AC-377.35** Given a commit diff is asked, when the file is in one of the session's repositories, then git shows
+  what the commit (7–40 hex digits) changed in the file and its name before a rename; an empty diff when the commit
+  did not touch it.
+- **AC-377.36** Given a commit diff is asked, when the file is outside the session's repositories or git does not know
+  the commit, then the answer is not found.
+- **AC-377.37** Given a commit diff is asked with a ref (`HEAD`, `origin/main`), an option (`--output=x`), fewer than
+  7 or more than 40 hex digits, a relative path or no path, when the route reads it, then it answers 400 and never
+  calls the session control; given the adapter is called with an option-like sha, then it refuses.
+- **AC-377.38** Given repo-changes is read, when git read a repository, then the session records it in
+  `review_targets` (repo, folder, branch, base, fork and head commits, pull request number and URL), kept by the
+  store.
+- **AC-377.39** Given a recorded worktree that is gone, when repo-changes is read, then it is read from its recorded
+  commits in the repo's own checkout (else `origin/<branch>`), named under the old folder, its source `recorded`;
+  unless the session now works on that repo elsewhere, then it is left out. Recorded commits git no longer has, or
+  that read as options, cannot be read.
+- **AC-377.40** Given a branch, when its pull request is read, then it comes from `gh pr list --head <branch>`, asked
+  at most once a minute; when GitHub does not answer, the recorded pull request shows (state `UNKNOWN`); a branch that
+  reads as an option names no pull request.
+- **AC-377.41** Given migration 0007 (after 0006), when the database is upgraded and downgraded, then `agent_sessions`
+  gains `review_targets` (`[]` for existing rows) and loses it again, rows kept.
+- **AC-377.42** Given the OpenAPI document, when it is built, then the two repo-changes routes are listed with the
+  agent-session paths and are behind the same access check as the others.
+
 ## Invariants
 
 - The platform implements no agent loop and calls no model; the children are the user's own `claude` with its own
