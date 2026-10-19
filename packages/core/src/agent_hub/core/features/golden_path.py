@@ -12,10 +12,10 @@ an epic (a ticket with children) counts only under Tickets, as it tracks the oth
 The fold: steps hold in turn until the first that does not, the gate; it is ``current`` (or
 ``unknown`` when its evidence cannot be read) and the ``phase``. No step after the gate is
 ``done``: one whose own condition holds is ``blocked`` naming the gate, one with recorded
-evidence for part of the feature (passing ACs, created tickets, review records, a SHIP over
-some ACs) is ``partial``, one that cannot be read is ``unknown``, the rest ``pending``. Without
-Linear (the plan fallback), ticket states are unknown: Implement's tickets, Review without a
-record for every ticket and Shipped are ``unknown``, never done.
+evidence for part of the feature (passing ACs, created tickets, reviewed or Done tickets, a
+SHIP over some ACs) is ``partial``, one that cannot be read is ``unknown``, the rest
+``pending``. Without Linear (the plan fallback), ticket states are unknown: Implement's
+tickets, Review without a record for every ticket and Shipped are ``unknown``, never done.
 """
 
 from collections.abc import Callable
@@ -291,7 +291,9 @@ def _implement(facts: _Facts) -> _Own:
 
 
 def _review(facts: _Facts) -> _Own:
-    started = facts.inputs.approved_reviews > 0
+    # A ticket Done in Linear counts as reviewed (D4), so it starts Review as a record does.
+    reviewed = sum(row.reviewed is True for row in facts.active)
+    started = facts.inputs.approved_reviews > 0 or reviewed > 0
     if facts.inputs.reviews_skipped:
         return _Own(
             holds=None,
@@ -301,7 +303,6 @@ def _review(facts: _Facts) -> _Own:
     total = len(facts.active)
     if total == 0:
         return _Own(holds=None, reason="no tickets recorded")
-    reviewed = sum(row.reviewed is True for row in facts.active)
     progress = StepProgress(done=reviewed, total=total)
     meta = f"{reviewed}/{total} reviewed"
     if reviewed == total:
@@ -360,4 +361,5 @@ def _shipped(facts: _Facts) -> _Own:
         meta=f"{facts.done}/{total} Done",
         reason=f"{total - facts.done} of {total} tickets not Done in Linear",
         progress=StepProgress(done=facts.done, total=total),
+        started=facts.done > 0,
     )
