@@ -171,14 +171,14 @@ def test_makes_review_current_when_in_review_without_approved_record() -> None:
     assert review.meta == "0/1 reviewed"
 
 
-def _one_of_three_done_board_rows(*, done: bool) -> tuple[TicketRow, ...]:
-    """Three active tickets read from Linear (the first Done when ``done``), plus a canceled
+def _three_active_board_rows(*, first_done: bool) -> tuple[TicketRow, ...]:
+    """Three active tickets read from Linear (the first Done when ``first_done``), plus a canceled
     one, with no review record."""
     planned = tuple(
         PlannedTicket(key=f"T{number}", id=f"ACME-{1519 + number}", order=number)
         for number in range(1, 5)
     )
-    states = (_DONE if done else _STARTED, _STARTED, _STARTED, _CANCELED)
+    states = (_DONE if first_done else _STARTED, _STARTED, _STARTED, _CANCELED)
     summaries = tuple(
         an_issue_summary(
             id=f"ACME-{1519 + number}",
@@ -194,7 +194,7 @@ def _one_of_three_done_board_rows(*, done: bool) -> tuple[TicketRow, ...]:
 
 
 def test_marks_review_partial_when_a_ticket_done_without_review_record() -> None:
-    rows = _one_of_three_done_board_rows(done=True)
+    rows = _three_active_board_rows(first_done=True)
 
     path = golden_path(_inputs(rows=rows, acs=_acs(3, passing=1), approved_reviews=0))
 
@@ -205,7 +205,7 @@ def test_marks_review_partial_when_a_ticket_done_without_review_record() -> None
 
 
 def test_marks_shipped_partial_when_some_tickets_done() -> None:
-    rows = _one_of_three_done_board_rows(done=True)
+    rows = _three_active_board_rows(first_done=True)
 
     path = golden_path(_inputs(rows=rows, acs=_acs(3, passing=1), approved_reviews=0))
 
@@ -216,7 +216,7 @@ def test_marks_shipped_partial_when_some_tickets_done() -> None:
 
 
 def test_keeps_review_and_shipped_pending_when_no_ticket_reviewed_or_done() -> None:
-    rows = _one_of_three_done_board_rows(done=False)
+    rows = _three_active_board_rows(first_done=False)
 
     path = golden_path(_inputs(rows=rows, acs=_acs(3, passing=1), approved_reviews=0))
 
