@@ -358,13 +358,13 @@ function pullNumber(url: string): string | null {
 }
 
 /**
- * The ticket's pull request as `#69`, opening GitHub in a new tab; plain text when the url is
+ * The ticket's pull request as `PR #69`, opening GitHub in a new tab; plain text when the url is
  * not a GitHub pull request. Nothing when the ticket has none.
  */
 export function TicketPrLink({ row }: { row: TicketRow }) {
   if (!row.pr_url) return null;
   const number = pullNumber(row.pr_url);
-  const text = number ? `#${number}` : "PR";
+  const text = number ? `PR #${number}` : "PR";
   const href = githubPullHref(row.pr_url);
   if (href === null) {
     return (
@@ -384,8 +384,8 @@ export function TicketPrLink({ row }: { row: TicketRow }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`Pull request ${text} of ${ticket} (opens GitHub in a new tab)`}
-      title={`Pull request ${text} · opens in GitHub`}
+      aria-label={`${text} of ${ticket} (opens GitHub in a new tab)`}
+      title={`${text} · opens in GitHub`}
     >
       <Icon name="git-pull-request" size="sm" />
       {text}
