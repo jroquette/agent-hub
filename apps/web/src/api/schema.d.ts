@@ -1639,6 +1639,16 @@ export interface components {
       target: string;
     };
     /**
+     * AcceptanceEval
+     * @description The feature's acceptance eval (AC-1.6): the latest whole-feature eval (``acs: all``, or a
+     *     legacy ``eval.md`` with no scope), by its ``delivery`` (``legacy`` for ``eval.md``).
+     */
+    AcceptanceEval: {
+      /** Delivery */
+      delivery: string;
+      verdict: components["schemas"]["Verdict"];
+    };
+    /**
      * ActivityItem
      * @description A notable event in the activity feed.
      */
@@ -1761,6 +1771,23 @@ export interface components {
      * @enum {string}
      */
     AgentSessionStatus: "running" | "idle" | "waiting_permission" | "ended" | "failed";
+    /**
+     * AmendmentView
+     * @description One ``A<n> (<date>, <who>): <title>`` entry of the plan's ``## Amendments``; ``anchor`` is
+     *     the text of the heading it is under, which the Plan record view links to.
+     */
+    AmendmentView: {
+      /** Anchor */
+      anchor: string;
+      /** Date */
+      date: string;
+      /** Id */
+      id: string;
+      /** Title */
+      title: string;
+      /** Who */
+      who: string;
+    };
     /** Format: date-time */
     ApiTimestamp: string;
     /**
@@ -2343,7 +2370,9 @@ export interface components {
       | "fatal";
     /**
      * FeatureDetail
-     * @description A feature with its acceptance criteria rows, its records (D3) and every eval.
+     * @description A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``
+     *     (None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is
+     *     the header's ``verdict``.
      */
     FeatureDetail: {
       /**
@@ -2351,6 +2380,7 @@ export interface components {
        * @default []
        */
       ac_rows: components["schemas"]["AcRow"][];
+      acceptance_eval?: components["schemas"]["AcceptanceEval"] | null;
       acs: components["schemas"]["AcCounts"] | null;
       /**
        * Derived
@@ -2368,6 +2398,7 @@ export interface components {
       /** Issues */
       issues: string[];
       phase: components["schemas"]["FeaturePhase"];
+      plan?: components["schemas"]["PlanView"] | null;
       /** Problem */
       problem?: string | null;
       /** Project */
@@ -3582,6 +3613,22 @@ export interface components {
       /** Index */
       index: number;
       rule: components["schemas"]["pydantic__types__JsonValue"];
+    };
+    /**
+     * PlanView
+     * @description The plan's version (AC-1.4): ``v<amendments + 1>``. ``version`` is None and ``problem``
+     *     says why when ``plan.md`` could not be read (larger than its cap).
+     */
+    PlanView: {
+      /**
+       * Amendments
+       * @default []
+       */
+      amendments: components["schemas"]["AmendmentView"][];
+      /** Problem */
+      problem?: string | null;
+      /** Version */
+      version: number | null;
     };
     /**
      * PlatformSyncRequest
