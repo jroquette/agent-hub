@@ -26,9 +26,10 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         removing test assertions (`assert`, `expect(`, `pytest.raises`,
         `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
-        plugin/<project>/hooks/, .claude/settings*.json, hub.lock and hub.json, in the hub or a hub worktree,
+        plugin/<project>/hooks/, .claude/settings*.json, hub.lock, hub.json and hub.local.json, in the hub or a hub worktree,
         and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/,
+        a mutating hub env (add, set, remove, service add|remove; list and show pass),
         and any Bash or file-tool call while blocked words cannot be checked: a command or a listed file over
         1 MiB, over 64 listed files or 4 MiB of them in one call, a listed file that is not regular, the
         rule's 300 ms spent, a blocked list of any layer unusable, or a hub.local.json that exists but is
@@ -253,6 +254,15 @@ LAUNCHERS = ("hub", "agent")
 WRITE_TARGET = re.compile(r">>?\s*([^\s;&|<>()`]+)")
 WRITE_ARGS = re.compile(r"\b(?:tee|sed\s+(?:-\w*i\w*|--in-place)|rm|mv|cp|truncate|ln)\b(.*)")
 HUB_PREFIX = "@hub"
+# A `hub env` verb that writes hub.json or hub.local.json, behind a launcher path (`./hub`, a tool
+# runner's `--from x hub`), searched in each of the blocked-words rule's command views, so quotes and
+# backslashes the shell removes (`'hub'`, `"env"`, `a''dd`, `hub\ env`) do not hide it; a mention
+# (`grep 'hub env add'`) asks too. Each part of the pattern is a fixed word or one run of blanks,
+# so a search stays linear in the command's length.
+ENV_COMMAND = re.compile(
+    r"(?<![\w.-])hub['\"]?[ \t]+env[ \t]+(service[ \t]+(?:add|remove)|add|set|remove)(?![\w-])"
+)
+ENV_COMMAND_REASON = "hub env {} changes the agents' environments (hub.json or hub.local.json); confirm"
 
 
 def _str(value: object) -> str:
@@ -385,7 +395,7 @@ def _hub_base(cfg: Config) -> str | None:
 
 def guard_file(path: str, cfg: Config, launchers: bool = True) -> str | None:
     """path relative to the hub when it is one of the guard's own files: its hooks, the project's
-    hooks (the guard extension), .claude/settings*.json, hub.lock or hub.json, or (with launchers)
+    hooks (the guard extension), .claude/settings*.json, hub.lock, hub.json or hub.local.json, or (with launchers)
     the hub and agent launchers, in the hub holding this file or one of its worktrees (in the
     plugin cache: the hub found). Case is ignored."""
     base = _hub_base(cfg)
@@ -397,7 +407,7 @@ def guard_file(path: str, cfg: Config, launchers: bool = True) -> str | None:
         if not c.startswith(head):
             continue
         rel = c[len(head):]
-        if any(rel == d or rel.startswith(d + "/") for d in dirs) or SETTINGS_FILE.fullmatch(rel) or rel in ("hub.lock", "hub.json") or (launchers and rel in LAUNCHERS):
+        if any(rel == d or rel.startswith(d + "/") for d in dirs) or SETTINGS_FILE.fullmatch(rel) or rel in ("hub.lock", "hub.json", "hub.local.json") or (launchers and rel in LAUNCHERS):
             return rel
     return None
 
@@ -455,7 +465,8 @@ def _tokens(segment: str) -> list[str]:
 DENY_PATH_REASON = "{} is under guard.deny_paths `{}` (hub.json); agents neither read nor change it"
 GUARD_PARENT_REASON = "{} holds the hub's guard files ({}); removing or moving it changes the guard, confirm first"
 GUARD_FILE_REASON = ("{} is the hub's own guard or config ({}): hooks, the project guard extension, settings, "
-                     "hub.lock, hub.json and the hub/agent launchers change only with the user's confirmation")
+                     "hub.lock, hub.json, hub.local.json and the hub/agent launchers change only with the user's "
+                     "confirmation")
 INFRA_MARKER_REASON = "this command matches guard.infra.prod_markers `{}` (hub.json): production infrastructure is human-only"
 INFRA_UNKNOWN_REASON = ("{}: environment not recognised by guard.infra.allow (hub.json); put the environment on this "
                         "command, e.g. `--profile <env>` or an `AWS_PROFILE=<env> ` prefix (an exported or inherited "
@@ -973,7 +984,7 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
 
 def _after_infra(c: str, cfg: Config) -> Verdict:
     """check_bash's rules after the infra rule (secrets, attribution, claude/ branches, .git,
-    deny_paths, guard files, tests, brain, ask_before_edit): an infra ask or allow does not end the
+    deny_paths, guard files, tests, brain, ask_before_edit, a mutating hub env): an infra ask or allow does not end the
     check, so a later deny wins and a later ask keeps the infra reason."""
     for seg in re.split(r"&&|\|\||[;|\n]", c):
         words = seg.split()
@@ -1024,6 +1035,9 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
                 pat = protected(tok, cfg)
                 if pat:
                     return "ask", f"{tok} matches guard.ask_before_edit `{pat}` (hub.json); confirm this change is intended"
+    env = next((m for m in map(ENV_COMMAND.search, _command_views(c)) if m), None)
+    if env:
+        return "ask", ENV_COMMAND_REASON.format(re.sub(r"[ \t]+", " ", env.group(1)))
     return None
 
 
@@ -1758,6 +1772,7 @@ RULE_IDS = (
     ("guard_files", re.compile(r" is the hub's own guard or config \(")),
     ("guard_parent", re.compile(r" holds the hub's guard files \(")),
     ("ask_before_edit", re.compile(r" matches guard\.ask_before_edit `")),
+    ("env_command", re.compile(r"^hub env (service )?\w+ changes the agents' environments")),
 )
 
 

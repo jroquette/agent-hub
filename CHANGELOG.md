@@ -28,6 +28,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `hub.local.json` only, checked as `hub env add --local` checks them. An `environments` item lists the declared
   environments, with a `production environment:` sub-line per production one; a hub with none prints no line,
   and a `hub.local.json` that conflicts with `hub.json` makes it missing (exit 1).
+- The guard asks before a `hub env` that changes the environments (`add`, `set`, `remove`, `service add|remove`;
+  `list` and `show` pass) and before an edit or shell write of `hub.local.json` (AGH-288). The README's guard section
+  explains blocked words.
 - Base skill `plain-language` (AGH-319): rules for text that people read (chat, PR bodies and replies, tracker
   comments, handoffs, summaries, brain notes), in the reader's language. `AGENTS.md` gains cross-repo rule 6, which
   points to it; `/summarize`, `/handoff`, `/feature` and `/deliver` cite it. To make room for rule 6, workflow step 3
