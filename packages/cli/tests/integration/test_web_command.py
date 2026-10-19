@@ -463,6 +463,18 @@ def test_sets_no_session_limit_when_sessions_max_zero(served: ServedApp, tmp_pat
     assert served.app.state.settings.limits.sessions_max == 0
 
 
+def test_sets_no_session_limit_when_sessions_max_env_zero(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    env = _scratch_env(tmp_path) | {"AGENT_HUB_SESSIONS_MAX": "0"}
+
+    result = _web(["--port", str(_free_port())], env=env)
+
+    assert result.exit_code == 0, result.output
+    assert served.app is not None
+    assert served.app.state.settings.limits.sessions_max == 0
+
+
 @pytest.mark.parametrize(
     "args",
     [
