@@ -118,6 +118,8 @@ class TrackerConfigView(ViewModel):
     blocked_label: str | None
     started_state: str
     review_state: str
+    # The labels and states hub.json sets (as the fields above name them); the rest are built-in.
+    team_set: tuple[str, ...] = ()
 
 
 class AgentModelView(ViewModel):
@@ -152,6 +154,8 @@ class HubConfigView(ViewModel):
     tracker: TrackerConfigView
     guard: GuardConfigView
     model_tiers: dict[str, str]
+    # The tiers hub.json names a model for; the others take their built-in model.
+    model_tiers_set: tuple[str, ...] = ()
     agent_models: tuple[AgentModelView, ...]
     modules: tuple[str, ...]
     platform_version: str
@@ -205,6 +209,9 @@ def hub_config_view(
         tracker=_tracker(config, local),
         guard=_guard(config, local),
         model_tiers={tier: config.models.model_for(tier) for tier in _TIERS},
+        model_tiers_set=tuple(
+            tier for tier in _TIERS if tier in config.models.tiers.model_fields_set
+        ),
         agent_models=tuple(
             AgentModelView(agent=agent, tier=tier)
             for agent in AGENT_NAMES
@@ -365,6 +372,17 @@ def _tracker(config: HubConfig, local: LocalConfig) -> TrackerConfigView:
         blocked_label=tracker.blocked_label,
         started_state=tracker.states.started,
         review_state=tracker.states.review,
+        team_set=tuple(
+            field
+            for field, is_set in (
+                ("ready_label", "ready_label" in tracker.model_fields_set),
+                ("failed_label", "failed_label" in tracker.model_fields_set),
+                ("blocked_label", tracker.blocked_label is not None),
+                ("started_state", "started" in tracker.states.model_fields_set),
+                ("review_state", "review" in tracker.states.model_fields_set),
+            )
+            if is_set
+        ),
     )
 
 
