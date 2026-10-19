@@ -55,9 +55,13 @@ test.beforeEach(async ({ page }) => {
 interface SmokePage {
   name: string;
   path: string;
-  heading: string;
+  heading: string | RegExp;
   shows: string | RegExp;
 }
+
+// AGH-380: a session on a ticket is named by it: its worktree's slug until the feature's tickets
+// are read, then the ticket's title.
+const LIVE_HEADING = /^DEM-7: (export-button|Add the export route)$/;
 
 // The app shows ids in their short form: hyphens dropped, first 8 characters.
 const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
@@ -68,7 +72,7 @@ const PAGES: SmokePage[] = [
   {
     name: "Session detail",
     path: `/sessions/${LIVE_SESSION}`,
-    heading: "DEM-7 · /feature",
+    heading: LIVE_HEADING,
     shows: "Guard blocked",
   },
   { name: "Workflow runs", path: "/runs", heading: "Workflow runs", shows: short(RUN) },
@@ -166,7 +170,7 @@ test("Session detail names the actors, says what they did and what went wrong", 
   baseURL,
 }) => {
   await visit(page, baseURL, `/sessions/${LIVE_SESSION}`, async () => {
-    await expect(page.getByRole("heading", { level: 1, name: "DEM-7 · /feature" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: LIVE_HEADING })).toBeVisible();
     const timeline = page.getByRole("region", { name: "Session timeline" });
     await expect(timeline.getByText("Ran skill /feature").first()).toBeVisible();
     await expect(
@@ -337,7 +341,8 @@ test("Agent session started from Sessions survives a reload while waiting and af
 // project's `demo-check`) and the managed `/feature` detail. Run alone by
 // test_shows_skills_catalog_and_detail_when_skills_opened.
 test("Skills catalog and a skill detail load from the hub's files", async ({ page, baseURL }) => {
-  await visit(page, baseURL, "/projects/demo/skills", async () => {
+  // AGH-382: the Toolkit's kinds are tabs kept in ?tab=; the skills are on Skills.
+  await visit(page, baseURL, "/projects/demo/skills?tab=skills", async () => {
     await expect(page.getByRole("heading", { level: 1, name: "Toolkit" })).toBeVisible();
     await expect(page.getByRole("article", { name: "demo-check", exact: true })).toBeVisible();
     const feature = page.getByRole("article", { name: "feature", exact: true });
