@@ -168,6 +168,10 @@ def test_passes_file_and_commit_when_commit_diff_read(recorded_app: Any) -> None
     [
         {"path": "/hubs/api/a.py", "sha": "HEAD"},
         {"path": "/hubs/api/a.py", "sha": "--output=x"},
+        {"path": "/hubs/api/a.py", "sha": "abc123"},
+        {"path": "/hubs/api/a.py", "sha": "a" * 41},
+        {"path": "/hubs/api/a.py", "sha": "origin/main"},
+        {"path": "-/hubs/api/a.py", "sha": "abc1234"},
         {"path": "a.py", "sha": "abc1234"},
         {"sha": "abc1234"},
     ],
