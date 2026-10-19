@@ -148,3 +148,41 @@ def test_marks_draft_when_change_hidden_from_status(hub: Path, flag: str) -> Non
         "get-order": True,
         "get-quote": False,
     }
+
+
+def test_marks_draft_when_action_ignored_never_committed(hub: Path) -> None:
+    (hub / ".gitignore").write_text("get-quote*\n", encoding="utf-8")
+    git(hub, "init", "-q", "-b", "main")
+    git(hub, "add", ".gitignore", "actions")
+    git(hub, "commit", "-q", "-m", "actions")
+
+    assert drafts(hub) == {
+        "get-cover": False,
+        "get-invoice": False,
+        "get-order": False,
+        "get-quote": True,
+    }
+
+
+def test_marks_draft_when_rename_staged(hub: Path) -> None:
+    git(hub, "init", "-q", "-b", "main")
+    git(hub, "add", "actions")
+    git(hub, "commit", "-q", "-m", "actions")
+    git(hub, "mv", "actions/orders", "actions/sales")
+
+    found = {entry.ref: entry.draft for entry in discover_actions(hub).actions}
+
+    assert set(found) == {f"sales/{name}" for name in drafts(hub)}
+    assert set(found.values()) == {True}
+
+
+def test_clears_draft_when_hub_below_repo_top(tmp_path: Path) -> None:
+    # The hub may sit below its repository's top: HEAD's paths carry that prefix.
+    top = tmp_path / "workspace"
+    hub = top / "demo-hub"
+    an_action(hub, "orders", "get-order")
+    git(top, "init", "-q", "-b", "main")
+    git(top, "add", "demo-hub")
+    git(top, "commit", "-q", "-m", "hub")
+
+    assert drafts(hub) == {"get-order": False}
