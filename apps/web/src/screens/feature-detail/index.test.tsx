@@ -90,31 +90,31 @@ rows.push({
 
 const detail = aFeatureDetail({
   slug: "layered-memory",
-  phase: "evaluate",
+  phase: "acceptance",
   files: ["spec.md", "plan.md", "issues.md", "features.json", "eval.md"],
   verdict: "SHIP-WITH-OWNER-STEPS",
   verdict_line: "Verdict: **SHIP-WITH-OWNER-STEPS**",
   issues: ["AGH-48", "AGH-49"],
   golden_path: aGoldenPath({
-    phase: "evaluate",
+    phase: "acceptance",
     steps: [
       aGoldenStep({ name: "spec", state: "done", meta: null, progress: null }),
+      aGoldenStep({ name: "ux_design", state: "skipped", meta: null, progress: null }),
       aGoldenStep({ name: "research", state: "skipped", meta: null, progress: null }),
-      aGoldenStep({ name: "plan", state: "done", meta: null, progress: null }),
+      aGoldenStep({ name: "plan", state: "done", meta: "v1", progress: null }),
       aGoldenStep({ name: "tickets", state: "done", meta: "2 of 2 created", progress: null }),
-      aGoldenStep({ name: "implement", state: "done", meta: "2/2 tickets", progress: null }),
       aGoldenStep({
-        name: "review",
+        name: "build",
         state: "unknown",
         meta: null,
         reason: "Linear not connected",
         progress: null,
       }),
       aGoldenStep({
-        name: "evaluate",
+        name: "acceptance",
         state: "partial",
-        meta: "partial: covers 3 of 13 ACs",
-        reason: "Review is not done",
+        meta: "Ticket evals cover 3 of 13 ACs",
+        reason: "Build is unknown",
         progress: { done: 3, total: 13 },
       }),
       aGoldenStep({ name: "shipped", state: "done", meta: null, reason: null, progress: null }),
@@ -192,7 +192,7 @@ describe("FeatureDetailScreen", () => {
     expect(steps.map((s) => s.dataset.state)).toEqual([
       "done",
       "skipped",
-      "done",
+      "skipped",
       "done",
       "done",
       "unknown",
@@ -202,9 +202,9 @@ describe("FeatureDetailScreen", () => {
     expect(steps[5]).toHaveTextContent("Unknown");
     expect(steps[5]).toHaveTextContent("Linear not connected");
     expect(steps[6]).toHaveTextContent("Partial");
-    expect(steps[6]).toHaveTextContent("partial: covers 3 of 13 ACs");
+    expect(steps[6]).toHaveTextContent("Ticket evals cover 3 of 13 ACs");
     expect(steps[7]).toHaveTextContent("Blocked");
-    expect(steps[7]).toHaveTextContent("Review is not done");
+    expect(steps[7]).toHaveTextContent("Build is not done");
   });
 
   it("calls out the owner steps left", async () => {
@@ -861,8 +861,8 @@ describe("FeatureDetailScreen", () => {
       expect(screen.queryByText("PR —")).toBeNull();
     });
 
-    it("opens on the Tickets tab while the feature is implemented (tabs)", async () => {
-      const { requests } = open({ [API]: { ...detail, phase: "implement" }, [TICKETS]: tickets });
+    it("opens on the Tickets tab while the feature is in Build (tabs)", async () => {
+      const { requests } = open({ [API]: { ...detail, phase: "build" }, [TICKETS]: tickets });
 
       expect(await screen.findByRole("table", { name: "Tickets" })).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
@@ -873,12 +873,12 @@ describe("FeatureDetailScreen", () => {
       const { router } = open({ [TICKETS]: tickets });
 
       await userEvent.click(
-        await screen.findByRole("button", { name: "Open the ticket plan of implement" }),
+        await screen.findByRole("button", { name: "Open the ticket plan of build" }),
       );
 
       expect(await screen.findByRole("table", { name: "Tickets" })).toBeInTheDocument();
       expect(router.state.location.search).toBe("?doc=tickets");
-      await userEvent.click(screen.getByRole("button", { name: "Open the eval of evaluate" }));
+      await userEvent.click(screen.getByRole("button", { name: "Open the eval of acceptance" }));
       expect(screen.getByRole("tab", { name: "Eval" })).toHaveAttribute("aria-selected", "true");
     });
 
@@ -909,10 +909,10 @@ describe("FeatureDetailScreen", () => {
     it("refetches the golden path after the tickets load (notice)", async () => {
       let reads = 0;
       const loaded = aGoldenPath({
-        phase: "evaluate",
+        phase: "acceptance",
         steps: detail.golden_path.steps.map((step) =>
-          step.name === "review"
-            ? { ...step, state: "done", reason: null, meta: "2/2 reviewed" }
+          step.name === "build"
+            ? { ...step, state: "done", reason: null, meta: "2 of 2 merged" }
             : step,
         ),
       });
