@@ -68,6 +68,9 @@ MAX_PLAN_BYTES: Final = 262_144
 UX_PREFIX: Final = "ux-"
 MAX_UX_FILES: Final = 50
 UX_HEAD_BYTES: Final = 4096
+# A review round's file in ``reviews/<ticket>/``: only its name is kept, at most this many (P3).
+ROUND_NAME: Final = re.compile(r"[a-z]+-r\d+\.json")
+MAX_ROUND_NAMES: Final = 2000
 _VERDICT_LINE_CHARS: Final = 200
 _SIZES: Final = ("spike", "bounded", "architectural")
 
@@ -106,6 +109,8 @@ class FeatureFolder:
     ``plan`` holds ``plan.md`` whole, None when absent or larger than ``MAX_PLAN_BYTES``
     (``plan_too_large`` then says so). ``ux_designs`` holds the heads of the folder's own
     ``ux-*.md`` sorted by name; ``ux_skipped`` counts those left unread over ``MAX_UX_FILES``.
+    ``review_rounds`` names the review round files (``<ticket>/<reviewer>-r<N>.json``, never
+    read), sorted, at most ``MAX_ROUND_NAMES``.
     """
 
     slug: str
@@ -121,6 +126,7 @@ class FeatureFolder:
     plan_too_large: bool = False
     ux_designs: tuple[RecordHead, ...] = ()
     ux_skipped: int = 0
+    review_rounds: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
