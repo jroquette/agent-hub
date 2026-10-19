@@ -36,6 +36,7 @@ import { commonDir, type ChangedFile, type FileChange } from "./model";
 import { useRepoCommitDiff } from "./queries";
 import { writtenText } from "./netDiff";
 import { repoState, type FileCommit, type RepoChanges } from "./repoChanges";
+import { shortSha } from "../feature-detail/acEvidence";
 
 /** What each tab says about its files, under the tabs. */
 const KIND_NOTE: Record<FileKind, string> = {
@@ -402,8 +403,6 @@ export function KindBadge({
     </span>
   );
 }
-
-const shortSha = (sha: string) => sha.slice(0, 7);
 
 function commitWhen(iso: string): string {
   const when = new Date(iso);
