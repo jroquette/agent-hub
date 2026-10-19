@@ -11,12 +11,11 @@ which the reader caps (``MAX_PLAN_BYTES``).
 
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
 from typing import Final
 
+from agent_hub.core.features.feature_view import AmendmentView, PlanView
 from agent_hub.core.hub_config.problems import one_line
 
-SECTION: Final = "amendments"
 _TITLE_CHARS: Final = 200
 _HEADING: Final = re.compile(r" {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*")
 _FENCE: Final = re.compile(r" {0,3}(`{3,}|~{3,})")
@@ -27,43 +26,24 @@ _ENTRY: Final = re.compile(
 )
 
 
-@dataclass(frozen=True, kw_only=True, slots=True)
-class Amendment:
-    """One entry of ``## Amendments``: its ``id`` (``A1``), ``date``, ``who`` and ``title`` (the
-    rest of the line), and ``anchor``, the text of the heading it is under (the Plan record view
-    links there)."""
-
-    id: str
-    date: str
-    who: str
-    title: str
-    anchor: str
-
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class PlanVersion:
-    """The plan's ``version`` (``len(amendments) + 1``) and its amendments in file order."""
-
-    version: int
-    amendments: tuple[Amendment, ...]
-
-
-def plan_version(text: bytes) -> PlanVersion:
+def plan_version(text: bytes) -> PlanView:
     """The version of the plan whose bytes are ``text`` (undecodable bytes are replaced)."""
-    found: dict[str, Amendment] = {}
+    found: dict[str, AmendmentView] = {}
     section: str | None = None
     for line in _prose(text.decode("utf-8", "replace")):
         heading = _HEADING.fullmatch(line)
         if heading is not None:
             level, title = len(heading.group(1)), (heading.group(2) or "").strip()
             if level <= 2:
-                section = title if level == 2 and title.casefold().startswith(SECTION) else None
+                section = (
+                    title if level == 2 and title.casefold().startswith("amendments") else None
+                )
             continue
         entry = None if section is None else _ENTRY.fullmatch(line)
         if entry is not None and section is not None and entry.group(1) not in found:
             found[entry.group(1)] = _amendment(entry, section)
     amendments = tuple(found.values())
-    return PlanVersion(version=len(amendments) + 1, amendments=amendments)
+    return PlanView(version=len(amendments) + 1, amendments=amendments)
 
 
 def _prose(text: str) -> Iterator[str]:
@@ -84,9 +64,9 @@ def _closes(opened: re.Match[str], fence: str, line: str) -> bool:
     return run[0] == fence[0] and len(run) >= len(fence) and not line[opened.end() :].strip()
 
 
-def _amendment(entry: re.Match[str], anchor: str) -> Amendment:
+def _amendment(entry: re.Match[str], anchor: str) -> AmendmentView:
     ident, date, who, title = entry.groups()
-    return Amendment(
+    return AmendmentView(
         id=ident,
         date=date,
         who=one_line(who.strip("*_ "))[:_TITLE_CHARS],

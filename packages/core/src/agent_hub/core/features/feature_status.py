@@ -35,7 +35,6 @@ from agent_hub.core.features.feature_view import (
     AcceptanceEval,
     AcCounts,
     AcRow,
-    AmendmentView,
     EvalRecord,
     FeatureDetail,
     FeatureRecord,
@@ -325,18 +324,7 @@ def _plan(folder: FeatureFolder) -> PlanView | None:
     """The plan's version and amendments; a record problem when it was too large to read."""
     if folder.plan_too_large:
         return PlanView(version=None, problem=PLAN_TOO_LARGE)
-    if folder.plan is None:
-        return None
-    found = plan_version(folder.plan)
-    return PlanView(
-        version=found.version,
-        amendments=tuple(
-            AmendmentView(
-                id=entry.id, date=entry.date, who=entry.who, title=entry.title, anchor=entry.anchor
-            )
-            for entry in found.amendments
-        ),
-    )
+    return None if folder.plan is None else plan_version(folder.plan)
 
 
 def _frontmatter(head: bytes | None) -> dict[str, str]:
