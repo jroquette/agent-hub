@@ -25,6 +25,7 @@ import { brainRoute } from "../../lib/brainLinks";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtDateTime } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
+import { readStored, writeStored } from "../../lib/storage";
 import { useDiscuss, type DiscussReference } from "../../shell/discuss";
 import { NoteView } from "../brain/NoteView";
 import { VERDICT_STATUS } from "../features/parts";
@@ -853,19 +854,11 @@ interface RowFacts {
 const LIST_KEY = "agent-hub:eval-list-open";
 
 function readListOpen(): boolean {
-  try {
-    return window.localStorage.getItem(LIST_KEY) !== "false";
-  } catch {
-    return true;
-  }
+  return readStored(LIST_KEY) !== "false";
 }
 
 function writeListOpen(open: boolean) {
-  try {
-    window.localStorage.setItem(LIST_KEY, String(open));
-  } catch {
-    // Without storage the list only opens again on reload.
-  }
+  writeStored(LIST_KEY, String(open));
 }
 
 /** The AC ids an eval names, `all` read as every AC of the feature. */
