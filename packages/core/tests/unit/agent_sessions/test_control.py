@@ -65,11 +65,13 @@ from agent_hub.core.agent_sessions.permission_policy import CLOSED_MESSAGE, TIME
 from agent_hub.core.agent_sessions.records import LogRecord, StatusFrame, StreamPosition
 from agent_hub.core.agent_sessions.screenshot import MAX_SCREENSHOT_BYTES
 from agent_hub.core.agent_sessions.store import AgentSessionFields
+from agent_hub.core.agent_sessions.workdirs import ResolvedWorkdir, WorkdirListing
 from agent_hub.core.readmodels.event_read_models import FoldedEventReadModels
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL, Rig
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
 from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.fakes import InMemoryEventStore
+from agent_hub.core.testing.read_model_builders import a_workdir
 from agent_hub.core.testing.session_driver_fakes import Hold, InMemorySessionDriver
 from agent_hub.core.testing.session_scenarios import a_session_events
 
@@ -458,6 +460,27 @@ async def test_reopens_ended_session_in_place_when_message_sent(make_rig: MakeRi
     assert (spec.resume, spec.fork, spec.session_id) == (PAST.session_id, False, None)
     assert (spec.mode, spec.cwd) == (created.mode, HUB_PATH)
     assert len(rig.store.list()) == 1
+
+
+async def test_starts_and_reopens_with_hub_plugins_when_workdir_lists_them(
+    make_rig: MakeRig,
+) -> None:
+    plugins = ("/hubs/demo-hub/plugin/hub-workflow",)
+
+    def workdirs(project: str) -> WorkdirListing:
+        assert project == "demo"
+        entry = ResolvedWorkdir(workdir=a_workdir(), path=HUB_PATH, plugin_dirs=plugins)
+        return WorkdirListing(entries=(entry,))
+
+    rig = make_rig(workdirs=workdirs, past_sessions=(PAST,))
+    created = await rig.create("Say hello.", resume_session_id=PAST.session_id)
+    await rig.until_status(created.id, "idle")
+    await rig.control.close(created.id)
+    await rig.control.send(created.id, SendMessage(text="Go on."))
+    await rig.until_status(created.id, "idle")
+
+    assert _start_spec(rig.driver, 0).plugin_dirs == plugins
+    assert _start_spec(rig.driver, 1).plugin_dirs == plugins
 
 
 async def test_counts_the_log_it_already_holds_when_reopened(make_rig: MakeRig) -> None:
