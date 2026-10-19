@@ -456,3 +456,25 @@ a.ah-flow-card-title:hover > span:last-child {
     animation: none;
   }
 }
+
+/* The table's ACs cell: the card's meter as the summary, the AC ids folded under it. */
+.ah-ticket-acs summary {
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: var(--control-sm);
+  line-height: var(--control-sm);
+}
+.ah-ticket-acs ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 0;
+  gap: 4px;
+}
+
+/* A ticket's pull request link (#69), under its Linear id and in its card's meta line. */
+.ah-ticket-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: var(--control-sm);
+}

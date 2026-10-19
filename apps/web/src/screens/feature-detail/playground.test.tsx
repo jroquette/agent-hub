@@ -259,7 +259,7 @@ describe("the tickets table", () => {
       Ticket: "110px",
       Scope: "90px",
       Status: "110px",
-      ACs: "120px",
+      ACs: "150px",
       Sessions: "150px",
       Readiness: "180px",
     });
