@@ -257,6 +257,19 @@ async def test_starts_every_session_when_no_limit(make_rig: MakeRig) -> None:
     assert all(s.ended_at is None for s in snapshots)
 
 
+async def test_refuses_no_start_when_no_limit_and_every_session_running(
+    make_rig: MakeRig,
+) -> None:
+    rig = make_rig(limits=SessionLimits(sessions_max=0), replies={"Work.": (Hold(),)})
+    busy = [await rig.create("Work.") for _ in range(17)]
+
+    extra = await rig.create()
+
+    assert extra.status == AgentSessionStatus.IDLE
+    snapshots = [await rig.control.snapshot(s.id) for s in busy]
+    assert [s.ended_at for s in snapshots] == [None] * 17
+
+
 async def test_ends_longest_idle_when_limit_reached(make_rig: MakeRig) -> None:
     rig = make_rig(limits=SessionLimits(sessions_max=2), replies={"Work.": (Hold(),)})
     oldest = await rig.create()
