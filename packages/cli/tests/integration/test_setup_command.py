@@ -2358,3 +2358,24 @@ class TestEnvironments:
         assert len(_check_ignore_calls(env_traced_git)) == 1
         assert (hub / ".gitignore").read_bytes() == ignore_bytes
         assert result.exit_code == 1
+
+    def test_skips_rest_of_identity_answer_when_answer_too_long(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # An identity answer cut at ANSWER_LIMIT is a no, and the rest of its line (here `y`)
+        # is skipped: it never answers the environments question.
+        hub = _team_hub(demo_workspace)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        result = run_setup(hub, input="x" * ANSWER_LIMIT + "y\n")
+
+        assert _identity_lines(result.stdout) == [DECLINED_LINE]
+        assert result.stderr.endswith(_prompt(hub) + DECLARE_PROMPT)
+        assert NAME_PROMPT not in result.stderr
+        assert not (hub / LOCAL_FILE).exists()
+        assert result.exit_code == 1
