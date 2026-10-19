@@ -19,7 +19,7 @@ README's "Sources not connected": Linear is read for a feature's tickets; GitHub
   loads `GET /features/{project}/{slug}/tickets` only while it is open.
 - **Tickets tab.** Columns Ticket, Title, Status (badge with text, never color alone), Assignee, Blocked by (links,
   each edge tagged plan, Linear or both), ACs (links to Criteria `?ac=`) and Readiness ("Can start now", "Waiting on
-  …", "Done", "Canceled", "Waiting: cycle", "Unknown"). The assignee is shown: the owner asked for it (D1), a departure from
+  …", "Can start on …'s branch", "Done", "Canceled", "Waiting: cycle", "Unknown"). The assignee is shown: the owner asked for it (D1), a departure from
   "No assignee column" below. No linked run or PR column (GitHub and runs are not joined). A Linear link opens in a
   new tab, only for a `https://linear.app/` url. Below the table, the planning view: Can start now, Parallel groups
   (numbered layers), Recommended order, Critical path, and a banner for cycles and blockers outside the feature.
@@ -136,7 +136,7 @@ otherwise, this list wins. Each item is an acceptance criterion.
   measuring is the workflow graph's, as a shared hook).
 - **AC-268.12 Cards.** Given a card of the flow, then it leads with the id, the Linear status (or "Not created") and
   the title's words; below a divider, a status line with the readiness only when it adds to the Linear status
-  ("Can start now", "Waiting on X", "Started before X was done", "Reviewed · waiting for Done") and the newest
+  ("Can start now", "Waiting on X", "Can start on X's branch", "Started before X was done", "Reviewed · waiting for Done") and the newest
   session or Start, then the facts in two fixed rows: progress (AC meter, PR, Reviewed) and people and order
   (assignee, After X, Critical path). The legend folds beside the flow's title.
 - **AC-268.13 Table.** Given the Tickets table, then ids stay on one line, an epic is tagged in its title and its
@@ -159,6 +159,11 @@ otherwise, this list wins. Each item is an acceptance criterion.
 - **AC-268.21 Start a ticket.** Given a created ticket that can start now, then its card and row offer Start, which
   starts a Claude session in the hub folder that works that one ticket with `/feature` from its workspace step and
   opens its chat; disabled, with the reason, when this machine cannot drive Claude or the hub has no folder.
+- **AC-268.22 Stacked start.** Given a created ticket whose only blocker not done is a ticket of this feature in
+  review with an open pull request, then its readiness reads "Can start on X's branch" (in the table, with "X is in
+  review, not merged" below) instead of "Waiting on X", and it offers the same Start (default, not primary), which
+  first confirms the risk in a dialog, then starts a session that creates the worktree from X's pull request branch
+  (`hub worktree --base`) and opens a pull request stacked on it.
 
 ---
 
