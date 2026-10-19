@@ -28,7 +28,7 @@ import typer
 from agent_hub.cli import setup_identity
 from agent_hub.cli.env_files import document_bytes, write_document
 from agent_hub.cli.hub_config_reader import FILE_LABEL, local_lines
-from agent_hub.cli.setup_identity import ANSWER_LIMIT
+from agent_hub.cli.setup_identity import ANSWER_LIMIT, skip_line
 from agent_hub.core.hub_config.effective_environments import (
     effective_environments,
     local_environment_problems,
@@ -67,8 +67,6 @@ INVALID_NAME: Final = (
 INVALID_ACCESS: Final = "access must be read, write or ask"
 _ACCESS: Final = frozenset({"read", "write", "ask"})
 _YES: Final = frozenset({"y", "yes"})
-# Lines read to skip the rest of an over-long answer: a terminal line is bounded anyway.
-_DRAIN_READS: Final = 1024
 
 
 class _StepEndedError(Exception):
@@ -198,16 +196,8 @@ def _ask(prompt: str) -> str:
         answer = sys.stdin.buffer.readline(ANSWER_LIMIT)
         if len(answer) < ANSWER_LIMIT or answer.endswith(b"\n"):
             return answer.decode("utf-8", errors="replace").strip()
-        _skip_line()
+        skip_line()
     raise _StepEndedError
-
-
-def _skip_line() -> None:
-    """Skip the rest of a line cut at ``ANSWER_LIMIT``, so it is not read as the next answer."""
-    for _ in range(_DRAIN_READS):
-        rest = sys.stdin.buffer.readline(ANSWER_LIMIT)
-        if not rest or rest.endswith(b"\n"):
-            return
 
 
 def _is_yes(answer: str) -> bool:
