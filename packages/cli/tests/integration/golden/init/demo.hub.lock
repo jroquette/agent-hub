@@ -84,6 +84,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/overengineering-review"
     },
+    ".claude/skills/plain-language": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/plain-language"
+    },
     ".claude/skills/recall": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/recall"
@@ -140,7 +144,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "896c787cd3f054d93de82c098a73983cbb44a03a392d98195cbdcee5e4400dcf"
+      "sha256": "0630636611536de4b977e47781e054106f2f3946589b74e7d00c0d130cffa91b"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -245,7 +249,7 @@
     "plugin/hub-workflow/NOTICE": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "d4f33e59fd80e374614fcc0d8017da71ce02dc35201cf97b64a9ef83339247e8"
+      "sha256": "abbdefc183257342ea248bc5ee62c2805cbd078cf9de6b9e43fec1d54c61a9a3"
     },
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
@@ -370,12 +374,12 @@
     "plugin/hub-workflow/skills/deliver/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "44655c4a7f254baeda594ddd62c658ae33a7b7070a0e510472b74166f04dc505"
+      "sha256": "8290c651c1d84161dc1c5614f7fefb857b2c50bc9c3396c270f92687ebdeba6d"
     },
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "bdbaa5d1defe07f3c10941824a728a9cf49b306024f3d2231680192fd34ab494"
+      "sha256": "8a5811df302b0d075371ad545ec035fda9ce30ac771fa1bd8a451feb5a82d59e"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
@@ -385,7 +389,7 @@
     "plugin/hub-workflow/skills/handoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "e2789656defde586cb980f5c08b0008829fb4abdaf75f24c24a68575dd94e33e"
+      "sha256": "58e25ce6dbaaf99e459639b3d60d431427cc443c3e2ca2694ad9139b10a789bb"
     },
     "plugin/hub-workflow/skills/incident/SKILL.md": {
       "executable": false,
@@ -422,6 +426,11 @@
       "ownership": "managed",
       "sha256": "46132ded74a70beccd4af49f8a70a9efe634a8acd41cf8761356eeec202dad17"
     },
+    "plugin/hub-workflow/skills/plain-language/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "be9a1cdcffb759374fba0f1ee0af80cd9e95421ad031f1833726c52e8127946d"
+    },
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,
       "ownership": "managed",
@@ -455,7 +464,7 @@
     "plugin/hub-workflow/skills/summarize/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "d54a4aca70e1601cb38661d9b4b97145100c4beabb8271addcd4b92b9ab48295"
+      "sha256": "757cd50b65f64b167ddf0b611a2be11ccc562e36ec2f0bc80c251005eb206094"
     },
     "plugin/hub-workflow/skills/triage/SKILL.md": {
       "executable": false,
