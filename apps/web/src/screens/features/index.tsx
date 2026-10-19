@@ -84,7 +84,7 @@ function readCollapsed(): Set<GroupId> {
   try {
     const value: unknown = JSON.parse(readStored(COLLAPSED_KEY) ?? "[]");
     const stored: unknown[] = Array.isArray(value) ? value : [];
-    return new Set(GROUPS.map((g) => g.id).filter((id) => id !== "needs" && stored.includes(id)));
+    return new Set(GROUPS.map((g) => g.id).filter((id) => stored.includes(id)));
   } catch {
     return new Set();
   }
@@ -309,9 +309,7 @@ function FeatureRow({
           className="ft-row-line"
           title={reason.line}
           style={
-            reason.tone === "failed" || reason.tone === "blocked"
-              ? { color: TONE_COLOR[reason.tone] }
-              : undefined
+            reason.needs !== null && reason.tone ? { color: TONE_COLOR[reason.tone] } : undefined
           }
         >
           {reason.line}
@@ -328,20 +326,21 @@ function FeatureRow({
   );
 }
 
-/** The group's hint: for Needs you, how many of each kind, so the reason is read at a glance. */
+/** The group's hint, then how many of its rows need you and why, so the warnings are read at a glance. */
 function hintOf(id: GroupId, rows: Feature[]): string {
-  const meta = GROUPS.find((g) => g.id === id);
-  if (id !== "needs") return meta?.hint ?? "";
-  const ranks = rows.map((f) => reasonOf(f).rank);
-  const count = (rank: number) => ranks.filter((r) => r === rank).length;
-  return [
-    [count(2), "wait on your steps"],
-    [count(1), "no ship"],
-    [count(0), "record cannot be read"],
-  ]
-    .filter(([n]) => Number(n) > 0)
-    .map(([n, words]) => `${String(n)} ${String(words)}`)
-    .join(" · ");
+  const hint = GROUPS.find((g) => g.id === id)?.hint ?? "";
+  const needs = rows.map((f) => reasonOf(f).needs);
+  const count = (kind: Reason["needs"]) => needs.filter((n) => n === kind).length;
+  const warnings = (
+    [
+      [count("owner-steps"), "wait on your steps"],
+      [count("no-ship"), "no ship"],
+      [count("problem"), "record cannot be read"],
+    ] as const
+  )
+    .filter(([n]) => n > 0)
+    .map(([n, words]) => `${String(n)} ${words}`);
+  return [hint, ...warnings].filter(Boolean).join(" · ");
 }
 
 /** The column titles at the top of each group's card; the first card also explains them. */
@@ -483,7 +482,7 @@ function Group({
   );
 }
 
-/** Features list (spec 17, D23) as an inbox: what needs you, what is moving, what shipped. */
+/** Features list (spec 17, D23): what is moving (rows that need you carry a warning), what was evaluated, what shipped. */
 export function FeaturesScreen() {
   const [scope] = useScope();
   const features = useFeatures(scope);
@@ -562,6 +561,9 @@ export function FeaturesScreen() {
         <h1 className="ah-h1">Features</h1>
         {features.isSuccess && all.length > 0 && (
           <p className="ft-summary">
+            <span data-group="needs">
+              <b>{all.filter((f) => reasonOf(f).needs !== null).length}</b> need you
+            </span>
             {GROUPS.map((g) => {
               const n = all.filter((f) => reasonOf(f).group === g.id).length;
               return (
