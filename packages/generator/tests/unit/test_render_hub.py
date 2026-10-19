@@ -21,6 +21,8 @@ from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
 from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.doctor.text_rules import ATTRIBUTIONS, SECRETS
 from agent_hub.core.hub_config.conventions import MAX_PATTERN_CHARS
+from agent_hub.core.hub_config.effective_environments import effective_environments
+from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig
 from agent_hub.core.hub_config.model_tiers import AGENT_NAMES
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
@@ -38,6 +40,7 @@ from agent_hub.core.testing.builders import (
     a_second_repo,
 )
 from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
+from agent_hub.core.workspace.environment_lines import brief_block
 from agent_hub.generator.built_json import managed_settings
 from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
@@ -5185,3 +5188,27 @@ def test_keeps_tier_keys_global_when_one_agent_overridden() -> None:
     )
     assert agent_model_lines(config)["planner"] == "model: opus"
     assert agent_model_lines(config)["researcher"] == "model: sonnet"
+
+
+def test_renders_no_env_file_when_environment_declares_env_file() -> None:
+    # AC-350.43: agents are not told where an env file is; every rendered byte is unchanged.
+    document = builders.an_environments_document()
+    document["environments"]["staging"]["credentials"]["env_file"] = "demo-api/.env.staging"
+    document["environments"]["local"]["credentials"] = {"env_file": "demo-api/.env.local"}
+    endpoints = document["repos"][0]["services"]["orders"]["endpoints"]
+    endpoints["staging"]["credentials"] = {"env_file": "demo-api/.env.orders"}
+
+    with_env_files = {
+        file.path: file.content for file in render_hub(HubConfig.model_validate(document)).files
+    }
+    without = {file.path: file.content for file in render_hub(environments_config()).files}
+
+    assert with_env_files == without
+    assert ".env." not in with_env_files["AGENTS.md"].decode("utf-8")
+    # The session brief's Environments block too.
+    briefs = [
+        brief_block(effective_environments(HubConfig.model_validate(source), LocalConfig()))
+        for source in (document, builders.an_environments_document())
+    ]
+    assert briefs[0] == briefs[1]
+    assert not any(".env." in line for line in briefs[0])
