@@ -29,6 +29,7 @@ import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
 import { useResolvedThreads } from "./ReviewDiff";
 import { reviewThreads } from "./review";
 import { SessionMenu } from "./SessionMenu";
+import { useSlashOptions } from "./SlashMenu";
 import {
   isTerminal,
   useAgentSession,
@@ -158,6 +159,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const screenshotUrl = useScreenshot(agentSessionId);
   const messageScreenshots = useMessageScreenshots(agentSessionId);
   const commands = useAgentSessionCommands(agentSessionId);
+  const slashOptions = useSlashOptions(snapshot.data?.project, transcript.state.slashCommands);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [forking, setForking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -515,7 +517,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             onSettings={commands.settings}
             onSending={follow.pin}
             maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
-            commands={state.slashCommands}
+            commands={slashOptions}
             draftId={agentSessionId}
             focusOnOpen={pending.length === 0}
             lastPrompt={lastPrompt(state)}

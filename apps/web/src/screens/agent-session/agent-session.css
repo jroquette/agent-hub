@@ -225,10 +225,37 @@
   padding: var(--space-1);
 }
 .as-slash-option {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-md);
-  font-family: var(--font-mono);
   cursor: pointer;
+}
+.as-slash-command {
+  flex: none;
+  font-family: var(--font-mono);
+}
+/* The hub's own skills and agents, told apart from what Claude Code or a plugin brings. */
+.as-slash-hub {
+  flex: none;
+  align-self: center;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.as-slash-desc {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .as-slash-option:hover,
 .as-slash-active {

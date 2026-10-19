@@ -4,9 +4,15 @@ import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { Composer, type ComposerProps } from "./Composer";
-import { matchCommands } from "./SlashMenu";
+import { aCatalogItem } from "../../testing/builders";
+import { hubOptions, matchCommands, slashOptions, slashToken, type SlashOption } from "./SlashMenu";
 
-const COMMANDS = ["/compact", "/review", "/feature", "/refactor"];
+const option = (command: string, hub = false): SlashOption => ({
+  command,
+  hub,
+  description: null,
+});
+const COMMANDS = ["/compact", "/review", "/feature", "/refactor"].map((name) => option(name));
 
 function open(overrides: Partial<ComposerProps> = {}) {
   const props: ComposerProps = {
@@ -28,7 +34,7 @@ const menu = () => screen.queryByRole("listbox", { name: "Commands" });
 const names = () =>
   within(screen.getByRole("listbox", { name: "Commands" }))
     .queryAllByRole("option")
-    .map((option) => option.textContent);
+    .map((item) => item.querySelector(".as-slash-command")?.textContent);
 const active = (box: HTMLElement) => {
   const id = box.getAttribute("aria-activedescendant");
   return id ? document.getElementById(id) : null;
@@ -36,8 +42,52 @@ const active = (box: HTMLElement) => {
 
 describe("matchCommands", () => {
   it("keeps the names holding the query, those starting with it first, ignoring case", () => {
-    expect(matchCommands(COMMANDS, "RE")).toEqual(["/review", "/refactor", "/feature"]);
+    const commands = (query: string) => matchCommands(COMMANDS, query).map((o) => o.command);
+    expect(commands("RE")).toEqual(["/review", "/refactor", "/feature"]);
     expect(matchCommands(COMMANDS, "")).toEqual(COMMANDS);
+  });
+});
+
+describe("slashToken", () => {
+  it("finds the /word at the caret when it starts the text or follows a space", () => {
+    expect(slashToken("/fe", 3)).toEqual({ start: 0, end: 3, query: "fe" });
+    expect(slashToken("run /fe now", 7)).toEqual({ start: 4, end: 7, query: "fe" });
+    expect(slashToken("run /feature", 6)).toEqual({ start: 4, end: 12, query: "f" });
+    expect(slashToken("a/fe", 4)).toBeNull();
+    expect(slashToken("/fe x", 5)).toBeNull();
+  });
+});
+
+describe("slash options", () => {
+  it("offers the hub's callable skills as /name and its agents as /agent-name", () => {
+    const items = [
+      aCatalogItem({ kind: "skill", name: "fix", mode: "both", description: "Fix a bug" }),
+      aCatalogItem({ kind: "skill", name: "recall", mode: "model-only" }),
+      aCatalogItem({ kind: "agent", name: "researcher", mode: null }),
+      aCatalogItem({ kind: "hook", name: "guard", mode: null }),
+    ];
+
+    expect(hubOptions(items)).toEqual([
+      { command: "/fix", hub: true, description: "Fix a bug" },
+      { command: "/agent-researcher", hub: true, description: items[2]?.description ?? null },
+    ]);
+  });
+
+  it("lists the hub first, then the session's commands the hub does not offer", () => {
+    const hub = [option("/fix", true), option("/agent-researcher", true)];
+    const session = [
+      "/compact",
+      "/hub-workflow:fix",
+      "/agent-hub-workflow:researcher",
+      "/vercel:deploy",
+    ];
+
+    expect(slashOptions(hub, session).map((o) => [o.command, o.hub])).toEqual([
+      ["/fix", true],
+      ["/agent-researcher", true],
+      ["/compact", false],
+      ["/vercel:deploy", false],
+    ]);
   });
 });
 
@@ -48,18 +98,43 @@ describe("SlashMenu (slash-menu)", () => {
 
     await userEvent.type(box, "/");
 
-    expect(names()).toEqual(COMMANDS);
+    expect(names()).toEqual(COMMANDS.map((o) => o.command));
     expect(box).toHaveAttribute("aria-controls", menu()?.id);
     expect(box).toHaveAttribute("aria-autocomplete", "list");
     expect(active(box)).toHaveTextContent("/compact");
     expect(active(box)).toHaveAttribute("aria-selected", "true");
   });
 
-  it("stays closed for a / later in the text and closes after a space", async () => {
+  it("opens for a matching /word later in the text and inserts it in place", async () => {
     const { box } = open();
 
     await userEvent.type(box, "run /re");
+    expect(names()).toEqual(["/review", "/refactor", "/feature"]);
+    await userEvent.keyboard("{Enter}");
+
+    expect(box).toHaveValue("run /review ");
+  });
+
+  it("stays closed for a later /word that matches nothing, so Enter sends", async () => {
+    const { box, props } = open();
+
+    await userEvent.type(box, "see /tmp/x{Enter}");
+
     expect(menu()).toBeNull();
+    expect(props.onSend).toHaveBeenCalledWith("see /tmp/x", []);
+  });
+
+  it("labels what the hub brings", async () => {
+    const { box } = open({ commands: [option("/fix", true), option("/compact")] });
+
+    await userEvent.type(box, "/");
+
+    expect(screen.getByRole("option", { name: "/fix, from the hub" })).toHaveTextContent("hub/fix");
+    expect(screen.getByRole("option", { name: "/compact" })).not.toHaveTextContent("hub");
+  });
+
+  it("closes after a space", async () => {
+    const { box } = open();
 
     await userEvent.clear(box);
     await userEvent.type(box, "/re");

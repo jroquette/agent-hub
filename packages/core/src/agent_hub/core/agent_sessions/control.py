@@ -586,6 +586,7 @@ class AgentSessionControl:
                 fork=request.fork,
                 session_id=minted,
                 environment_extra=self._environment_extra,
+                plugin_dirs=resolved.plugin_dirs,
             )
             live = await self._start(session, spec, state)
             try:
@@ -943,6 +944,7 @@ class AgentSessionControl:
                 resume=claude_session_id,
                 session_id=None,
                 environment_extra=self._environment_extra,
+                plugin_dirs=resolved.plugin_dirs,
             )
             state = start_state(with_prompt=False)
             live = await self._start(reopened, spec, state)
