@@ -42,6 +42,7 @@ BRAIN_MEMORY_RULE: Final = "brain.memory"
 SANDBOX_WORKFLOW_RULE: Final = "sandbox.workflow"
 WORKFLOWS_VALID_RULE: Final = "workflows.valid"
 ENVIRONMENTS_PRODUCTION_RULE: Final = "environments.production"
+ENVIRONMENTS_ENV_FILE_RULE: Final = "environments.env_file"
 ITEM_LEFTOVERS_RULE: Final = "items.leftovers"
 
 RULE_IDS: Final = (
@@ -69,6 +70,7 @@ RULE_IDS: Final = (
     CONFIG_STOP_GATE_RULE,
     # Before the last four, whose places their tests pin.
     ENVIRONMENTS_PRODUCTION_RULE,
+    ENVIRONMENTS_ENV_FILE_RULE,
     BRAIN_MEMORY_RULE,
     SANDBOX_WORKFLOW_RULE,
     WORKFLOWS_VALID_RULE,
@@ -200,6 +202,7 @@ class DoctorRules(ConfigObject):
     environments_production: RuleSettings | None = absent_by_default(
         alias="environments.production"
     )
+    environments_env_file: RuleSettings | None = absent_by_default(alias="environments.env_file")
     repos_agents: RuleSettings | None = absent_by_default(alias="repos.agents")
     config_stop_gate: StopGateRuleSettings | None = absent_by_default(alias="config.stop_gate")
     brain_memory: RuleSettings | None = absent_by_default(alias="brain.memory")
