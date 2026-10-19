@@ -99,7 +99,7 @@ def test_keeps_rows_and_planning_consistent_when_tickets_built() -> None:
 
     assert set(tickets.planning.order) <= refs
     assert {ref for layer in tickets.planning.layers for ref in layer} <= refs
-    assert tickets.golden_path.phase == "implement"
+    assert tickets.golden_path.phase == "build"
     assert a_ticket_snapshot().summaries[0].id == an_issue_summary().id
 
 
