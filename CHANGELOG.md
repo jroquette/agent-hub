@@ -18,6 +18,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The guard decides a long quote- or dot-dense Bash command (`echo 'a'a'a…`) in time linear in its length (AGH-302):
   before, its secret-file rule took quadratic time, so a command near or over the blocked-words 1 MiB cap ran past
   the 10 s hook timeout and Claude Code went on with no verdict (no "too large" ask).
+- While blocked words, or a problem with the blocked-word list, are in effect, the guard asks on a tool call whose
+  hook input it cannot read (not a JSON object, or nested too deep for the parser) instead of letting it through
+  unchecked (AGH-293).
 
 ### Added
 

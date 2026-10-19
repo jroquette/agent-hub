@@ -351,10 +351,11 @@ names one (glob tokens expanded; not `ls`, `test`, `[` or `stat`). The rule runs
 final and wins over any declared `access` and any `guard.infra.allow` match, and `prod_markers` still applies beside
 it. It never opens a file the secret-file rule treats as secret; that file keeps the secret-file reason unless its
 path or the command text holds a word. Scans are bounded (1 MiB per command or file, 64 files and 4 MiB per call,
-300 ms); over a bound, on a file that is not regular, on an unusable list in any layer and while an existing
-`hub.local.json` is unusable, the guard asks. The lists are the union of `hub.json`, `hub.local.json` and a `hub.json`
-named by `$HUB_CONFIG` (the hooks only); no layer removes an entry. A reason names the word, its first layer and the
-surface, never the command, a value or a line, and the recorded event carries `rule: blocked_word`.
+300 ms); over a bound, on a file that is not regular, on an unusable list in any layer, while an existing
+`hub.local.json` is unusable and on a hook event it cannot read as a JSON object, the guard asks. The lists are the
+union of `hub.json`, `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` (the hooks only); no layer removes an
+entry. A reason names the word, its first layer and the surface, never the command, a value or a line, and the
+recorded event carries `rule: blocked_word`.
 **`access` is not enforced by the guard in v1**: the guard cannot tell a read from a write in `psql`, `curl`, `aws` or
 an SDK script, so `access` is an instruction rendered for the agent, and the only hard blocks are blocked words and the
 existing `guard.infra`, `deny_hosts` and `deny_paths`. Blocked words are a best-effort text tripwire, not a security
