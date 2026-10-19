@@ -49,6 +49,20 @@ At least one of `acs` and `tickets` is required. At most 200 eval files are read
 each head up to 16 KiB. A legacy `eval.md` is read as one delivery named `legacy`: its verdict is its first `Verdict`
 line, its scope its frontmatter when it has one.
 
+The feature's **acceptance eval** is the latest whole-feature eval: `acs: all`, or a legacy `eval.md` whose
+frontmatter lists no `acs` or `tickets` (it was the one eval per feature; one that lists ACs counts only with
+`acs: all`). "Latest" is the order of the decisions below, ties going to the conservative verdict. The feature's
+header `verdict` is that eval's verdict, and none before one exists: ticket-scoped evals never set it, even when
+together they cover every AC (two-level-flows AC-1.6, AGH-323).
+
+### `plan.md`
+
+`plan.md` is read whole up to 256 KiB (`MAX_PLAN_BYTES`); over it, its version is a record problem ("plan.md is larger
+than 256 KiB; its version could not be read."). Its version is `v1` plus one per distinct entry
+`A<n> (<YYYY-MM-DD>, <who>): <title>` (a bare line or a `- ` list item, its head optionally `**` bold) under a
+`## Amendments…` heading, up to the next level-1 or level-2 heading; each entry's anchor is that heading's text. Lines
+in fenced code blocks do not count (`agent_hub.core.features.plan_version`).
+
 ### `reviews/<ticket>.md`
 
 Written by `/feature` step 7 once both reviewers pass: `type: review`, `ticket`, `outcome` (`approved` or

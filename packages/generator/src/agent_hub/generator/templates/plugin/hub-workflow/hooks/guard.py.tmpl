@@ -94,6 +94,16 @@ AI_ATTRIBUTION = re.compile(r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|c
 SECRET_TOKEN = re.compile(
     r"(?<![\w-])[<'\"]?(\S*/)?(\.env(\.[\w.-]+)?|[\w.-]+\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)[\w.-]*)(?=[\s'\";|&)<>]|$)"
 )
+# SECRET_TOKEN's matches, found by _secret_tokens in time linear in the command's length:
+# the regex rescans the rest of a word from each start (`(\S*/)?`, `[\w.-]+`), quadratic on quote- or
+# dot-dense text. A name ends where its run of `[\w.-]` (a chunk) ends, so only a chunk holding one of
+# the names' fixed parts (SECRET_CHUNK) can end a match.
+SECRET_CHUNK = re.compile(r"(?<![\w.-])[\w.-]*(?:\.env|\.(?:pem|key|p12|pfx)|id_(?:rsa|ed25519|ecdsa))[\w.-]*")
+SECRET_AFTER = re.compile(r"[\s'\";|&)<>]")
+SECRET_WORDISH = re.compile(r"[\w-]")
+SECRET_BLANK = re.compile(r"\s")
+SECRET_KEY_ENDS = (".pem", ".key", ".p12", ".pfx")
+SECRET_ID_NAMES = ("id_rsa", "id_ed25519", "id_ecdsa")
 SAFE_ON_SECRETS = {"ls", "test", "[", "stat"}  # these never print file contents
 SECRET_READ_REASON = "reading secret file {} is not allowed (any command, not just cat); reference the variable name instead"
 SECRET_FILE_REASON = "{} may hold secrets; reference variable names instead of reading it"
@@ -283,6 +293,54 @@ def _read_text(path: str) -> str:
             return fh.read()
     except (OSError, ValueError):
         return ""
+
+
+def _secret_name(seg: str, p: int, end: int) -> bool:
+    """SECRET_TOKEN's name part matches seg[p:end], where end is the end of p's chunk."""
+    if seg.startswith(".env", p) and (end == p + 4 or (seg[p + 4] == "." and end >= p + 6)):
+        return True
+    return (end - p >= 5 and seg[end - 4 : end] in SECRET_KEY_ENDS) or seg.startswith(SECRET_ID_NAMES, p)
+
+
+def _secret_dotted(seg: str, start: int, end: int) -> int | None:
+    """The first p inside the chunk seg[start:end] that follows a `.` and starts a name (a `.env` or
+    `id_` one: a key-file name that fits there fits at the chunk's start too), or None."""
+    firsts = [seg.find("." + name, start, end) for name in SECRET_ID_NAMES]
+    at = seg.find("..env", start, end)
+    while at != -1 and not _secret_name(seg, at + 1, end):
+        at = seg.find("..env", at + 1, end)
+    firsts.append(at)
+    found = [first + 1 for first in firsts if first != -1]
+    return min(found) if found else None
+
+
+def _secret_tokens(seg: str) -> list[str]:
+    """SECRET_TOKEN.finditer(seg)'s matches, in order, each chunk looked at once. A match is a chunk
+    that ends before SECRET_AFTER or the end and starts a name: after a `/`, the regex's first start in
+    that word takes everything from the word's start to the last such chunk; else it starts at the
+    chunk (or the `<`, `'` or `"` just before it), or after a `.` inside it."""
+    chunks = [(m.start(), m.end()) for m in SECRET_CHUNK.finditer(seg)
+              if m.end() == len(seg) or SECRET_AFTER.match(seg, m.end())]
+    found: list[tuple[int, int]] = []
+    taken = len(seg) + 1  # the start of the word a `/` match took, from the end backwards
+    backwards = ""
+    for start, end in reversed(chunks):
+        if start >= taken:
+            continue
+        named = _secret_name(seg, start, end)
+        if named and start and seg[start - 1] == "/":
+            backwards = backwards or seg[::-1]
+            blank = SECRET_BLANK.search(backwards, len(seg) - start)
+            taken = len(seg) - blank.start() if blank else 0
+            found.append((taken, end))
+        elif named:
+            quoted = start and seg[start - 1] in "<'\"" and not (start > 1 and SECRET_WORDISH.match(seg, start - 2))
+            found.append((start - 1 if quoted else start, end))
+        else:
+            dotted = _secret_dotted(seg, start, end)
+            if dotted is not None:
+                found.append((dotted, end))
+    return [seg[start:end] for start, end in reversed(found)]
 
 
 def _secret_path(path: str, cfg: Config) -> bool:
@@ -964,17 +1022,19 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
     c = cmd.replace("\\\n", " ")
     # longest first, so release/2 is named before release
     branches = "|".join(re.escape(b) for b in sorted(cfg.protected_branches, key=lambda b: (-len(b), b)))
-    if re.search(GIT + r"push\b[^;&|\n]*(\s--force\b|\s-[a-zA-Z]*f[a-zA-Z]*\b|\s--force-with-lease\b|\s--mirror\b|\s\+\S)", c):
+    # Here and in _after_infra, a rule whose pattern needs a fixed word first checks that the word is
+    # there, which skips the regex's slower scan of a long command.
+    if "push" in c and re.search(GIT + r"push\b[^;&|\n]*(\s--force\b|\s-[a-zA-Z]*f[a-zA-Z]*\b|\s--force-with-lease\b|\s--mirror\b|\s\+\S)", c):
         return "deny", "force-push is not allowed; push a new commit (or a merge) instead"
-    push = re.search(GIT + rf"push\b[^;&|\n]*(\s(origin\s+)?(?P<plain>{branches})\b|:(refs/heads/)?(?P<ref>{branches})\b)", c)
+    push = "push" in c and re.search(GIT + rf"push\b[^;&|\n]*(\s(origin\s+)?(?P<plain>{branches})\b|:(refs/heads/)?(?P<ref>{branches})\b)", c)
     if push:
         return "deny", f"pushing to {push.group('plain') or push.group('ref')} is not allowed; open a PR from a {_branch_hint(cfg)} branch"
-    if re.search(r"\b(curl|wget)\b[^|;&\n]*\|\s*(sudo\s+)?(ba|z|da)?sh\b", c):
+    if ("curl" in c or "wget" in c) and re.search(r"\b(curl|wget)\b[^|;&\n]*\|\s*(sudo\s+)?(ba|z|da)?sh\b", c):
         return "deny", "curl|sh is not allowed; download, inspect, then run explicitly"
     host = denied_host(c, cfg)
     if host:
         return "deny", f"{host} is in guard.deny_hosts (hub.json); agents do not reach it. Use fixtures or a sandbox endpoint"
-    if re.search(r"\bdocker\s+volume\s+(rm|prune)\b|\bdocker\s+compose\b[^;&|\n]*\bdown\b[^;&|\n]*\s-v\b", c):
+    if "docker" in c and re.search(r"\bdocker\s+volume\s+(rm|prune)\b|\bdocker\s+compose\b[^;&|\n]*\bdown\b[^;&|\n]*\s-v\b", c):
         return "deny", "removing docker volumes deletes local data (databases, caches); a human does this"
     infra = check_infra(cmd, cfg)
     if infra and infra[0] == "deny":
@@ -990,25 +1050,27 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
         words = seg.split()
         if not words or words[0] in SAFE_ON_SECRETS:
             continue
-        for m in SECRET_TOKEN.finditer(seg):
-            tok = m.group(0).lstrip("<").strip("'\"")
+        for found in _secret_tokens(seg):
+            tok = found.lstrip("<").strip("'\"")
             if _secret_path(tok, cfg):
                 return "deny", SECRET_READ_REASON.format(tok)
-    if re.search(r"\bgit\s+(commit|tag)\b", c) and AI_ATTRIBUTION.search(c):
+    if "git" in c and re.search(r"\bgit\s+(commit|tag)\b", c) and AI_ATTRIBUTION.search(c):
         return "deny", "commits carry no AI attribution (no Co-Authored-By AI, no 'Generated with', no 🤖)"
-    if re.search(r"\bgh\s+pr\s+(create|edit)\b", c) and AI_ATTRIBUTION.search(c):
+    if "gh" in c and re.search(r"\bgh\s+pr\s+(create|edit)\b", c) and AI_ATTRIBUTION.search(c):
         return "deny", "PR text carries no AI attribution"
-    if re.search(r"\b(checkout\s+-b|switch\s+-c|branch(\s+-\w+)*|worktree\s+add\b[^;&|\n]*-b)\s+['\"]?claude/", c):
+    if "claude/" in c and re.search(r"\b(checkout\s+-b|switch\s+-c|branch(\s+-\w+)*|worktree\s+add\b[^;&|\n]*-b)\s+['\"]?claude/", c):
         return "deny", f"branches are {_branch_hint(cfg)}, never claude/..."
-    if re.search(r"\b(rm|mv|cp|ln|truncate)\b[^;&|\n]*(^|[\s/'\"])\.git(/|\s|$|['\"])", c) or re.search(r">>?\s*(\S*/)?\.git(/|\s|$)", c):
+    if ".git" in c and (re.search(r"\b(rm|mv|cp|ln|truncate)\b[^;&|\n]*(^|[\s/'\"])\.git(/|\s|$|['\"])", c)
+                        or re.search(r">>?\s*(\S*/)?\.git(/|\s|$)", c)):
         return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
+    segments = _segments(c)
     if cfg.deny_paths:
-        for seg in _segments(c):
+        for seg in segments:
             for tok in _tokens(seg):
                 pat = denied_path(tok, cfg)
                 if pat:
                     return "deny", DENY_PATH_REASON.format(tok, pat)
-    for seg in _segments(c):
+    for seg in segments:
         if BASH_WRITE.search(seg):
             for tok in _tokens(seg):
                 rel = guard_file(tok, cfg, launchers=False)
@@ -1025,10 +1087,10 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
                     return "ask", GUARD_PARENT_REASON.format(tok, held or "the hub")
     if re.search(r"\b(rm|mv|truncate)\b[^;&|\n]*\s" + TEST_PATH, c) or re.search(r"\bsed\s+(-\w*i\w*|--in-place)\b[^;&|\n]*\s" + TEST_PATH, c):
         return "ask", "deleting or sed-editing tests from Bash bypasses the assertion guard; use Edit, or confirm this is intended"
-    if re.search(r"(>>?|\btee\b(\s+-a)?|\bsed\s+-\w*i\w*|\b(rm|mv|cp)\b)[^;&|\n]*\bbrain/(?!(now\.md|journal/|_inbox/|auto/|features/))\S+", c):
+    if "brain/" in c and re.search(r"(>>?|\btee\b(\s+-a)?|\bsed\s+-\w*i\w*|\b(rm|mv|cp)\b)[^;&|\n]*\bbrain/(?!(now\.md|journal/|_inbox/|auto/|features/))\S+", c):
         return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
     if cfg.ask_before_edit:
-        for seg in _segments(c):
+        for seg in segments:
             if not BASH_WRITE.search(seg):
                 continue
             for tok in _tokens(seg):
@@ -1169,12 +1231,15 @@ def _blocked_hit(pattern: re.Pattern[str], text: str, deadline: float) -> str | 
     return None
 
 
+UNQUOTED = {ord("'"): None, ord('"'): None, ord("\\"): None}
+
+
 def _command_views(cmd: str) -> tuple[str, ...]:
     """The raw command, with backslash-newlines removed (as bash joins them), and then with every
     quote and backslash removed, and a `$` just before a quote (p''rod, p\\rod, p$''rod: bash's
     ANSI-C and locale quotes); each distinct view once."""
     joined = cmd.replace("\\\n", "")
-    unquoted = re.sub(r"['\"\\\\]", "", re.sub(r"\$(?=['\"])", "", joined))
+    unquoted = re.sub(r"\$(?=['\"])", "", joined).translate(UNQUOTED)
     return tuple(dict.fromkeys((cmd, joined, unquoted)))
 
 

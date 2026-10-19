@@ -117,13 +117,14 @@ This system is the north star for the people and agents building the REST API (`
 | Agent | A role with instructions, tools and a model: `hub-workflow:evaluator` | bot, assistant |
 | Session | One Claude Code session of an agent | run, job, execution |
 | Workflow | A versioned sequence of steps | pipeline |
-| Run | One WorkflowRun (one issue taken to a PR); it contains sessions | session |
+| Run | One WorkflowRun: a workflow run (such as one issue taken to a PR) or, always qualified, a scenario run; it contains sessions | session |
+| Scenario run | One run of a scenario in one environment and mode; a WorkflowRun underneath | run (alone) |
 | Gate | An automatic check or a human approval a step must pass | — |
 | Brain · Learning · Inbox · Decision | Curated knowledge · something learned (proposed → accepted/rejected) · unreviewed proposals · a recorded choice | wiki · insight, tip |
 | Issue | A tracker item, `AGH-48` | ticket, task |
 | Doctor · finding | `hub doctor` and what it reports | lint |
 
-"Run" names a WorkflowRun only. A session is never a run.
+"Run" names a WorkflowRun only. A session is never a run. "Run" alone means a WorkflowRun; a scenario run is always qualified.
 
 **Formatting.** Ids short and mono (`5091b986`), full UUIDv7 on copy (`IdChip`). Issues as `AGH-48`, linking out. Recent times relative ("3 min ago") with the absolute time in the tooltip; tables absolute; local time by default, UTC on toggle. Durations "1 h 12 min". Money in USD: 2 decimals in summaries (`$1.27`), 4 in details (`$1.2734`); totals add up exactly. Numbers use tabular figures, thousands separators, right-aligned. Paths and commands are mono and middle-truncated (`packages/core/…/brain_memory_rule.py`) with the full value on hover (`PathText`). External content (issue text, PR comments, web pages) is labelled `ExternalLabel` and never styled as fact.
 

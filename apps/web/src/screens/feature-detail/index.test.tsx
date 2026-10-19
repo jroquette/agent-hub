@@ -63,6 +63,12 @@ function recordsWithSummary(summary: (path: string) => unknown) {
 }
 const route = "features/:project/:slug";
 
+/** Matches the one element whose whole text is the plan's version line. */
+function versionLine(text: string) {
+  return (_: string, element: Element | null) =>
+    element?.tagName === "P" && element.textContent === text;
+}
+
 const rows = Array.from({ length: 12 }, (_, i) => ({
   id: `AC-48.${String(i + 1)}`,
   description: `Given case ${String(i + 1)}, when it runs, then it passes`,
@@ -472,6 +478,58 @@ describe("FeatureDetailScreen", () => {
             new URL(r.url).searchParams.get("path")?.includes("/summaries/") === true,
         ),
       ).toBe(false);
+    });
+
+    it("shows the plan version line with one link per amendment (two-level-flows AC-1.4)", async () => {
+      const amendment = (id: string, title: string) => ({
+        id,
+        date: "2026-10-20",
+        who: "Ana",
+        title,
+        anchor: "Amendments",
+      });
+      const { router } = open(
+        {
+          [API]: {
+            ...detail,
+            plan: {
+              version: 3,
+              amendments: [amendment("A1", "Split the ticket"), amendment("A2", "Drop the export")],
+              problem: null,
+            },
+          },
+        },
+        "/features/agent-hub/layered-memory?doc=plan",
+      );
+
+      expect(
+        await screen.findByText(versionLine("Plan v3 · amendments A1, A2")),
+      ).toBeInTheDocument();
+      const second = screen.getByRole("link", { name: "A2" });
+      expect(second).toHaveAttribute("title", "A2 (2026-10-20, Ana): Drop the export");
+      await userEvent.click(second);
+
+      expect(router.state.location.search).toContain("view=agent");
+      expect(router.state.location.hash).toBe("#Amendments");
+    });
+
+    it("shows v1 when the plan has no amendments (two-level-flows AC-1.4)", async () => {
+      open(
+        { [API]: { ...detail, plan: { version: 1, amendments: [], problem: null } } },
+        "/features/agent-hub/layered-memory?doc=plan",
+      );
+
+      expect(await screen.findByText(versionLine("Plan v1 · no amendments"))).toBeInTheDocument();
+    });
+
+    it("says why the plan version is unknown when plan.md is too large (two-level-flows AC-1.4)", async () => {
+      const problem = "plan.md is larger than 256 KiB; its version could not be read.";
+      open(
+        { [API]: { ...detail, plan: { version: null, amendments: [], problem } } },
+        "/features/agent-hub/layered-memory?doc=plan",
+      );
+
+      expect(await screen.findByText(problem)).toBeInTheDocument();
     });
 
     it("says No plan.md yet when the plan record is absent (records)", async () => {

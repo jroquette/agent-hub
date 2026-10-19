@@ -20,9 +20,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Starting a stacked ticket from the Tickets tab creates the blocker's repo's worktree from the blocker's pull request
   branch even when the ticket's own work is in another repo of the hub: the session is given
   `./hub worktree <id> --stack-on <PR url>` instead of being asked to read the branch (AGH-381).
+- The guard decides a long quote- or dot-dense Bash command (`echo 'a'a'a…`) in time linear in its length (AGH-302):
+  before, its secret-file rule took quadratic time, so a command near or over the blocked-words 1 MiB cap ran past
+  the 10 s hook timeout and Claude Code went on with no verdict (no "too large" ask).
 
 ### Added
 
+- `hub web` Feature detail: the Plan tab shows the plan's version line ("Plan v3 · amendments A1, A2", one link per
+  amendment to its section of the plan), and the header verdict is the latest whole-feature eval's (`acs: all`, or a
+  legacy `eval.md` without scope); a ticket-scoped eval no longer sets it (AGH-323). The feature detail API serves
+  `plan` and `acceptance_eval`.
 - `hub brief` prints an `## Environments` block (both files: access, `PRODUCTION`, source, credential names, endpoints
   and blocked words, at most 60 lines), and the hooks' fallback brief lists the environments' names and access
   (AGH-286). `hub doctor`'s new `environments.production` rule names each production environment: a warning for
@@ -80,7 +87,7 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 - `hub web --sessions-max 0` (`AGENT_HUB_SESSIONS_MAX=0`) sets no limit on live agent sessions: none is ended or
   refused for the limit. `make playground` starts its conductor that way, instead of 16 sessions (AGH-383,
-  ADR 0041).
+  ADR 0042).
 - Generated hubs: `/feature` tells each implementer to change files with the Edit or Write tool, never by a shell
   script, so the session's review shows each change (AGH-378). `hub sync` brings it after you bump
   `platform.version`.

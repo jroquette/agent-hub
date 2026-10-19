@@ -19,6 +19,7 @@ from typing import Final, Literal, cast
 
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_evals import (
+    acceptance_eval,
     eval_coverage,
     eval_records,
     legacy_verdict_line,
@@ -35,6 +36,7 @@ from agent_hub.core.features.feature_reviews import (
     review_records,
 )
 from agent_hub.core.features.feature_view import (
+    AcceptanceEval,
     AcCounts,
     AcRow,
     EvalRecord,
@@ -43,10 +45,12 @@ from agent_hub.core.features.feature_view import (
     FeatureRecordName,
     FeatureView,
     GoldenPath,
+    PlanView,
     TicketsSource,
     Verdict,
 )
 from agent_hub.core.features.golden_path import EvalGate, GoldenInputs, golden_path
+from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_planning import TicketBoard, ticket_board
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.problems import one_line
@@ -63,6 +67,11 @@ EVAL: Final = "eval.md"
 RECORD_FILES: Final = (SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL)
 # How much of ``spec.md`` and ``eval.md`` is read for the frontmatter and the verdict.
 HEAD_BYTES: Final = 65_536
+# ``plan.md`` is read whole up to this size, so its ``## Amendments`` at the end is seen (P1).
+MAX_PLAN_BYTES: Final = 262_144
+PLAN_TOO_LARGE: Final = (
+    f"{PLAN} is larger than {MAX_PLAN_BYTES // 1024} KiB; its version could not be read."
+)
 _VERDICT_LINE_CHARS: Final = 200
 _SIZES: Final = ("spike", "bounded", "architectural")
 
@@ -98,6 +107,8 @@ class FeatureFolder:
     ``spec_head`` and ``eval_head`` are the first ``HEAD_BYTES`` of ``spec.md`` and ``eval.md``.
     ``evals`` and ``reviews`` hold the heads of ``evals/*.md`` and ``reviews/*.md`` sorted by
     name; ``evals_skipped`` and ``reviews_skipped`` count the files left unread over the cap.
+    ``plan`` holds ``plan.md`` whole, None when absent or larger than ``MAX_PLAN_BYTES``
+    (``plan_too_large`` then says so).
     """
 
     slug: str
@@ -109,6 +120,8 @@ class FeatureFolder:
     reviews: tuple[RecordHead, ...] = ()
     evals_skipped: int = 0
     reviews_skipped: int = 0
+    plan: bytes | None = None
+    plan_too_large: bool = False
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -228,7 +241,8 @@ def feature_detail(
     parts = feature_parts(folder, read)
     record = parts.record
     rows = () if not isinstance(record, FeatureRecordFile) else tuple(_row(ac) for ac in record.acs)
-    verdict, verdict_line = _verdict(folder.eval_head)
+    accepted = acceptance_eval(parts.evals)
+    verdict, verdict_line = _verdict(accepted, folder.eval_head)
     spec_repos = _listed(front.get("repos"))
     return FeatureDetail(
         project=project,
@@ -253,6 +267,12 @@ def feature_detail(
         ac_rows=rows,
         records=_records(folder),
         evals=parts.evals,
+        plan=_plan(folder),
+        acceptance_eval=(
+            None
+            if accepted is None or accepted.verdict is None
+            else AcceptanceEval(delivery=accepted.delivery, verdict=accepted.verdict)
+        ),
     )
 
 
@@ -300,12 +320,24 @@ def _counts(rows: tuple[AcRow, ...]) -> AcCounts:
     )
 
 
-def _verdict(head: bytes | None) -> tuple[Verdict | None, str | None]:
-    found = None if head is None else legacy_verdict_line(head)
-    if found is None:
+def _verdict(
+    accepted: EvalRecord | None, legacy_head: bytes | None
+) -> tuple[Verdict | None, str | None]:
+    """The header verdict: the acceptance eval's, with the legacy ``eval.md``'s own verdict line
+    when it is that eval, else a line naming its delivery; none before an acceptance eval."""
+    if accepted is None or accepted.verdict is None:
         return None, None
-    verdict, line = found
-    return verdict, one_line(line.strip())[:_VERDICT_LINE_CHARS]
+    found = legacy_verdict_line(legacy_head) if accepted.legacy and legacy_head else None
+    if found is None:
+        return accepted.verdict, f"Verdict: {accepted.verdict}, from the {accepted.delivery} eval"
+    return accepted.verdict, one_line(found[1].strip())[:_VERDICT_LINE_CHARS]
+
+
+def _plan(folder: FeatureFolder) -> PlanView | None:
+    """The plan's version and amendments; a record problem when it was too large to read."""
+    if folder.plan_too_large:
+        return PlanView(version=None, problem=PLAN_TOO_LARGE)
+    return None if folder.plan is None else plan_version(folder.plan)
 
 
 def _frontmatter(head: bytes | None) -> dict[str, str]:

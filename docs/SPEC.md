@@ -365,6 +365,43 @@ reading `config/app.json`, `find … -exec cat`), tool output, obfuscation past 
 edit contents; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen; `hub run`'s implement
 sessions run without the hub's hooks (AGH-278).
 
+### Scenarios and actions (AGH-350)
+
+A project can drive its own system, step by step, through the workflow engine, so that a walk developers now do by
+hand (send a message, wait, read a table, fix data, retry) is written down, runs the same way twice and is audited.
+The contract is [design/scenarios.md](design/scenarios.md); the decision is
+[ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md), which partially supersedes ADR 0038's "`access` is an
+instruction" for actions and for the deterministic nodes of a workflow that declares an environment.
+
+- **Actions** are the project's own scripts in the hub's `actions/<pack>/`, each declaring its `effect` (`read`,
+  `write` or `destroy`), typed inputs (a `service` input resolves to that service's endpoint in the bound environment)
+  and an output schema. A script reads one JSON object on stdin and prints one JSON value; in `plan` mode it changes
+  nothing. An action runs only when it is committed in the hub; a new or changed one is a draft. agent-hub ships no
+  built-in action and no infra client.
+- **Scenarios** are workflow documents with `kind: scenario` in the hub's `scenarios/<pack>/`, built only from
+  `action`, `expect` (poll a read action until a condition holds or a timeout), `approval`, `wait`, `loop_group` and
+  `include` nodes, passing values on with `capture` and `$CTX`.
+- **The access policy** lives in core and decides every action before it runs, from the environment's effective
+  access (`hub.local.json` only tightens), the effect and who proposed the step: an undeclared environment and a
+  production write or destroy are denied; access `read` allows reads only, `ask` asks before writes and destroys,
+  `write` asks before destroys; a write or destroy an agent proposed is never allowed without asking, and a deny stays
+  a deny; a draft is denied. No key or flag turns an ask into an allow. `hub scenario plan` shows each step, where it goes, its effect and the decision before anything runs;
+  a deny refuses the start and an ask is an approval gate.
+- **Credentials:** an environment (or an endpoint) may name a git-ignored dotenv file, `credentials.env_file`. Only
+  the action runner reads it, when an action starts, and injects its variables into that action's process alone;
+  values of 4 characters or more are redacted from the action's output (shorter ones cannot be told apart from
+  ordinary output), and no value appears in an event, record or plan. Declared credential names are
+  removed from every agent session, and the guard denies agents any read of a declared env file.
+- **Modes:** `hub scenario run --mode regression` starts no agent and fails on the first divergence; `interactive`
+  (the default) pauses, and hub web starts one read-only investigation session that may read the hub, run read
+  actions, write draft actions and propose findings and workaround options, each with its plan. The developer picks
+  an option, retries or stops; nothing runs before the pick. Findings become tracker issues or inbox notes.
+- **Process workflows** may declare `environment`: their `action`, `shell` and `script` nodes get the same policy
+  (`shell` and `script` take `effect`, default `write`). Their agent nodes get only a **best-effort** guard check
+  (an ask when a command or URL names an endpoint of a read-only or production environment), and the docs and the run
+  view say so. Scenario runs are local only in v1, and a scenario run is a WorkflowRun that is always called a
+  scenario run.
+
 ## Layer 2: control plane and observability
 
 A web app reads the hubs and the agents' events and answers five questions, one per view.
@@ -532,7 +569,7 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
 
 - **Playground.** `make playground` runs a conductor `hub web` (7420, from a copy of the checkout taken at each
   start) that drives the sessions, with no limit on live ones (`--sessions-max 0`,
-  [ADR 0041](adr/0041-no-live-session-limit-in-the-playground.md)), and `make live`: the checkout's API on 7421, restarted on each Python change, and
+  [ADR 0042](adr/0042-no-live-session-limit-in-the-playground.md)), and `make live`: the checkout's API on 7421, restarted on each Python change, and
   the web app on 5173, whose proxy sends the agent-session routes to the conductor, so a change never ends a session.
   One address (`/__playground/session?token=`) signs the browser in. The dev app's shake and New session start in
   the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps never offer it.
@@ -658,7 +695,7 @@ Workflow runs list filters by workflow and failure kind.
   the demo data ([TESTING.md](TESTING.md)).
 
 **Playground delivery 2 (AGH-384, built).** What the owner validated in the playground after v0.17.0, as one
-change; the live-session limit is [ADR 0041](adr/0041-no-live-session-limit-in-the-playground.md):
+change; the live-session limit is [ADR 0042](adr/0042-no-live-session-limit-in-the-playground.md):
 
 - **Features** leads In progress with the features that need you (a warning, or a live session waiting on you), and
   the sidebar badges Features with their count. **Feature detail**: per ticket an AC meter and a last PR column

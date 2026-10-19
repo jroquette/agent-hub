@@ -98,7 +98,7 @@ At the live-sessions limit, a start or a reopen first ends the local session idl
 request or a cloud one is the start refused (429 `limit`). With `--sessions-max 0` (the playground's conductor) no
 session is ended or refused for the limit.
 
-**No live-session limit (AGH-383, [ADR 0041](../adr/0041-no-live-session-limit-in-the-playground.md))**
+**No live-session limit (AGH-383, [ADR 0042](../adr/0042-no-live-session-limit-in-the-playground.md))**
 
 **Session limits (core)**
 
