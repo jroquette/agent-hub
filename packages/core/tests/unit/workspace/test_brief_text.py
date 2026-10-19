@@ -297,6 +297,19 @@ def test_keeps_text_when_no_environments() -> None:
     for given in (inputs(), inputs(now_text=long_now)):
         assert render_brief(given.model_copy(update={"environments": ()})) == render_brief(given)
     assert BriefInputs.model_fields["environments"].default == ()
+    assert render_brief(inputs(environments=())).split("\n") == [
+        "# Brief",
+        "",
+        "## Now",
+        "Ship the collector.",
+        "Then the CLI.",
+        "",
+        "## Journal (last 7 days)",
+        "- (no entry in the last week)",
+        "",
+        "## Repos",
+        *FOOTER,
+    ]
 
 
 def test_keeps_environments_block_when_brief_cut() -> None:

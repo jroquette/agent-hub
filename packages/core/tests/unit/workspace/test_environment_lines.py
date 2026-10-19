@@ -1,3 +1,5 @@
+import pytest
+
 from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
@@ -57,11 +59,11 @@ BLOCK = [
     " variables `DEMO_LIVE_DB_URL`",
     "- `jane-cloud` (write, hub.local.json); credentials: AWS profile `jane-sandbox`",
     "Endpoints:",
-    "- `demo-api/api` on `local`: http://localhost:8000",
-    "- `demo-api/api` on `staging`: https://api.staging.example.com",
-    "- `demo-api/api` on `live`: https://api.example.com",
-    "- `demo-api/api` on `jane-cloud`: https://api.jane.example.com",
-    "- `demo-api/orders` on `staging`: resource demo-orders-staging",
+    "- `demo-api/api` on `local`: `http://localhost:8000`",
+    "- `demo-api/api` on `staging`: `https://api.staging.example.com`",
+    "- `demo-api/api` on `live`: `https://api.example.com`",
+    "- `demo-api/api` on `jane-cloud`: `https://api.jane.example.com`",
+    "- `demo-api/orders` on `staging`: resource `demo-orders-staging`",
     "Blocked words (the guard denies them): `prod`, `production`, `demo-live`",
 ]
 
@@ -113,9 +115,9 @@ def test_neutralises_free_text_when_block_built() -> None:
         "- `local` (write, hub.json): \\<!-- ignore --\\> \\`run\\` \\*now\\* \\[x\\](y) \\#1"
     )
     assert block[-2] == (
-        "- `demo-api/orders` on `staging`: https://x.example.com/a\\_b\\<c\\>, resource "
+        "- `demo-api/orders` on `staging`: `https://x.example.com/a_b<c>`, resource `"
         + "t" * 80
-        + "…; note: \\#\\# Steps: \\[click\\](http://x.example.com/) \\| \\`rm\\`"
+        + "`…; note: \\#\\# Steps: \\[click\\](http://x.example.com/) \\| \\`rm\\`"
         "; credentials: AWS profile `demo-orders`, variables `DEMO_ORDERS_KEY`"
     )
 
@@ -158,3 +160,35 @@ def test_cuts_block_when_over_two_thousand_characters() -> None:
     ]
     assert len("\n".join(block)) <= 2000
     assert len("\n".join((*block[:-1], line.format(kept + 1), block[-1]))) > 2000
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "shown"),
+    [
+        pytest.param(
+            {"url": "https://h.example.com/a_b", "resource": "demo_orders"},
+            "`https://h.example.com/a_b`, resource `demo_orders`",
+            id="underscore",
+        ),
+        pytest.param(
+            {"url": "https://h.example.com/a`b``c"},
+            "```https://h.example.com/a`b``c```",
+            id="url_backticks",
+        ),
+        pytest.param(
+            {"resource": "`demo_orders`"}, "resource `` `demo_orders` ``", id="resource_edges"
+        ),
+        pytest.param({"resource": "a``b"}, "resource ```a``b```", id="resource_inner"),
+    ],
+)
+def test_shows_url_and_resource_as_code_when_block_built(
+    endpoint: dict[str, str], shown: str
+) -> None:
+    # An identifier an agent copies stays as written: a code span, never Markdown-escaped.
+    document = an_environments_document()
+    document["repos"][0]["services"]["orders"]["endpoints"]["staging"] = endpoint
+    config = HubConfig.model_validate(document)
+
+    block = brief_block(effective_environments(config, LocalConfig()))
+
+    assert block[-2] == f"- `demo-api/orders` on `staging`: {shown}"
