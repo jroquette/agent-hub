@@ -82,6 +82,7 @@ describe("ReviewDiff (comments)", () => {
 
     await userEvent.click(within(shown).getByRole("button", { name: "Resolve" }));
     expect(within(shown).queryByText("Why both?")).toBeNull();
+    expect(within(shown).getByText("Resolved")).toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem(resolvedKey("s1")) ?? "[]")).toEqual(["u-3"]);
   });
 
