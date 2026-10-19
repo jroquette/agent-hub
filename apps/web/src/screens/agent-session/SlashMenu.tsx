@@ -1,16 +1,19 @@
 import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 
 import type { components } from "../../api/schema";
+import { Icon } from "../../components";
 import { cx } from "../../lib/cx";
-import { useSkillCatalog } from "../skills/queries";
+import { skillRoute, useSkillCatalog } from "../skills/queries";
 
 type CatalogItem = components["schemas"]["CatalogItem"];
 
-/** One entry of the `/` menu: what it inserts, whether the project's hub brings it, a hint. */
+/** One entry of the `/` menu: what it inserts, whether the project's hub brings it, a hint, and
+ * the in-app page of a hub item (opened in a new tab). */
 export interface SlashOption {
   command: string;
   hub: boolean;
   description: string | null;
+  href?: string | null;
 }
 
 /** The `/word` the caret is in, when it opens the text or follows a space; else null. */
@@ -48,7 +51,7 @@ function shortName(command: string): string {
 
 /** What the hub's catalog offers in the composer: the skills a user may call, as `/name`, and the
  * agents, as `/agent-name` (the session sends both to Claude by their exact names). */
-export function hubOptions(items: readonly CatalogItem[]): SlashOption[] {
+export function hubOptions(project: string, items: readonly CatalogItem[]): SlashOption[] {
   const seen = new Set<string>();
   const options: SlashOption[] = [];
   for (const item of items) {
@@ -59,7 +62,12 @@ export function hubOptions(items: readonly CatalogItem[]): SlashOption[] {
     const command = item.kind === "agent" ? `/agent-${item.name}` : `/${item.name}`;
     if (seen.has(command)) continue;
     seen.add(command);
-    options.push({ command, hub: true, description: item.description });
+    options.push({
+      command,
+      hub: true,
+      description: item.description,
+      href: skillRoute(project, item),
+    });
   }
   return options;
 }
@@ -80,7 +88,15 @@ export function slashOptions(
 export function useSlashOptions(project: string | undefined, session: readonly string[]) {
   const catalog = useSkillCatalog(project ?? "", project !== undefined);
   const items = project === undefined ? undefined : catalog.data?.items;
-  return useMemo(() => slashOptions(hubOptions(items ?? []), session), [items, session]);
+  return useMemo(
+    () => slashOptions(hubOptions(project ?? "", items ?? []), session),
+    [project, items, session],
+  );
+}
+
+/** Opens a hub item's page in a new tab; nothing for an option without one. */
+export function openPage(option: SlashOption): void {
+  if (option.href) window.open(option.href, "_blank", "noopener");
 }
 
 function countText(count: number): string {
@@ -136,7 +152,9 @@ export function useSlashMenu(
       case "Enter":
         // Never a send while the menu is open, even with nothing to insert.
         if (event.shiftKey) return false;
-        if (chosen !== undefined) pick(chosen);
+        if (event.ctrlKey || event.metaKey) {
+          if (chosen !== undefined) openPage(chosen);
+        } else if (chosen !== undefined) pick(chosen);
         break;
       case "Tab":
         if (event.shiftKey || chosen === undefined) return false;
@@ -208,9 +226,23 @@ export function SlashMenu({ id, options, active, onPick }: SlashMenuProps) {
               </span>
             )}
             <span className="as-slash-command">{option.command}</span>
-            {option.description && (
-              <span className="as-slash-desc ah-muted" aria-hidden="true">
-                {option.description}
+            <span className="as-slash-desc ah-muted" aria-hidden="true">
+              {option.description}
+            </span>
+            {option.href && (
+              // Not a link: an option holds no control (its children are presentational); the
+              // keyboard opens the active option's page with Ctrl/Cmd+Enter.
+              <span
+                className="as-slash-open"
+                aria-hidden="true"
+                title={`Open ${option.command} in a new tab (Ctrl/Cmd+Enter)`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openPage(option);
+                }}
+              >
+                <Icon name="external-link" size="sm" />
               </span>
             )}
           </div>
