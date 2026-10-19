@@ -76,6 +76,15 @@ AGENTS_RULE_PHRASES = (
     "versioned text uses the hub's",
     "Text for agents keeps full detail",
 )
+# AC-10: each step that writes for people names the skill on the line that holds its anchor.
+CITATIONS = [
+    ("summarize", "Write in the language of the record."),
+    ("handoff", "Facts only; no secrets"),
+    ("feature", "**Finish**"),
+    ("deliver", "**Review threads**"),
+    ("deliver", "**Ready**"),
+    ("deliver", "**Tracker**"),
+]
 
 
 def flat(text: str) -> str:
@@ -156,3 +165,14 @@ def test_states_agents_plain_language_rule_when_agents_rendered(
     skill_lines = {line.strip() for line in skill_text.splitlines()}
     long_lines = [line.strip() for line in rule.splitlines() if len(line.strip()) >= 60]
     assert not [line for line in long_lines if line in skill_lines]
+
+
+@pytest.mark.parametrize(("skill", "anchor"), CITATIONS)
+def test_cites_plain_language_when_people_skills_rendered(
+    demo_config: HubConfig, skill: str, anchor: str
+) -> None:
+    text = rendered_text(demo_config, f"plugin/hub-workflow/skills/{skill}/SKILL.md")
+    lines = [line for line in text.splitlines() if anchor in line]
+
+    assert len(lines) == 1, lines
+    assert "`plain-language`" in lines[0]
