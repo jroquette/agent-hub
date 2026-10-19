@@ -3003,6 +3003,37 @@ def test_allows_launcher_when_run_or_read(guarded_hub: Path, guard: Guard) -> No
         assert guard(hooks, runs) == [None] * len(runs)
 
 
+# AGH-277 (AC-277.20): hub.local.json widens the developer's environments and blocked lists, so
+# an Edit or Write of it, and a Bash write of it from the hub, ask first.
+def test_asks_when_local_file_written(guarded_hub: Path, guard: Guard) -> None:
+    local = guarded_hub / "hub.local.json"
+    runs: list[tuple[dict[str, Any], Path]] = [
+        (
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(local), "old_string": "a", "new_string": "b"},
+            },
+            guarded_hub,
+        ),
+        (
+            {"tool_name": "Write", "tool_input": {"file_path": str(local), "content": "{}"}},
+            guarded_hub,
+        ),
+        bash_run("echo {} > hub.local.json", guarded_hub),
+    ]
+    named = [str(local), str(local), "hub.local.json"]
+
+    verdicts = guard(guarded_hub / HOOKS, runs)
+
+    missed = [
+        (event, verdict)
+        for (event, _), path, verdict in zip(runs, named, verdicts, strict=True)
+        if verdict is None or verdict[0] != "ask" or path not in verdict[1]
+    ]
+    assert len(runs) == 3
+    assert missed == []
+
+
 # AGH-31 (AC-31.5): the probe kickoff Reads, as written in the rendered kickoff, is denied by the
 # guard itself, from the hub, from a hub worktree and with no hub.json above the cwd.
 def test_denies_guard_probe_when_kickoff_path_read(
