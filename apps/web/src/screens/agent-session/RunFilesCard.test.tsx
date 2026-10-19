@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { RUN_FILES_SHOWN, RunFilesCard, runFilesOf } from "./RunFilesCard";
+import { RUN_FILES_SHOWN, RunFilesCard, runFilesOf, type RunFile } from "./RunFilesCard";
 import { changedFiles, type ToolView } from "./model";
 
 const edit = (id: string, path: string, isError = false): ToolView => ({
@@ -57,5 +57,65 @@ describe("RunFilesCard (review)", () => {
     await userEvent.click(within(card).getByRole("button", { name: "+2 more files" }));
 
     expect(onOpenFile.mock.calls).toEqual([["/r/f0.ts"], [null]]);
+  });
+});
+
+describe("RunFilesCard (kinds of file)", () => {
+  it("says Edited for a turn that only edits files an earlier turn created", () => {
+    const files = filesOf([
+      { ...edit("w1", "/r/a.md"), name: "Write", input: { file_path: "/r/a.md", content: "a" } },
+      edit("e1", "/r/a.md"),
+    ]);
+    render(
+      <RunFilesCard
+        files={runFilesOf(files, new Set(["e1"]))}
+        reviewed={{}}
+        onOpenFile={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Edited 1 file")).toBeInTheDocument();
+  });
+
+  const changed = (path: string, created: boolean): RunFile => ({
+    file: {
+      path,
+      created,
+      changes: [],
+      added: 1,
+      removed: 0,
+      lastChangeId: `c-${path}`,
+      net: null,
+    },
+    created,
+    added: 1,
+    removed: 0,
+  });
+
+  it("groups the code apart from Claude's plan and scratch, the scratch not waiting for review", () => {
+    render(
+      <RunFilesCard
+        files={[
+          changed("/tmp/notes.md", true),
+          changed("/Users/me/.claude/plans/p.md", true),
+          changed("/repo/src/a.ts", true),
+        ]}
+        reviewed={{}}
+        onOpenFile={vi.fn()}
+      />,
+    );
+    const card = screen.getByRole("region", { name: "Files edited in this turn" });
+    expect(
+      within(card)
+        .getAllByRole("button", { name: /^Open / })
+        .map((b) => b.title),
+    ).toEqual(["/repo/src/a.ts", "/Users/me/.claude/plans/p.md", "/tmp/notes.md"]);
+    expect(
+      within(card).getByText("goes in the pull request", { exact: false }),
+    ).toBeInTheDocument();
+    expect(
+      within(card).getByRole("button", {
+        name: "Open /tmp/notes.md, Claude's notes, nothing to review, new, +1 −0, not for review",
+      }),
+    ).toBeInTheDocument();
   });
 });
