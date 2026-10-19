@@ -36,7 +36,9 @@ is a hub bug: log it in `brain/_inbox/`.
    `brain/now.md` and the journal at the end.
 3. Features: requirements → research → plan (owner approves) → implementation → spec and quality review → evaluator.
 4. Code changes happen only in an isolated worktree (`make worktree NAME=<team>-<n>-<desc>`) created from a freshly
-   fetched @@{worktree_base}.
+   fetched @@{worktree_base}. Change a file with the Edit or Write tool, never by a shell script (a heredoc, `sed -i`,
+   a Python `write`): the session's review shows each change from those calls. A tool's own output (a formatter, a
+   codemod, generated code) runs from the shell, and the review still shows it through git.
    A repo can ship executable `<repo>/scripts/worktree-setup.sh` and `<repo>/scripts/worktree-teardown.sh`, which
    `hub worktree` runs with the worktree's path for the repo's own setup (env files, databases, ports); they get
    `HUB_WORKTREE_NAME`, `HUB_WORKTREE_BRANCH`, `HUB_REPO_DIR` and `HUB_HUB_DIR` (the repo's and the hub's main
