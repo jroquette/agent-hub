@@ -117,15 +117,16 @@ def test_folds_owner_case_when_one_ticket_done() -> None:
         "plan": "done",
         "tickets": "done",
         "implement": "current",
-        "review": "pending",
+        "review": "partial",
         "evaluate": "partial",
-        "shipped": "pending",
+        "shipped": "partial",
     }
     assert _step(path, "implement").meta == "1/17 tickets delivered · 3/36 ACs"
     assert _step(path, "review").meta == "1/17 reviewed"
     assert _step(path, "evaluate").meta == "partial: covers 3 of 36 ACs"
     assert _step(path, "evaluate").reason == "Implement is not done"
     assert _step(path, "shipped").reason == "Implement is not done"
+    assert _step(path, "shipped").meta == "1/17 Done"
 
 
 def test_counts_reviewed_when_done_or_approved_record() -> None:
@@ -168,6 +169,60 @@ def test_makes_review_current_when_in_review_without_approved_record() -> None:
     assert _step(path, "implement").state == "done"
     assert review.state == "current"
     assert review.meta == "0/1 reviewed"
+
+
+def _one_of_three_done_board_rows(*, done: bool) -> tuple[TicketRow, ...]:
+    """Three active tickets read from Linear (the first Done when ``done``), plus a canceled
+    one, with no review record."""
+    planned = tuple(
+        PlannedTicket(key=f"T{number}", id=f"ACME-{1519 + number}", order=number)
+        for number in range(1, 5)
+    )
+    states = (_DONE if done else _STARTED, _STARTED, _STARTED, _CANCELED)
+    summaries = tuple(
+        an_issue_summary(
+            id=f"ACME-{1519 + number}",
+            state=state,
+            url=f"https://linear.app/demo/issue/ACME-{1519 + number}",
+            blocks=(),
+            blocked_by=(),
+        )
+        for number, state in enumerate(states, start=1)
+    )
+    snapshot = a_ticket_snapshot(summaries=summaries, missing=(), external=())
+    return ticket_board(planned, _acs(3, passing=1), snapshot, approved=()).rows
+
+
+def test_marks_review_partial_when_a_ticket_done_without_review_record() -> None:
+    rows = _one_of_three_done_board_rows(done=True)
+
+    path = golden_path(_inputs(rows=rows, acs=_acs(3, passing=1), approved_reviews=0))
+
+    review = _step(path, "review")
+    assert path.phase == "implement"
+    assert (review.state, review.meta) == ("partial", "1/3 reviewed")
+    assert review.reason == "Implement is not done"
+
+
+def test_marks_shipped_partial_when_some_tickets_done() -> None:
+    rows = _one_of_three_done_board_rows(done=True)
+
+    path = golden_path(_inputs(rows=rows, acs=_acs(3, passing=1), approved_reviews=0))
+
+    shipped = _step(path, "shipped")
+    assert path.phase == "implement"
+    assert (shipped.state, shipped.meta) == ("partial", "1/3 Done")
+    assert shipped.reason == "Implement is not done"
+
+
+def test_keeps_review_and_shipped_pending_when_no_ticket_reviewed_or_done() -> None:
+    rows = _one_of_three_done_board_rows(done=False)
+
+    path = golden_path(_inputs(rows=rows, acs=_acs(3, passing=1), approved_reviews=0))
+
+    assert path.phase == "implement"
+    assert (_step(path, "review").state, _step(path, "review").meta) == ("pending", "0/3 reviewed")
+    assert (_step(path, "shipped").state, _step(path, "shipped").meta) == ("pending", "0/3 Done")
 
 
 def test_marks_review_unknown_when_records_over_cap() -> None:
