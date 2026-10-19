@@ -2,19 +2,23 @@ import type { IconName } from "../../components";
 
 /**
  * What a changed file is to the person reviewing the session: code that goes in the pull request,
- * or one of Claude's own working files (a plan, a learning, a scratch note). Read from the path
+ * or one of Claude's own working files (a plan, a feature's record, a brain note, a scratch note). Read from the path
  * alone: the chat does not know the session's folder, only the paths Claude wrote to.
  */
-export type FileKind = "code" | "plan" | "learning" | "scratch";
+export type FileKind = "code" | "plan" | "feature" | "learning" | "scratch";
 
 /** The tabs of the review, in order: the code first, Claude's scratch last. */
-export const FILE_KINDS: readonly FileKind[] = ["code", "plan", "learning", "scratch"];
+export const FILE_KINDS: readonly FileKind[] = ["code", "plan", "feature", "learning", "scratch"];
 
 /** A user's own Claude folder (`~/.claude/`), not a repo's `.claude/` folder. */
 const HOME_CLAUDE = /^(?:\/Users\/[^/]+|\/home\/[^/]+|\/root)\/\.claude\//;
 const PLAN = /\/\.claude\/plans\/[^/]+\.md$/;
-/** A brain's inbox or learnings, or Claude's auto memory (`~/.claude/projects/<p>/memory/`). */
-const LEARNING = /\/brain\/(?:_inbox|learnings)\/|\/\.claude\/projects\/[^/]+\/memory\//;
+/** A feature's record in a hub's brain: its spec, plan, research, evals and the workflow's
+ * spec and quality reviews (`brain/features/<feature>/…`). */
+const FEATURE = "/brain/features/";
+/** Any other note of a hub's brain (inbox, learnings, decisions, domain…), or Claude's auto
+ * memory (`~/.claude/projects/<p>/memory/`). */
+const LEARNING = /\/brain\/|\/\.claude\/projects\/[^/]+\/memory\//;
 /** The system's temporary folders: what Claude writes there is for itself. */
 const TEMP = /^(?:\/private)?\/(?:tmp|var\/folders)\//;
 
@@ -22,12 +26,18 @@ const TEMP = /^(?:\/private)?\/(?:tmp|var\/folders)\//;
 export const KIND_TAB: Record<FileKind, { label: string; icon: IconName; hint: string }> = {
   code: { label: "Code", icon: "git-pull-request", hint: "goes in the pull request" },
   plan: { label: "Plans", icon: "list-checks", hint: "Claude's plan, stays on this machine" },
-  learning: { label: "Learnings", icon: "lightbulb", hint: "proposed for the brain" },
+  feature: {
+    label: "Features",
+    icon: "clipboard-list",
+    hint: "the feature's spec, plan, evals and reviews, in the brain",
+  },
+  learning: { label: "Learnings", icon: "lightbulb", hint: "notes for the brain" },
   scratch: { label: "Scratch", icon: "pencil", hint: "Claude's notes, nothing to review" },
 };
 
 export function fileKind(path: string): FileKind {
   if (PLAN.test(path)) return "plan";
+  if (path.includes(FEATURE)) return "feature";
   if (LEARNING.test(path)) return "learning";
   if (TEMP.test(path) || HOME_CLAUDE.test(path)) return "scratch";
   return "code";
@@ -37,5 +47,6 @@ export function fileKind(path: string): FileKind {
 export const isMarkdown = (path: string) => /\.(?:md|markdown|mdx)$/i.test(path);
 
 /** A file you review (viewed marks, "to review" counts): only the code that goes in the pull
- * request. Claude's plans, learnings and scratch are there to read, not to sign off. */
+ * request. Claude's plans, feature records, brain notes and scratch are there to read, not to sign
+ * off. */
 export const isReviewable = (path: string) => fileKind(path) === "code";
