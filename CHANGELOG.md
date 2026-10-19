@@ -11,6 +11,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Fixed
+
+- `hub web` Feature detail: the golden path's Review and Shipped steps read "Partial" once some tickets are
+  reviewed or Done in Linear, instead of "Not reached" next to a partial Evaluate (AGH-322).
+
 ### Added
 
 - `hub brief` prints an `## Environments` block (both files: access, `PRODUCTION`, source, credential names, endpoints
