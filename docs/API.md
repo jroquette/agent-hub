@@ -198,6 +198,21 @@ They are actions, not resources, a deliberate exception to "resources are nouns"
   authored as the hub's author (ADR 0016) with no trailer.
 - A decision is idempotent by the learning's state: a second call answers 409 with the PR already open.
 
+## Feature detail
+
+`GET /api/v1/features/{project}/{slug}` serves one feature as a `FeatureDetail` (the records are in
+[design/feature-records.md](design/feature-records.md)); it never calls Linear. Besides the list's fields, the
+acceptance criteria rows, the records and every eval, it carries:
+
+- `plan`: `null` without `plan.md`, else `version` (`v1` plus one per amendment entry under `## Amendments`),
+  `amendments` (each `id`, `date`, `who`, `title` and `anchor`, the text of the heading it is under) and `problem`.
+  A `plan.md` over 256 KiB has `version: null` and its `problem`; the rest of the detail is served as usual.
+- `acceptance_eval`: `null` before a whole-feature eval exists, else its `delivery` (`legacy` for `eval.md`) and
+  `verdict`. It is the latest eval whose scope is `acs: all`, or a legacy `eval.md` without scope.
+- `verdict` and `verdict_line` (here and in the list) are the acceptance eval's: a legacy `eval.md` keeps its own
+  verdict line, an `evals/` record reads "Verdict: <verdict>, from the <delivery> eval". A ticket-scoped eval never
+  sets them.
+
 ## Feature tickets
 
 `GET /api/v1/features/{project}/{slug}/tickets` serves one feature's tickets, their planning and its golden path
