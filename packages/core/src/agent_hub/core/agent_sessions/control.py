@@ -163,6 +163,23 @@ DRAIN_SECONDS: Final = 1.0
 # Records the server writes while a session ends, and the driver's last ones: they use the
 # log's headroom (E12).
 _RESERVED_KINDS: Final = frozenset({"result", "exited"})
+# The tool calls ``repo_changes`` reads for the worktrees a session names, a page at a time.
+CALL_KINDS: Final[frozenset[RecordKind]] = frozenset({"tool.call"})
+MAX_CALLS_READ: Final = 5000
+CALLS_PAGE: Final = 500
+
+
+def _strings(value: object) -> str:
+    """Every string inside a call's input, one per line (a command, a prompt, a path)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return "\n".join(_strings(item) for item in value.values())
+    if isinstance(value, list):
+        return "\n".join(_strings(item) for item in value)
+    return ""
+
+
 # How many records a reopened session's log is read in at a time, to count its budget.
 _BUDGET_PAGE: Final = 1000
 _STOPPING: Final = "hub web is stopping"
@@ -430,10 +447,12 @@ class AgentSessionControl:
             listing = await self._listing(session.project)
         except Exception:  # noqa: BLE001 -- an unknown project reads as no repository
             return SessionRepoChanges()
+        mentions = await asyncio.to_thread(self._call_inputs, agent_session_id)
         roots = repo_roots(
             listing,
             workdir_id=session.workdir_id,
             paths=(file.path for file in session.changed_files),
+            mentions=mentions,
         )
         repos = []
         warnings = []
@@ -445,6 +464,21 @@ class AgentSessionControl:
             except RepoChangesError:
                 warnings.append(f"{root.workdir.label} could not be read by git")
         return SessionRepoChanges(repos=tuple(repos), warnings=tuple(warnings))
+
+    def _call_inputs(self, agent_session_id: str) -> list[str]:
+        """The text of every tool call's input in the session's log, oldest first (at most
+        ``MAX_CALLS_READ`` calls): where its shell commands ran and where it sent subagents."""
+        texts: list[str] = []
+        after = 0
+        while len(texts) < MAX_CALLS_READ:
+            page = self._store.records(
+                agent_session_id, after=after, limit=CALLS_PAGE, kinds=CALL_KINDS
+            )
+            texts.extend(_strings(record.body.get("input")) for record in page)
+            if len(page) < CALLS_PAGE:
+                break
+            after = page[-1].seq
+        return texts[:MAX_CALLS_READ]
 
     async def repo_commit_diff(
         self, agent_session_id: str, *, path: str, sha: str, old_path: str | None = None
