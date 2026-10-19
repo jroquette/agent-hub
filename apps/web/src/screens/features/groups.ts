@@ -2,7 +2,6 @@
 import type { components } from "../../api/schema";
 import { GOLDEN_STEP_LABEL, type IconName } from "../../components";
 import { waitsOnOwner } from "./GoldenPathBar";
-import { waitingLink } from "../sessions-list/tiles";
 import { phaseIndex } from "./parts";
 
 type Feature = components["schemas"]["FeatureView"];
@@ -62,8 +61,6 @@ export interface Reason {
   tone: Tone | null;
   line: string;
   doc: string | null;
-  /** Where the row opens instead of the feature: the session that waits on you. */
-  href?: string;
 }
 
 /** The kinds of warning, in the order they lead In progress. */
@@ -101,7 +98,6 @@ export function sessionWaitOf(f: Feature, tiles: readonly LiveTile[]): SessionWa
 
 function sessionReason(wait: SessionWait): Reason {
   const { tile } = wait;
-  const href = waitingLink(tile).href;
   if (wait.group === "waiting") {
     const why = tile.waiting_reason ?? "a permission prompt";
     return {
@@ -111,7 +107,6 @@ function sessionReason(wait: SessionWait): Reason {
       tone: "waiting",
       line: `A session waits on you · ${why}`,
       doc: null,
-      href,
     };
   }
   const last = tile.last_action ? ` · ${tile.last_action}` : "";
@@ -122,7 +117,6 @@ function sessionReason(wait: SessionWait): Reason {
     tone: "waiting",
     line: `Your turn in a session${last}`,
     doc: null,
-    href,
   };
 }
 
