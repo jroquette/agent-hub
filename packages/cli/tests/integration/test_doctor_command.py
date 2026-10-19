@@ -34,8 +34,10 @@ from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_ME
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import (
     a_conventions_document,
+    a_local_environments_document,
     a_second_repo,
     a_two_team_document,
+    an_environments_document,
 )
 from agent_hub.core.testing.platform_repository_cases import (
     CREDENTIAL_VALUE,
@@ -2034,6 +2036,87 @@ def test_reports_nothing_when_remote_answers_in_claude_session(
     lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=0)
 
     assert lines == [CLEAN]
+
+
+PRODUCTION_FIX = (
+    "Fix: keep the agent's access to a production environment at read, or confirm it on purpose"
+    " (docs/design/environments.md)"
+)
+
+
+def environments_hub(demo_hub: Path, demo_document: dict[str, Any], **rules: Any) -> Path:
+    """``demo_hub`` with the spec's ``W`` and ``Lc``, ``jane-cloud`` set production (AC-277.9)."""
+    document = an_environments_document()
+    demo_document["environments"] = document["environments"]
+    demo_document["repos"][0]["services"] = document["repos"][0]["services"]
+    demo_document["guard"] = document["guard"]
+    if rules:
+        demo_document["doctor"] = {"rules": {"environments.production": rules}}
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+    local = a_local_environments_document()
+    local["environments"]["jane-cloud"]["production"] = True
+    (demo_hub / "hub.local.json").write_text(json.dumps(local), encoding="utf-8")
+    return demo_hub
+
+
+def test_exits_zero_when_production_environment_warns(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    root = environments_hub(demo_hub, demo_document)
+
+    lines = lines_of(run_doctor(root, "--only", "environments.production"), exit_code=0)
+
+    assert lines == [
+        "info environments.production hub.json: production environment: live (access read,"
+        f" hub.json) {PRODUCTION_FIX}",
+        "warning environments.production hub.local.json: production environment: jane-cloud"
+        f" (access write, hub.local.json) {PRODUCTION_FIX}",
+        "0 errors, 1 warning, 1 info",
+    ]
+
+
+def test_exits_one_when_production_rule_retuned_to_error(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AM-2: an ordinary doctor.rules entry; a severity applies to all its findings.
+    root = environments_hub(demo_hub, demo_document, severity="error")
+
+    lines = lines_of(run_doctor(root, "--only", "environments.production"), exit_code=1)
+
+    assert [line.split(": production")[0] for line in lines] == [
+        "error environments.production hub.json",
+        "error environments.production hub.local.json",
+        "2 errors, 0 warnings, 0 infos",
+    ]
+
+
+def test_reports_nothing_when_production_rule_disabled(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    root = environments_hub(demo_hub, demo_document, enabled=False)
+
+    result = run_doctor(root, "--only", "environments.production")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [CLEAN]
+
+
+def test_reports_local_conflict_when_local_redeclares_environment(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # Doctor and the CLI agree: a local file that loosens a committed environment is an error.
+    root = environments_hub(demo_hub, demo_document)
+    (root / "hub.local.json").write_text(
+        json.dumps({"environments": {"staging": {"access": "write"}}}), encoding="utf-8"
+    )
+
+    lines = lines_of(run_doctor(root, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [
+        "error config.schema hub.local.json: environments.staging.access: may only tighten"
+        " hub.json's ask Fix: fix hub.local.json (docs/design/developer-identity.md)",
+        ONE_ERROR,
+    ]
 
 
 def test_rewrites_brain_note_when_fix_given(

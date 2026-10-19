@@ -10,6 +10,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from agent_hub.core.hub_config.document_check import check_hub_document
+from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import (
     MAX_CHECK_FAST_TIMEOUT,
     MODULE_IDS,
@@ -1761,6 +1762,29 @@ def test_rejects_blocked_words_when_fault_given(
     document["guard"][key] = value
 
     assert error_locs(document) == [("guard", *loc)]
+
+
+@pytest.mark.parametrize(
+    ("word", "kind"),
+    [
+        # Assembled at run time, so the repo holds no secret-shaped text.
+        pytest.param("AK" + "IA" + "A" * 16, "AWS access key", id="aws"),
+        pytest.param("gh" + "p_" + "a" * 36, "GitHub token", id="github"),
+        pytest.param("ey" + "J" + "a" * 15 + "." + "b" * 15, "JWT", id="jwt"),
+        pytest.param("lin" + "_api_" + "a" * 20, "Linear API key", id="linear"),
+    ],
+)
+def test_rejects_blocked_word_when_secret_shape_given(word: str, kind: str) -> None:
+    # Every brief prints the blocked words: a secret-shaped one is refused, never echoed.
+    for layer in ("hub", "local"):
+        document = a_blocked_words_document() if layer == "hub" else {"guard": {}}
+        document["guard"]["blocked_words"] = ["prod", word]
+        model: type[Any] = HubConfig if layer == "hub" else LocalConfig
+        with pytest.raises(ValidationError) as caught:
+            model.model_validate(document)
+        errors = [(error["loc"], error["msg"]) for error in caught.value.errors()]
+        assert [loc for loc, _ in errors] == [("guard", "blocked_words", 1)], layer
+        assert all(kind in message and word not in message for _, message in errors), errors
 
 
 @pytest.mark.parametrize("glob", ["..x/a", "a/...", "config/*.json", "**/prod/*.yml"])

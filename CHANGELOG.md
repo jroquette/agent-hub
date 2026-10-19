@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub brief` prints an `## Environments` block (both files: access, `PRODUCTION`, source, credential names, endpoints
+  and blocked words, at most 60 lines), and the hooks' fallback brief lists the environments' names and access
+  (AGH-286). `hub doctor`'s new `environments.production` rule names each production environment: a warning for
+  `write` or `ask` access, info for `read`; turn it off or retune it in `doctor.rules`. Environment and service text
+  now refuses line-separator and bidi characters, and a secret-shaped blocked word is refused.
 - Base skill `plain-language` (AGH-319): rules for text that people read (chat, PR bodies and replies, tracker
   comments, handoffs, summaries, brain notes), in the reader's language. `AGENTS.md` gains cross-repo rule 6, which
   points to it; `/summarize`, `/handoff`, `/feature` and `/deliver` cite it. To make room for rule 6, workflow step 3

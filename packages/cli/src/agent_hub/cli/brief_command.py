@@ -1,4 +1,5 @@
-"""``hub brief``: the session brief (``now.md``, the last journal days, each repo's state).
+"""``hub brief``: the session brief (``now.md``, the last journal days, each repo's state, and
+the environments of ``hub.json`` and ``hub.local.json`` when they declare any).
 
 The hub is ``AGENT_HUB_ROOT`` or the cwd, and its repos are ``../<dir>``. Git runs in each
 checkout with ``GIT_OPTIONAL_LOCKS=0`` and git's location variables dropped, so the brief writes
@@ -27,6 +28,7 @@ from agent_hub.cli.child_process import git_env, run_child
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.hub_root import hub_root_or_exit
+from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.workspace.brief_text import (
     JOURNAL_MAX_AGE,
@@ -36,6 +38,7 @@ from agent_hub.core.workspace.brief_text import (
     now_verified,
     select_journal,
 )
+from agent_hub.core.workspace.environment_lines import brief_block
 
 COMMAND: Final = "brief"
 BRIEF_GIT_TIMEOUT: Final = 6.0
@@ -76,7 +79,8 @@ def brief(
 ) -> None:
     """Print the session brief: now.md, the last journal days, each repo's git, PR and CI state."""
     root = hub_root_or_exit(os.environ, command=COMMAND)
-    config = load_effective_config_or_exit(root).config
+    loaded = load_effective_config_or_exit(root)
+    config = loaded.config
     day = today()
     now_text = _file_text(root / NOW_PATH)
     inputs = BriefInputs(
@@ -85,6 +89,7 @@ def brief(
         journal=_journal(root, day),
         repos=_repos(root, config, network=not no_network),
         network=not no_network,
+        environments=brief_block(effective_environments(config, loaded.local)),
     )
     typer.echo(brief_text(inputs))
 

@@ -251,7 +251,8 @@ class Config:
     blocked_words, blocked_files and blocked_env are (entry, layer) pairs from the root's file
     (or the config, labelled config_label, without one), local_layer (hub.local.json), then the
     config when it is another file ($HUB_CONFIG). blocked_problem is local_layer's file_problem,
-    else the first layer's unusable location as "<layer> <location>", else "". environments merge
+    else the first layer's unusable location as "<layer> <location>", else "";
+    local_file_problem is local_layer's file_problem alone. environments merge
     the config's with local_layer's; credential_env names every credentials.env variable of the
     files, each once.
     """
@@ -307,6 +308,7 @@ class Config:
         self.blocked_env = _layered(layers, "blocked_words_env")
         problems = [f"{label} {section.problem}" for label, section in layers if section.problem]
         self.blocked_problem = local_layer.file_problem or (problems[0] if problems else "")
+        self.local_file_problem = local_layer.file_problem
         self.environments = _environments(hub_file, local_layer)
         files = (*(root_file.environments if root_file is not None else ()), *hub_file.environments, *local_layer.environments)
         self.credential_env = _union((), tuple(name for entry in files for name in entry.credential_env))
