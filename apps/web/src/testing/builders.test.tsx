@@ -132,12 +132,12 @@ describe("builders", () => {
     expect(tickets.golden_path.phase).toBe(aFeature().phase);
     expect(aGoldenPath().steps.map((step) => step.name)).toEqual([
       "spec",
+      "ux_design",
       "research",
       "plan",
       "tickets",
-      "implement",
-      "review",
-      "evaluate",
+      "build",
+      "acceptance",
       "shipped",
     ]);
     expect(aGoldenStep({ state: "blocked" }).state).toBe("blocked");

@@ -34,17 +34,17 @@ const PAGE = "/features/agent-hub/layered-memory";
 
 const detail = aFeatureDetail({
   slug: "layered-memory",
-  phase: "evaluate",
+  phase: "acceptance",
   verdict: "SHIP-WITH-OWNER-STEPS",
   issues: ["AGH-48"],
   golden_path: aGoldenPath({
-    phase: "evaluate",
+    phase: "acceptance",
     steps: [
       aGoldenStep({ name: "spec", state: "done", meta: null, progress: null }),
       aGoldenStep({
-        name: "evaluate",
-        state: "partial",
-        meta: "waiting: owner steps",
+        name: "acceptance",
+        state: "current",
+        meta: "Waiting on you: 1 owner step",
         reason: "1 AC waits on owner steps (SHIP-WITH-OWNER-STEPS)",
         progress: null,
       }),
