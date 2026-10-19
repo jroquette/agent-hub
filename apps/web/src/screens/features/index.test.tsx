@@ -509,7 +509,7 @@ describe("FeaturesScreen", () => {
     );
   });
 
-  it("puts a feature whose session waits on you at the top of In progress and opens that session (session)", async () => {
+  it("puts a feature whose session waits on you at the top of In progress and opens the feature, not the chat (session)", async () => {
     const permission = aLiveTile({
       id: "s-perm",
       group: "waiting",
@@ -550,7 +550,8 @@ describe("FeaturesScreen", () => {
     );
 
     await userEvent.click(rowOf("tracker-team-cap"));
-    expect(router.state.location.pathname).toBe("/agent-sessions/a-perm");
+    expect(router.state.location.pathname).toBe("/features/agent-hub/tracker-team-cap");
+    expect(router.state.location.search).toBe("");
   });
 
   it("tells waiting rows apart by what their eval says is left (needs)", async () => {
