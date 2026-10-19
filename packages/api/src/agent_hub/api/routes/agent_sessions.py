@@ -29,6 +29,7 @@ from agent_hub.core.agent_sessions.agent_session import (
 )
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.agent_sessions.records import LogRecordPage
+from agent_hub.core.agent_sessions.repo_changes import SessionRepoChanges
 
 router = APIRouter(prefix="/agent-sessions", tags=["agent-sessions"], responses=PROBLEM_RESPONSES)
 
@@ -93,6 +94,15 @@ async def get_agent_session(
 ) -> AgentSession:
     """One session, with the permission request it waits on while live."""
     return await control.snapshot(str(agent_session_id))
+
+
+@router.get("/{agent_session_id:uuid}/repo-changes")
+async def get_agent_session_repo_changes(
+    agent_session_id: SessionIdPath, control: AgentSessionControlDep
+) -> SessionRepoChanges:
+    """What the repositories the session worked in change against their base branch, as git
+    reads them: the pull request's files, whoever changed them."""
+    return await control.repo_changes(str(agent_session_id))
 
 
 @router.delete("/{agent_session_id:uuid}", status_code=204)

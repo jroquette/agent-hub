@@ -25,6 +25,7 @@ import {
 } from "./fileKind";
 import { commonDir, type ChangedFile, type FileChange } from "./model";
 import { writtenText } from "./netDiff";
+import type { FileCommit } from "./repoChanges";
 
 /** What each tab says about its files, under the tabs. */
 const KIND_NOTE: Record<FileKind, string> = {
@@ -159,10 +160,23 @@ function ChangeBlock({
 function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
   const comments = useContext(ReviewCommentsContext);
   const net = file.net;
-  if (!net) return null;
+  const repo = file.repo;
+  if (!net) {
+    if (repo?.binary) return <p className="ah-small ah-muted">A binary file: no diff to show.</p>;
+    if (repo?.tooBig) return <p className="ah-small ah-muted">Too big a diff to show here.</p>;
+    return null;
+  }
   const label = `Final diff of ${path}`;
   if (net.added === 0 && net.removed === 0) {
-    return <p className="ah-small ah-muted">The changes cancel out: the file ends as it began.</p>;
+    return (
+      <p className="ah-small ah-muted">
+        {repo?.unchanged
+          ? `The file ends as it is on ${repo.base}: none of it goes in the pull request.`
+          : repo
+            ? "Renamed, its content unchanged."
+            : "The changes cancel out: the file ends as it began."}
+      </p>
+    );
   }
   const threads =
     comments?.threads.filter(
@@ -188,7 +202,7 @@ function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
   );
 }
 
-type DetailView = "preview" | "final" | "changes";
+type DetailView = "preview" | "final" | "changes" | "commits";
 
 const isApplied = (change: FileChange) => change.state !== "error" && change.state !== "denied";
 
@@ -355,15 +369,64 @@ function RootLine({ base, workdirLabel }: { base: string; workdirLabel: string |
   );
 }
 
-/** A file's status letter: A (new) or M (modified). */
-export function KindBadge({ created }: { created: boolean }) {
+const STATUS_BADGE = {
+  added: { letter: "A", title: "New file", tone: "a" },
+  modified: { letter: "M", title: "Modified", tone: "m" },
+  deleted: { letter: "D", title: "Deleted", tone: "d" },
+  renamed: { letter: "R", title: "Renamed", tone: "m" },
+} as const;
+
+/** A file's status letter: A (new), M (modified), D (deleted) or R (renamed); without git's
+ * status, A or M from whether the session wrote it whole. */
+export function KindBadge({
+  created,
+  status,
+}: {
+  created: boolean;
+  status?: keyof typeof STATUS_BADGE | undefined;
+}) {
+  const badge = STATUS_BADGE[status ?? (created ? "added" : "modified")];
   return (
-    <span
-      className={cx("as-files-kind", created ? "as-files-kind-a" : "as-files-kind-m")}
-      title={created ? "New file" : "Modified"}
-    >
-      {created ? "A" : "M"}
+    <span className={cx("as-files-kind", `as-files-kind-${badge.tone}`)} title={badge.title}>
+      {badge.letter}
     </span>
+  );
+}
+
+const shortSha = (sha: string) => sha.slice(0, 7);
+
+function commitWhen(iso: string): string {
+  const when = new Date(iso);
+  return Number.isNaN(when.getTime())
+    ? iso
+    : when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+/** A file's history on its branch: the commits that touched it, newest first, and its changes
+ * not committed yet. */
+function CommitsBlock({ commits, uncommitted }: { commits: FileCommit[]; uncommitted: boolean }) {
+  return (
+    <ol className="as-files-commits" aria-label="Commits that changed this file">
+      {uncommitted && (
+        <li className="as-files-commit as-files-commit-dirty">
+          <Icon name="pencil" size="sm" />
+          <span className="as-files-commit-subject">Uncommitted changes</span>
+          <span className="ah-small ah-muted">in the working tree</span>
+        </li>
+      )}
+      {commits.map((commit) => (
+        <li key={commit.sha} className="as-files-commit">
+          <code className="as-files-commit-sha ah-mono ah-small" title={commit.sha}>
+            {shortSha(commit.sha)}
+          </code>
+          <span className="as-files-commit-subject">{commit.subject}</span>
+          <Stats added={commit.added} removed={commit.removed} />
+          <span className="as-files-commit-meta ah-small ah-muted">
+            {commit.author} · {commitWhen(commit.authoredAt)}
+          </span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -484,7 +547,7 @@ function FileList({
                       onSelect(file.path);
                     }}
                   >
-                    <KindBadge created={file.created} />
+                    <KindBadge created={file.created} status={file.repo?.status} />
                     <FitText
                       text={name.slice(name.lastIndexOf("/") + 1)}
                       tail={nameTail(name.slice(name.lastIndexOf("/") + 1))}
@@ -547,16 +610,29 @@ function FileDetail({
   const [codeView, setCodeView] = useState<DetailView>("final");
   const view = text !== null ? proseView : codeView;
   const setView = text !== null ? setProseView : setCodeView;
-  const showPreview = text !== null && view === "preview";
-  const showNet = !showPreview && file.net !== null && view !== "changes";
+  const repo = file.repo;
+  const history = repo ? repo.commits.length + (repo.uncommitted ? 1 : 0) : 0;
+  const hasChanges = file.changes.length > 0;
+  // A file git read always has its final result (a note when there is no diff to show).
+  const hasNet = file.net !== null || repo !== undefined;
   const views = [
     ...(text !== null ? [{ id: "preview", label: "Preview" }] : []),
-    ...(file.net ? [{ id: "final", label: "Final result" }] : []),
-    ...(text !== null || file.net
+    ...(hasNet ? [{ id: "final", label: "Final result" }] : []),
+    ...(hasChanges && (text !== null || hasNet)
       ? [{ id: "changes", label: `Each change (${String(file.changes.length)})` }]
       : []),
+    ...(history > 0 ? [{ id: "commits", label: `Commits (${String(history)})` }] : []),
   ];
-  const current = showPreview ? "preview" : showNet ? "final" : "changes";
+  const offered = (id: DetailView) => views.some((option) => option.id === id);
+  const current: DetailView = offered(view)
+    ? view
+    : text !== null
+      ? "preview"
+      : hasNet
+        ? "final"
+        : "changes";
+  const showPreview = current === "preview" && text !== null;
+  const showNet = current === "final";
   useEffect(() => {
     if (body.current) body.current.scrollTop = 0;
   }, [file.path]);
@@ -581,7 +657,7 @@ function FileDetail({
             </span>
           )}
           <span className="as-files-detail-file">
-            <KindBadge created={file.created} />
+            <KindBadge created={file.created} status={file.repo?.status} />
             <b className="as-files-name">
               <Breakable text={name.slice(slash + 1)} />
             </b>
@@ -639,19 +715,28 @@ function FileDetail({
               {showPreview
                 ? "The file as it ends, rendered"
                 : showNet
-                  ? `All ${String(file.changes.length)} changes in this session, as one diff`
-                  : "Oldest first"}
+                  ? repo
+                    ? `Against ${repo.base}: every commit and uncommitted change, as the pull request shows it`
+                    : `All ${String(file.changes.length)} changes in this session, as one diff`
+                  : current === "commits"
+                    ? "Newest first"
+                    : "Oldest first, as Claude made them in this session"}
             </span>
           </div>
         ) : (
           <p className="as-files-summary ah-small ah-muted">
-            {file.changes.length === 1
-              ? "1 change in this session"
-              : `${String(file.changes.length)} changes in this session, oldest first`}
+            {repo && !hasChanges
+              ? `Against ${repo.base}, as the pull request shows it`
+              : file.changes.length === 1
+                ? "1 change in this session"
+                : `${String(file.changes.length)} changes in this session, oldest first`}
           </p>
         )}
         {showPreview && <PreviewBlock text={text} />}
         {showNet && <NetBlock file={file} path={name} />}
+        {current === "commits" && repo && (
+          <CommitsBlock commits={repo.commits} uncommitted={repo.uncommitted} />
+        )}
         {current === "changes" &&
           file.changes.map((change, index) => (
             <ChangeBlock
@@ -681,6 +766,8 @@ export interface FilesPanelProps {
   comments?: ReviewComments | undefined;
   /** The session's folder (its worktree or branch), shown in bold where the files' root has it. */
   workdirLabel?: string | undefined;
+  /** The branch and base git compared the code with (`repoSummary`), when it read the repos. */
+  repoNote?: string | null | undefined;
 }
 
 /**
@@ -698,6 +785,7 @@ export function FilesPanel({
   pickNonce = 0,
   comments,
   workdirLabel,
+  repoNote,
 }: FilesPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const [panel, setPanel] = useState<HTMLElement | null>(null);
@@ -833,7 +921,11 @@ export function FilesPanel({
                   count: group.files.length,
                 }))}
               />
-              <p className="ah-small ah-muted">{KIND_NOTE[kind.kind]}</p>
+              <p className="ah-small ah-muted">
+                {kind.kind === "code" && repoNote
+                  ? `What the pull request has, whoever changed it (${repoNote}).`
+                  : KIND_NOTE[kind.kind]}
+              </p>
             </div>
           )}
           <div

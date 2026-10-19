@@ -6480,6 +6480,110 @@
         "title": "Relation",
         "type": "object"
       },
+      "RepoChanges": {
+        "additionalProperties": false,
+        "description": "One repository's changes against its base. ``root`` is the folder git ran in, ``branch``\nits checked-out branch (null when detached), ``base`` the ref the branch is compared with\n(``origin/main``…, null when none was found: then nothing is compared and ``files`` is\nempty), ``base_sha`` the commit the branch forked from. ``truncated`` says commits or files\nwere left out past the bounds.",
+        "properties": {
+          "base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "base_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Sha"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "commits": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RepoCommit"
+            },
+            "title": "Commits",
+            "type": "array"
+          },
+          "files": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RepoFileChange"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "root",
+          "label"
+        ],
+        "title": "RepoChanges",
+        "type": "object"
+      },
+      "RepoCommit": {
+        "additionalProperties": false,
+        "description": "A commit of the branch since its base, newest first.",
+        "properties": {
+          "author": {
+            "title": "Author",
+            "type": "string"
+          },
+          "authored_at": {
+            "title": "Authored At",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha",
+          "subject",
+          "authored_at",
+          "author"
+        ],
+        "title": "RepoCommit",
+        "type": "object"
+      },
       "RepoConfigView": {
         "additionalProperties": false,
         "description": "One repo of ``hub.json`` with its effective branch and conventions.",
@@ -6554,6 +6658,118 @@
         ],
         "title": "RepoConfigView",
         "type": "object"
+      },
+      "RepoFileChange": {
+        "additionalProperties": false,
+        "description": "A file that differs from the base: committed on the branch, staged, unstaged or\nuntracked. ``path`` is absolute (the repository's folder joined with git's path), as Claude's\nfile tools name it; ``old_path`` the name before a rename. ``diff`` is the unified diff from\nthe base to the working tree, with the file's line numbers; null for a binary file or one\npast ``REPO_DIFF_MAX_BYTES``. ``fingerprint`` changes whenever the diff does (a review mark\nis kept against it). ``commits`` are the branch's commits that touched it, newest first;\n``uncommitted`` says the working tree differs from ``HEAD`` too.",
+        "properties": {
+          "added": {
+            "minimum": 0.0,
+            "title": "Added",
+            "type": "integer"
+          },
+          "binary": {
+            "default": false,
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "commits": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RepoFileCommit"
+            },
+            "title": "Commits",
+            "type": "array"
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "old_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Path"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "removed": {
+            "minimum": 0.0,
+            "title": "Removed",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RepoFileStatus"
+          },
+          "uncommitted": {
+            "default": false,
+            "title": "Uncommitted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "status",
+          "added",
+          "removed",
+          "fingerprint"
+        ],
+        "title": "RepoFileChange",
+        "type": "object"
+      },
+      "RepoFileCommit": {
+        "additionalProperties": false,
+        "description": "A commit that touched a file, and the lines it added and removed there.",
+        "properties": {
+          "added": {
+            "minimum": 0.0,
+            "title": "Added",
+            "type": "integer"
+          },
+          "removed": {
+            "minimum": 0.0,
+            "title": "Removed",
+            "type": "integer"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha",
+          "added",
+          "removed"
+        ],
+        "title": "RepoFileCommit",
+        "type": "object"
+      },
+      "RepoFileStatus": {
+        "enum": [
+          "added",
+          "modified",
+          "deleted",
+          "renamed"
+        ],
+        "type": "string"
       },
       "RepoView": {
         "additionalProperties": false,
@@ -7817,6 +8033,30 @@
           "items"
         ],
         "title": "SessionProblems",
+        "type": "object"
+      },
+      "SessionRepoChanges": {
+        "additionalProperties": false,
+        "description": "``GET /agent-sessions/{id}/repo-changes``: each repository the session worked in, and the\nones that could not be read (``warnings``, named by folder label).",
+        "properties": {
+          "repos": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RepoChanges"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "title": "SessionRepoChanges",
         "type": "object"
       },
       "SessionSegment": {
@@ -11490,6 +11730,60 @@
           }
         },
         "summary": "Answer Agent Session Permission",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes": {
+      "get": {
+        "description": "What the repositories the session worked in change against their base branch, as git\nreads them: the pull request's files, whoever changed them.",
+        "operationId": "get_agent_session_repo_changes_api_v1_agent_sessions__agent_session_id__repo_changes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRepoChanges"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Agent Session Repo Changes",
         "tags": [
           "agent-sessions"
         ]

@@ -84,6 +84,29 @@ export function useAgentSession(id: string) {
   return useApi(SESSION, sessionParams(id), { retry: false });
 }
 
+/**
+ * `GET /agent-sessions/{id}/repo-changes`: what the session's repositories change against their
+ * base branch, as git reads them. Read again whenever `version` changes (a file tool ran, a turn
+ * ended), since a commit or a shell command changes it without the chat knowing.
+ */
+export function useRepoChanges(id: string, version: string) {
+  const query = useApi(
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes",
+    sessionParams(id),
+    { retry: false, staleTime: 5_000, refetchOnWindowFocus: true },
+  );
+  const { refetch } = query;
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    void refetch();
+  }, [version, refetch]);
+  return query;
+}
+
 /** What a session is about: its name and, when it is on a ticket a hub feature works on, that
  * feature. */
 export interface SessionAbout {
