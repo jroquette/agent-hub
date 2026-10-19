@@ -321,6 +321,15 @@ describe("FeatureDetailScreen", () => {
     expect(list).toHaveTextContent("Givencase 12Whenit runsThenit passes");
   });
 
+  it("moves keyboard focus to the asked AC's toggle when it opens by ?ac=", async () => {
+    open({}, "/features/agent-hub/layered-memory?doc=acs&ac=AC-48.12");
+
+    const toggle = await screen.findByRole("button", { name: "Collapse AC-48.12" });
+    await waitFor(() => {
+      expect(toggle).toHaveFocus();
+    });
+  });
+
   it("copies every non-manual command, each under its AC id", async () => {
     const write = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, "clipboard", {

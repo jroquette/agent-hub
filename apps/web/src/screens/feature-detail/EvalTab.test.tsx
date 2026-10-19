@@ -289,6 +289,54 @@ describe("EvalTab rows", () => {
     });
   });
 
+  it("marks the latest run's owner steps done with a note, after a cancel that sends nothing", async () => {
+    const onSelect = vi.fn();
+    const written = anEvalRecord({ delivery: "owner-signoff", verdict: "SHIP" });
+    const view = renderWithApi(tab({ evals: runs, onSelect }), {
+      routes: { [`POST ${SIGNOFF}`]: written },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Mark owner steps done" }));
+    expect(
+      screen.getByRole("form", { name: "Mark the owner steps done: AGH-201 · Eval 2" }),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("textbox", { name: "Note (optional)" })).toBeNull();
+    expect(view.requests.some((r) => r.method === "POST")).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: "Mark owner steps done" }));
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Note (optional)" }),
+      "Deployed the config by hand",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Mark owner steps done" }));
+
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith("owner-signoff");
+    });
+    const post = view.requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({
+      delivery: "agh-201-r2",
+      decision: "done",
+      note: "Deployed the config by hand",
+    });
+  });
+
+  it("asks nothing more once an owner sign-off settles the latest run", () => {
+    const signoff = anEvalRecord({
+      delivery: "owner-signoff",
+      path: "owner-signoff.md",
+      verdict: "SHIP",
+      provenance: "owner",
+      evaluated_at: "2026-10-14T10:00:00Z",
+    });
+    renderWithApi(tab({ evals: [...runs, signoff] }));
+
+    expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
+    expect(screen.queryByText(/passed with owner steps/)).toBeNull();
+    expect(rowOf("owner-signoff")).toHaveTextContent("Owner sign-off");
+  });
+
   it("reads a run the owner found more work on as handled, not as waiting", () => {
     const review = anEvalRecord({
       delivery: "owner-signoff",
