@@ -163,16 +163,15 @@ def acceptance_eval(records: Iterable[EvalRecord]) -> EvalRecord | None:
         return None
     keys = [_order_key(record) for record in whole]
     group = tuple(range(len(whole)))
-    verdict = _latest_verdict(group, whole, keys)
-    deciding = [record for record in whole if record.verdict == verdict]
     latest = [
-        record
-        for index, record in enumerate(whole)
-        if record.verdict == verdict
-        and not any(_newer(keys[other], keys[index]) for other in group if other != index)
-    ]
+        index
+        for index in group
+        if not any(_newer(keys[other], keys[index]) for other in group if other != index)
+    ] or list(group)
+    verdicts = {whole[index].verdict for index in latest}
+    verdict = next(verdict for verdict in _CONSERVATIVE if verdict in verdicts)
     # The listing order picks one among equals (and all of them when the order loops).
-    return max(latest or deciding, key=_listing_key)
+    return max((whole[i] for i in latest if whole[i].verdict == verdict), key=_listing_key)
 
 
 def _whole_feature(record: EvalRecord) -> bool:

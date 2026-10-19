@@ -314,7 +314,7 @@ def _verdict(
     when it is that eval, else a line naming its delivery; none before an acceptance eval."""
     if accepted is None or accepted.verdict is None:
         return None, None
-    found = None if not accepted.legacy or legacy_head is None else legacy_verdict_line(legacy_head)
+    found = legacy_verdict_line(legacy_head) if accepted.legacy and legacy_head else None
     if found is None:
         return accepted.verdict, f"Verdict: {accepted.verdict}, from the {accepted.delivery} eval"
     return accepted.verdict, one_line(found[1].strip())[:_VERDICT_LINE_CHARS]
