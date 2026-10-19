@@ -27,9 +27,9 @@ export const KIND_TAB: Record<FileKind, { label: string; icon: IconName; hint: s
   code: { label: "Code", icon: "git-pull-request", hint: "goes in the pull request" },
   plan: { label: "Plans", icon: "list-checks", hint: "Claude's plan, stays on this machine" },
   feature: {
-    label: "Features",
+    label: "Reviews & specs",
     icon: "clipboard-list",
-    hint: "the feature's spec, plan, evals and reviews, in the brain",
+    hint: "the workflow's reviews, spec, plan and evals of the feature, in the brain",
   },
   learning: { label: "Learnings", icon: "lightbulb", hint: "notes for the brain" },
   scratch: { label: "Scratch", icon: "pencil", hint: "Claude's notes, nothing to review" },
