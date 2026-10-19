@@ -1,5 +1,7 @@
 from collections.abc import Callable
 
+import pytest
+
 from agent_hub.core.doctor import environments_rule
 from agent_hub.core.doctor.finding import Finding
 from agent_hub.core.doctor.run_rules import Selection, run_rules, select_rules
@@ -33,7 +35,8 @@ JANE_WARNING: Shown = (
     Severity.WARNING,
     "hub.local.json",
     None,
-    "production environment: jane-cloud (access write, hub.local.json)",
+    "production environment: jane-cloud (access write, hub.local.json); actions: writes and"
+    " destroys are denied there",
     FIX,
 )
 
@@ -102,7 +105,8 @@ def test_warns_at_local_file_when_local_tightens_to_ask(snapshot_of: SnapshotFac
             Severity.WARNING,
             "hub.local.json",
             None,
-            "production environment: live (access ask, hub.local.json)",
+            "production environment: live (access ask, hub.local.json); actions: writes and"
+            " destroys are denied there",
             FIX,
         )
     ]
@@ -159,3 +163,42 @@ def test_retunes_every_finding_when_severity_set(snapshot_of: SnapshotFactory) -
         (Severity.ERROR, "hub.json"),
         (Severity.ERROR, "hub.local.json"),
     ]
+
+
+def production_config(access: str) -> HubConfig:
+    document = an_environments_document()
+    document["environments"]["live"]["access"] = access
+    return HubConfig.model_validate(document)
+
+
+@pytest.mark.parametrize("access", ["write", "ask"])
+def test_says_writes_denied_when_environments_production_has_write_access(
+    snapshot_of: SnapshotFactory, access: str
+) -> None:
+    # AC-350.3 (P-22): actions never write or destroy on production, whatever the access says.
+    findings = environments_rule.ENVIRONMENTS_PRODUCTION.check(
+        snapshot_of(config=production_config(access))
+    )
+
+    assert shown(list(findings)) == [
+        (
+            "environments.production",
+            Severity.WARNING,
+            "hub.json",
+            None,
+            f"production environment: live (access {access}, hub.json); actions: writes and"
+            " destroys are denied there",
+            FIX,
+        )
+    ]
+
+
+def test_keeps_info_when_environments_production_has_read_access(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # AC-350.3: reads only, so nothing is denied that the access allows.
+    findings = environments_rule.ENVIRONMENTS_PRODUCTION.check(
+        snapshot_of(config=production_config("read"))
+    )
+
+    assert shown(list(findings)) == [LIVE_INFO]
