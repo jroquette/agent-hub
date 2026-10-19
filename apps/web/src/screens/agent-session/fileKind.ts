@@ -1,3 +1,5 @@
+import type { IconName } from "../../components";
+
 /**
  * What a changed file is to the person reviewing the session: code that goes in the pull request,
  * or one of Claude's own working files (a plan, a learning, a scratch note). Read from the path
@@ -15,6 +17,14 @@ const PLAN = /\/\.claude\/plans\/[^/]+\.md$/;
 const LEARNING = /\/brain\/(?:_inbox|learnings)\/|\/\.claude\/projects\/[^/]+\/memory\//;
 /** The system's temporary folders: what Claude writes there is for itself. */
 const TEMP = /^(?:\/private)?\/(?:tmp|var\/folders)\//;
+
+/** Each kind of file as the review shows it: its tab, and its group in a turn's files card. */
+export const KIND_TAB: Record<FileKind, { label: string; icon: IconName; hint: string }> = {
+  code: { label: "Code", icon: "git-pull-request", hint: "goes in the pull request" },
+  plan: { label: "Plans", icon: "list-checks", hint: "Claude's plan, stays on this machine" },
+  learning: { label: "Learnings", icon: "lightbulb", hint: "proposed for the brain" },
+  scratch: { label: "Scratch", icon: "pencil", hint: "Claude's notes, nothing to review" },
+};
 
 export function fileKind(path: string): FileKind {
   if (PLAN.test(path)) return "plan";
