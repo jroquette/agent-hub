@@ -799,7 +799,13 @@ function applyTask(state: TranscriptState, record: LogRecord): TranscriptState {
   const known = state.tasks[id];
   const endedAt = status === "running" ? null : record.at;
   const task: TaskView = known
-    ? { ...known, status: status as TaskView["status"], endedAt }
+    ? {
+        ...known,
+        status: status as TaskView["status"],
+        endedAt,
+        // A finished agent resumed (a message sent to it) runs again from now.
+        startedAt: status === "running" && known.status !== "running" ? record.at : known.startedAt,
+      }
     : {
         id,
         description: str(record.body, "description"),

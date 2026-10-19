@@ -69,6 +69,14 @@ class UnavailableSessionDriver:
         """No session exists to interrupt."""
         raise self._refuse()
 
+    async def stop_task(
+        self,
+        handle: DriverHandle,  # noqa: ARG002 -- same
+        task_id: str,  # noqa: ARG002 -- same
+    ) -> None:
+        """No session exists to stop a task in."""
+        raise self._refuse()
+
     async def answer_permission(
         self,
         handle: DriverHandle,  # noqa: ARG002 -- same

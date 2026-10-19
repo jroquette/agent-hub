@@ -149,6 +149,7 @@ def test_answers_204_without_body_when_delete_called(recorded_app: Any) -> None:
         ("get", f"{ONE}/events", None),
         ("post", f"{ONE}/messages", {"text": "hi"}),
         ("post", f"{ONE}/interrupt", {}),
+        ("post", f"{ONE}/tasks/task-1/stop", {}),
         ("post", f"{ONE}/settings", {"mode": "plan"}),
         ("post", f"{ONE}/close", {}),
     ],
@@ -161,6 +162,7 @@ def test_answers_404_problem_when_session_not_found(
         f"{ONE}/events": "events",
         f"{ONE}/messages": "send",
         f"{ONE}/interrupt": "interrupt",
+        f"{ONE}/tasks/task-1/stop": "stop_task",
         f"{ONE}/settings": "change_settings",
         f"{ONE}/close": "close",
     }[path]

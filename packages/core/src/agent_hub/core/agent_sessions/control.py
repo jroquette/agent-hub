@@ -296,6 +296,10 @@ class AgentSessionCommands(Protocol):
         """Interrupt the running turn; its result follows on the stream."""
         ...
 
+    async def stop_task(self, agent_session_id: str, task_id: str) -> AgentSession:
+        """Stop a running background task; its end follows on the stream."""
+        ...
+
     async def answer(
         self, agent_session_id: str, request_id: str, decision: PermissionDecision
     ) -> AgentSession:
@@ -538,6 +542,16 @@ class AgentSessionControl:
             await self._sync(live)
             await self._driver.send(live.handle, message.text, images=images)
         return MessageAccepted(seq=seq)
+
+    async def stop_task(self, agent_session_id: str, task_id: str) -> AgentSession:
+        """Stop a running task (a background agent or command): the CLI ends it and its
+        ``task`` record with ``stopped`` follows. A task not running (it just ended, or never
+        ran here) is left alone, so a stop that crosses its end is not an error."""
+        live = await self._commandable(agent_session_id)
+        async with live.commands:
+            if task_id in live.tasks:
+                await self._driver.stop_task(live.handle, task_id)
+            return live.view()
 
     async def interrupt(self, agent_session_id: str) -> AgentSession:
         """Interrupt the running turn: open requests are denied ``by: closed``, then the

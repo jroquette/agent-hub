@@ -780,6 +780,10 @@ class RecordingAgentSessions:
         self._call("interrupt", agent_session_id)
         return self.session
 
+    async def stop_task(self, agent_session_id: str, task_id: str) -> AgentSession:
+        self._call("stop_task", agent_session_id, task_id)
+        return self.session
+
     async def answer(
         self, agent_session_id: str, request_id: str, decision: PermissionDecision
     ) -> AgentSession:

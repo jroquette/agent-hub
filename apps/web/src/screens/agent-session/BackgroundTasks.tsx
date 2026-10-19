@@ -58,8 +58,17 @@ export function BackgroundChip({ tasks, open, onToggle }: BackgroundChipProps) {
   );
 }
 
-function RunningRow({ row, now }: { row: TaskRow; now: number }) {
+interface RunningRowProps {
+  row: TaskRow;
+  now: number;
+  onStop: ((taskId: string) => Promise<unknown>) | undefined;
+}
+
+function RunningRow({ row, now, onStop }: RunningRowProps) {
   const [open, setOpen] = useState(false);
+  // Asked to stop: the row stays until the task's end arrives on the stream.
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState(false);
   const { task, label, call } = row;
   const command = isCommandTask(task);
   const took = now - ms(task.startedAt);
@@ -77,20 +86,45 @@ function RunningRow({ row, now }: { row: TaskRow; now: number }) {
   );
   return (
     <li className="as-bg-row as-bg-running">
-      {nested.length > 0 || uses > 0 ? (
-        <button
-          type="button"
-          className="as-bg-head"
-          aria-expanded={open}
-          onClick={() => {
-            setOpen(!open);
-          }}
-        >
-          <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
-          {head}
-        </button>
-      ) : (
-        <div className="as-bg-head">{head}</div>
+      <div className="as-bg-top">
+        {nested.length > 0 || uses > 0 ? (
+          <button
+            type="button"
+            className="as-bg-head"
+            aria-expanded={open}
+            onClick={() => {
+              setOpen(!open);
+            }}
+          >
+            <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
+            {head}
+          </button>
+        ) : (
+          <div className="as-bg-head">{head}</div>
+        )}
+        {onStop && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="square"
+            disabled={stopping}
+            aria-label={`Stop ${label}`}
+            title={stopping ? "Stopping…" : "Stop this task"}
+            onClick={() => {
+              setStopping(true);
+              setStopError(false);
+              onStop(task.id).catch(() => {
+                setStopping(false);
+                setStopError(true);
+              });
+            }}
+          />
+        )}
+      </div>
+      {stopError && (
+        <div className="as-bg-sub ah-small" role="alert">
+          Could not stop it. Try again.
+        </div>
       )}
       {!command && (
         <div className="as-bg-sub ah-small ah-subtle">
@@ -144,6 +178,8 @@ function DoneRow({ row }: { row: TaskRow }) {
 export interface BackgroundPanelProps {
   tasks: BackgroundTaskList;
   onClose: () => void;
+  /** Stops a running task; without it (an ended or cloud session) no stop button shows. */
+  onStop?: ((taskId: string) => Promise<unknown>) | undefined;
 }
 
 /**
@@ -151,7 +187,7 @@ export interface BackgroundPanelProps {
  * the running ones on top with how long they have run and, for an agent, its calls so far; the
  * ended ones folded under "Completed". Esc or Close shuts it.
  */
-export function BackgroundPanel({ tasks, onClose }: BackgroundPanelProps) {
+export function BackgroundPanel({ tasks, onClose, onStop }: BackgroundPanelProps) {
   const now = useNow(1000);
   const heading = useRef<HTMLHeadingElement>(null);
   const drawer = useDrawerWidth();
@@ -203,7 +239,7 @@ export function BackgroundPanel({ tasks, onClose }: BackgroundPanelProps) {
           ) : (
             <ul className="as-bg-list">
               {running.map((row) => (
-                <RunningRow key={row.task.id} row={row} now={now} />
+                <RunningRow key={row.task.id} row={row} now={now} onStop={onStop} />
               ))}
             </ul>
           )}
