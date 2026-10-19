@@ -346,3 +346,47 @@ def test_reads_ignored_when_environments_env_file_in_repo(hub_root: Path) -> Non
         branch_prefix=None,
     )
     assert unselected.env_files is None
+
+
+@pytest.mark.usefixtures("isolated_git")
+def test_reads_outside_when_environments_env_file_links_out(hub_root: Path, tmp_path: Path) -> None:
+    # AC-350.45: held by real path: a link in a repo that leads out of it is outside.
+    assert REAL_GIT is not None, "git is needed for the env file cases"
+    checkout = hub_root.parent / "demo-api"
+    checkout.mkdir()
+    subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [REAL_GIT, "init", "-q"], cwd=checkout, check=True, capture_output=True
+    )
+    (checkout / ".gitignore").write_text(".env.*\n", encoding="utf-8")
+    secrets = tmp_path / "elsewhere"
+    secrets.mkdir()
+    (secrets / "values.env").write_text("DEMO_TOKEN=x\n", encoding="utf-8")
+    os.symlink(secrets / "values.env", checkout / ".env.linked")
+    os.symlink(checkout / ".gitignore", hub_root / ".env.hub")
+    document = a_hub_document()
+    document["platform"]["version"] = RUNNING
+    document["environments"] = {
+        "staging": {"access": "ask", "credentials": {"env_file": "demo-api/.env.linked"}},
+        "qa": {"access": "read", "credentials": {"env_file": f"{hub_root.name}/.env.hub"}},
+    }
+    config = HubConfig.model_validate(document)
+    selection = select_rules(REGISTRY, config=config, only=("environments.env_file",))
+    assert isinstance(selection, Selection)
+
+    snapshot = build_doctor_snapshot(
+        str(hub_root),
+        config=config,
+        running=RUNNING,
+        selection=selection,
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+
+    assert snapshot.env_files is not None
+    assert [
+        (facts.path, facts.exists, facts.holder, facts.ignored) for facts in snapshot.env_files
+    ] == [
+        ("demo-api/.env.linked", True, None, None),
+        # A link from the hub into a repo is held, by its real path, by that repo.
+        (f"{hub_root.name}/.env.hub", True, "demo-api", False),
+    ]

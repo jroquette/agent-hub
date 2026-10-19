@@ -105,24 +105,37 @@ def env_file_facts(
     root: str, config: HubConfig, local: LocalConfig | tuple[ConfigProblem, ...]
 ) -> tuple[EnvFileFacts, ...]:
     """Each env file ``hub.json`` and a usable ``hub.local.json`` declare, as found in the
-    workspace (the hub's parent folder): whether it exists, whether the hub or a declared repo
-    holds it (by its first segment), and whether git ignores it there (``git check-ignore``)."""
+    workspace (the hub's parent folder): whether it exists, which of the hub and the declared
+    repos holds it by real path (a link that leads out of them is outside), and whether git
+    ignores it there (``git check-ignore``)."""
     if not isinstance(local, LocalConfig) or local_environment_problems(config, local):
         local = LocalConfig()
     workspace = Path(root).parent
-    holders = {Path(root).name, *(repo.dir for repo in config.repos)}
+    holders = {
+        name: Path(os.path.realpath(workspace / name))
+        for name in (Path(root).name, *(repo.dir for repo in config.repos))
+    }
     facts = []
     for declared in declared_env_files(effective_environments(config, local)):
-        holder, _, inside = declared.path.partition("/")
-        held = holder in holders and bool(inside)
+        real = Path(os.path.realpath(workspace / declared.path))
+        held = next(
+            (
+                (name, top)
+                for name, top in holders.items()
+                if real != top and real.is_relative_to(top)
+            ),
+            None,
+        )
         facts.append(
             EnvFileFacts(
                 path=declared.path,
                 environment=declared.environment,
                 source=declared.source,
-                exists=(workspace / declared.path).exists(),
-                holder=holder if held else None,
-                ignored=_is_ignored(workspace / holder, inside) if held else None,
+                exists=real.exists(),
+                holder=held[0] if held else None,
+                ignored=_is_ignored(held[1], real.relative_to(held[1]).as_posix())
+                if held
+                else None,
             )
         )
     return tuple(facts)
