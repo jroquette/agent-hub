@@ -2379,3 +2379,14 @@ class TestEnvironments:
         assert NAME_PROMPT not in result.stderr
         assert not (hub / LOCAL_FILE).exists()
         assert result.exit_code == 1
+
+    def test_names_environments_in_help_when_yes_described(
+        self, demo_workspace: Workspace, run_setup: SetupRunner
+    ) -> None:
+        result = run_setup(demo_workspace.hub, "--help")
+
+        help_text = " ".join(unstyle(result.stdout).split())
+        assert "Write a new hub.local.json without asking, and ask no environment question." in (
+            help_text.replace("│ ", "").replace(" │", "")
+        )
+        assert result.exit_code == 0, result.output
