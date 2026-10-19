@@ -40,6 +40,7 @@ class RecordingClient(ClaudeSDKClient):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.queries = []
+        self.stopped: list[str] = []
         self._done = asyncio.Event()
 
     async def connect(self, prompt: object = None) -> None:
@@ -57,6 +58,9 @@ class RecordingClient(ClaudeSDKClient):
             self.queries.append(prompt)
         else:
             self.queries.append([message async for message in prompt])
+
+    async def stop_task(self, task_id: str) -> None:
+        self.stopped.append(task_id)
 
     async def receive_messages(self) -> AsyncIterator[Any]:
         await self._done.wait()
@@ -104,6 +108,25 @@ async def test_queries_exact_names_when_text_uses_short_ones(tmp_path: Path) -> 
     sent = await _sent(tmp_path, "/fix then ask /agent-researcher", (), info=info)
 
     assert sent == ["/hub-workflow:fix then ask @agent-hub-workflow:researcher"]
+
+
+async def test_asks_cli_to_stop_task_when_stop_task_called(tmp_path: Path) -> None:
+    claude = tmp_path / "claude"
+    claude.write_text("#!/bin/sh\n")
+    claude.chmod(0o755)
+    clients: list[RecordingClient] = []
+
+    def factory(*args: Any, **kwargs: Any) -> RecordingClient:
+        clients.append(RecordingClient(*args, **kwargs))
+        return clients[-1]
+
+    driver = ClaudeSdkSessionDriver(environ={"PATH": str(tmp_path)}, client_factory=factory)
+    handle = await driver.start(StartSpec(cwd=str(tmp_path), mode="default"))
+    await driver.stop_task(handle, "task-1")
+    await driver.close(handle)
+
+    assert clients[0].stopped == ["task-1"]
+    assert clients[0].queries == []
 
 
 async def test_queries_image_then_text_when_image_given(tmp_path: Path) -> None:
