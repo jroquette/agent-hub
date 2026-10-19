@@ -116,7 +116,7 @@ const waiting = aFeature({
 });
 
 describe("FeaturesScreen", () => {
-  it("groups features into Needs you, In progress and Shipped (groups)", async () => {
+  it("groups features into In progress and Shipped, with the ones that need you inside In progress (groups)", async () => {
     const done = aFeature({
       slug: "shipped-one",
       phase: "shipped",
@@ -126,12 +126,20 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([done, waiting, ...features]) });
 
     await screen.findByRole("link", { name: "layered-memory" });
-    expect(slugsIn(groupOf(/^Needs you · 2$/))).toEqual(["broken-record", "owner-held"]);
-    expect(slugsIn(groupOf(/^In progress · 3$/))).toEqual([
+    expect(screen.queryByRole("button", { name: /^Needs you/ })).not.toBeInTheDocument();
+    expect(slugsIn(groupOf(/^In progress · 5$/))).toEqual([
+      "owner-held",
       "layered-memory",
       "control-plane",
       "tracker-team-cap",
+      "broken-record",
     ]);
+    expect(rowOf("owner-held")).toHaveAttribute("data-tone", "waiting");
+    expect(rowOf("broken-record")).toHaveAttribute("data-tone", "blocked");
+    expect(rowOf("layered-memory")).not.toHaveAttribute("data-tone");
+    expect(groupOf(/^In progress · 5$/)).toHaveTextContent(
+      "1 wait on your steps · 1 record cannot be read",
+    );
     expect(slugsIn(groupOf(/^Shipped · 1$/))).toEqual(["shipped-one"]);
   });
 
@@ -235,9 +243,9 @@ describe("FeaturesScreen", () => {
       /^layered-memory\. .*\. golden path at Evaluate\. ACs 21 of 21\. verdict SHIP-WITH-OWNER-STEPS\. issues AGH-48, AGH-49, AGH-50$/,
     );
     await userEvent.keyboard("j");
-    expect(rowOf("broken-record")).toHaveFocus();
-    await userEvent.keyboard("j");
     expect(row).toHaveFocus();
+    await userEvent.keyboard("j");
+    expect(rowOf("control-plane")).toHaveFocus();
   });
 
   it("finds features by name, issue or repo through the URL (search)", async () => {
@@ -510,7 +518,7 @@ describe("FeaturesScreen", () => {
 
     await screen.findByRole("link", { name: "told" });
     expect(rowOf("told")).toHaveTextContent("Your steps are left · Publish the plugin release.");
-    expect(groupOf(/^Needs you · 1$/)).toHaveTextContent("1 wait on your steps");
+    expect(groupOf(/^In progress · 1$/)).toHaveTextContent("1 wait on your steps");
   });
 });
 

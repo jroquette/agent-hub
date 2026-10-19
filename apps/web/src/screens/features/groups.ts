@@ -1,4 +1,4 @@
-/* The Features list as an inbox: what needs the owner, what is moving, what was evaluated, what shipped. */
+/* The Features list: what is moving (with a warning on the rows that need the owner), what was evaluated, what shipped. */
 import type { components } from "../../api/schema";
 import { GOLDEN_STEP_LABEL, type IconName } from "../../components";
 import { waitsOnOwner } from "./GoldenPathBar";
@@ -6,7 +6,7 @@ import { phaseIndex } from "./parts";
 
 type Feature = components["schemas"]["FeatureView"];
 
-export type GroupId = "needs" | "progress" | "evaluated" | "shipped";
+export type GroupId = "progress" | "evaluated" | "shipped";
 
 export const GROUPS: readonly {
   id: GroupId;
@@ -16,14 +16,6 @@ export const GROUPS: readonly {
   hint: string;
   empty: string;
 }[] = [
-  {
-    id: "needs",
-    title: "Needs you",
-    summary: "need you",
-    hint: "Your steps to do, a no-ship verdict or a record that cannot be read",
-    empty:
-      "Nothing needs you. Features show here when they wait on your owner steps, get a NO-SHIP verdict or have a record that cannot be read.",
-  },
   {
     id: "progress",
     title: "In progress",
@@ -59,8 +51,8 @@ export type Tone = "blocked" | "failed" | "waiting" | "done";
 /** Why a feature sits in its group: the lead icon, the one line under its name and the tab it opens. */
 export interface Reason {
   group: GroupId;
-  /** Orders the Needs you group: a broken record first, then NO-SHIP, then owner steps. */
-  rank: number;
+  /** Why the row needs the owner, shown as a warning on it: a broken record, NO-SHIP, or owner steps. */
+  needs: "problem" | "no-ship" | "owner-steps" | null;
   icon: IconName | null;
   tone: Tone | null;
   line: string;
@@ -125,8 +117,8 @@ function shortReason(reason: string): string | null {
 export function reasonOf(f: Feature): Reason {
   if (f.problem) {
     return {
-      group: "needs",
-      rank: 0,
+      group: "progress",
+      needs: "problem",
       icon: "octagon-x",
       tone: "blocked",
       line: `${f.problem}. Fix it in a hub PR.`,
@@ -136,8 +128,8 @@ export function reasonOf(f: Feature): Reason {
   if (f.phase !== "shipped" && f.verdict === "NO-SHIP") {
     const why = f.verdict_line ? plainVerdictLine(f.verdict_line) : "";
     return {
-      group: "needs",
-      rank: 1,
+      group: "progress",
+      needs: "no-ship",
       icon: "circle-x",
       tone: "failed",
       line: why ? `Evaluator says no ship: ${verdictDetail(why) ?? why}` : "Evaluator says no ship",
@@ -146,8 +138,8 @@ export function reasonOf(f: Feature): Reason {
   }
   if (f.phase !== "shipped" && waitsOnOwner(f.golden_path)) {
     return {
-      group: "needs",
-      rank: 2,
+      group: "progress",
+      needs: "owner-steps",
       icon: "hand",
       tone: "waiting",
       line: ownerLine(f),
@@ -157,7 +149,7 @@ export function reasonOf(f: Feature): Reason {
   if (f.phase === "shipped") {
     return {
       group: "shipped",
-      rank: 0,
+      needs: null,
       icon: "circle-check",
       tone: "done",
       line: "Shipped",
@@ -168,7 +160,7 @@ export function reasonOf(f: Feature): Reason {
     const detail = verdictDetail(f.verdict_line);
     return {
       group: "evaluated",
-      rank: 0,
+      needs: null,
       icon: "circle-check",
       tone: null,
       line: detail
@@ -188,7 +180,14 @@ export function reasonOf(f: Feature): Reason {
   if (why) parts.push(why);
   if (f.verdict) parts.push(VERDICT_WORDS[f.verdict]);
   if (parts.length === 1) parts.push(`step ${String(at + 1)} of ${String(steps.length)}`);
-  return { group: "progress", rank: 0, icon: null, tone: null, line: parts.join(" · "), doc: null };
+  return {
+    group: "progress",
+    needs: null,
+    icon: null,
+    tone: null,
+    line: parts.join(" · "),
+    doc: null,
+  };
 }
 
 function stepRatio(f: Feature): number {
@@ -201,12 +200,9 @@ function acRatio(f: Feature): number {
   return a && a.total > 0 ? (a.passing + a.owner_steps) / a.total : 0;
 }
 
-/** Orders rows inside one group: by reason, furthest along, most done, then by name. */
+/** Orders rows inside one group: furthest along, most done, then by name. */
 export function byGroupOrder(a: Feature, b: Feature): number {
-  const ra = reasonOf(a);
-  const rb = reasonOf(b);
   return (
-    ra.rank - rb.rank ||
     phaseIndex(b.phase) - phaseIndex(a.phase) ||
     stepRatio(b) - stepRatio(a) ||
     acRatio(b) - acRatio(a) ||
