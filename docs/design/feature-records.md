@@ -49,6 +49,21 @@ At least one of `acs` and `tickets` is required. At most 200 eval files are read
 each head up to 16 KiB. A legacy `eval.md` is read as one delivery named `legacy`: its verdict is its first `Verdict`
 line, its scope its frontmatter when it has one.
 
+The feature's **acceptance eval** is the latest whole-feature eval: `acs: all`, or a legacy `eval.md` whose
+frontmatter lists no `acs` or `tickets` (it was the one eval per feature; one that lists ACs counts only with
+`acs: all`). "Latest" is the order of the decisions below, ties going to the conservative verdict. The feature's
+header `verdict` is that eval's verdict, and none before one exists: ticket-scoped evals never set it, even when
+together they cover every AC (two-level-flows AC-1.6, AGH-323).
+
+### `plan.md`, `brief.md` and `ux-*.md`
+
+`plan.md` is read whole up to 256 KiB (`MAX_PLAN_BYTES`); over it, its version is a record problem ("plan.md is larger
+than 256 KiB; its version could not be read."). Its version is `v1` plus one per distinct entry
+`A<n> (<YYYY-MM-DD>, <who>): <title>` (optionally a list item or bold) under a `## Amendments…` heading, up to the
+next level-1 or level-2 heading; lines in fenced code blocks do not count (`agent_hub.core.features.plan_version`).
+`brief.md` (the `/feature` intake) is only checked present. The folder's own `ux-*.md` designs are read as heads of
+4 KiB, at most 50 by name (the rest counted as skipped); a `ux-*.md` in a subfolder is not a design.
+
 ### `reviews/<ticket>.md`
 
 Written by `/feature` step 7 once both reviewers pass: `type: review`, `ticket`, `outcome` (`approved` or
@@ -67,6 +82,10 @@ words are read), so `hub web` opens a record tab on its summary ("For humans") w
 note route gives for the record.
 
 ### Agent outputs: `reviews/<ticket>/<reviewer>-r<N>.json` and `evals/<delivery>.json`
+
+The app keeps only the names of the review rounds, `<ticket>/<reviewer>-r<N>.json` (`<reviewer>` lower-case
+letters), at most 2,000 in all, as evidence that a round exists; it never reads their bytes and never reads them as
+review records.
 
 JSON the agents hand to `/feature` ([ADR 0028](../adr/0028-agent-outputs-as-validated-json.md)), checked by
 `agent_hub.core.features.agent_outputs` (`review_problems`, `eval_problems`: bytes in, every problem at its JSON path

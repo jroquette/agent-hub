@@ -18,6 +18,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` Feature detail: the Plan tab shows the plan's version line ("Plan v3 · amendments A1, A2", one link per
+  amendment to its section of the plan), and the header verdict is the latest whole-feature eval's (`acs: all`, or a
+  legacy `eval.md` without scope); a ticket-scoped eval no longer sets it (AGH-323). The feature detail API serves
+  `plan` and `acceptance_eval`.
 - `hub brief` prints an `## Environments` block (both files: access, `PRODUCTION`, source, credential names, endpoints
   and blocked words, at most 60 lines), and the hooks' fallback brief lists the environments' names and access
   (AGH-286). `hub doctor`'s new `environments.production` rule names each production environment: a warning for
