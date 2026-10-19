@@ -236,7 +236,7 @@ function FeatureRow({
   onOpen: (href: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const href = reason.href ?? featureHref(f) + (reason.doc ? `?doc=${reason.doc}` : "");
+  const href = featureHref(f) + (reason.doc ? `?doc=${reason.doc}` : "");
   const lineId = `ft-line-${f.project}-${f.slug}`;
   const tags = [...(showProject ? [f.project] : []), ...f.repos.filter((r) => r !== f.project)];
   return (
