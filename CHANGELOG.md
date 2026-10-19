@@ -11,6 +11,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Fixed
+
+- `hub web` Feature detail: the golden path's Review and Shipped steps read "Partial" once some tickets are
+  reviewed or Done in Linear, instead of "Not reached" next to a partial Evaluate (AGH-322).
+
 ### Added
 
 - `hub brief` prints an `## Environments` block (both files: access, `PRODUCTION`, source, credential names, endpoints
@@ -26,6 +31,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The guard asks before a `hub env` that changes the environments (`add`, `set`, `remove`, `service add|remove`;
   `list` and `show` pass) and before an edit or shell write of `hub.local.json` (AGH-288). The README's guard section
   explains blocked words.
+- Base skill `plain-language` (AGH-319): rules for text that people read (chat, PR bodies and replies, tracker
+  comments, handoffs, summaries, brain notes), in the reader's language. `AGENTS.md` gains cross-repo rule 6, which
+  points to it; `/summarize`, `/handoff`, `/feature` and `/deliver` cite it. To make room for rule 6, workflow step 3
+  and the outside-content brain rule are each shortened to one line, with the same meaning. `hub sync` adds the skill
+  and its link after you bump `platform.version`.
 
 ## [0.17.0] - 2026-10-19
 

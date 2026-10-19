@@ -459,9 +459,9 @@ def test_never_marks_evaluate_done_when_ship_covers_part() -> None:
         "plan": "done",
         "tickets": "done",
         "implement": "current",
-        "review": "pending",
+        "review": "partial",
         "evaluate": "partial",
-        "shipped": "pending",
+        "shipped": "partial",
     }
     assert _meta(path, "implement") == "1/17 tickets delivered · 16 in progress · 3/36 ACs"
     assert _meta(path, "review") == "1/17 reviewed"
