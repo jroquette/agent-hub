@@ -26,7 +26,7 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         removing test assertions (`assert`, `expect(`, `pytest.raises`,
         `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
-        plugin/<project>/hooks/, .claude/settings*.json, hub.lock and hub.json, in the hub or a hub worktree,
+        plugin/<project>/hooks/, .claude/settings*.json, hub.lock, hub.json and hub.local.json, in the hub or a hub worktree,
         and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/,
         and any Bash or file-tool call while blocked words cannot be checked: a command or a listed file over
@@ -385,7 +385,7 @@ def _hub_base(cfg: Config) -> str | None:
 
 def guard_file(path: str, cfg: Config, launchers: bool = True) -> str | None:
     """path relative to the hub when it is one of the guard's own files: its hooks, the project's
-    hooks (the guard extension), .claude/settings*.json, hub.lock or hub.json, or (with launchers)
+    hooks (the guard extension), .claude/settings*.json, hub.lock, hub.json or hub.local.json, or (with launchers)
     the hub and agent launchers, in the hub holding this file or one of its worktrees (in the
     plugin cache: the hub found). Case is ignored."""
     base = _hub_base(cfg)
@@ -397,7 +397,7 @@ def guard_file(path: str, cfg: Config, launchers: bool = True) -> str | None:
         if not c.startswith(head):
             continue
         rel = c[len(head):]
-        if any(rel == d or rel.startswith(d + "/") for d in dirs) or SETTINGS_FILE.fullmatch(rel) or rel in ("hub.lock", "hub.json") or (launchers and rel in LAUNCHERS):
+        if any(rel == d or rel.startswith(d + "/") for d in dirs) or SETTINGS_FILE.fullmatch(rel) or rel in ("hub.lock", "hub.json", "hub.local.json") or (launchers and rel in LAUNCHERS):
             return rel
     return None
 
@@ -455,7 +455,8 @@ def _tokens(segment: str) -> list[str]:
 DENY_PATH_REASON = "{} is under guard.deny_paths `{}` (hub.json); agents neither read nor change it"
 GUARD_PARENT_REASON = "{} holds the hub's guard files ({}); removing or moving it changes the guard, confirm first"
 GUARD_FILE_REASON = ("{} is the hub's own guard or config ({}): hooks, the project guard extension, settings, "
-                     "hub.lock, hub.json and the hub/agent launchers change only with the user's confirmation")
+                     "hub.lock, hub.json, hub.local.json and the hub/agent launchers change only with the user's "
+                     "confirmation")
 INFRA_MARKER_REASON = "this command matches guard.infra.prod_markers `{}` (hub.json): production infrastructure is human-only"
 INFRA_UNKNOWN_REASON = ("{}: environment not recognised by guard.infra.allow (hub.json); put the environment on this "
                         "command, e.g. `--profile <env>` or an `AWS_PROFILE=<env> ` prefix (an exported or inherited "
