@@ -55,8 +55,11 @@ PLAN: Final = "plan.md"
 ISSUES: Final = "issues.md"
 RECORD: Final = RECORD_FILE
 EVAL: Final = "eval.md"
-# The record files of a feature folder, in the order a feature is built.
-RECORD_FILES: Final = (SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL)
+# The ``/feature`` intake brief: only its presence counts (AC-1.2); it has no tab of its own.
+BRIEF: Final = "brief.md"
+# The record files of a feature folder, in the order a feature is built (the brief last, so the
+# order of the files before it is unchanged).
+RECORD_FILES: Final = (SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL, BRIEF)
 # How much of ``spec.md`` and ``eval.md`` is read for the frontmatter and the verdict.
 HEAD_BYTES: Final = 65_536
 # ``plan.md`` is read whole up to this size, so its ``## Amendments`` at the end is seen (P1).
