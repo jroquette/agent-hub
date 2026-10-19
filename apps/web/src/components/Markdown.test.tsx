@@ -610,3 +610,40 @@ describe("highlight walker (AC-234.31)", () => {
     expect(container.querySelectorAll("*")).toHaveLength(2);
   });
 });
+
+describe("Markdown refs", () => {
+  const refs = (text: string) => {
+    const at = text.indexOf("TIP-1");
+    if (at < 0) return null;
+    return [
+      text.slice(0, at),
+      { label: "TIP-1", href: "https://linear.app/x/issue/TIP-1" },
+      text.slice(at + 5),
+    ];
+  };
+
+  it("links what refs names in text and in a whole code span, never inside a link", () => {
+    render(
+      <Markdown source={"See TIP-1, `TIP-1` and [TIP-1 here](https://example.com)."} refs={refs} />,
+    );
+    const links = screen.getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "https://linear.app/x/issue/TIP-1",
+      "https://linear.app/x/issue/TIP-1",
+      "https://example.com",
+    ]);
+    expect(links[1]?.querySelector("code")).not.toBeNull();
+  });
+
+  it("opens an action ref in the page with a button", () => {
+    const open = vi.fn();
+    render(
+      <Markdown
+        source="Open app.ts now"
+        refs={(t) => (t.includes("app.ts") ? ["Open ", { label: "app.ts", open }, " now"] : null)}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "app.ts" }));
+    expect(open).toHaveBeenCalled();
+  });
+});

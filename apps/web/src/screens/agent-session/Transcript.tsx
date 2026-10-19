@@ -1,6 +1,7 @@
 import "./agent-session.css";
 
 import {
+  useContext,
   memo,
   useCallback,
   useEffect,
@@ -20,6 +21,7 @@ import { MessageMeta } from "./MessageMeta";
 import { RequestCard, type PermissionAnswer } from "./PermissionCard";
 import { OpenReviewFileContext, ReviewBubble } from "./ReviewDiff";
 import { parseReview } from "./review";
+import { ChatRefsContext } from "./chatRefs";
 import { runFilesOf } from "./RunFilesCard";
 import { StoredCopyLabel } from "./SessionStatus";
 import { ActivityPanel, ActivityRun, ThinkingBlock, type ActivityStep } from "./ActivityRun";
@@ -145,9 +147,13 @@ type AssistantEntry = Extract<TranscriptEntry, { kind: "assistant" }>;
 /** Claude's text; the parse is memoised by text, so only a changed bubble parses again. A code
  * block still streaming stays plain; it is highlighted once its fence closes or the text ends. */
 function AssistantText({ entry }: { entry: AssistantEntry }) {
+  // Tickets, pull requests, URLs and the review's files become links (the session page's finder).
+  const refs = useContext(ChatRefsContext) ?? undefined;
   const body = useMemo(
-    () => <Markdown source={entry.text} streaming={entry.streaming} className="as-md" />,
-    [entry.text, entry.streaming],
+    () => (
+      <Markdown source={entry.text} streaming={entry.streaming} className="as-md" refs={refs} />
+    ),
+    [entry.text, entry.streaming, refs],
   );
   return (
     <article
