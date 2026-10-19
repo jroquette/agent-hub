@@ -4324,6 +4324,67 @@ def test_asks_when_scan_budget_spent(decide: Decide) -> None:
     assert verdicts == [unchecked("out of time (300 ms)")] * 2
 
 
+# AGH-302: the Bash rules stay linear in the command's length, so a quote-dense command gets its
+# verdict well inside the hook's 10 s timeout, past which Claude Code goes on with no verdict.
+# argv: hub and a file holding one event. Prints [decide's verdict, the seconds it took].
+DECIDE_TIMED = """
+import json, time
+from pathlib import Path
+import guard
+from hubhooks import load_config
+hub, event = Path(sys.argv[1]), sys.argv[2]
+with open(event, encoding="utf-8") as fh:
+    event = json.load(fh)
+cfg = load_config(hub)
+started = time.perf_counter()
+verdict = guard.decide(event, cfg, None)
+print(json.dumps([verdict, time.perf_counter() - started]))
+"""
+GUARD_HOOK_TIMEOUT = 10.0
+QUOTE_DENSE_BUDGET = 1.0  # seconds; a linear scan takes a fraction of it on 3.9
+
+
+@pytest.mark.serial
+@pytest.mark.parametrize(
+    ("command", "verdict"),
+    [
+        pytest.param("echo " + "'a" * 400_000, None, id="400k-pairs"),
+        pytest.param(
+            "echo " + "'a" * (BLOCKED_TEXT_CAP // 2),
+            unchecked("the command is over 1 MiB (too large)"),
+            id="over-cap",
+        ),
+    ],
+)
+def test_decides_quote_dense_command_in_time(
+    command: str,
+    verdict: tuple[str, str] | None,
+    blocked_hub: Path,
+    *,
+    tmp_path: Path,
+    hook_python: str,
+    run_python: Callable[..., Any],
+) -> None:
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps(bash_call(command)), encoding="utf-8")
+
+    try:
+        found, seconds = run_python(
+            hook_python,
+            DECIDE_TIMED,
+            path=blocked_hub / HOOKS,
+            args=[str(blocked_hub), str(event)],
+            cwd=tmp_path,
+            env={"HOME": str(tmp_path)},
+            timeout=GUARD_HOOK_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        found, seconds = "no verdict", GUARD_HOOK_TIMEOUT
+
+    assert seconds < QUOTE_DENSE_BUDGET
+    assert (tuple(found) if found else found) == verdict
+
+
 # D-order (AC-277.17): the AGH-45 synthetic ``I`` (guard.infra) beside blocked words.
 def with_infra_and_words(words: Sequence[str]) -> dict[str, Any]:
     document = builders.an_environments_document()
