@@ -1785,7 +1785,7 @@ setup: 2 missing, 8 ok
 | `tracker` | `LINEAR_API_KEY set (transport api)`; `transport mcp: Linear through claude -p (its Linear MCP server is not checked)` | `LINEAR_API_KEY is not set (transport api)` → as the sample; `transport mcp needs claude on PATH` → the `claude` fix |
 | `identity` | `wrote hub.local.json: <values> (<sources>)` (the written keys only); `<values> (<sources>)`, sources distinct in key order | below |
 | `gitignore` | no line | `hub.local.json is not ignored by git` → `add the line hub.local.json to .gitignore and commit it; if git tracks it, also git rm --cached hub.local.json` |
-| `environments` | `<name> (<access>[, PRODUCTION])` per effective environment, joined by `, `; a sub-line `production environment: <name> (access <a>, <file>)` per production one; no line when neither file declares one | never |
+| `environments` | `<name> (<access>[, PRODUCTION])` per effective environment, joined by `, `; a sub-line `production environment: <name> (access <a>, <file>)` per production one; no line when neither file declares one | `hub.local.json is invalid` (a sub-line per problem across both files; the file's own problems are the identity item's) → `fix hub.local.json (docs/design/developer-identity.md)` |
 | `repo <dir>` | `present, fetched`; `cloned <owner/name> into ../<dir> (<ssh\|https>)` | below |
 | `hub doctor` | its totals line | its totals line → `fix each error below, then ./hub doctor`; its finding lines as sub-lines in both states |
 

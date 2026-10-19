@@ -33,7 +33,6 @@ from agent_hub.core.workspace.setup_checklist import (
     ChecklistItem,
     State,
     doctor_item,
-    environments_item,
     item_lines,
     setup_exit,
     summary_line,
@@ -78,12 +77,13 @@ def setup(
     for item in setup_identity.identity_items(config, home=home, is_confirmed_by_flag=yes):
         checklist.add(item)
     # Asked before the ignore check, so a hub.local.json the step creates is checked too.
-    environments = setup_environments.environments_view(config, home=home, is_confirmed_by_flag=yes)
+    environments = setup_environments.environments_items(
+        config, home=home, is_confirmed_by_flag=yes
+    )
     for item in setup_identity.gitignore_items(home, env=setup_repos.setup_git_env(os.environ)):
         checklist.add(item)
-    declared = environments_item(environments)
-    if declared is not None:
-        checklist.add(declared)
+    for item in environments:
+        checklist.add(item)
     for item in setup_repos.repo_items(config, root=root, home=home, environ=os.environ):
         checklist.add(item)
     checklist.add(_doctor_item(root))
