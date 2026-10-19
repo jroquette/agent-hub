@@ -21,6 +21,7 @@ describe("CreateMenu", () => {
       "New agentSpecialists the session delegates to",
       "New skillPackaged instructions, run as /commands",
       "New hookCommands run at lifecycle events",
+      "New workflowSteps the hub runs by itself, chaining agents and commands",
     ]);
     expect(items[0]).toHaveFocus();
   });
@@ -30,7 +31,7 @@ describe("CreateMenu", () => {
     const menu = screen.getByRole("menu", { name: "Create with Claude" });
 
     fireEvent.keyDown(menu, { key: "ArrowUp" });
-    expect(screen.getByRole("menuitem", { name: /New hook/ })).toHaveFocus();
+    expect(screen.getByRole("menuitem", { name: /New workflow/ })).toHaveFocus();
     fireEvent.keyDown(menu, { key: "Escape" });
 
     expect(screen.queryByRole("menu")).toBeNull();
