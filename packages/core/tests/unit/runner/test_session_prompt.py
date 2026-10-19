@@ -267,6 +267,25 @@ def test_orders_argv_when_built() -> None:
     assert json.loads(argv[12]) == {"effortLevel": "medium"}
 
 
+def test_passes_settings_file_when_one_given() -> None:
+    settings_file = "/h/.agent-runs/session-settings/low.json"
+
+    argv = implementing_argv(
+        prompt="the prompt",
+        max_turns=40,
+        budget=3.0,
+        model="sonnet",
+        effort="low",
+        add_dirs=("/h",),
+        tools=("Read",),
+        denied_tools=(),
+        settings_file=settings_file,
+    )
+
+    assert argv.count("--settings") == 1
+    assert argv[argv.index("--settings") + 1] == settings_file
+
+
 def test_names_both_linear_servers_when_tracker_servers_listed() -> None:
     assert TRACKER_MCP_SERVERS == ("mcp__Linear", "mcp__claude_ai_Linear")
 
