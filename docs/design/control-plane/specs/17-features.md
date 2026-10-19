@@ -165,7 +165,13 @@ otherwise, this list wins. Each item is an acceptance criterion.
   review with an open pull request, then its readiness reads "Can start on X's branch" (in the table, with "X is in
   review, not merged" below) instead of "Waiting on X", and it offers the same Start (default, not primary), which
   first confirms the risk in a dialog, then starts a session that creates the worktree from X's pull request branch
-  (`hub worktree --base`) and opens a pull request stacked on it.
+  and opens a pull request stacked on it.
+- **AC-381.1 Stacked worktree, every repo.** Given a stacked start, then the session's first prompt names one exact
+  command, `./hub worktree <ticket id in lowercase> --stack-on <X's pull request URL>` (no `--only`, no `--base`):
+  `hub worktree` reads the pull request with `gh` and creates the worktree of the pull request's repo (the `hub.json`
+  repo whose `github` is the URL's `<owner>/<repo>`) from its head branch, and every other repo's from its default
+  branch, so the blocker's repo starts on its branch even when this ticket's own work is in another repo. No step
+  asks the agent to read the branch or choose the repo.
 
 ---
 

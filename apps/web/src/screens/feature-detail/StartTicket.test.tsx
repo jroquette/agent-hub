@@ -100,8 +100,13 @@ describe("StartTicket", () => {
 
     expect(prompt).toContain("Its blockers are done: AGH-1.");
     expect(prompt).toContain(`Its blocker AGH-2 is not merged yet: it is in review in ${PR}.`);
-    expect(prompt).toContain(`gh pr view ${PR} --json headRefName -q .headRefName`);
-    expect(prompt).toContain("./hub worktree <name> --only api --base <that branch>");
+    // AGH-381: the command names the pull request; hub worktree reads its repo and branch, so the
+    // blocker's repo starts from its branch even when the ticket's own work is in another repo.
+    expect(prompt).toContain(
+      `\`./hub worktree agh-3 --stack-on ${PR}\`, with no --only and no --base`,
+    );
+    expect(prompt).not.toContain("gh pr view");
+    expect(prompt).not.toContain("--base <");
     expect(prompt).toContain("Open this ticket's pull request against AGH-2's branch");
   });
 
