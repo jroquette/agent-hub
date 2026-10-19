@@ -4358,7 +4358,7 @@ QUOTE_DENSE_ALLOWED = (None, unchecked("out of time (300 ms)"))
         ),
     ],
 )
-def test_decides_quote_dense_command_in_time(
+def test_decides_in_time_when_command_quote_dense(
     command: str,
     verdicts: tuple[tuple[str, str] | None, ...],
     blocked_hub: Path,
@@ -4405,7 +4405,7 @@ print(json.dumps([c for c, want in zip(cases, regex) if guard._secret_tokens(c) 
 """
 
 
-def test_finds_secret_tokens_as_regex(
+def test_matches_regex_when_scanning_secret_tokens(
     blocked_hub: Path, *, hook_python: str, run_python: Callable[..., Any]
 ) -> None:
     assert run_python(hook_python, SCAN_AS_REGEX, path=blocked_hub / HOOKS) == []
