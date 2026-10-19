@@ -2458,7 +2458,7 @@ export interface components {
     };
     /** @enum {string} */
     FeaturePhase:
-      "spec" | "research" | "plan" | "tickets" | "implement" | "review" | "evaluate" | "shipped";
+      "spec" | "ux_design" | "research" | "plan" | "tickets" | "build" | "acceptance" | "shipped";
     /**
      * FeatureRecord
      * @description One record file of a feature folder; ``path`` is relative to the hub's ``brain/``, so the
@@ -4733,7 +4733,8 @@ export interface components {
       total: number;
     };
     /** @enum {string} */
-    StepState: "done" | "partial" | "current" | "pending" | "skipped" | "unknown" | "blocked";
+    StepState:
+      "done" | "partial" | "current" | "pending" | "skipped" | "unknown" | "blocked" | "unrecorded";
     /** @enum {string} */
     StepStatus: "running" | "ok" | "failed" | "skipped";
     /** @enum {string} */

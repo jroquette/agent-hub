@@ -2270,12 +2270,12 @@
       "FeaturePhase": {
         "enum": [
           "spec",
+          "ux_design",
           "research",
           "plan",
           "tickets",
-          "implement",
-          "review",
-          "evaluate",
+          "build",
+          "acceptance",
           "shipped"
         ],
         "type": "string"
@@ -8839,7 +8839,8 @@
           "pending",
           "skipped",
           "unknown",
-          "blocked"
+          "blocked",
+          "unrecorded"
         ],
         "type": "string"
       },
