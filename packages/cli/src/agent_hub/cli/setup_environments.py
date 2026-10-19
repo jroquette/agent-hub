@@ -10,9 +10,12 @@ rules across both files), and ``env_files``' writer over the bytes read. Only
 
 Prompts and refusals go to stderr; a name is echoed only through ``shown_name``. An answer is
 read up to ``ANSWER_LIMIT`` bytes: an over-long one is no answer, asked again once, then the
-step ends. With ``--yes``, without a terminal, or when ``hub.local.json`` is unusable (the
-identity item and doctor report it), nothing is asked or written. The step gives the
-effective view; its checklist item prints only when something is declared (spec AM-1).
+step ends. With ``--yes``, without a terminal, or when ``hub.local.json`` is unusable, nothing
+is asked or written. A file that cannot be read, is no JSON object or breaks its own schema is
+the identity item's ``hub.local.json is invalid`` (no item here; the view is ``hub.json``'s); a
+file that breaks a rule across both files, which every command reading both refuses, gives a
+missing ``environments`` item with its lines. Otherwise the item lists the effective view and
+prints only when something is declared (spec AM-1).
 """
 
 import contextlib
@@ -27,7 +30,6 @@ from agent_hub.cli.env_files import document_bytes, write_document
 from agent_hub.cli.hub_config_reader import FILE_LABEL, local_lines
 from agent_hub.cli.setup_identity import ANSWER_LIMIT
 from agent_hub.core.hub_config.effective_environments import (
-    EffectiveEnvironments,
     effective_environments,
     local_environment_problems,
 )
@@ -47,6 +49,11 @@ from agent_hub.core.hub_config.local_config import (
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
 from agent_hub.core.json_form import load_json_bytes
+from agent_hub.core.workspace.setup_checklist import (
+    ChecklistItem,
+    environments_invalid_item,
+    environments_item,
+)
 from agent_hub.generator.hub_config_files import UnreadFile, parse_json, read_file_bytes
 
 DECLARE_PROMPT: Final = f"Declare your own environments now ({LOCAL_FILE})? [y/N] "
@@ -77,22 +84,28 @@ class _Local:
         self.config = config
 
 
-def environments_view(
+def environments_items(
     config: HubConfig, *, home: Path, is_confirmed_by_flag: bool
-) -> EffectiveEnvironments:
-    """The effective environments after the step, which asks only on a terminal without
-    ``--yes`` and writes only ``home``'s ``hub.local.json``."""
+) -> list[ChecklistItem]:
+    """The ``environments`` item after the step (none when nothing is declared), which asks
+    only on a terminal without ``--yes`` and writes only ``home``'s ``hub.local.json``."""
     local = _read_local(home / LOCAL_FILE, config)
     if local is None:
-        return effective_environments(config, LocalConfig())
-    if not is_confirmed_by_flag and setup_identity.stdin_is_tty():
-        with contextlib.suppress(_StepEndedError):
-            _declare(config, local)
-    return effective_environments(config, local.config)
+        view = effective_environments(config, LocalConfig())
+    elif not isinstance(local, _Local):
+        return [environments_invalid_item(local_lines(local))]
+    else:
+        if not is_confirmed_by_flag and setup_identity.stdin_is_tty():
+            with contextlib.suppress(_StepEndedError):
+                _declare(config, local)
+        view = effective_environments(config, local.config)
+    item = environments_item(view)
+    return [] if item is None else [item]
 
 
-def _read_local(path: Path, config: HubConfig) -> _Local | None:
-    """The developer's file as read, an absent one as empty; ``None`` when it is unusable."""
+def _read_local(path: Path, config: HubConfig) -> _Local | tuple[ConfigProblem, ...] | None:
+    """The developer's file as read, an absent one as empty; its problems across both files;
+    ``None`` when the file itself is unusable (the identity item reports it)."""
     found = read_file_bytes(path, max_bytes=LOCAL_FILE_MAX_BYTES)
     if isinstance(found, UnreadFile):
         return _Local(path, None, LocalConfig()) if found.is_missing else None
@@ -100,8 +113,11 @@ def _read_local(path: Path, config: HubConfig) -> _Local | None:
     if isinstance(parsed, ConfigProblem):
         return None
     checked = check_local_document(parsed)
-    if not isinstance(checked, LocalConfig) or local_environment_problems(config, checked):
+    if not isinstance(checked, LocalConfig):
         return None
+    across = local_environment_problems(config, checked)
+    if across:
+        return across
     return _Local(path, found, checked)
 
 

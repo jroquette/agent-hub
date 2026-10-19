@@ -429,6 +429,18 @@ def environments_item(view: EffectiveEnvironments) -> ChecklistItem | None:
     )
 
 
+def environments_invalid_item(sub_lines: Sequence[str]) -> ChecklistItem:
+    """``environments`` missing: ``hub.local.json`` breaks a rule across both files (its
+    lines, one per problem, as sub-lines), so every command reading both refuses it."""
+    return ChecklistItem(
+        state=State.MISSING,
+        item="environments",
+        detail="hub.local.json is invalid",
+        fix=INVALID_LOCAL_FIX,
+        sub_lines=tuple(sub_lines),
+    )
+
+
 def repo_item(
     repo: WorkspaceRepo,
     outcome: RepoOutcome,
