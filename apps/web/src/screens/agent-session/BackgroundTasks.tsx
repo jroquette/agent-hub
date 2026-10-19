@@ -64,6 +64,57 @@ interface RunningRowProps {
   onStop: ((taskId: string) => Promise<unknown>) | undefined;
 }
 
+/** "commands" when every task is one, "agents" when every one is, else "tasks". */
+function noun(rows: TaskRow[], count: number): string {
+  const commands = rows.filter((row) => isCommandTask(row.task)).length;
+  const word = commands === rows.length ? "command" : commands === 0 ? "agent" : "task";
+  return count === 1 ? word : `${word}s`;
+}
+
+export interface BackgroundCardProps {
+  tasks: BackgroundTaskList;
+  /** Ended tasks count from here (the last message's time): older ones are not news. */
+  since: string | null;
+  onOpen: () => void;
+}
+
+/**
+ * The conversation's last line while tasks run beside it, as Claude Desktop shows it: "1
+ * background command done, 1 running". It shows while one runs or once one ended since the last
+ * message, and opens the Background drawer.
+ */
+export function BackgroundCard({ tasks, since, onOpen }: BackgroundCardProps) {
+  const running = tasks.running.length;
+  const from = since === null ? Number.NEGATIVE_INFINITY : ms(since);
+  const done = tasks.done.filter((row) => ms(row.task.endedAt) >= from);
+  if (running === 0 && done.length === 0) return null;
+  const rows = [...tasks.running, ...done];
+  const parts =
+    done.length > 0
+      ? [
+          `${String(done.length)} background ${noun(rows, done.length)} done`,
+          running > 0 ? `${String(running)} running` : null,
+        ]
+      : [`${String(running)} background ${noun(rows, running)} running`];
+  return (
+    <button
+      type="button"
+      className="as-run-files as-bg-card"
+      onClick={onOpen}
+      title="Show the tasks running in the background"
+    >
+      {running > 0 ? (
+        <span className="as-live-pulse" aria-hidden />
+      ) : (
+        <Icon name="layers" size="sm" />
+      )}
+      <span>{parts.filter(Boolean).join(", ")}</span>
+      <span className="ah-grow" />
+      <Icon name="chevron-right" size="sm" />
+    </button>
+  );
+}
+
 function RunningRow({ row, now, onStop }: RunningRowProps) {
   const [open, setOpen] = useState(false);
   // Asked to stop: the row stays until the task's end arrives on the stream.
