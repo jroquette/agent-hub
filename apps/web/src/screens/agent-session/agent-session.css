@@ -2446,3 +2446,31 @@ body.as-resizing .as-drawer {
     display: none;
   }
 }
+.as-files-tabs {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) 0;
+}
+.as-files-tabs > p {
+  margin: 0 0 var(--space-1);
+}
+.as-files-preview {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-3) var(--space-4);
+}
+.as-files-frontmatter {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
