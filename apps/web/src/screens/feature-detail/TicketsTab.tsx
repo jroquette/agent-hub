@@ -153,7 +153,7 @@ function CardAction({
   const sessions = useTicketSessions(project, row);
   const newest = sessions.data?.items[0];
   const open = newest != null && newest.status !== "ended";
-  const start = canStartTicket(row) && !open && (
+  const start = canStartTicket(row, rows) && !open && (
     <StartTicketButton project={project} slug={slug} row={row} rows={rows} />
   );
   if (!newest) return start ? <span className="ah-flow-card-action">{start}</span> : null;
@@ -447,7 +447,7 @@ export function TicketsTab({
   }
   if (!data) return <Loading />;
   const ticketAction: TicketAction = (row) =>
-    canStartTicket(row) ? (
+    canStartTicket(row, data.tickets) ? (
       <StartTicketButton project={project} slug={slug} row={row} rows={data.tickets} />
     ) : null;
   const cardAction: TicketAction = (row) => (
