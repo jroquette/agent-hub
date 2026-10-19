@@ -19,7 +19,8 @@ import { sessionControlUnavailable } from "../sessions-list/control";
 import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
-import { liveActivity, turnSteps } from "./liveActivity";
+import { backgroundTasks, liveActivity, turnSteps } from "./liveActivity";
+import { BackgroundChip, BackgroundPanel } from "./BackgroundTasks";
 import { LiveActivityBar, StepsPanel, StepsToggle } from "./LiveActivityBar";
 import { readStored, writeStored } from "../../lib/storage";
 import { CostMeter } from "./CostMeter";
@@ -157,6 +158,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [backgroundOpen, setBackgroundOpen] = useState(false);
   // The Steps drawer opens as it was last left, in this browser.
   const [liveOpen, setLiveOpen] = useState(() => readStored(STEPS_OPEN_KEY) === "open");
   const composer = useRef<HTMLTextAreaElement | null>(null);
@@ -173,10 +175,21 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const closeFiles = useCallback(() => {
     setFilesOpen(false);
   }, []);
-  // One drawer at a time: opening one closes the other.
+  // One drawer at a time: opening one closes the others.
   const closePanels = useCallback(() => {
     setFilesOpen(false);
     setLiveOpen(false);
+    setBackgroundOpen(false);
+  }, []);
+  const setBackground = useCallback((open: boolean) => {
+    setBackgroundOpen(open);
+    if (open) {
+      setFilesOpen(false);
+      setLiveOpen(false);
+    }
+  }, []);
+  const closeBackground = useCallback(() => {
+    setBackgroundOpen(false);
   }, []);
   const setSteps = useCallback((open: boolean) => {
     writeStored(STEPS_OPEN_KEY, open ? "open" : "closed");
@@ -186,6 +199,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setStepsFocus(true);
       setFilesOpen(false);
+      setBackgroundOpen(false);
     } else {
       // Focus goes back to what opened it, else to the composer.
       (stepsTrigger.current ?? composer.current)?.focus({ preventScroll: true });
@@ -201,6 +215,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const openFile = useCallback((path: string | null) => {
     setFilePick((before) => ({ path, nonce: before.nonce + 1 }));
     setLiveOpen(false);
+    setBackgroundOpen(false);
     setFilesOpen(true);
   }, []);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
@@ -275,6 +290,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const status = state.status ?? session.status;
   const activity = liveActivity(state);
   const steps = turnSteps(state);
+  const tasks = backgroundTasks(state);
   const ended = isTerminal(status);
   const mode = state.mode ?? session.mode;
   const model = state.model ?? session.model ?? null;
@@ -313,9 +329,16 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             <AgentStatusBadge
               status={status}
               endReason={state.endReason ?? session.end_reason}
-              background={runningTasks(state).length}
+              background={runningTasks(state)}
             />
             <span className="ah-grow" />
+            <BackgroundChip
+              tasks={tasks}
+              open={backgroundOpen}
+              onToggle={() => {
+                setBackground(!backgroundOpen);
+              }}
+            />
             <StepsToggle
               steps={steps}
               open={liveOpen}
@@ -414,7 +437,9 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           reviewed={review.reviewed}
           onOpenFile={openFile}
           sidePanel={
-            liveOpen && steps.end !== null ? (
+            backgroundOpen ? (
+              <BackgroundPanel tasks={tasks} onClose={closeBackground} />
+            ) : liveOpen && steps.end !== null ? (
               <StepsPanel steps={steps} onClose={closeLive} focusOnOpen={stepsFocus} />
             ) : filesOpen ? (
               <FilesPanel
@@ -442,9 +467,11 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
         <div className="as-column">
           <LiveActivityBar
             activity={activity}
-            open={liveOpen}
+            open={activity?.phase === "background" ? backgroundOpen : liveOpen}
             onToggle={() => {
-              setSteps(!liveOpen);
+              // Between turns the bar is about the background tasks: it opens their drawer.
+              if (activity?.phase === "background") setBackground(!backgroundOpen);
+              else setSteps(!liveOpen);
             }}
           />
           <Composer

@@ -8,12 +8,13 @@
  */
 import { resultText } from "./ToolCallCard";
 import {
-  runningTasks,
   diffStats,
+  isCommandTask,
   toolDiff,
   toolState,
   toolSummary,
   type ToolState,
+  type TaskView,
   type ToolView,
   type TranscriptState,
 } from "./model";
@@ -226,30 +227,55 @@ export function turnSteps(state: TranscriptState): TurnSteps {
   return { activity, feed, earlier, end, tookMs };
 }
 
-/** The background agents an idle session waits on, oldest first; null when there are none. */
+/** One task as the Background panel and bar show it: what it does, and its calls so far when it
+ * is an agent whose calls the log holds. */
+export interface TaskRow {
+  task: TaskView;
+  label: string;
+  /** The calling tool, read as a live call (its running calls nested); null when unknown. */
+  call: LiveCall | null;
+}
+
+function taskRow(state: TranscriptState, task: TaskView): TaskRow {
+  const tool = task.toolUseId ? state.tools[task.toolUseId] : undefined;
+  const call = tool ? liveCall(state, tool, 0) : null;
+  const label = isCommandTask(task)
+    ? (task.description ?? call?.label ?? "Background command")
+    : (call?.label ?? task.description ?? "Background agent");
+  return { task, label, call };
+}
+
+/** The session's tasks: the running ones oldest first, the ended ones latest ended first. */
+export function backgroundTasks(state: TranscriptState): { running: TaskRow[]; done: TaskRow[] } {
+  const all = Object.values(state.tasks).map((task) => taskRow(state, task));
+  return {
+    running: all.filter((row) => row.task.status === "running"),
+    done: all
+      .filter((row) => row.task.status !== "running")
+      .sort((a, b) => (b.task.endedAt ?? "").localeCompare(a.task.endedAt ?? "")),
+  };
+}
+
+/** The background tasks an idle session waits on, latest first; null when there are none. */
 function backgroundActivity(state: TranscriptState): LiveActivity | null {
-  const tasks = runningTasks(state);
-  if (tasks.length === 0) return null;
-  const calls = tasks
-    .map((task): LiveCall => {
-      const tool = task.toolUseId ? state.tools[task.toolUseId] : undefined;
-      const call = tool ? liveCall(state, tool, 0) : null;
-      return {
-        id: task.id,
-        name: call?.name ?? "Task",
-        label: call?.label ?? task.description ?? "Background task",
-        startedAt: task.startedAt,
-        subagent: true,
-        running: call?.running ?? [],
-        calls: call?.calls ?? 0,
-      };
-    })
+  const { running } = backgroundTasks(state);
+  if (running.length === 0) return null;
+  const calls = running
+    .map(({ task, label, call }): LiveCall => ({
+      id: task.id,
+      name: call?.name ?? (isCommandTask(task) ? "Bash" : "Agent"),
+      label,
+      startedAt: task.startedAt,
+      subagent: !isCommandTask(task),
+      running: call?.running ?? [],
+      calls: call?.calls ?? 0,
+    }))
     .reverse();
   return {
     phase: "background",
     calls,
     todo: null,
-    turnStartedAt: tasks[0]?.startedAt ?? null,
+    turnStartedAt: running[0]?.task.startedAt ?? null,
     lastEventAt: state.lastAt,
     ...turnFeed(state, { ended: true }),
   };

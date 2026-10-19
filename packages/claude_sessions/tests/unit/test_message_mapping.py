@@ -347,6 +347,7 @@ def _started() -> TaskStartedMessage:
         uuid="u1",
         session_id=SESSION,
         tool_use_id="toolu_9",
+        task_type="local_agent",
     )
 
 
@@ -357,6 +358,7 @@ def test_maps_running_task_when_task_started() -> None:
             status="running",
             description="Review the change",
             tool_use_id="toolu_9",
+            task_type="local_agent",
         )
     ]
 

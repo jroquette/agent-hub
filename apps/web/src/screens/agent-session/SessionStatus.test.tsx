@@ -20,9 +20,23 @@ describe("AgentStatusBadge", () => {
 
 describe("AgentStatusBadge with background agents", () => {
   it("reads an idle session with agents still running as at work", () => {
-    render(<AgentStatusBadge status="idle" background={2} />);
+    const task = (id: string, type: string) => ({
+      id,
+      description: null,
+      toolUseId: null,
+      startedAt: "2026-10-19T10:00:00Z",
+      endedAt: null,
+      status: "running" as const,
+      type,
+    });
+    render(
+      <AgentStatusBadge
+        status="idle"
+        background={[task("a", "local_agent"), task("b", "local_agent"), task("c", "local_bash")]}
+      />,
+    );
 
-    expect(screen.getByText("Background · 2 agents")).toBeInTheDocument();
+    expect(screen.getByText("Background · 2 agents, 1 command")).toBeInTheDocument();
   });
 });
 

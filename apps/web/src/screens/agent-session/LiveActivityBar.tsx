@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button, Icon, type IconName } from "../../components";
 import { useNow } from "../../lib/clock";
 import { cx } from "../../lib/cx";
+import { BACKGROUND_PANEL_ID } from "./BackgroundTasks";
 import { useDrawerWidth } from "./DrawerResize";
 import { cutText, OUTPUT_SHOWN } from "./ToolCallCard";
 import {
@@ -35,8 +36,15 @@ const since = (iso: string | null | undefined, now: number): number | null => {
 function headline(activity: LiveActivity): string {
   const { phase, calls } = activity;
   const subagents = calls.filter((call) => call.subagent).length;
-  if (phase === "background")
-    return `${String(calls.length)} background ${calls.length === 1 ? "agent" : "agents"} running`;
+  if (phase === "background") {
+    const commands = calls.filter((call) => !call.subagent).length;
+    const agents = calls.length - commands;
+    const words = [
+      agents > 0 ? `${String(agents)} ${agents === 1 ? "agent" : "agents"}` : null,
+      commands > 0 ? `${String(commands)} ${commands === 1 ? "command" : "commands"}` : null,
+    ];
+    return `Running in the background: ${words.filter(Boolean).join(", ")}`;
+  }
   if (phase === "subagents")
     return `${PHASE.subagents.text}: ${String(subagents)} ${subagents === 1 ? "agent" : "agents"}`;
   if (phase === "tool") {
@@ -252,11 +260,13 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
   const { stalled } = quietness(activity, now);
   const subagent = activity.calls.find((call) => call.subagent);
   const detail =
-    activity.phase === "subagents" || activity.phase === "background"
+    activity.phase === "subagents"
       ? subagent?.label
-      : activity.phase === "tool"
+      : activity.phase === "background"
         ? activity.calls[0]?.label
-        : activity.todo;
+        : activity.phase === "tool"
+          ? activity.calls[0]?.label
+          : activity.todo;
   const ask =
     activity.phase === "waiting"
       ? activity.feed.find(
@@ -264,6 +274,9 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
             item.kind === "tool" && item.state === "waiting",
         )
       : undefined;
+  // Between turns the bar opens the Background drawer, not the Steps one.
+  const tasks = activity.phase === "background";
+  const what = tasks ? "tasks" : "steps";
   return (
     <section
       className={cx("as-live", `as-live-${activity.phase}`, stalled && "as-live-stalled")}
@@ -281,14 +294,16 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
             : onToggle
         }
         aria-expanded={ask ? undefined : open}
-        aria-controls={!ask && open ? STEPS_PANEL_ID : undefined}
-        aria-keyshortcuts={ask ? undefined : STEPS_KEYS}
+        aria-controls={!ask && open ? (tasks ? BACKGROUND_PANEL_ID : STEPS_PANEL_ID) : undefined}
+        aria-keyshortcuts={ask || tasks ? undefined : STEPS_KEYS}
         title={
           ask
             ? "Go to the request that waits for you"
-            : open
-              ? `Hide the turn's steps (${STEPS_KEY_LABEL})`
-              : `Show the turn's steps (${STEPS_KEY_LABEL})`
+            : tasks
+              ? `${open ? "Hide" : "Show"} the tasks running in the background`
+              : open
+                ? `Hide the turn's steps (${STEPS_KEY_LABEL})`
+                : `Show the turn's steps (${STEPS_KEY_LABEL})`
         }
       >
         <span className="as-live-pulse" aria-hidden />
@@ -311,7 +326,7 @@ export function LiveActivityBar({ activity, open, onToggle }: LiveActivityBarPro
         <QuietLabel activity={activity} now={now} />
         <span className="as-live-open-label">
           <span className="as-live-open-text">
-            {ask ? "Show request" : open ? "Hide steps" : "Show steps"}
+            {ask ? "Show request" : `${open ? "Hide" : "Show"} ${what}`}
           </span>
           <Icon name={ask ? "arrow-up" : open ? "chevron-right" : "chevron-left"} size="sm" />
         </span>

@@ -156,6 +156,7 @@ def _task(
                 status="running",
                 description=message.description,
                 tool_use_id=message.tool_use_id,
+                task_type=message.task_type,
             )
         ]
     status = _TASK_ENDS.get(message.status or "")
