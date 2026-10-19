@@ -1,6 +1,7 @@
 """A plan's version from its ``## Amendments`` entries (two-level-flows AC-1.4)."""
 
-from agent_hub.core.features.plan_version import Amendment, PlanVersion, plan_version
+from agent_hub.core.features.feature_view import AmendmentView, PlanView
+from agent_hub.core.features.plan_version import plan_version
 
 PLAN = b"""---
 type: plan
@@ -15,7 +16,7 @@ Text.
 
 
 def test_reads_v1_when_plan_has_no_amendments_section() -> None:
-    assert plan_version(PLAN) == PlanVersion(version=1, amendments=())
+    assert plan_version(PLAN) == PlanView(version=1, amendments=())
 
 
 def test_counts_entries_when_amendments_section_lists_them() -> None:
@@ -26,17 +27,17 @@ def test_counts_entries_when_amendments_section_lists_them() -> None:
         b"- A2 (2026-10-21, Jos\xc3\xa9 Henrique Roquette): Drop the CSV export.\n"
     )
 
-    assert plan_version(text) == PlanVersion(
+    assert plan_version(text) == PlanView(
         version=3,
         amendments=(
-            Amendment(
+            AmendmentView(
                 id="A1",
                 date="2026-10-20",
                 who="José",
                 title="Split the ticket in two.",
                 anchor="Amendments",
             ),
-            Amendment(
+            AmendmentView(
                 id="A2",
                 date="2026-10-21",
                 who="José Henrique Roquette",
@@ -83,10 +84,10 @@ def test_ignores_entries_when_inside_code_blocks() -> None:
         b"A3 (2026-10-21, Ana): the real one.\n"
     )
 
-    assert plan_version(text) == PlanVersion(
+    assert plan_version(text) == PlanView(
         version=2,
         amendments=(
-            Amendment(
+            AmendmentView(
                 id="A3", date="2026-10-21", who="Ana", title="the real one.", anchor="Amendments"
             ),
         ),
@@ -116,4 +117,4 @@ def test_ignores_lines_when_not_an_entry() -> None:
         b"\xff\xfe broken bytes\n"
     )
 
-    assert plan_version(text) == PlanVersion(version=1, amendments=())
+    assert plan_version(text) == PlanView(version=1, amendments=())
