@@ -1,16 +1,21 @@
 """``RepoChangesReader`` over ``git``: a checkout's changes against its base branch.
 
-Read only: every command reads (``rev-parse``, ``symbolic-ref``, ``merge-base``, ``log``,
-``diff``, ``ls-files``), nothing writes a ref, the index or the working tree, and git runs as the
-learning actions run it (``git_runner``: an argv list, no shell, no prompt, git's location
-variables dropped, stderr discarded), all under one deadline.
+Read only: every command reads (``rev-parse``, ``symbolic-ref``, ``reflog``, ``merge-base``,
+``log``, ``diff``, ``ls-files``), nothing writes a ref, the index or the working tree, and git
+runs as the learning actions run it (``git_runner``: an argv list, no shell, no prompt, git's
+location variables dropped, stderr discarded), all under one deadline.
 
-The base is ``origin/HEAD`` when the clone knows it, else the first of ``origin/main``,
-``origin/master``, ``main`` and ``master`` that exists; the branch is compared from where it
-forked from it (``git merge-base``), as a pull request is. The files are ``git diff <fork>``
-(the working tree against the fork: committed, staged and unstaged changes alike, renames found)
-plus the untracked files git does not ignore, read as all added. Each file's commits come from
-``git log --numstat`` over ``<fork>..HEAD``.
+The base is the branch the checkout's branch was started from, as git recorded it: the
+``Created from <ref>`` of its reflog (``git worktree add -b <branch> <path> <base>`` and
+``git branch <branch> <base>`` write it), else its upstream when that is another branch (not its
+own pushed copy). A branch started from ``batatinha`` is compared with ``batatinha``, one started
+from ``origin/main`` with ``origin/main``. Without either (a reflog expired, a branch made from
+``HEAD``), the base is ``origin/HEAD`` when the clone knows it, else the first of
+``origin/main``, ``origin/master``, ``main`` and ``master`` that exists. The branch is compared
+from where it forked from its base (``git merge-base``), as a pull request is. The files are
+``git diff <fork>`` (the working tree against the fork: committed, staged and unstaged changes
+alike, renames found) plus the untracked files git does not ignore, read as all added. Each
+file's commits come from ``git log --numstat`` over ``<fork>..HEAD``.
 """
 
 import hashlib
@@ -45,6 +50,8 @@ READ_LIMIT: Final = 16 * 1024 * 1024
 # Paths as they are (no octal escapes), no colour, no pager, no external diff tool.
 _READ_OPTIONS: Final = (*GIT_OPTIONS, "-c", "core.quotePath=false", "--no-pager")
 _BASES: Final = ("origin/main", "origin/master", "main", "master")
+# How git's reflog names a branch's first entry: ``branch: Created from <ref>``.
+_CREATED_FROM: Final = "branch: Created from "
 _RECORD: Final = "\x1e"
 _LAUNCH: Final = partial(run_process, limit=READ_LIMIT)
 _FIELD: Final = "\x1f"
@@ -224,7 +231,7 @@ class GitRepoChanges:
         if run.text("rev-parse", "--is-inside-work-tree").strip() != "true":
             raise RepoChangesError(label)
         branch = run.text("symbolic-ref", "--quiet", "--short", "HEAD", check=False).strip()
-        base = GitRepoChanges._base(run)
+        base = GitRepoChanges._base(run, branch)
         if base is None:
             return RepoChanges(root=root, label=label, branch=branch or None)
         fork = run.text("merge-base", "HEAD", base, check=False).strip()
@@ -279,17 +286,38 @@ class GitRepoChanges:
         )
 
     @staticmethod
-    def _base(run: _Run) -> str | None:
+    def _base(run: _Run, branch: str) -> str | None:
         remote_head = run.text(
             "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD", check=False
         ).strip()
-        for candidate in (remote_head, *_BASES):
-            if not candidate:
+        for candidate in (*_started_from(run, branch), remote_head, *_BASES):
+            if not candidate or candidate == branch:
                 continue
             found = run.result("rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}")
             if found.returncode == 0:
                 return candidate
         return None
+
+
+def _started_from(run: _Run, branch: str) -> tuple[str, ...]:
+    """The refs ``branch`` was started from, as git recorded them: its reflog's oldest
+    ``branch: Created from <ref>`` (not ``HEAD``, which says nothing of the branch it was), then
+    its upstream unless that is the branch's own copy on the remote."""
+    if not branch:
+        return ()
+    found: list[str] = []
+    reflog = run.text("reflog", "show", "--format=%gs", f"refs/heads/{branch}", check=False)
+    lines = reflog.strip().splitlines()
+    if lines and lines[-1].startswith(_CREATED_FROM):
+        ref = lines[-1][len(_CREATED_FROM) :].strip()
+        if ref and ref != "HEAD":
+            found.append(ref)
+    upstream = run.text(
+        "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{branch}@{{upstream}}", check=False
+    ).strip()
+    if upstream and upstream != branch and not upstream.endswith(f"/{branch}"):
+        found.append(upstream)
+    return tuple(found)
 
 
 def _history(run: _Run, fork: str) -> tuple[list[RepoCommit], dict[str, list[RepoFileCommit]]]:
