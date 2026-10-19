@@ -206,12 +206,24 @@ ENV_COMMAND_WRITES = {
     "uvx --from x hub env remove y": "remove",
     "./hub env service add demo-api cache --env local --url redis://localhost:6379": "service add",
     "git status && './hub' env add qa --access ask": "add",
+    # quotes and backslashes the shell removes (the blocked-words rule's command views)
+    './hub "env" add x': "add",
+    "./hub 'env' add x": "add",
+    "./hub env 'add' x": "add",
+    "hub\\ env add x": "add",
+    "./h''ub env add x": "add",
+    "./hub env a''dd x": "add",
+    "./hub env ad\\d x": "add",
+    "./hub env service 'remove' demo-api api": "service remove",
 }
 ENV_COMMAND_READS = [
     "./hub env list",
     "./hub env show staging",
     "hub env list --json",
     "./hub env show live --json",
+    './hub "env" list',
+    "./hub env 'show' staging",
+    "h''ub env l''ist",
 ]
 
 
