@@ -9,12 +9,15 @@ is the path itself (no link, so it never leaves the pack), and ``output_format``
 Schema. Every other file under the pack's ``scripts/`` (``__pycache__`` aside, and not another
 action's own script) is a helper the script may source: it is read once per pack, never through a
 link, and joins each action's content hash and draft check. At most ``MAX_HUB_ACTIONS`` files are
-read; past that the root gets one problem.
+read; past that the root gets one problem. An action is committed only when ``HEAD`` holds, as a
+regular file's blob (``git ls-tree``), exactly the bytes read of each of its files; anything else
+(no git, no ``HEAD``, a change the index hides, a submodule pack, a later edit) is a draft.
 
 Limit: as for workflows, a path is checked, then read; a link swapped in between could be followed.
 The packs are the hub owner's own files.
 """
 
+import hashlib
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -45,6 +48,8 @@ from agent_hub.generator.workflow_yaml import LoadedWorkflow, WorkflowFileError,
 ACTION_SUFFIX: Final = ".yaml"
 MAX_HUB_ACTIONS: Final = 200
 MAX_PACK_SCRIPT_FILES: Final = 200
+# A regular file, plain or executable, as ``git ls-tree`` prints its mode.
+_FILE_MODES: Final = frozenset({"100644", "100755"})
 PYTHON_CACHE: Final = "__pycache__"
 
 
@@ -81,57 +86,57 @@ def discover_actions(hub_root: Path) -> ActionDiscovery:
         scan.problem(folder, "the actions folder is a link; it is not read")
     else:
         scan.root(folder)
-    uncommitted = _uncommitted(hub_root) if scan.found else None
+    committed = _committed_blobs(hub_root) if scan.found else None
     actions = tuple(
-        entry.model_copy(update={"draft": _is_draft(scan.files[entry.document_path], uncommitted)})
+        entry.model_copy(update={"draft": _is_draft(scan.files[entry.document_path], committed)})
         for entry in scan.found
     )
     return ActionDiscovery(actions=actions, problems=tuple(scan.problems))
 
 
-def _uncommitted(hub_root: Path) -> frozenset[str] | None:
-    """The hub-relative paths under ``actions/`` that differ from ``HEAD`` (staged, changed,
-    untracked or ignored; a folder ends in ``/``), from one ``git status``; ``None`` when the
-    hub is not in a git checkout or git cannot answer."""
-    prefix = git_answer(("rev-parse", "--show-prefix"), cwd=hub_root)
-    if prefix is None or prefix[0] != 0:
+def _committed_blobs(hub_root: Path) -> _CommittedBlobs | None:
+    """The object id of each regular file under ``actions/`` in the hub's ``HEAD``, by
+    hub-relative path, and the repository's object format; ``None`` when the hub is in no git
+    checkout, has no ``HEAD`` or git cannot answer (every action is then a draft)."""
+    about = git_answer(("rev-parse", "--show-prefix", "--show-object-format"), cwd=hub_root)
+    if about is None or about[0] != 0:
         return None
-    status = git_answer(
-        (
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--ignored=matching",
-            "--",
-            HUB_ACTIONS_FOLDER,
-        ),
-        cwd=hub_root,
+    hub_prefix, object_format, *_ = [*os.fsdecode(about[1]).split("\n"), "", ""]
+    if object_format not in hashlib.algorithms_available:
+        return None
+    tree = git_answer(
+        ("ls-tree", "-r", "-z", "--full-name", "HEAD", "--", HUB_ACTIONS_FOLDER), cwd=hub_root
     )
-    if status is None or status[0] != 0:
+    if tree is None or tree[0] != 0:
         return None
-    # Porcelain paths are relative to the repository's top; the hub may sit below it.
-    hub_prefix = os.fsdecode(prefix[1]).strip("\n")
-    paths: set[str] = set()
-    records = iter(status[1].split(b"\0"))
-    for record in records:
-        if not record:
-            continue
-        # ``XY <path>``; a rename or copy is followed by a record holding its source path alone.
-        paths.add(os.fsdecode(record[3:]).removeprefix(hub_prefix))
-        if record[:1] in {b"R", b"C"} or record[1:2] in {b"R", b"C"}:
-            paths.add(os.fsdecode(next(records, b"")).removeprefix(hub_prefix))
-    return frozenset(paths)
+    blobs: dict[str, str] = {}
+    for record in tree[1].split(b"\0"):
+        # ``<mode> <type> <object>\t<path>``: a link, a submodule or a tree is no committed file.
+        meta, _, path = os.fsdecode(record).partition("\t")
+        mode, _, rest = meta.partition(" ")
+        kind, _, object_id = rest.partition(" ")
+        if kind == "blob" and mode in _FILE_MODES and path.startswith(hub_prefix):
+            blobs[path.removeprefix(hub_prefix)] = object_id
+    return _CommittedBlobs(object_format=object_format, blobs=blobs)
 
 
-def _is_draft(files: tuple[tuple[str, bytes], ...], uncommitted: frozenset[str] | None) -> bool:
-    if uncommitted is None:
+def _is_draft(files: tuple[tuple[str, bytes], ...], committed: _CommittedBlobs | None) -> bool:
+    """Whether any of ``files`` (the bytes read, which the content hash covers) differs from its
+    blob in ``HEAD``: committed means ``HEAD`` holds these exact bytes, whatever the index or
+    ``git status`` says (assume-unchanged, skip-worktree, an edit after the read)."""
+    if committed is None:
         return True
-    return any(
-        path in uncommitted
-        or any(folder.endswith("/") and path.startswith(folder) for folder in uncommitted)
-        for path, _ in files
-    )
+    return any(committed.blobs.get(path) != committed.object_id(data) for path, data in files)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _CommittedBlobs:
+    object_format: str
+    blobs: dict[str, str]
+
+    def object_id(self, data: bytes) -> str:
+        """Git's object id of a blob holding ``data``."""
+        return hashlib.new(self.object_format, b"blob %d\0" % len(data) + data).hexdigest()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
