@@ -474,9 +474,7 @@ def test_reads_who_ran_eval_when_provenance_given(
 # two-level-flows AC-1.6 (AGH-323): the acceptance eval is the latest whole-feature eval.
 def test_acceptance_eval_is_latest_with_all_scope_when_ticket_evals_mixed() -> None:
     heads = [
-        an_eval(
-            "feature.md", type="eval", verdict="SHIP", acs="all", evaluated_at="2026-10-01"
-        ),
+        an_eval("feature.md", type="eval", verdict="SHIP", acs="all", evaluated_at="2026-10-01"),
         an_eval(
             "agh-1.md",
             type="eval",
