@@ -254,9 +254,11 @@ LAUNCHERS = ("hub", "agent")
 WRITE_TARGET = re.compile(r">>?\s*([^\s;&|<>()`]+)")
 WRITE_ARGS = re.compile(r"\b(?:tee|sed\s+(?:-\w*i\w*|--in-place)|rm|mv|cp|truncate|ln)\b(.*)")
 HUB_PREFIX = "@hub"
-# A `hub env` verb that writes hub.json or hub.local.json, behind any launcher path or
-# quote (`./hub`, `'hub'`, a tool runner's `--from x hub`). Each part of the pattern is a fixed
-# word or one run of blanks, so a search stays linear in the command's length.
+# A `hub env` verb that writes hub.json or hub.local.json, behind a launcher path (`./hub`, a tool
+# runner's `--from x hub`), searched in each of the blocked-words rule's command views, so quotes and
+# backslashes the shell removes (`'hub'`, `"env"`, `a''dd`, `hub\ env`) do not hide it; a mention
+# (`grep 'hub env add'`) asks too. Each part of the pattern is a fixed word or one run of blanks,
+# so a search stays linear in the command's length.
 ENV_COMMAND = re.compile(
     r"(?<![\w.-])hub['\"]?[ \t]+env[ \t]+(service[ \t]+(?:add|remove)|add|set|remove)(?![\w-])"
 )
@@ -1033,7 +1035,7 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
                 pat = protected(tok, cfg)
                 if pat:
                     return "ask", f"{tok} matches guard.ask_before_edit `{pat}` (hub.json); confirm this change is intended"
-    env = ENV_COMMAND.search(c)
+    env = next((m for m in map(ENV_COMMAND.search, _command_views(c)) if m), None)
     if env:
         return "ask", ENV_COMMAND_REASON.format(re.sub(r"[ \t]+", " ", env.group(1)))
     return None
