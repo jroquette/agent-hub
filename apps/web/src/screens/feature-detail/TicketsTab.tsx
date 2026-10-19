@@ -46,23 +46,23 @@ function TicketId({ row }: { row: TicketRow }) {
       </span>
     );
   }
+  return <TicketIdLine row={row} />;
+}
+
+/** The ticket's pull request (`PR #69`), else a dash with the reason in its tooltip. */
+function PrCell({ row }: { row: TicketRow }) {
+  if (row.pr_url) return <TicketPrLink row={row} />;
+  if (!row.id) return <span className="ah-subtle">—</span>;
   return (
-    <span className="ah-stack" style={{ gap: 2 }}>
-      <TicketIdLine row={row} />
-      {row.pr_url ? (
-        <TicketPrLink row={row} />
-      ) : (
-        <span
-          className="ah-small ah-subtle"
-          title={
-            row.reviewed === true
-              ? "The review record names no pull request on GitHub (still pending, or a repo outside this hub)."
-              : "No pull request yet: /feature records it in the ticket's review once both reviewers pass."
-          }
-        >
-          no PR
-        </span>
-      )}
+    <span
+      className="ah-subtle"
+      title={
+        row.reviewed === true
+          ? "The review record names no pull request on GitHub (still pending, or a repo outside this hub)."
+          : "No pull request yet: /feature records it in the ticket's review once both reviewers pass."
+      }
+    >
+      —
     </span>
   );
 }
@@ -333,6 +333,7 @@ function TicketsTable({
         </span>
       ),
     },
+    { label: "PR", width: 100, nowrap: true, cell: (row) => <PrCell row={row} /> },
   ];
   return (
     <div className="ah-table-wrap">

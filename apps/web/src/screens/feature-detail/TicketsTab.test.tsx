@@ -318,15 +318,17 @@ describe("TicketsTab", () => {
 
     const table = within(screen.getByRole("table", { name: "Tickets" }));
     const link = table.getByRole("link", {
-      name: `Pull request #69 of ${withPr.ref} (opens GitHub in a new tab)`,
+      name: `PR #69 of ${withPr.ref} (opens GitHub in a new tab)`,
     });
     expect(link).toHaveAttribute("href", "https://github.com/acme/demo-api/pull/69");
     expect(link).toHaveAttribute("target", "_blank");
-    expect(table.getByText("#7")).toHaveAttribute(
+    expect(table.getByText("PR #7")).toHaveAttribute(
       "title",
       "Link not shown: only GitHub pull request links are opened",
     );
-    expect(table.getByText("no PR")).toBeInTheDocument();
+    const cells = within(rowOf(nth(data.tickets, 2).ref)).getAllByRole("cell");
+    expect(cells.at(-1)).toHaveTextContent(/^—$/);
+    expect(within(rowOf(withPr.ref)).getAllByRole("cell").at(-1)).toContainElement(link);
   });
 
   it("shows the title's scope in its own column, apart from the words (tickets)", () => {
