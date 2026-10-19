@@ -13,6 +13,7 @@ import {
   anAgentSession,
   anId,
   at,
+  aWorkdir,
   renderWithApi,
   type ApiRoutes,
   type Session,
@@ -33,6 +34,7 @@ function routes(sessions: ApiRoutes[string], agents: unknown[] = []): ApiRoutes 
     "/api/v1/projects": aPage([aProjectSummary()]),
     [AGENT]: { items: agents },
     [`${AGENT}/capabilities`]: aCapabilities(),
+    [`${AGENT}/workdirs`]: { items: [aWorkdir()], warnings: [] },
   };
 }
 
