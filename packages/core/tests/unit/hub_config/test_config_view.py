@@ -203,3 +203,14 @@ def test_names_team_tracker_keys_when_hub_sets_some() -> None:
 
 def test_names_no_team_tracker_key_when_hub_sets_none() -> None:
     assert _view(a_hub_document()).tracker.team_set == ()
+
+
+def test_names_blocked_label_and_started_state_when_hub_sets_them() -> None:
+    document = a_hub_document()
+    document["tracker"] = {
+        **document["tracker"],
+        "blocked_label": "stuck",
+        "states": {"started": "Doing"},
+    }
+
+    assert _view(document).tracker.team_set == ("blocked_label", "started_state")

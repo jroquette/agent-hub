@@ -213,6 +213,35 @@ describe("HubConfigScreen", () => {
     expect(within(models).getByText("Set by the team")).toBeVisible();
   });
 
+  it("marks the tracker's labels built-in and its states the team's when hub.json sets only a state", async () => {
+    open("/projects/demo/config", {
+      [CONFIG]: aConfig({ tracker: { ...aConfig().tracker, team_set: ["review_state"] } }),
+    });
+
+    const tracker = await screen.findByRole("region", { name: /Tracker/ });
+    const row = (label: string) => {
+      const cell = within(tracker).getByText(label, { selector: ".ah-config-label" });
+      const parent = cell.closest(".ah-config-row");
+      if (!(parent instanceof HTMLElement)) throw new Error(`no row ${label}`);
+      return within(parent);
+    };
+    expect(row("Labels").getByText("Built-in")).toBeVisible();
+    expect(row("States").getByText("Set by the team")).toBeVisible();
+  });
+
+  it("offers Change for me, or Add for me on a list, only on the rows I may set", async () => {
+    open();
+
+    const guard = await screen.findByRole("region", { name: /Guard/ });
+    expect(within(guard).getByRole("button", { name: "Add for me: blocked words" })).toBeVisible();
+    expect(within(guard).queryByRole("button", { name: /for me: never read/ })).toBeNull();
+    const tracker = screen.getByRole("region", { name: /Tracker/ });
+    expect(within(tracker).getByRole("button", { name: "Change for me: transport" })).toBeVisible();
+    expect(within(tracker).queryByRole("button", { name: /Change for me: labels/ })).toBeNull();
+    const models = screen.getByRole("region", { name: /Models/ });
+    expect(within(models).queryByRole("button", { name: /Change for me/ })).toBeNull();
+  });
+
   it("saves the local settings to hub.local.json and shows the field's problem in words", async () => {
     const { requests } = open("/projects/demo/config", {
       [CONFIG]: aConfig(),
