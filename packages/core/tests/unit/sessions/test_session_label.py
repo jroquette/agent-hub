@@ -9,6 +9,7 @@ from agent_hub.core.sessions.session_label import (
     label_signals,
     session_label,
     with_issue,
+    with_prompt_issue,
 )
 from agent_hub.core.testing.session_scenarios import a_session_events, as_stored, shuffled
 
@@ -129,3 +130,16 @@ def test_takes_newest_ai_title_when_no_custom_title() -> None:
 
     assert session_label(label_signals(events)).title == "Newer guess"
     assert session_label(label_signals(as_stored(a_session_events()))).title is None
+
+
+def test_prefers_prompt_issue_when_branch_names_another_ticket() -> None:
+    # Started from the hub folder, whose checkout is on the previous ticket's records branch.
+    label = with_issue(
+        session_label(label_signals(as_stored(a_session_events(git_branch="ACME-1563-record")))),
+        ACME,
+    )
+
+    assert label.issue == "ACME-1563"
+    assert with_prompt_issue(label, "ACME-1564", ACME).issue == "ACME-1564"
+    assert with_prompt_issue(label, None, ACME).issue == "ACME-1563"
+    assert with_prompt_issue(label, "XYZ-9", ACME).issue == "ACME-1563"
