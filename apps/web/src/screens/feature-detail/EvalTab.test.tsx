@@ -20,6 +20,7 @@ import {
   evalPrompt,
   pickEval,
   ranBy,
+  settledOwnerSteps,
   type EvalTabProps,
 } from "./EvalTab";
 
@@ -132,6 +133,46 @@ describe("evalHistory", () => {
       "ci",
       null,
     ]);
+  });
+});
+
+describe("settledOwnerSteps", () => {
+  const waiting = (delivery: string, evaluated_at: string | null) =>
+    anEvalRecord({
+      delivery,
+      path: `${delivery}.md`,
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      evaluated_at,
+    });
+  const signoff = anEvalRecord({
+    delivery: "owner-signoff",
+    path: "owner-signoff.md",
+    verdict: "SHIP",
+    provenance: "owner",
+    evaluated_at: "2026-10-19T11:57:18+02:00",
+  });
+
+  it("settles the owner-steps evals before the owner's sign-off, not the ones after", () => {
+    const before = waiting("tip-1", "2026-10-14T16:35:32+02:00");
+    const undated = waiting("tip-2", null);
+    const after = waiting("feature-r2", "2026-10-20T09:00:00+02:00");
+
+    const settled = settledOwnerSteps([before, undated, after, signoff]);
+
+    expect([...settled.keys()]).toEqual(["tip-1.md", "tip-2.md"]);
+    expect(settled.get("tip-1.md")).toBe(signoff);
+  });
+
+  it("settles nothing without an owner sign-off", () => {
+    expect(settledOwnerSteps([waiting("tip-1", "2026-10-14")]).size).toBe(0);
+  });
+
+  it("reads a signed-off eval as SHIP in the table", () => {
+    renderWithApi(tab({ evals: [waiting("tip-1", "2026-10-14T16:35:32+02:00"), signoff] }), {});
+
+    expect(within(rowOf("tip-1")).getByText("SHIP")).toBeInTheDocument();
+    expect(within(rowOf("tip-1")).getByText("owner steps signed off")).toBeInTheDocument();
+    expect(within(rowOf("tip-1")).queryByText("SHIP-WITH-OWNER-STEPS")).toBeNull();
   });
 });
 
