@@ -123,3 +123,28 @@
 .ah-md-pre .hljs-emphasis {
   font-style: italic;
 }
+/* A ref the page opens in place (a file of the review): reads as a link, is a button. */
+.ah-md-ref {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.ah-md-ref:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ah-md-ref:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+/* A code span that is a ref keeps its code look, in the link's colour. */
+.ah-md a > code,
+.ah-md-ref > code {
+  color: var(--accent);
+}
