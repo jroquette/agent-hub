@@ -147,6 +147,8 @@ def test_sets_location_when_session_created(wired: Any, ports: tuple[Mock, Mock]
         (f"{ONE}/messages", {"text": ""}),
         (f"{ONE}/permissions/req-1", {"decision": "always"}),
         (f"{ONE}/permissions/req%201", {"decision": "allow"}),
+        (f"{ONE}/tasks/task%201/stop", {}),
+        (f"{ONE}/tasks/{'t' * 65}/stop", {}),
         (f"{ONE}/settings", {}),
         (f"{BASE}/cloud", {"project": "demo", "workdir_id": WORKDIR_ID, "task": "-x"}),
     ],
