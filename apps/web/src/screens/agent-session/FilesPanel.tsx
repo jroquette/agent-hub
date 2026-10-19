@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useContext,
   useEffect,
@@ -8,10 +9,10 @@ import {
   type KeyboardEvent,
 } from "react";
 
-import { Button, Icon, Markdown, SegmentedControl, Tabs } from "../../components";
+import { Button, CopyButton, Icon, Markdown, SegmentedControl, Tabs } from "../../components";
 import { cx } from "../../lib/cx";
 import { readStored, writeStored } from "../../lib/storage";
-import { useDrawerWidth } from "./DrawerResize";
+import { useDrawerWidth, useListWidth } from "./DrawerResize";
 import { ReviewCommentsContext, ReviewDiff, type ReviewComments } from "./ReviewDiff";
 import { DiffText, TOOL_STATE } from "./ToolCallCard";
 import {
@@ -246,21 +247,61 @@ function OpenThreads({ path }: { path: string }) {
 /** The drawer is wide enough for the list beside the file (px). */
 export const SPLIT_MIN = 720;
 
-/** Whether `element` is at least `min` px wide, followed as it resizes (false without a
- * ResizeObserver: the narrow, one-pane layout). */
-function useWiderThan(element: HTMLElement | null, min: number): boolean {
-  const [wider, setWider] = useState(false);
+/** How wide `element` is, followed as it resizes (0 without a ResizeObserver: the narrow,
+ * one-pane layout). */
+function useWidth(element: HTMLElement | null): number {
+  const [width, setWidth] = useState(0);
   useEffect(() => {
     if (!element || typeof ResizeObserver !== "function") return undefined;
     const observer = new ResizeObserver(([entry]) => {
-      if (entry) setWider(entry.contentRect.width >= min);
+      if (entry) setWidth(entry.contentRect.width);
     });
     observer.observe(element);
     return () => {
       observer.disconnect();
     };
-  }, [element, min]);
-  return wider;
+  }, [element]);
+  return width;
+}
+
+/** A path or name that wraps after its separators (`/ _ - .`) instead of being cut: in the
+ * review the name is the content, so all of it shows. */
+function Breakable({ text }: { text: string }) {
+  const parts = text.split(/(?<=[/_.-])/);
+  return (
+    <>
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {part}
+          {index < parts.length - 1 && <wbr />}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/** The folder every listed file is under, the session's worktree (its branch) in bold when the
+ * folder is inside it, the home folder as `~`; the full path one click away. */
+function RootLine({ base, workdirLabel }: { base: string; workdirLabel: string | undefined }) {
+  const path = base.slice(0, -1);
+  const marker = workdirLabel ? `/${workdirLabel}/` : null;
+  const at = marker ? `${path}/`.indexOf(marker) : -1;
+  let lead = "";
+  let rest = path.replace(/^(?:\/Users\/[^/]+|\/home\/[^/]+)(?=\/|$)/, "~");
+  if (at >= 0 && workdirLabel) {
+    lead = workdirLabel;
+    rest = path.slice(at + workdirLabel.length + 1);
+  }
+  return (
+    <div className="as-files-root ah-small">
+      <span className="ah-subtle">In</span>
+      <span className="as-files-root-path">
+        {lead && <b>{lead}</b>}
+        <Breakable text={rest} />
+      </span>
+      <CopyButton text={path} label="Copy folder path" className="as-files-copy" />
+    </div>
+  );
 }
 
 /** A file's status letter: A (new) or M (modified). */
@@ -332,10 +373,12 @@ function FileList({
   selected,
   review,
   onSelect,
+  workdirLabel,
 }: {
   files: readonly ChangedFile[];
   nameOf: (path: string) => string;
   base: string;
+  workdirLabel: string | undefined;
   selected: string | null;
   review: ReviewState;
   onSelect: (path: string) => void;
@@ -357,20 +400,18 @@ function FileList({
           </span>
         </div>
       )}
-      {base && (
-        <p className="as-files-root ah-small ah-subtle" title={base}>
-          {base}
-        </p>
-      )}
+      {base && <RootLine base={base} workdirLabel={workdirLabel} />}
       {byFolder(files, nameOf).map(([folder, inFolder]) => (
         <div key={folder} className="as-files-group">
           {folder && (
-            <div className="as-files-folder ah-small" title={base + folder}>
+            <div className="as-files-folder ah-small">
               <Icon name="folder" size="sm" />
-              <span>{folder.slice(0, -1)}</span>
+              <span>
+                <Breakable text={folder.slice(0, -1)} />
+              </span>
             </div>
           )}
-          <ul>
+          <ul aria-label={folder ? `Folder ${folder.slice(0, -1)}` : undefined}>
             {inFolder.map((file) => {
               const mark = review.reviewed[file.path];
               const viewed = mark === file.lastChangeId;
@@ -396,7 +437,7 @@ function FileList({
                   >
                     <KindBadge created={file.created} />
                     <span className="as-files-nav-name">
-                      {name.slice(name.lastIndexOf("/") + 1)}
+                      <Breakable text={name.slice(name.lastIndexOf("/") + 1)} />
                     </span>
                     <OpenThreads path={file.path} />
                     <Stats added={file.added} removed={file.removed} />
@@ -483,14 +524,20 @@ function FileDetail({
           </Button>
         )}
         <div className="as-files-detail-title">
-          <KindBadge created={file.created} />
-          <span className="as-files-name" title={file.path}>
-            {slash >= 0 && <span className="ah-muted">{name.slice(0, slash + 1)}</span>}
-            <b>{name.slice(slash + 1)}</b>
+          {slash >= 0 && (
+            <span className="as-files-detail-dir ah-small">
+              <Breakable text={name.slice(0, slash + 1)} />
+            </span>
+          )}
+          <span className="as-files-detail-file">
+            <KindBadge created={file.created} />
+            <b className="as-files-name">
+              <Breakable text={name.slice(slash + 1)} />
+            </b>
+            <Stats added={file.added} removed={file.removed} />
           </span>
-          <Stats added={file.added} removed={file.removed} />
         </div>
-        <span className="ah-grow" />
+        <CopyButton text={file.path} label="Copy file path" className="as-files-copy" />
         {isReviewable(file.path) && (
           <ViewedToggle
             viewed={viewed}
@@ -581,6 +628,8 @@ export interface FilesPanelProps {
   pickNonce?: number | undefined;
   /** Review comments on the diffs, sent to the session's Claude (absent: read-only diffs). */
   comments?: ReviewComments | undefined;
+  /** The session's folder (its worktree or branch), shown in bold where the files' root has it. */
+  workdirLabel?: string | undefined;
 }
 
 /**
@@ -597,10 +646,13 @@ export function FilesPanel({
   initialPath = null,
   pickNonce = 0,
   comments,
+  workdirLabel,
 }: FilesPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const [panel, setPanel] = useState<HTMLElement | null>(null);
-  const wide = useWiderThan(panel, SPLIT_MIN);
+  const panelWidth = useWidth(panel);
+  const wide = panelWidth >= SPLIT_MIN;
+  const list = useListWidth(panelWidth);
   const drawer = useDrawerWidth();
   const own = useReviewed(sessionId);
   const review = shared ?? own;
@@ -733,17 +785,22 @@ export function FilesPanel({
               <p className="ah-small ah-muted">{KIND_NOTE[kind.kind]}</p>
             </div>
           )}
-          <div className={cx("as-files-body", wide && "as-files-split")}>
+          <div
+            className={cx("as-files-body", wide && "as-files-split")}
+            style={wide ? list.style : undefined}
+          >
             {(wide || !open) && (
               <FileList
                 files={shown}
                 nameOf={nameOf}
                 base={base}
+                workdirLabel={workdirLabel}
                 selected={selected}
                 review={review}
                 onSelect={setPicked}
               />
             )}
+            {wide && <div {...list.handle} />}
             {open && (
               <FileDetail
                 file={open}
