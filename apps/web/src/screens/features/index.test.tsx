@@ -554,6 +554,32 @@ describe("FeaturesScreen", () => {
     expect(router.state.location.search).toBe("");
   });
 
+  it("flags a NO-SHIP row as failed in In progress and counts the rows that need you (needs)", async () => {
+    const noShip = aFeature({
+      slug: "no-ship-one",
+      verdict: "NO-SHIP",
+      verdict_line: "**Verdict: NO-SHIP.** The export drops the last row.",
+    });
+    open({ "/api/v1/features": aPage([noShip, waiting, ...features]) });
+
+    await screen.findByRole("link", { name: "no-ship-one" });
+    expect(rowOf("no-ship-one")).toHaveAttribute("data-tone", "failed");
+    expect(rowOf("no-ship-one")).toHaveTextContent(
+      "Evaluator says no ship: The export drops the last row.",
+    );
+    expect(slugsIn(groupOf(/^In progress · 6$/)).slice(0, 3)).toEqual([
+      "broken-record",
+      "no-ship-one",
+      "owner-held",
+    ]);
+    expect(groupOf(/^In progress · 6$/)).toHaveTextContent(
+      "What needs you first, then furthest along and most ACs passing · 1 wait on your steps · 1 no ship · 1 record cannot be read",
+    );
+    expect(document.querySelector('.ft-summary [data-group="needs"]')).toHaveTextContent(
+      "3 need you",
+    );
+  });
+
   it("tells waiting rows apart by what their eval says is left (needs)", async () => {
     const told = aFeature({
       ...waiting,
