@@ -462,16 +462,34 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
   `.env.development`, `.env.staging` and the names in `guard.readable_env_files`, plus the names in
   `guard.secret_env_files` always, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys), from any tool or command;
 - AI attribution in commits, tags and pull requests, and `claude/…` branches;
-- touching the `.git` internals, and reading or changing any path in `guard.deny_paths`.
+- touching the `.git` internals, and reading or changing any path in `guard.deny_paths`;
+- naming a blocked word (`guard.blocked_words`), see *Blocked words* below.
 
 **Asked first:**
 
 - editing the guard's own files (`plugin/hub-workflow/hooks/`, `plugin/<project>/hooks/`, `.claude/settings*.json`,
-  `hub.json`, `hub.lock`), or removing or moving their folders;
+  `hub.json`, `hub.local.json`, `hub.lock`), or removing or moving their folders;
+- a `hub env` that changes the environments (`add`, `set`, `remove`, `service add|remove`, quoted or escaped too);
+  `list` and `show` pass. Text that only mentions one asks as well (`grep 'hub env add'`, `git commit -m '… hub env
+  add'`). Not seen: the module form (`python -m agent_hub.cli env …`), a verb fed through stdin or a launcher in a
+  variable (`h=./hub; $h env add`), and shell writes to `hub.local.json` through `python -c`, `dd`, `install` or
+  `rsync`, as for `hub.json`;
 - removing assertions from a test, or adding skip, xfail, quarantine or fixme markers;
 - deleting or `sed`-editing test files from the shell;
 - writing in `brain/` outside `now.md`, `journal/`, `_inbox/`, `auto/` and `features/`;
 - editing a path in `guard.ask_before_edit`.
+
+**Blocked words.** `guard.blocked_words` lists words agents must not reach (e.g. `prod`, `production`). The guard
+denies, before any other rule, a Bash command that names one (as written, with backslash-newlines joined, or with its
+quotes removed), a scanned session variable whose value holds one (the infra selectors, the usual stage and connection
+names, each declared `credentials.env` and the names in `guard.blocked_words_env`), a file tool's path, and the
+contents of a `.env*` file or a `guard.blocked_words_files` match that a Read, a Grep or a Bash command names. A word
+matches ignoring ASCII case with no letter beside it: `prod` matches `my-prod-db` and `PROD`, not `product`. The
+lists of `hub.json`, `hub.local.json` and a `$HUB_CONFIG` file add up; no layer removes a word. When the words cannot
+be checked (a list that cannot be used, a command or file over 1 MiB, too many files, the 300 ms budget spent), the
+guard asks. It is a best-effort tripwire, not a security boundary: an environment's `access` is not enforced, and
+files a program opens on its own, MCP tools, tool output and obfuscated text are not checked. The contract and its
+limits: [environments](docs/design/environments.md).
 
 **Infra commands.** Set `guard.infra` in `hub.json` (even `{}`) and the guard classifies commands that run `aws`,
 `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam` or `serverless` by environment instead. The command is split
