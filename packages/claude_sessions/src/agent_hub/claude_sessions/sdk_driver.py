@@ -23,6 +23,7 @@ there too. ``events`` drains that queue until ``Exited``.
 import asyncio
 import base64
 import os
+import re
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import suppress
@@ -68,6 +69,14 @@ NO_CLAUDE: Final = "no claude executable on PATH: install Claude Code"
 NOT_STARTED: Final = "claude did not start"
 
 type ClientFactory = Callable[..., ClaudeSDKClient]
+
+# The composer offers each subagent as ``/agent-<name>``; the CLI calls one on ``@agent-<name>``.
+_AGENT_COMMAND = re.compile(r"^/(?=agent-[\w:.@-]+(?:\s|$))")
+
+
+def _prompt(text: str) -> str:
+    """``text`` as the CLI reads it: a leading ``/agent-<name>`` becomes its ``@agent-<name>``."""
+    return _AGENT_COMMAND.sub("@", text, count=1)
 
 
 @dataclass
@@ -195,6 +204,7 @@ class ClaudeSdkSessionDriver:
         turn."""
         session = self._open(handle)
         session.turns += 1
+        text = _prompt(text)
         try:
             if images:
                 await session.client.query(_single(_user_message(text, images)))
