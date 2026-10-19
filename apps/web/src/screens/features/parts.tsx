@@ -10,12 +10,12 @@ export type Verdict = components["schemas"]["Verdict"];
 /** The golden path in its fixed order (spec 17). */
 export const PHASES: readonly { id: FeaturePhase; label: string; file?: string }[] = [
   { id: "spec", label: "Spec", file: "spec.md" },
+  { id: "ux_design", label: "UX design" },
   { id: "research", label: "Research", file: "research.md" },
   { id: "plan", label: "Plan", file: "plan.md" },
   { id: "tickets", label: "Tickets", file: "issues.md" },
-  { id: "implement", label: "Implement" },
-  { id: "review", label: "Review" },
-  { id: "evaluate", label: "Evaluate", file: "eval.md" },
+  { id: "build", label: "Build" },
+  { id: "acceptance", label: "Acceptance", file: "eval.md" },
   { id: "shipped", label: "Shipped" },
 ];
 

@@ -214,7 +214,7 @@ describe("FeaturesScreen", () => {
         steps: [
           aGoldenStep({
             state: "unknown",
-            meta: "33/33 ACs",
+            meta: "Linear not loaded yet",
             reason: "Ticket status from Linear not loaded yet; open the Tickets tab.",
           }),
         ],

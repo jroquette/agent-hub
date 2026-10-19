@@ -830,12 +830,12 @@ type FeaturePhase = components["schemas"]["FeaturePhase"];
 
 export const GOLDEN_STEP_LABEL: Record<FeaturePhase, string> = {
   spec: "Spec",
+  ux_design: "UX design",
   research: "Research",
   plan: "Plan",
   tickets: "Tickets",
-  implement: "Implement",
-  review: "Review",
-  evaluate: "Evaluate",
+  build: "Build",
+  acceptance: "Acceptance",
   shipped: "Shipped",
 };
 
@@ -848,6 +848,7 @@ export const GOLDEN_STATE_TEXT: Record<GoldenStepState, string> = {
   skipped: "Skipped",
   unknown: "Unknown",
   blocked: "Blocked",
+  unrecorded: "Not recorded",
 };
 
 const GOLDEN_STATE_ICON: Partial<Record<GoldenStepState, IconName>> = {
@@ -872,7 +873,7 @@ export function shownGoldenSteps(steps: readonly GoldenStep[]): GoldenStep[] {
   });
 }
 
-/** "Evaluate: partial · partial: covers 3 of 36 ACs (Implement is not done)". */
+/** "Acceptance: partial · Ticket evals cover 3 of 36 ACs (Build is not done)". */
 export function goldenStepSummary(step: GoldenStep): string {
   const progress = step.progress
     ? `${String(step.progress.done)}/${String(step.progress.total)}`
@@ -883,9 +884,17 @@ export function goldenStepSummary(step: GoldenStep): string {
   return `${head}${meta ? ` · ${meta}` : ""}${reason}`;
 }
 
-/** The one short line the step in focus shows under its state; the owner's wait reads as theirs. */
+/**
+ * The Acceptance step while it waits on the owner's steps (a SHIP-WITH-OWNER-STEPS eval not signed
+ * off yet), else null: the one place that reads the server's "Waiting on you" meta.
+ */
+export function ownerWaitStep(steps: readonly GoldenStep[]): GoldenStep | null {
+  const step = steps.find((s) => s.name === "acceptance");
+  return step && step.state !== "done" && step.meta?.startsWith("Waiting on you") ? step : null;
+}
+
+/** The one short line the step in focus shows under its state. */
 function focusMeta(step: GoldenStep): string | null {
-  if (step.meta?.startsWith("waiting: owner")) return "Waiting on you";
   if (step.meta) return step.meta;
   return step.progress ? `${String(step.progress.done)}/${String(step.progress.total)}` : null;
 }
@@ -898,6 +907,7 @@ const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
   blocked: { borderColor: "var(--blocked)", color: "var(--blocked)" },
   skipped: { borderStyle: "dashed", opacity: 0.7 },
   unknown: { borderStyle: "dashed", opacity: 0.7 },
+  unrecorded: { borderStyle: "dashed", opacity: 0.7 },
 };
 
 /**
