@@ -483,8 +483,10 @@ describe("FeatureDetailScreen", () => {
       await userEvent.click(await screen.findByRole("tab", { name: "Eval" }));
 
       const table = screen.getByRole("table", { name: "Evals" });
-      expect(table).toHaveTextContent("agh-48");
-      expect(table).toHaveTextContent("agh-49");
+      for (const toggle of within(table).queryAllByRole("button", { expanded: false })) {
+        await userEvent.click(toggle);
+      }
+      expect(within(table).getByRole("button", { name: /^agh-48,/ })).toBeInTheDocument();
       expect(table).toHaveTextContent("NO-SHIP");
       expect(within(table).getByRole("button", { name: /^agh-49,/ })).toHaveAttribute(
         "title",
@@ -496,6 +498,7 @@ describe("FeatureDetailScreen", () => {
       open({}, "/features/agent-hub/layered-memory?doc=eval&eval=agh-48");
 
       expect(await screen.findByRole("article", { name: "Eval agh-48" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: /^AGH-49\b.*1 eval/ }));
       await userEvent.click(screen.getByRole("button", { name: /^agh-49,/ }));
       expect(await screen.findByRole("article", { name: "Eval agh-49" })).toBeInTheDocument();
     });

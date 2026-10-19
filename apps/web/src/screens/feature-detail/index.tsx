@@ -435,6 +435,8 @@ export function FeatureDetailScreen() {
         tickets={issueIds}
         epics={tickets.data?.planning.epics ?? []}
         evals={detail.evals}
+        ticketRows={tickets.data?.tickets}
+        acRows={detail.ac_rows}
         selected={selectedEval}
         onSelect={(delivery) => {
           setParams(

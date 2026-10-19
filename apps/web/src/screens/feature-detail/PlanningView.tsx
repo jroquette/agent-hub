@@ -381,7 +381,7 @@ export function AcCount({
   row,
   acPasses,
 }: {
-  row: TicketRow;
+  row: { acs: readonly string[] };
   acPasses?: Readonly<Record<string, boolean>> | undefined;
 }) {
   if (row.acs.length === 0) return null;

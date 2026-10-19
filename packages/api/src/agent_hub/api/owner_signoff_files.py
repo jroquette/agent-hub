@@ -7,11 +7,25 @@ overwriting an eval, and no link is followed into the folder.
 
 import os
 from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent_hub.core.features.feature_evals import EVALS_FOLDER
+from agent_hub.core.features.owner_signoff import MAX_NOTE_CHARS
 from agent_hub.core.readmodels.read_ports import HubReadModels
 
 _FEATURES = ("brain", "features")
+
+
+class OwnerSignOffBody(BaseModel):
+    """``POST .../owner-signoff``: the eval to settle, the owner's decision and an optional note."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    delivery: str | None = Field(default=None, min_length=1, max_length=64)
+    decision: Literal["done", "more_work"] = "done"
+    note: str | None = Field(default=None, max_length=MAX_NOTE_CHARS)
 
 
 class ProjectHubPaths:
