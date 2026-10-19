@@ -34,11 +34,15 @@ def test_gives_durations_when_asked() -> None:
 
 
 @pytest.mark.parametrize(
-    "field", [{"sessions_max": 0}, {"sessions_max": 17}, {"log_records": 99}, {"log_bytes": 1}]
+    "field", [{"sessions_max": -1}, {"sessions_max": 17}, {"log_records": 99}, {"log_bytes": 1}]
 )
 def test_refuses_limit_when_out_of_range(field: dict[str, int]) -> None:
     with pytest.raises(ValidationError):
         SessionLimits.model_validate(field)
+
+
+def test_accepts_no_session_limit_when_sessions_max_zero() -> None:
+    assert SessionLimits(sessions_max=0).sessions_max == 0
 
 
 def test_accepts_low_caps_when_test_configures_them() -> None:

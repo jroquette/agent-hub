@@ -679,7 +679,8 @@ class AgentSessionControl:
         capabilities = await self._driver.capabilities()
         if not capabilities.available:
             raise SessionsUnavailableError(capabilities.reason or "sessions cannot start here")
-        if len(self._live) >= self._limits.sessions_max:
+        limit = self._limits.sessions_max
+        if limit and len(self._live) >= limit:
             await self._free_slot()
 
     async def _free_slot(self) -> None:

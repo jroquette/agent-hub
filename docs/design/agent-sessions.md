@@ -85,7 +85,7 @@ is refused (`terminal`, or `log-full` naming Resume); a command while an interru
 
 | Limit | Default | Range |
 | --- | --- | --- |
-| live sessions (`--sessions-max`) | 4 | 1-16 |
+| live sessions (`--sessions-max`) | 4 | 0-16 (0: no limit) |
 | idle seconds (`--session-idle-seconds`) | 1800 | 1-86400 |
 | permission answer seconds (`--permission-timeout-seconds`) | 600 | 1-86400 |
 | log records (`--session-log-records`) / bytes (`--session-log-bytes`) | 50000 / 32 MiB | 100-1000000 / 64 KiB-1 GiB |
@@ -95,7 +95,8 @@ is refused (`terminal`, or `log-full` naming Resume); a command while an interru
 
 At the live-sessions limit, a start or a reopen first ends the local session idle the longest (no request open)
 `idle_timeout`, `by: server`; a message reopens it in place. Only when every live session is running, waiting on a
-request or a cloud one is the start refused (429 `limit`).
+request or a cloud one is the start refused (429 `limit`). With `--sessions-max 0` (the playground's conductor) no
+session is ended or refused for the limit.
 
 ### Links
 

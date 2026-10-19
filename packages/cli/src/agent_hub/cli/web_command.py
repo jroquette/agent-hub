@@ -204,7 +204,7 @@ def web(
             "sessions_max",
             flag="--sessions-max",
             variable="AGENT_HUB_SESSIONS_MAX",
-            help_text="Live agent sessions.",
+            help_text="Live agent sessions; 0: no limit.",
         ),
     ] = _DEFAULTS.sessions_max,
     session_idle_seconds: Annotated[
