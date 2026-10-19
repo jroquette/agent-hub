@@ -18,14 +18,14 @@ All optional and additive under `schema_version: 1`; a hub without them behaves,
 | `…credentials` | `aws_profile` (`^[A-Za-z0-9_.-]{1,64}$`) and `env` (≤ 10 names `^[A-Z_][A-Z0-9_]{0,63}$`): names, never values |
 | `repos[].services.<name>` | `kind` (`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 32, informational), `description`, `endpoints` |
 | `…endpoints.<env>` | `url` or `resource` (one required), `note`, `credentials`; `<env>` must be declared |
-| `guard.blocked_words` | ≤ 200 words `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2-64 characters, matched literally |
+| `guard.blocked_words` | ≤ 200 words `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2-64 characters, matched literally, never a secret's shape |
 | `guard.blocked_words_files` | ≤ 100 globs, ≤ 200 printable ASCII characters, no leading `/`, no `..` segment, no space |
 | `guard.blocked_words_env` | ≤ 50 variable names `^[A-Z_][A-Z0-9_]{0,63}$`, a trailing `*` matching a prefix |
 
-Names are a safe segment `S` (project-config.md) of ≤ 40 characters, environment names unique ignoring case across
-both files. A `url` is `scheme://host[:port][/path]`, printable ASCII, ≤ 200 characters, no `@`, `?` or `#`. Strings
-under `environments` and `services` must not match doctor's secret shapes (the error names the key and the kind, never
-the value). No behaviour comes from a name: `production: true` is a flag. An example `hub.json` and `hub.local.json`:
+Names are a safe segment `S` (project-config.md) of ≤ 40 characters, environment names unique ignoring case across both
+files. A `url` is `scheme://host[:port][/path]`, printable ASCII, ≤ 200 characters, no `@`, `?` or `#`. Strings under
+`environments` and `services` hold no control, line-break or bidi character nor a doctor secret shape (the error names
+the key and kind, never the value). No behaviour comes from a name: `production: true` is a flag. Examples:
 
 ```json
 "environments": {"local": {"access": "write", "description": "docker compose stack on this machine"},
@@ -60,10 +60,11 @@ tightens); the brief, `hub env list`, doctor and setup show it.
   environment (`` `live` (read, PRODUCTION): … ``, its description Markdown-escaped) and per repo with services, no
   endpoint or credential. Each counts in `instructions.size` (the example: 96 of 100; more raise its `max_lines`).
 - **`hub brief`** reads both files: after `## Repos`, an `Environments` block with each environment's access,
-  PRODUCTION, source and credential names, each service's endpoint per environment and the effective blocked words
-  (≤ 60 lines and 2000 characters, then `… <n> more: ./hub env list`), never cut by the 5500-character limit. The
-  hooks' mini brief lists names, access and PRODUCTION; with an unusable `hub.local.json`, `hub.json`'s ones and
-  `hub.local.json is unusable: your own environments are not shown`.
+  PRODUCTION, source and credential names, each service's endpoint per environment and the effective blocked words (≤ 60
+  lines, 2000 characters, then `… <n> more: ./hub env list`; urls and resources as code, descriptions and notes cut at
+  80, escaped), never cut by the 5500-character limit. Mini brief: names (`<hidden>` if secret-shaped), access,
+  PRODUCTION (≤ 60); with an unusable `hub.local.json`, `hub.json`'s and `hub.local.json is unusable: your own
+  environments are not shown`.
 - **Production lines** `production environment: <name> (access <a>, <source>)`: `hub sync` (`hub.json` only, after
   its report, `up to date` and `--check` included; none on a conflict or `--adopt`), `hub setup` (under its
   `environments` item, shown only when one is declared) and `hub env add|set`, whatever doctor's settings. Doctor's

@@ -13,8 +13,8 @@ read up to ``ANSWER_LIMIT`` bytes: an over-long one is no answer, asked again on
 step ends. With ``--yes``, without a terminal, or when ``hub.local.json`` is unusable, nothing
 is asked or written. A file that cannot be read, is no JSON object or breaks its own schema is
 the identity item's ``hub.local.json is invalid`` (no item here; the view is ``hub.json``'s); a
-file that breaks a rule across both files, which every command reading both refuses, gives a
-missing ``environments`` item with its lines. Otherwise the item lists the effective view and
+file that breaks a rule across both files, which every command reading both refuses (doctor's
+``config.schema`` too), gives a missing ``environments`` item with its lines. Otherwise the item lists the effective view and
 prints only when something is declared (spec AM-1).
 """
 

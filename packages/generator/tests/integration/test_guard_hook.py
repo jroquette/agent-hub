@@ -4118,8 +4118,23 @@ def test_denies_when_listed_env_name_holds_word(
     ]
 
 
+# A blocked word with a secret's shape (assembled at run time, so the repo holds none): the
+# guard asks, naming its place, never the word, as the CLI refuses it.
+SECRET_WORD = "AK" + "IA" + "A" * 16
 # D-fail: (hub.json's guard lists over W's, hub.local.json's text or None, the problem named).
 UNUSABLE_BLOCKED: tuple[tuple[str, dict[str, Any], str | None, str], ...] = (
+    (
+        "hub-secret-word",
+        {"blocked_words": ["ok", SECRET_WORD]},
+        None,
+        "hub.json guard.blocked_words[1]",
+    ),
+    (
+        "local-secret-word",
+        {},
+        json.dumps({"guard": {"blocked_words": [SECRET_WORD]}}),
+        "hub.local.json guard.blocked_words[0]",
+    ),
     ("hub-string", {"blocked_words": "prod"}, None, "hub.json guard.blocked_words"),
     ("hub-empty-item", {"blocked_words": ["ok", ""]}, None, "hub.json guard.blocked_words[1]"),
     ("hub-glob", {"blocked_words_files": [3]}, None, "hub.json guard.blocked_words_files[0]"),
