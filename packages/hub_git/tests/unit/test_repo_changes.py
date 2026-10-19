@@ -45,7 +45,7 @@ Binary files a/logo.png and b/logo.png differ
 """
 
 
-def test_parse_patch_reads_each_file_s_status_and_diff() -> None:
+def test_reads_each_file_s_status_and_diff_when_a_patch_is_parsed() -> None:
     patches = {patch.path: patch for patch in parse_patch(_PATCH)}
 
     assert {path: patch.status for path, patch in patches.items()} == {
@@ -69,7 +69,7 @@ def test_parse_patch_reads_each_file_s_status_and_diff() -> None:
     assert patches["logo.png"].binary
 
 
-def test_a_hunk_line_that_looks_like_a_header_stays_in_the_diff() -> None:
+def test_keeps_a_hunk_line_in_the_diff_when_it_looks_like_a_header() -> None:
     patch = """\
 diff --git a/notes.txt b/notes.txt
 --- a/notes.txt
@@ -85,7 +85,7 @@ diff --git a/notes.txt b/notes.txt
     assert only.path == "notes.txt"
 
 
-def test_parse_log_reads_commits_newest_first_and_each_file_s_lines() -> None:
+def test_reads_commits_newest_first_when_a_log_is_parsed() -> None:
     log = (
         "\x1eaaa\x1fAna\x1f2026-10-19T15:00:00+01:00\x1fsecond\n\n3\t1\tsrc/app.py\n"
         "\x1ebbb\x1fAna\x1f2026-10-19T14:00:00+01:00\x1ffirst\n\n"
@@ -105,7 +105,7 @@ def test_parse_log_reads_commits_newest_first_and_each_file_s_lines() -> None:
     assert [(c.added, c.removed) for c in by_path["logo.png"]] == [(0, 0)]
 
 
-def test_names_the_branch_s_pull_request_as_gh_lists_it(tmp_path: Path) -> None:
+def test_names_the_pull_request_when_gh_lists_one_for_the_branch(tmp_path: Path) -> None:
     asked: list[list[str]] = []
 
     def launch(argv: Sequence[str], **_: object) -> ProcessResult:
@@ -134,7 +134,7 @@ def test_no_pull_request_when_gh_names_none(tmp_path: Path, stdout: bytes) -> No
     assert reader.pull_request(str(tmp_path), branch="tip-1") is None
 
 
-def test_no_pull_request_for_a_branch_that_reads_as_an_option(tmp_path: Path) -> None:
+def test_names_no_pull_request_when_the_branch_reads_as_an_option(tmp_path: Path) -> None:
     reader = GitRepoChanges(gh="git", environ={"PATH": os.environ["PATH"]})
 
     assert reader.pull_request(str(tmp_path), branch="--web") is None

@@ -55,7 +55,7 @@ def _labels(roots: tuple[ResolvedWorkdir, ...]) -> list[str]:
     return [root.workdir.label for root in roots]
 
 
-def test_a_file_in_a_worktree_picks_the_worktree_not_its_repo() -> None:
+def test_picks_the_worktree_not_its_repo_when_a_file_is_in_a_worktree() -> None:
     roots = repo_roots(_listing(), workdir_id=WORKDIR_ID, paths=[f"{WORKTREE_PATH}/src/app.py"])
 
     assert _labels(roots) == ["api/tip-1"]
@@ -67,7 +67,7 @@ def test_the_hub_is_never_a_repository_even_when_the_session_started_there() -> 
     assert roots == ()
 
 
-def test_the_session_s_own_repo_comes_first_then_each_repo_once() -> None:
+def test_lists_the_own_repo_first_then_each_repo_once_when_several_repos_changed() -> None:
     roots = repo_roots(
         _listing(),
         workdir_id=REPO_ID,
@@ -77,13 +77,13 @@ def test_the_session_s_own_repo_comes_first_then_each_repo_once() -> None:
     assert _labels(roots) == ["api", "api/tip-1"]
 
 
-def test_a_path_that_only_starts_like_a_repo_folder_is_not_in_it() -> None:
+def test_leaves_a_path_out_when_it_only_starts_like_a_repo_folder() -> None:
     roots = repo_roots(_listing(), workdir_id=WORKDIR_ID, paths=["/hubs/api-old/a.py", "/etc/x"])
 
     assert roots == ()
 
 
-def test_at_most_max_repos_are_read() -> None:
+def test_reads_at_most_max_repos_when_more_repos_changed() -> None:
     entries = tuple(
         ResolvedWorkdir(
             workdir=a_workdir(workdir_id=f"{n:016x}", kind="repo", label=f"r{n}", repo=f"r{n}"),
@@ -100,7 +100,7 @@ def test_at_most_max_repos_are_read() -> None:
     assert len(roots) == MAX_REPOS
 
 
-def test_a_worktree_a_call_names_is_read_though_no_file_tool_changed_it() -> None:
+def test_reads_a_worktree_when_a_call_names_it_and_no_file_tool_changed_it() -> None:
     roots = repo_roots(
         _listing(),
         workdir_id=WORKDIR_ID,
@@ -111,7 +111,7 @@ def test_a_worktree_a_call_names_is_read_though_no_file_tool_changed_it() -> Non
     assert _labels(roots) == ["api/tip-1"]
 
 
-def test_a_repo_s_main_checkout_named_in_passing_is_not_read() -> None:
+def test_skips_a_main_checkout_when_a_call_names_it_in_passing() -> None:
     roots = repo_roots(
         _listing(), workdir_id=WORKDIR_ID, paths=[], mentions=[f"rg claims {REPO_PATH}/src"]
     )
@@ -123,7 +123,7 @@ def test_a_repo_s_main_checkout_named_in_passing_is_not_read() -> None:
     "mention",
     [f"{WORKTREE_PATH}-old/a.py", f"{WORKTREE_PATH}x", "/hubs/api/.claude/worktrees/tip-10"],
 )
-def test_a_text_that_only_starts_like_a_worktree_does_not_name_it(mention: str) -> None:
+def test_names_no_worktree_when_a_text_only_starts_like_one(mention: str) -> None:
     roots = repo_roots(_listing(), workdir_id=WORKDIR_ID, paths=[], mentions=[mention])
 
     assert roots == ()
@@ -133,7 +133,7 @@ def test_a_text_that_only_starts_like_a_worktree_does_not_name_it(mention: str) 
     "mention",
     [WORKTREE_PATH, f"{WORKTREE_PATH}/", f'W="{WORKTREE_PATH}"; cd $W', f"-C {WORKTREE_PATH} log"],
 )
-def test_a_worktree_is_named_by_its_whole_path(mention: str) -> None:
+def test_names_a_worktree_when_its_whole_path_appears(mention: str) -> None:
     roots = repo_roots(_listing(), workdir_id=WORKDIR_ID, paths=[], mentions=[mention])
 
     assert _labels(roots) == ["api/tip-1"]
@@ -220,7 +220,7 @@ async def _ended_session_with_files(
     return rig, session
 
 
-async def test_repo_changes_reads_each_repository_the_session_changed_a_file_in(
+async def test_reads_each_repository_when_the_session_changed_a_file_in_it(
     make_rig: MakeRig,
 ) -> None:
     reader = _Reader()
@@ -235,7 +235,7 @@ async def test_repo_changes_reads_each_repository_the_session_changed_a_file_in(
     assert changes.warnings == ()
 
 
-async def test_repo_changes_reads_the_worktree_the_session_s_calls_worked_in(
+async def test_reads_the_worktree_when_the_session_s_calls_worked_in_it(
     make_rig: MakeRig,
 ) -> None:
     reader = _Reader()
@@ -267,7 +267,7 @@ PULL = RepoPullRequest(
 )
 
 
-async def test_what_the_review_read_is_recorded_on_the_session_with_its_pull_request(
+async def test_records_the_review_targets_with_their_pull_request_when_repo_changes_read(
     make_rig: MakeRig,
 ) -> None:
     reader = _Reader(pull=PULL)
@@ -291,7 +291,7 @@ async def test_what_the_review_read_is_recorded_on_the_session_with_its_pull_req
     )
 
 
-async def test_github_is_asked_for_a_branch_s_pull_request_at_most_once_a_minute(
+async def test_asks_github_at_most_once_a_minute_when_a_branch_s_pull_request_read_again(
     make_rig: MakeRig,
 ) -> None:
     reader = _Reader(pull=PULL)
@@ -303,7 +303,7 @@ async def test_github_is_asked_for_a_branch_s_pull_request_at_most_once_a_minute
     assert reader.pr_asks == 1
 
 
-async def test_a_removed_worktree_is_read_from_the_commits_it_recorded(make_rig: MakeRig) -> None:
+async def test_reads_the_recorded_commits_when_a_worktree_was_removed(make_rig: MakeRig) -> None:
     reader = _Reader()
     gone = "/hubs/api/.claude/worktrees/tip-0"
     rig, session = await _ended_session_with_files(make_rig, reader, f"{HUB_PATH}/brain/x.md")
@@ -350,7 +350,9 @@ async def test_a_removed_worktree_is_left_out_when_the_session_works_on_its_repo
     assert reader.recorded == []
 
 
-async def test_a_repository_git_cannot_read_is_named_in_the_warnings(make_rig: MakeRig) -> None:
+async def test_names_a_repository_in_the_warnings_when_git_cannot_read_it(
+    make_rig: MakeRig,
+) -> None:
     reader = _Reader(failing=frozenset({REPO_PATH}))
     rig, session = await _ended_session_with_files(
         make_rig, reader, f"{REPO_PATH}/a.py", f"{WORKTREE_PATH}/b.py"
@@ -362,7 +364,7 @@ async def test_a_repository_git_cannot_read_is_named_in_the_warnings(make_rig: M
     assert changes.warnings == ("api could not be read by git",)
 
 
-async def test_without_a_reader_there_are_no_repositories(make_rig: MakeRig) -> None:
+async def test_lists_no_repositories_when_there_is_no_reader(make_rig: MakeRig) -> None:
     rig, session = await _ended_session_with_files(make_rig, None, f"{REPO_PATH}/a.py")
 
     changes = await rig.control.repo_changes(session.id)
@@ -370,7 +372,7 @@ async def test_without_a_reader_there_are_no_repositories(make_rig: MakeRig) -> 
     assert (changes.repos, changes.warnings) == ((), ())
 
 
-async def test_a_commit_s_diff_is_read_in_the_repository_that_holds_the_file(
+async def test_reads_a_commit_s_diff_when_its_repository_holds_the_file(
     make_rig: MakeRig,
 ) -> None:
     reader = _Reader()
@@ -391,7 +393,7 @@ async def test_a_commit_s_diff_is_read_in_the_repository_that_holds_the_file(
 
 
 @pytest.mark.parametrize("path", [f"{HUB_PATH}/brain/a.md", "/etc/passwd", WORKTREE_PATH])
-async def test_a_commit_s_diff_outside_the_session_s_repositories_is_not_found(
+async def test_answers_not_found_when_a_commit_s_file_is_outside_the_repositories(
     make_rig: MakeRig, path: str
 ) -> None:
     rig, session = await _ended_session_with_files(make_rig, _Reader())
@@ -400,7 +402,7 @@ async def test_a_commit_s_diff_outside_the_session_s_repositories_is_not_found(
         await rig.control.repo_commit_diff(session.id, path=path, sha="abc1234")
 
 
-async def test_a_commit_git_cannot_read_is_not_found(make_rig: MakeRig) -> None:
+async def test_answers_not_found_when_git_cannot_read_the_commit(make_rig: MakeRig) -> None:
     rig, session = await _ended_session_with_files(
         make_rig, _Reader(failing=frozenset({REPO_PATH}))
     )
@@ -409,7 +411,7 @@ async def test_a_commit_git_cannot_read_is_not_found(make_rig: MakeRig) -> None:
         await rig.control.repo_commit_diff(session.id, path=f"{REPO_PATH}/a.py", sha="abc1234")
 
 
-def test_relative_to_root_keeps_only_files_inside_the_root() -> None:
+def test_keeps_only_files_inside_the_root_when_made_relative_to_it() -> None:
     assert relative_to_root(REPO_PATH, f"{REPO_PATH}/src/a.py") == "src/a.py"
     assert relative_to_root(REPO_PATH, REPO_PATH) is None
     assert relative_to_root(REPO_PATH, f"{REPO_PATH}/../x.py") is None

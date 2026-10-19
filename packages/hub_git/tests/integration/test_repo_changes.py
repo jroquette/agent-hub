@@ -63,7 +63,7 @@ def checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     return work, env
 
 
-def test_reads_every_change_against_the_fork_whoever_made_it(
+def test_reads_every_change_against_the_fork_when_anyone_made_it(
     checkout: tuple[Path, dict[str, str]],
 ) -> None:
     work, env = checkout
@@ -129,7 +129,7 @@ def _stacked(tmp_path: Path) -> tuple[Path, dict[str, str]]:
 
 
 @pytest.mark.parametrize("start", ["batatinha", "origin/batatinha"])
-def test_a_worktree_started_from_a_branch_is_compared_with_that_branch(
+def test_compares_with_that_branch_when_a_worktree_started_from_a_branch(
     tmp_path: Path, start: str
 ) -> None:
     work, env = _stacked(tmp_path)
@@ -145,7 +145,7 @@ def test_a_worktree_started_from_a_branch_is_compared_with_that_branch(
     assert [os.path.basename(file.path) for file in changes.files] == ["tip2.py"]
 
 
-def test_a_branch_pushed_with_its_upstream_still_compares_with_where_it_started(
+def test_compares_with_where_it_started_when_a_branch_is_pushed_with_its_upstream(
     tmp_path: Path,
 ) -> None:
     work, env = _stacked(tmp_path)
@@ -162,7 +162,7 @@ def test_a_branch_pushed_with_its_upstream_still_compares_with_where_it_started(
     assert changes.base == "origin/main"
 
 
-def test_a_removed_worktree_is_read_from_its_recorded_commits(tmp_path: Path) -> None:
+def test_reads_recorded_commits_when_the_worktree_was_removed(tmp_path: Path) -> None:
     work, env = _stacked(tmp_path)
     tree = work / ".claude" / "worktrees" / "tip-3"
     _git(work, env, "worktree", "add", "-q", "-b", "tip-3", str(tree), "origin/main")
@@ -192,7 +192,7 @@ def test_a_removed_worktree_is_read_from_its_recorded_commits(tmp_path: Path) ->
     assert recorded.head_sha == live.head_sha
 
 
-def test_recorded_commits_no_longer_here_cannot_be_read(tmp_path: Path) -> None:
+def test_cannot_read_when_recorded_commits_are_no_longer_here(tmp_path: Path) -> None:
     work, env = _stacked(tmp_path)
 
     with pytest.raises(RepoChangesError):
@@ -207,12 +207,12 @@ def test_recorded_commits_no_longer_here_cannot_be_read(tmp_path: Path) -> None:
         )
 
 
-def test_a_folder_that_is_not_a_checkout_cannot_be_read(tmp_path: Path) -> None:
+def test_cannot_read_when_the_folder_is_not_a_checkout(tmp_path: Path) -> None:
     with pytest.raises(RepoChangesError):
         GitRepoChanges(environ=_env(tmp_path)).read(str(tmp_path), label="plain")
 
 
-def test_without_a_base_branch_nothing_is_compared(tmp_path: Path) -> None:
+def test_compares_nothing_when_there_is_no_base_branch(tmp_path: Path) -> None:
     env = _env(tmp_path)
     _git(tmp_path, env, "init", "--initial-branch=trunk", "-q")
     (tmp_path / "a.txt").write_text("a\n")
@@ -224,7 +224,9 @@ def test_without_a_base_branch_nothing_is_compared(tmp_path: Path) -> None:
     assert (changes.branch, changes.base, changes.files) == ("trunk", None, ())
 
 
-def test_reads_what_one_commit_changed_in_one_file(checkout: tuple[Path, dict[str, str]]) -> None:
+def test_reads_one_file_s_diff_when_one_commit_is_asked(
+    checkout: tuple[Path, dict[str, str]],
+) -> None:
     work, env = checkout
     reader = GitRepoChanges(environ=env)
     app = next(f for f in reader.read(str(work), label="w").files if f.path.endswith("app.py"))
@@ -236,7 +238,7 @@ def test_reads_what_one_commit_changed_in_one_file(checkout: tuple[Path, dict[st
     assert diff.diff == "--- a/app.py\n+++ b/app.py\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c"
 
 
-def test_a_commit_that_did_not_touch_the_file_has_an_empty_diff(
+def test_reads_an_empty_diff_when_the_commit_did_not_touch_the_file(
     checkout: tuple[Path, dict[str, str]],
 ) -> None:
     work, env = checkout
@@ -246,7 +248,7 @@ def test_a_commit_that_did_not_touch_the_file_has_an_empty_diff(
     assert reader.commit_diff(str(work), sha=first.sha, paths=["new.py"]).diff == ""
 
 
-def test_an_unknown_commit_cannot_be_read(checkout: tuple[Path, dict[str, str]]) -> None:
+def test_cannot_read_when_the_commit_is_unknown(checkout: tuple[Path, dict[str, str]]) -> None:
     work, env = checkout
 
     with pytest.raises(RepoChangesError):
