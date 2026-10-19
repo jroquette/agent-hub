@@ -34,8 +34,8 @@ class AgentSessionLink(ViewModel):
     agent_session_id: str
     waiting: bool = False
     # The issue the session's first prompt names (``/feature AGH-305``), not yet checked
-    # against the hub's tracker teams: what a session started from a ticket is about before
-    # its branch or worktree says so.
+    # against the hub's tracker teams: what a session started from a ticket is about, over
+    # what its branch or worktree names.
     prompt_issue: str | None = None
 
 
