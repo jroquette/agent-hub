@@ -1,11 +1,12 @@
 """The ``ClaudeAgentOptions`` of one session (AC-165.3) and where the user's ``claude`` is.
 
 Setting sources stay at the CLI's defaults (user, project, local), so the workdir's CLAUDE.md,
-hooks, skills and agents load as in a terminal. A permission mode is always passed: with none the
-CLI runs ``auto`` (spike), which the web never offers. The CLI accepts ``default`` as it is, so
-no mode is renamed (E15). The SDK runs the ``claude`` found on ``PATH`` (``cli_path``), never the
-binary bundled in its wheel. The child's stderr is discarded: it may hold conversation text,
-which no server log keeps.
+hooks, skills and agents load as in a terminal; a session outside the hub also loads the hub's
+plugins (``StartSpec.plugin_dirs``), so its skills and agents answer there too. A permission
+mode is always passed: with none the CLI runs ``auto`` (spike), which the web never offers. The
+CLI accepts ``default`` as it is, so no mode is renamed (E15). The SDK runs the ``claude`` found
+on ``PATH`` (``cli_path``), never the binary bundled in its wheel. The child's stderr is
+discarded: it may hold conversation text, which no server log keeps.
 """
 
 import os
@@ -58,4 +59,5 @@ def sdk_options(
         env=child_environment(environ, spec.environment_extra),
         max_buffer_size=max_buffer_size,
         stderr=_discard,
+        plugins=[{"type": "local", "path": path} for path in spec.plugin_dirs],
     )

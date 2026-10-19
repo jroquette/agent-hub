@@ -45,8 +45,10 @@ class RecordingClient(ClaudeSDKClient):
     async def connect(self, prompt: object = None) -> None:
         return None
 
+    info: dict[str, Any] | None = None
+
     async def get_server_info(self) -> dict[str, Any] | None:
-        return None
+        return self.info
 
     async def query(
         self, prompt: str | AsyncIterable[dict[str, Any]], session_id: str = "default"
@@ -65,7 +67,13 @@ class RecordingClient(ClaudeSDKClient):
         self._done.set()
 
 
-async def _sent(tmp_path: Path, text: str, images: tuple[DriverImage, ...]) -> list[object]:
+async def _sent(
+    tmp_path: Path,
+    text: str,
+    images: tuple[DriverImage, ...],
+    *,
+    info: dict[str, Any] | None = None,
+) -> list[object]:
     claude = tmp_path / "claude"
     claude.write_text("#!/bin/sh\n")
     claude.chmod(0o755)
@@ -73,6 +81,7 @@ async def _sent(tmp_path: Path, text: str, images: tuple[DriverImage, ...]) -> l
 
     def factory(*args: Any, **kwargs: Any) -> RecordingClient:
         clients.append(RecordingClient(*args, **kwargs))
+        clients[-1].info = info
         return clients[-1]
 
     driver = ClaudeSdkSessionDriver(environ={"PATH": str(tmp_path)}, client_factory=factory)
@@ -86,18 +95,15 @@ async def test_queries_plain_text_when_no_image(tmp_path: Path) -> None:
     assert await _sent(tmp_path, "Say hello.", ()) == ["Say hello."]
 
 
-async def test_queries_agent_mention_when_text_starts_with_agent_command(
-    tmp_path: Path,
-) -> None:
-    sent = await _sent(tmp_path, "/agent-research find the flaky test", ())
+async def test_queries_exact_names_when_text_uses_short_ones(tmp_path: Path) -> None:
+    info = {
+        "commands": [{"name": "hub-workflow:fix"}],
+        "agents": [{"name": "hub-workflow:researcher"}],
+    }
 
-    assert sent == ["@agent-research find the flaky test"]
+    sent = await _sent(tmp_path, "/fix then ask /agent-researcher", (), info=info)
 
-
-async def test_queries_text_as_is_when_agent_command_is_not_leading(tmp_path: Path) -> None:
-    text = "ask /agent-research later; /agent-"
-
-    assert await _sent(tmp_path, text, ()) == [text]
+    assert sent == ["/hub-workflow:fix then ask @agent-hub-workflow:researcher"]
 
 
 async def test_queries_image_then_text_when_image_given(tmp_path: Path) -> None:

@@ -73,8 +73,9 @@ class DriverModel(BaseModel):
 class StartSpec(DriverModel):
     """What one session starts with: a resolved working directory (never a free path from the
     browser), the mode, an optional model, an optional session to resume (and fork), an
-    optional session id to give the new session (P13), and variables added to the child's
-    environment (``AGENT_HUB_WEB_URL``; never the access token, L5)."""
+    optional session id to give the new session (P13), variables added to the child's
+    environment (``AGENT_HUB_WEB_URL``; never the access token, L5), and the hub's plugin
+    folders a session outside the hub loads (resolved by the workdir listing)."""
 
     cwd: str = Field(min_length=1)
     mode: PermissionMode
@@ -83,6 +84,7 @@ class StartSpec(DriverModel):
     fork: bool = False
     session_id: str | None = None
     environment_extra: Mapping[str, str] = Field(default_factory=dict)
+    plugin_dirs: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _fork_needs_resume(self) -> StartSpec:
