@@ -209,6 +209,24 @@ describe("FeatureDetailScreen", () => {
     expect(callout.closest('[role="status"]')).toHaveTextContent("memory loads.");
   });
 
+  it("names the evals waiting on owner steps and opens the first in Eval", async () => {
+    const waiting = anEvalRecord({
+      delivery: "agh-48",
+      path: "features/layered-memory/evals/agh-48.md",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      tickets: ["AGH-48"],
+    });
+    const { router } = open({ [API]: { ...detail, evals: [waiting] } });
+
+    const banner = (
+      await screen.findByText(/1 eval passed with owner steps: AGH-48 · Eval 1/)
+    ).closest('[role="status"]');
+    expect(banner).not.toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Review owner steps" }));
+    expect(router.state.location.search).toContain("doc=eval");
+    expect(router.state.location.search).toContain("eval=agh-48");
+  });
+
   it("shows every AC row at once, with no Show all fold (AC-269.12)", async () => {
     open();
 

@@ -557,12 +557,22 @@ a.ah-flow-card-title:hover > span:last-child {
   padding-top: 4px;
   padding-bottom: 4px;
 }
-.ah-eval-decision-row td {
+/* The "Waiting on you" callout under the eval that waits on owner steps. */
+.ah-eval-table .ah-eval-owner-row td {
   height: auto;
-  padding: 10px var(--space-3) 12px;
-  background: var(--surface-sunken);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  white-space: normal;
+  cursor: default;
+}
+.ah-eval-owner-row .ah-banner {
+  align-items: flex-start;
 }
 .ah-eval-decision {
-  gap: 8px;
-  max-width: 760px;
+  gap: var(--space-3);
+  max-width: 720px;
+}
+.ah-eval-note {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
 }
