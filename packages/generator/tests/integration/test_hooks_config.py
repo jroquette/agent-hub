@@ -491,6 +491,7 @@ import hubhooks
 def boom():
     raise RuntimeError("forced")
 hubhooks.read_input = boom
+hubhooks.read_event = boom
 sys.argv = [hook]
 runpy.run_path(hook, run_name="__main__")
 """
