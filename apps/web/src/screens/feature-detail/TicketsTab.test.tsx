@@ -99,7 +99,10 @@ describe("TicketsTab", () => {
       "href",
       "#ticket-AGH-201",
     );
-    expect(ready.getByRole("link", { name: "AC-200.4" })).toHaveAttribute("href", "/?ac=AC-200.4");
+    expect(ready.getByRole("link", { name: "AC-200.4" })).toHaveAttribute(
+      "href",
+      "/?doc=acs&ac=AC-200.4",
+    );
     expect(ready.getByText("Can start now")).toBeInTheDocument();
 
     const waiting = within(rowOf("AGH-203"));
@@ -303,7 +306,7 @@ describe("TicketsTab", () => {
     expect(table.getByText("1/1 ACs passing")).toBeInTheDocument();
     expect(table.getByRole("link", { name: /^AC-8\s*passing$/, hidden: true })).toHaveAttribute(
       "href",
-      "/?ac=AC-8",
+      "/?doc=acs&ac=AC-8",
     );
     expect(
       table.getByRole("link", { name: /^AC-4\s*not passing yet$/, hidden: true }),
