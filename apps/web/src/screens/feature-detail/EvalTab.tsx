@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
@@ -595,6 +595,7 @@ function OwnerStepsCallout({
   project,
   slug,
   record,
+  scope,
   label,
   ownerAcs,
   onShow,
@@ -602,7 +603,9 @@ function OwnerStepsCallout({
   project: string;
   slug: string;
   record: EvalRecord;
-  /** How the eval reads in the table ("DEMO-1562 · Eval 1"). */
+  /** The ticket (or the whole feature) the eval is listed under. */
+  scope: string;
+  /** How the eval reads in the table ("Eval 1"). */
   label: string;
   /** The eval's ACs that are manual owner steps, to name them. */
   ownerAcs: readonly string[];
@@ -678,16 +681,14 @@ function OwnerStepsCallout({
         <form
           id={formId}
           className="ah-eval-decision ah-stack"
-          aria-label={`${DECISION[decision].title}: ${label}`}
+          aria-label={`${DECISION[decision].title}: ${scope} · ${label}`}
           onSubmit={(event) => {
             event.preventDefault();
             settle.mutate(decision);
           }}
         >
           <span className="ah-stack" style={{ gap: 2 }}>
-            <b>
-              {DECISION[decision].title} · {label}
-            </b>
+            <b>{DECISION[decision].title}</b>
             <span className="ah-small ah-muted">{DECISION[decision].detail}</span>
           </span>
           <label className="ah-stack ah-small" style={{ gap: 4 }}>
@@ -716,7 +717,10 @@ function OwnerStepsCallout({
         <span className="ah-stack" style={{ gap: 2 }}>
           <span>
             <b>Waiting on you</b>
-            <span className="ah-muted"> · {label} passed with owner steps. Did you do them?</span>
+            <span className="ah-muted">
+              {" "}
+              · {scope} {label} passed with owner steps. Did you do them?
+            </span>
           </span>
           {ownerAcs.length > 0 && (
             <span className="ah-small ah-muted">
@@ -1030,9 +1034,8 @@ export function EvalTab({
   }[] = [
     {
       label: "Eval",
-      width: 190,
       cell: (e, row) => (
-        <span className="ah-row" style={{ gap: 6, flexWrap: "nowrap" }}>
+        <span className="ah-row ah-eval-child" style={{ gap: 6, flexWrap: "nowrap" }}>
           <button
             type="button"
             className="ah-btn ah-btn-sm ah-btn-ghost"
@@ -1053,6 +1056,7 @@ export function EvalTab({
     },
     {
       label: "Verdict",
+      width: 300,
       cell: (e, row) =>
         e.problem ? (
           <span className="ah-small" style={{ color: "var(--failed)" }}>
@@ -1084,7 +1088,7 @@ export function EvalTab({
     },
     {
       label: "Ran by",
-      width: 150,
+      width: 140,
       cell: (e) => {
         const who = ranBy(e.provenance);
         return who ? (
@@ -1132,76 +1136,78 @@ export function EvalTab({
                     ? labels.get(current.path)
                     : undefined,
               });
-              const callout = waiting && (
-                <tr className="ah-eval-owner-row">
-                  <td colSpan={columns.length}>
-                    <OwnerStepsCallout
-                      project={project}
-                      slug={slug}
-                      record={waiting}
-                      label={`${group.scope === FEATURE_SCOPE ? "The whole feature" : group.scope} · ${labels.get(waiting.path) ?? waiting.delivery}`}
-                      ownerAcs={evalAcs(waiting, allAcs).filter((id) => {
-                        const ac = acById.get(id);
-                        return ac ? passOf(ac) === "owner" : false;
-                      })}
-                      onShow={onSelect}
-                    />
-                  </td>
-                </tr>
-              );
+              const summary = current ?? latest;
+              const summaryFacts: RowFacts = { label: "", current: false, supersededBy: undefined };
               return (
-                <tbody key={group.scope}>
-                  <tr className="ah-eval-group" data-open={open || undefined}>
-                    <th scope="colgroup" colSpan={columns.length}>
+                <tbody key={group.scope} className="ah-eval-tbody">
+                  <tr
+                    className="ah-eval-group"
+                    data-open={open || undefined}
+                    onClick={() => {
+                      toggleGroup(group.scope);
+                    }}
+                  >
+                    <th scope="rowgroup">
                       <button
                         type="button"
                         className="ah-eval-group-toggle"
                         aria-expanded={open}
                         aria-label={`${name}${title ? ` ${title}` : ""} · ${String(group.evals.length)} eval${group.evals.length === 1 ? "" : "s"}`}
-                        onClick={() => {
+                        onClick={(event) => {
+                          event.stopPropagation();
                           toggleGroup(group.scope);
                         }}
                       >
                         <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
-                        <span className="ah-mono">{name}</span>
+                        <span className="ah-mono ah-eval-group-id">{name}</span>
                         {title && <span className="ah-eval-group-title">{title}</span>}
-                        <span className="ah-subtle">
+                        <span className="ah-subtle ah-nowrap">
                           · {group.evals.length} eval{group.evals.length === 1 ? "" : "s"}
                         </span>
-                        <span className="ah-grow" />
-                        {!open && latest?.verdict && (
-                          <VerdictBadge record={latest} settledBy={settled.get(latest.path)} />
-                        )}
-                        {!open && latest?.evaluated_at && (
-                          <span className="ah-small ah-subtle">
-                            <Time iso={latest.evaluated_at} absolute />
-                          </span>
-                        )}
                       </button>
                     </th>
+                    {summary &&
+                      columns.slice(1).map((c) => (
+                        <td key={c.label} style={{ whiteSpace: "normal" }}>
+                          {c.cell(summary, summaryFacts)}
+                        </td>
+                      ))}
                   </tr>
-                  {!open && callout}
+                  {waiting && (
+                    <tr className="ah-eval-owner-row">
+                      <td colSpan={columns.length}>
+                        <OwnerStepsCallout
+                          project={project}
+                          slug={slug}
+                          record={waiting}
+                          scope={group.scope === FEATURE_SCOPE ? "The whole feature" : group.scope}
+                          label={labels.get(waiting.path) ?? waiting.delivery}
+                          ownerAcs={evalAcs(waiting, allAcs).filter((id) => {
+                            const ac = acById.get(id);
+                            return ac ? passOf(ac) === "owner" : false;
+                          })}
+                          onShow={onSelect}
+                        />
+                      </td>
+                    </tr>
+                  )}
                   {open &&
-                    group.evals.map((e) => {
-                      const row = facts(e);
-                      return (
-                        <Fragment key={e.path}>
-                          <tr
-                            aria-selected={selected?.path === e.path}
-                            onClick={() => {
-                              onSelect(e.delivery);
-                            }}
-                          >
-                            {columns.map((c) => (
-                              <td key={c.label} style={{ whiteSpace: "normal" }}>
-                                {c.cell(e, row)}
-                              </td>
-                            ))}
-                          </tr>
-                          {e === waiting && callout}
-                        </Fragment>
-                      );
-                    })}
+                    group.evals.map((e) => (
+                      <tr
+                        key={e.path}
+                        className="ah-eval-run"
+                        aria-selected={selected?.path === e.path}
+                        onClick={() => {
+                          onSelect(e.delivery);
+                        }}
+                      >
+                        {columns.map((c) => (
+                          <td key={c.label} style={{ whiteSpace: "normal" }}>
+                            {c.cell(e, facts(e))}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
                 </tbody>
               );
             })}
