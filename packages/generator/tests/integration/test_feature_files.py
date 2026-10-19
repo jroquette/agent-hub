@@ -7,7 +7,12 @@ import pytest
 
 from agent_hub.core.features.feature_evals import EVAL_HEAD_BYTES
 from agent_hub.core.features.feature_reviews import REVIEW_HEAD_BYTES
-from agent_hub.core.features.feature_status import HEAD_BYTES, FeatureFolder, RecordHead
+from agent_hub.core.features.feature_status import (
+    HEAD_BYTES,
+    MAX_PLAN_BYTES,
+    FeatureFolder,
+    RecordHead,
+)
 from agent_hub.generator.feature_files import (
     MAX_EVAL_FILES,
     MAX_FEATURE_FOLDERS,
@@ -55,6 +60,7 @@ def test_reads_record_files_when_feature_folder_complete(tmp_path: Path) -> None
             features_json=b'{"acs": []}',
             spec_head=b"---\nprocess_size: bounded\n---\n",
             eval_head=b"Verdict: SHIP\n",
+            plan=b"# Plan\n",
         ),
     )
 
@@ -340,14 +346,31 @@ def test_reads_no_byte_when_record_file_only_checked_present(
     a_feature(
         features_of(tmp_path),
         "demo-feature",
-        {"plan.md": b"p" * 100_000, "research.md": b"r" * 100_000, "issues.md": b"i"},
+        {"research.md": b"r" * 100_000, "issues.md": b"i"},
     )
     reads = Reads(monkeypatch)
 
     [read] = read_feature_folders(tmp_path)
 
-    assert read.files == ("research.md", "plan.md", "issues.md")
+    assert read.files == ("research.md", "issues.md")
     assert reads.bytes == 0
+
+
+# AGH-323 (two-level-flows P1): plan.md is read whole up to MAX_PLAN_BYTES, so its amendments are seen.
+def test_reads_plan_whole_up_to_its_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    features = features_of(tmp_path)
+    a_feature(features, "fits", {"plan.md": b"p" * 102_400})
+    a_feature(features, "over", {"plan.md": b"q" * (MAX_PLAN_BYTES + 1)})
+    reads = Reads(monkeypatch)
+
+    fits, over = read_feature_folders(tmp_path)
+
+    assert (fits.plan, fits.plan_too_large) == (b"p" * 102_400, False)
+    assert (over.plan, over.plan_too_large) == (None, True)
+    assert "plan.md" in fits.files
+    assert "plan.md" in over.files
+    assert reads.bytes == 102_400 + MAX_PLAN_BYTES + 1
+    assert MAX_PLAN_BYTES == 262_144
 
 
 def test_reads_first_names_only_when_reviews_over_cap(
