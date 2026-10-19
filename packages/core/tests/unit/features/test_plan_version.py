@@ -118,3 +118,35 @@ def test_ignores_lines_when_not_an_entry() -> None:
     )
 
     assert plan_version(text) == PlanView(version=1, amendments=())
+
+
+# Quality review B1, B2 (AGH-323): a long run of blanks is read in linear time. Sized so the old
+# backtracking patterns took close to a minute; no timing assertion.
+LONG_BLANKS = 50_000
+
+
+def test_reads_heading_when_followed_by_long_blank_run() -> None:
+    text = (
+        b"## Amendments\n\n"
+        + b"### a"
+        + b" " * LONG_BLANKS
+        + b"x\n"
+        + b"A1 (2026-10-20, Ana): counted.\n"
+    )
+
+    assert [(a.id, a.anchor) for a in plan_version(text).amendments] == [("A1", "Amendments")]
+
+
+def test_skips_entry_when_parenthesis_never_closes() -> None:
+    text = (
+        b"## Amendments\n\n"
+        + b"A1 (2026-10-20, a"
+        + b" " * LONG_BLANKS
+        + b"x\n"
+        + b"A2 (2026-10-21, Ana): the real one.\n"
+    )
+
+    found = plan_version(text)
+
+    assert found.version == 2
+    assert [(a.id, a.who) for a in found.amendments] == [("A2", "Ana")]
