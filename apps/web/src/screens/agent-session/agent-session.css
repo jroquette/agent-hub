@@ -234,6 +234,7 @@
 }
 .as-slash-command {
   flex: none;
+  min-width: 18ch;
   font-family: var(--font-mono);
 }
 /* The hub's own skills and agents, told apart from what Claude Code or a plugin brings. */
@@ -251,11 +252,24 @@
   letter-spacing: 0.04em;
 }
 .as-slash-desc {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.as-slash-open {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+.as-slash-open:hover {
+  background: var(--surface-sunken);
+  color: var(--accent);
 }
 .as-slash-option:hover,
 .as-slash-active {
