@@ -39,6 +39,15 @@ describe("Sidebar", () => {
     expect(within(nav).queryByText("Live sessions")).not.toBeInTheDocument();
   });
 
+  it("hides Workflow runs until a workflow has run, and lists no Workflows", () => {
+    renderSidebar("/", { showRuns: false });
+
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    expect(within(nav).queryByRole("link", { name: "Workflow runs" })).toBeNull();
+    expect(within(nav).queryByRole("link", { name: "Workflows" })).toBeNull();
+    expect(within(nav).getByRole("link", { name: "Sessions" })).toBeInTheDocument();
+  });
+
   it("has no P3 tag and hides Metrics, Bench and Tracker queue", () => {
     const { container } = renderSidebar();
 

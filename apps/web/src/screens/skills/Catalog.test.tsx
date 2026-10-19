@@ -250,6 +250,25 @@ describe("Catalog your_drafts", () => {
     ).toBeInTheDocument();
   });
 
+  it("offers to continue an edit draft on its hook's row", () => {
+    saveDraft(
+      "hook-edit1",
+      { project: "demo", kind: "hook" },
+      {
+        name: "settings-pretooluse-1",
+        target: { kind: "hook", source: "settings", name: "settings-pretooluse-1" },
+      },
+    );
+    open("/projects/demo/skills?tab=hooks");
+
+    const row = screen.getByRole("article", { name: "settings-pretooluse-1" });
+    expect(
+      within(row).getByRole("link", {
+        name: "Continue your draft of settings-pretooluse-1 in the Studio",
+      }),
+    ).toHaveAttribute("href", "/projects/demo/skills/drafts/hook-edit1");
+  });
+
   it("shows the first three drafts and the rest on demand", () => {
     for (const n of [1, 2, 3, 4]) {
       saveDraft(

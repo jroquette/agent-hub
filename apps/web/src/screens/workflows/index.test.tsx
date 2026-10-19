@@ -117,6 +117,39 @@ describe("WorkflowsScreen", () => {
 
     expect(router.state.location.pathname).toBe("/knowledge/skills");
   });
+
+  it("sends /workflows to the Workflows tab of the project in scope's Toolkit", () => {
+    const { router } = renderWithApi(<WorkflowsScreen />, {
+      path: "/workflows?scope=agent-hub",
+      route: "/workflows",
+    });
+
+    expect(router.state.location.pathname).toBe("/projects/agent-hub/skills");
+    expect(router.state.location.search).toBe("?view=workflows");
+  });
+});
+
+describe("WorkflowDetailScreen in the Toolkit", () => {
+  it("places the workflow under its project's Toolkit and Workflows tab", async () => {
+    renderWithApi(<WorkflowDetailScreen />, {
+      routes: { [DETAIL]: aWorkflowDetail() },
+      path: "/projects/agent-hub/skills/workflows/feature-flow",
+      route: "projects/:project/skills/workflows/:name",
+    });
+
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(
+      within(crumbs)
+        .getAllByRole("link")
+        .map((link) => [link.textContent, link.getAttribute("href")]),
+    ).toEqual([
+      ["Portfolio", "/"],
+      ["agent-hub", "/projects/agent-hub"],
+      ["Toolkit", "/projects/agent-hub/skills"],
+      ["Workflows", "/projects/agent-hub/skills?view=workflows"],
+    ]);
+    expect(within(crumbs).getByText("feature-flow")).toHaveAttribute("aria-current", "page");
+  });
 });
 
 describe("WorkflowDetailScreen history", () => {

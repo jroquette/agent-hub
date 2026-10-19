@@ -75,6 +75,7 @@ describe("routes", () => {
     ["/workflows", "Toolkit"],
     ["/workflows/agent-hub/feature-flow", "feature-flow"],
     ["/projects/agent-hub/skills/workflows/feature-flow", "feature-flow"],
+    ["/projects/agent-hub/skills/workflows/new", "New workflow"],
     ["/settings/hubs", "Settings"],
     ["/welcome", "Set up agent-hub on this machine"],
     ["/metrics", "This page does not exist"],
@@ -87,6 +88,7 @@ describe("routes", () => {
   it.each([
     ["/knowledge", "/knowledge/learnings"],
     ["/settings", "/settings/hubs"],
+    ["/workflows/agent-hub/feature-flow", "/projects/agent-hub/skills/workflows/feature-flow"],
   ])("redirects %s to %s", async (from, to) => {
     const { router } = renderAt(from, withHub);
 
