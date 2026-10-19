@@ -2474,3 +2474,30 @@ body.as-resizing .as-drawer {
   color: var(--text-muted);
   white-space: pre-wrap;
 }
+.as-run-files-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px var(--space-2) 2px;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.as-run-files li:not(:first-child) > .as-run-files-kind {
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+.as-run-files-kind > b {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.as-run-files-kind-code > svg {
+  color: var(--accent);
+}
+.as-run-files-row-scratch .as-run-files-name {
+  color: var(--text-subtle);
+}
+.as-run-files-dot-none {
+  flex: none;
+  width: 7px;
+}

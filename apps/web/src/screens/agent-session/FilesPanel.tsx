@@ -8,23 +8,22 @@ import {
   type KeyboardEvent,
 } from "react";
 
-import { Button, Icon, Markdown, SegmentedControl, Tabs, type IconName } from "../../components";
+import { Button, Icon, Markdown, SegmentedControl, Tabs } from "../../components";
 import { cx } from "../../lib/cx";
 import { readStored, writeStored } from "../../lib/storage";
 import { useDrawerWidth } from "./DrawerResize";
 import { ReviewCommentsContext, ReviewDiff, type ReviewComments } from "./ReviewDiff";
 import { DiffText, TOOL_STATE } from "./ToolCallCard";
-import { FILE_KINDS, fileKind, isMarkdown, isReviewable, type FileKind } from "./fileKind";
+import {
+  FILE_KINDS,
+  KIND_TAB,
+  fileKind,
+  isMarkdown,
+  isReviewable,
+  type FileKind,
+} from "./fileKind";
 import { commonDir, type ChangedFile, type FileChange } from "./model";
 import { writtenText } from "./netDiff";
-
-/** Each kind of file as its review tab shows it. */
-const KIND_TAB: Record<FileKind, { label: string; icon: IconName }> = {
-  code: { label: "Code", icon: "git-pull-request" },
-  plan: { label: "Plans", icon: "list-checks" },
-  learning: { label: "Learnings", icon: "lightbulb" },
-  scratch: { label: "Scratch", icon: "pencil" },
-};
 
 /** What each tab says about its files, under the tabs. */
 const KIND_NOTE: Record<FileKind, string> = {
@@ -715,7 +714,8 @@ export function FilesPanel({
                 }}
                 tabs={kinds.map((group) => ({
                   id: group.kind,
-                  ...KIND_TAB[group.kind],
+                  label: KIND_TAB[group.kind].label,
+                  icon: KIND_TAB[group.kind].icon,
                   count: group.files.length,
                 }))}
               />
