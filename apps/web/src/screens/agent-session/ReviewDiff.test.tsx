@@ -101,6 +101,52 @@ describe("ReviewDiff (comments)", () => {
   });
 });
 
+describe("ReviewDiff (conversation)", () => {
+  const thread: ReviewThread = {
+    key: "u-5",
+    anchor: { path: "/r/x.py", change: 1, side: "new", start: 41, end: 41 },
+    messages: [
+      { key: "u-5", author: "you", text: "Why c?", pending: false },
+      { key: "a-6", author: "claude", text: "For the tests.", pending: false },
+      { key: "u-7", author: "you", text: "Ok", pending: true },
+    ],
+    waiting: false,
+  };
+
+  it("lays out a thread like a GitHub conversation: who wrote each comment, Claude as Agent", () => {
+    render(<Harness threads={[thread]} onComment={vi.fn(() => Promise.resolve())} />);
+
+    const shown = screen.getByRole("region", { name: "Review thread on Line 41" });
+    expect(within(shown).getByText("· 3 comments")).toBeInTheDocument();
+    const comments = within(shown).getAllByRole("listitem");
+    expect(comments.map((item) => item.textContent)).toEqual([
+      "YYoucommentedWhy c?",
+      "CClaudeAgentrepliedFor the tests.",
+      "YYousending…Ok",
+    ]);
+    expect(within(shown).getByRole("button", { name: "Reply…" })).toBeInTheDocument();
+    expect(within(shown).getByRole("button", { name: "Resolve" })).toBeInTheDocument();
+  });
+
+  it("folds a resolved thread to its header, shows it again and reopens it", async () => {
+    render(<Harness threads={[thread]} onComment={vi.fn(() => Promise.resolve())} />);
+    const shown = screen.getByRole("region", { name: "Review thread on Line 41" });
+    await userEvent.click(within(shown).getByRole("button", { name: "Resolve" }));
+
+    expect(within(shown).getByText(/conversation on Line 41/)).toBeInTheDocument();
+    expect(within(shown).queryByRole("listitem")).toBeNull();
+    expect(within(shown).queryByRole("button", { name: "Reply…" })).toBeNull();
+
+    await userEvent.click(within(shown).getByRole("button", { name: "Show" }));
+    expect(within(shown).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(shown).queryByRole("button", { name: "Reply…" })).toBeNull();
+
+    await userEvent.click(within(shown).getByRole("button", { name: "Reopen" }));
+    expect(within(shown).getByRole("button", { name: "Resolve" })).toBeInTheDocument();
+    expect(within(shown).getAllByRole("listitem")).toHaveLength(3);
+  });
+});
+
 describe("ReviewBubble (chat)", () => {
   it("reads a review comment in the chat and opens its file in the review (AC-265.18)", async () => {
     const openFile = vi.fn();
