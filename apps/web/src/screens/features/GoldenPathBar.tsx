@@ -6,6 +6,7 @@ import {
   StatusBadge,
   Tooltip,
   goldenStepSummary,
+  ownerWaitStep,
   shownGoldenSteps,
 } from "../../components";
 
@@ -28,21 +29,15 @@ const SEGMENT: Record<StepState, CSSProperties> = {
   },
   skipped: { background: "transparent", border: DASHED },
   unknown: { background: "transparent", border: DASHED },
+  unrecorded: { background: "transparent", border: DASHED },
 };
 
 /** The step order, as the column hint gives it, so the segments can be read left to right. */
 export const GOLDEN_PATH_ORDER = Object.values(GOLDEN_STEP_LABEL).join(" → ");
 
-/** Whether the feature is held at Evaluate by owner steps only: the owner is the one to act. */
+/** Whether the feature is held at Acceptance by owner steps only: the owner is the one to act. */
 export function waitsOnOwner(path: GoldenPath): boolean {
-  const evaluate = path.steps.find((s) => s.name === "evaluate");
-  return evaluate?.state !== "done" && (evaluate?.meta?.startsWith("waiting") ?? false);
-}
-
-/** The list's ACs column counts the ACs, so the row's meta leaves out its "N/M ACs" part. */
-function listMeta(meta: string | null): string | null {
-  const parts = (meta ?? "").split(" · ").filter((p) => p && !/^\d+\/\d+ ACs$/.test(p));
-  return parts.length ? parts.join(" · ") : null;
+  return ownerWaitStep(path.steps) !== null;
 }
 
 /**
@@ -54,7 +49,7 @@ export function GoldenPathBar({ path, compact = false }: { path: GoldenPath; com
   const steps = shownGoldenSteps(path.steps);
   const label = GOLDEN_STEP_LABEL[path.phase];
   const waiting = waitsOnOwner(path);
-  const meta = waiting ? null : listMeta(steps.find((s) => s.name === path.phase)?.meta ?? null);
+  const meta = waiting ? null : (steps.find((s) => s.name === path.phase)?.meta ?? null);
   const position = steps.findIndex((s) => s.name === path.phase) + 1;
   const summaries = steps.map(goldenStepSummary);
   const segments = steps.map((step) => (
