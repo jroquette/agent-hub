@@ -651,6 +651,40 @@ def test_flags_unreadable_stdin_when_event_read(
     ]
 
 
+# The crash launcher with ``load_config`` raising instead: on an unreadable event the guard reaches
+# it in its unreadable branch, and the crash still asks.
+LOAD_CRASH_LAUNCHER = CRASH_LAUNCHER.replace(
+    "hubhooks.read_input = boom\nhubhooks.read_event = boom\n",
+    "hubhooks.load_config = lambda *args: boom()\n",
+)
+
+
+def test_asks_when_config_load_crashes_on_unreadable_event(
+    hub: Path, *, hook_python: str, elsewhere: Path, tmp_path: Path
+) -> None:
+    write_hub_json(hub, builders.an_environments_document())
+    launcher = tmp_path / "support" / "load_crash_launcher.py"
+    launcher.parent.mkdir(exist_ok=True)
+    launcher.write_text(LOAD_CRASH_LAUNCHER, encoding="utf-8")
+    assert "hubhooks.load_config = lambda" in LOAD_CRASH_LAUNCHER
+
+    completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, a fixed launcher
+        [hook_python, str(launcher), str(hub / HOOKS / "guard.py")],
+        input=b"[]",
+        capture_output=True,
+        check=False,
+        cwd=elsewhere,
+        env={"PATH": os.environ.get("PATH", os.defpath)} | scratch_env(tmp_path),
+        timeout=60,
+    )
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (
+        0,
+        GUARD_CRASH_OUTPUT,
+        b"",
+    )
+
+
 @pytest.mark.parametrize(
     "name", ["post_edit", "stop_gate", "session_start", "session_end", "pre_compact"]
 )
