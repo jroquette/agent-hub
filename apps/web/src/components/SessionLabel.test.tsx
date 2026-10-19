@@ -157,24 +157,24 @@ describe("SessionLabel", () => {
 describe("ticket names", () => {
   it("names a ticket session as its commits read: the ticket's title, else the feature's slug", () => {
     const label = aSessionLabel({
-      issue: "TIP-1563",
-      branch: "roquettejh/tip-1563-allianz-claim-api",
-      title: "Status do agente em execução",
+      issue: "DEM-63",
+      branch: "jdoe/dem-63-csv-export-api",
+      title: "Show the running agent's status",
     });
 
-    const feature = { project: "tipple", slug: "allianz-ecommerce-claim" };
-    expect(ticketName(label, new Map([["TIP-1563", { ...feature, title: null }]]))).toBe(
-      "TIP-1563: allianz-ecommerce-claim",
+    const feature = { project: "demo", slug: "csv-export" };
+    expect(ticketName(label, new Map([["DEM-63", { ...feature, title: null }]]))).toBe(
+      "DEM-63: csv-export",
     );
     expect(
       ticketName(
         label,
-        new Map([["TIP-1563", { ...feature, title: "Allianz claims from the e-commerce flow" }]]),
+        new Map([["DEM-63", { ...feature, title: "Export the session list as CSV" }]]),
       ),
-    ).toBe("TIP-1563: Allianz claims from the e-commerce flow");
-    expect(ticketName(label)).toBe("TIP-1563: allianz-claim-api");
+    ).toBe("DEM-63: Export the session list as CSV");
+    expect(ticketName(label)).toBe("DEM-63: csv-export-api");
     expect(sessionIdentity(aSession({ label }))).toMatchObject({
-      title: "TIP-1563: allianz-claim-api",
+      title: "DEM-63: csv-export-api",
       named: true,
     });
   });

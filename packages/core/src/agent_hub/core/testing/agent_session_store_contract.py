@@ -177,9 +177,9 @@ class AgentSessionStoreContract:
         targets = (
             ReviewTarget(
                 repo="api",
-                label="api/tip-1",
-                root="/hubs/api/.claude/worktrees/tip-1",
-                branch="tip-1",
+                label="api/dem-1",
+                root="/hubs/api/.claude/worktrees/dem-1",
+                branch="dem-1",
                 base="origin/main",
                 base_sha="a" * 40,
                 head_sha="b" * 40,

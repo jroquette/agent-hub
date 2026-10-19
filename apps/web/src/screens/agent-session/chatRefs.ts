@@ -8,7 +8,7 @@ import { useTicketLookup } from "../features/queries";
 
 /**
  * What Claude's replies name, turned into links: a bare URL, a pull request (`owner/repo#545`, or
- * `repo#545` for a repo of the project), a ticket of the project's tracker teams (`TIP-1564`: in
+ * `repo#545` for a repo of the project), a ticket of the project's tracker teams (`DEM-64`: in
  * Linear when its workspace is known, else on its feature's page here) and a file of the session's review (its full path, or a tail of
  * it that names one file only), which opens in the review drawer. Anything else stays text.
  */

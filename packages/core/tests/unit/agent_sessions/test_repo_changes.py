@@ -20,7 +20,7 @@ from agent_hub.core.testing.agent_session_rig import HUB_PATH, Rig
 from agent_hub.core.testing.read_model_builders import WORKDIR_ID, a_log_record, a_workdir
 
 REPO_PATH = "/hubs/api"
-WORKTREE_PATH = "/hubs/api/.claude/worktrees/tip-1"
+WORKTREE_PATH = "/hubs/api/.claude/worktrees/dem-1"
 REPO_ID = "1111111111111111"
 WORKTREE_ID = "2222222222222222"
 
@@ -41,9 +41,9 @@ def _listing() -> WorkdirListing:
                 workdir=a_workdir(
                     workdir_id=WORKTREE_ID,
                     kind="worktree",
-                    label="api/tip-1",
+                    label="api/dem-1",
                     repo="api",
-                    worktree="tip-1",
+                    worktree="dem-1",
                 ),
                 path=WORKTREE_PATH,
             ),
@@ -58,7 +58,7 @@ def _labels(roots: tuple[ResolvedWorkdir, ...]) -> list[str]:
 def test_picks_the_worktree_not_its_repo_when_a_file_is_in_a_worktree() -> None:
     roots = repo_roots(_listing(), workdir_id=WORKDIR_ID, paths=[f"{WORKTREE_PATH}/src/app.py"])
 
-    assert _labels(roots) == ["api/tip-1"]
+    assert _labels(roots) == ["api/dem-1"]
 
 
 def test_the_hub_is_never_a_repository_even_when_the_session_started_there() -> None:
@@ -74,7 +74,7 @@ def test_lists_the_own_repo_first_then_each_repo_once_when_several_repos_changed
         paths=[f"{WORKTREE_PATH}/a.py", f"{REPO_PATH}/b.py", f"{WORKTREE_PATH}/c.py"],
     )
 
-    assert _labels(roots) == ["api", "api/tip-1"]
+    assert _labels(roots) == ["api", "api/dem-1"]
 
 
 def test_leaves_a_path_out_when_it_only_starts_like_a_repo_folder() -> None:
@@ -108,7 +108,7 @@ def test_reads_a_worktree_when_a_call_names_it_and_no_file_tool_changed_it() -> 
         mentions=[f"cd {WORKTREE_PATH} && python3 - <<'EOF'", "Implement the card"],
     )
 
-    assert _labels(roots) == ["api/tip-1"]
+    assert _labels(roots) == ["api/dem-1"]
 
 
 def test_skips_a_main_checkout_when_a_call_names_it_in_passing() -> None:
@@ -121,7 +121,7 @@ def test_skips_a_main_checkout_when_a_call_names_it_in_passing() -> None:
 
 @pytest.mark.parametrize(
     "mention",
-    [f"{WORKTREE_PATH}-old/a.py", f"{WORKTREE_PATH}x", "/hubs/api/.claude/worktrees/tip-10"],
+    [f"{WORKTREE_PATH}-old/a.py", f"{WORKTREE_PATH}x", "/hubs/api/.claude/worktrees/dem-10"],
 )
 def test_names_no_worktree_when_a_text_only_starts_like_one(mention: str) -> None:
     roots = repo_roots(_listing(), workdir_id=WORKDIR_ID, paths=[], mentions=[mention])
@@ -136,7 +136,7 @@ def test_names_no_worktree_when_a_text_only_starts_like_one(mention: str) -> Non
 def test_names_a_worktree_when_its_whole_path_appears(mention: str) -> None:
     roots = repo_roots(_listing(), workdir_id=WORKDIR_ID, paths=[], mentions=[mention])
 
-    assert _labels(roots) == ["api/tip-1"]
+    assert _labels(roots) == ["api/dem-1"]
 
 
 class _Reader:
@@ -158,7 +158,7 @@ class _Reader:
         return RepoChanges(
             root=root,
             label=label,
-            branch="tip-1",
+            branch="dem-1",
             base="origin/main",
             base_sha="f" * 40,
             head_sha="e" * 40,
@@ -231,7 +231,7 @@ async def test_reads_each_repository_when_the_session_changed_a_file_in_it(
     changes = await rig.control.repo_changes(session.id)
 
     assert reader.read_roots == [WORKTREE_PATH]
-    assert [(repo.label, repo.base) for repo in changes.repos] == [("api/tip-1", "origin/main")]
+    assert [(repo.label, repo.base) for repo in changes.repos] == [("api/dem-1", "origin/main")]
     assert changes.warnings == ()
 
 
@@ -259,7 +259,7 @@ async def test_reads_the_worktree_when_the_session_s_calls_worked_in_it(
     changes = await rig.control.repo_changes(session.id)
 
     assert reader.read_roots == [WORKTREE_PATH]
-    assert [repo.label for repo in changes.repos] == ["api/tip-1"]
+    assert [repo.label for repo in changes.repos] == ["api/dem-1"]
 
 
 PULL = RepoPullRequest(
@@ -279,9 +279,9 @@ async def test_records_the_review_targets_with_their_pull_request_when_repo_chan
     assert rig.store.get(session.id).review_targets == (
         ReviewTarget(
             repo="api",
-            label="api/tip-1",
+            label="api/dem-1",
             root=WORKTREE_PATH,
-            branch="tip-1",
+            branch="dem-1",
             base="origin/main",
             base_sha="f" * 40,
             head_sha="e" * 40,
@@ -305,13 +305,13 @@ async def test_asks_github_at_most_once_a_minute_when_a_branch_s_pull_request_re
 
 async def test_reads_the_recorded_commits_when_a_worktree_was_removed(make_rig: MakeRig) -> None:
     reader = _Reader()
-    gone = "/hubs/api/.claude/worktrees/tip-0"
+    gone = "/hubs/api/.claude/worktrees/dem-0"
     rig, session = await _ended_session_with_files(make_rig, reader, f"{HUB_PATH}/brain/x.md")
     target = ReviewTarget(
         repo="api",
-        label="api/tip-0",
+        label="api/dem-0",
         root=gone,
-        branch="tip-0",
+        branch="dem-0",
         base="origin/main",
         base_sha="a" * 40,
         head_sha="b" * 40,
@@ -323,7 +323,7 @@ async def test_reads_the_recorded_commits_when_a_worktree_was_removed(make_rig: 
     changes = await rig.control.repo_changes(session.id)
 
     assert reader.recorded == [(REPO_PATH, gone, "b" * 40)]
-    assert [(repo.label, repo.source) for repo in changes.repos] == [("api/tip-0", "recorded")]
+    assert [(repo.label, repo.source) for repo in changes.repos] == [("api/dem-0", "recorded")]
     # GitHub did not answer: the pull request the session recorded still shows.
     assert changes.repos[0].pull_request == RepoPullRequest(
         number=3, url="https://github.com/acme/api/pull/3", state="UNKNOWN"
@@ -337,8 +337,8 @@ async def test_a_removed_worktree_is_left_out_when_the_session_works_on_its_repo
     rig, session = await _ended_session_with_files(make_rig, reader, f"{WORKTREE_PATH}/a.py")
     old = ReviewTarget(
         repo="api",
-        label="api/tip-0",
-        root="/hubs/api/.claude/worktrees/tip-0",
+        label="api/dem-0",
+        root="/hubs/api/.claude/worktrees/dem-0",
         base_sha="a" * 40,
         head_sha="b" * 40,
     )
@@ -346,7 +346,7 @@ async def test_a_removed_worktree_is_left_out_when_the_session_works_on_its_repo
 
     changes = await rig.control.repo_changes(session.id)
 
-    assert [repo.label for repo in changes.repos] == ["api/tip-1"]
+    assert [repo.label for repo in changes.repos] == ["api/dem-1"]
     assert reader.recorded == []
 
 
@@ -360,7 +360,7 @@ async def test_names_a_repository_in_the_warnings_when_git_cannot_read_it(
 
     changes = await rig.control.repo_changes(session.id)
 
-    assert [repo.label for repo in changes.repos] == ["api/tip-1"]
+    assert [repo.label for repo in changes.repos] == ["api/dem-1"]
     assert changes.warnings == ("api could not be read by git",)
 
 

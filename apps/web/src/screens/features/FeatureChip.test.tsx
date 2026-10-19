@@ -8,13 +8,13 @@ describe("FeatureChip", () => {
   it("names the feature and opens its panel", () => {
     render(
       <MemoryRouter>
-        <FeatureChip project="tipple" slug="allianz-ecommerce-claim" />
+        <FeatureChip project="demo" slug="csv-export" />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("link", { name: /allianz-ecommerce-claim/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /csv-export/ })).toHaveAttribute(
       "href",
-      "/features/tipple/allianz-ecommerce-claim",
+      "/features/demo/csv-export",
     );
   });
 });

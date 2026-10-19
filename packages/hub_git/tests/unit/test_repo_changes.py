@@ -115,12 +115,12 @@ def test_names_the_pull_request_when_gh_lists_one_for_the_branch(tmp_path: Path)
 
     reader = GitRepoChanges(gh="git", launch=launch, environ={"PATH": os.environ["PATH"]})
 
-    pull = reader.pull_request(str(tmp_path / "gone" / "tree"), branch="tip-1")
+    pull = reader.pull_request(str(tmp_path / "gone" / "tree"), branch="dem-1")
 
     assert pull == RepoPullRequest(
         number=545, url="https://github.com/acme/ui/pull/545", state="OPEN", head_sha="abc"
     )
-    assert asked[0][1:5] == ["pr", "list", "--head", "tip-1"]
+    assert asked[0][1:5] == ["pr", "list", "--head", "dem-1"]
 
 
 @pytest.mark.parametrize("stdout", [b"[]", b"not json", b'[{"number":"x"}]'])
@@ -131,7 +131,7 @@ def test_no_pull_request_when_gh_names_none(tmp_path: Path, stdout: bytes) -> No
         environ={"PATH": os.environ["PATH"]},
     )
 
-    assert reader.pull_request(str(tmp_path), branch="tip-1") is None
+    assert reader.pull_request(str(tmp_path), branch="dem-1") is None
 
 
 def test_names_no_pull_request_when_the_branch_reads_as_an_option(tmp_path: Path) -> None:

@@ -440,13 +440,13 @@ describe("FilesPanel (feature records and totals)", () => {
         files={filesOf(RECORDS)}
         sessionId="s1"
         onClose={vi.fn()}
-        repoNote="api/tip-1: tip-1 against origin/main · 2 commits"
+        repoNote="api/dem-1: dem-1 against origin/main · 2 commits"
         repos={[
           {
             source: "worktree",
             root: "/repo",
-            label: "api/tip-1",
-            branch: "tip-1",
+            label: "api/dem-1",
+            branch: "dem-1",
             base: "origin/main",
             base_sha: "f0",
             head_sha: "h1",
@@ -459,7 +459,7 @@ describe("FilesPanel (feature records and totals)", () => {
     );
     expect(
       screen.getByText(
-        "What the pull request has, whoever changed it (api/tip-1: tip-1 against origin/main · 2 commits).",
+        "What the pull request has, whoever changed it (api/dem-1: dem-1 against origin/main · 2 commits).",
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Repositories" })).toHaveTextContent(
@@ -474,12 +474,11 @@ describe("FilesPanel (feature records and totals)", () => {
 describe("FilesPanel (long names)", () => {
   const DEEP = [
     tool("d1", "Write", {
-      file_path:
-        "/Users/me/work/api/.claude/worktrees/tip-1563-claims/Lambdas/a/test_order_cover.py",
+      file_path: "/Users/me/work/api/.claude/worktrees/dem-63-export/src/a/test_export.py",
       content: "x = 1",
     }),
     tool("d2", "Write", {
-      file_path: "/Users/me/work/api/.claude/worktrees/tip-1563-claims/Lambdas/b/service.py",
+      file_path: "/Users/me/work/api/.claude/worktrees/dem-63-export/src/b/service.py",
       content: "y = 2",
     }),
   ];
@@ -488,13 +487,10 @@ describe("FilesPanel (long names)", () => {
     render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
     const root = screen.getByText("In").closest<HTMLElement>(".as-files-root");
     if (!root) throw new Error("no root line");
-    expect(root).toHaveAttribute(
-      "title",
-      "/Users/me/work/api/.claude/worktrees/tip-1563-claims/Lambdas",
-    );
+    expect(root).toHaveAttribute("title", "/Users/me/work/api/.claude/worktrees/dem-63-export/src");
     expect(root.querySelector(".as-files-root-repo")).toHaveTextContent("api");
-    expect(root.querySelector(".as-files-root-rest")).toHaveTextContent("/Lambdas");
-    expect(root.querySelector(".as-files-root-lead")).toHaveTextContent("tip-1563-claims");
+    expect(root.querySelector(".as-files-root-rest")).toHaveTextContent("/src");
+    expect(root.querySelector(".as-files-root-lead")).toHaveTextContent("dem-63-export");
     expect(within(root).getByRole("button", { name: "Copy folder path" })).toBeInTheDocument();
     const list = screen.getByRole("navigation", { name: "Files" });
     expect(within(list).getByRole("list", { name: "Folder a" })).toBeInTheDocument();
@@ -502,9 +498,9 @@ describe("FilesPanel (long names)", () => {
 
   it("keeps each file on one line, its whole name on hover", () => {
     render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
-    expect(screen.getByTitle("test_order_cover.py")).toHaveTextContent("test_order_cover.py");
+    expect(screen.getByTitle("test_export.py")).toHaveTextContent("test_export.py");
     // Cut in the middle when it does not fit: the extension always shows.
-    const tail = screen.getByTitle("test_order_cover.py").querySelector(".as-fit-tail");
+    const tail = screen.getByTitle("test_export.py").querySelector(".as-fit-tail");
     expect(tail?.textContent).toMatch(/\.py$/);
   });
 
@@ -543,7 +539,7 @@ describe("FilesPanel (long names)", () => {
 
   it("lets you copy the open file's full path", async () => {
     render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
-    await userEvent.click(screen.getByRole("button", { name: /test_order_cover/ }));
+    await userEvent.click(screen.getByRole("button", { name: /test_export/ }));
     expect(screen.getByRole("button", { name: "Copy file path" })).toBeInTheDocument();
   });
 });
@@ -559,7 +555,7 @@ describe("FilesPanel (pull request)", () => {
           source: "worktree",
           root: "/w/api",
           label: "api",
-          branch: "tip-1",
+          branch: "dem-1",
           base: "origin/main",
           base_sha: "f0",
           commits: [
@@ -713,8 +709,8 @@ describe("FilesPanel (repositories)", () => {
           {
             source: "worktree",
             root: "/repo",
-            label: "api/tip-1",
-            branch: "tip-1",
+            label: "api/dem-1",
+            branch: "dem-1",
             base: "origin/main",
             base_sha: "f0",
             head_sha: "h1",
@@ -732,7 +728,7 @@ describe("FilesPanel (repositories)", () => {
       />,
     );
     const repos = screen.getByRole("list", { name: "Repositories" });
-    expect(repos).toHaveTextContent("tip-1 → origin/main · 0 commits");
+    expect(repos).toHaveTextContent("dem-1 → origin/main · 0 commits");
     expect(within(repos).getByRole("link", { name: /PR #7/ })).toHaveAttribute(
       "href",
       "https://github.com/acme/api/pull/7",
