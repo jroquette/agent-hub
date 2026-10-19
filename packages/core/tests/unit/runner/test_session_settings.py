@@ -1,6 +1,8 @@
 import json
 from typing import Any
 
+import pytest
+
 from agent_hub.core.runner.session_settings import hooks_settings
 from agent_hub.core.testing.builders import a_hub_settings_document
 
@@ -64,3 +66,19 @@ def test_lists_each_rewritten_script_once_when_hooks_name_them() -> None:
         f"{folder}/guard.py",
         f"{folder}/stop_gate.py",
     )
+
+
+@pytest.mark.parametrize("source", [[], {}, {"hooks": []}, {"hooks": "x"}])
+def test_refuses_source_when_hooks_not_an_object(source: Any) -> None:
+    with pytest.raises(ValueError, match="hooks"):
+        hooks_settings(source, effort="low", hub=HUB)
+
+
+@pytest.mark.parametrize("character", ['"', "$", "`", "\\"])
+def test_refuses_hub_path_when_it_holds_a_shell_character(character: str) -> None:
+    hub = f"/w/h{character}ub"
+
+    with pytest.raises(ValueError) as raised:
+        hooks_settings(a_hub_settings_document(), effort="low", hub=hub)
+
+    assert hub in str(raised.value)
