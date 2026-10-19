@@ -361,7 +361,9 @@ def test_reads_no_byte_when_record_file_only_checked_present(
 
 
 # AGH-323 (two-level-flows AC-1.2): brief.md is a record file, checked present and never read.
-def test_lists_brief_as_a_record_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lists_brief_as_record_file_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     a_feature(features_of(tmp_path), "demo-feature", {"brief.md": b"b" * 100})
     reads = Reads(monkeypatch)
 
@@ -372,7 +374,7 @@ def test_lists_brief_as_a_record_file(tmp_path: Path, monkeypatch: pytest.Monkey
 
 
 # AGH-323 (two-level-flows AC-1.3, P2): the folder's own ux-*.md heads, at most 50, 4 KiB each.
-def test_reads_ux_design_heads(tmp_path: Path) -> None:
+def test_reads_ux_design_heads_when_folder_has_designs(tmp_path: Path) -> None:
     folder = a_feature(
         features_of(tmp_path),
         "demo-feature",
@@ -393,7 +395,7 @@ def test_reads_ux_design_heads(tmp_path: Path) -> None:
     assert UX_HEAD_BYTES == 4096
 
 
-def test_counts_ux_designs_over_the_cap_as_skipped(tmp_path: Path) -> None:
+def test_counts_skipped_when_ux_designs_over_cap(tmp_path: Path) -> None:
     folder = a_feature(features_of(tmp_path), "demo-feature", {})
     for index in range(MAX_UX_FILES + 1):
         (folder / f"ux-{index:02}.md").write_bytes(b"---\n---\n")
@@ -406,7 +408,7 @@ def test_counts_ux_designs_over_the_cap_as_skipped(tmp_path: Path) -> None:
     assert MAX_UX_FILES == 50
 
 
-def test_lists_linked_ux_design_with_its_problem(tmp_path: Path) -> None:
+def test_reports_problem_when_ux_design_is_link(tmp_path: Path) -> None:
     folder = a_feature(features_of(tmp_path), "demo-feature", {})
     secret = tmp_path / "secret.md"
     secret.write_bytes(b"---\nstatus: approved\n---\n")
@@ -421,7 +423,9 @@ def test_lists_linked_ux_design_with_its_problem(tmp_path: Path) -> None:
 
 # AGH-323 (two-level-flows AC-1.8, P3): the names of reviews/<ticket>/<reviewer>-r<N>.json, never
 # their bytes.
-def test_lists_review_round_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lists_review_round_names_when_ticket_folders_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     folder = a_feature(features_of(tmp_path), "demo-feature", {})
     rounds = folder / "reviews" / "AGH-1"
     rounds.mkdir(parents=True)
@@ -442,7 +446,7 @@ def test_lists_review_round_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert reads.bytes == 0
 
 
-def test_keeps_review_round_names_up_to_the_cap(
+def test_keeps_first_review_round_names_when_over_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     folder = a_feature(features_of(tmp_path), "demo-feature", {})
@@ -458,8 +462,10 @@ def test_keeps_review_round_names_up_to_the_cap(
     assert MAX_ROUND_NAMES == 2000
 
 
-# AGH-323 (two-level-flows P1): plan.md is read whole up to MAX_PLAN_BYTES, so its amendments are seen.
-def test_reads_plan_whole_up_to_its_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+# AGH-323 (two-level-flows P1): plan.md is read whole up to MAX_PLAN_BYTES, amendments included.
+def test_reads_plan_whole_when_under_its_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     features = features_of(tmp_path)
     a_feature(features, "fits", {"plan.md": b"p" * 102_400})
     a_feature(features, "over", {"plan.md": b"q" * (MAX_PLAN_BYTES + 1)})
@@ -534,7 +540,11 @@ def test_reads_same_folder_when_outputs_added(
 
     # Only the review round names are listed (AGH-323 P3); no output is read as a record.
     assert mixed is not None
-    assert mixed.review_rounds == ("DEM-1/quality-r1.json", "DEM-1/spec-r1.json", "DEM-3/spec-r1.json")
+    assert mixed.review_rounds == (
+        "DEM-1/quality-r1.json",
+        "DEM-1/spec-r1.json",
+        "DEM-3/spec-r1.json",
+    )
     assert replace(mixed, review_rounds=()) == legacy
     assert legacy is not None
     assert [head.name for head in legacy.evals] == ["dem-1.md", "dem-2.md"]
