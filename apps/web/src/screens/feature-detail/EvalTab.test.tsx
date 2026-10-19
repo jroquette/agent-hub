@@ -230,6 +230,18 @@ describe("EvalTab rows", () => {
     expect(within(rowOf("agh-201")).getByText("2/3 ACs passing")).toBeInTheDocument();
   });
 
+  it("lines a folded ticket's latest eval up under the table's columns", async () => {
+    renderWithApi(tab({ evals: runs }));
+
+    await userEvent.click(screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ }));
+    const summary = screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ }).closest("tr");
+    if (!summary) throw new Error("no summary row");
+    // One cell per column: the ticket, then the latest eval's verdict, ACs, author and date.
+    expect(summary.children).toHaveLength(5);
+    expect(within(summary).getByText("SHIP-WITH-OWNER-STEPS")).toBeInTheDocument();
+    expect(within(summary).getByText("3 ACs")).toBeInTheDocument();
+  });
+
   it("keeps the owner's callout in view when its group is folded", async () => {
     renderWithApi(tab({ evals: runs }));
 
@@ -258,7 +270,7 @@ describe("EvalTab rows", () => {
 
     // One callout, for the newest eval only, says it waits on the owner.
     expect(screen.getAllByRole("button", { name: "Needs more work" })).toHaveLength(1);
-    expect(screen.getByText(/AGH-201 · Eval 2 passed with owner steps/)).toBeInTheDocument();
+    expect(screen.getByText(/AGH-201 Eval 2 passed with owner steps/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Needs more work" }));
     await userEvent.type(
       screen.getByRole("textbox", { name: "Note (optional)" }),

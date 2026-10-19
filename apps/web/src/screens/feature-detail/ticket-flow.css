@@ -514,16 +514,37 @@ a.ah-flow-card-title:hover > span:last-child {
   overflow: hidden;
 }
 
-/* The Eval tab's table: one foldable group per scope, its ticket's title beside its id. */
+/*
+ * The Eval tab's table, a tree: a summary row per scope (its ticket and title, then the latest
+ * eval's verdict, ACs, author and date in the same columns as the header), its evals folded
+ * under it, indented to start under the ticket id.
+ */
 .ah-eval-table .ah-eval-group th {
+  position: static;
+  height: var(--row);
   padding: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.ah-eval-table .ah-eval-group td {
+  background: var(--surface);
+}
+.ah-eval-table .ah-eval-group:hover th,
+.ah-eval-table .ah-eval-group:hover td {
+  background: var(--surface-hover);
+}
+.ah-eval-tbody + .ah-eval-tbody .ah-eval-group > * {
+  border-top: 1px solid var(--border-strong);
 }
 .ah-eval-group-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   width: 100%;
-  min-height: 36px;
+  min-height: var(--row);
   padding: 0 var(--space-3);
   border: 0;
   background: transparent;
@@ -532,20 +553,33 @@ a.ah-flow-card-title:hover > span:last-child {
   text-align: left;
   cursor: pointer;
 }
-.ah-eval-group-toggle:hover {
-  background: var(--surface-hover);
-}
 .ah-eval-group-toggle:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
+.ah-eval-group-id {
+  font-weight: 600;
+  white-space: nowrap;
+}
 .ah-eval-group-title {
-  font-weight: 400;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+.ah-eval-table .ah-eval-run td {
+  background: var(--surface-sunken);
+}
+.ah-eval-table .ah-eval-run:hover td {
+  background: var(--surface-hover);
+}
+.ah-eval-table .ah-eval-run[aria-selected="true"] td {
+  background: var(--accent-soft);
+}
+/* 16px chevron + 8px gap, less the ghost button's own padding: the label starts under the id. */
+.ah-eval-child {
+  padding-left: 16px;
 }
 .ah-eval-when {
   display: flex;
@@ -560,9 +594,17 @@ a.ah-flow-card-title:hover > span:last-child {
 /* The "Waiting on you" callout under the eval that waits on owner steps. */
 .ah-eval-table .ah-eval-owner-row td {
   height: auto;
-  padding: var(--space-2) var(--space-3) var(--space-3);
+  /* Starts under the ticket id, so it reads as the ticket's, not the table's. */
+  padding: 0 var(--space-3) var(--space-3) calc(var(--space-3) + 24px);
   white-space: normal;
   cursor: default;
+  background: var(--surface);
+}
+.ah-eval-table .ah-eval-owner-row:hover td {
+  background: var(--surface);
+}
+.ah-eval-table .ah-eval-group:has(+ .ah-eval-owner-row) > * {
+  border-bottom: 0;
 }
 .ah-eval-owner-row .ah-banner {
   align-items: flex-start;
