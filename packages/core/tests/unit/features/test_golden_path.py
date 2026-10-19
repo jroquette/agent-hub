@@ -703,6 +703,16 @@ def test_keeps_acceptance_waiting_when_ticket_evals_ship_after_whole_feature_eva
     assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: 3 owner steps")
 
 
+# two-level-flows A6: a legacy eval.md without scope is whole-feature; it needs a sign-off too.
+def test_keeps_acceptance_waiting_when_legacy_eval_ships_with_owner_steps() -> None:
+    legacy = b"# Eval\n\n**Verdict: SHIP-WITH-OWNER-STEPS.** One manual step left.\n"
+
+    path = feature_parts(_folder(files=(*_folder().files, "eval.md"), eval_head=legacy), _MERGED)
+
+    acceptance = _step(path.golden_path, "acceptance")
+    assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: 3 owner steps")
+
+
 # two-level-flows A3: the sign-off is never the acceptance eval nor the header verdict.
 def test_never_makes_owner_signoff_the_acceptance_eval_when_it_lists_acs() -> None:
     alone = feature_detail(_folder(_SIGNOFF), project="demo", read=_MERGED)

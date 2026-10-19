@@ -17,7 +17,7 @@ def test_serializes_feature_with_ac_counts_when_dumped() -> None:
     document = a_feature_view().model_dump(mode="json")
 
     assert document["acs"] == {"passing": 2, "total": 5, "owner_steps": 1}
-    assert (document["phase"], document["problem"]) == ("implement", None)
+    assert (document["phase"], document["problem"]) == ("build", None)
 
 
 def test_serializes_detail_rows_when_detail_dumped() -> None:
@@ -27,7 +27,9 @@ def test_serializes_detail_rows_when_detail_dumped() -> None:
     assert detail.model_dump(mode="json")["ac_rows"][0]["id"] == "AC-7.1"
 
 
-@pytest.mark.parametrize(("field", "value"), [("phase", "design"), ("verdict", "MAYBE")])
+@pytest.mark.parametrize(
+    ("field", "value"), [("phase", "design"), ("phase", "implement"), ("verdict", "MAYBE")]
+)
 def test_rejects_feature_when_value_unknown(field: str, value: str) -> None:
     with pytest.raises(ValidationError, match=field):
         a_feature_view(**{field: value})
@@ -56,35 +58,36 @@ def test_serializes_golden_path_when_feature_built() -> None:
     steps = (
         GoldenStep(name="spec", state="done", meta=None, reason=None, progress=None),
         GoldenStep(
-            name="implement",
+            name="build",
             state="current",
-            meta="1/17 tickets · 3/36 ACs",
+            meta="1 of 17 merged",
             reason=None,
             progress=StepProgress(done=1, total=17),
         ),
         GoldenStep(
-            name="evaluate",
-            state="partial",
-            meta="partial: covers 3 of 36 ACs",
-            reason="Implement is not done",
+            name="acceptance",
+            state="unrecorded",
+            meta="Ticket evals cover 3 of 36 ACs",
+            reason="Build is not done",
             progress=StepProgress(done=3, total=36),
         ),
     )
     feature = a_feature_view(
-        golden_path=GoldenPath(steps=steps, phase="implement"), tickets_source="plan"
+        golden_path=GoldenPath(steps=steps, phase="build"), tickets_source="plan"
     )
 
     document = feature.model_dump(mode="json")
 
     assert document["tickets_source"] == "plan"
-    assert document["golden_path"]["phase"] == "implement"
+    assert document["golden_path"]["phase"] == "build"
     assert document["golden_path"]["steps"][1] == {
-        "name": "implement",
+        "name": "build",
         "state": "current",
-        "meta": "1/17 tickets · 3/36 ACs",
+        "meta": "1 of 17 merged",
         "reason": None,
         "progress": {"done": 1, "total": 17},
     }
+    assert document["golden_path"]["steps"][2]["state"] == "unrecorded"
 
 
 def test_serializes_evals_when_detail_has_eval_records() -> None:

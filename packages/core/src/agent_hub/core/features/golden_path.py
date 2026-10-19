@@ -1,25 +1,27 @@
-"""A feature's golden path (AGH-136 D3-D5, S8): each step done only when the whole feature is.
+"""A feature's golden path (AGH-136 D3-D5, S8; two-level-flows AC-1.1-1.7): the feature steps.
 
-Steps, in order: Spec, Research and Plan (their record file is written; one left out while a
-later record exists is ``skipped``), Tickets (every planned ticket has a tracker id), Implement
-(every ticket delivered: In Review or Done in Linear, or with an approved review record; with no
-tickets, every AC passing; its meta also counts the ACs passing and the tickets still in
-progress), Review (every ticket reviewed: Done in Linear or an approved review record),
-Evaluate (the latest eval of every AC is a SHIP, none waiting on owner steps) and Shipped
-(every ticket Done in Linear). Canceled tickets and withdrawn ACs are left out of every count;
-an epic (a ticket with children) counts only under Tickets, as it tracks the others.
+Steps, in order: Spec (``spec.md`` written; with only ``brief.md`` it is current, "Brief only"),
+UX design (every top-level ``ux-*.md`` says ``status: approved``; none while a later record
+exists is ``skipped``, "No screen change recorded"), Research and Plan (their record file is
+written; one left out while a later record exists is ``skipped``; Plan's meta is the plan's
+version), Tickets (every planned ticket has a tracker id), Build (every ticket merged: Done in
+Linear), Acceptance (the latest whole-feature eval is SHIP, or SHIP-WITH-OWNER-STEPS whose owner
+steps the owner signed off; ticket evals never make it done) and Shipped (Build and Acceptance
+done). Canceled tickets and withdrawn ACs are left out of every count; an epic (a ticket with
+children) counts only under Tickets, as it tracks the others. Each ticket's own steps are its
+row's, not the golden path's.
 
 The fold: steps hold in turn until the first that does not, the gate; it is ``current`` (or
-``unknown`` when its evidence cannot be read) and the ``phase``. No step after the gate is
-``done``: one whose own condition holds is ``blocked`` naming the gate, one with recorded
-evidence for part of the feature (passing ACs, created tickets, reviewed or Done tickets, a
-SHIP over some ACs) is ``partial``, one that cannot be read is ``unknown``, the rest
-``pending``. Without Linear (the plan fallback), ticket states are unknown: Implement's
-tickets, Review without a record for every ticket and Shipped are ``unknown``, never done.
+``unknown`` when its evidence cannot be read, ``unrecorded`` when its record was never written)
+and the ``phase``. No step after the gate is ``done``: one whose own condition holds is
+``blocked`` naming the gate, one with recorded evidence for part of the feature (created or
+merged tickets, ticket evals covering some ACs, a design written) is ``partial``, one that cannot
+be read is ``unknown``, the rest ``pending``. Without Linear (the plan fallback), ticket states
+are unknown: Build and Shipped are ``unknown``, never done.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final
 
 from agent_hub.core.features.feature_record import RecordAc
@@ -27,60 +29,56 @@ from agent_hub.core.features.feature_view import (
     FeaturePhase,
     GoldenPath,
     GoldenStep,
+    PlanView,
     StepProgress,
     StepState,
     TicketsSource,
+    Verdict,
 )
 from agent_hub.core.features.ticket_view import TicketRow
 
+BRIEF_FILE: Final = "brief.md"
 SPEC_FILE: Final = "spec.md"
 RESEARCH_FILE: Final = "research.md"
 PLAN_FILE: Final = "plan.md"
 ISSUES_FILE: Final = "issues.md"
 RECORD_FILE: Final = "features.json"
 MAX_EVALS: Final = 200
-MAX_REVIEWS: Final = 500
 LINEAR_NOT_CONNECTED: Final = "Linear not connected"
 LINEAR_NOT_LOADED: Final = "Linear not loaded yet"
 LINEAR_NOT_LOADED_REASON: Final = "Ticket status from Linear not loaded yet; open the Tickets tab."
 STEP_TITLES: Final[dict[FeaturePhase, str]] = {
     "spec": "Spec",
+    "ux_design": "UX design",
     "research": "Research",
     "plan": "Plan",
     "tickets": "Tickets",
-    "implement": "Implement",
-    "review": "Review",
-    "evaluate": "Evaluate",
+    "build": "Build",
+    "acceptance": "Acceptance",
     "shipped": "Shipped",
 }
-_DOC_STEPS: Final[tuple[tuple[FeaturePhase, str], ...]] = (
-    ("spec", SPEC_FILE),
-    ("research", RESEARCH_FILE),
-    ("plan", PLAN_FILE),
-)
 _CANCELED: Final = frozenset({"canceled", "duplicate"})
-_NOT_YET: Final = {"tickets": "tickets not in review or Done yet", "ACs": "ACs not passing"}
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class EvalGate:
-    """What the feature's evals say about its ACs (the caller folds the eval records).
+    """What the feature's evals say (the caller folds the eval records).
 
     ``evals`` counts the eval records read (the legacy ``eval.md`` included); ``covered`` the
-    non-withdrawn ACs whose latest eval is SHIP or SHIP-WITH-OWNER-STEPS; ``owner_steps`` those
-    of them whose latest is SHIP-WITH-OWNER-STEPS. ``scope_recorded`` is False for a legacy
-    ``eval.md`` with no scope that does not cover every AC; ``skipped`` counts the eval files
-    over the cap, left unread.
+    non-withdrawn ACs whose latest eval is SHIP or SHIP-WITH-OWNER-STEPS; ``acceptance`` the
+    verdict of the acceptance eval (the latest whole-feature one), None without one;
+    ``owner_steps`` the ACs a SHIP-WITH-OWNER-STEPS acceptance eval leaves as owner steps that
+    the owner has not signed off yet; ``skipped`` the eval files over the cap, left unread.
     """
 
     evals: int
     covered: int
-    owner_steps: int
-    scope_recorded: bool = True
+    owner_steps: int = 0
     skipped: int = 0
+    acceptance: Verdict | None = None
 
 
-NO_EVALS: Final = EvalGate(evals=0, covered=0, owner_steps=0)
+NO_EVALS: Final = EvalGate(evals=0, covered=0)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -88,18 +86,19 @@ class GoldenInputs:
     """Everything the golden path reads of one feature.
 
     ``files`` names the record files present; ``rows`` the ticket rows (Linear's states when
-    ``source`` is ``linear``, None in the plan fallback; ``reviewed`` per D4); ``acs`` the
-    record's ACs; ``approved_reviews`` the approved review records of the feature's tickets and
-    ``reviews_skipped`` the review files over the cap. ``not_loaded`` says the plan fallback is
-    a cold cache with a key present (E5), not a missing connection.
+    ``source`` is ``linear``, None in the plan fallback); ``acs`` the record's ACs;
+    ``ux_designs`` whether each ``ux-*.md`` is approved, and ``ux_problem`` why they could not
+    all be read; ``plan`` the plan's version (None without ``plan.md``). ``not_loaded`` says the
+    plan fallback is a cold cache with a key present (E5), not a missing connection.
     """
 
     files: tuple[str, ...]
     rows: tuple[TicketRow, ...]
     acs: tuple[RecordAc, ...]
     coverage: EvalGate = NO_EVALS
-    approved_reviews: int = 0
-    reviews_skipped: int = 0
+    ux_designs: tuple[bool, ...] = ()
+    ux_problem: str | None = None
+    plan: PlanView | None = None
     source: TicketsSource
     not_loaded: bool = False
 
@@ -107,7 +106,8 @@ class GoldenInputs:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class _Own:
     """A step judged alone: whether its own condition ``holds`` (None: cannot tell, ``reason``
-    says why), its texts, and whether part of it is recorded (``started``)."""
+    says why), its texts, whether part of it is recorded (``started``) and whether, as the gate,
+    its record was never written (``unrecorded``)."""
 
     holds: bool | None
     meta: str | None = None
@@ -115,6 +115,7 @@ class _Own:
     progress: StepProgress | None = None
     started: bool = False
     skippable: bool = False
+    unrecorded: bool = False
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -125,8 +126,6 @@ class _Facts:
     active: tuple[TicketRow, ...]
     acs: tuple[RecordAc, ...]
     done: int
-    # Tickets whose work is handed over: Done, in a review state, or with an approved review.
-    delivered: int
 
     @property
     def linear(self) -> bool:
@@ -166,7 +165,9 @@ def _before_gate(own: _Own) -> tuple[StepState, str | None]:
         return "done", None
     if own.skippable:
         return "skipped", None
-    return ("unknown" if own.holds is None else "current"), own.reason
+    if own.holds is None:
+        return "unknown", own.reason
+    return ("unrecorded" if own.unrecorded else "current"), own.reason
 
 
 def _after_gate(own: _Own, gate: GoldenStep) -> tuple[StepState, str | None]:
@@ -192,34 +193,75 @@ def _owns(inputs: GoldenInputs) -> dict[FeaturePhase, _Own]:
         active=active,
         acs=tuple(ac for ac in inputs.acs if not ac.withdrawn),
         done=sum(row.state is not None and row.state.type == "completed" for row in active),
-        delivered=sum(_delivered(row) for row in active),
     )
-    owns: dict[FeaturePhase, _Own] = {
-        name: _document(facts, file=file, later=_DOC_STEPS[index + 1 :])
-        for index, (name, file) in enumerate(_DOC_STEPS)
-    }
     judges: tuple[tuple[FeaturePhase, Callable[[_Facts], _Own]], ...] = (
+        ("spec", _spec),
+        ("ux_design", _ux_design),
+        ("research", lambda facts: _document(facts, file=RESEARCH_FILE, later=(PLAN_FILE,))),
+        ("plan", _plan),
         ("tickets", _tickets),
-        ("implement", _implement),
-        ("review", _review),
-        ("evaluate", _evaluate),
-        ("shipped", _shipped),
+        ("build", _build),
+        ("acceptance", _acceptance),
     )
-    for name, judge in judges:
-        owns[name] = judge(facts)
+    owns = {name: judge(facts) for name, judge in judges}
+    owns["shipped"] = _shipped(owns["build"], owns["acceptance"])
     return owns
 
 
-def _document(facts: _Facts, *, file: str, later: tuple[tuple[FeaturePhase, str], ...]) -> _Own:
+def _later_record(facts: _Facts, later: tuple[str, ...]) -> bool:
+    """Whether a record of a later step exists: one of the ``later`` files, the ticket plan, a
+    ticket, an AC or an eval."""
     files = facts.inputs.files
-    if file in files:
-        return _Own(holds=True)
-    later_evidence = (
-        any(name in files for _, name in later)
-        or any(name in files for name in (ISSUES_FILE, RECORD_FILE))
-        or bool(facts.inputs.rows or facts.acs or facts.inputs.coverage.evals)
+    return any(name in files for name in (*later, ISSUES_FILE, RECORD_FILE)) or bool(
+        facts.inputs.rows or facts.acs or facts.inputs.coverage.evals
     )
-    return _Own(holds=False, reason=f"{file} not written", skippable=later_evidence)
+
+
+def _document(facts: _Facts, *, file: str, later: tuple[str, ...]) -> _Own:
+    if file in facts.inputs.files:
+        return _Own(holds=True)
+    return _Own(holds=False, reason=f"{file} not written", skippable=_later_record(facts, later))
+
+
+def _spec(facts: _Facts) -> _Own:
+    own = _document(facts, file=SPEC_FILE, later=(RESEARCH_FILE, PLAN_FILE))
+    if own.holds or BRIEF_FILE not in facts.inputs.files:
+        return own
+    return replace(own, meta="Brief only · spec not written")
+
+
+def _ux_design(facts: _Facts) -> _Own:
+    designs = facts.inputs.ux_designs
+    if facts.inputs.ux_problem is not None:
+        return _Own(holds=None, reason=facts.inputs.ux_problem, started=bool(designs))
+    if not designs:
+        later = _later_record(facts, (RESEARCH_FILE, PLAN_FILE))
+        meta = "No screen change recorded" if later else None
+        return _Own(holds=False, meta=meta, reason="no ux-*.md written", skippable=later)
+    total, drafts = len(designs), designs.count(False)
+    count = f"{total} design{'' if total == 1 else 's'}"
+    if not drafts:
+        return _Own(holds=True, meta=f"{count} approved")
+    return _Own(
+        holds=False,
+        meta=f"{count} · {drafts} draft",
+        reason=f"{drafts} of {total} UX designs not approved",
+        started=True,
+    )
+
+
+def _plan(facts: _Facts) -> _Own:
+    own = _document(facts, file=PLAN_FILE, later=())
+    plan = facts.inputs.plan
+    if not own.holds or plan is None:
+        return own
+    if plan.version is None:
+        return _Own(holds=None, reason=plan.problem)
+    amended = len(plan.amendments)
+    meta = f"v{plan.version}"
+    if amended:
+        meta += f" · {amended} amendment{'' if amended == 1 else 's'}"
+    return _Own(holds=True, meta=meta)
 
 
 def _tickets(facts: _Facts) -> _Own:
@@ -238,128 +280,63 @@ def _tickets(facts: _Facts) -> _Own:
     )
 
 
-def _delivered(row: TicketRow) -> bool:
-    """Whether the ticket's implementation is handed over: Done in Linear, in a review state
-    (a started state whose name says review, such as In Review), or with an approved review."""
-    if row.reviewed is True:
-        return True
-    if row.state is None:
-        return False
-    if row.state.type == "completed":
-        return True
-    return row.state.type == "started" and "review" in row.state.name.lower()
-
-
-def _implement(facts: _Facts) -> _Own:
-    """Implement is the code being written: it ends when every ticket is delivered (In Review
-    or Done), not when it ships. The ACs gate it only when there are no tickets to count; with
-    tickets, a failing AC is Evaluate's to report, and here it is only counted in the meta."""
-    total, acs = len(facts.active), len(facts.acs)
-    passing = sum(ac.passes for ac in facts.acs)
-    if total == 0 and acs == 0:
-        return _Own(holds=False, reason="no tickets or acceptance criteria recorded")
-    tickets_read = bool(total) and facts.linear
-    counts: list[tuple[int, int, str]] = []
-    if tickets_read:
-        counts.append((facts.delivered, total, "tickets"))
-    if acs:
-        counts.append((passing, acs, "ACs"))
-    progress = StepProgress(done=counts[0][0], total=counts[0][1]) if counts else None
-    parts = [
-        f"{done}/{of} {'tickets delivered' if noun == 'tickets' else noun}"
-        for done, of, noun in counts
-    ]
-    # Tickets under way (In Progress) are not delivered yet but are not idle either.
-    working = (
-        sum(row.readiness == "in_progress" and not _delivered(row) for row in facts.active)
-        if facts.linear
-        else 0
-    )
-    if working:
-        parts.insert(1 if total else 0, f"{working} in progress")
-    meta = " · ".join(parts) or None
-    started = passing > 0 or facts.delivered > 0 or working > 0
-    gating = counts[:1] if tickets_read else counts
-    missing = [f"{of - done} of {of} {_NOT_YET[noun]}" for done, of, noun in gating if done < of]
-    if missing:
-        reason = "; ".join(missing)
-        return _Own(holds=False, meta=meta, reason=reason, progress=progress, started=started)
-    if total and not facts.linear:
-        _, reason = facts.unread
-        return _Own(holds=None, meta=meta, reason=reason, progress=progress, started=started)
-    return _Own(holds=True, meta=meta, progress=progress, started=started)
-
-
-def _review(facts: _Facts) -> _Own:
-    # A ticket Done in Linear counts as reviewed (D4), so it starts Review as a record does.
-    reviewed = sum(row.reviewed is True for row in facts.active)
-    started = facts.inputs.approved_reviews > 0 or reviewed > 0
-    if facts.inputs.reviews_skipped:
-        return _Own(
-            holds=None,
-            reason=f"more than {MAX_REVIEWS} review records; not all were read",
-            started=started,
-        )
+def _build(facts: _Facts) -> _Own:
+    """Build is every ticket merged (Done in Linear); its meta also counts those in progress."""
     total = len(facts.active)
     if total == 0:
-        return _Own(holds=None, reason="no tickets recorded")
-    progress = StepProgress(done=reviewed, total=total)
-    meta = f"{reviewed}/{total} reviewed"
-    if reviewed == total:
-        return _Own(holds=True, meta=meta, progress=progress, started=started)
-    if any(row.reviewed is None for row in facts.active):
-        unread_meta, reason = facts.unread
-        return _Own(holds=None, meta=unread_meta, reason=reason, progress=progress, started=started)
-    reason = f"{total - reviewed} of {total} tickets not reviewed"
-    return _Own(holds=False, meta=meta, reason=reason, progress=progress, started=started)
-
-
-def _evaluate(facts: _Facts) -> _Own:
-    gate = facts.inputs.coverage
-    total = len(facts.acs)
-    if gate.skipped:
-        return _Own(holds=None, reason=f"more than {MAX_EVALS} evals; not all were read")
-    if gate.evals == 0:
-        return _Own(holds=False, reason="no eval yet")
-    if not gate.scope_recorded:
-        return _Own(
-            holds=False,
-            meta="partial: scope not recorded",
-            reason="eval.md records no scope and not every AC passes",
-            started=True,
-        )
-    if total == 0:
-        return _Own(holds=False, reason="no acceptance criteria in features.json")
-    covered = min(gate.covered, total)
-    progress = StepProgress(done=covered, total=total)
-    if covered < total:
-        meta = (
-            f"partial: covers {covered} of {total} ACs" if covered else f"covers 0 of {total} ACs"
-        )
-        reason = f"{total - covered} of {total} ACs not covered by a SHIP"
-        return _Own(holds=False, meta=meta, reason=reason, progress=progress, started=covered > 0)
-    if gate.owner_steps:
-        return _Own(
-            holds=False,
-            meta="waiting: owner steps",
-            reason=f"{gate.owner_steps} ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)",
-            progress=progress,
-            started=True,
-        )
-    return _Own(holds=True, meta=f"covers {total} of {total} ACs", progress=progress)
-
-
-def _shipped(facts: _Facts) -> _Own:
-    total = len(facts.active)
-    if total == 0:
-        return _Own(holds=None, reason="no tickets recorded")
+        return _Own(holds=False, reason="no tickets planned")
     if not facts.linear:
         meta, reason = facts.unread
         return _Own(holds=None, meta=meta, reason=reason)
+    working = sum(row.state is not None and row.state.type == "started" for row in facts.active)
+    meta = f"{facts.done} of {total} merged"
+    if working:
+        meta += f" · {working} in progress"
     return _Own(
         holds=facts.done == total,
-        meta=f"{facts.done}/{total} Done",
-        reason=f"{total - facts.done} of {total} tickets not Done in Linear",
+        meta=meta,
+        reason=f"{total - facts.done} of {total} tickets not merged",
         progress=StepProgress(done=facts.done, total=total),
         started=facts.done > 0,
     )
+
+
+def _acceptance(facts: _Facts) -> _Own:
+    gate = facts.inputs.coverage
+    if gate.skipped:
+        return _Own(holds=None, reason=f"more than {MAX_EVALS} evals; not all were read")
+    if gate.acceptance == "SHIP":
+        return _Own(holds=True)
+    if gate.acceptance == "NO-SHIP":
+        return _Own(holds=False, meta="NO-SHIP", reason="the whole-feature eval says NO-SHIP")
+    if gate.acceptance == "SHIP-WITH-OWNER-STEPS":
+        if not gate.owner_steps:
+            return _Own(holds=True, meta="Owner steps signed off")
+        steps = f"{gate.owner_steps} owner step{'' if gate.owner_steps == 1 else 's'}"
+        return _Own(
+            holds=False,
+            meta=f"Waiting on you: {steps}",
+            reason=f"{gate.owner_steps} ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)",
+            started=True,
+        )
+    total = len(facts.acs)
+    covered = min(gate.covered, total)
+    return _Own(
+        holds=False,
+        meta=f"Ticket evals cover {covered} of {total} ACs" if total else None,
+        reason="no whole-feature eval yet",
+        progress=StepProgress(done=covered, total=total) if total else None,
+        started=covered > 0,
+        unrecorded=True,
+    )
+
+
+def _shipped(build: _Own, acceptance: _Own) -> _Own:
+    """Shipped is Build and Acceptance both done; unknown while either cannot be told."""
+    holds = (build.holds, acceptance.holds)
+    if False in holds:
+        return _Own(holds=False, reason="Build and Acceptance are not both done")
+    if None in holds:
+        unread = build if build.holds is None else acceptance
+        return _Own(holds=None, reason=unread.reason)
+    return _Own(holds=True)

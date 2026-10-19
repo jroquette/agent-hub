@@ -17,6 +17,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
+from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_evals import (
     acceptance_eval,
@@ -27,6 +28,7 @@ from agent_hub.core.features.feature_evals import (
 from agent_hub.core.features.feature_record import (
     RECORD_FILE,
     FeatureRecordFile,
+    PlannedTicket,
     RecordAc,
     record_from_bytes,
 )
@@ -189,6 +191,7 @@ def feature_parts(folder: FeatureFolder, read: SnapshotRead | None = None) -> Fe
     evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
     coverage = eval_coverage(evals, acs, tickets=tickets)
     approved = approved_tickets(review_records(folder.reviews, slug=folder.slug))
+    accepted = acceptance_eval(evals)
     snapshot = None if read is None else read.snapshot
     board = ticket_board(
         tickets,
@@ -201,18 +204,20 @@ def feature_parts(folder: FeatureFolder, read: SnapshotRead | None = None) -> Fe
     gate = EvalGate(
         evals=len(evals),
         covered=len(coverage.covered),
-        owner_steps=len(coverage.owner_steps),
-        scope_recorded=not coverage.unscoped or len(coverage.covered) == coverage.total > 0,
+        owner_steps=_unsigned_owner_steps(accepted, evals, acs, tickets=tickets),
         skipped=folder.evals_skipped,
+        acceptance=None if accepted is None else accepted.verdict,
     )
+    ux_designs, ux_problem = _ux_designs(folder)
     path = golden_path(
         GoldenInputs(
             files=folder.files,
             rows=board.rows,
             acs=acs,
             coverage=gate,
-            approved_reviews=sum(_approved(row.key, row.id, approved) for row in board.rows),
-            reviews_skipped=folder.reviews_skipped,
+            ux_designs=ux_designs,
+            ux_problem=ux_problem,
+            plan=_plan(folder),
             source=source,
             not_loaded=read is not None and snapshot is None and read.failure is None,
         )
@@ -272,8 +277,41 @@ def feature_detail(
     )
 
 
-def _approved(key: str | None, issue_id: str | None, approved: frozenset[str]) -> bool:
-    return any(name is not None and name.upper() in approved for name in (key, issue_id))
+def _unsigned_owner_steps(
+    accepted: EvalRecord | None,
+    evals: tuple[EvalRecord, ...],
+    acs: tuple[RecordAc, ...],
+    *,
+    tickets: tuple[PlannedTicket, ...],
+) -> int:
+    """The ACs a SHIP-WITH-OWNER-STEPS acceptance eval leaves as owner steps with no later SHIP
+    by the owner (Amendment A3): read over that eval and the owner's sign-offs only, so a
+    ticket eval never signs an owner step off."""
+    if accepted is None or accepted.verdict != "SHIP-WITH-OWNER-STEPS":
+        return 0
+    signoffs = (e for e in evals if e.provenance == "owner" and e.verdict == "SHIP")
+    left = eval_coverage((accepted, *signoffs), acs, tickets=tickets)
+    return len(left.owner_steps) + len(left.uncovered)
+
+
+def _ux_designs(folder: FeatureFolder) -> tuple[tuple[bool, ...], str | None]:
+    """Whether each UX design says ``status: approved``, and why they could not all be read:
+    one unreadable, or more than the cap (an unread one could be a draft)."""
+    if folder.ux_skipped:
+        return (), f"more than {MAX_UX_FILES} UX designs; not all were read"
+    approved: list[bool] = []
+    for design in folder.ux_designs:
+        front = (
+            None
+            if design.head is None
+            else split_frontmatter(design.head.decode("utf-8", "replace"))
+        )
+        problem = design.problem if front is None else front.problem
+        if front is None or problem is not None:
+            why = problem or "could not be read"
+            return (), one_line(f"{design.name} could not be read ({why}). Fix it in a hub PR.")
+        approved.append(front.fields.get("status") == "approved")
+    return tuple(approved), None
 
 
 def _records(folder: FeatureFolder) -> tuple[FeatureRecord, ...]:

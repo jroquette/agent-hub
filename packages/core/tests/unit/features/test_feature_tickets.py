@@ -122,8 +122,8 @@ def test_says_not_loaded_when_cache_cold() -> None:
     assert tickets.notice == NOT_LOADED_NOTICE
     assert tickets.notice == "Ticket status from Linear not loaded yet; open the Tickets tab."
     assert tickets.tracker_problem is None
-    shipped = next(step for step in tickets.golden_path.steps if step.name == "shipped")
-    assert shipped.meta == LINEAR_NOT_LOADED
+    build = next(step for step in tickets.golden_path.steps if step.name == "build")
+    assert build.meta == LINEAR_NOT_LOADED
 
 
 @pytest.mark.parametrize(
