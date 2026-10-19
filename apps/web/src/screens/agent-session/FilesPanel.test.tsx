@@ -471,6 +471,7 @@ describe("FilesPanel (pull request)", () => {
       ]),
       [
         {
+          source: "worktree",
           root: "/w/api",
           label: "api",
           branch: "tip-1",
@@ -613,5 +614,44 @@ describe("FilesPanel (pull request)", () => {
     await userEvent.click(row);
     expect(screen.getByLabelText("Commit c2abcde to /w/api/app.py")).toBeInTheDocument();
     expect(view.requests).toHaveLength(1);
+  });
+});
+
+describe("FilesPanel (repositories)", () => {
+  it("names each repository's branch, base, pull request and where it stands", () => {
+    render(
+      <FilesPanel
+        files={filesOf(TWO_FILES)}
+        sessionId="s1"
+        onClose={vi.fn()}
+        repos={[
+          {
+            source: "worktree",
+            root: "/repo",
+            label: "api/tip-1",
+            branch: "tip-1",
+            base: "origin/main",
+            base_sha: "f0",
+            head_sha: "h1",
+            pull_request: {
+              number: 7,
+              url: "https://github.com/acme/api/pull/7",
+              state: "OPEN",
+              head_sha: "h1",
+            },
+            commits: [],
+            files: [],
+            truncated: false,
+          },
+        ]}
+      />,
+    );
+    const repos = screen.getByRole("list", { name: "Repositories" });
+    expect(repos).toHaveTextContent("tip-1 → origin/main · 0 commits");
+    expect(within(repos).getByRole("link", { name: /PR #7/ })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/api/pull/7",
+    );
+    expect(repos).toHaveTextContent("In sync with the pull request");
   });
 });

@@ -2730,3 +2730,32 @@ button.as-bg-head {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
+/* The review's repositories: branch → base, commits, pull request and where it stands. */
+.as-files-repos {
+  flex: none;
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.as-files-repo {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px var(--space-2);
+  min-width: 0;
+}
+.as-files-repo > svg {
+  flex: none;
+  color: var(--text-subtle);
+}
+.as-files-repo-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
