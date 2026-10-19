@@ -10,6 +10,7 @@ from agent_hub.cli.bench_command import bench
 from agent_hub.cli.brief_command import brief
 from agent_hub.cli.collect import collect
 from agent_hub.cli.doctor_command import doctor
+from agent_hub.cli.env_command import env_app
 from agent_hub.cli.generator import init
 from agent_hub.cli.next_command import next_command
 from agent_hub.cli.run_engine import run
@@ -65,3 +66,4 @@ app.command("web")(web)
 app.command("validate-output")(validate_output)
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(step_app, name="step")
+app.add_typer(env_app, name="env")
