@@ -16,7 +16,7 @@ from agent_hub.core.agent_sessions.repo_changes import (
 from agent_hub.core.agent_sessions.workdirs import ResolvedWorkdir, WorkdirListing
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, Rig
-from agent_hub.core.testing.read_model_builders import WORKDIR_ID, a_workdir
+from agent_hub.core.testing.read_model_builders import WORKDIR_ID, a_log_record, a_workdir
 
 REPO_PATH = "/hubs/api"
 WORKTREE_PATH = "/hubs/api/.claude/worktrees/tip-1"
@@ -99,6 +99,45 @@ def test_at_most_max_repos_are_read() -> None:
     assert len(roots) == MAX_REPOS
 
 
+def test_a_worktree_a_call_names_is_read_though_no_file_tool_changed_it() -> None:
+    roots = repo_roots(
+        _listing(),
+        workdir_id=WORKDIR_ID,
+        paths=[f"{HUB_PATH}/brain/reviews/T-1.md"],
+        mentions=[f"cd {WORKTREE_PATH} && python3 - <<'EOF'", "Implement the card"],
+    )
+
+    assert _labels(roots) == ["api/tip-1"]
+
+
+def test_a_repo_s_main_checkout_named_in_passing_is_not_read() -> None:
+    roots = repo_roots(
+        _listing(), workdir_id=WORKDIR_ID, paths=[], mentions=[f"rg claims {REPO_PATH}/src"]
+    )
+
+    assert roots == ()
+
+
+@pytest.mark.parametrize(
+    "mention",
+    [f"{WORKTREE_PATH}-old/a.py", f"{WORKTREE_PATH}x", "/hubs/api/.claude/worktrees/tip-10"],
+)
+def test_a_text_that_only_starts_like_a_worktree_does_not_name_it(mention: str) -> None:
+    roots = repo_roots(_listing(), workdir_id=WORKDIR_ID, paths=[], mentions=[mention])
+
+    assert roots == ()
+
+
+@pytest.mark.parametrize(
+    "mention",
+    [WORKTREE_PATH, f"{WORKTREE_PATH}/", f'W="{WORKTREE_PATH}"; cd $W', f"-C {WORKTREE_PATH} log"],
+)
+def test_a_worktree_is_named_by_its_whole_path(mention: str) -> None:
+    roots = repo_roots(_listing(), workdir_id=WORKDIR_ID, paths=[], mentions=[mention])
+
+    assert _labels(roots) == ["api/tip-1"]
+
+
 class _Reader:
     def __init__(self, failing: frozenset[str] = frozenset()) -> None:
         self.read_roots: list[str] = []
@@ -151,6 +190,33 @@ async def test_repo_changes_reads_each_repository_the_session_changed_a_file_in(
     assert reader.read_roots == [WORKTREE_PATH]
     assert [(repo.label, repo.base) for repo in changes.repos] == [("api/tip-1", "origin/main")]
     assert changes.warnings == ()
+
+
+async def test_repo_changes_reads_the_worktree_the_session_s_calls_worked_in(
+    make_rig: MakeRig,
+) -> None:
+    reader = _Reader()
+    rig, session = await _ended_session_with_files(make_rig, reader, f"{HUB_PATH}/brain/x.md")
+    last = rig.store.get(session.id).last_seq
+    rig.store.append(
+        session.id,
+        [
+            a_log_record(
+                "tool.call",
+                seq=last + 1,
+                body={
+                    "name": "Agent",
+                    "tool_use_id": "t9",
+                    "input": {"prompt": f"Work in {WORKTREE_PATH}"},
+                },
+            )
+        ],
+    )
+
+    changes = await rig.control.repo_changes(session.id)
+
+    assert reader.read_roots == [WORKTREE_PATH]
+    assert [repo.label for repo in changes.repos] == ["api/tip-1"]
 
 
 async def test_a_repository_git_cannot_read_is_named_in_the_warnings(make_rig: MakeRig) -> None:

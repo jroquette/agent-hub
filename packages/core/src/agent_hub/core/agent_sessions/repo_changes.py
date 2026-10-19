@@ -9,10 +9,15 @@ touched it.
 Git runs only in a listed workdir (``WorkdirListing``: the hub's repos and their worktrees), never
 in a path taken from the session's log: ``repo_roots`` picks the listed repos and worktrees that
 hold the session's folder or one of the files it changed, deepest first, so a worktree wins over
-the repo it sits in. The reading itself is the ``RepoChangesReader`` port's (``hub_git``).
+the repo it sits in, then the listed worktrees the session's calls name (a shell command run in
+one, a subagent sent to work there): a session that changes its files from the shell, or through
+subagents whose calls never reach its log, still shows its pull request. Only worktrees count by
+name: a repo's main checkout read in passing is not this session's work. The reading itself is the
+``RepoChangesReader`` port's (``hub_git``).
 """
 
 import os
+import re
 from collections.abc import Iterable, Sequence
 from typing import Final, Literal, Protocol
 
@@ -130,11 +135,22 @@ def _inside(path: str, folder: str) -> bool:
     return path == folder or path.startswith(folder.rstrip("/") + "/")
 
 
+def _names(text: str, folder: str) -> bool:
+    """Whether ``text`` names ``folder`` as a whole path (``/a/b`` in ``cd /a/b && …`` or in
+    ``/a/b/c.py``, not in ``/a/bc``)."""
+    return re.search(re.escape(folder.rstrip("/")) + r"(?![\w.\-])", text) is not None
+
+
 def repo_roots(
-    listing: WorkdirListing, *, workdir_id: str, paths: Iterable[str]
+    listing: WorkdirListing,
+    *,
+    workdir_id: str,
+    paths: Iterable[str],
+    mentions: Iterable[str] = (),
 ) -> tuple[ResolvedWorkdir, ...]:
     """The listed repos and worktrees a session worked in: the one it started in (when it is a
-    repo or a worktree) and the deepest one holding each of ``paths``, in that order, at most
+    repo or a worktree), the deepest one holding each of ``paths``, then each listed worktree
+    one of ``mentions`` (the text of its calls' inputs) names, in that order, at most
     ``MAX_REPOS``. The hub is never one: its files are the brain's, not a pull request's."""
     candidates = [entry for entry in listing.entries if entry.workdir.kind != "hub"]
     # Deepest first: a worktree under ``<repo>/.claude/worktrees/`` wins over its repo.
@@ -146,6 +162,13 @@ def repo_roots(
         hit = next((entry for entry in candidates if _inside(path, entry.path)), None)
         if hit is not None and hit not in roots:
             roots.append(hit)
+    worktrees = [entry for entry in candidates if entry.workdir.kind == "worktree"]
+    for text in mentions:
+        if len(roots) >= MAX_REPOS or not worktrees:
+            break
+        for entry in [entry for entry in worktrees if entry not in roots]:
+            if _names(text, entry.path):
+                roots.append(entry)
     return tuple(roots[:MAX_REPOS])
 
 
