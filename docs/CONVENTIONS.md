@@ -11,7 +11,7 @@ tool wherever a tool can check it. Each rule below is marked **enforced by <tool
 |---|---|
 | Names reveal intent and are pronounceable. No abbreviations, except `id`, `url`, `http` and `api` (`session_id`, not `sess_id`; `transcript`, not `tx`). | review-only (casing is enforced by ruff `N`) |
 | Classes are nouns (`TranscriptParser`); use cases are verb + object (`IngestTranscript`, `GenerateHub`); functions are verbs (`parse_line`); booleans are questions (`is_active`, `has_cost`). | review-only |
-| One term per concept, matching the SPEC glossary below. "run", "job" and "execution" are never synonyms for Session; a workflow execution is a `WorkflowRun`. | review-only |
+| One term per concept, matching the SPEC glossary below. "run", "job" and "execution" are never synonyms for Session; a workflow execution is a `WorkflowRun`. "Run" alone means a WorkflowRun; a scenario run is always qualified. | review-only |
 | No modules or folders named `utils.py`, `helpers.py`, `common.py`, `misc.py` (nor `util`, `helper`); name the module after what it does. | enforced by the layout checker (`forbidden-module`) |
 | A src module name does not end in `_<digits>` (`rfc9457.py`, not `rfc_9457.py`), because its mirrored test would be a numbered name. | review-only (the layout checker's `numbered-name` catches it only when a unit test mirrors the module) |
 
@@ -26,6 +26,7 @@ The terms of the [SPEC](SPEC.md). Code, docs, API paths and log fields use exact
 | Repo | A code repository managed by the hub, with its own `AGENTS.md` |
 | Workflow | A sequence of steps with gates, approvers and limits |
 | WorkflowRun | One execution of a workflow; it contains Sessions |
+| Scenario run | One execution of a scenario in one environment and mode; a WorkflowRun underneath, always called a scenario run ([design/scenarios.md](design/scenarios.md)) |
 | Agent | A role with instructions, tools and a model |
 | Session | One concrete execution of an agent, with a transcript, cost and outcome |
 | Brain | Curated, versioned knowledge with provenance |
