@@ -389,6 +389,88 @@ describe("FilesPanel (kinds of file)", () => {
   });
 });
 
+describe("FilesPanel (feature records and totals)", () => {
+  const RECORDS = [
+    tool("f1", "Write", { file_path: "/repo/src/new.ts", content: "export const a = 1;" }),
+    tool("f2", "Write", {
+      file_path: "/hub/brain/features/claims/spec.md",
+      content: "# Spec\n\none\ntwo",
+    }),
+    tool("f3", "Write", {
+      file_path: "/hub/brain/decisions/0009-retries.md",
+      content: "# Retries",
+    }),
+  ];
+
+  it("gives a feature's records a Reviews & specs tab and the brain's other notes the Learnings tab", async () => {
+    render(<FilesPanel files={filesOf(RECORDS)} sessionId="s1" onClose={vi.fn()} />);
+
+    const tabs = screen.getByRole("tablist", { name: "Kind of file" });
+    expect(
+      within(tabs)
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent),
+    ).toEqual(["Code1", "Reviews & specs1", "Learnings1"]);
+    // The drawer's header totals the code alone.
+    expect(screen.getByText(/1 code file/)).toHaveTextContent("1 code file · +1−0");
+
+    await userEvent.click(within(tabs).getByRole("tab", { name: /Reviews & specs/ }));
+    expect(
+      screen.getByText(/What the workflow keeps on the feature in the brain/),
+    ).toBeInTheDocument();
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(within(list).getByRole("button", { name: /spec\.md/ })).toBeInTheDocument();
+    expect(within(list).queryByRole("checkbox")).toBeNull();
+  });
+
+  it("says No code changes when the session changed only Claude's own files", () => {
+    render(
+      <FilesPanel
+        files={filesOf([tool("s1", "Write", { file_path: "/tmp/scratch.md", content: "n" })])}
+        sessionId="s1"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("No code changes")).toBeInTheDocument();
+  });
+
+  it("names what git compared in the Code tab note and lists the repositories there only", async () => {
+    render(
+      <FilesPanel
+        files={filesOf(RECORDS)}
+        sessionId="s1"
+        onClose={vi.fn()}
+        repoNote="api/tip-1: tip-1 against origin/main · 2 commits"
+        repos={[
+          {
+            source: "worktree",
+            root: "/repo",
+            label: "api/tip-1",
+            branch: "tip-1",
+            base: "origin/main",
+            base_sha: "f0",
+            head_sha: "h1",
+            commits: [],
+            files: [],
+            truncated: false,
+          },
+        ]}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "What the pull request has, whoever changed it (api/tip-1: tip-1 against origin/main · 2 commits).",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Repositories" })).toHaveTextContent(
+      "No pull request yet",
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /Learnings/ }));
+    expect(screen.queryByRole("list", { name: "Repositories" })).toBeNull();
+  });
+});
+
 describe("FilesPanel (long names)", () => {
   const DEEP = [
     tool("d1", "Write", {
@@ -421,6 +503,9 @@ describe("FilesPanel (long names)", () => {
   it("keeps each file on one line, its whole name on hover", () => {
     render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
     expect(screen.getByTitle("test_order_cover.py")).toHaveTextContent("test_order_cover.py");
+    // Cut in the middle when it does not fit: the extension always shows.
+    const tail = screen.getByTitle("test_order_cover.py").querySelector(".as-fit-tail");
+    expect(tail?.textContent).toMatch(/\.py$/);
   });
 
   it("bolds a repo session's folder by its label", () => {

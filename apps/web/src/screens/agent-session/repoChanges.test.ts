@@ -171,6 +171,7 @@ describe("repoState", () => {
       "Commits not in the pull request yet",
     ],
     ["merged", repo({ pull_request: pull({ state: "MERGED" }) }), "Pull request merged"],
+    ["closed", repo({ pull_request: pull({ state: "CLOSED" }) }), "Pull request closed"],
     ["worktree removed", repo({ source: "recorded" }), "Worktree removed: its recorded commits"],
     [
       "uncommitted, no PR",
