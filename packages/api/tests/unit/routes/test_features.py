@@ -145,6 +145,24 @@ def test_answers_conflict_and_writes_nothing_when_no_owner_steps(
     assert sorted(path.name for path in evals.iterdir()) == ["dem-7.md"]
 
 
+# The owner settles one eval: the body names it and the decision; NO-SHIP for more work.
+def test_answers_created_with_no_ship_when_owner_finds_more_work(
+    tmp_path: Path, wired: Any
+) -> None:
+    evals = _signoff_hub(tmp_path, wired, "SHIP-WITH-OWNER-STEPS")
+
+    response = wired.client.post(
+        "/api/v1/features/demo/demo-feature/owner-signoff",
+        json={"delivery": "dem-7", "decision": "more_work", "note": "The migration is not run."},
+    )
+
+    assert response.status_code == 201, response.text
+    assert (response.json()["verdict"], response.json()["provenance"]) == ("NO-SHIP", "owner")
+    text = (evals / "owner-signoff.md").read_text(encoding="utf-8")
+    assert "verdict: NO-SHIP\n" in text
+    assert "The migration is not run." in text
+
+
 # AC-PG-10.1: an unknown feature answers 404.
 def test_answers_not_found_when_signoff_feature_unknown(tmp_path: Path, wired: Any) -> None:
     _signoff_hub(tmp_path, wired, "SHIP-WITH-OWNER-STEPS")

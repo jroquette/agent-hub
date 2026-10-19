@@ -8,6 +8,8 @@ import {
   aCapabilities,
   aWorkdir,
   anAgentSession,
+  anAcRow,
+  aTicketRow,
   anEvalRecord,
   anId,
   renderWithApi,
@@ -84,6 +86,14 @@ function rowOf(delivery: string): HTMLElement {
   const row = screen.getByRole("button", { name: new RegExp(`^${delivery},`) }).closest("tr");
   if (!row) throw new Error(`no row ${delivery}`);
   return row;
+}
+
+/** Opens every folded group of the evals table. */
+async function openGroups() {
+  const table = screen.getByRole("table", { name: "Evals" });
+  for (const toggle of within(table).queryAllByRole("button", { expanded: false })) {
+    await userEvent.click(toggle);
+  }
 }
 
 beforeEach(() => {
@@ -176,6 +186,107 @@ describe("settledOwnerSteps", () => {
   });
 });
 
+describe("EvalTab rows", () => {
+  const SIGNOFF = "/api/v1/features/agent-hub/control-plane/owner-signoff";
+  const runs = [
+    anEvalRecord({
+      delivery: "agh-201",
+      path: "agh-201.md",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      evaluated_at: "2026-10-12T10:00:00Z",
+    }),
+    anEvalRecord({
+      delivery: "agh-201-r2",
+      path: "agh-201-r2.md",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      evaluated_at: "2026-10-13T10:00:00Z",
+    }),
+  ];
+
+  it("names runs by number, the group by its ticket's title, the newest as latest", () => {
+    renderWithApi(
+      tab({ evals: runs, ticketRows: [aTicketRow({ id: "AGH-201", title: "Claim lifecycle" })] }),
+    );
+
+    expect(screen.getByRole("button", { name: /^AGH-201\b.*evals/ })).toHaveTextContent(
+      "Claim lifecycle",
+    );
+    expect(rowOf("agh-201-r2")).toHaveTextContent(/Run 2\s*latest/);
+    expect(within(rowOf("agh-201")).getByText("replaced by Run 2")).toBeInTheDocument();
+  });
+
+  it("shows an eval's ACs as the Tickets tab does, with how many pass", () => {
+    renderWithApi(
+      tab({
+        evals: [anEvalRecord()],
+        acRows: [
+          anAcRow({ id: "AC-200.1", passes: true }),
+          anAcRow({ id: "AC-200.2", passes: false }),
+          anAcRow({ id: "AC-200.3", passes: true }),
+        ],
+      }),
+    );
+
+    expect(within(rowOf("agh-201")).getByText("2/3 ACs passing")).toBeInTheDocument();
+  });
+
+  it("folds the whole list and remembers it", async () => {
+    const view = renderWithApi(tab({ evals: runs }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Hide list" }));
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+    view.unmount();
+    renderWithApi(tab({ evals: runs }));
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Show list" })).toBeInTheDocument();
+  });
+
+  it("records that the owner found more work on the latest run, with a note", async () => {
+    const onSelect = vi.fn();
+    const written = anEvalRecord({ delivery: "owner-signoff", verdict: "NO-SHIP" });
+    const view = renderWithApi(tab({ evals: runs, onSelect }), {
+      routes: { [`POST ${SIGNOFF}`]: written },
+    });
+
+    expect(within(rowOf("agh-201")).queryByRole("button", { name: "Needs more work" })).toBeNull();
+    await userEvent.click(
+      within(rowOf("agh-201-r2")).getByRole("button", { name: "Needs more work" }),
+    );
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Note (optional)" }),
+      "Run the migration",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Record more work needed" }));
+
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith("owner-signoff");
+    });
+    const post = view.requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({
+      delivery: "agh-201-r2",
+      decision: "more_work",
+      note: "Run the migration",
+    });
+  });
+
+  it("reads a run the owner found more work on as handled, not as waiting", () => {
+    const review = anEvalRecord({
+      delivery: "owner-signoff",
+      path: "owner-signoff.md",
+      verdict: "NO-SHIP",
+      provenance: "owner",
+      evaluated_at: "2026-10-14T10:00:00Z",
+    });
+    renderWithApi(tab({ evals: [...runs, review] }));
+
+    expect(within(rowOf("agh-201-r2")).getByText("you found more work")).toBeInTheDocument();
+    expect(
+      within(rowOf("agh-201-r2")).queryByRole("button", { name: "Owner steps done" }),
+    ).toBeNull();
+    expect(rowOf("owner-signoff")).toHaveTextContent("Owner: more work");
+  });
+});
+
 describe("evalPrompt", () => {
   it("asks the evaluator for one scope and never to touch an existing eval (AC-269.1)", () => {
     expect(evalPrompt("agent-hub", "control-plane", "feature")).toContain(
@@ -196,6 +307,9 @@ describe("EvalTab", () => {
 
     expect(rowOf("agh-202")).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("article", { name: "Eval agh-202" })).toBeInTheDocument();
+    // Only the selected eval's group opens; the others fold to their header.
+    expect(screen.queryByRole("button", { name: /^agh-201,/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^AGH-201\b.*1 eval/ }));
     await userEvent.click(screen.getByRole("button", { name: /^agh-201,/ }));
     expect(onSelect).toHaveBeenCalledWith("agh-201");
   });
@@ -267,10 +381,13 @@ describe("EvalTab", () => {
     expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
   });
 
-  it("lists every delivery's eval with its verdict, scope and date (golden)", () => {
+  it("lists every delivery's eval with its verdict, scope and date (golden)", async () => {
     renderWithApi(tab({ evals }));
 
     const table = screen.getByRole("table", { name: "Evals" });
+    // Folded: the header and a row per scope.
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    await openGroups();
     // The header, a row per scope (whole feature, AGH-201, AGH-202) and the four evals.
     expect(within(table).getAllByRole("row")).toHaveLength(8);
 
@@ -320,8 +437,10 @@ describe("EvalTab", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "AGH-200" })).toBeNull();
     expect(screen.getByRole("button", { name: "AGH-201" })).toBeInTheDocument();
-    // One scope only: no group header, the table reads as the feature's evals.
-    expect(screen.queryByRole("columnheader", { name: /Whole feature/ })).toBeNull();
+    // One scope only: its group starts open.
+    expect(
+      screen.getByRole("button", { name: /^Whole feature · AGH-200 epic\b.*1 eval/ }),
+    ).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("1 eval · newest first")).toBeInTheDocument();
   });
 

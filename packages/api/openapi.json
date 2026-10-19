@@ -5071,6 +5071,48 @@
         "title": "Outcome",
         "type": "string"
       },
+      "OwnerSignOffBody": {
+        "additionalProperties": false,
+        "description": "``POST .../owner-signoff``: the eval to settle, the owner's decision and an optional note.",
+        "properties": {
+          "decision": {
+            "default": "done",
+            "enum": [
+              "done",
+              "more_work"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "delivery": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "OwnerSignOffBody",
+        "type": "object"
+      },
       "Page_ActivityItem_": {
         "additionalProperties": false,
         "properties": {
@@ -12969,7 +13011,7 @@
     },
     "/api/v1/features/{project}/{slug}/owner-signoff": {
       "post": {
-        "description": "The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over\nthe ACs that waited on them (409 when no AC waits, or one is not covered by a SHIP).",
+        "description": "The owner settles the owner steps: without a body, writes an ``owner-signoff`` SHIP eval\nover every AC that waited on them (409 when no AC waits, or one is not covered by a SHIP).\nWith ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes\na SHIP over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words.",
         "operationId": "sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post",
         "parameters": [
           {
@@ -12995,6 +13037,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/OwnerSignOffBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "content": {

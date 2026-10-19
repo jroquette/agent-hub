@@ -633,8 +633,10 @@ export interface paths {
     put?: never;
     /**
      * Sign Off Owner Steps
-     * @description The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over
-     *     the ACs that waited on them (409 when no AC waits, or one is not covered by a SHIP).
+     * @description The owner settles the owner steps: without a body, writes an ``owner-signoff`` SHIP eval
+     *     over every AC that waited on them (409 when no AC waits, or one is not covered by a SHIP).
+     *     With ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes
+     *     a SHIP over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words.
      */
     post: operations["sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post"];
     delete?: never;
@@ -3441,6 +3443,22 @@ export interface components {
      * @enum {string}
      */
     Outcome: "done" | "stopped" | "blocked" | "error";
+    /**
+     * OwnerSignOffBody
+     * @description ``POST .../owner-signoff``: the eval to settle, the owner's decision and an optional note.
+     */
+    OwnerSignOffBody: {
+      /**
+       * Decision
+       * @default done
+       * @enum {string}
+       */
+      decision: "done" | "more_work";
+      /** Delivery */
+      delivery?: string | null;
+      /** Note */
+      note?: string | null;
+    };
     /** Page[ActivityItem] */
     Page_ActivityItem_: {
       /** Items */
@@ -6938,7 +6956,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["OwnerSignOffBody"] | null;
+      };
+    };
     responses: {
       /** @description Successful Response */
       201: {
