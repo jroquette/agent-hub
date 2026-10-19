@@ -21,10 +21,19 @@ const END_REASON: Record<EndReason, string> = {
 export interface AgentStatusBadgeProps {
   status: AgentSessionStatus;
   endReason?: EndReason | null | undefined;
+  /** Background agents still running: an idle session waiting on them is at work, not idle. */
+  background?: number;
 }
 
 /** The status indicator of an agent session (D10), with why it ended when it did. */
-export function AgentStatusBadge({ status, endReason }: AgentStatusBadgeProps) {
+export function AgentStatusBadge({ status, endReason, background = 0 }: AgentStatusBadgeProps) {
+  if (status === "idle" && background > 0)
+    return (
+      <StatusBadge
+        status="running"
+        label={`Background · ${String(background)} ${background === 1 ? "agent" : "agents"}`}
+      />
+    );
   const look = AGENT_STATUS[status];
   const reason = status === "ended" && endReason ? ` · ${END_REASON[endReason]}` : "";
   return <StatusBadge status={look.status} label={`${look.label}${reason}`} />;

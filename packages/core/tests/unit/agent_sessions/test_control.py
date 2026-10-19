@@ -37,6 +37,7 @@ from agent_hub.core.agent_sessions.driver import (
     PermissionRequest,
     PermissionSuggestion,
     StartSpec,
+    TaskEvent,
     TextBlock,
     Thinking,
     ToolCall,
@@ -1010,6 +1011,33 @@ async def test_keeps_running_session_when_idle_limit_passes(make_rig: MakeRig) -
     await rig.control.sweep(rig.clock.advance(60))
 
     assert (await rig.control.snapshot(created.id)).status == AgentSessionStatus.RUNNING
+
+
+async def test_keeps_idle_session_until_its_tasks_end_when_idle_limit_passes(
+    make_rig: MakeRig,
+) -> None:
+    started = TaskEvent(task_id="task-1", status="running", description="Review")
+    ended = TaskEvent(task_id="task-1", status="completed")
+    rig = make_rig(
+        limits=SessionLimits(idle_seconds=2),
+        replies={"Review.": (started,), "Report.": (ended,)},
+    )
+    created = await rig.create("Review.")
+    await rig.until_status(created.id, "idle")
+
+    await rig.control.sweep(rig.clock.advance(60))
+    kept = await rig.control.snapshot(created.id)
+    await rig.control.send(created.id, SendMessage(text="Report."))
+    await rig.until(lambda: rig.kinds(created.id).count("result") == 2)
+    await rig.control.sweep(rig.clock.advance(1))
+    still = await rig.control.snapshot(created.id)
+    await rig.control.sweep(rig.clock.advance(2))
+
+    assert kept.status == AgentSessionStatus.IDLE
+    assert still.ended_at is None
+    assert (await rig.until_status(created.id, "ended")).end_reason == EndReason.IDLE_TIMEOUT
+    task = next(r for r in rig.records(created.id) if r.kind == "task")
+    assert (task.by, task.body["status"]) == ("driver", "running")
 
 
 async def test_purges_ended_after_retention_when_swept(make_rig: MakeRig) -> None:

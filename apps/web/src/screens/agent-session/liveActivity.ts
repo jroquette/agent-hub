@@ -1,11 +1,14 @@
 /**
  * What a live turn is doing right now, for the activity bar above the composer: the phase (thinking,
  * writing, a tool, waiting for you, planning), the calls still running (subagents with their own
- * running calls nested), the todo in progress and when the turn and its last record started. Pure:
+ * running calls nested), the todo in progress and when the turn and its last record started. Between
+ * turns it is the background agents still at work, so an idle session that waits on them never
+ * reads as stopped. Pure:
  * derived from the transcript state, so the bar reads the same as the conversation below it.
  */
 import { resultText } from "./ToolCallCard";
 import {
+  runningTasks,
   diffStats,
   toolDiff,
   toolState,
@@ -15,7 +18,8 @@ import {
   type TranscriptState,
 } from "./model";
 
-export type LivePhase = "waiting" | "writing" | "subagents" | "tool" | "thinking" | "planning";
+export type LivePhase =
+  "waiting" | "writing" | "subagents" | "tool" | "thinking" | "planning" | "background";
 
 export interface LiveCall {
   id: string;
@@ -37,7 +41,8 @@ export interface LiveActivity {
   calls: LiveCall[];
   /** The todo in progress, as Claude phrased it. */
   todo: string | null;
-  /** When the open turn started (its user message), null when unknown. */
+  /** When the open turn started (its user message), null when unknown; in the background phase,
+   * when the oldest background agent started. */
   turnStartedAt: string | null;
   /** When the last record arrived. */
   lastEventAt: string | null;
@@ -221,9 +226,40 @@ export function turnSteps(state: TranscriptState): TurnSteps {
   return { activity, feed, earlier, end, tookMs };
 }
 
-/** What the session is doing now; null when no turn runs (idle, ended, failed). */
+/** The background agents an idle session waits on, oldest first; null when there are none. */
+function backgroundActivity(state: TranscriptState): LiveActivity | null {
+  const tasks = runningTasks(state);
+  if (tasks.length === 0) return null;
+  const calls = tasks
+    .map((task): LiveCall => {
+      const tool = task.toolUseId ? state.tools[task.toolUseId] : undefined;
+      const call = tool ? liveCall(state, tool, 0) : null;
+      return {
+        id: task.id,
+        name: call?.name ?? "Task",
+        label: call?.label ?? task.description ?? "Background task",
+        startedAt: task.startedAt,
+        subagent: true,
+        running: call?.running ?? [],
+        calls: call?.calls ?? 0,
+      };
+    })
+    .reverse();
+  return {
+    phase: "background",
+    calls,
+    todo: null,
+    turnStartedAt: tasks[0]?.startedAt ?? null,
+    lastEventAt: state.lastAt,
+    ...turnFeed(state, { ended: true }),
+  };
+}
+
+/** What the session is doing now: the open turn, else the background agents an idle session
+ * waits on; null when neither (idle, ended, failed). */
 export function liveActivity(state: TranscriptState): LiveActivity | null {
   const { status } = state;
+  if (status === "idle") return backgroundActivity(state);
   if (status !== "running" && status !== "waiting_permission") return null;
   const turnStartedAt = turnStart(state);
   // Calls of an earlier, interrupted turn never got a result: only this turn's count.

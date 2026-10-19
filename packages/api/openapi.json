@@ -6418,6 +6418,7 @@
           "tool.call",
           "tool.result",
           "todos",
+          "task",
           "permission.request",
           "result",
           "error",
