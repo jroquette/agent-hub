@@ -33,7 +33,8 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         and any Bash or file-tool call while blocked words cannot be checked: a command or a listed file over
         1 MiB, over 64 listed files or 4 MiB of them in one call, a listed file that is not regular, the
         rule's 300 ms spent, a blocked list of any layer unusable, or a hub.local.json that exists but is
-        unusable; an unreadable listed file gets no verdict)
+        unusable; an unreadable listed file gets no verdict), and a hook event that is not a JSON object
+        while blocked words (or a blocked-list problem) are in effect
 Project values (default branch, tracker team, guard lists) come from hub.json. The branch prefix of a deny's
 hint is the developer's: hub.local.json, else hub.json, else the local part of git config user.email plus `/`
 (git runs only on that deny); with none, the hint has no prefix. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
@@ -72,7 +73,7 @@ from typing import IO, Callable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from hubhooks import Config, emit, load_config, read_input, run_hook
+    from hubhooks import Config, emit, load_config, read_event, run_hook
 except Exception as error:  # a partial install: ask, never let the call through unchecked
     import json
 
@@ -1186,6 +1187,7 @@ BLOCKED_TEXT_CAP = 1 << 20  # characters of a command the rule scans; a longer o
 BLOCKED_TOO_LARGE = "the command is over 1 MiB (too large)"
 BLOCKED_SCAN_BUDGET = 0.3  # seconds for the command's views, the session variables and the files together
 BLOCKED_OUT_OF_TIME = "out of time (300 ms)"
+BLOCKED_UNREADABLE = "the tool input could not be read (not a JSON object)"
 BLOCKED_CHUNK = 1 << 16  # characters searched between two looks at the clock
 BLOCKED_WORD_MAX_CHARS = 64  # the longest blocked word (the reader's bound)
 # D-env: the session variables whose values are scanned (not every value: PATH, HOME and the like
@@ -1860,8 +1862,21 @@ def record(data: dict, decision: str, reason: str) -> None:
         pass
 
 
+def _print_verdict(data: dict, verdict: tuple[str, str]) -> None:
+    """Print the verdict as the hook's output, then record it."""
+    decision, reason = verdict
+    emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
+                                 "permissionDecisionReason": f"[hub guard] {reason}"}})
+    record(data, decision, reason)
+
+
 def main() -> None:
-    data = read_input()
+    data, unreadable = read_event()
+    if unreadable:  # not a JSON object: the words cannot be checked, so ask while they are in effect
+        cfg = load_config(None)
+        if cfg.blocked_words or cfg.blocked_problem:
+            _print_verdict({}, ("ask", BLOCKED_UNCHECKED_REASON.format(BLOCKED_UNREADABLE)))
+        return
     tool = data.get("tool_name")
     if tool != "Bash" and tool not in FILE_TOOLS:
         return
@@ -1873,10 +1888,7 @@ def main() -> None:
             extra, failed = run_extension(path, data, cfg)
             verdict = tighten(verdict, extra, failed)
     if verdict:
-        decision, reason = verdict
-        emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
-                                     "permissionDecisionReason": f"[hub guard] {reason}"}})
-        record(data, decision, reason)
+        _print_verdict(data, verdict)
 
 
 def ask_on_error(kind: str) -> None:
