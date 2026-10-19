@@ -119,7 +119,7 @@ def named(text: str, message: str) -> bool:
         ("hub", script_above_hub, "is outside the hub"),
         ("hub", script_at_root, "is outside the hub"),
         ("hub", leftover_variable, "CLAUDE_PROJECT_DIR"),
-        ("hub", unquoted_variable, "outside double quotes"),
+        ("hub", unquoted_variable, "plain words"),
         ('h"ub', valid_hooks, "holds"),
         ("h\udcffub", valid_hooks, "not UTF-8"),
     ],
@@ -169,9 +169,26 @@ def test_names_only_capped_script_path_when_script_missing(tmp_path: Path) -> No
     assert str(tmp_path) not in message
 
 
-def test_refuses_effort_when_not_a_level(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="effort"):
-        session_settings_path(tmp_path, "../medium")
+@pytest.mark.parametrize(
+    "call",
+    [session_settings_path, hub_hooks_settings, write_session_settings],
+    ids=["path", "read", "write"],
+)
+def test_refuses_effort_when_not_a_level(
+    tmp_path: Path, call: Callable[[Path, str], object]
+) -> None:
+    hub = tmp_path / "hub"
+    hub_hooks(hub)
+    effort = "../" + "x" * 300
+
+    with pytest.raises(HubHooksError, match="effort") as raised:
+        call(hub, effort)
+
+    message = str(raised.value)
+    assert message.startswith(PREFIX)
+    assert "x" * 120 in message
+    assert "x" * 121 not in message
+    assert not (hub / ".agent-runs").exists()
 
 
 def mode_of(path: Path) -> int:
