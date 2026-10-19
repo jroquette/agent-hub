@@ -208,6 +208,25 @@
         "title": "AcceptLearningBody",
         "type": "object"
       },
+      "AcceptanceEval": {
+        "additionalProperties": false,
+        "description": "The feature's acceptance eval (AC-1.6): the latest whole-feature eval (``acs: all``, or a\nlegacy ``eval.md`` with no scope), by its ``delivery`` (``legacy`` for ``eval.md``).",
+        "properties": {
+          "delivery": {
+            "title": "Delivery",
+            "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict"
+          }
+        },
+        "required": [
+          "delivery",
+          "verdict"
+        ],
+        "title": "AcceptanceEval",
+        "type": "object"
+      },
       "ActivityItem": {
         "additionalProperties": false,
         "description": "A notable event in the activity feed.",
@@ -594,6 +613,41 @@
         ],
         "title": "AgentSessionStatus",
         "type": "string"
+      },
+      "AmendmentView": {
+        "additionalProperties": false,
+        "description": "One ``A<n> (<date>, <who>): <title>`` entry of the plan's ``## Amendments``; ``anchor`` is\nthe text of that ``## Amendments…`` heading, which the Plan record view links to.",
+        "properties": {
+          "anchor": {
+            "title": "Anchor",
+            "type": "string"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "who": {
+            "title": "Who",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "who",
+          "title",
+          "anchor"
+        ],
+        "title": "AmendmentView",
+        "type": "object"
       },
       "ApiTimestamp": {
         "format": "date-time",
@@ -1965,7 +2019,7 @@
       },
       "FeatureDetail": {
         "additionalProperties": false,
-        "description": "A feature with its acceptance criteria rows, its records (D3) and every eval.",
+        "description": "A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``\n(None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is\nthe header's ``verdict``.",
         "properties": {
           "ac_rows": {
             "default": [],
@@ -1974,6 +2028,16 @@
             },
             "title": "Ac Rows",
             "type": "array"
+          },
+          "acceptance_eval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AcceptanceEval"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "acs": {
             "anyOf": [
@@ -2017,6 +2081,16 @@
           },
           "phase": {
             "$ref": "#/components/schemas/FeaturePhase"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "problem": {
             "anyOf": [
@@ -5788,6 +5862,48 @@
           "rule"
         ],
         "title": "PermissionSuggestion",
+        "type": "object"
+      },
+      "PlanView": {
+        "additionalProperties": false,
+        "description": "The plan's version (AC-1.4): ``v<amendments + 1>``. ``version`` is None and ``problem``\nsays why when ``plan.md`` could not be read (larger than its cap).",
+        "properties": {
+          "amendments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AmendmentView"
+            },
+            "title": "Amendments",
+            "type": "array"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "PlanView",
         "type": "object"
       },
       "PlatformSyncRequest": {

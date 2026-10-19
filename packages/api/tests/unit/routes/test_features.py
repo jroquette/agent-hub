@@ -10,7 +10,13 @@ from agent_hub.core.features.feature_view import AcRow, FeatureDetail
 from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.projects.project_views import ProjectDetail, TrackerView
 from agent_hub.core.readmodels.filters import Scope
-from agent_hub.core.testing.read_model_builders import HUB_ID, a_feature_tickets, a_feature_view
+from agent_hub.core.testing.read_model_builders import (
+    HUB_ID,
+    a_feature_tickets,
+    a_feature_view,
+    a_plan_view,
+    an_acceptance_eval,
+)
 from agent_hub.generator.feature_files import read_feature_folder
 
 SIGNED_AT = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
@@ -36,6 +42,40 @@ def test_maps_detail_when_feature_requested(wired: Any) -> None:
     response = wired.client.get("/api/v1/features/demo/demo-feature")
 
     assert response.json()["ac_rows"][0]["id"] == "AC-1"
+
+
+# two-level-flows AC-1.4, AC-1.6 (AGH-323): the detail carries the plan version and acceptance eval.
+def test_detail_has_plan_and_acceptance_eval_when_feature_requested(wired: Any) -> None:
+    wired.hubs.features.append(
+        _detail().model_copy(
+            update={"plan": a_plan_view(), "acceptance_eval": an_acceptance_eval()}
+        )
+    )
+
+    body = wired.client.get("/api/v1/features/demo/demo-feature").json()
+
+    assert body["plan"] == {
+        "version": 2,
+        "amendments": [
+            {
+                "id": "A1",
+                "date": "2026-10-20",
+                "who": "Ana",
+                "title": "Split the ticket in two.",
+                "anchor": "Amendments",
+            }
+        ],
+        "problem": None,
+    }
+    assert body["acceptance_eval"] == {"delivery": "feature", "verdict": "SHIP"}
+
+
+def test_serves_null_plan_when_feature_has_none(wired: Any) -> None:
+    wired.hubs.features.append(_detail())
+
+    body = wired.client.get("/api/v1/features/demo/demo-feature").json()
+
+    assert (body["plan"], body["acceptance_eval"]) == (None, None)
 
 
 def test_answers_not_found_when_feature_unknown(wired: Any) -> None:
