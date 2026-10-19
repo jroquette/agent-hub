@@ -1,4 +1,5 @@
-"""``environments.production``: one finding per production environment (environments.md).
+"""``environments.production``: one finding per production environment (environments.md), and
+``environments.env_file``: the declared env files' problems (scenarios.md § Credentials).
 
 Each production environment of ``hub.json`` and the developer's ``hub.local.json`` is named at
 its source, the file its effective ``access`` comes from: a warning when the agent may write
@@ -13,9 +14,10 @@ from collections.abc import Iterable
 from dataclasses import replace
 from typing import Final
 
-from agent_hub.core.doctor.finding import Finding, Rule
-from agent_hub.core.doctor.snapshot import DoctorSnapshot
+from agent_hub.core.doctor.finding import Finding, Read, Rule
+from agent_hub.core.doctor.snapshot import DoctorSnapshot, EnvFileFacts
 from agent_hub.core.hub_config.doctor_rules import (
+    ENVIRONMENTS_ENV_FILE_RULE,
     ENVIRONMENTS_PRODUCTION_RULE,
     RULE_MODULES,
     Severity,
@@ -61,4 +63,44 @@ ENVIRONMENTS_PRODUCTION: Final = Rule(
     module=RULE_MODULES.get(ENVIRONMENTS_PRODUCTION_RULE),
     reads=frozenset(),
     check=_environments_production,
+)
+
+
+ENV_FILE_FIX: Final = (
+    "keep each declared env file present, git-ignored and inside the hub or a declared repo"
+    " (docs/design/scenarios.md)"
+)
+
+
+def _environments_env_file(snapshot: DoctorSnapshot) -> Iterable[Finding]:
+    """``environments.env_file``: a warning per problem of each declared env file, at the file
+    that declares it; nothing when no env file is declared."""
+    return tuple(
+        ENVIRONMENTS_ENV_FILE.finding(
+            path=facts.source,
+            message=f"env file {facts.path} of {facts.environment} {problem}",
+            fix=ENV_FILE_FIX,
+        )
+        for facts in snapshot.env_files or ()
+        for problem in _env_file_problems(facts)
+    )
+
+
+def _env_file_problems(facts: EnvFileFacts) -> Iterable[str]:
+    if not facts.exists:
+        yield "is missing"
+    if facts.holder is None:
+        yield "is outside the hub and every declared repo"
+    elif facts.ignored is False:
+        yield f"is not ignored by git in {facts.holder}"
+
+
+ENVIRONMENTS_ENV_FILE: Final = Rule(
+    id=ENVIRONMENTS_ENV_FILE_RULE,
+    severity=Severity.WARNING,
+    summary="each declared env file, a warning when it is missing, not git-ignored or outside"
+    " the hub and its repos",
+    module=RULE_MODULES.get(ENVIRONMENTS_ENV_FILE_RULE),
+    reads=frozenset({Read.ENV_FILES}),
+    check=_environments_env_file,
 )

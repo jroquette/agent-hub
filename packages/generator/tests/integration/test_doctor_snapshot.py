@@ -6,6 +6,8 @@ command and the control plane share, with git and the developer's prefix injecte
 
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -271,3 +273,76 @@ def test_reads_no_item_folders_when_rule_not_selected(hub_root: Path) -> None:
 
     assert snapshot.item_leftovers is None
     assert snapshot.item_folders == ()
+
+
+REAL_GIT = shutil.which("git")
+
+
+@pytest.fixture
+def isolated_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No user or system git config, excludes included, reaches a test's git."""
+    for variable in [name for name in os.environ if name.startswith("GIT_")]:
+        monkeypatch.delenv(variable)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
+    (home / ".gitconfig").write_text("[maintenance]\n\tauto = false\n", encoding="utf-8")
+
+
+@pytest.mark.usefixtures("isolated_git")
+def test_reads_ignored_when_environments_env_file_in_repo(hub_root: Path) -> None:
+    # AC-350.45: present, held by a declared repo and ignored there by its .gitignore, or not.
+    assert REAL_GIT is not None, "git is needed for the env file cases"
+    checkout = hub_root.parent / "demo-api"
+    checkout.mkdir()
+    subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [REAL_GIT, "init", "-q"], cwd=checkout, check=True, capture_output=True
+    )
+    (checkout / ".gitignore").write_text(".env.*\n", encoding="utf-8")
+    (checkout / ".env.staging").write_text("DEMO_TOKEN=x\n", encoding="utf-8")
+    (checkout / "config.env").write_text("DEMO_TOKEN=x\n", encoding="utf-8")
+    document = a_hub_document()
+    document["platform"]["version"] = RUNNING
+    document["repos"].append(a_second_repo())
+    document["environments"] = {
+        "staging": {"access": "ask", "credentials": {"env_file": "demo-api/.env.staging"}},
+        "qa": {"access": "read", "credentials": {"env_file": "demo-api/config.env"}},
+        "dev": {"access": "write", "credentials": {"env_file": "demo-api/.env.dev"}},
+        "box": {"access": "write", "credentials": {"env_file": "secrets/.env.box"}},
+        "plain": {"access": "write"},
+    }
+    config = HubConfig.model_validate(document)
+    selection = select_rules(REGISTRY, config=config, only=("environments.env_file",))
+    assert isinstance(selection, Selection)
+
+    snapshot = build_doctor_snapshot(
+        str(hub_root),
+        config=config,
+        running=RUNNING,
+        selection=selection,
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+
+    assert snapshot.env_files is not None
+    assert [
+        (facts.path, facts.environment, facts.source, facts.exists, facts.holder, facts.ignored)
+        for facts in snapshot.env_files
+    ] == [
+        ("demo-api/.env.staging", "staging", "hub.json", True, "demo-api", True),
+        ("demo-api/config.env", "qa", "hub.json", True, "demo-api", False),
+        ("demo-api/.env.dev", "dev", "hub.json", False, "demo-api", True),
+        ("secrets/.env.box", "box", "hub.json", False, None, None),
+    ]
+    unselected = build_doctor_snapshot(
+        str(hub_root),
+        config=config,
+        running=RUNNING,
+        selection=NO_RULES,
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+    assert unselected.env_files is None

@@ -98,6 +98,37 @@ def effective_environments(config: HubConfig, local: LocalConfig) -> EffectiveEn
     )
 
 
+class DeclaredEnvFile(BaseModel):
+    """An env file a declared environment or endpoint names, with the first that names it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+    environment: str
+    source: str
+
+
+def declared_env_files(view: EffectiveEnvironments) -> tuple[DeclaredEnvFile, ...]:
+    """Each env file of ``view`` once: the environments' first, then the endpoints'."""
+    found: dict[str, DeclaredEnvFile] = {}
+    named = [
+        (environment.credentials, environment.name, environment.source)
+        for environment in view.environments
+    ]
+    named.extend(
+        (endpoint.endpoint.credentials, endpoint.environment, endpoint.source)
+        for service in view.services
+        for endpoint in service.endpoints
+    )
+    for credentials, environment, source in named:
+        if credentials is not None and credentials.env_file is not None:
+            found.setdefault(
+                credentials.env_file,
+                DeclaredEnvFile(path=credentials.env_file, environment=environment, source=source),
+            )
+    return tuple(found.values())
+
+
 def env_file_for(
     view: EffectiveEnvironments, environment: str, *, service: tuple[str, str] | None = None
 ) -> str | None:
