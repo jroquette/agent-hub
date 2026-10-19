@@ -111,6 +111,48 @@ export function pickEval(
   return evals.at(-1);
 }
 
+/**
+ * The SHIP-WITH-OWNER-STEPS evals whose owner steps were signed off afterwards, each with the
+ * owner's sign-off that settled it. The files stay as written (evals are never edited), but a
+ * sign-off covers every AC that still waited on owner steps when it was written, so any
+ * owner-steps eval before it is resolved: it reads as done, not as waiting forever.
+ */
+export function settledOwnerSteps(evals: readonly EvalRecord[]): Map<string, EvalRecord> {
+  const time = (e: EvalRecord) => (e.evaluated_at ? Date.parse(e.evaluated_at) : Number.NaN);
+  const signoffs = evals.filter(
+    (e) => e.provenance === "owner" && e.verdict === "SHIP" && !e.problem && !Number.isNaN(time(e)),
+  );
+  const settled = new Map<string, EvalRecord>();
+  for (const e of evals) {
+    if (e.verdict !== "SHIP-WITH-OWNER-STEPS" || e.problem) continue;
+    const at = time(e);
+    // An undated eval is older than any sign-off: the sign-off is always dated.
+    const by = signoffs
+      .filter((s) => Number.isNaN(at) || time(s) > at)
+      .sort((a, b) => time(a) - time(b))[0];
+    if (by) settled.set(e.path, by);
+  }
+  return settled;
+}
+
+/** The verdict of an eval as it reads now: an owner-steps one signed off since reads as done. */
+function VerdictBadge({ record, settledBy }: { record: EvalRecord; settledBy?: EvalRecord | undefined }) {
+  if (!record.verdict) return null;
+  if (settledBy) {
+    return (
+      <Tooltip
+        label={`The eval said ${record.verdict}; you signed the owner steps off in ${settledBy.delivery}.`}
+      >
+        <span className="ah-row" style={{ gap: 6 }}>
+          <StatusBadge status="done" label="SHIP" />
+          <span className="ah-small ah-muted">owner steps signed off</span>
+        </span>
+      </Tooltip>
+    );
+  }
+  return <StatusBadge status={VERDICT_STATUS[record.verdict]} label={record.verdict} />;
+}
+
 /** One eval as a Discuss reference: its verdict and the scope it evaluated. */
 export function evalReference(record: EvalRecord): DiscussReference {
   const acs = record.acs === "all" ? "all" : record.acs.join(", ");
@@ -497,11 +539,14 @@ function EvalCard({
   project,
   record,
   named,
+  settledBy,
 }: {
   project: string;
   record: EvalRecord;
   /** Name the delivery: there are several evals to tell apart. */
   named: boolean;
+  /** The owner's sign-off that settled this eval's owner steps, if any. */
+  settledBy?: EvalRecord | undefined;
 }) {
   const { addReference, references } = useDiscuss();
   const { tz } = usePreferences();
@@ -513,9 +558,7 @@ function EvalCard({
       aria-label={`Eval ${record.delivery}`}
     >
       <div className="ah-row ah-wrap" style={{ gap: 10 }}>
-        {record.verdict && (
-          <StatusBadge status={VERDICT_STATUS[record.verdict]} label={record.verdict} />
-        )}
+        <VerdictBadge record={record} settledBy={settledBy} />
         {named && <b className="ah-mono">{deliveryLabel(record)}</b>}
         <span className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 6 }}>
           {[
@@ -636,6 +679,7 @@ export function EvalTab({
     );
   }
   const history = evalHistory(evals, tickets, epics);
+  const settled = settledOwnerSteps(evals);
   const columns: { label: string; width?: number; cell: (e: EvalRecord) => ReactNode }[] = [
     {
       label: "Eval",
@@ -664,7 +708,7 @@ export function EvalTab({
             Unreadable: {e.problem}
           </span>
         ) : e.verdict ? (
-          <StatusBadge status={VERDICT_STATUS[e.verdict]} label={e.verdict} />
+          <VerdictBadge record={e} settledBy={settled.get(e.path)} />
         ) : (
           <span className="ah-subtle">—</span>
         ),
@@ -742,7 +786,14 @@ export function EvalTab({
           ))}
         </table>
       </div>
-      {selected && <EvalCard project={project} record={selected} named />}
+      {selected && (
+        <EvalCard
+          project={project}
+          record={selected}
+          named
+          settledBy={settled.get(selected.path)}
+        />
+      )}
     </div>
   );
 }
