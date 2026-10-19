@@ -4,13 +4,14 @@ Each edit takes the parsed document and returns a new one, the document given le
 an ``EditRefusal`` naming why (docs/design/environments.md § ``hub env``). Every other key and
 the key order are kept: a new entry goes last in its map, and a map an edit empties is dropped,
 so an add followed by its remove gives the document back. Whether the result is a valid file is
-not checked here: the caller validates it with the same checks as a read. A name given by the
+not checked here: the caller validates it with the same checks as a read. A name starting
+with ``_`` is a comment key, never a name: every edit refuses one. A name given by the
 caller is echoed in a refusal only when it is a valid name without a secret's shape.
 """
 
 import copy
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Final, NamedTuple
 
 from agent_hub.core.hub_config.environments import MAX_NAME_CHARS
@@ -31,6 +32,16 @@ class EditRefusal(NamedTuple):
     message: str
 
 
+def _comment_refusal(*names: str | None) -> EditRefusal | None:
+    """A refusal for the first name that is a comment key (``_`` first), else ``None``."""
+    for name in names:
+        if name is not None and name.startswith("_"):
+            return EditRefusal(
+                f"{shown_name(name)}: a name starting with _ is a comment key; choose another name"
+            )
+    return None
+
+
 def shown_name(name: str) -> str:
     """``name`` as given when it is a valid name with no secret's shape, else ``<name>``."""
     if len(name) <= MAX_NAME_CHARS and _NAME.fullmatch(name) and secret_kind(name) is None:
@@ -46,6 +57,8 @@ def add_environment(
     Refused when a name equal ignoring case is in ``document`` or in ``declared`` (the other
     file's names, each with its file); the refusal names the name already declared.
     """
+    if refusal := _comment_refusal(name):
+        return refusal
     edited = copy.deepcopy(document)
     environments = _map(edited, "environments")
     taken = {key: file for key in environments if not key.startswith("_")} | dict(declared)
@@ -67,6 +80,8 @@ def set_environment(
 ) -> Document | EditRefusal:
     """``document`` with ``changes`` made to the environment ``name``: a key set to ``None`` is
     removed. With ``may_create`` an absent environment is added (a local tightening)."""
+    if refusal := _comment_refusal(name):
+        return refusal
     edited = copy.deepcopy(document)
     environments = _map(edited, "environments")
     entry = environments.get(name)
@@ -86,6 +101,8 @@ def set_environment(
 
 def remove_environment(document: Document, name: str, *, file: str) -> Document | EditRefusal:
     """``document`` without the environment ``name``; refused while an endpoint names it."""
+    if refusal := _comment_refusal(name):
+        return refusal
     edited = copy.deepcopy(document)
     environments = _map(edited, "environments")
     if name not in environments:
@@ -113,15 +130,21 @@ def add_endpoint(
     kind: str | None,
     file: str,
     creates_repo: bool,
+    known_repos: Collection[str] = (),
 ) -> Document | EditRefusal:
     """``document`` with ``endpoint`` for ``service`` of ``repo`` in ``environment``; the
     service is added when absent, with ``kind`` when given. With ``creates_repo`` (the local
-    file), an absent ``repos`` entry is added as ``{dir, services}``."""
+    file), an absent ``repos`` entry is added as ``{dir, services}``, for a dir in
+    ``known_repos`` (``hub.json``'s) only."""
+    if refusal := _comment_refusal(repo, service, environment):
+        return refusal
     edited = copy.deepcopy(document)
     entry = _repo(edited, repo)
     if entry is None:
         if not creates_repo:
             return EditRefusal(f"no repo {shown_name(repo)} in {file}")
+        if repo not in known_repos:
+            return EditRefusal(f"no repo {shown_name(repo)} in hub.json")
         repos = edited.get("repos")
         repos = repos if isinstance(repos, list) else []
         entry = {"dir": repo, "services": {}}
@@ -148,6 +171,8 @@ def remove_endpoint(
     """``document`` without ``service``'s endpoint in ``environment``, or without the whole
     service when ``environment`` is ``None``. A map left empty is dropped (a service left with no
     key too), and so is a local ``repos`` entry left with only its ``dir``."""
+    if refusal := _comment_refusal(repo, service, environment):
+        return refusal
     edited = copy.deepcopy(document)
     entry = _repo(edited, repo)
     if entry is None:
