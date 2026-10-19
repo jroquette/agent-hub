@@ -505,3 +505,11 @@ a.ah-flow-card-title:hover > span:last-child {
   gap: 3px;
   min-height: var(--control-sm);
 }
+
+/* An AC's text in its tooltip in the Tickets table: three lines at most, for a quick check. */
+.ah-ticket-ac-tip {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

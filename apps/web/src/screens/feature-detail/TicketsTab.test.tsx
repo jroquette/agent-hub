@@ -10,6 +10,7 @@ import {
   aSession,
   aTicketPlan,
   aTicketRow,
+  anAcRow,
   renderWithApi,
   type ApiRoutes,
   type FeatureTickets,
@@ -21,6 +22,7 @@ function show(
   extra: {
     error?: ApiProblem | null;
     acPasses?: Record<string, boolean>;
+    acRows?: ReturnType<typeof anAcRow>[];
     routes?: ApiRoutes;
   } = {},
 ) {
@@ -33,6 +35,7 @@ function show(
       error={extra.error ?? null}
       onRefresh={onRefresh}
       acPasses={extra.acPasses}
+      acRows={extra.acRows}
     />,
     { routes: { "/api/v1/sessions": aPage([]), ...extra.routes } },
   );
@@ -293,6 +296,34 @@ describe("TicketsTab", () => {
     );
   });
 
+  it("describes each AC id with what must be true and marks an owner step (tickets)", () => {
+    const data = aFeatureTickets();
+    show(aFeatureTickets({ tickets: [{ ...nth(data.tickets, 0), acs: ["AC-1", "AC-2"] }] }), {
+      acPasses: { "AC-1": true, "AC-2": false },
+      acRows: [
+        anAcRow({
+          id: "AC-1",
+          description: "Given a ticket, when its ACs are listed, then each shows its text",
+        }),
+        anAcRow({
+          id: "AC-2",
+          description: "The owner checks the PDF",
+          passes: false,
+          manual: true,
+        }),
+      ],
+    });
+
+    const table = within(screen.getByRole("table", { name: "Tickets" }));
+    const gwt = table.getByRole("link", { name: /^AC-1\s*Passes$/, hidden: true });
+    expect(gwt).toHaveAttribute("href", "/?doc=acs&ac=AC-1");
+    expect(gwt).toHaveAccessibleDescription("each shows its text");
+    expect(gwt).not.toHaveAttribute("title");
+    expect(
+      table.getByRole("link", { name: /^AC-2\s*Owner step$/, hidden: true }),
+    ).toHaveAccessibleDescription("The owner checks the PDF");
+  });
+
   it("shows the same AC meter whatever the number of ACs, ids folded under it (tickets)", () => {
     const data = aFeatureTickets();
     const many = { ...nth(data.tickets, 0), acs: ["AC-1", "AC-2", "AC-3", "AC-4"] };
@@ -304,12 +335,12 @@ describe("TicketsTab", () => {
     const table = within(screen.getByRole("table", { name: "Tickets" }));
     expect(table.getByText("3/4 ACs passing")).toBeInTheDocument();
     expect(table.getByText("1/1 ACs passing")).toBeInTheDocument();
-    expect(table.getByRole("link", { name: /^AC-8\s*passing$/, hidden: true })).toHaveAttribute(
+    expect(table.getByRole("link", { name: /^AC-8\s*Passes$/, hidden: true })).toHaveAttribute(
       "href",
       "/?doc=acs&ac=AC-8",
     );
     expect(
-      table.getByRole("link", { name: /^AC-4\s*not passing yet$/, hidden: true }),
+      table.getByRole("link", { name: /^AC-4\s*Not passing$/, hidden: true }),
     ).toBeInTheDocument();
   });
 

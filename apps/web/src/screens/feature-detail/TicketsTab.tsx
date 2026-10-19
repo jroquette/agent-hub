@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
-import { EmptyState, Icon, ProblemError, Skeleton, StatusBadge } from "../../components";
+import { EmptyState, Icon, ProblemError, Skeleton, StatusBadge, Tooltip } from "../../components";
 import { useApi, type ApiProblem } from "../../lib/api";
 import { fmtClock, fmtDateTime, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
@@ -21,6 +21,7 @@ import {
   ticketAnchor,
   type TicketAction,
 } from "./PlanningView";
+import { PASS, gwtParts, passOf } from "./CriteriaTab";
 import { StartTicketButton, canStartTicket } from "./StartTicket";
 import { TICKETS_REFRESH_MS } from "./queries";
 import { TicketNotice } from "./TicketNotice";
@@ -28,6 +29,7 @@ import { TicketNotice } from "./TicketNotice";
 type FeatureTickets = components["schemas"]["FeatureTickets"];
 type TicketRow = components["schemas"]["TicketRow"];
 type EdgeSource = components["schemas"]["EdgeSource"];
+type AcRow = components["schemas"]["AcRow"];
 /** Whether each AC passes, by id. */
 type AcPasses = Readonly<Record<string, boolean>>;
 
@@ -242,8 +244,52 @@ function Blockers({ row, data }: { row: TicketRow; data: FeatureTickets }) {
   );
 }
 
+/**
+ * One AC id, linking to it in Criteria. Hover or focus shows what must be true (the "Then" of a
+ * Given / When / Then, else the whole text) for a quick check; its status is the icon.
+ */
+function AcLink({
+  id,
+  row,
+  passes,
+}: {
+  id: string;
+  row?: AcRow | undefined;
+  passes?: boolean | undefined;
+}) {
+  const tipId = useId();
+  const pass = row
+    ? PASS[passOf(row)]
+    : passes === undefined
+      ? null
+      : PASS[passes ? "yes" : "none"];
+  const summary = row ? (gwtParts(row.description)?.then ?? row.description) : null;
+  return (
+    <Tooltip id={tipId} label={summary && <span className="ah-ticket-ac-tip">{summary}</span>}>
+      <Link
+        className="ah-row ah-mono ah-small"
+        style={{ gap: 4 }}
+        to={{ search: `?doc=acs&ac=${encodeURIComponent(id)}` }}
+        aria-describedby={summary ? tipId : undefined}
+      >
+        {pass && <Icon name={pass.icon} size="sm" />}
+        {id}
+        {pass && <span className="ah-sr"> {pass.label}</span>}
+      </Link>
+    </Tooltip>
+  );
+}
+
 /** How many of the ticket's ACs pass, the same meter as its card; the ids fold under it. */
-function Acs({ row, acPasses }: { row: TicketRow; acPasses?: AcPasses | undefined }) {
+function Acs({
+  row,
+  acPasses,
+  acRows,
+}: {
+  row: TicketRow;
+  acPasses?: AcPasses | undefined;
+  acRows?: ReadonlyMap<string, AcRow> | undefined;
+}) {
   if (row.acs.length === 0) return <span className="ah-subtle">—</span>;
   return (
     <details className="ah-ticket-acs">
@@ -251,25 +297,11 @@ function Acs({ row, acPasses }: { row: TicketRow; acPasses?: AcPasses | undefine
         <AcCount row={row} acPasses={acPasses} />
       </summary>
       <ul className="ah-stack">
-        {row.acs.map((ac) => {
-          const passes = acPasses?.[ac];
-          return (
-            <li key={ac}>
-              <Link
-                className="ah-row ah-mono ah-small"
-                style={{ gap: 4 }}
-                to={{ search: `?doc=acs&ac=${encodeURIComponent(ac)}` }}
-                title={`Open ${ac} in Criteria${acPasses ? (passes ? " · passing" : " · not passing yet") : ""}`}
-              >
-                {acPasses && <Icon name={passes ? "circle-check" : "clock"} size="sm" />}
-                {ac}
-                {acPasses && (
-                  <span className="ah-sr">{passes ? " passing" : " not passing yet"}</span>
-                )}
-              </Link>
-            </li>
-          );
-        })}
+        {row.acs.map((ac) => (
+          <li key={ac}>
+            <AcLink id={ac} row={acRows?.get(ac)} passes={acPasses?.[ac]} />
+          </li>
+        ))}
       </ul>
     </details>
   );
@@ -295,11 +327,13 @@ function TicketsTable({
   data,
   project,
   acPasses,
+  acRows,
   ticketAction,
 }: {
   data: FeatureTickets;
   project: string;
   acPasses?: AcPasses | undefined;
+  acRows?: ReadonlyMap<string, AcRow> | undefined;
   ticketAction?: TicketAction | undefined;
 }) {
   const byRef = new Set(data.tickets.map((t) => t.ref));
@@ -320,7 +354,11 @@ function TicketsTable({
     { label: "Status", width: 110, nowrap: true, cell: (row) => <StateBadge row={row} /> },
     { label: "Assignee", width: 110, cell: (row) => <Assignee row={row} /> },
     { label: "Blocked by", width: 110, cell: (row) => <Blockers row={row} data={data} /> },
-    { label: "ACs", width: 150, cell: (row) => <Acs row={row} acPasses={acPasses} /> },
+    {
+      label: "ACs",
+      width: 150,
+      cell: (row) => <Acs row={row} acPasses={acPasses} acRows={acRows} />,
+    },
     {
       label: "Sessions",
       width: 150,
@@ -419,6 +457,8 @@ export interface TicketsTabProps {
   refreshing?: boolean | undefined;
   /** Whether each AC passes (by id), from the feature record; shows each ticket's progress. */
   acPasses?: AcPasses | undefined;
+  /** The feature's ACs, for each AC's text and status (owner step included) in the ids list. */
+  acRows?: readonly AcRow[] | undefined;
 }
 
 /**
@@ -434,7 +474,9 @@ export function TicketsTab({
   onRefresh,
   refreshing,
   acPasses,
+  acRows,
 }: TicketsTabProps) {
+  const acById = acRows && new Map(acRows.map((ac) => [ac.id, ac]));
   if (error) {
     return (
       <ProblemError
@@ -475,6 +517,7 @@ export function TicketsTab({
             data={data}
             project={project}
             acPasses={acPasses}
+            acRows={acById}
             ticketAction={ticketAction}
           />
         </>
