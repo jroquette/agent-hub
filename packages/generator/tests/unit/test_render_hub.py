@@ -4924,6 +4924,8 @@ ADAPTER_MODULES = frozenset(
         "workflow_discovery.py",
         "workflow_fixtures.py",
         "workflow_source.py",
+        "action_discovery.py",
+        "git_answers.py",
     }
 )
 RENDERING_MODULES = frozenset(
