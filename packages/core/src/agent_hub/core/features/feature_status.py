@@ -60,11 +60,8 @@ PLAN: Final = "plan.md"
 ISSUES: Final = "issues.md"
 RECORD: Final = RECORD_FILE
 EVAL: Final = "eval.md"
-# The ``/feature`` intake brief: only its presence counts (AC-1.2); it has no tab of its own.
-BRIEF: Final = "brief.md"
-# The record files of a feature folder, in the order a feature is built (the brief last, so the
-# order of the files before it is unchanged).
-RECORD_FILES: Final = (SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL, BRIEF)
+# The record files of a feature folder, in the order a feature is built.
+RECORD_FILES: Final = (SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL)
 # How much of ``spec.md`` and ``eval.md`` is read for the frontmatter and the verdict.
 HEAD_BYTES: Final = 65_536
 # ``plan.md`` is read whole up to this size, so its ``## Amendments`` at the end is seen (P1).
@@ -72,13 +69,6 @@ MAX_PLAN_BYTES: Final = 262_144
 PLAN_TOO_LARGE: Final = (
     f"{PLAN} is larger than {MAX_PLAN_BYTES // 1024} KiB; its version could not be read."
 )
-# The UX designs are the folder's own ``ux-*.md`` files: at most this many, their head only (P2).
-UX_PREFIX: Final = "ux-"
-MAX_UX_FILES: Final = 50
-UX_HEAD_BYTES: Final = 4096
-# A review round's file in ``reviews/<ticket>/``: only its name is kept, at most this many (P3).
-ROUND_NAME: Final = re.compile(r"[a-z]+-r\d+\.json")
-MAX_ROUND_NAMES: Final = 2000
 _VERDICT_LINE_CHARS: Final = 200
 _SIZES: Final = ("spike", "bounded", "architectural")
 
@@ -115,10 +105,7 @@ class FeatureFolder:
     ``evals`` and ``reviews`` hold the heads of ``evals/*.md`` and ``reviews/*.md`` sorted by
     name; ``evals_skipped`` and ``reviews_skipped`` count the files left unread over the cap.
     ``plan`` holds ``plan.md`` whole, None when absent or larger than ``MAX_PLAN_BYTES``
-    (``plan_too_large`` then says so). ``ux_designs`` holds the heads of the folder's own
-    ``ux-*.md`` sorted by name; ``ux_skipped`` counts those left unread over ``MAX_UX_FILES``.
-    ``review_rounds`` names the review round files (``<ticket>/<reviewer>-r<N>.json``, never
-    read), sorted, at most ``MAX_ROUND_NAMES``.
+    (``plan_too_large`` then says so).
     """
 
     slug: str
@@ -132,9 +119,6 @@ class FeatureFolder:
     reviews_skipped: int = 0
     plan: bytes | None = None
     plan_too_large: bool = False
-    ux_designs: tuple[RecordHead, ...] = ()
-    ux_skipped: int = 0
-    review_rounds: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
