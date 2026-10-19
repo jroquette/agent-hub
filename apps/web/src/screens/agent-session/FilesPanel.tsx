@@ -29,7 +29,10 @@ import { writtenText } from "./netDiff";
 const KIND_NOTE: Record<FileKind, string> = {
   code: "The files of your repo this session changed: what goes in the pull request.",
   plan: "The plans Claude wrote for this work. They stay on this machine.",
-  learning: "What Claude proposes to remember. They reach the brain only once you accept them.",
+  feature:
+    "The feature's record in the brain: spec, plan, research, evals, and the spec and quality reviews of the workflow. Not part of your pull request.",
+  learning:
+    "Notes for the brain: what Claude proposes to remember, and the brain's own notes it changed.",
   scratch:
     "Notes Claude wrote for itself (temporary folders, its own settings). Nothing to review.",
 };
