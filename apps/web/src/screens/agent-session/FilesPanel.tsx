@@ -284,13 +284,20 @@ function Breakable({ text }: { text: string }) {
  * folder is inside it, the home folder as `~`; the full path one click away. */
 function RootLine({ base, workdirLabel }: { base: string; workdirLabel: string | undefined }) {
   const path = base.slice(0, -1);
-  const marker = workdirLabel ? `/${workdirLabel}/` : null;
+  // A worktree is labelled `<repo>/<name>` and lives in `<repo>/.claude/worktrees/<name>/`; a
+  // repo or the hub is labelled with its folder's name.
+  const slash = workdirLabel?.indexOf("/") ?? -1;
+  const marker = !workdirLabel
+    ? null
+    : slash > 0
+      ? `/${workdirLabel.slice(0, slash)}/.claude/worktrees/${workdirLabel.slice(slash + 1)}/`
+      : `/${workdirLabel}/`;
   const at = marker ? `${path}/`.indexOf(marker) : -1;
   let lead = "";
   let rest = path.replace(/^(?:\/Users\/[^/]+|\/home\/[^/]+)(?=\/|$)/, "~");
-  if (at >= 0 && workdirLabel) {
+  if (marker && at >= 0 && workdirLabel) {
     lead = workdirLabel;
-    rest = path.slice(at + workdirLabel.length + 1);
+    rest = path.slice(at + marker.length - 1);
   }
   return (
     <div className="as-files-root ah-small">
