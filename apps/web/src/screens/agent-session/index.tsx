@@ -404,7 +404,8 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           </div>
           <div className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 12 }}>
             <span>
-              {session.project} › <b className="ah-mono">{session.workdir_label}</b>
+              {session.project} ›{" "}
+              <b className="ah-mono as-workdir-label">{session.workdir_label}</b>
             </span>
             <span>
               {modeLabel(mode)}
@@ -450,6 +451,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 files={files}
                 sessionId={agentSessionId}
                 onClose={closeFiles}
+                workdirLabel={session.workdir_label}
                 review={review}
                 initialPath={filePick.path}
                 pickNonce={filePick.nonce}

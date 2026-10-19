@@ -45,6 +45,7 @@ describe("FilesPanel (review)", () => {
     expect(
       within(list)
         .getAllByRole("button")
+        .filter((button) => button.dataset.filePath !== undefined)
         .map((button) => button.textContent),
     ).toEqual(["Anew.ts+1−0", "Mapp.ts+1−1"]);
     // Narrow, no file is open until you pick one: the list is all there is.
@@ -309,6 +310,7 @@ describe("FilesPanel (kinds of file)", () => {
     expect(
       within(list)
         .getAllByRole("button")
+        .filter((button) => button.dataset.filePath !== undefined)
         .map((b) => b.textContent),
     ).toEqual(["Anew.ts+1−0"]);
 
@@ -376,5 +378,47 @@ describe("FilesPanel (kinds of file)", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /1 to review/ })).toBeInTheDocument();
+  });
+});
+
+describe("FilesPanel (long names)", () => {
+  const DEEP = [
+    tool("d1", "Write", {
+      file_path:
+        "/Users/me/work/api/.claude/worktrees/tip-1563-claims/Lambdas/a/test_order_cover.py",
+      content: "x = 1",
+    }),
+    tool("d2", "Write", {
+      file_path: "/Users/me/work/api/.claude/worktrees/tip-1563-claims/Lambdas/b/service.py",
+      content: "y = 2",
+    }),
+  ];
+
+  it("shows the root whole, its worktree in bold, and copies the full path", () => {
+    render(
+      <FilesPanel
+        files={filesOf(DEEP)}
+        sessionId="s1"
+        onClose={vi.fn()}
+        workdirLabel="tip-1563-claims"
+      />,
+    );
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(within(list).getByText("tip-1563-claims").tagName).toBe("B");
+    expect(within(list).getByText(/\/Lambdas/)).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: "Copy folder path" })).toBeInTheDocument();
+    expect(within(list).getByRole("list", { name: "Folder a" })).toBeInTheDocument();
+  });
+
+  it("falls back to the full root, home as ~, without a worktree to match", () => {
+    render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
+    const root = screen.getByText("In").parentElement;
+    expect(root).toHaveTextContent("~/work/api/.claude/worktrees/tip-1563-claims/Lambdas");
+  });
+
+  it("lets you copy the open file's full path", async () => {
+    render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: /test_order_cover/ }));
+    expect(screen.getByRole("button", { name: "Copy file path" })).toBeInTheDocument();
   });
 });

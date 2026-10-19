@@ -1367,7 +1367,12 @@ body.as-resizing .as-drawer {
   grid-template-rows: minmax(0, 1fr);
 }
 .as-files-split {
-  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  position: relative;
+  grid-template-columns: var(--as-files-list-w, 280px) minmax(0, 1fr);
+}
+/* The list's right edge: the drawer's own grip, resizing the list against the open file. */
+.as-files-split-handle {
+  left: calc(var(--as-files-list-w, 280px) - 4px);
 }
 .as-files-nav {
   display: flex;
@@ -1401,14 +1406,26 @@ body.as-resizing .as-drawer {
   background: var(--done);
   transition: width var(--dur-base) var(--ease-out);
 }
+/* The files' root: wraps whole (the worktree in bold), with its copy button. */
 .as-files-root {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
+}
+.as-files-root-path {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
   font-family: var(--font-mono);
+}
+.as-files-root-path > b {
+  color: var(--text);
+  font-weight: 600;
+}
+.as-files-copy {
+  flex: none;
 }
 .as-files-group ul {
   list-style: none;
@@ -1420,24 +1437,26 @@ body.as-resizing .as-drawer {
 }
 .as-files-folder {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   padding: 2px var(--space-2) 4px;
   color: var(--text-subtle);
   font-family: var(--font-mono);
 }
+.as-files-folder > svg {
+  flex: none;
+  margin-top: 2px;
+}
 .as-files-folder > span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .as-files-folder + ul {
   padding-left: var(--space-3);
 }
 .as-files-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-1);
   padding-right: var(--space-1);
   border-radius: var(--radius-md);
@@ -1454,7 +1473,7 @@ body.as-resizing .as-drawer {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   padding: 5px var(--space-2);
   border: 0;
@@ -1474,9 +1493,7 @@ body.as-resizing .as-drawer {
 .as-files-nav-name {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
 }
 .as-files-stats {
@@ -1510,10 +1527,8 @@ body.as-resizing .as-drawer {
 }
 .as-files-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 13px var(--font-mono);
+  overflow-wrap: anywhere;
+  font: 600 13px var(--font-mono);
 }
 .as-files-viewed {
   flex: none;
@@ -1565,12 +1580,24 @@ body.as-resizing .as-drawer {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
+/* The open file: its folder on one line, its name (status, lines) under it, both whole. */
 .as-files-detail-title {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
   flex: 1 1 200px;
+}
+.as-files-detail-dir {
+  overflow-wrap: anywhere;
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+}
+.as-files-detail-file {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
 }
 .as-files-stepper {
   display: inline-flex;
@@ -2497,4 +2524,7 @@ button.as-bg-head {
 }
 .as-bg-top > .as-bg-head {
   flex: 1 1 auto;
+}
+.as-workdir-label {
+  overflow-wrap: anywhere;
 }
