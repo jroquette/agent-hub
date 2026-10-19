@@ -6,11 +6,13 @@ the hub (its ``hub.json``, its workspace). Each repo ``<ws>/<dir>`` gets
 ``conventions`` set another ``branch`` pattern for it), from a freshly fetched
 ``origin/<default_branch>`` (an existing branch is checked out as it is; ``--no-fetch`` skips the
 fetch and starts from ``origin/<default_branch>`` as already fetched, refusing a repo where it never
-was: the escape hatch inside the Claude Code sandbox, AGH-134), then runs the repo's executable
-``scripts/worktree-setup.sh <worktree>``; ``--remove`` runs ``worktree-teardown.sh`` the same way,
-then ``git worktree remove`` (never forced; branches are kept). Usage problems (the name,
-``--only``, ``--no-fetch`` with ``--remove``) exit 2 before git runs in any repo; a task branch that
-clashes with a worktree (``check_branches``) exits 1 before any repo is touched; another repo
+was: the escape hatch inside the Claude Code sandbox, AGH-134; ``--base <branch>`` starts a new
+worktree from ``origin/<branch>`` instead, to stack a task on a blocker still in review), then runs
+the repo's executable ``scripts/worktree-setup.sh <worktree>``; ``--remove`` runs
+``worktree-teardown.sh`` the same way, then ``git worktree remove`` (never forced; branches are
+kept). Usage problems (the name, ``--only``, ``--no-fetch`` or ``--base`` with ``--remove``)
+exit 2 before git runs in any repo; a task branch that clashes with a worktree (``check_branches``)
+exits 1 before any repo is touched; another repo
 problem, or a script that fails, exits 1 when it is reached, and later repos are left alone. A
 worktree with modified or untracked files is never torn down. Git and the scripts run with no
 timeout in the caller's process group, so Ctrl-C reaches them. The scripts run with the worktree as
@@ -72,10 +74,23 @@ def worktree(
             ),
         ),
     ] = False,
+    base: Annotated[
+        str | None,
+        typer.Option(
+            "--base",
+            metavar="BRANCH",
+            help=(
+                "Start new worktrees from origin/BRANCH instead of the default branch: build on"
+                " a blocker's branch that is still in review."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Create isolated worktrees for one task in the hub's repos, or remove them."""
     if remove and no_fetch:
         context.fail("--no-fetch applies to creating worktrees, not to --remove")
+    if remove and base is not None:
+        context.fail("--base applies to creating worktrees, not to --remove")
     root = hub_root_or_exit(os.environ, command=COMMAND)
     git = _git_or_exit()
     env = git_env(os.environ, optional_locks=True)
@@ -95,6 +110,7 @@ def worktree(
             git_timeout=None,
             runner=run_child,
             fetch=not no_fetch,
+            base=base,
         )
     except WorktreeUsageError as error:
         context.fail(str(error))
