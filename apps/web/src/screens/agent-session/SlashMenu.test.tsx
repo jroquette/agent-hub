@@ -137,6 +137,17 @@ describe("SlashMenu (slash-menu)", () => {
     expect(screen.getByRole("option", { name: "/compact" })).not.toHaveTextContent("hub");
   });
 
+  it("puts the menu's scroll in the tab order, keeping the composer's Tab for picking", async () => {
+    const { box, container } = open({ commands: [option("/fix", true), option("/compact")] });
+    await userEvent.type(box, "/");
+
+    // axe scrollable-region-focusable: the list scrolls once the hub's items fill it.
+    expect(container.querySelector(".as-slash")).toHaveAttribute("tabindex", "0");
+    await userEvent.keyboard("{Tab}");
+    expect(box).toHaveValue("/fix ");
+    expect(box).toHaveFocus();
+  });
+
   it("opens a hub item's page in a new tab without picking it", async () => {
     const opened = vi.spyOn(window, "open").mockReturnValue(null);
     const fix = { ...option("/fix", true), href: "/projects/demo/skills/skill/hub-workflow/fix" };
