@@ -6,7 +6,9 @@ other than this release included (plan E1), prints the reader's lines and exits 
 git call. Then the checklist, each item's lines printed as soon as it is decided (the
 tools and the tracker credential, ``setup_tools``, then the developer's identity,
 ``setup_identity``, whose proposal and prompt alone go to stderr, whether git ignores
-``hub.local.json`` when it exists, then each repo cloned or fetched next to the hub,
+``hub.local.json`` when it exists, the declared environments, ``setup_environments``, whose
+prompts (asked before the ignore check, so a file they create is checked) go to stderr and
+whose item prints only when one is declared, then each repo cloned or fetched next to the hub,
 ``setup_repos``, then ``hub doctor``'s check, run in process on the hub root whatever the
 current folder, its findings under its totals), and the totals line ``setup: ...``; the exit
 is 0 when every item is ``ok``, else 1.
@@ -18,7 +20,7 @@ from typing import Annotated, Final
 
 import typer
 
-from agent_hub.cli import setup_identity, setup_repos, setup_tools
+from agent_hub.cli import setup_environments, setup_identity, setup_repos, setup_tools
 from agent_hub.cli.doctor_command import check_hub
 from agent_hub.cli.doctor_report import finding_line, totals_line
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
@@ -59,10 +61,13 @@ def setup(
     *,
     yes: Annotated[
         bool,
-        typer.Option("--yes", help="Write a new hub.local.json without asking."),
+        typer.Option(
+            "--yes",
+            help="Write a new hub.local.json without asking, and ask no environment question.",
+        ),
     ] = False,
 ) -> None:
-    """Set up this machine for the hub: tools, identity, repos, then hub doctor."""
+    """Set up this machine for the hub: tools, identity, environments, repos, then hub doctor."""
     root = hub_root_or_exit(os.environ, command=COMMAND)
     config = load_hub_config_or_exit(root / FILE_LABEL)
     # No token reaches git, which only looks for the main checkout.
@@ -74,7 +79,13 @@ def setup(
         checklist.add(item)
     for item in setup_identity.identity_items(config, home=home, is_confirmed_by_flag=yes):
         checklist.add(item)
+    # Asked before the ignore check, so a hub.local.json the step creates is checked too.
+    environments = setup_environments.environments_items(
+        config, home=home, is_confirmed_by_flag=yes
+    )
     for item in setup_identity.gitignore_items(home, env=setup_repos.setup_git_env(os.environ)):
+        checklist.add(item)
+    for item in environments:
         checklist.add(item)
     for item in setup_repos.repo_items(config, root=root, home=home, environ=os.environ):
         checklist.add(item)

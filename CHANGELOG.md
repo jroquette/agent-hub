@@ -18,6 +18,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   (AGH-286). `hub doctor`'s new `environments.production` rule names each production environment: a warning for
   `write` or `ask` access, info for `read`; turn it off or retune it in `doctor.rules`. Environment and service text
   now refuses line-separator and bidi characters, and a secret-shaped blocked word is refused.
+- `hub setup` has an environments step (AGH-289): on a terminal without `--yes` it asks whether to declare your own
+  environments, then each one's name, access and whether it is production (no unless you answer `y`), and adds them to
+  `hub.local.json` only, checked as `hub env add --local` checks them. An `environments` item lists the declared
+  environments, with a `production environment:` sub-line per production one; a hub with none prints no line,
+  and a `hub.local.json` that conflicts with `hub.json` makes it missing (exit 1).
 - The guard asks before a `hub env` that changes the environments (`add`, `set`, `remove`, `service add|remove`;
   `list` and `show` pass) and before an edit or shell write of `hub.local.json` (AGH-288). The README's guard section
   explains blocked words.
