@@ -8,11 +8,14 @@ one path per hub and effort, so the dry run can name the path a live run writes.
 is a ``HubHooksError`` of one line naming the file.
 """
 
+import contextlib
 import os
+import secrets
 from pathlib import Path
 from typing import Final
 
 from agent_hub.cli.errors import CliError
+from agent_hub.cli.exclusive_write import TEMP_INFIX
 from agent_hub.cli.init_report import shown_path
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 from agent_hub.core.runner.session_settings import HUB_PATH_PROBLEM, NO_HOOKS, hooks_settings
@@ -21,6 +24,9 @@ from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes
 SETTINGS_FOLDER: Final = (".agent-runs", "session-settings")
 MAX_SETTINGS_BYTES: Final = 1 << 20
 _HUB_SETTINGS: Final = (".claude", "settings.json")
+_FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+# O_EXCL: the temp is this call's own; O_NOFOLLOW: never through a planted link.
+_TEMP_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 class HubHooksError(CliError):
@@ -68,5 +74,45 @@ def hub_hooks_settings(hub: Path, effort: str) -> bytes:
 
 
 def write_session_settings(hub: Path, effort: str) -> Path:
-    """Write the settings file for ``effort`` in ``hub`` and return its path."""
-    raise NotImplementedError
+    """Write the settings file for ``effort`` in ``hub`` and return its path.
+
+    The file is 0600 and each folder made for it 0700. The bytes go to a temp file that then
+    replaces the name, so a session starting meanwhile reads the old file or the new one, never
+    a partial one. A linked folder on the way is refused; a link at the file's name is replaced,
+    never followed. Raises ``HubHooksError`` for what ``hub_hooks_settings`` refuses, and
+    ``cannot write <path>: <reason>`` when the write fails.
+    """
+    content = hub_hooks_settings(hub, effort)
+    path = session_settings_path(hub, effort)
+    try:
+        _replace_file(hub, path.name, content)
+    except OSError as error:
+        reason = error.strerror or type(error).__name__
+        raise HubHooksError(f"cannot write {shown_path(str(path))}: {reason}") from None
+    return path
+
+
+def _replace_file(hub: Path, name: str, content: bytes) -> None:
+    folder = os.open(hub, _FOLDER_FLAGS)
+    try:
+        for part in SETTINGS_FOLDER:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(part, 0o700, dir_fd=folder)
+            # O_NOFOLLOW: a folder replaced by a link is refused, never walked through.
+            child = os.open(part, _FOLDER_FLAGS | os.O_NOFOLLOW, dir_fd=folder)
+            os.close(folder)
+            folder = child
+        temp = f".{name}{TEMP_INFIX}{secrets.token_hex(4)}"
+        descriptor = os.open(temp, _TEMP_FLAGS, 0o600, dir_fd=folder)
+        try:
+            with os.fdopen(descriptor, "wb") as file:
+                os.fchmod(file.fileno(), 0o600)
+                file.write(content)
+            # Replaces the entry itself: a planted link is dropped, its target left as it was.
+            os.replace(temp, name, src_dir_fd=folder, dst_dir_fd=folder)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(temp, dir_fd=folder)
+            raise
+    finally:
+        os.close(folder)
