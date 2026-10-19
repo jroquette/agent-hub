@@ -20,8 +20,16 @@ export function canStartTicket(
   return row.id != null && (row.readiness === "can_start" || stackedOn(row, rows) != null);
 }
 
+/**
+ * The worktree name a stacked ticket's command gives `hub worktree`: the ticket's id in lowercase
+ * (`AGH-3` → `agh-3`), the issue shape it takes (`<team>-<n>[-<desc>]`).
+ */
+function stackedName(row: TicketRow & { id: string }): string {
+  return row.id.toLowerCase();
+}
+
 /** What the session is told about the blockers, and how to build on one still in review. */
-function blockerLines(row: TicketRow, rows: readonly TicketRow[]): string[] {
+function blockerLines(row: TicketRow & { id: string }, rows: readonly TicketRow[]): string[] {
   const idOf = (ref: string) => rows.find((r) => r.ref === ref)?.id ?? ref;
   const base = stackedOn(row, rows);
   const done = row.blocked_by.map((edge) => edge.ref).filter((ref) => ref !== base?.ref);
@@ -33,11 +41,11 @@ function blockerLines(row: TicketRow, rows: readonly TicketRow[]): string[] {
         : "It has no blockers.",
   ];
   if (!base) return lines;
-  const repo = base.repo ?? "<the PR's repo>";
+  const repo = base.repo ?? "the pull request's repo";
   return [
     ...lines,
     `Its blocker ${base.id} is not merged yet: it is in review in ${base.pr_url}. Build this ticket on top of it (a stacked branch) instead of waiting for the merge.`,
-    `For step 5, read that pull request's branch with \`gh pr view ${base.pr_url} --json headRefName -q .headRefName\`, then create the worktree in ${repo} from it: \`./hub worktree <name> --only ${repo} --base <that branch>\`. Any other repo starts from its default branch as usual.`,
+    `For step 5, create the worktrees with exactly \`./hub worktree ${stackedName(row)} --stack-on ${base.pr_url}\`, with no --only and no --base: it starts ${repo}'s worktree from that pull request's branch and every other repo from its default branch.`,
     `Open this ticket's pull request against ${base.id}'s branch, not the default branch, and say in its body that it is stacked on ${base.pr_url}. If ${base.id} changes in review, rebase onto its branch; once it merges, rebase onto the default branch and retarget the pull request.`,
   ];
 }
