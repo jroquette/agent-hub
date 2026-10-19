@@ -366,7 +366,8 @@ export function filesToReview(
   reviewed: Record<string, string>,
 ): { total: number; toReview: number } {
   return {
-    total: files.length,
+    // The code only: Claude's plans, feature records, brain notes and scratch are not the change.
+    total: files.filter((file) => isReviewable(file.path)).length,
     // Only the code waits for review: Claude's plans, learnings and scratch never do.
     toReview: files.filter(
       (file) => isReviewable(file.path) && reviewed[file.path] !== file.last_change_id,
