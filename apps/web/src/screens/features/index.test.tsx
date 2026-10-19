@@ -11,8 +11,10 @@ import {
   aFeature,
   aGoldenPath,
   aGoldenStep,
+  aLiveTile,
   aPage,
   aProblem,
+  aSessionLabel,
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
@@ -128,11 +130,11 @@ describe("FeaturesScreen", () => {
     await screen.findByRole("link", { name: "layered-memory" });
     expect(screen.queryByRole("button", { name: /^Needs you/ })).not.toBeInTheDocument();
     expect(slugsIn(groupOf(/^In progress · 5$/))).toEqual([
+      "broken-record",
       "owner-held",
       "layered-memory",
       "control-plane",
       "tracker-team-cap",
-      "broken-record",
     ]);
     expect(rowOf("owner-held")).toHaveAttribute("data-tone", "waiting");
     expect(rowOf("broken-record")).toHaveAttribute("data-tone", "blocked");
@@ -243,9 +245,9 @@ describe("FeaturesScreen", () => {
       /^layered-memory\. .*\. golden path at Evaluate\. ACs 21 of 21\. verdict SHIP-WITH-OWNER-STEPS\. issues AGH-48, AGH-49, AGH-50$/,
     );
     await userEvent.keyboard("j");
-    expect(row).toHaveFocus();
+    expect(rowOf("broken-record")).toHaveFocus();
     await userEvent.keyboard("j");
-    expect(rowOf("control-plane")).toHaveFocus();
+    expect(row).toHaveFocus();
   });
 
   it("finds features by name, issue or repo through the URL (search)", async () => {
@@ -505,6 +507,50 @@ describe("FeaturesScreen", () => {
     expect(rowOf("evaluated-one")).toHaveTextContent(
       "Evaluator says ship · All 9 ACs pass on main.",
     );
+  });
+
+  it("puts a feature whose session waits on you at the top of In progress and opens that session (session)", async () => {
+    const permission = aLiveTile({
+      id: "s-perm",
+      group: "waiting",
+      status: "waiting",
+      issue: null,
+      label: aSessionLabel({ issue: "AGH-112", branch: "dev/agh-112-team-cap" }),
+      waiting_reason: "Permission prompt",
+      agent_session_id: "a-perm",
+    });
+    const yourTurn = aLiveTile({
+      id: "s-turn",
+      group: "idle",
+      status: "idle",
+      issue: null,
+      label: aSessionLabel({ issue: null, title: "control-plane plan" }),
+      last_action: "Edited plan.md",
+    });
+    const busy = aLiveTile({ id: "s-busy", group: "live", issue: "AGH-49" });
+    const { router } = open({
+      "/api/v1/live-sessions": aPage([permission, yourTurn, busy]),
+    });
+
+    await waitFor(() => {
+      expect(slugsIn(groupOf(/^In progress · 4$/))).toEqual([
+        "tracker-team-cap",
+        "control-plane",
+        "broken-record",
+        "layered-memory",
+      ]);
+    });
+    expect(rowOf("tracker-team-cap")).toHaveTextContent(
+      "A session waits on you · Permission prompt",
+    );
+    expect(rowOf("control-plane")).toHaveTextContent("Your turn in a session · Edited plan.md");
+    expect(rowOf("layered-memory")).not.toHaveAttribute("data-tone");
+    expect(groupOf(/^In progress · 4$/)).toHaveTextContent(
+      "1 session waits on you · 1 your turn in a session",
+    );
+
+    await userEvent.click(rowOf("tracker-team-cap"));
+    expect(router.state.location.pathname).toBe("/agent-sessions/a-perm");
   });
 
   it("tells waiting rows apart by what their eval says is left (needs)", async () => {
