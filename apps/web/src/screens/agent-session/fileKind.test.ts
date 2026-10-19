@@ -19,9 +19,11 @@ describe("fileKind", () => {
     expect(fileKind(path)).toBe(kind);
   });
 
-  it("does not count Claude's scratch as something to review", () => {
+  it("counts only the code as something to review", () => {
+    expect(isReviewable("/repo/src/index.ts")).toBe(true);
+    expect(isReviewable("/Users/me/.claude/plans/p.md")).toBe(false);
+    expect(isReviewable("/hub/brain/_inbox/l.md")).toBe(false);
     expect(isReviewable("/tmp/notes.md")).toBe(false);
-    expect(isReviewable("/Users/me/.claude/plans/p.md")).toBe(true);
   });
 
   it("tells markdown by its extension", () => {

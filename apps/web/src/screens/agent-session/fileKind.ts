@@ -36,5 +36,6 @@ export function fileKind(path: string): FileKind {
 /** Markdown, which reads better rendered than as a diff. */
 export const isMarkdown = (path: string) => /\.(?:md|markdown|mdx)$/i.test(path);
 
-/** A file whose kind the review counts: Claude's scratch is there to look at, not to review. */
-export const isReviewable = (path: string) => fileKind(path) !== "scratch";
+/** A file you review (viewed marks, "to review" counts): only the code that goes in the pull
+ * request. Claude's plans, learnings and scratch are there to read, not to sign off. */
+export const isReviewable = (path: string) => fileKind(path) === "code";

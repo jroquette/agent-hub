@@ -1,6 +1,7 @@
 /* Sessions as an inbox (v2 design): what each row says, in plain words, one fact per row. */
 import { sessionIdentity, TOOL_ICON, type IconName, type Status } from "../../components";
 import { fmtDuration } from "../../lib/format";
+import { isReviewable } from "../agent-session/fileKind";
 import { modeLabel, resumable } from "../agent-session/model";
 import type { AgentSession, Session } from "./queries";
 import { isDriven, type SectionId, type SectionRow } from "./sections";
@@ -360,7 +361,10 @@ export function filesToReview(
 ): { total: number; toReview: number } {
   return {
     total: files.length,
-    toReview: files.filter((file) => reviewed[file.path] !== file.last_change_id).length,
+    // Only the code waits for review: Claude's plans, learnings and scratch never do.
+    toReview: files.filter(
+      (file) => isReviewable(file.path) && reviewed[file.path] !== file.last_change_id,
+    ).length,
   };
 }
 
