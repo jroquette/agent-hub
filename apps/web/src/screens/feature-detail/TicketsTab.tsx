@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
-import { EmptyState, ProblemError, Skeleton, StatusBadge } from "../../components";
+import { EmptyState, Icon, ProblemError, Skeleton, StatusBadge } from "../../components";
 import { useApi, type ApiProblem } from "../../lib/api";
 import { fmtClock, fmtDateTime, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
@@ -10,11 +10,12 @@ import { badgeOf } from "../sessions-list/badge";
 import { rowHref } from "../sessions-list/drivenRows";
 import type { Session } from "../sessions-list/queries";
 import {
-  AcMeter,
+  AcCount,
   PlanningView,
   ReadinessText,
   StateBadge,
   TicketIdLine,
+  TicketPrLink,
   TicketRef,
   splitTitle,
   ticketAnchor,
@@ -45,7 +46,25 @@ function TicketId({ row }: { row: TicketRow }) {
       </span>
     );
   }
-  return <TicketIdLine row={row} />;
+  return (
+    <span className="ah-stack" style={{ gap: 2 }}>
+      <TicketIdLine row={row} />
+      {row.pr_url ? (
+        <TicketPrLink row={row} />
+      ) : (
+        <span
+          className="ah-small ah-subtle"
+          title={
+            row.reviewed === true
+              ? "The review record names no pull request on GitHub (still pending, or a repo outside this hub)."
+              : "No pull request yet: /feature records it in the ticket's review once both reviewers pass."
+          }
+        >
+          no PR
+        </span>
+      )}
+    </span>
+  );
 }
 
 /** The conventional prefix of the title (`feat(brand-api)`) as a chip in its own column. */
@@ -218,40 +237,35 @@ function Blockers({ row, data }: { row: TicketRow; data: FeatureTickets }) {
   );
 }
 
-/** How many of the ticket's ACs pass, with the ids one click away (a long list stays folded). */
+/** How many of the ticket's ACs pass, the same meter as its card; the ids fold under it. */
 function Acs({ row, acPasses }: { row: TicketRow; acPasses?: AcPasses | undefined }) {
   if (row.acs.length === 0) return <span className="ah-subtle">—</span>;
-  const passing = acPasses ? row.acs.filter((ac) => acPasses[ac]).length : null;
-  const links = (
-    <span className="ah-row ah-wrap" style={{ gap: 6 }}>
-      {row.acs.map((ac) => (
-        <Link
-          key={ac}
-          className="ah-mono ah-small"
-          to={{ search: `?ac=${encodeURIComponent(ac)}` }}
-          title={`Open ${ac} in Criteria${acPasses ? (acPasses[ac] ? " · passing" : " · not passing yet") : ""}`}
-          style={acPasses && !acPasses[ac] ? { color: "var(--waiting)" } : undefined}
-        >
-          {ac}
-        </Link>
-      ))}
-    </span>
-  );
-  if (row.acs.length <= 3) return links;
   return (
-    <details>
-      <summary className="ah-small" style={{ cursor: "pointer", whiteSpace: "nowrap" }}>
-        {passing === null ? (
-          `${String(row.acs.length)} ACs`
-        ) : (
-          <AcMeter
-            passing={passing}
-            total={row.acs.length}
-            label={`${String(passing)}/${String(row.acs.length)} passing`}
-          />
-        )}
+    <details className="ah-ticket-acs">
+      <summary className="ah-small">
+        <AcCount row={row} acPasses={acPasses} />
       </summary>
-      <div style={{ paddingTop: 4 }}>{links}</div>
+      <ul className="ah-stack">
+        {row.acs.map((ac) => {
+          const passes = acPasses?.[ac];
+          return (
+            <li key={ac}>
+              <Link
+                className="ah-row ah-mono ah-small"
+                style={{ gap: 4 }}
+                to={{ search: `?ac=${encodeURIComponent(ac)}` }}
+                title={`Open ${ac} in Criteria${acPasses ? (passes ? " · passing" : " · not passing yet") : ""}`}
+              >
+                {acPasses && <Icon name={passes ? "circle-check" : "clock"} size="sm" />}
+                {ac}
+                {acPasses && (
+                  <span className="ah-sr">{passes ? " passing" : " not passing yet"}</span>
+                )}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
     </details>
   );
 }
@@ -302,7 +316,7 @@ function TicketsTable({
     { label: "Status", width: 110, nowrap: true, cell: (row) => <StateBadge row={row} /> },
     { label: "Assignee", width: 110, cell: (row) => <Assignee row={row} /> },
     { label: "Blocked by", width: 110, cell: (row) => <Blockers row={row} data={data} /> },
-    { label: "ACs", width: 120, cell: (row) => <Acs row={row} acPasses={acPasses} /> },
+    { label: "ACs", width: 150, cell: (row) => <Acs row={row} acPasses={acPasses} /> },
     {
       label: "Sessions",
       width: 150,

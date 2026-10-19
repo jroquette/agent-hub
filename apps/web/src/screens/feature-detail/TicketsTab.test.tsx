@@ -290,16 +290,43 @@ describe("TicketsTab", () => {
     );
   });
 
-  it("folds a long AC list into how many pass (tickets)", () => {
+  it("shows the same AC meter whatever the number of ACs, ids folded under it (tickets)", () => {
     const data = aFeatureTickets();
-    const row = { ...nth(data.tickets, 0), acs: ["AC-1", "AC-2", "AC-3", "AC-4"] };
-    show(aFeatureTickets({ tickets: [row] }), {
-      acPasses: { "AC-1": true, "AC-2": true, "AC-3": true, "AC-4": false },
+    const many = { ...nth(data.tickets, 0), acs: ["AC-1", "AC-2", "AC-3", "AC-4"] };
+    const one = { ...nth(data.tickets, 1), acs: ["AC-8"] };
+    show(aFeatureTickets({ tickets: [many, one] }), {
+      acPasses: { "AC-1": true, "AC-2": true, "AC-3": true, "AC-4": false, "AC-8": true },
     });
 
     const table = within(screen.getByRole("table", { name: "Tickets" }));
-    expect(table.getByText("3/4 passing")).toBeInTheDocument();
-    expect(screen.getByText("3/4 ACs passing")).toBeInTheDocument();
+    expect(table.getByText("3/4 ACs passing")).toBeInTheDocument();
+    expect(table.getByText("1/1 ACs passing")).toBeInTheDocument();
+    expect(table.getByRole("link", { name: /^AC-8\s*passing$/, hidden: true })).toHaveAttribute(
+      "href",
+      "/?ac=AC-8",
+    );
+    expect(
+      table.getByRole("link", { name: /^AC-4\s*not passing yet$/, hidden: true }),
+    ).toBeInTheDocument();
+  });
+
+  it("links each ticket's pull request, else says there is none (tickets)", () => {
+    const data = aFeatureTickets();
+    const withPr = { ...nth(data.tickets, 0), pr_url: "https://github.com/acme/demo-api/pull/69" };
+    const unsafe = { ...nth(data.tickets, 1), pr_url: "https://evil.example/acme/demo-api/pull/7" };
+    show(aFeatureTickets({ tickets: [withPr, unsafe, nth(data.tickets, 2)] }));
+
+    const table = within(screen.getByRole("table", { name: "Tickets" }));
+    const link = table.getByRole("link", {
+      name: `Pull request #69 of ${withPr.ref} (opens GitHub in a new tab)`,
+    });
+    expect(link).toHaveAttribute("href", "https://github.com/acme/demo-api/pull/69");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(table.getByText("#7")).toHaveAttribute(
+      "title",
+      "Link not shown: only GitHub pull request links are opened",
+    );
+    expect(table.getByText("no PR")).toBeInTheDocument();
   });
 
   it("shows the title's scope in its own column, apart from the words (tickets)", () => {

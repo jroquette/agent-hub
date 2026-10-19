@@ -8891,7 +8891,7 @@
       },
       "TicketRow": {
         "additionalProperties": false,
-        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).\n``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent\nissue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.",
+        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).\n``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent\nissue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.\n``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.",
         "properties": {
           "acs": {
             "items": {
@@ -8987,6 +8987,17 @@
               }
             ],
             "title": "Parent"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
           },
           "priority": {
             "anyOf": [
