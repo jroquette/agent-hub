@@ -2261,7 +2261,7 @@ class TestEnvironments:
         assert not (hub / LOCAL_FILE).exists()
         assert result.exit_code == 0, result.output
 
-    def test_lists_hub_environments_without_prompt_when_local_file_unusable(
+    def test_reports_missing_environments_when_local_file_conflicts(
         self,
         demo_workspace: Workspace,
         env_traced_git: TracedGit,
@@ -2269,6 +2269,8 @@ class TestEnvironments:
         *,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        # A hub.local.json every effective-config command refuses (here: a "tightening" that
+        # is not stricter) is reported, not dropped: the item is missing and setup exits 1.
         hub = Path(demo_workspace.hub)
         _declare_w(hub)
         demo_workspace.write_local('{"environments": {"local": {"access": "write"}}}\n')
@@ -2277,9 +2279,19 @@ class TestEnvironments:
 
         result = run_setup(hub, input=_answers("y", "local2", "write", "n", ""))
 
-        assert _environments_lines(result.stdout) == [W_ITEM, W_PRODUCTION]
+        lines = result.stdout.splitlines()
+        start = lines.index(
+            f"missing environments: hub.local.json is invalid Fix: {INVALID_LOCAL_FIX}"
+        )
+        assert lines[start + 1] == (
+            f"{_SUB_LINE}hub.local.json: environments.local.access: may only tighten hub.json's"
+            " write"
+        )
+        assert _items(result.stdout).index("environments") == ITEM_ORDER.index("identity") + 1
+        assert _environments_lines(result.stdout) == []
         assert DECLARE_PROMPT not in result.stderr
         assert _snapshot(hub / LOCAL_FILE) == before
+        assert result.exit_code == 1
 
     def test_refuses_write_when_local_file_too_large_or_changed(
         self,

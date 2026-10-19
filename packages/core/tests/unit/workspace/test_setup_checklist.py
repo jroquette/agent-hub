@@ -23,6 +23,7 @@ from agent_hub.core.workspace.setup_checklist import (
     RepoOutcome,
     State,
     doctor_item,
+    environments_invalid_item,
     environments_item,
     gh_item,
     git_lacks_item,
@@ -1008,3 +1009,16 @@ class TestEnvironments:
         config = HubConfig.model_validate(a_hub_document())
 
         assert environments_item(effective_environments(config, LocalConfig())) is None
+
+    def test_reports_invalid_local_when_environments_conflict(self) -> None:
+        # A hub.local.json the cross-file rules refuse: missing, its problems as sub-lines.
+        item = environments_invalid_item(
+            ["hub.local.json: environments.local.access: may only tighten hub.json's write"]
+        )
+
+        assert item_lines(item) == [
+            "missing environments: hub.local.json is invalid"
+            " Fix: fix hub.local.json (docs/design/developer-identity.md)",
+            "        hub.local.json: environments.local.access: may only tighten hub.json's write",
+        ]
+        assert setup_exit([item]) == 1
