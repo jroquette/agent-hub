@@ -165,3 +165,40 @@ export function repoSummary(repos: readonly RepoChanges[] | undefined): string |
     })
     .join("; ");
 }
+
+/** How a repository's review stands against its pull request, in a few words, and its tone. */
+export interface RepoState {
+  tone: "done" | "waiting" | "muted";
+  text: string;
+}
+
+const files = (n: number) => `${String(n)} ${n === 1 ? "file" : "files"}`;
+
+/**
+ * Where the branch stands: its folder gone (read from the commits the session recorded), in sync
+ * with its pull request, changed since it (uncommitted files, or commits the PR does not have
+ * yet), or with no pull request yet.
+ */
+export function repoState(repo: RepoChanges): RepoState {
+  const uncommitted = repo.files.filter((file) => file.uncommitted).length;
+  const pull = repo.pull_request;
+  if (repo.source === "recorded") {
+    return { tone: "muted", text: "Worktree removed: its recorded commits" };
+  }
+  if (pull && pull.state !== "OPEN" && pull.state !== "UNKNOWN") {
+    return { tone: "muted", text: `Pull request ${pull.state.toLowerCase()}` };
+  }
+  if (pull?.head_sha && repo.head_sha && pull.head_sha !== repo.head_sha) {
+    return { tone: "waiting", text: "Commits not in the pull request yet" };
+  }
+  if (uncommitted > 0) {
+    return {
+      tone: "waiting",
+      text: pull
+        ? `${files(uncommitted)} changed since the pull request`
+        : `${files(uncommitted)} not committed`,
+    };
+  }
+  if (pull) return { tone: "done", text: "In sync with the pull request" };
+  return { tone: "muted", text: "No pull request yet" };
+}

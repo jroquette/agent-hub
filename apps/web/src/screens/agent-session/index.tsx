@@ -480,6 +480,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                   onClose={closeFiles}
                   workdirLabel={session.workdir_label}
                   repoNote={repoSummary(repos)}
+                  repos={repos}
                   review={review}
                   initialPath={filePick.path}
                   pickNonce={filePick.nonce}
