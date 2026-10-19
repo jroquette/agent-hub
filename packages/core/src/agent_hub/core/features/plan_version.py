@@ -4,9 +4,10 @@ An approved ``plan.md`` is never rewritten; each change is appended under its ``
 section (a level-2 heading whose text starts with ``Amendments``, up to the next level-1 or
 level-2 heading) as one entry line ``A<n> (<YYYY-MM-DD>, <who>): <title>``, optionally a list
 item (``-``, ``*``, ``+``, ``1.``) or bold (``**A1 (…):**``). The plan's version is the number of
-distinct entries plus one: ``v1`` without any. Lines inside fenced code blocks are neither entries
-nor headings; an id written again counts once (its first entry). The work is bounded by the input,
-which the reader caps (``MAX_PLAN_BYTES``).
+distinct entries plus one: ``v1`` without any. Each entry's anchor is the text of that
+``## Amendments…`` heading. Lines inside fenced code blocks are neither entries nor headings; an
+id written again counts once (its first entry). Every line is read in linear time, and the input
+is capped by the reader (``MAX_PLAN_BYTES``).
 """
 
 import re
@@ -17,12 +18,13 @@ from agent_hub.core.features.feature_view import AmendmentView, PlanView
 from agent_hub.core.hub_config.problems import one_line
 
 _TITLE_CHARS: Final = 200
-_HEADING: Final = re.compile(r" {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*")
+# An ATX heading's opening run: its text is taken with string methods, never backtracked over.
+_HEADING: Final = re.compile(r" {0,3}(#{1,6})(?=[ \t]|$)")
 _FENCE: Final = re.compile(r" {0,3}(`{3,}|~{3,})")
+# ``<who>`` is everything up to the first ``)``; no lazy group sits before optional blanks.
 _ENTRY: Final = re.compile(
-    r"[ \t]*(?:[-*+][ \t]+|\d{1,9}[.)][ \t]+)?(?:\*\*|__)?"
-    r"(A[1-9]\d{0,5})(?:\*\*|__)?[ \t]+\((\d{4}-\d{2}-\d{2}),[ \t]*([^()\n]+?)[ \t]*\)[ \t]*:"
-    r"(?:\*\*|__)?[ \t]*(.*)"
+    r"[ \t]*(?:[-*+][ \t]+|\d{1,9}[.)][ \t]+)?(?:\*\*|__)?(A[1-9]\d{0,5})(?:\*\*|__)?[ \t]+"
+    r"\((\d{4}-\d{2}-\d{2}),([^()\n]+)\)[ \t]*:(?:\*\*|__)?(.*)"
 )
 
 
@@ -31,19 +33,31 @@ def plan_version(text: bytes) -> PlanView:
     found: dict[str, AmendmentView] = {}
     section: str | None = None
     for line in _prose(text.decode("utf-8", "replace")):
-        heading = _HEADING.fullmatch(line)
+        heading = _heading(line)
         if heading is not None:
-            level, title = len(heading.group(1)), (heading.group(2) or "").strip()
+            level, title = heading
             if level <= 2:
-                section = (
-                    title if level == 2 and title.casefold().startswith("amendments") else None
-                )
+                opens = level == 2 and title.casefold().startswith("amendments")
+                section = title if opens else None
             continue
         entry = None if section is None else _ENTRY.fullmatch(line)
         if entry is not None and section is not None and entry.group(1) not in found:
             found[entry.group(1)] = _amendment(entry, section)
     amendments = tuple(found.values())
     return PlanView(version=len(amendments) + 1, amendments=amendments)
+
+
+def _heading(line: str) -> tuple[int, str] | None:
+    """The level and text of an ATX heading line, None for another line. The closing ``#`` run
+    (after a blank, or the whole text) and the blanks around the text are left out."""
+    opened = _HEADING.match(line)
+    if opened is None:
+        return None
+    title = line[opened.end() :].strip(" \t")
+    closed = title.rstrip("#")
+    if not closed or closed[-1] in " \t":
+        title = closed.rstrip(" \t")
+    return len(opened.group(1)), title
 
 
 def _prose(text: str) -> Iterator[str]:
@@ -69,7 +83,7 @@ def _amendment(entry: re.Match[str], anchor: str) -> AmendmentView:
     return AmendmentView(
         id=ident,
         date=date,
-        who=one_line(who.strip("*_ "))[:_TITLE_CHARS],
+        who=one_line(who.strip("*_ \t"))[:_TITLE_CHARS],
         title=one_line(title.strip().removesuffix("**").strip())[:_TITLE_CHARS],
         anchor=anchor,
     )
