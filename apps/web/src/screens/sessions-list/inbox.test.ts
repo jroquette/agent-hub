@@ -603,7 +603,7 @@ describe("the conversation of a chat", () => {
       toReview: 1,
     });
     expect(filesToReview([], {})).toEqual({ total: 0, toReview: 0 });
-    // Claude's plan and scratch are listed, never waiting for review.
+    // Claude's plan and scratch are neither counted nor waiting for review.
     expect(
       filesToReview(
         [
@@ -613,7 +613,7 @@ describe("the conversation of a chat", () => {
         ],
         {},
       ),
-    ).toEqual({ total: 3, toReview: 1 });
+    ).toEqual({ total: 1, toReview: 1 });
   });
 
   it("reads no files when an older hub web sends no changed_files", () => {
