@@ -29,6 +29,10 @@ from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes
 SETTINGS_FOLDER: Final = (".agent-runs", "session-settings")
 MAX_SETTINGS_BYTES: Final = 1 << 20
 _HUB_SETTINGS: Final = (".claude", "settings.json")
+# The ``effortLevel`` values ``hub run`` and the workflow nodes pass; each names a file.
+EFFORT_LEVELS: Final = ("low", "medium", "high")
+# The most of a script path an error shows: the path comes from a file a session can write.
+_SHOWN_SCRIPT_CHARS: Final = 120
 _FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 # O_EXCL: the temp is this call's own; O_NOFOLLOW: never through a planted link.
 _TEMP_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -42,7 +46,9 @@ class HubHooksError(CliError):
 
 
 def session_settings_path(hub: Path, effort: str) -> Path:
-    """Where the settings file for ``effort`` lives in ``hub``."""
+    """Where the settings file for ``effort`` lives in ``hub``; ``ValueError`` for other efforts."""
+    if effort not in EFFORT_LEVELS:
+        raise ValueError(f"unknown effort {effort!r}: use one of {', '.join(EFFORT_LEVELS)}")
     return hub.joinpath(*SETTINGS_FOLDER, f"{effort}.json")
 
 
@@ -74,19 +80,28 @@ def hub_hooks_settings(hub: Path, effort: str) -> bytes:
     root = os.path.normpath(hub)
     for script in scripts:
         found = os.path.normpath(hub / script)
-        if os.path.commonpath((root, found)) != root or not os.path.isfile(found):
-            raise HubHooksError(f"{shown_path(found)} is missing")
+        if os.path.commonpath((root, found)) != root:
+            raise HubHooksError(f"hook script {_shown_script(script)} is outside the hub")
+        if not os.path.isfile(found):
+            raise HubHooksError(f"hook script {_shown_script(script)} is missing")
     return built
+
+
+def _shown_script(script: str) -> str:
+    # Only the hub-relative path, cut at its cap: never the rest of the command.
+    cut = script[:_SHOWN_SCRIPT_CHARS]
+    return shown_path(cut if cut == script else f"{cut}...")
 
 
 def write_session_settings(hub: Path, effort: str) -> Path:
     """Write the settings file for ``effort`` in ``hub`` and return its path.
 
-    The file is 0600 and each folder made for it 0700. The bytes go to a temp file that then
-    replaces the name, so a session starting meanwhile reads the old file or the new one, never
-    a partial one. A linked folder on the way is refused; a link at the file's name is replaced,
-    never followed. Raises ``HubHooksError`` for what ``hub_hooks_settings`` refuses, and
-    ``cannot write <path>: <reason>`` when the write fails.
+    The file is 0600, each folder made for it 0700, and ``session-settings`` is set to 0700
+    whatever its mode was. The bytes go to a temp file that then replaces the name, so a session
+    starting meanwhile reads the old file or the new one, never a partial one. A linked folder on
+    the way is refused; a link at the file's name is replaced, never followed. Raises
+    ``HubHooksError`` for what ``hub_hooks_settings`` refuses, and ``cannot write <path>:
+    <reason>`` when the write fails.
     """
     content = hub_hooks_settings(hub, effort)
     path = session_settings_path(hub, effort)
@@ -108,6 +123,8 @@ def _replace_file(hub: Path, name: str, content: bytes) -> None:
             child = os.open(part, _FOLDER_FLAGS | os.O_NOFOLLOW, dir_fd=folder)
             os.close(folder)
             folder = child
+        # The folder may predate this call with a looser mode: tighten it through what was opened.
+        os.fchmod(folder, 0o700)
         temp = f".{name}{TEMP_INFIX}{secrets.token_hex(4)}"
         descriptor = os.open(temp, _TEMP_FLAGS, 0o600, dir_fd=folder)
         try:
