@@ -62,6 +62,20 @@ SOURCE_PHRASES = (
     "simplified-english",
 )
 MAX_SKILL_LINES = 100
+# AC-8: rule 6 of the rendered AGENTS.md points to the skill, in at most four lines.
+MAX_RULE_LINES = 4
+AGENTS_RULE_PHRASES = (
+    "`plain-language`",
+    "chat",
+    "PR bodies and replies",
+    "tracker comments",
+    "handoffs",
+    "summaries",
+    "brain notes",
+    "in the reader's language",
+    "versioned text uses the hub's",
+    "Text for agents keeps full detail",
+)
 
 
 def flat(text: str) -> str:
@@ -119,3 +133,26 @@ def test_credits_simple_english_when_notice_rendered(demo_config: HubConfig) -> 
     notice = rendered_text(demo_config, NOTICE)
     assert notice.count("skills/plain-language") == 1
     assert notice.count("AminBlg/SimpleEnglish") == 1
+
+
+def agents_rule(agents: str, number: int) -> str:
+    """One item of ``## Cross-repo rules``, from ``<number>. `` to the next ``## `` heading."""
+    rules = section(agents, "Cross-repo rules")
+    start = rules.index(f"\n{number}. ") + 1
+    end = rules.find("\n## ", start)
+    return rules[start : end if end != -1 else len(rules)].rstrip("\n")
+
+
+def test_states_agents_plain_language_rule_when_agents_rendered(
+    demo_config: HubConfig, skill_text: str
+) -> None:
+    rule = agents_rule(rendered_text(demo_config, "AGENTS.md"), 6)
+
+    assert len(rule.splitlines()) <= MAX_RULE_LINES
+    text = flat(rule)
+    for phrase in AGENTS_RULE_PHRASES:
+        assert phrase in text, phrase
+    # The doctor's `instructions.duplicates` compares lines of 60 or more characters.
+    skill_lines = {line.strip() for line in skill_text.splitlines()}
+    long_lines = [line.strip() for line in rule.splitlines() if len(line.strip()) >= 60]
+    assert not [line for line in long_lines if line in skill_lines]
