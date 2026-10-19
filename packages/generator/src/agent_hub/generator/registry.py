@@ -178,6 +178,7 @@ _BASE_SKILLS: Final = (
     "learn",
     "onboard",
     "overengineering-review",
+    "plain-language",
     "recall",
     "refactor",
     "release",
