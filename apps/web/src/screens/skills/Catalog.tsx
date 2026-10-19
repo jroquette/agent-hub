@@ -11,11 +11,14 @@ import {
   EmptyState,
   FilterRail,
   Icon,
+  ProblemError,
   SegmentedControl,
+  Skeleton,
   Time,
 } from "../../components";
 import type { Facet, IconName } from "../../components";
 import type { components } from "../../api/schema";
+import type { ApiProblem } from "../../lib/api";
 import { useNow } from "../../lib/clock";
 import {
   KINDS,
@@ -23,6 +26,8 @@ import {
   KIND_LABEL,
   KIND_SUMMARY,
   MAX_QUERY_CHARS,
+  WORKFLOWS_HELP,
+  WORKFLOWS_SUMMARY,
   MODES,
   MODE_LABEL,
   NO_FILTERS,
@@ -37,7 +42,9 @@ import {
   type ItemKind,
 } from "./filters";
 import { skillRoute as skillRouteOf } from "./queries";
+import { newWorkflowRoute } from "./routes";
 import { HookStateTags, KIND_ICON, KIND_NAME, OriginBadge, SkillCard } from "./SkillCard";
+import { WorkflowList } from "../workflows";
 import { newDraftRoute, studioRoute } from "./Studio";
 import { openDrafts } from "./studioDrafts";
 
@@ -45,6 +52,12 @@ type Schemas = components["schemas"];
 type SkillCatalog = Schemas["SkillCatalog"];
 type ExternalPlugin = Schemas["ExternalPlugin"];
 type CatalogItem = Schemas["CatalogItem"];
+type WorkflowCatalog = Schemas["WorkflowCatalogView"];
+
+/** The Workflows tab: not an item kind of the catalog API, so it lives in its own URL key. */
+const WORKFLOWS_TAB = "workflow";
+const VIEW_KEY = "view";
+const VIEW_WORKFLOWS = "workflows";
 
 type Sort = "name" | "used" | "recent";
 
@@ -67,6 +80,8 @@ export function hookParts(item: CatalogItem): {
 }
 
 /** The kinds as selectable tiles: what each is, how many there are, how many were used. */
+type TileId = ItemKind | "all" | typeof WORKFLOWS_TAB;
+
 function KindTiles({
   value,
   counts,
@@ -74,11 +89,11 @@ function KindTiles({
   onChange,
 }: {
   value: string;
-  counts: Record<ItemKind | "all", number>;
+  counts: Record<ItemKind | "all", number> & { [WORKFLOWS_TAB]: number | null };
   used: Record<ItemKind | "all", number>;
   onChange: (id: string) => void;
 }) {
-  const tiles: { id: ItemKind | "all"; label: string; icon: IconName; line: string }[] = [
+  const tiles: { id: TileId; label: string; icon: IconName; line: string }[] = [
     { id: "all", label: "All", icon: "layers", line: "Everything this hub's agents can do" },
     ...KINDS.map((kind) => ({
       id: kind,
@@ -86,6 +101,7 @@ function KindTiles({
       icon: KIND_ICON[kind],
       line: KIND_SUMMARY[kind],
     })),
+    { id: WORKFLOWS_TAB, label: "Workflows", icon: "workflow", line: WORKFLOWS_SUMMARY },
   ];
   return (
     <div className="ah-kind-tiles" role="tablist" aria-label="Kind">
@@ -96,7 +112,7 @@ function KindTiles({
           role="tab"
           className="ah-kind-tile"
           aria-selected={tile.id === value}
-          aria-label={`${tile.label} ${String(counts[tile.id])}`}
+          aria-label={`${tile.label} ${String(counts[tile.id] ?? "")}`.trim()}
           aria-describedby={`kind-tile-${tile.id}`}
           onClick={() => {
             onChange(tile.id);
@@ -107,12 +123,12 @@ function KindTiles({
           </span>
           <span className="ah-kind-tile-text">
             <span className="ah-kind-tile-label">
-              {tile.label} <span className="ah-kind-tile-count">{counts[tile.id]}</span>
+              {tile.label} <span className="ah-kind-tile-count">{counts[tile.id] ?? "…"}</span>
             </span>
             <span className="ah-kind-tile-line" id={`kind-tile-${tile.id}`}>
               {tile.line}
             </span>
-            {tile.id !== "hook" && (
+            {tile.id !== "hook" && tile.id !== WORKFLOWS_TAB && (
               <span className="ah-kind-tile-used">{used[tile.id]} used in 30 days</span>
             )}
           </span>
@@ -272,14 +288,78 @@ function Notices({ catalog }: { catalog: SkillCatalog }) {
   ) : null;
 }
 
+/** The Workflows tab: what a workflow is, a way to write one, and the project's workflows. */
+function WorkflowsGroup({
+  project,
+  workflows,
+  error,
+  onRetry,
+  query,
+}: {
+  project: string;
+  workflows: WorkflowCatalog | undefined;
+  error: ApiProblem | null;
+  onRetry: (() => void) | undefined;
+  query: string;
+}) {
+  return (
+    <section className="ah-skills-group" aria-labelledby="skills-group-workflow">
+      <div className="ah-skills-group-head">
+        <div className="ah-grow">
+          <h2 id="skills-group-workflow" className="ah-h3">
+            <Icon name="workflow" size="sm" />
+            Workflows {workflows && <span className="ah-count">{workflows.items.length}</span>}
+          </h2>
+          <p className="ah-skills-group-help">{WORKFLOWS_HELP}</p>
+        </div>
+        <AppLink href={newWorkflowRoute(project)} className="ah-skills-new">
+          <Icon name="plus" size="sm" />
+          New workflow with Claude
+        </AppLink>
+      </div>
+      {error ? (
+        <ProblemError
+          title="Could not load workflows"
+          detail={error.detail}
+          status={error.status}
+          onRetry={onRetry}
+        />
+      ) : !workflows ? (
+        <Skeleton lines={3} />
+      ) : workflows.items.length + workflows.problems.length === 0 ? (
+        <div className="ah-card">
+          <EmptyState icon="workflow" title="No workflows defined" command="./hub sync">
+            Workflows are YAML files in the hub&apos;s <span className="ah-mono">workflows/</span>{" "}
+            folder; <span className="ah-mono">hub sync</span> installs the default ones. Run it in
+            the hub:
+          </EmptyState>
+        </div>
+      ) : (
+        <WorkflowList catalog={workflows} query={query} />
+      )}
+    </section>
+  );
+}
+
 export interface CatalogProps {
   catalog: SkillCatalog;
+  /** The project's workflows, for the Workflows tab; absent while they load. */
+  workflows?: WorkflowCatalog | undefined;
+  /** Why the workflows could not be read, if they could not. */
+  workflowsError?: ApiProblem | null | undefined;
+  onRetryWorkflows?: (() => void) | undefined;
   /** The current time in ms (default: a clock refreshed every minute). */
   now?: number | undefined;
 }
 
 /** The catalog of one project; search and facets live in the URL query, updated in place. */
-export function Catalog({ catalog, now }: CatalogProps) {
+export function Catalog({
+  catalog,
+  workflows,
+  workflowsError = null,
+  onRetryWorkflows,
+  now,
+}: CatalogProps) {
   const clock = useNow(60_000);
   const [params, setParams] = useSearchParams();
   const [sort, setSort] = useState<Sort>("name");
@@ -308,9 +388,18 @@ export function Catalog({ catalog, now }: CatalogProps) {
   const counts = facetCounts(catalog.items, filters);
   // The kind is picked with tabs above the cards: one kind, or all of them. A URL naming
   // several kinds (an older link) reads as All, and picking a tab replaces it.
-  const tab = filters.kind.length === 1 ? (filters.kind[0] ?? "all") : "all";
+  const onWorkflows = params.get(VIEW_KEY) === VIEW_WORKFLOWS;
+  const tab = onWorkflows
+    ? WORKFLOWS_TAB
+    : filters.kind.length === 1
+      ? (filters.kind[0] ?? "all")
+      : "all";
   const allCount = KINDS.reduce((sum, kind) => sum + counts.kind[kind], 0);
-  const tileCounts = { all: allCount, ...counts.kind };
+  const tileCounts = {
+    all: allCount,
+    ...counts.kind,
+    [WORKFLOWS_TAB]: workflows ? workflows.items.length : null,
+  };
   const usedOf = (kind?: ItemKind) =>
     catalog.items.filter(
       (item) => (kind ? item.kind === kind : true) && (item.usage?.count ?? 0) > 0,
@@ -318,7 +407,15 @@ export function Catalog({ catalog, now }: CatalogProps) {
   const used = { all: usedOf(), skill: usedOf("skill"), agent: usedOf("agent"), hook: 0 };
   const onTab = (id: string) => {
     const kind = KINDS.find((value) => value === id);
-    setFilters({ ...filters, kind: kind ? [kind] : [] });
+    setParams(
+      (current) => {
+        const next = withFilters(current, { ...filters, kind: kind ? [kind] : [] });
+        if (id === WORKFLOWS_TAB) next.set(VIEW_KEY, VIEW_WORKFLOWS);
+        else next.delete(VIEW_KEY);
+        return next;
+      },
+      { replace: true },
+    );
   };
   const facets: Facet[] = [
     {
@@ -364,24 +461,26 @@ export function Catalog({ catalog, now }: CatalogProps) {
     <div className="ah-stack" style={{ gap: 16 }}>
       <Notices catalog={catalog} />
       <div className="ah-skills-layout">
-        <FilterRail
-          facets={facets}
-          onToggle={onToggle}
-          footer={
-            filtered ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                icon="x"
-                onClick={() => {
-                  setFilters(NO_FILTERS);
-                }}
-              >
-                Clear filters
-              </Button>
-            ) : null
-          }
-        />
+        {!onWorkflows && (
+          <FilterRail
+            facets={facets}
+            onToggle={onToggle}
+            footer={
+              filtered ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon="x"
+                  onClick={() => {
+                    setFilters(NO_FILTERS);
+                  }}
+                >
+                  Clear filters
+                </Button>
+              ) : null
+            }
+          />
+        )}
         <div className="ah-skills-main">
           <DraftsInProgress project={catalog.project} now={now ?? clock} />
           <KindTiles value={tab} counts={tileCounts} used={used} onChange={onTab} />
@@ -391,7 +490,7 @@ export function Catalog({ catalog, now }: CatalogProps) {
               <input
                 type="search"
                 className="ah-input"
-                aria-label="Search skills, agents and hooks"
+                aria-label={onWorkflows ? "Search workflows" : "Search skills, agents and hooks"}
                 placeholder="Search by name or description"
                 maxLength={MAX_QUERY_CHARS}
                 value={filters.q}
@@ -400,23 +499,35 @@ export function Catalog({ catalog, now }: CatalogProps) {
                 }}
               />
             </div>
-            <SegmentedControl
-              label="Sort"
-              value={sort}
-              onChange={(id) => {
-                setSort(id === "used" || id === "recent" ? id : "name");
-              }}
-              options={[
-                { id: "name", label: "A–Z" },
-                { id: "used", label: "Most used" },
-                { id: "recent", label: "Recent" },
-              ]}
-            />
-            <p className="ah-skills-count" role="status" style={{ margin: 0 }}>
-              Showing {items.length} of {catalog.items.length}
-            </p>
+            {!onWorkflows && (
+              <SegmentedControl
+                label="Sort"
+                value={sort}
+                onChange={(id) => {
+                  setSort(id === "used" || id === "recent" ? id : "name");
+                }}
+                options={[
+                  { id: "name", label: "A–Z" },
+                  { id: "used", label: "Most used" },
+                  { id: "recent", label: "Recent" },
+                ]}
+              />
+            )}
+            {!onWorkflows && (
+              <p className="ah-skills-count" role="status" style={{ margin: 0 }}>
+                Showing {items.length} of {catalog.items.length}
+              </p>
+            )}
           </div>
-          {items.length === 0 ? (
+          {onWorkflows ? (
+            <WorkflowsGroup
+              project={catalog.project}
+              workflows={workflows}
+              error={workflowsError}
+              onRetry={onRetryWorkflows}
+              query={filters.q}
+            />
+          ) : items.length === 0 ? (
             <div className="ah-card ah-pad ah-small ah-muted">
               No items match these filters.{" "}
               <Button

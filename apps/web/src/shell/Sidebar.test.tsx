@@ -25,7 +25,6 @@ describe("Sidebar", () => {
       "Portfolio",
       "Sessions",
       "Workflow runs",
-      "Workflows",
       "Features",
       "Learnings",
       "Brain",

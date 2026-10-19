@@ -22,7 +22,7 @@ import { SettingsScreen } from "./screens/settings";
 import { SkillDetailScreen, SkillsPickerScreen, SkillsScreen } from "./screens/skills";
 import { EditDraftScreen, NewDraftScreen, StudioScreen } from "./screens/skills/Studio";
 import { WelcomeScreen } from "./screens/welcome";
-import { WorkflowDetailScreen, WorkflowsScreen } from "./screens/workflows";
+import { LegacyWorkflowRedirect, WorkflowDetailScreen, WorkflowsScreen } from "./screens/workflows";
 import { NewWorkflowScreen } from "./screens/workflows/NewWorkflow";
 import { AppShell } from "./shell/AppShell";
 
@@ -63,6 +63,9 @@ export const appRoutes: RouteObject[] = [
           { path: "projects/:project/skills", element: <SkillsScreen /> },
           { path: "projects/:project/skills/new/:kind", element: <NewDraftScreen /> },
           { path: "projects/:project/skills/drafts/:draftId", element: <StudioScreen /> },
+          // Workflows are a tab of the Toolkit; static segments rank before `:kind/:source/:name`.
+          { path: "projects/:project/skills/workflows/new", element: <NewWorkflowScreen /> },
+          { path: "projects/:project/skills/workflows/:name", element: <WorkflowDetailScreen /> },
           { path: "projects/:project/skills/:kind/:source/:name", element: <SkillDetailScreen /> },
           {
             path: "projects/:project/skills/:kind/:source/:name/edit",
@@ -83,9 +86,10 @@ export const appRoutes: RouteObject[] = [
           { path: "knowledge/:section", element: <KnowledgePhase3Screen /> },
           { path: "features", element: <FeaturesScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
+          // Older links: Workflows moved into the Toolkit.
           { path: "workflows", element: <WorkflowsScreen /> },
           { path: "workflows/new", element: <NewWorkflowScreen /> },
-          { path: "workflows/:project/:name", element: <WorkflowDetailScreen /> },
+          { path: "workflows/:project/:name", element: <LegacyWorkflowRedirect /> },
           { path: "health", element: <HealthScreen /> },
           { path: "*", element: <NotFoundScreen /> },
         ],
