@@ -44,7 +44,7 @@ export function slugAfterIssue(text: string | null | undefined, issue: string): 
   if (!text) return null;
   const found = new RegExp(`${escaped(issue)}(?![0-9])[-_/]*(.*)$`, "i").exec(text);
   const rest = found?.[1]?.trim();
-  return rest || null;
+  return rest === undefined || rest === "" ? null : rest;
 }
 
 /** A ticket session's name, as its commits read: `ACME-12: fix-login`; null without an issue. */
