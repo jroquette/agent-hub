@@ -67,17 +67,6 @@ function PrCell({ row }: { row: TicketRow }) {
   );
 }
 
-/** The conventional prefix of the title (`feat(brand-api)`) as a chip in its own column. */
-function ScopeCell({ row }: { row: TicketRow }) {
-  const { type, scope } = splitTitle(row.title ?? "");
-  if (!type) return <span className="ah-subtle">—</span>;
-  return (
-    <span className="ah-ticket-scope" title={`${type}${scope ? `(${scope})` : ""}`}>
-      {scope ?? type}
-    </span>
-  );
-}
-
 /** The words of the title, the epic tag before them and a branch mark on an epic's child. */
 function TitleCell({ row, child }: { row: TicketRow; child: boolean }) {
   const text = row.title ? splitTitle(row.title).text : null;
@@ -307,7 +296,6 @@ function TicketsTable({
     cell: (row: TicketRow) => ReactNode;
   }[] = [
     { label: "Ticket", width: 110, nowrap: true, cell: (row) => <TicketId row={row} /> },
-    { label: "Scope", width: 90, nowrap: true, cell: (row) => <ScopeCell row={row} /> },
     {
       label: "Title",
       className: "ah-ticket-title-col",
@@ -420,7 +408,7 @@ export interface TicketsTabProps {
 /**
  * The Tickets tab (AC-136.28): where the data comes from, the flow of the tickets (what runs in
  * parallel, in which order, and where each one is now), then one row per ticket (Linear link,
- * scope, title, status, assignee, blockers, ACs, the sessions that worked on it, readiness).
+ * title, status, assignee, blockers, ACs, the sessions that worked on it, readiness).
  */
 export function TicketsTab({
   project,
