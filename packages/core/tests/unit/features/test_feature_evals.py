@@ -412,3 +412,59 @@ def test_ignores_json_outputs_when_legacy_and_outputs_mixed() -> None:
     assert review_records(mixed.reviews, slug=SLUG) == review_records(legacy.reviews, slug=SLUG)
     assert feature_detail(mixed, project="demo") == feature_detail(legacy, project="demo")
     assert (mixed.evals_skipped, mixed.reviews_skipped) == (1, 1)
+
+
+def test_takes_final_verdict_when_addendum_reverses_first_legacy() -> None:
+    head = (
+        b"# Eval\n\n**Final verdict: SHIP, 2/2 ACs (Addendum 2).**\n\n"
+        b"**Verdict: NO-SHIP.** 1 of 2.\n"
+    )
+
+    [record] = eval_records((), head, slug=SLUG)
+    coverage = eval_coverage((record,), acs_named(2, passes=True))
+
+    assert record.verdict == "SHIP"
+    assert coverage.covered == ("AC-7.1", "AC-7.2")
+
+
+def test_keeps_first_verdict_when_no_final_line_legacy() -> None:
+    [record] = eval_records((), b"Verdict: NO-SHIP\n\nLater: Verdict: SHIP\n", slug=SLUG)
+
+    assert record.verdict == "NO-SHIP"
+
+
+# AC-PG-11.1: a lowercase "final verdict" line (and a lowercase verdict) still decides.
+def test_takes_final_verdict_when_line_lowercase_legacy() -> None:
+    head = (
+        b"# Eval\n\n**Verdict: NO-SHIP.** 1 of 2.\n\n"
+        b"addendum: final verdict: ship-with-owner-steps\n"
+    )
+
+    [record] = eval_records((), head, slug=SLUG)
+
+    assert record.verdict == "SHIP-WITH-OWNER-STEPS"
+
+
+# AC-PG-11.1: the first "Final verdict" line decides when an eval has two.
+def test_takes_first_final_verdict_when_two_final_lines_legacy() -> None:
+    head = b"FINAL VERDICT: NO-SHIP\n\nVerdict: SHIP\n\nFinal verdict: SHIP\n"
+
+    [record] = eval_records((), head, slug=SLUG)
+
+    assert record.verdict == "NO-SHIP"
+
+
+@pytest.mark.parametrize(
+    ("provenance", "expected"),
+    [("agent-evaluator", "agent-evaluator"), ("owner", "owner"), ("[a, b]", None), (None, None)],
+)
+def test_reads_who_ran_eval_when_provenance_given(
+    provenance: str | None, expected: str | None
+) -> None:
+    fields = {"type": "eval", "verdict": "SHIP", "acs": "[AC-7.1]"}
+    if provenance is not None:
+        fields["provenance"] = provenance
+
+    (record,) = eval_records((an_eval("acme-1520.md", **fields),), None, slug=SLUG)
+
+    assert (record.provenance, record.problem) == (expected, None)

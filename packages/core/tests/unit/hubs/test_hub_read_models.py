@@ -625,9 +625,10 @@ def test_captures_skill_units_when_capture_given() -> None:
     )
 
     models.skill_catalog("demo")
-    unit = models.skill_unit("demo", kind=ItemKind.AGENT, source="demo", name="scout")
+    marked = models.marked_skill_unit("demo", kind=ItemKind.AGENT, source="demo", name="scout")
 
-    assert unit is not None
+    assert marked is not None
+    unit = marked.unit
     assert unit.unit_path == "plugin/demo/agents/scout.md"
     last = store.last("demo", unit.unit_path)
     assert last is not None

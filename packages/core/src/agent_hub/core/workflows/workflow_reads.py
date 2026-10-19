@@ -9,15 +9,18 @@ With ``capture`` (AGH-295, D8, D14, A3), the list hands the capture every hub wo
 loads and the detail its one workflow, each as the hub-relative file the discovery loaded
 (``.yaml`` or ``.json``) marked with that file's own fingerprint entry, so an edit re-reads only
 its file; one list request shares one capture budget across its hubs. A built-in has no unit,
-and ``unit_of`` names a workflow's unit without capturing.
+and ``marked_workflow_unit`` names a workflow's unit and its capture mark without capturing.
 A file that does not load is a problem of the list, never an item, and its detail is not found.
 A list scoped to an unknown project is empty; a detail of one raises ``EntityNotFoundError``.
 """
 
 import threading
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import NamedTuple, Protocol
+
+from pydantic import Field
 
 from agent_hub.core.item_versions.capture_item_versions import (
     CaptureBudget,
@@ -26,6 +29,7 @@ from agent_hub.core.item_versions.capture_item_versions import (
 )
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import UnitKind
+from agent_hub.core.item_versions.item_version_ports import MarkedUnit
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
@@ -50,8 +54,29 @@ class WorkflowNodeView(ViewModel):
     description: str | None = None
 
 
+class WorkflowInputView(ViewModel):
+    """An input a run of the workflow takes: what to pass to ``hub workflow run``."""
+
+    name: str
+    type: str
+    required: bool
+    description: str | None = None
+
+
+class WorkflowStepView(ViewModel):
+    """A step as the catalog outlines it: declaration order, a repeat's body nested (its ids
+    without the ``<group>__`` prefix) and its round cap."""
+
+    id: str
+    type: str
+    description: str | None = None
+    max_iterations: int | None = None
+    body: tuple[WorkflowStepView, ...] = ()
+
+
 class WorkflowSummary(ViewModel):
-    """A workflow of a project's hub, and where it comes from (``source``)."""
+    """A workflow of a project's hub, and where it comes from (``source``). ``step_types``
+    counts every step by type, a ``loop_group``'s body included; ``inputs`` is what a run takes."""
 
     project: str
     name: str
@@ -60,6 +85,9 @@ class WorkflowSummary(ViewModel):
     source: WorkflowOrigin
     node_count: int
     layer_count: int
+    step_types: dict[str, int] = Field(default_factory=dict)
+    inputs: tuple[WorkflowInputView, ...] = ()
+    steps: tuple[WorkflowStepView, ...] = ()
 
 
 class WorkflowDetail(WorkflowSummary):
@@ -204,11 +232,16 @@ class ReadWorkflows:
             raise EntityNotFoundError(entity="workflow", entity_id=f"{project}/{name}")
         return hub_path, plan
 
-    def unit_of(self, project: str, name: str) -> ItemUnit | None:
-        """The unit the workflow is versioned in, or None (a built-in, D14); an unknown project
-        or workflow is ``EntityNotFoundError``. Reads no unit."""
+    def marked_workflow_unit(self, project: str, name: str) -> MarkedUnit | None:
+        """The unit the workflow is versioned in, with the mark the reads capture the file under,
+        or None (a built-in, D14); an unknown project or workflow is ``EntityNotFoundError``.
+        Reads no unit."""
         hub_path, plan = self.workflow_plan(project, name)
-        return _unit_of(project, plan, self._read(hub_path))
+        read = self._read(hub_path)
+        unit = _unit_of(project, plan, read)
+        if unit is None:
+            return None
+        return MarkedUnit(hub_path=hub_path, unit=unit, mark=_mark_of(read, unit), shared_by=1)
 
     def _capture_plans(
         self,
@@ -224,8 +257,7 @@ class ReadWorkflows:
         for plan in plans:
             unit = _unit_of(project, plan, read)
             if unit is not None:
-                # A file the listing does not hold (never expected) falls back to the whole one.
-                marked.append((unit, read.marks.get(unit.unit_path, read.fingerprint)))
+                marked.append((unit, _mark_of(read, unit)))
         self._capture.capture(project, hub_path, marked, budget=budget)
 
     def _read(self, hub_path: str) -> _Read:
@@ -253,6 +285,12 @@ def _unit_of(project: str, plan: WorkflowPlan, read: _Read) -> ItemUnit | None:
     return ItemUnit(project=project, unit_path=unit_path, kind=UnitKind.WORKFLOW)
 
 
+def _mark_of(read: _Read, unit: ItemUnit) -> SourceStat | tuple[SourceStat, ...]:
+    """The unit's capture mark: its file's own fingerprint entry; a file the listing does not
+    hold (never expected) falls back to the whole fingerprint."""
+    return read.marks.get(unit.unit_path, read.fingerprint)
+
+
 def _workflow_files(files: Iterable[WorkflowFile | LoadProblem]) -> Iterator[WorkflowFile]:
     return (item for item in files if isinstance(item, WorkflowFile))
 
@@ -269,4 +307,36 @@ def _summary(
         source=origins.get(document.name, "hub"),
         node_count=len(document.nodes),
         layer_count=len(plan.layers),
+        step_types=dict(Counter(_step_types(document.nodes))),
+        inputs=tuple(
+            WorkflowInputView(
+                name=name, type=item.type, required=item.required, description=item.description
+            )
+            for name, item in document.inputs.items()
+        ),
+        steps=tuple(_outline(document.nodes)),
     )
+
+
+def _outline(nodes: Iterable[object], prefix: str = "") -> Iterator[WorkflowStepView]:
+    """Each step in declaration order, a ``loop_group``'s body nested under it."""
+    for node in nodes:
+        node_id = str(getattr(node, "id", ""))
+        body = getattr(node, "nodes", None)
+        cap = getattr(node, "max_iterations", None)
+        yield WorkflowStepView(
+            id=node_id.removeprefix(prefix),
+            type=str(getattr(node, "type", "unknown")),
+            description=getattr(node, "description", None),
+            max_iterations=cap if isinstance(cap, int) else None,
+            body=tuple(_outline(body, f"{node_id}__")) if isinstance(body, tuple) else (),
+        )
+
+
+def _step_types(nodes: Iterable[object]) -> Iterator[str]:
+    """Each step's type, a ``loop_group``'s body steps after the group's own."""
+    for node in nodes:
+        yield str(getattr(node, "type", "unknown"))
+        body = getattr(node, "nodes", None)
+        if isinstance(body, tuple):
+            yield from _step_types(body)

@@ -42,6 +42,7 @@ BRAIN_MEMORY_RULE: Final = "brain.memory"
 SANDBOX_WORKFLOW_RULE: Final = "sandbox.workflow"
 WORKFLOWS_VALID_RULE: Final = "workflows.valid"
 ENVIRONMENTS_PRODUCTION_RULE: Final = "environments.production"
+ITEM_LEFTOVERS_RULE: Final = "items.leftovers"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -66,11 +67,12 @@ RULE_IDS: Final = (
     CONFIG_IDENTITY_RULE,
     REPOS_AGENTS_RULE,
     CONFIG_STOP_GATE_RULE,
-    # Before the last three, whose places their tests pin.
+    # Before the last four, whose places their tests pin.
     ENVIRONMENTS_PRODUCTION_RULE,
     BRAIN_MEMORY_RULE,
     SANDBOX_WORKFLOW_RULE,
     WORKFLOWS_VALID_RULE,
+    ITEM_LEFTOVERS_RULE,
 )
 
 # The rules a module owns: they run and may be configured only when the module is selected.
@@ -194,7 +196,7 @@ class DoctorRules(ConfigObject):
     features_tracker: RuleSettings | None = absent_by_default(alias="features.tracker")
     bench_tasks: RuleSettings | None = absent_by_default(alias="bench.tasks")
     config_identity: IdentityRuleSettings | None = absent_by_default(alias="config.identity")
-    # Before the last five fields, whose order the schema's tests pin.
+    # Before the last six fields, whose order the schema's tests pin.
     environments_production: RuleSettings | None = absent_by_default(
         alias="environments.production"
     )
@@ -203,3 +205,4 @@ class DoctorRules(ConfigObject):
     brain_memory: RuleSettings | None = absent_by_default(alias="brain.memory")
     sandbox_workflow: RuleSettings | None = absent_by_default(alias="sandbox.workflow")
     workflows_valid: RuleSettings | None = absent_by_default(alias="workflows.valid")
+    items_leftovers: RuleSettings | None = absent_by_default(alias="items.leftovers")

@@ -245,6 +245,9 @@ type DriverEvent = Annotated[
     | Exited,
     Field(discriminator="kind"),
 ]
+# The events of a turn at work: one while no turn is counted means the CLI started one itself
+# (a queued message played after the result that answered the turn before it).
+ACTIVITY_EVENTS: Final = (TextDelta, TextBlock, Thinking, ToolCall, ToolResult, Todos)
 
 
 class Allow(DriverModel):

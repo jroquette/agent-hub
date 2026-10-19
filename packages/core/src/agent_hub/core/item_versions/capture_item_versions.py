@@ -15,29 +15,31 @@ unit after it, for the next read. One request stops reading
 new units once ``budget_bytes`` (the catalog's 16 MiB) have been read; the read that crosses it
 still finishes, and the units left are read by a later request. A call spends its own budget
 unless it is handed one (``budget()``), which a request reading several hubs shares across its
-calls. A unit gone before its read is left out of the answer.
+calls. A unit gone before its read is left out of the answer. A write of units (S4) runs
+``holding`` them: no capture of one reads or records meanwhile, and their memo entries are
+dropped, so the next read reads them again (and finds the version the write recorded).
 """
 
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Hashable, Iterable, Mapping
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
+from contextlib import ExitStack, contextmanager
 from datetime import datetime
 from enum import StrEnum
 from typing import Final
 
 from agent_hub.core.hubs.hub_registry import HubFileReader, UnreadUnit
+from agent_hub.core.item_versions.append_version import append_next
 from agent_hub.core.item_versions.item_units import ItemUnit
-from agent_hub.core.item_versions.item_version import NewItemVersion, UnitKind, VersionOrigin
+from agent_hub.core.item_versions.item_version import VersionOrigin
 from agent_hub.core.item_versions.secret_match import has_secret_match
-from agent_hub.core.item_versions.unit_content import UnitContent, encode, size_of
-from agent_hub.core.item_versions.unit_hash import file_hash, folder_hash
+from agent_hub.core.item_versions.unit_content import UnitContent, size_of
 from agent_hub.core.item_versions.version_store import (
     ItemVersionSequenceError,
     ItemVersionStore,
 )
 from agent_hub.core.skills.skill_sources import CATALOG_BUDGET_BYTES
 
-ATTEMPTS: Final = 3
 # The units the memo remembers; past it the oldest is read again (and stores nothing new).
 MEMO_UNITS: Final = 50_000
 
@@ -128,7 +130,7 @@ class CaptureItemVersions:
     ) -> tuple[UnitState | None, int]:
         """Read, record and mark one unit with its key held, so an older read of it is never
         appended after a newer one; answers its state (None: not settled) and the bytes read."""
-        with self._unit_locks[hash(key) % UNIT_LOCKS]:
+        with self._unit_locks[_lock_index(key)]:
             with self._guard:
                 known = self._memo.get(key)
             if known is not None and known[0] == mark:
@@ -147,34 +149,31 @@ class CaptureItemVersions:
             self._mark(key, mark, state)
             return state, read_bytes
 
+    @contextmanager
+    def holding(self, units: Iterable[ItemUnit]) -> Iterator[None]:
+        """Hold the keys of ``units`` while a write of them runs, then forget their marks."""
+        keys = {(unit.project, unit.unit_path) for unit in units}
+        with ExitStack() as held:
+            # Each lock once (two keys may share one) and in one order, so writes never deadlock.
+            for index in sorted({_lock_index(key) for key in keys}):
+                held.enter_context(self._unit_locks[index])
+            try:
+                yield
+            finally:
+                with self._guard:
+                    for key in keys:
+                        self._memo.pop(key, None)
+
     def _record(self, unit: ItemUnit, content: UnitContent) -> bool:
         """Append ``content`` unless the unit's last version holds it; False when every try lost
         the race (left for the next read)."""
-        folder = unit.kind is UnitKind.SKILL
-        content_hash = folder_hash(content.files) if folder else file_hash(content.files[0].content)
-        for _ in range(ATTEMPTS):
-            last = self._store.last(unit.project, unit.unit_path)
-            if last is not None and last.content_hash == content_hash:
-                return True
-            seq = 1 if last is None else last.seq + 1
-            version = NewItemVersion(
-                project=unit.project,
-                unit_path=unit.unit_path,
-                kind=unit.kind,
-                seq=seq,
-                origin=VersionOrigin.EXTERNAL,
-                first=seq == 1,
-                recorded_at=self._clock(),
-                content_hash=content_hash,
-                size=size_of(content),
-                content=encode(content, folder=folder),
+        try:
+            append_next(
+                self._store, unit, content, origin=VersionOrigin.EXTERNAL, clock=self._clock
             )
-            try:
-                self._store.append(version)
-            except ItemVersionSequenceError:
-                continue
-            return True
-        return False
+        except ItemVersionSequenceError:
+            return False
+        return True
 
     def _mark(self, key: tuple[str, str], mark: UnitMark, state: UnitState) -> None:
         with self._guard:
@@ -182,3 +181,7 @@ class CaptureItemVersions:
             self._memo.move_to_end(key)
             while len(self._memo) > MEMO_UNITS:
                 self._memo.popitem(last=False)
+
+
+def _lock_index(key: tuple[str, str]) -> int:
+    return hash(key) % UNIT_LOCKS

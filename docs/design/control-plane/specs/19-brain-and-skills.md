@@ -114,3 +114,78 @@ The owner validated these in the playground too. They refine the Skills catalog 
   page, then it is "Toolkit"; its tabs stay Skills, Agents and Hooks.
 - **AC-271.10** Given the Toolkit, when it lists kinds (tabs, tiles, the Create menu, the index columns), then agents
   come before skills and hooks.
+
+## Item history (AGH-295)
+
+As built in AGH-297. A Toolkit item's detail ends its main column with a **History** panel, and a hub workflow's
+page has the same panel under its document; a built-in workflow's page has none. The panel is folded ("Show history")
+and reads `GET .../versions` only when opened. It lists the versions agent-hub recorded of the item's unit (a skill's
+folder, an agent's file, a hook's whole file, a workflow's file), newest first, 50 at a time with "Load more".
+
+```
+History                                                                   [Hide history]
+Versions of .claude/settings.json · Shared by 3 hooks · (lock) Managed by hub.lock
+(!) Not versioned: secret  The item on disk holds a secret match, so agent-hub does not store it. ...
++----+------------------------------+----------------+-----------+----------+-----------+
+| [] | Origin                       | Author         | When      | Hash     |           |
+| [x]| (undo) Restored from 1a2b3c4d| Example Owner  | 5 min ago | 9f8e7d6c | [Restore] |
+| [] | (pen)  Published             | Example Owner  | 1 h ago   | 5e4d3c2b | [Restore] |
+| [] | (pencil) Changed outside the app | Outside the app | 2 h ago | 7a6b5c4d | [Restore] |
+| [x]| (flag) First seen            | Outside the app| 2 d ago   | 1a2b3c4d | [Restore] |
++----+------------------------------+----------------+-----------+----------+-----------+
+[Compare]  2 versions selected.
+```
+
+- **Rows.** Origin in words beside an icon: "Published", "Restored from <8-character hash of the source>" ("Restored
+  from an older version" when the source is not loaded), "Changed outside the app", and "First seen" for a unit's
+  first version. The author's name, or "Outside the app" for an external version (D11). The time is relative, the
+  absolute one in its tooltip. The hash is 8 hex characters, the full `sha256:` value in its tooltip.
+- **Unit line.** "Versions of <unit path>", "Shared by <n> hooks" when one file holds several hooks, and the quiet
+  badge "Managed by hub.lock".
+- **State.** When the disk's content could not be stored, a warning notice (text and icon, never color alone) above
+  the list: "Not versioned: secret" or "Not versioned: cannot read it" (Restore is off on every row), "Not
+  versioned: too large" (Restore stays on). Earlier versions stay listed and comparable.
+- **States.** Loading: skeleton lines (status "Loading the history"). No versions: "No versions yet" (the next read
+  records the first). An item with no unit (a link out of the hub): "No history for this item". A failed read:
+  "Could not load the history" with "Try again".
+- **Compare.** Each row has a checkbox "Select <hash> (<origin>) to compare"; the last two picked stay selected, any
+  two (not only adjacent ones). "Compare" turns on with two and shows, under the list, "From <older hash> to <newer
+  hash>": the older against the newer as a unified diff, rendered by the Studio's `DiffText`. A folder shows one
+  diff per changed file, each headed "Added", "Removed" or "Changed" with its path, and "Executable bit: off → on"
+  (or on → off) for a changed bit; a binary file says its bytes differ. Equal versions say "These two versions hold
+  the same content."; two versions whose hashes differ with no change the web can see (a binary file of the same
+  size) say "These versions differ in bytes the app cannot show" and name the binary files; when other files changed
+  too, the changes end with "They may also differ in bytes the app cannot show, in <binary files>". The diffs share one
+  budget of 2,000 rendered lines (`COMPARE_MAX_LINES`), headers included: the file that crosses it ends with "<n>
+  more lines — too large to show here", and each file after it keeps its heading with "Diff not shown — too large
+  to show here.". The diffs are computed once per pair of versions. Opening Compare moves focus to its heading;
+  "Close compare" folds it and puts focus back on Compare.
+- **Restore dialog.** "Restore" on a row opens a confirm dialog (nothing is sent before its verb), titled
+  "Restore <hash>?":
+  - a file: "Writes this version back into <unit path>."; a hook: "Restores the whole file <unit path>: every hook
+    in it (<n> hooks today)." (AC-295.23);
+  - consequences: "The current content is recorded first when it changed, so it stays restorable." and "git is not
+    run: the change shows in the hub's working tree.";
+  - a managed unit: the warning "This file is managed by hub.lock: the next hub sync rewrites it. Restore anyway?"
+    and the verb "Restore anyway", which alone sends `confirm_managed: true`; a project-owned unit has no warning
+    and the verb "Restore". When the server answers `managed_confirmation_required` (hub.lock changed since the
+    list), the dialog shows the warning and "Restore anyway".
+  - Cancel, Escape, the X and the scrim send nothing. A refusal stays in the dialog in words: `hub_read_only` (the
+    hub folder is read-only here, always in the container), `no_author` (with the server's reason),
+    `link_in_path`, `unit_unreadable`, `secret_unversioned`, a 500 `write_failed`, a 503 `version_race` or
+    `written_not_recorded`, and a 401 (open the link hub web printed, ending `?token=…`).
+- **Result.** The dialog closes and a notice under the unit line says "Restored <hash>: a new version records it.",
+  "The item already holds <hash>: nothing was written." (both neutral notices) or, as a warning, "Restored <hash>, but not versioned:
+  secret" (or "too large"). A 503 `written_not_recorded` also closes the dialog, with the warning "Wrote <hash>, but
+  its version was not recorded." and the server's advice to reload the history. Every read of the project's Toolkit
+  (the item, its bundled files, the hooks sharing its file, the catalog), or the workflows list and the workflow,
+  reads again. A history refresh that fails shows "Could not refresh the history" with "Try again" above the list
+  it keeps.
+
+### Accessibility
+
+The panel is a region named "History"; its fold button carries `aria-expanded`. The list is a table with the
+caption "Versions of <name>". Checkboxes and Restore buttons are reached with Tab and work with Space and Enter;
+the selection count is a polite live line. The dialog is an alert dialog with focus on Cancel; Tab reaches "Restore"
+(or "Restore anyway"). Each diff is a focusable, labelled `pre` ("Changes to <path>"), so it scrolls from the
+keyboard. axe reports no serious or critical violation in the panel, Compare or the dialog (AC-295.31).

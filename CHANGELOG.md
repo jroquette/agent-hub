@@ -13,12 +13,37 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub doctor` warns with `items.leftovers` about each `.<name>.hub-tmp-<8 hex>` entry an interrupted
+  `hub web` Publish or Restore left beside a skill, agent, hook, script or workflow (a skill's stage or old
+  folder may hold the only copy of its hidden files); check it, then remove it.
 - The Toolkit keeps a version history of every skill folder, agent file and hook file, and the Workflows page of every
   hub workflow file (AGH-296): reading the catalog, the Workflows list or an item's detail stores a baseline the first
   time a unit is seen and a new version when its content changed,
   in agent-hub's database (`item_versions`, migration 0005, upgraded on start). A link is versioned once, at its
   target; a built-in workflow, or a unit with a secret match or past the 256 KiB or 200-file bounds, is never
   stored; the hub's files are not touched.
+- `hub web` can restore an earlier version of a Toolkit item or a hub workflow (AGH-297,
+  `POST .../versions/{version_id}/restore`): the hub's file or skill folder is written back as that version, its
+  executable bits included, after the current content is recorded first, and a `restore` version names its source
+  and your identity. A unit `hub.lock` manages needs a confirmation, a unit with a secret match on disk is refused,
+  and in the container (`make up`) the hubs are read-only, so a restore answers 409 `hub_read_only`. git is never
+  run: the change shows in the hub's working tree.
+- The Toolkit detail and a hub workflow's page have a History panel (AGH-297): each version with its origin in words
+  ("Published", "Restored from <hash>", "Changed outside the app", "First seen"), its author or "Outside the app",
+  when and its hash; Compare shows any two versions as a diff, file by file for a skill folder; Restore asks first,
+  warns when `hub.lock` manages the file (the next `hub sync` rewrites it) and says how many hooks a hook file's
+  restore brings back. A unit with a secret match on disk shows "Not versioned: secret" and cannot be restored.
+
+- The playground work of 2026-10-17/18 (AGH-314): Sessions as an inbox with a summary strip and one action per
+  row; the chat's header menu, Events link, live activity bar and Steps drawer, and Changed files on the final result;
+  Continue in chat for an ended terminal session; Features grouped by state with search, filters and nicknames kept on
+  this machine; on a feature's page the Waiting on you banner and owner sign-off, the Eval history per scope, Approve
+  with the spec's open questions, ticket sessions and Run on an AC's check; Workflows as plain rows with a step list
+  and New workflow; Settings › Linear with a key kept on this machine and a release sync for a hub on another pin;
+  Health's Fix (`hub doctor --fix`, which rewrites every `brain.leak` on the brain side); the Hub config screen and
+  `hub.local.json` editing. `agent_sessions` gains three columns (migration 0006, upgraded on start). The app writes
+  into a hub only what the CLI would, and never commits there
+  ([ADR 0040](docs/adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)).
 
 ## [0.16.1] - 2026-10-17
 

@@ -18,6 +18,8 @@ const routes: CaptureRoute[] = process.env.AH_CAPTURE
   ? (JSON.parse(process.env.AH_CAPTURE) as CaptureRoute[])
   : [];
 const outDir = process.env.AH_CAPTURE_DIR ?? "";
+// hub web's address with its launch token: the agent-session routes need the cookie it is traded for.
+const login = process.env.AH_CAPTURE_LOGIN;
 // One fixed instant, so the clock-driven parts of a screen are the same in every export.
 const FROZEN = new Date("2026-01-01T12:00:00Z");
 
@@ -32,6 +34,10 @@ test.describe("playground export capture", () => {
       await page.addInitScript(() => {
         window.localStorage.setItem("ah.theme", "dark");
       });
+      if (login) {
+        // The 303 sets the cookie; it is the loopback's, so the preview's proxied calls carry it.
+        await page.request.get(login, { maxRedirects: 0 });
+      }
       await page.goto(route.path);
       if (route.follow) {
         const link = page.locator(`a[href^="${route.follow}"]`).first();

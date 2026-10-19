@@ -28,11 +28,13 @@ import { readStored, writeStored } from "../../lib/storage";
 import {
   ACTIVITY_FILTERS,
   activityEntry,
+  collapseRepeats,
   costDelta,
   inFlight,
   moreLabel,
   NEEDS_MAX,
   NEEDS_VISIBLE,
+  groupLearnings,
   needsEntry,
   orderNeeds,
   orderProjects,
@@ -86,7 +88,7 @@ function NeedsRegion({ project, live }: { project: string | null; live: number }
       />
     );
   }
-  const ordered = orderNeeds(needs.data.items);
+  const ordered = orderNeeds(groupLearnings(needs.data.items));
   if (ordered.length === 0 && live === 0) {
     return (
       <section className="ah-needs" aria-labelledby="needs-title">
@@ -121,35 +123,29 @@ function NeedsRegion({ project, live }: { project: string | null; live: number }
   );
 }
 
-function KpiRow({ projects }: { projects: ProjectSummary[] }) {
+/** Totals across projects (spec 12: after the cards); only worth a row from two projects up. */
+function TotalsRow({ projects }: { projects: ProjectSummary[] }) {
   const sum = totals(projects);
   const delta = costDelta(String(sum.cost), sum.previous === null ? null : String(sum.previous));
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+    <section aria-label="Totals · 7 d" className="ah-pf-totals">
       <KpiStat
+        small
         label="Estimated cost · 7 d"
         value={fmtMoney(sum.cost)}
         delta={delta.pct === null ? undefined : delta.text.split(" vs")[0]}
         deltaTone={delta.tone}
-        period={
-          delta.pct === null ? "No previous period to compare" : `vs ${fmtMoney(sum.previous)}`
-        }
+        period={delta.pct === null ? "First period tracked" : `vs ${fmtMoney(sum.previous)}`}
         hint={`${PERIOD_HINT} Cost is estimated from transcripts. OpenTelemetry is not connected in this version.`}
       />
       <KpiStat
+        small
         label="Failed runs · 7 d"
         value={String(sum.failed)}
-        period="Runs that ended in FAILED"
+        period="Runs that failed"
         hint={PERIOD_HINT}
       />
-      <KpiStat label="Runs in flight" value={String(sum.inFlight)} period="Now" hint={NOW_HINT} />
-      <KpiStat
-        label="Live sessions"
-        value={String(sum.live)}
-        period={sum.live ? "Now" : "Now · nothing running"}
-        hint={NOW_HINT}
-      />
-    </div>
+    </section>
   );
 }
 
@@ -293,7 +289,7 @@ function ProjectsRegion({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(480px, 100%), 1fr))",
         gap: 16,
       }}
     >
@@ -305,10 +301,6 @@ function ProjectsRegion({
               p={projectCard(p)}
               onOpen={() => void navigate(`/projects/${encodeURIComponent(p.name)}`)}
             />
-            <span className="ah-row ah-small ah-subtle" style={{ gap: 6 }}>
-              <Icon name="coins" size="sm" />
-              Cost estimated from transcripts
-            </span>
             {quiet && (
               <p className="ah-small ah-muted" style={{ margin: 0 }}>
                 No sessions yet. Start Claude Code in <span className="ah-mono">{p.hub_repo}</span>{" "}
@@ -327,7 +319,7 @@ function toZero(p: ProjectSummary): boolean {
   return p.cost_period === null && p.failed_runs_7d === 0 && inFlight(p) === 0;
 }
 
-function ActivityRegion({ project }: { project: string | null }) {
+function ActivityRegion({ project, single }: { project: string | null; single: boolean }) {
   const [filter, setFilter] = useState("All");
   const [limit, setLimit] = useState(ACTIVITY_PAGE);
   const activity = useActivity(project, limit);
@@ -362,9 +354,15 @@ function ActivityRegion({ project }: { project: string | null }) {
       ) : (
         <>
           <ActivityFeed
-            items={items.map((item) => ({
+            items={collapseRepeats(items).map(({ item, count }) => ({
               ...activityEntry(item, now),
-              node: item.href ? <AppLink href={item.href}>{item.text}</AppLink> : undefined,
+              project: single ? "" : item.project,
+              count,
+              node: item.href ? (
+                <AppLink href={item.href} className="ah-feed-link">
+                  {item.text}
+                </AppLink>
+              ) : undefined,
             }))}
           />
           {activity.data.next_cursor && limit < 200 && (
@@ -389,9 +387,9 @@ function ActivityRegion({ project }: { project: string | null }) {
           Activity
         </h2>
         <span className="ah-grow" />
-        <span className="ah-small ah-subtle">7 d</span>
+        <span className="ah-small ah-subtle">Last 7 days</span>
       </div>
-      <div className="ah-row ah-wrap" style={{ gap: 6, padding: "10px 16px 0" }}>
+      <div className="ah-row" style={{ gap: 6, padding: "10px 16px 0", overflowX: "auto" }}>
         {ACTIVITY_FILTERS.map((f) => (
           <FilterChip
             key={f.id}
@@ -406,6 +404,20 @@ function ActivityRegion({ project }: { project: string | null }) {
       <div style={{ padding: "4px 16px 12px" }}>{body}</div>
     </section>
   );
+}
+
+/** "1 project · 2 sessions running · no runs in flight": the now-values, said once. */
+function summaryLine(projects: number, live: number, inFlight: number): string {
+  const parts = [
+    `${String(projects)} ${projects === 1 ? "project" : "projects"}`,
+    live === 0
+      ? "no session running"
+      : `${String(live)} ${live === 1 ? "session" : "sessions"} running`,
+    inFlight === 0
+      ? "no runs in flight"
+      : `${String(inFlight)} ${inFlight === 1 ? "run" : "runs"} in flight`,
+  ];
+  return parts.join(" · ");
 }
 
 function readView(params: URLSearchParams): string {
@@ -443,7 +455,7 @@ export function PortfolioScreen() {
           <StaleStamp />
           <span className="ah-grow" />
           <Tooltip label={PERIOD_HINT}>
-            <span className="ah-small ah-subtle">Period · 7 d</span>
+            <span className="ah-small ah-subtle">Last 7 days</span>
           </Tooltip>
           <SegmentedControl
             label="View"
@@ -455,34 +467,24 @@ export function PortfolioScreen() {
             ]}
           />
         </div>
-        <div className="ah-small ah-muted" style={{ marginTop: 4 }}>
+        <div className="ah-muted" style={{ marginTop: 4 }}>
           {projects.data ? (
-            `${String(list.length)} ${list.length === 1 ? "project" : "projects"} · ${String(sum.live)} live · ${String(sum.inFlight)} ${sum.inFlight === 1 ? "run" : "runs"} in flight`
+            summaryLine(list.length, sum.live, sum.inFlight)
           ) : (
             <Skeleton width={320} />
           )}
         </div>
       </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) 320px",
-          gap: 24,
-          alignItems: "start",
-        }}
-      >
-        <div className="ah-stack" style={{ gap: 20, minWidth: 0 }}>
+      <div className="ah-pf-layout">
+        <div className="ah-stack" style={{ gap: 24, minWidth: 0 }}>
           <NeedsRegion project={scope} live={sum.live} />
-          {projects.data && <KpiRow projects={list} />}
           <div>
             <div className="ah-section-title">
               <h2 className="ah-h3" style={{ fontSize: 14 }}>
-                Projects
+                {list.length === 1 ? "Project" : "Projects"}
               </h2>
               <span className="ah-grow" />
-              <span className="ah-small ah-subtle">
-                Projects with items that need you first, then by live sessions
-              </span>
+              <span className="ah-small ah-subtle">Cost is estimated from transcripts</span>
             </div>
             <ProjectsRegion projects={projects} view={view} needs={needs} />
             {projects.data?.items.length === 0 && (
@@ -491,8 +493,9 @@ export function PortfolioScreen() {
               </p>
             )}
           </div>
+          {list.length > 1 && <TotalsRow projects={list} />}
         </div>
-        <ActivityRegion project={scope} />
+        <ActivityRegion project={scope} single={list.length === 1} />
       </div>
     </div>
   );

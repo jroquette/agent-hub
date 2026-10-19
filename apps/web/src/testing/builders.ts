@@ -57,6 +57,9 @@ export type WorkflowSummary = Schemas["WorkflowSummary"];
 export type WorkflowCatalogView = Schemas["WorkflowCatalogView"];
 export type WorkflowDetail = Schemas["WorkflowDetail"];
 export type WorkflowProblem = Schemas["WorkflowProblemView"];
+export type ItemVersion = Schemas["ItemVersionView"];
+export type ItemVersionPage = Schemas["ItemVersionPage"];
+export type ItemVersionContent = Schemas["ItemVersionContent"];
 
 /** The synthetic clock every builder uses. */
 export const T0 = "2026-10-11T14:00:00.000Z";
@@ -951,6 +954,7 @@ export function aSuggestions(): PermissionSuggestion[] {
 /** An idle local agent session in the hub's workdir, linked to Claude session `anId(1, "5091b986")`. */
 export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSession {
   return {
+    changed_files: [],
     claude_session_id: anId(1, "5091b986"),
     cloud_id: null,
     cost_usd: "0.0012",
@@ -959,6 +963,8 @@ export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSess
     ended_at: null,
     id: anId(1, "0192a5e5"),
     kind: "local",
+    last_prompt: null,
+    last_reply: null,
     last_seq: 4,
     mode: "default",
     model: "sonnet",
@@ -1471,12 +1477,20 @@ export function aBundledFileText(overrides: Partial<BundledFileText> = {}): Bund
 export function aWorkflowSummary(overrides: Partial<WorkflowSummary> = {}): WorkflowSummary {
   return {
     description: "Plans, builds and documents a feature, then asks for a review.",
+    inputs: [{ name: "feature", type: "string", required: true, description: "What to build." }],
     layer_count: 3,
     name: "feature-flow",
     node_count: 4,
     project: "agent-hub",
     revision: 3,
     source: "hub",
+    step_types: { agent: 1, shell: 1, script: 1, approval: 1 },
+    steps: [
+      { id: "plan", type: "agent", description: "Writes the plan.", body: [] },
+      { id: "build", type: "shell", body: [] },
+      { id: "docs", type: "script", body: [] },
+      { id: "review", type: "approval", body: [] },
+    ],
     ...overrides,
   };
 }
@@ -1537,6 +1551,49 @@ export function aWorkflowDetail(overrides: Partial<WorkflowDetail> = {}): Workfl
         { id: "review", type: "approval", depends_on: ["build", "docs"], message: "Ship it?" },
       ],
     },
+    ...overrides,
+  };
+}
+
+/** A version as the history lists it: by default the app's Publish, by the hub's identity. */
+export function anItemVersion(overrides: Partial<ItemVersion> = {}): ItemVersion {
+  return {
+    id: "0199f0a1-0000-7000-8000-000000000001",
+    origin: "publish",
+    first: false,
+    author: { name: "Example Owner", email: "owner@example.com" },
+    recorded_at: "2026-10-18T09:00:00Z",
+    content_hash: `sha256:${"a1b2c3d4".repeat(8)}`,
+    size: 120,
+    restored_from: null,
+    draft_id: null,
+    ...overrides,
+  };
+}
+
+/** A page of a skill folder's versions, newest first, whose disk is stored (`state` ok). */
+export function anItemVersionPage(overrides: Partial<ItemVersionPage> = {}): ItemVersionPage {
+  return {
+    items: [anItemVersion()],
+    managed: false,
+    next_cursor: null,
+    shared_by: 1,
+    state: "ok",
+    total_estimate: overrides.items?.length ?? 1,
+    unit_kind: "skill",
+    unit_path: "plugin/hub-workflow/skills/feature",
+    ...overrides,
+  };
+}
+
+/** One version's content: a skill folder's files in path order. */
+export function anItemVersionContent(
+  overrides: Partial<ItemVersionContent> = {},
+): ItemVersionContent {
+  return {
+    id: "0199f0a1-0000-7000-8000-000000000001",
+    unit_kind: "skill",
+    files: [{ path: "SKILL.md", executable: false, size: 24, text: "---\nname: feature\n---\n" }],
     ...overrides,
   };
 }

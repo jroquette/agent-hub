@@ -193,12 +193,25 @@ function useReported(
   return { ready, late };
 }
 
-function StartRunDialog({ scope, onClose }: { scope: string | null; onClose: () => void }) {
+interface Chosen {
+  project: string;
+  name: string;
+}
+
+function StartRunDialog({
+  scope,
+  initial,
+  onClose,
+}: {
+  scope: string | null;
+  initial?: Chosen | undefined;
+  onClose: () => void;
+}) {
   const catalog = useWorkflows(scope);
   const start = useStartRun();
   const navigate = useNavigate();
   const [started, setStarted] = useState<RunAccepted | null>(null);
-  const [chosen, setChosen] = useState<{ project: string; name: string } | null>(null);
+  const [chosen, setChosen] = useState<Chosen | null>(initial ?? null);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [bad, setBad] = useState<Record<string, boolean>>({});
@@ -376,23 +389,42 @@ function StartRunDialog({ scope, onClose }: { scope: string | null; onClose: () 
   );
 }
 
-/** The runs list's "Start run" button and its dialog. */
-export function StartRun({ project }: { project: string | null }) {
+/** Whether hub web can start this workflow (issue-to-pr starts from `hub run`). */
+export function startableFromWeb(name: string): boolean {
+  return !TRACKER_WORKFLOWS.has(name);
+}
+
+/** The "Start run" button and its dialog; `workflow` opens it on that workflow. */
+export function StartRun({
+  project,
+  workflow,
+  label = "Start run",
+  size,
+  variant = "primary",
+}: {
+  project: string | null;
+  workflow?: Chosen;
+  label?: string;
+  size?: "sm";
+  variant?: "primary" | "default";
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button
-        variant="primary"
+        variant={variant}
+        size={size}
         icon="play"
         onClick={() => {
           setOpen(true);
         }}
       >
-        Start run
+        {label}
       </Button>
       {open && (
         <StartRunDialog
           scope={project}
+          initial={workflow}
           onClose={() => {
             setOpen(false);
           }}

@@ -19,7 +19,7 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.core.workflows.catalog import check_workflows
-from agent_hub.generator.doctor_snapshot import build_doctor_snapshot
+from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, item_leftovers
 
 RUNNING = "4.5.6"
 NO_RULES = Selection(rules=(), notes=(), severities={})
@@ -205,3 +205,69 @@ def test_lists_pack_folders_when_workflows_rule_selected(hub_root: Path) -> None
     )
 
     assert snapshot.workflow_folders == ("workflows/empty",)
+
+
+def test_lists_temp_entries_when_item_leftovers_rule_selected(hub_root: Path) -> None:
+    # AGH-297: a crash mid-swap leaves a stage or old folder beside a skill, never followed.
+    config = a_config()
+    skills = hub_root / "plugin" / "demo" / "skills"
+    (skills / "alpha").mkdir(parents=True)
+    (skills / ".alpha.hub-tmp-0123abcd" / "references").mkdir(parents=True)
+    (skills / ".hidden").mkdir()
+    agents = hub_root / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    (agents / ".reviewer.md.hub-tmp-89abcdef").write_bytes(b"x")
+    (hub_root / "workflows" / "demo").mkdir(parents=True)
+    (hub_root / "workflows" / "demo" / ".lint.yaml.hub-tmp-00000000").write_bytes(b"x")
+    (hub_root / "plugin" / "demo" / "scripts").mkdir()
+    (hub_root / "plugin" / "demo" / "scripts" / ".check.sh.hub-tmp-22222222").write_bytes(b"x")
+    (hub_root / "plugin" / "other").mkdir()
+    outside = hub_root.parent / "outside"
+    (outside / ".beta.hub-tmp-11111111").mkdir(parents=True)
+    (hub_root / ".claude" / "skills").symlink_to(outside)
+
+    snapshot = build_doctor_snapshot(
+        str(hub_root),
+        config=config,
+        running=RUNNING,
+        selection=every_rule(config),
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+
+    assert snapshot.item_leftovers == (
+        ".claude/agents/.reviewer.md.hub-tmp-89abcdef",
+        "plugin/demo/scripts/.check.sh.hub-tmp-22222222",
+        "plugin/demo/skills/.alpha.hub-tmp-0123abcd",
+        "workflows/demo/.lint.yaml.hub-tmp-00000000",
+    )
+    # The folders where an item folder can be made are watched too (``plugin/other``).
+    assert snapshot.item_folders == (
+        ".claude",
+        ".claude/agents",
+        "plugin",
+        "plugin/demo",
+        "plugin/demo/scripts",
+        "plugin/demo/skills",
+        "plugin/other",
+        "workflows/demo",
+    )
+
+
+def test_watches_plugin_folder_when_absent(tmp_path: Path) -> None:
+    # A ``plugin`` made later changes its watched time (absent: None), so the next run rescans.
+    assert item_leftovers(str(tmp_path)) == ((), ("plugin",))
+
+
+def test_reads_no_item_folders_when_rule_not_selected(hub_root: Path) -> None:
+    snapshot = build_doctor_snapshot(
+        str(hub_root),
+        config=a_config(),
+        running=RUNNING,
+        selection=NO_RULES,
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+
+    assert snapshot.item_leftovers is None
+    assert snapshot.item_folders == ()

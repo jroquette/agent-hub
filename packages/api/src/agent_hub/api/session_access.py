@@ -12,6 +12,9 @@ refuses before routing, so a refused request never reaches a port.
   (``run-control-off``): both start processes in a hub.
 - **Run writes** (start, cancel, resume, abandon a workflow run) need the cookie too; their
   Origin and JSON checks are the strict ones of ``LocalSecurityMiddleware``.
+- **Item writes** (a Restore into a hub's tree, AGH-295 D13) need the cookie too, with the
+  strict checks; with ``sessions_off`` they answer 409 ``hub_read_only`` before the cookie is
+  looked at (A6): the container mounts the hubs read-only and mints no token.
 - **Cookie.** Every route under the prefix needs the cookie (constant-time match); else 401.
   With no token configured, nothing matches.
 - **Writes** need this server's exact ``Origin``, ``Sec-Fetch-Site: same-origin`` when sent and,
@@ -30,10 +33,16 @@ from starlette.requests import cookie_parser
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from agent_hub.api.local_security import STATE_CHANGING_METHODS, is_run_write, strict_refusal
+from agent_hub.api.local_security import (
+    STATE_CHANGING_METHODS,
+    is_item_write,
+    is_run_write,
+    strict_refusal,
+)
 from agent_hub.api.openapi_paths import AGENT_SESSIONS, API_PREFIX
-from agent_hub.api.rfc9457 import problem
+from agent_hub.api.rfc9457 import item_write_refused_problem, problem
 from agent_hub.api.session_token import SessionToken, cookie_name
+from agent_hub.core.item_versions.hub_item_writer import ItemWriteRefusedError
 
 TOKEN_PARAMETER = "token"  # noqa: S105 -- the query parameter's name, not a token
 OFF_PROBLEM_TYPE = "urn:agent-hub:problem:agent-sessions-off"
@@ -43,6 +52,9 @@ EXCHANGE_METHODS = frozenset({"GET", "HEAD"})
 BODILESS_WRITES = frozenset({"DELETE"})
 # What a browser sends for a request this server's own page (or the address bar) made.
 OWN_FETCH_SITES = frozenset({"same-origin", "none"})
+CONTAINER_READ_ONLY = ItemWriteRefusedError(
+    "hub_read_only", "The hubs are mounted read-only in the agent-hub container"
+)
 # Characters a redirect path keeps as they are; the rest (a backslash among them) is encoded.
 _PATH_SAFE = "/:@!$&'()*+,;=-._~%"
 
@@ -108,6 +120,8 @@ class SessionAccessMiddleware:
             response = self._refusal(scope, headers)
         elif is_run_write(str(scope["method"]), path):
             response = self._run_refusal(path, headers)
+        elif is_item_write(str(scope["method"]), path):
+            response = self._item_write_refusal(path, headers)
         else:
             response = self._exchange(scope)
         if response is None:
@@ -162,6 +176,20 @@ class SessionAccessMiddleware:
                 detail="Workflow runs cannot be started or stopped from the agent-hub container.",
                 instance=instance,
                 members={"type": RUNS_OFF_PROBLEM_TYPE},
+            )
+        if self._has_cookie(headers):
+            return None
+        return self._unauthorized(instance)
+
+    def _item_write_refusal(self, instance: str, headers: Headers) -> Response | None:
+        if self._off:
+            found = item_write_refused_problem(CONTAINER_READ_ONLY)
+            return problem(
+                found.status,
+                title=found.title,
+                detail=found.detail,
+                instance=instance,
+                members=found.members,
             )
         if self._has_cookie(headers):
             return None

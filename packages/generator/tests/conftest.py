@@ -3,11 +3,13 @@
 TESTING.md: builders only, no real hub.json; a test that writes does so under ``tmp_path``.
 """
 
+import contextlib
 import os
 import re
 import shutil
 import stat
-from collections.abc import Callable, Iterable
+import subprocess
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,7 @@ _EXECUTABLE_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
 type TreeWriter = Callable[..., Path]
 type ShellScripts = Callable[[Iterable[RenderedFile]], list[str]]
+type ReadOnlyMaker = Callable[[Path], None]
 
 # A sh or bash ``#!`` line: the ``hub`` and ``agent`` shims carry one and no ``.sh`` suffix.
 _SHELL_SHEBANG = re.compile(rb"^#!\s*/(?:usr/)?bin/(?:env\s+)?(?:ba)?sh\b")
@@ -147,3 +150,51 @@ def shell_scripts() -> ShellScripts:
         ]
 
     return scripts
+
+
+@pytest.fixture
+def read_only_tree() -> Iterator[ReadOnlyMaker]:
+    """Make every folder under a root unwritable, as a read-only mount does, and undo it after.
+
+    Each folder (links not followed) goes to ``0o555``. A user that writes anywhere still can
+    (root in a container), so its folders are also made immutable with ``chattr +i``, which
+    refuses root too; where that is not possible (no ``chattr``, or no ``CAP_LINUX_IMMUTABLE``)
+    the test is skipped, as ``hub_git``'s read-only test is. The teardown takes each folder back
+    on its own, so one that fails never leaves the others locked.
+    """
+    folders: list[Path] = []
+    immutable: list[Path] = []
+    chattr = shutil.which("chattr")
+
+    def make(root: Path) -> None:
+        found = [root] + [
+            Path(top) / name
+            for top, names, _ in os.walk(root)
+            for name in names
+            if not (Path(top) / name).is_symlink()
+        ]
+        for folder in found:
+            folder.chmod(0o555)
+            folders.append(folder)
+        if not os.access(root, os.W_OK):
+            return
+        for folder in found:
+            done = chattr is not None and _run_quietly([chattr, "+i", str(folder)])
+            if not done:
+                pytest.skip("running as a user that writes anywhere, and chattr +i is refused")
+            immutable.append(folder)
+
+    yield make
+    for folder in immutable:
+        _run_quietly([str(chattr), "-i", str(folder)])
+    for folder in folders:
+        with contextlib.suppress(OSError):
+            folder.chmod(0o755)
+
+
+def _run_quietly(command: list[str]) -> bool:
+    """Run ``command``; whether it exited 0 (a missing tool or a refusal is False)."""
+    try:
+        return subprocess.run(command, check=False, capture_output=True).returncode == 0  # noqa: S603
+    except OSError:
+        return False
