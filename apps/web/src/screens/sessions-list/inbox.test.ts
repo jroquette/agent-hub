@@ -555,9 +555,8 @@ describe("rowTitle", () => {
     ).toBe("Readable names");
     const onTicket = observed({ label: aSessionLabel({ title: "Readable names" }) });
     expect(rowTitle(onTicket)).toBe("AGH-48: live-tiles");
-    expect(rowTitle(onTicket, new Map([["AGH-48", "session-names"]]))).toBe(
-      "AGH-48: session-names",
-    );
+    const feature = { project: "agent-hub", slug: "session-names", title: null };
+    expect(rowTitle(onTicket, new Map([["AGH-48", feature]]))).toBe("AGH-48: session-names");
     expect(
       rowTitle(observed({ label: aSessionLabel({ issue: "AGH-9", workflow: "/feature" }) })),
     ).toBe("AGH-9 · /feature");

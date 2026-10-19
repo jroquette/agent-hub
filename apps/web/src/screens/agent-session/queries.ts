@@ -12,11 +12,11 @@ import {
   useApi,
   type ApiProblem,
 } from "../../lib/api";
-import { ticketName } from "../../components";
+import { ticketName, type TicketInfo } from "../../components";
 import { screenshotBody } from "../../lib/pastedImage";
 import { rememberMessageScreenshots } from "../../lib/screenshotCopy";
 import { useEventStream, type StreamHandlers, type StreamHealth } from "../../lib/sse";
-import { useTicketSlugs } from "../features/queries";
+import { useTicketLookup, useTicketTitles } from "../features/queries";
 import {
   applySnapshot,
   initialTranscript,
@@ -84,22 +84,36 @@ export function useAgentSession(id: string) {
   return useApi(SESSION, sessionParams(id), { retry: false });
 }
 
-/** What this machine can drive (the model aliases the composer offers). */
+/** What a session is about: its name and, when it is on a ticket a hub feature works on, that
+ * feature. */
+export interface SessionAbout {
+  name: string | null;
+  feature: TicketInfo | null;
+}
+
 /**
- * The session's name: a session on a ticket reads as its commits do (`ACME-12: checkout-redesign`,
- * from its observed twin's label and the hub's features), else Claude Code's title.
+ * The session's name: a session on a ticket reads as its commits do (`ACME-12: Export orders as
+ * CSV`, from its observed twin's label and the hub's features), else Claude Code's title. It reads
+ * the feature's tickets once, so the name says what the ticket is about.
  */
-export function useSessionName(session: AgentSession | undefined): string | null {
+export function useSessionAbout(session: AgentSession | undefined): SessionAbout {
   const observed = session?.observed_session_id ?? null;
   const twin = useApi(
     "/api/v1/sessions/{session_id}",
     { path: { session_id: observed ?? "" } },
     { enabled: observed !== null, staleTime: 30_000, retry: false },
   );
-  const slugs = useTicketSlugs(session?.project ?? null);
-  return ticketName(twin.data?.label, slugs) ?? session?.title ?? null;
+  const tickets = useTicketLookup(session?.project ?? null);
+  const label = twin.data?.label;
+  const feature = label?.issue ? tickets.get(label.issue.toUpperCase()) : undefined;
+  useTicketTitles(feature);
+  return {
+    name: ticketName(label, tickets) ?? session?.title ?? null,
+    feature: feature ?? null,
+  };
 }
 
+/** What this machine can drive (the model aliases the composer offers). */
 export function useCapabilities() {
   return useApi("/api/v1/agent-sessions/capabilities", undefined, {
     staleTime: 60_000,
