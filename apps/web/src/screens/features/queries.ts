@@ -1,5 +1,8 @@
+import { useMemo } from "react";
+
+import type { TicketSlugs } from "../../components";
 import { useApi } from "../../lib/api";
-import { reasonOf, sessionWaitOf } from "./groups";
+import { issueId, reasonOf, sessionWaitOf } from "./groups";
 
 /** How often the open Features list rereads the records (local files, Linear cached server-side). */
 export const FEATURES_REFRESH_MS = 30_000;
@@ -11,6 +14,25 @@ export function useFeatures(project: string | null) {
     { query: { project } },
     { refetchInterval: FEATURES_REFRESH_MS },
   );
+}
+
+/**
+ * The slug of each ticket a hub feature works on (`ACME-12` → `checkout-redesign`), so a session
+ * on that ticket is named `ACME-12: checkout-redesign`. It reads the Features list's cache (no
+ * polling of its own); the first feature naming a ticket wins.
+ */
+export function useTicketSlugs(project: string | null = null): TicketSlugs {
+  const items = useApi("/api/v1/features", { query: { project } }, { staleTime: 60_000 }).data
+    ?.items;
+  return useMemo(() => {
+    const slugs = new Map<string, string>();
+    for (const feature of items ?? [])
+      for (const issue of feature.issues) {
+        const id = issueId(issue).toUpperCase();
+        if (!slugs.has(id)) slugs.set(id, feature.slug);
+      }
+    return slugs;
+  }, [items]);
 }
 
 /** While a session is live, the list rereads the sessions this often, so a wait shows within seconds. */

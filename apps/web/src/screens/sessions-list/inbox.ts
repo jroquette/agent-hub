@@ -1,5 +1,11 @@
 /* Sessions as an inbox (v2 design): what each row says, in plain words, one fact per row. */
-import { sessionIdentity, TOOL_ICON, type IconName, type Status } from "../../components";
+import {
+  sessionIdentity,
+  TOOL_ICON,
+  type IconName,
+  type Status,
+  type TicketSlugs,
+} from "../../components";
 import { fmtDuration } from "../../lib/format";
 import { isReviewable } from "../agent-session/fileKind";
 import { modeLabel, resumable } from "../agent-session/model";
@@ -401,6 +407,6 @@ export function commonRepoOf(rows: readonly SectionRow[]): string | null {
 }
 
 /** The searchable title of a row (for aria names). */
-export function rowTitle(row: SectionRow): string {
-  return isDriven(row) ? (row.title ?? "Untitled session") : sessionIdentity(row).title;
+export function rowTitle(row: SectionRow, slugs?: TicketSlugs): string {
+  return isDriven(row) ? (row.title ?? "Untitled session") : sessionIdentity(row, slugs).title;
 }

@@ -11,12 +11,14 @@ import {
   ProblemError,
   Skeleton,
   StatusBadge,
+  type TicketSlugs,
 } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtClock, fmtInt } from "../../lib/format";
 import { rowHref } from "./drivenRows";
 import { readStored } from "../../lib/storage";
 import { reviewedKey } from "../agent-session/FilesPanel";
+import { useTicketSlugs } from "../features/queries";
 import { filesToReview, rowTitle, rowView, summaryOf, type Tone, type ViewContext } from "./inbox";
 import type { AgentSession } from "./queries";
 import { openHref } from "./rows";
@@ -167,13 +169,17 @@ function Row({
   row: SectionRow;
   group: SectionId;
   tz: Tz;
-  ctx: Omit<ViewContext, "group" | "drv"> & { drv: AgentSession | null; canDrive: boolean };
+  ctx: Omit<ViewContext, "group" | "drv"> & {
+    drv: AgentSession | null;
+    canDrive: boolean;
+    slugs: TicketSlugs;
+  };
   onOpen: (href: string) => void;
 }) {
   const view = rowView(row, { ...ctx, group });
   const talk = view.conversation;
   const files = ctx.drv ? filesToReview(summaryOf(ctx.drv).files, readReviewed(ctx.drv.id)) : null;
-  const title = rowTitle(row);
+  const title = rowTitle(row, ctx.slugs);
   const named = isDriven(row) || Boolean(row.label?.title?.trim());
   const href = openHref(row);
   const lineId = `sl-line-${row.id}`;
@@ -392,6 +398,7 @@ function Row({
 }
 
 function Group({ group, tz, props }: { group: InboxGroup; tz: Tz; props: SessionsInboxProps }) {
+  const slugs = useTicketSlugs();
   const [expanded, setExpanded] = useState(false);
   const open = group.fixed || !group.collapsed;
   const shown =
@@ -495,6 +502,7 @@ function Group({ group, tz, props }: { group: InboxGroup; tz: Tz; props: Session
                       commonRepo: props.commonRepo,
                       showProject: props.showProject,
                       canDrive: props.canDrive,
+                      slugs,
                     }}
                     onOpen={props.onOpen}
                   />

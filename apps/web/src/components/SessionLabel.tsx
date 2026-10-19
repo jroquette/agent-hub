@@ -1,8 +1,11 @@
 /**
  * What a session is about (S1, AC-201.4, AC-201.5): its name over `ACME-1511 · /feature · repo · branch`.
  *
- * The name is the session's title (the user's `/rename`, else the one Claude Code wrote, ADR 0035).
- * Without one, the title is `ACME-1511 · /feature` over `repo · branch`, as before.
+ * A session on a ticket is named as its commits are: `ACME-1511: checkout-redesign`, the ticket then
+ * its slug (the hub feature's slug for that ticket, else what the branch or worktree says after the
+ * ticket), else the ticket then Claude's title. Otherwise the name is the session's title (the
+ * user's `/rename`, else the one Claude Code wrote, ADR 0035). Without one, the title is
+ * `ACME-1511 · /feature` over `repo · branch`, as before.
  *
  * The deprecated `agent` field is never shown: the main agent's stored value "main" read as a branch
  * and said nothing about the session. Without an issue or a workflow the title falls back to
@@ -30,14 +33,43 @@ export interface SessionIdentity {
 
 export const shortSessionId = (id: string) => id.replace(/-/g, "").slice(0, 8);
 
+/** The slug of each ticket a hub feature works on, by ticket id (uppercased). */
+export type TicketSlugs = ReadonlyMap<string, string>;
+
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** What `text` (a branch, a worktree) says after `issue`: `roquettejh/acme-12-fix-login` gives
+ * `fix-login`; null when it does not name the issue or says nothing after it. */
+export function slugAfterIssue(text: string | null | undefined, issue: string): string | null {
+  if (!text) return null;
+  const found = new RegExp(`${escaped(issue)}(?![0-9])[-_/]*(.*)$`, "i").exec(text);
+  const rest = found?.[1]?.trim();
+  return rest || null;
+}
+
+/** A ticket session's name, as its commits read: `ACME-12: fix-login`; null without an issue. */
+export function ticketName(label: Label | null | undefined, slugs?: TicketSlugs): string | null {
+  const issue = label?.issue;
+  if (!issue) return null;
+  const slug =
+    slugs?.get(issue.toUpperCase()) ??
+    slugAfterIssue(label.branch, issue) ??
+    slugAfterIssue(label.worktree, issue) ??
+    label.title?.trim();
+  return slug ? `${issue}: ${slug}` : null;
+}
+
 const joined = (...parts: (string | null | undefined)[]) =>
   parts.filter((part): part is string => Boolean(part)).join(" · ");
 
-export function sessionIdentity(session: LabelledSession): SessionIdentity {
+export function sessionIdentity(session: LabelledSession, slugs?: TicketSlugs): SessionIdentity {
   const label = session.label ?? null;
   const what = joined(label?.issue, label?.workflow);
   const where = joined(label?.repo ?? session.repo, label?.branch);
   const short = shortSessionId(session.id);
+  const ticket = ticketName(label, slugs);
+  if (ticket)
+    return { title: ticket, detail: joined(label?.workflow, where) || short, named: true };
   const name = label?.title?.trim();
   if (name) return { title: name, detail: joined(what, where) || short, named: true };
   if (what) return { title: what, detail: where || null, named: false };

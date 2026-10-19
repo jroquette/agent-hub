@@ -32,6 +32,7 @@ import {
   isTerminal,
   useAgentSession,
   useAgentSessionCommands,
+  useSessionName,
   useAgentTranscript,
   useCapabilities,
 } from "./queries";
@@ -232,6 +233,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
 
   const problem = snapshot.error ?? transcript.error;
   const session = snapshot.data;
+  const name = useSessionName(session);
   const { state } = transcript;
   const { tools, permissions } = state;
   // Only the calls and their permissions change the list, not every streamed text delta.
@@ -242,7 +244,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   );
   const crumbs = [
     { label: "Sessions", href: "/sessions" },
-    { label: session?.title ?? `Agent session ${short(agentSessionId)}` },
+    { label: name ?? `Agent session ${short(agentSessionId)}` },
   ];
 
   if (problem) {
@@ -325,7 +327,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           <div className="ah-row ah-wrap" style={{ gap: 12 }}>
             <Icon name="square-terminal" size="lg" style={{ color: "var(--text-subtle)" }} />
             <h1 className="ah-h1" style={{ fontSize: 20 }}>
-              {session.title ?? "Untitled session"}
+              {name ?? "Untitled session"}
             </h1>
             <AgentStatusBadge
               status={status}

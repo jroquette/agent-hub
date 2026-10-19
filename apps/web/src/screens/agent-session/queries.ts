@@ -12,9 +12,11 @@ import {
   useApi,
   type ApiProblem,
 } from "../../lib/api";
+import { ticketName } from "../../components";
 import { screenshotBody } from "../../lib/pastedImage";
 import { rememberMessageScreenshots } from "../../lib/screenshotCopy";
 import { useEventStream, type StreamHandlers, type StreamHealth } from "../../lib/sse";
+import { useTicketSlugs } from "../features/queries";
 import {
   applySnapshot,
   initialTranscript,
@@ -83,6 +85,21 @@ export function useAgentSession(id: string) {
 }
 
 /** What this machine can drive (the model aliases the composer offers). */
+/**
+ * The session's name: a session on a ticket reads as its commits do (`ACME-12: checkout-redesign`,
+ * from its observed twin's label and the hub's features), else Claude Code's title.
+ */
+export function useSessionName(session: AgentSession | undefined): string | null {
+  const observed = session?.observed_session_id ?? null;
+  const twin = useApi(
+    "/api/v1/sessions/{session_id}",
+    { path: { session_id: observed ?? "" } },
+    { enabled: observed !== null, staleTime: 30_000, retry: false },
+  );
+  const slugs = useTicketSlugs(session?.project ?? null);
+  return ticketName(twin.data?.label, slugs) ?? session?.title ?? null;
+}
+
 export function useCapabilities() {
   return useApi("/api/v1/agent-sessions/capabilities", undefined, {
     staleTime: 60_000,
