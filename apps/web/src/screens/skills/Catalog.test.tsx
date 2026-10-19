@@ -1,5 +1,5 @@
 import { fireEvent, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { T0, aCatalogItem, aSkillCatalog, renderWithApi } from "../../testing/builders";
@@ -17,126 +17,138 @@ function open(path = "/projects/demo/skills", catalog: SkillCatalog = aSkillCata
   });
 }
 
-const cards = () =>
-  screen.queryAllByRole("article").map((card) => card.getAttribute("aria-labelledby"));
 const shown = () =>
   screen.queryAllByRole("article").map((card) => within(card).getByRole("heading").textContent);
-const box = (name: RegExp) => screen.getByRole("checkbox", { name });
 const tab = (name: RegExp) => screen.getByRole("tab", { name });
+const search = () => screen.getByRole("searchbox", { name: /Search/ });
+/** Opens a facet menu and returns its options. */
+const facet = (label: string) => {
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${label}:`) }));
+  return within(screen.getByRole("dialog", { name: `${label} filter` }));
+};
 
-describe("Catalog search_facets", () => {
-  it("filters on name or description, ignoring case, and restores all when cleared (AC-164.14)", () => {
-    open();
-    expect(shown()).toEqual(["evaluator", "feature", "plan", "settings-pretooluse-1"]);
+afterEach(() => {
+  window.localStorage.clear();
+});
 
-    fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
-      target: { value: "SPEC" },
-    });
-    expect(shown()).toEqual(["evaluator", "feature"]);
-    expect(screen.getByRole("status")).toHaveTextContent("Showing 2 of 4");
-
-    fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
-      target: { value: "" },
-    });
-    expect(shown()).toHaveLength(4);
-  });
-
-  it("combines facets with search and shows each value's count", () => {
+describe("Catalog tabs", () => {
+  it("opens on Agents, the first kind, and shows one kind per tab", () => {
     open();
 
-    fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
-      target: { value: "spec" },
-    });
-    expect(tab(/^All/)).toHaveAccessibleName("All 2");
-    expect(tab(/^Skills/)).toHaveAccessibleName("Skills 1");
-    expect(tab(/^Agents/)).toHaveAccessibleName("Agents 1");
-    expect(tab(/^Hooks/)).toHaveAccessibleName("Hooks 0");
-
-    fireEvent.click(tab(/^Agents/));
+    expect(tab(/^Agents/)).toHaveAttribute("aria-selected", "true");
     expect(shown()).toEqual(["evaluator"]);
-    expect(box(/^Managed/)).toHaveAccessibleName("Managed1");
-
-    fireEvent.click(box(/^Has diagnostics/));
-    expect(shown()).toEqual([]);
-    expect(screen.getByText("No items match these filters.")).toBeInTheDocument();
-
-    const clear = screen.getAllByRole("button", { name: "Clear filters" });
-    expect(clear).toHaveLength(2);
-    const inMessage = clear.pop();
-    if (inMessage) fireEvent.click(inMessage);
-    expect(shown()).toHaveLength(4);
-    expect(screen.getByRole("searchbox", { name: /Search/ })).toHaveValue("");
-    expect(tab(/^All/)).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(tab(/^Skills/));
+    expect(shown()).toEqual(["feature", "plan"]);
+    fireEvent.click(tab(/^Hooks/));
+    expect(shown()).toEqual(["settings-pretooluse-1"]);
   });
 
-  it("offers the four modes with Hidden for neither (L2)", () => {
-    open(
-      "/projects/demo/skills",
-      aSkillCatalog({ items: [aCatalogItem(), aCatalogItem({ name: "quiet", mode: "neither" })] }),
-    );
+  it("counts each tab and keeps the tab out of the filters", () => {
+    open("/projects/demo/skills?tab=skills");
 
-    const modes = within(screen.getByRole("group", { name: "Invocation" }));
-    expect(
-      modes.getAllByRole("checkbox").map((option) => option.closest("label")?.textContent),
-    ).toEqual(["User only0", "Model only0", "User and model1", "Hidden1"]);
-    fireEvent.click(box(/^Hidden/));
-    expect(shown()).toEqual(["quiet"]);
+    expect(tab(/^Agents/)).toHaveTextContent("1");
+    expect(tab(/^Skills/)).toHaveTextContent("2");
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("pushes the tab into the URL so Back returns to the previous one", () => {
+    const { router } = open("/projects/demo/skills?q=spec");
+
+    fireEvent.click(tab(/^Skills/));
+
+    expect(router.state.location.search).toBe("?q=spec&tab=skills");
+    expect(router.state.historyAction).toBe("PUSH");
+  });
+
+  it("reads an older kind or view link as the tab it names", () => {
+    open("/projects/demo/skills?kind=skill");
+    expect(tab(/^Skills/)).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("lands on the first tab with matches when the URL filters", () => {
+    open("/projects/demo/skills?diag=1");
+
+    expect(tab(/^Skills/)).toHaveAttribute("aria-selected", "true");
+    expect(shown()).toEqual(["feature"]);
   });
 });
 
-describe("Catalog url_query", () => {
-  it("opens with the URL's search and facets applied (AC-164.40)", () => {
-    open("/projects/demo/skills?q=plan&kind=skill&mode=user-only");
+describe("Catalog search_facets", () => {
+  it("filters on name or description, ignoring case, and counts within the tab (AC-164.14)", () => {
+    open("/projects/demo/skills?tab=skills");
 
-    expect(screen.getByRole("searchbox", { name: /Search/ })).toHaveValue("plan");
+    fireEvent.change(search(), { target: { value: "SPEC" } });
+
+    expect(shown()).toEqual(["feature"]);
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 2 skills");
+    expect(tab(/^Agents/)).toHaveTextContent("1");
+    expect(tab(/^Hooks/)).toHaveTextContent("0");
+  });
+
+  it("clears search and facets but keeps the tab", () => {
+    open("/projects/demo/skills?tab=skills&q=spec&origin=managed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(search()).toHaveValue("");
     expect(tab(/^Skills/)).toHaveAttribute("aria-selected", "true");
-    expect(box(/^User only/)).toBeChecked();
-    expect(tab(/^Agents/)).toHaveAttribute("aria-selected", "false");
+    expect(shown()).toEqual(["feature", "plan"]);
+  });
+
+  it("offers Invocation only on Skills, with Hidden for neither (L2)", () => {
+    open(
+      "/projects/demo/skills?tab=skills",
+      aSkillCatalog({ items: [aCatalogItem(), aCatalogItem({ name: "quiet", mode: "neither" })] }),
+    );
+
+    const modes = facet("Invocation");
+    expect(
+      modes.getAllByRole("checkbox").map((option) => option.closest("label")?.textContent),
+    ).toEqual(["User only0", "Model only0", "User and model1", "Hidden1"]);
+    fireEvent.click(modes.getByRole("checkbox", { name: /^Hidden/ }));
+    expect(shown()).toEqual(["quiet"]);
+  });
+
+  it("does not let an Invocation filter empty the Agents tab", () => {
+    open("/projects/demo/skills?tab=agents&mode=user-only");
+
+    expect(screen.queryByRole("button", { name: /^Invocation:/ })).toBeNull();
+    expect(shown()).toEqual(["evaluator"]);
+  });
+
+  it("says which other tabs match when this one has none", () => {
+    open("/projects/demo/skills?tab=hooks&q=plan");
+
+    expect(screen.getByText(/No hooks match these filters/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Skills (1)" }));
     expect(shown()).toEqual(["plan"]);
   });
 
-  it("updates the query in place when a tab or facet changes", () => {
-    const { router } = open("/projects/demo/skills?q=plan&kind=skill&mode=user-only");
+  it("keeps the sort in the URL", () => {
+    const { router } = open("/projects/demo/skills?tab=skills");
 
-    fireEvent.click(tab(/^Agents/));
+    fireEvent.click(screen.getByRole("button", { name: "Most used" }));
 
-    expect(router.state.location.search).toBe("?q=plan&kind=agent&mode=user-only");
-    expect(router.state.historyAction).toBe("REPLACE");
-    fireEvent.change(screen.getByRole("searchbox", { name: /Search/ }), {
-      target: { value: "" },
-    });
-    expect(router.state.location.search).toBe("?kind=agent&mode=user-only");
-    fireEvent.click(tab(/^All/));
-    expect(router.state.location.search).toBe("?mode=user-only");
-  });
-
-  it("reads several kinds from an older link as All", () => {
-    open("/projects/demo/skills?kind=skill,agent");
-
-    expect(tab(/^All/)).toHaveAttribute("aria-selected", "true");
-    expect(shown()).toEqual(["evaluator", "feature", "plan"]);
+    expect(router.state.location.search).toBe("?tab=skills&sort=used");
+    expect(shown()).toEqual(["feature", "plan"]);
   });
 
   it("ignores unknown values when the query is hand-written", () => {
-    open("/projects/demo/skills?kind=plugin&mode=all&diag=yes&origin=nowhere");
+    open("/projects/demo/skills?tab=skills&mode=all&diag=yes&origin=nowhere");
 
-    expect(
-      screen.getAllByRole("checkbox").filter((option) => (option as HTMLInputElement).checked),
-    ).toEqual([]);
-    expect(shown()).toHaveLength(4);
+    expect(shown()).toEqual(["feature", "plan"]);
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
 });
 
 describe("Catalog groups and notices", () => {
-  it("groups cards by kind under headings with counts", () => {
-    open();
+  it("explains the open tab's kind once, under the toolbar", () => {
+    open("/projects/demo/skills?tab=hooks");
 
-    expect(screen.getByRole("heading", { level: 2, name: "Skills 2" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Agents 1" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Hooks 1" })).toBeInTheDocument();
-    expect(cards()).toHaveLength(4);
-    const hooks = screen.getByRole("region", { name: "Hooks 1" });
-    expect(hooks).toHaveTextContent(/Shell commands Claude Code runs by itself/);
+    expect(screen.getByRole("tabpanel", { name: "Hooks" })).toHaveTextContent(
+      /Shell commands Claude Code runs by itself/,
+    );
   });
 
   it("lists third-party plugins as not in this hub (D1)", () => {
@@ -156,13 +168,12 @@ describe("Catalog groups and notices", () => {
       }),
     );
 
-    const plugins = screen.getByRole("region", { name: "Third-party plugins" });
-    const [first, second] = within(plugins).getAllByRole("listitem");
+    const plugins = screen.getByText("Third-party plugins").closest("details");
+    if (!plugins) throw new Error("no plugins section");
+    const [first, second] = within(plugins).getAllByRole("listitem", { hidden: true });
     expect(first).toHaveTextContent("superpowers");
-    expect(first).toHaveTextContent("agent-hub");
     expect(first).toHaveTextContent("pinned 5f0c2e1");
     expect(first).toHaveTextContent("Enabled");
-    expect(first).toHaveTextContent("content not in this hub");
     expect(second).toHaveTextContent("not pinned");
     expect(second).toHaveTextContent("Disabled");
   });
@@ -175,13 +186,6 @@ describe("Catalog groups and notices", () => {
 
     const banner = screen.getByText(/catalog is incomplete/).closest("[role='status']");
     expect(banner).toHaveTextContent("hub.lock not read: origins from folder names");
-  });
-
-  it("shows a notice alone when nothing is truncated", () => {
-    open("/projects/demo/skills", aSkillCatalog({ notice: "plugin/x/hooks/hooks.json: not read" }));
-
-    expect(screen.getByText("plugin/x/hooks/hooks.json: not read")).toBeInTheDocument();
-    expect(screen.queryByText(/catalog is incomplete/)).toBeNull();
   });
 
   it("explains an empty hub with its notice and no filters", () => {
@@ -200,31 +204,65 @@ describe("Catalog groups and notices", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("searchbox")).toBeNull();
-    expect(screen.queryByRole("region", { name: "Third-party plugins" })).toBeNull();
   });
 });
 
 describe("Catalog a11y", () => {
-  it("has no serious or critical axe violation and states status as text (AC-164.31)", async () => {
-    const { container } = open("/projects/demo/skills?diag=1");
+  it("has no serious or critical axe violation and states the count as text (AC-164.31)", async () => {
+    saveDraft("skill-new1", { project: "demo", kind: "skill" }, { name: "release-notes" });
+    const { container } = open("/projects/demo/skills?tab=skills&diag=1");
 
     expect(await seriousViolations(container)).toEqual([]);
-    expect(screen.getByRole("status")).toHaveTextContent("Showing 1 of 4");
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 2 skills");
   });
 });
 
-describe("Catalog drafts in progress", () => {
-  it("marks an edit draft of an existing item as editing", () => {
-    window.localStorage.clear();
+describe("Catalog your_drafts", () => {
+  it("lists drafts apart from the filters, with a verb and where they are kept", () => {
+    saveDraft("skill-new1", { project: "demo", kind: "skill" }, { name: "release-notes" });
     saveDraft(
-      "skill-aaa111",
-      { project: "demo", kind: "skill" },
-      { name: "feature", target: { kind: "skill", source: "hub-workflow", name: "feature" } },
+      "agent-edit1",
+      { project: "demo", kind: "agent" },
+      { name: "evaluator", target: { kind: "agent", source: "hub-workflow", name: "evaluator" } },
     );
     open();
 
-    const drafts = screen.getByRole("region", { name: "Drafts in progress" });
-    expect(within(drafts).getByRole("link")).toHaveTextContent("editingfeature");
-    window.localStorage.clear();
+    const drafts = screen.getByRole("region", { name: /Your drafts/ });
+    expect(drafts).toHaveTextContent("Kept in this browser only");
+    expect(drafts).toHaveTextContent("Editing agent");
+    expect(drafts).toHaveTextContent("New skill");
+    expect(
+      within(drafts).getByRole("link", { name: "Continue new skill release-notes in the Studio" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers to continue an edit draft on its item's card", () => {
+    saveDraft(
+      "agent-edit1",
+      { project: "demo", kind: "agent" },
+      { name: "evaluator", target: { kind: "agent", source: "hub-workflow", name: "evaluator" } },
+    );
+    open();
+
+    const card = screen.getByRole("article", { name: "evaluator" });
+    expect(
+      within(card).getByRole("link", { name: "Continue your draft of evaluator in the Studio" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the first three drafts and the rest on demand", () => {
+    for (const n of [1, 2, 3, 4]) {
+      saveDraft(
+        `skill-${String(n)}`,
+        { project: "demo", kind: "skill" },
+        { name: `s${String(n)}` },
+      );
+    }
+    open();
+
+    const drafts = screen.getByRole("region", { name: /Your drafts/ });
+    expect(within(drafts).getAllByRole("listitem")).toHaveLength(3);
+    fireEvent.click(within(drafts).getByRole("button", { name: "Show all 4 drafts" }));
+    expect(within(drafts).getAllByRole("listitem")).toHaveLength(4);
   });
 });

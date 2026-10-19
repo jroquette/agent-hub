@@ -29,7 +29,7 @@ describe("SkillCard card", () => {
     expect(within(article).getByText("/feature <idea or tracker issue id>").tagName).toBe("CODE");
     expect(article).toHaveTextContent("Managed");
     expect(article).toHaveTextContent("User and model");
-    expect(article).toHaveTextContent("3 uses in 30 days · last used 1 h ago");
+    expect(article).toHaveTextContent("3 uses in 30 days (2 by you) · last used 1 h ago");
     expect(article).toHaveTextContent("1 diagnostic");
   });
 
@@ -82,22 +82,39 @@ describe("SkillCard card", () => {
     expect(screen.getByRole("article")).toHaveTextContent("1 use in 30 days");
   });
 
-  it("shows the subagent line and no Copy when an agent is rendered", () => {
+  it("shows no Copy and does not repeat the kind when an agent is rendered", () => {
     card(AGENT);
 
     const article = screen.getByRole("article", { name: "evaluator" });
-    expect(article).toHaveTextContent("subagent evaluator");
-    expect(within(article).getByText("evaluator", { selector: "code" })).toBeInTheDocument();
     expect(within(article).queryByRole("button")).toBeNull();
-    expect(article).toHaveTextContent("Agent");
+    expect(article).not.toHaveTextContent("subagent");
+    expect(article).toHaveTextContent("Managed");
     expect(article).toHaveTextContent("Not used in 30 days");
+  });
+
+  it("takes one Tab stop for the name: origin and mode are plain text", () => {
+    card();
+
+    const article = screen.getByRole("article", { name: "feature" });
+    expect(article.querySelectorAll("[tabindex='0']")).toHaveLength(0);
+  });
+
+  it("offers to continue an open draft of the item", () => {
+    renderWithApi(
+      <ul>
+        <SkillCard item={aCatalogItem()} project="demo" now={NOW} usageDays={30} draftHref="/x" />
+      </ul>,
+    );
+
+    expect(
+      screen.getByRole("link", { name: "Continue your draft of feature in the Studio" }),
+    ).toHaveAttribute("href", "/x");
   });
 
   it("shows a hook's command, source and state as text when a hook is rendered", () => {
     card({ ...HOOK, active: false, state: "not synced" });
 
     const article = screen.getByRole("article", { name: "settings-pretooluse-1" });
-    expect(article).toHaveTextContent("Hook");
     expect(article).toHaveTextContent("python3 plugin/hub-workflow/hooks/guard.py");
     expect(article).toHaveTextContent("Inactive");
     expect(article).toHaveTextContent("Not synced");
