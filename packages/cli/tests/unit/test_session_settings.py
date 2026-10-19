@@ -1,10 +1,16 @@
 import json
+import os
+import stat
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from agent_hub.cli.session_settings import HubHooksError, hub_hooks_settings
+from agent_hub.cli.session_settings import (
+    HubHooksError,
+    hub_hooks_settings,
+    write_session_settings,
+)
 from agent_hub.core.runner.session_settings import hooks_settings
 from agent_hub.core.testing.builders import a_hub_settings_document
 
@@ -94,3 +100,61 @@ def test_names_the_problem_when_hub_hooks_cannot_be_wired(
     assert "\n" not in message
     assert not (hub / ".agent-runs").exists()
 
+
+
+def mode_of(path: Path) -> int:
+    return stat.S_IMODE(os.lstat(path).st_mode)
+
+
+def test_writes_owner_only_settings_when_hub_hooks_wired(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub_hooks(hub)
+    folder = hub / ".agent-runs" / "session-settings"
+    expected = folder / "medium.json"
+
+    written = write_session_settings(hub, "medium")
+
+    assert written == expected
+    assert written.read_bytes() == hub_hooks_settings(hub, "medium")
+    assert mode_of(written) == 0o600
+    assert mode_of(folder) == 0o700
+    assert mode_of(hub / ".agent-runs") == 0o700
+    written.write_bytes(b"{}")
+
+    rewritten = write_session_settings(hub, "medium")
+
+    assert rewritten.read_bytes() == hub_hooks_settings(hub, "medium")
+    assert mode_of(rewritten) == 0o600
+    assert os.listdir(folder) == ["medium.json"]
+
+
+def test_refuses_link_when_settings_folder_is_a_link(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub_hooks(hub)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (hub / ".agent-runs").mkdir()
+    (hub / ".agent-runs" / "session-settings").symlink_to(elsewhere)
+
+    with pytest.raises(HubHooksError, match="cannot write ") as raised:
+        write_session_settings(hub, "medium")
+
+    assert str(raised.value).startswith(PREFIX)
+    assert os.listdir(elsewhere) == []
+
+
+def test_replaces_link_when_settings_file_is_a_link(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub_hooks(hub)
+    target = tmp_path / "target.json"
+    target.write_bytes(b"kept\n")
+    folder = hub / ".agent-runs" / "session-settings"
+    folder.mkdir(parents=True)
+    (folder / "medium.json").symlink_to(target)
+
+    written = write_session_settings(hub, "medium")
+
+    assert not written.is_symlink()
+    assert stat.S_ISREG(os.lstat(written).st_mode)
+    assert written.read_bytes() == hub_hooks_settings(hub, "medium")
+    assert target.read_bytes() == b"kept\n"

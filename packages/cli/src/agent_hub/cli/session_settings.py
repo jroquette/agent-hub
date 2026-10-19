@@ -65,3 +65,8 @@ def hub_hooks_settings(hub: Path, effort: str) -> bytes:
         if os.path.commonpath((root, found)) != root or not os.path.isfile(found):
             raise HubHooksError(f"{shown_path(found)} is missing")
     return built
+
+
+def write_session_settings(hub: Path, effort: str) -> Path:
+    """Write the settings file for ``effort`` in ``hub`` and return its path."""
+    raise NotImplementedError
