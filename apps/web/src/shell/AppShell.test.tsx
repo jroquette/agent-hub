@@ -11,6 +11,7 @@ import {
   aPage,
   aProjectSummary,
   aStreamCounts,
+  aWorkdir,
   renderWithApi,
 } from "../testing/builders";
 import { AppShell, useShell } from "./AppShell";
@@ -260,7 +261,11 @@ describe("AppShell", () => {
     window.localStorage.removeItem("ah.discuss.open");
     const { requests } = renderWithApi(<AppShell />, {
       path: "/health",
-      routes: { ...routes, "/api/v1/agent-sessions/capabilities": aCapabilities() },
+      routes: {
+        ...routes,
+        "/api/v1/agent-sessions/capabilities": aCapabilities(),
+        "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
+      },
     });
     const asked = () =>
       requests.filter((r) => new URL(r.url).pathname === "/api/v1/agent-sessions/capabilities");
