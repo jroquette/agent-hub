@@ -17,7 +17,9 @@ the cap, and the names that are not UTF-8, are counted in ``evals_skipped`` / ``
 A linked or missing record folder reads as empty: at most ``MAX_EVAL_FILES`` and
 ``MAX_REVIEW_FILES`` names are kept while listing (the smallest by name), the rest only counted.
 The folder's own ``ux-*.md`` designs are read the same way, at most ``MAX_UX_FILES``, as their
-first ``UX_HEAD_BYTES`` (``ux_skipped`` counts the rest).
+first ``UX_HEAD_BYTES`` (``ux_skipped`` counts the rest). In ``reviews/``, each ticket folder is
+opened the same way and only the names of its review rounds (``<reviewer>-r<N>.json``) are kept,
+at most ``MAX_ROUND_NAMES`` in all; no round file is read.
 
 One call reads at most about ``READ_BUDGET_BYTES``: a folder is read only while the bytes read so
 far are under it, so the total goes over by one folder at most (about 8.3 MiB); each folder past
@@ -49,10 +51,12 @@ from agent_hub.core.features.feature_status import (
     EVAL,
     HEAD_BYTES,
     MAX_PLAN_BYTES,
+    MAX_ROUND_NAMES,
     MAX_UX_FILES,
     PLAN,
     RECORD,
     RECORD_FILES,
+    ROUND_NAME,
     SPEC,
     UX_HEAD_BYTES,
     UX_PREFIX,
@@ -169,6 +173,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
             folder, REVIEWS_FOLDER, cap=MAX_REVIEW_FILES, size=REVIEW_HEAD_BYTES, meter=meter
         )
         ux_designs, ux_skipped = _ux_heads(folder, meter)
+        rounds = _round_names(folder)
     finally:
         os.close(folder)
     record, plan = reads[RECORD], reads[PLAN]
@@ -187,6 +192,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
         plan_too_large=too_large,
         ux_designs=ux_designs,
         ux_skipped=ux_skipped,
+        review_rounds=rounds,
     )
 
 
@@ -216,6 +222,58 @@ def _ux_heads(folder: int, meter: _Meter) -> tuple[tuple[RecordHead, ...], int]:
         return (), 0
     heads = tuple(_record_head(folder, name, size=UX_HEAD_BYTES, meter=meter) for name in names)
     return heads, skipped
+
+
+def _round_names(parent: int) -> tuple[str, ...]:
+    """The review round names ``<ticket>/<reviewer>-r<N>.json`` in ``reviews/``'s ticket folders
+    (not hidden, no link followed), sorted, at most ``MAX_ROUND_NAMES``; no file is read."""
+    found: list[str] = []
+    try:
+        reviews = os.open(REVIEWS_FOLDER, _FOLDER_FLAGS, dir_fd=parent)
+    except OSError:
+        return ()
+    try:
+        with os.scandir(reviews) as entries:
+            tickets = sorted(
+                entry.name
+                for entry in entries
+                if not entry.name.startswith(".")
+                and _is_utf8(entry.name)
+                and entry.is_dir(follow_symlinks=False)
+            )
+        for ticket in tickets:
+            if len(found) >= MAX_ROUND_NAMES:
+                break
+            found.extend(_rounds_of(reviews, ticket)[: MAX_ROUND_NAMES - len(found)])
+    except OSError:
+        return tuple(found)
+    finally:
+        os.close(reviews)
+    return tuple(found)
+
+
+def _is_utf8(name: str) -> bool:
+    try:
+        name.encode()
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _rounds_of(reviews: int, ticket: str) -> list[str]:
+    try:
+        folder = os.open(ticket, _FOLDER_FLAGS, dir_fd=reviews)
+    except OSError:
+        return []
+    try:
+        with os.scandir(folder) as entries:
+            names = heapq.nsmallest(
+                MAX_ROUND_NAMES,
+                (entry.name for entry in entries if ROUND_NAME.fullmatch(entry.name)),
+            )
+    finally:
+        os.close(folder)
+    return [f"{ticket}/{name}" for name in names]
 
 
 def _record_names(folder: int, cap: int, *, prefix: str = "") -> tuple[list[str], int]:
