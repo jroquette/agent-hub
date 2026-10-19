@@ -25,7 +25,7 @@ const HOOK = "/api/v1/projects/demo/skills/hook/settings/settings-pretooluse-1";
 const FILE = `${DETAIL}/files/0123456789abcdef`;
 const DETAIL_ROUTE = "projects/:project/skills/:kind/:source/:name";
 
-function openCatalog(path = "/projects/demo/skills", routes: ApiRoutes = {}) {
+function openCatalog(path = "/projects/demo/skills?tab=skills", routes: ApiRoutes = {}) {
   return renderWithApi(<SkillsScreen />, {
     routes: { [CATALOG]: aSkillCatalog(), ...routes },
     path,
@@ -156,7 +156,7 @@ describe("SkillsScreen states", () => {
       "/projects/demo",
     );
     expect(
-      await screen.findByText(/The agents, skills and hooks demo's agents work with/),
+      await screen.findByText(/What demo's agents can do, read from its hub's files/),
     ).toBeInTheDocument();
   });
 
