@@ -356,6 +356,17 @@ def test_reads_no_byte_when_record_file_only_checked_present(
     assert reads.bytes == 0
 
 
+# AGH-325 (two-level-flows AC-1.2): brief.md is a record file, checked present and never read.
+def test_lists_brief_when_only_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    a_feature(features_of(tmp_path), "demo-feature", {"brief.md": b"b" * 100})
+    reads = Reads(monkeypatch)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.files == ("brief.md",)
+    assert reads.bytes == 0
+
+
 # AGH-323 (two-level-flows P1): plan.md is read whole up to MAX_PLAN_BYTES, amendments included.
 def test_reads_plan_whole_when_under_its_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
