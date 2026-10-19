@@ -70,11 +70,11 @@ ACCESS_STRICTNESS = {"write": 0, "ask": 1, "read": 2}
 def read_event() -> tuple[dict, bool]:
     """The event on stdin, and whether stdin was not empty but not a JSON object either.
 
-    An OSError while reading, bad UTF-8, invalid or truncated JSON, a RecursionError, a list or a
-    string give ({}, True); empty or blank stdin gives ({}, False)."""
+    An OSError or ValueError (a closed stdin) while reading, bad UTF-8, invalid or truncated JSON, a
+    RecursionError, a list or a string give ({}, True); empty or blank stdin gives ({}, False)."""
     try:
         raw = sys.stdin.buffer.read()
-    except OSError:
+    except (OSError, ValueError):
         return {}, True
     if not raw.strip():
         return {}, False
