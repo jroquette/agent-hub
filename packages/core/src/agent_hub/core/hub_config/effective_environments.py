@@ -15,6 +15,7 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
+from agent_hub.core.hub_config.environment_edits import shown_name
 from agent_hub.core.hub_config.environments import Access, Credentials, Endpoint, Service
 from agent_hub.core.hub_config.local_config import LocalConfig, LocalEnvironment, LocalRepo
 from agent_hub.core.hub_config.model import HubConfig
@@ -245,7 +246,7 @@ def _repo_problems(config: HubConfig, local: LocalConfig) -> Iterator[tuple[Loca
         if committed is None:
             yield (
                 ("repos", index, "dir"),
-                f"repo dir {json.dumps(local_repo.dir)} is not in hub.json's repos",
+                f"repo dir {json.dumps(shown_name(local_repo.dir))} is not in hub.json's repos",
             )
             continue
         yield from _service_problems(

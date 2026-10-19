@@ -140,6 +140,7 @@ def test_adds_local_repo_when_creates_repo() -> None:
         kind=None,
         file="hub.local.json",
         creates_repo=True,
+        known_repos=("demo-api",),
     )
 
     assert edited == {
@@ -222,3 +223,56 @@ def test_refuses_remove_endpoint_when_absent() -> None:
     assert remove("demo-api", "orders", "live") == EditRefusal(
         "demo-api orders has no endpoint in live in hub.json"
     )
+
+
+def test_refuses_comment_key_when_any_edit_names_one() -> None:
+    document = _w()
+    document["environments"]["_note"] = "a comment"
+    document["repos"][0]["services"]["_note"] = "a comment"
+    refusal = EditRefusal("_note: a name starting with _ is a comment key; choose another name")
+
+    assert add_environment(document, "_note", {"access": "ask"}, declared={}, file="x") == refusal
+    assert (
+        set_environment(document, "_note", {"access": "ask"}, file="x", may_create=True) == refusal
+    )
+    assert remove_environment(document, "_note", file="x") == refusal
+    for repo, service, environment in (
+        ("_note", "api", "local"),
+        ("demo-api", "_note", "local"),
+        ("demo-api", "api", "_note"),
+    ):
+        assert (
+            add_endpoint(
+                document,
+                repo=repo,
+                service=service,
+                environment=environment,
+                endpoint={"url": "http://localhost:1"},
+                kind=None,
+                file="x",
+                creates_repo=False,
+            )
+            == refusal
+        )
+        assert (
+            remove_endpoint(document, repo=repo, service=service, environment=environment, file="x")
+            == refusal
+        )
+
+
+def test_refuses_local_repo_when_hub_json_lacks_it() -> None:
+    aws_key = "AK" + "IA" + "A" * 16
+
+    refused = add_endpoint(
+        {},
+        repo=aws_key,
+        service="api",
+        environment="jane-cloud",
+        endpoint={"url": "http://localhost:1"},
+        kind=None,
+        file="hub.local.json",
+        creates_repo=True,
+        known_repos=("demo-api",),
+    )
+
+    assert refused == EditRefusal("no repo <name> in hub.json")
