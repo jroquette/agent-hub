@@ -353,7 +353,20 @@ describe("FilesPanel (kinds of file)", () => {
     expect(screen.getByRole("heading", { name: "The plan" })).toBeInTheDocument();
   });
 
-  it("leaves Claude's scratch out of what waits for review", () => {
+  it("asks for a viewed mark on the code only", async () => {
+    render(<FilesPanel files={filesOf(MIXED)} sessionId="s1" onClose={vi.fn()} />);
+    const list = () => screen.getByRole("navigation", { name: "Files" });
+    expect(within(list()).getAllByRole("checkbox", { name: "Viewed" })).toHaveLength(1);
+    expect(within(list()).getByText("0 of 1 viewed")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: /Plans/ }));
+    expect(within(list()).queryByRole("checkbox")).toBeNull();
+    expect(within(list()).queryByText(/viewed/)).toBeNull();
+    await userEvent.click(within(list()).getByRole("button", { name: /p\.md/ }));
+    expect(screen.queryByRole("checkbox", { name: "Viewed" })).toBeNull();
+  });
+
+  it("leaves Claude's plans, learnings and scratch out of what waits for review", () => {
     render(
       <ChangedFilesChip
         files={filesOf(MIXED)}
@@ -362,6 +375,6 @@ describe("FilesPanel (kinds of file)", () => {
         onToggle={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: /3 to review/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /1 to review/ })).toBeInTheDocument();
   });
 });
