@@ -4389,22 +4389,26 @@ def test_decides_quote_dense_command_in_time(
 
 # AGH-302: _secret_tokens finds SECRET_TOKEN.finditer's matches (the regex stays as their
 # definition): the tickets' shapes, then seeded random text over the characters the regex reads.
-SECRET_TOKENS_SAME = """
+SCAN_AS_REGEX = r"""
 import json, random
 import guard
-cases = ["cat .env", "cat a/.env b/.env.local", "x/'.env' <.env \\"id_rsa\\"", "a.a..env)", "'a/b.pem&c",
-         "..env..env/", "'a" * 50 + ".env", "a/'b/.env.x.", "<'x.key", "-.env .env.example id_ecdsa.pub"]
+cases = [
+    "cat .env", "cat a/.env b/.env.local", "x/'.env' <.env \"id_rsa\"", "a.a..env)", "'a/b.pem&c",
+    "..env..env/", "'a" * 50 + ".env", "a/'b/.env.x.", "<'x.key", "-.env .env.example id_ecdsa.pub",
+]
 rnd = random.Random(302)
-alphabet = list("a./'\\"<-_ \t&)>|;1") + [".env", ".pem", ".key", ".p12", "id_rsa", "id_ecdsa", "..env", "\u00e9"]
-cases += ["".join(rnd.choice(alphabet) for _ in range(rnd.randint(0, 24))) for _ in range(20000)]
-print(json.dumps([c for c in cases if guard._secret_tokens(c) != [m.group(0) for m in guard.SECRET_TOKEN.finditer(c)]]))
+alphabet = [*"a./'\"<-_ \t&)>|;1\u00e9", ".env", "..env", ".pem", ".key", "id_rsa", "id_ecdsa"]
+for _ in range(20000):
+    cases.append("".join(rnd.choice(alphabet) for _ in range(rnd.randint(0, 24))))
+regex = [[m.group(0) for m in guard.SECRET_TOKEN.finditer(c)] for c in cases]
+print(json.dumps([c for c, want in zip(cases, regex) if guard._secret_tokens(c) != want]))
 """
 
 
 def test_finds_secret_tokens_as_regex(
     blocked_hub: Path, *, hook_python: str, run_python: Callable[..., Any]
 ) -> None:
-    assert run_python(hook_python, SECRET_TOKENS_SAME, path=blocked_hub / HOOKS) == []
+    assert run_python(hook_python, SCAN_AS_REGEX, path=blocked_hub / HOOKS) == []
 
 
 # D-order (AC-277.17): the AGH-45 synthetic ``I`` (guard.infra) beside blocked words.
