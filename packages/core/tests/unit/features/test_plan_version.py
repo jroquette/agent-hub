@@ -48,11 +48,14 @@ def test_counts_entries_when_amendments_section_lists_them() -> None:
     )
 
 
-def test_reads_entry_when_written_bold_or_numbered() -> None:
+def test_reads_entry_when_written_bold_or_as_dash_item() -> None:
     text = PLAN + (
         b"\n## Amendments (owner)\n\n"
-        b"* **A1 (2026-10-20, Ana):** Rename the step.\n"
-        b"2. A2 (2026-10-22, Ana): Keep the old route.\n"
+        b"- **A1 (2026-10-20, Ana):** Rename the step.\n"
+        b"**A2 (2026-10-22, Ana):** Keep the old route.\n"
+        b"* A3 (2026-10-23, Ana): a star item is not an entry.\n"
+        b"4. A4 (2026-10-24, Ana): a numbered item is not an entry.\n"
+        b"__A5 (2026-10-25, Ana):__ underscore bold is not an entry.\n"
     )
 
     found = plan_version(text)
