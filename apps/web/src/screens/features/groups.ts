@@ -2,9 +2,11 @@
 import type { components } from "../../api/schema";
 import { GOLDEN_STEP_LABEL, type IconName } from "../../components";
 import { waitsOnOwner } from "./GoldenPathBar";
+import { waitingLink } from "../sessions-list/tiles";
 import { phaseIndex } from "./parts";
 
 type Feature = components["schemas"]["FeatureView"];
+type LiveTile = components["schemas"]["LiveTile"];
 
 export type GroupId = "progress" | "evaluated" | "shipped";
 
@@ -20,7 +22,7 @@ export const GROUPS: readonly {
     id: "progress",
     title: "In progress",
     summary: "in progress",
-    hint: "Furthest along first, then most ACs passing",
+    hint: "What needs you first, then furthest along and most ACs passing",
     empty: "No feature in progress.",
   },
   {
@@ -51,12 +53,77 @@ export type Tone = "blocked" | "failed" | "waiting" | "done";
 /** Why a feature sits in its group: the lead icon, the one line under its name and the tab it opens. */
 export interface Reason {
   group: GroupId;
-  /** Why the row needs the owner, shown as a warning on it: a broken record, NO-SHIP, or owner steps. */
-  needs: "problem" | "no-ship" | "owner-steps" | null;
+  /**
+   * Why the row needs the owner, shown as a warning on it: a session that waits on you (a permission
+   * or your reply), a broken record, NO-SHIP, or owner steps.
+   */
+  needs: Needs | null;
   icon: IconName | null;
   tone: Tone | null;
   line: string;
   doc: string | null;
+  /** Where the row opens instead of the feature: the session that waits on you. */
+  href?: string;
+}
+
+/** The kinds of warning, in the order they lead In progress. */
+export const NEEDS_ORDER = ["session", "your-turn", "problem", "no-ship", "owner-steps"] as const;
+export type Needs = (typeof NEEDS_ORDER)[number];
+
+/** A live session working on a feature that waits on you: a permission prompt, or your reply. */
+export interface SessionWait {
+  tile: LiveTile;
+  /** `waiting`: a permission or question is open; `idle`: the turn ended and it is yours. */
+  group: "waiting" | "idle";
+}
+
+/**
+ * The session that waits on you for this feature, if any: a live tile whose issue (from its branch,
+ * worktree or first prompt) is one of the feature's, or whose title names the feature. A waiting
+ * one wins over an idle one, then the most recent.
+ */
+export function sessionWaitOf(f: Feature, tiles: readonly LiveTile[]): SessionWait | null {
+  const ids = new Set(f.issues.map((i) => issueId(i).toUpperCase()));
+  const ofFeature = (t: LiveTile) => {
+    const issue = (t.label?.issue ?? t.issue ?? "").toUpperCase();
+    return (issue !== "" && ids.has(issue)) || (t.label?.title ?? "").includes(f.slug);
+  };
+  const waits = tiles
+    .filter((t) => (t.group === "waiting" || t.group === "idle") && !t.is_subagent && ofFeature(t))
+    .sort(
+      (a, b) =>
+        Number(b.group === "waiting") - Number(a.group === "waiting") ||
+        b.last_activity_at.localeCompare(a.last_activity_at),
+    );
+  const tile = waits[0];
+  return tile ? { tile, group: tile.group === "waiting" ? "waiting" : "idle" } : null;
+}
+
+function sessionReason(wait: SessionWait): Reason {
+  const { tile } = wait;
+  const href = waitingLink(tile).href;
+  if (wait.group === "waiting") {
+    const why = tile.waiting_reason ?? "a permission prompt";
+    return {
+      group: "progress",
+      needs: "session",
+      icon: "shield-alert",
+      tone: "waiting",
+      line: `A session waits on you · ${why}`,
+      doc: null,
+      href,
+    };
+  }
+  const last = tile.last_action ? ` · ${tile.last_action}` : "";
+  return {
+    group: "progress",
+    needs: "your-turn",
+    icon: "message-square",
+    tone: "waiting",
+    line: `Your turn in a session${last}`,
+    doc: null,
+    href,
+  };
 }
 
 /** The eval's verdict line without its markdown. */
@@ -114,7 +181,8 @@ function shortReason(reason: string): string | null {
   return isLinearGap(reason) ? null : reason.replace(/[.;]\s*open the \w+ tab\.?$/i, "");
 }
 
-export function reasonOf(f: Feature): Reason {
+export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
+  if (wait && f.phase !== "shipped") return sessionReason(wait);
   if (f.problem) {
     return {
       group: "progress",
@@ -200,9 +268,16 @@ function acRatio(f: Feature): number {
   return a && a.total > 0 ? (a.passing + a.owner_steps) / a.total : 0;
 }
 
-/** Orders rows inside one group: furthest along, most done, then by name. */
-export function byGroupOrder(a: Feature, b: Feature): number {
+const needsRank = (r: Reason) => (r.needs ? NEEDS_ORDER.indexOf(r.needs) : NEEDS_ORDER.length);
+
+/** Orders rows inside one group: the ones that need you first, then furthest along, most done, then by name. */
+export function byGroupOrder(
+  a: Feature,
+  b: Feature,
+  reason: (f: Feature) => Reason = reasonOf,
+): number {
   return (
+    needsRank(reason(a)) - needsRank(reason(b)) ||
     phaseIndex(b.phase) - phaseIndex(a.phase) ||
     stepRatio(b) - stepRatio(a) ||
     acRatio(b) - acRatio(a) ||
