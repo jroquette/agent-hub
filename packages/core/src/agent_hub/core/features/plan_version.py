@@ -2,8 +2,8 @@
 
 An approved ``plan.md`` is never rewritten; each change is appended under its ``## Amendments``
 section (a level-2 heading whose text starts with ``Amendments``, up to the next level-1 or
-level-2 heading) as one entry line ``A<n> (<YYYY-MM-DD>, <who>): <title>``, optionally a list
-item (``-``, ``*``, ``+``, ``1.``) or bold (``**A1 (…):**``). The plan's version is the number of
+level-2 heading) as one entry line ``A<n> (<YYYY-MM-DD>, <who>): <title>``, bare or as a ``- ``
+list item, its head optionally bold (``**A1 (…):**``). The plan's version is the number of
 distinct entries plus one: ``v1`` without any. Each entry's anchor is the text of that
 ``## Amendments…`` heading. Lines inside fenced code blocks are neither entries nor headings; an
 id written again counts once (its first entry). Every line is read in linear time, and the input
@@ -23,8 +23,8 @@ _HEADING: Final = re.compile(r" {0,3}(#{1,6})(?=[ \t]|$)")
 _FENCE: Final = re.compile(r" {0,3}(`{3,}|~{3,})")
 # ``<who>`` is everything up to the first ``)``; no lazy group sits before optional blanks.
 _ENTRY: Final = re.compile(
-    r"[ \t]*(?:[-*+][ \t]+|\d{1,9}[.)][ \t]+)?(?:\*\*|__)?(A[1-9]\d{0,5})(?:\*\*|__)?[ \t]+"
-    r"\((\d{4}-\d{2}-\d{2}),([^()\n]+)\)[ \t]*:(?:\*\*|__)?(.*)"
+    r"[ \t]*(?:-[ \t]+)?(?:\*\*)?(A[1-9]\d{0,5})(?:\*\*)?[ \t]+"
+    r"\((\d{4}-\d{2}-\d{2}),([^()\n]+)\)[ \t]*:(?:\*\*)?(.*)"
 )
 
 
@@ -83,7 +83,7 @@ def _amendment(entry: re.Match[str], anchor: str) -> AmendmentView:
     return AmendmentView(
         id=ident,
         date=date,
-        who=one_line(who.strip("*_ \t"))[:_TITLE_CHARS],
+        who=one_line(who.strip("* \t"))[:_TITLE_CHARS],
         title=one_line(title.strip().removesuffix("**").strip())[:_TITLE_CHARS],
         anchor=anchor,
     )
