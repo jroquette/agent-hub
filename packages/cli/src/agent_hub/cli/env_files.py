@@ -7,6 +7,7 @@ left as it is. The new bytes go to a temp file in the same folder, at the file's
 ``os.replace`` gives them the name, so the name never holds a partial write; a writer between the
 check and the replace is overwritten (a narrow window, docs/design/environments.md). A file
 that was absent is created with ``write_exclusive``, which never replaces one that appeared.
+A file that is a symbolic link is refused: it is never replaced by a regular file.
 """
 
 import contextlib
@@ -22,6 +23,7 @@ from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_byte
 from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes
 
 CHANGED_MESSAGE: Final = "{file} changed since it was read; run the command again"
+SYMLINK_MESSAGE: Final = "{file}: is a symlink; edit its target"
 _TEMP_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
@@ -46,6 +48,9 @@ def write_document(path: Path, *, read: bytes | None, content: bytes) -> str | N
     An ``OSError``'s own text names paths, so the line shows only its reason.
     """
     changed = CHANGED_MESSAGE.format(file=path.name)
+    if path.is_symlink():
+        # A replace would put a regular file in the link's place, its target left as it was.
+        return SYMLINK_MESSAGE.format(file=path.name)
     found = read_file_bytes(path)
     current: bytes | None = None
     if isinstance(found, UnreadFile):
