@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import type { components } from "../../api/schema";
 import { Banner, Icon, StatusBadge, type Status } from "../../components";
 import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
-import { linearHref } from "../../lib/safeHref";
+import { githubPullHref, linearHref } from "../../lib/safeHref";
 
 type TicketRow = components["schemas"]["TicketRow"];
 type TicketPlan = components["schemas"]["TicketPlan"];
@@ -333,7 +333,7 @@ export function AcMeter({
 }
 
 /** "17/18 ACs passing" for a ticket, or its AC count when passing is not known. */
-function AcCount({
+export function AcCount({
   row,
   acPasses,
 }: {
@@ -349,6 +349,48 @@ function AcCount({
       total={row.acs.length}
       label={`${String(passing)}/${String(row.acs.length)} ACs passing`}
     />
+  );
+}
+
+/** The ticket's pull request number, from its GitHub url (`.../pull/69` → `69`). */
+function pullNumber(url: string): string | null {
+  return /\/pull\/(\d+)$/.exec(url)?.[1] ?? null;
+}
+
+/**
+ * The ticket's pull request as `#69`, opening GitHub in a new tab; plain text when the url is
+ * not a GitHub pull request. Nothing when the ticket has none.
+ */
+export function TicketPrLink({ row }: { row: TicketRow }) {
+  if (!row.pr_url) return null;
+  const number = pullNumber(row.pr_url);
+  const text = number ? `#${number}` : "PR";
+  const href = githubPullHref(row.pr_url);
+  if (href === null) {
+    return (
+      <span
+        className="ah-mono ah-small ah-ticket-pr"
+        title="Link not shown: only GitHub pull request links are opened"
+      >
+        <Icon name="git-pull-request" size="sm" />
+        {text}
+      </span>
+    );
+  }
+  const ticket = row.id ?? row.ref;
+  return (
+    <a
+      className="ah-issue ah-ticket-pr"
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`Pull request ${text} of ${ticket} (opens GitHub in a new tab)`}
+      title={`Pull request ${text} · opens in GitHub`}
+    >
+      <Icon name="git-pull-request" size="sm" />
+      {text}
+      <Icon name="arrow-up-right" />
+    </a>
   );
 }
 
@@ -421,6 +463,7 @@ function FlowCard({
         </div>
         <div className="ah-flow-card-meta">
           <AcCount row={row} acPasses={acPasses} />
+          <TicketPrLink row={row} />
           {showReviewed && (
             <span className="ah-row" style={{ gap: 3, color: "var(--done)" }}>
               <Icon name="circle-check" size="sm" />

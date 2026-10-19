@@ -4758,6 +4758,7 @@ export interface components {
      *     its blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).
      *     ``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent
      *     issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
+     *     ``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.
      */
     TicketRow: {
       /** Acs */
@@ -4783,6 +4784,8 @@ export interface components {
       order: number | null;
       /** Parent */
       parent?: string | null;
+      /** Pr Url */
+      pr_url?: string | null;
       /** Priority */
       priority: number | null;
       readiness: components["schemas"]["Readiness"];

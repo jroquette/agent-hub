@@ -5,6 +5,7 @@ import pytest
 from agent_hub.core.features.feature_reviews import (
     ReviewRecord,
     approved_tickets,
+    review_pull_requests,
     review_records,
 )
 from agent_hub.core.features.feature_status import RecordHead
@@ -80,3 +81,28 @@ def test_reports_problem_when_name_not_a_ticket() -> None:
 
     assert record.problem is not None
     assert "ticket" in record.problem
+
+
+def _pr_review(ticket: str, pr: str) -> RecordHead:
+    return a_review(
+        f"{ticket}.md", f"---\ntype: review\nticket: {ticket}\noutcome: approved\npr: {pr}\n---\n"
+    )
+
+
+def test_links_pull_request_when_review_names_hub_repo() -> None:
+    heads = (
+        _pr_review("ACME-1", "demo-api#12"),
+        _pr_review("ACME-2", "Demo-Web#7"),
+        _pr_review("ACME-3", "https://github.com/acme/other/pull/3"),
+        _pr_review("ACME-4", "demo-api#pending"),
+        _pr_review("ACME-5", "unknown-repo#9"),
+    )
+    repos = {"demo-api": "acme/demo-api", "web": "acme/demo-web"}
+
+    urls = review_pull_requests(review_records(heads, slug=SLUG), repos)
+
+    assert urls == {
+        "ACME-1": "https://github.com/acme/demo-api/pull/12",
+        "ACME-2": "https://github.com/acme/demo-web/pull/7",
+        "ACME-3": "https://github.com/acme/other/pull/3",
+    }
