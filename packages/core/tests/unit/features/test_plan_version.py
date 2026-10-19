@@ -125,6 +125,7 @@ def test_ignores_lines_when_not_an_entry() -> None:
 
 # Quality review B1, B2 (AGH-323): a long run of blanks is read in linear time. Sized so the old
 # backtracking patterns took close to a minute; no timing assertion.
+# A regression shows as these tests hanging (the old patterns took ~46 s / ~11 s).
 LONG_BLANKS = 50_000
 
 

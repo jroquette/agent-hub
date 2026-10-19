@@ -48,16 +48,12 @@ def plan_version(text: bytes) -> PlanView:
 
 
 def _heading(line: str) -> tuple[int, str] | None:
-    """The level and text of an ATX heading line, None for another line. The closing ``#`` run
-    (after a blank, or the whole text) and the blanks around the text are left out."""
+    """The level and text of an ATX heading line, None for another line. The blanks around the
+    text are left out."""
     opened = _HEADING.match(line)
     if opened is None:
         return None
-    title = line[opened.end() :].strip(" \t")
-    closed = title.rstrip("#")
-    if not closed or closed[-1] in " \t":
-        title = closed.rstrip(" \t")
-    return len(opened.group(1)), title
+    return len(opened.group(1)), line[opened.end() :].strip(" \t")
 
 
 def _prose(text: str) -> Iterator[str]:
