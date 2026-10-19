@@ -46,7 +46,7 @@ def _control() -> Mock:
     control.delete.return_value = None
     control.events.return_value = LogRecordPage(items=(a_log_record(),), next_after=None)
     control.send.return_value = MessageAccepted(seq=5)
-    for method in ("interrupt", "answer", "change_settings", "close"):
+    for method in ("interrupt", "stop_task", "answer", "change_settings", "close"):
         getattr(control, method).return_value = session
     return control
 
@@ -102,6 +102,7 @@ def test_answers_not_implemented_when_control_not_wired(wired: Any) -> None:
         ("get", f"{ONE}/events?after=2&limit=50", None, 200, "events"),
         ("post", f"{ONE}/messages", {"text": "Run the tests."}, 202, "send"),
         ("post", f"{ONE}/interrupt", {}, 202, "interrupt"),
+        ("post", f"{ONE}/tasks/task-1/stop", {}, 202, "stop_task"),
         ("post", f"{ONE}/permissions/req-1", {"decision": "allow"}, 200, "answer"),
         ("post", f"{ONE}/settings", {"mode": "plan"}, 200, "change_settings"),
         ("post", f"{ONE}/close", {}, 200, "close"),

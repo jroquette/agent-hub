@@ -100,6 +100,17 @@ describe("background agents", () => {
     expect(liveActivity(state)).toBeNull();
   });
 
+  it("runs a finished agent again when it is resumed", () => {
+    const state = run([
+      ...launched,
+      task(7, "t1", "completed"),
+      task(8, "t2", "completed"),
+      task(9, "t1", "running"),
+    ]);
+    expect(liveActivity(state)?.calls.map((c) => c.label)).toEqual(["reviewer · quality review"]);
+    expect(state.tasks.t1?.endedAt).toBeNull();
+  });
+
   it("forgets the agents when the process exits", () => {
     const state = run([...launched, record("exited", { seq: 7, body: { code: 0 } })]);
     expect(liveActivity(state)).toBeNull();

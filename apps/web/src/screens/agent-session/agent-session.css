@@ -2489,3 +2489,12 @@ button.as-bg-head {
 .as-bg-stopped .ah-icon {
   color: var(--text-subtle);
 }
+.as-bg-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.as-bg-top > .as-bg-head {
+  flex: 1 1 auto;
+}

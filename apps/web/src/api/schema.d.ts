@@ -314,6 +314,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/agent-sessions/{agent_session_id}/tasks/{task_id}/stop": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Stop Agent Session Task
+     * @description Stop a background task (an agent or a command); its end follows on the stream.
+     */
+    post: operations["stop_agent_session_task_api_v1_agent_sessions__agent_session_id__tasks__task_id__stop_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/approvals": {
     parameters: {
       query?: never;
@@ -6047,6 +6067,47 @@ export interface operations {
         };
         content: {
           "text/event-stream": string;
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  stop_agent_session_task_api_v1_agent_sessions__agent_session_id__tasks__task_id__stop_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+        task_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentSession"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

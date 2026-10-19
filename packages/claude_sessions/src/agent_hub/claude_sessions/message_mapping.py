@@ -61,6 +61,9 @@ from agent_hub.core.sessions.session import TokenUsage
 TODO_TOOL: Final = "TodoWrite"
 # A terminal task status as the port says it: the CLI reports a killed task as ``killed`` in a
 # ``task_updated`` and as ``stopped`` in a ``task_notification``.
+# A task_updated's status as the port says it: ``running`` again when a finished agent is
+# resumed (a SendMessage to it), else its end.
+_TASK_UPDATES: Final[dict[str, TaskStatus]] = {"running": "running"}
 _TASK_ENDS: Final[dict[str, TaskStatus]] = {
     "completed": "completed",
     "failed": "failed",
@@ -148,7 +151,8 @@ class EventMapper:
 def _task(
     message: TaskStartedMessage | TaskNotificationMessage | TaskUpdatedMessage,
 ) -> list[DriverEvent]:
-    """A task's start, or its end when the message reports a terminal status; else nothing."""
+    """A task's start, its end when the message reports a terminal status, or its restart
+    when an update says it runs again; else nothing."""
     if isinstance(message, TaskStartedMessage):
         return [
             TaskEvent(
@@ -159,7 +163,8 @@ def _task(
                 task_type=message.task_type,
             )
         ]
-    status = _TASK_ENDS.get(message.status or "")
+    statuses = _TASK_ENDS | _TASK_UPDATES if isinstance(message, TaskUpdatedMessage) else _TASK_ENDS
+    status = statuses.get(message.status or "")
     if status is None or not message.task_id:
         return []
     tool_use_id = None if isinstance(message, TaskUpdatedMessage) else message.tool_use_id

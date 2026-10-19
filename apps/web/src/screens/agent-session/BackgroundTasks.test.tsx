@@ -95,3 +95,24 @@ describe("BackgroundPanel", () => {
     expect(onClose).toHaveBeenCalled();
   });
 });
+
+describe("BackgroundPanel stop", () => {
+  it("stops a running task and waits for its end, saying so when the stop fails", async () => {
+    const user = userEvent.setup();
+    const onStop = vi.fn().mockRejectedValueOnce(new Error("lost")).mockResolvedValue({});
+    render(<BackgroundPanel tasks={tasks()} onClose={vi.fn()} onStop={onStop} />);
+
+    const stop = screen.getByRole("button", { name: "Stop Rerun full make check" });
+    await user.click(stop);
+    expect(onStop).toHaveBeenCalledWith("t2");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not stop it");
+
+    await user.click(stop);
+    expect(stop).toBeDisabled();
+  });
+
+  it("offers no stop without a way to stop", () => {
+    render(<BackgroundPanel tasks={tasks()} onClose={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /^Stop / })).toBeNull();
+  });
+});

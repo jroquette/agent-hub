@@ -212,6 +212,10 @@ class ClaudeSdkSessionDriver:
         await session.client.interrupt()
         session.bridge.deny_all(INTERRUPTED)
 
+    async def stop_task(self, handle: DriverHandle, task_id: str) -> None:
+        """Ask the CLI to stop the task; its end arrives as a task message."""
+        await self._open(handle).client.stop_task(task_id)
+
     async def answer_permission(
         self, handle: DriverHandle, request_id: str, answer: DriverAnswer
     ) -> None:
