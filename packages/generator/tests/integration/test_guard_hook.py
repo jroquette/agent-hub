@@ -4324,8 +4324,8 @@ def test_asks_when_scan_budget_spent(decide: Decide) -> None:
     assert verdicts == [unchecked("out of time (300 ms)")] * 2
 
 
-# AGH-302: the Bash rules stay linear in the command's length, so a quote-dense command gets its
-# verdict well inside the hook's 10 s timeout, past which Claude Code goes on with no verdict.
+# AGH-302: the secret-file rule stays linear in the command's length, so a quote-dense command gets
+# its verdict well inside the hook's 10 s timeout, past which Claude Code goes on with no verdict.
 # argv: hub and a file holding one event. Prints [decide's verdict, the seconds it took].
 DECIDE_TIMED = """
 import json, time
