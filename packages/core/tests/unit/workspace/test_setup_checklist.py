@@ -3,8 +3,16 @@ from collections.abc import Callable
 
 import pytest
 
+from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.hub_config.effective_identity import IdentityKey, Source, Sourced
+from agent_hub.core.hub_config.local_config import LocalConfig
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.workspace_repos import WorkspaceRepo
+from agent_hub.core.testing.builders import (
+    a_hub_document,
+    a_local_environments_document,
+    an_environments_document,
+)
 from agent_hub.core.workspace.setup_checklist import (
     PROBE_TIMEOUT_SECONDS,
     PYTHON_MINIMUM,
@@ -15,6 +23,8 @@ from agent_hub.core.workspace.setup_checklist import (
     RepoOutcome,
     State,
     doctor_item,
+    environments_invalid_item,
+    environments_item,
     gh_item,
     git_lacks_item,
     gitignore_item,
@@ -960,3 +970,55 @@ class TestDoctor:
         item = doctor_item(totals=totals, has_errors=has_errors, finding_lines=findings)
 
         assert item_lines(item) == lines
+
+
+class TestEnvironments:
+    # AGH-289 (spec D-setup, AM-1): the item lists each effective environment, ok, with one
+    # production sub-line per production environment; it is absent when none is declared.
+    def test_lists_environments_item_when_declared(self) -> None:
+        config = HubConfig.model_validate(an_environments_document())
+
+        item = environments_item(effective_environments(config, LocalConfig()))
+
+        assert item is not None
+        assert item_lines(item) == [
+            "ok      environments: local (write), staging (ask), live (read, PRODUCTION)",
+            "        production environment: live (access read, hub.json)",
+        ]
+        assert item.state is State.OK
+        assert item.fix is None
+
+    def test_lists_local_environments_item_when_local_declares_them(self) -> None:
+        config = HubConfig.model_validate(an_environments_document())
+        document = a_local_environments_document()
+        document["environments"]["staging"] = {"access": "read"}
+        document["environments"]["jane-cloud"]["production"] = True
+        local = LocalConfig.model_validate(document)
+
+        item = environments_item(effective_environments(config, local))
+
+        assert item is not None
+        assert item_lines(item) == [
+            "ok      environments: local (write), staging (read), live (read, PRODUCTION),"
+            " jane-cloud (write, PRODUCTION)",
+            "        production environment: live (access read, hub.json)",
+            "        production environment: jane-cloud (access write, hub.local.json)",
+        ]
+
+    def test_omits_environments_item_when_none_declared(self) -> None:
+        config = HubConfig.model_validate(a_hub_document())
+
+        assert environments_item(effective_environments(config, LocalConfig())) is None
+
+    def test_reports_invalid_local_when_environments_conflict(self) -> None:
+        # A hub.local.json the cross-file rules refuse: missing, its problems as sub-lines.
+        item = environments_invalid_item(
+            ["hub.local.json: environments.local.access: may only tighten hub.json's write"]
+        )
+
+        assert item_lines(item) == [
+            "missing environments: hub.local.json is invalid"
+            " Fix: fix hub.local.json (docs/design/developer-identity.md)",
+            "        hub.local.json: environments.local.access: may only tighten hub.json's write",
+        ]
+        assert setup_exit([item]) == 1

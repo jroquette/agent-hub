@@ -31,6 +31,7 @@ from agent_hub.cli.main import app
 from agent_hub.cli.setup_identity import ANSWER_LIMIT
 from agent_hub.core.hub_config.local_config import LOCAL_FILE_MAX_BYTES
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
+from agent_hub.core.testing import builders
 from agent_hub.core.workspace.setup_checklist import (
     CLAUDE_FIX,
     CLONE_FIX,
@@ -1027,9 +1028,13 @@ class TestPrompt:
 
         assert _identity_lines(result.stdout) == [WROTE_LINE]
         assert (hub / LOCAL_FILE).read_bytes() == LOCAL_BYTES
-        assert result.stderr == _proposal(
-            hub, "jane/, Jane Roe <jane@example.com> (git config)"
-        ) + _prompt(hub)
+        # The environments step asks next; the end of input is its no.
+        assert (
+            result.stderr
+            == _proposal(hub, "jane/, Jane Roe <jane@example.com> (git config)")
+            + _prompt(hub)
+            + DECLARE_PROMPT
+        )
         assert "proposed" not in result.stdout
         assert "[y/N]" not in result.stdout
         assert result.exit_code == 0, result.output
@@ -1064,7 +1069,7 @@ class TestPrompt:
         assert result.exception is None or isinstance(result.exception, SystemExit)
         assert _identity_lines(result.stdout) == [DECLINED_LINE]
         assert not (hub / LOCAL_FILE).exists()
-        assert result.stderr.endswith(_prompt(hub))
+        assert result.stderr.endswith(_prompt(hub) + DECLARE_PROMPT)
         assert result.exit_code == 1
 
     def test_writes_nothing_when_prompt_has_no_terminal(
@@ -1967,3 +1972,421 @@ class TestGolden:
 
         compare_text_golden(result.stdout_bytes, GOLDEN / "mixed.golden", GOLDEN_HINT)
         assert result.exit_code == 1
+
+
+# AGH-289 (spec D-setup, AC-277.24, AM-1 / AC-277.35): the environments step, after the
+# identity, writes only the developer's hub.local.json; its item prints only when an
+# environment is declared in either file.
+DECLARE_PROMPT = "Declare your own environments now (hub.local.json)? [y/N] "
+NAME_PROMPT = "Environment name (for example local, staging, production; empty to stop): "
+PRODUCTION_PROMPT = "Is it production? [y/N] "
+W_ITEM = "ok      environments: local (write), staging (ask), live (read, PRODUCTION)"
+W_PRODUCTION = f"{_SUB_LINE}production environment: live (access read, hub.json)"
+_ENVIRONMENTS_LINE = re.compile(r"^ok +environments: ")
+
+
+def _access_prompt(name: str) -> str:
+    return f"Access for {name} (read, write or ask): "
+
+
+def _environments_lines(stdout: str) -> list[str]:
+    """The ``environments`` line and its sub-lines; empty when there is none."""
+    lines = stdout.splitlines()
+    start = next((i for i, line in enumerate(lines) if _ENVIRONMENTS_LINE.match(line)), None)
+    if start is None:
+        return []
+    end = start + 1
+    while end < len(lines) and lines[end].startswith(_SUB_LINE):
+        end += 1
+    return lines[start:end]
+
+
+def _declare_w(hub: Path) -> None:
+    """Give ``hub.json`` the spec's ``W``: three environments, one of them production."""
+    declared = builders.an_environments_document()
+
+    def change(document: dict[str, Any]) -> None:
+        document["environments"] = declared["environments"]
+        document["repos"][0]["services"] = declared["repos"][0]["services"]
+
+    _edit_hub_json(hub, change)
+
+
+def _answers(*lines: str) -> str:
+    return "".join(f"{line}\n" for line in lines)
+
+
+@pytest.mark.usefixtures("tools_ok")
+class TestEnvironments:
+    def test_writes_local_environment_when_terminal_answers(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tree_digest: TreeDigest,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        hub_json = (hub / "hub.json").read_bytes()
+        before = {path for path in tree_digest(hub) if path != LOCAL_FILE}
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        result = run_setup(hub, input=_answers("y", "local2", "write", "n", ""))
+
+        assert (hub / LOCAL_FILE).read_bytes() == (
+            b'{\n  "environments": {\n    "local2": {\n      "access": "write"\n    }\n  }\n}\n'
+        )
+        assert (hub / "hub.json").read_bytes() == hub_json
+        assert {path for path in tree_digest(hub) if path != LOCAL_FILE} == before
+        assert _environments_lines(result.stdout) == ["ok      environments: local2 (write)"]
+        assert _items(result.stdout).index("environments") == ITEM_ORDER.index("identity") + 1
+        assert result.stderr == (
+            DECLARE_PROMPT
+            + NAME_PROMPT
+            + _access_prompt("local2")
+            + PRODUCTION_PROMPT
+            + "hub setup: hub.local.json: added environment local2\n"
+            + NAME_PROMPT
+        )
+        assert result.stdout.splitlines()[-1] == "setup: 11 ok"
+        assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize("answer", ["", "n", "no"], ids=["empty", "n", "no"])
+    def test_defaults_production_to_no_when_name_is_production(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        answer: str,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        result = run_setup(hub, input=_answers("y", "production", "read", answer, ""))
+
+        written = json.loads((hub / LOCAL_FILE).read_bytes())
+        assert written == {"environments": {"production": {"access": "read"}}}
+        assert _environments_lines(result.stdout) == ["ok      environments: production (read)"]
+        assert result.exit_code == 0, result.output
+
+    def test_writes_production_when_production_answered_yes(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        result = run_setup(hub, input=_answers("y", "jane-cloud", "ask", "y", ""))
+
+        written = json.loads((hub / LOCAL_FILE).read_bytes())
+        assert written == {"environments": {"jane-cloud": {"access": "ask", "production": True}}}
+        assert _environments_lines(result.stdout) == [
+            "ok      environments: jane-cloud (ask, PRODUCTION)",
+            f"{_SUB_LINE}production environment: jane-cloud (access ask, hub.local.json)",
+        ]
+        assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize("case", ["yes", "no-terminal"])
+    def test_prints_environments_item_without_prompt_when_yes_or_no_terminal(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tree_digest: TreeDigest,
+        case: str,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        _declare_w(hub)
+        before = tree_digest(hub)
+        if case == "yes":
+            monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+        args = ("--yes",) if case == "yes" else ()
+
+        result = run_setup(hub, *args, input=_answers("y", "local2", "write", "n", ""))
+
+        assert _environments_lines(result.stdout) == [W_ITEM, W_PRODUCTION]
+        assert result.stderr == ""
+        assert tree_digest(hub) == before
+        assert not (hub / LOCAL_FILE).exists()
+
+    def test_prints_production_sub_line_when_hub_declares_one(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        _declare_w(hub)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        result = run_setup(hub, input=_answers("y", "jane-cloud", "write", "", ""))
+
+        assert _environments_lines(result.stdout) == [
+            "ok      environments: local (write), staging (ask), live (read, PRODUCTION),"
+            " jane-cloud (write)",
+            W_PRODUCTION,
+        ]
+        assert json.loads((hub / LOCAL_FILE).read_bytes()) == {
+            "environments": {"jane-cloud": {"access": "write"}}
+        }
+        assert result.exit_code == 0, result.output
+
+    def test_refuses_answer_when_name_taken_or_invalid(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        _declare_w(hub)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+        secret_name = "AK" + "IA" + "A" * 16
+
+        result = run_setup(
+            hub,
+            input=_answers(
+                "y", "Live", secret_name, "bad name", "qa", "admin", "qa", "read", "n", ""
+            ),
+        )
+
+        assert json.loads((hub / LOCAL_FILE).read_bytes()) == {
+            "environments": {"qa": {"access": "read"}}
+        }
+        assert "hub setup: environment live is already declared in hub.json\n" in result.stderr
+        assert result.stderr.count("hub setup: not a valid environment name") == 2
+        assert "hub setup: access must be read, write or ask\n" in result.stderr
+        assert secret_name not in result.stderr
+        assert secret_name not in result.stdout
+        assert "admin" not in result.stdout
+        assert result.exit_code == 0, result.output
+
+    def test_writes_nothing_when_rerun(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tree_digest: TreeDigest,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+        first = run_setup(hub, input=_answers("y", "local2", "write", "n", ""))
+        assert first.exit_code == 0, first.output
+        local = _snapshot(hub / LOCAL_FILE)
+        before = (tree_digest(hub), _mtimes(hub))
+
+        declined = run_setup(hub, input=_answers("n"))
+        flagged = run_setup(hub, "--yes")
+        empty = run_setup(hub, input=_answers("y", ""))
+
+        for result in (declined, flagged, empty):
+            assert _environments_lines(result.stdout) == ["ok      environments: local2 (write)"]
+            assert result.exit_code == 0, result.output
+        assert _snapshot(hub / LOCAL_FILE) == local
+        assert (tree_digest(hub), _mtimes(hub)) == before
+
+    @pytest.mark.parametrize(
+        ("answers", "written"),
+        [
+            pytest.param(("y", "a" * 100, "b" * ANSWER_LIMIT), None, id="name-twice"),
+            pytest.param(("y" * ANSWER_LIMIT, "y" * 100), None, id="declare-twice"),
+            pytest.param(("y", "local2", "w" * 100, "x" * 100), None, id="access-twice"),
+            pytest.param(
+                ("y", "a" * 100, "local2", "write", "n", ""),
+                {"environments": {"local2": {"access": "write"}}},
+                id="asked-again",
+            ),
+        ],
+    )
+    def test_ends_step_when_answer_too_long(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        answers: tuple[str, ...],
+        written: dict[str, Any] | None,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        # Anything after the step ends is never read: a name here would be written.
+        result = run_setup(hub, input=_answers(*answers, "late", "write", "n", ""))
+
+        if written is None:
+            assert not (hub / LOCAL_FILE).exists()
+            assert _environments_lines(result.stdout) == []
+            assert "late" not in result.stderr
+        else:
+            assert json.loads((hub / LOCAL_FILE).read_bytes()) == written
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize("case", ["yes", "declined"])
+    def test_prints_no_environment_line_when_none_declared(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        case: str,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        if case == "yes":
+            result = run_setup(hub, "--yes")
+        else:
+            monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+            result = run_setup(hub, input=_answers("n"))
+
+        assert _environments_lines(result.stdout) == []
+        assert "environments" not in result.stdout
+        assert _items(result.stdout) == ITEM_ORDER
+        assert result.stdout.splitlines()[-1] == "setup: 10 ok"
+        assert not (hub / LOCAL_FILE).exists()
+        assert result.exit_code == 0, result.output
+
+    def test_reports_missing_environments_when_local_file_conflicts(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A hub.local.json every effective-config command refuses (here: a "tightening" that
+        # is not stricter) is reported, not dropped: the item is missing and setup exits 1.
+        hub = Path(demo_workspace.hub)
+        _declare_w(hub)
+        demo_workspace.write_local('{"environments": {"local": {"access": "write"}}}\n')
+        before = _snapshot(hub / LOCAL_FILE)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        result = run_setup(hub, input=_answers("y", "local2", "write", "n", ""))
+
+        lines = result.stdout.splitlines()
+        start = lines.index(
+            f"missing environments: hub.local.json is invalid Fix: {INVALID_LOCAL_FIX}"
+        )
+        assert lines[start + 1] == (
+            f"{_SUB_LINE}hub.local.json: environments.local.access: may only tighten hub.json's"
+            " write"
+        )
+        assert _items(result.stdout).index("environments") == ITEM_ORDER.index("identity") + 1
+        assert _environments_lines(result.stdout) == []
+        assert DECLARE_PROMPT not in result.stderr
+        assert _snapshot(hub / LOCAL_FILE) == before
+        assert result.exit_code == 1
+
+    def test_refuses_write_when_local_file_too_large_or_changed(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        demo_workspace.write_local(json.dumps({"_comment": "x" * (LOCAL_FILE_MAX_BYTES - 40)}))
+        large = _snapshot(hub / LOCAL_FILE)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        too_large = run_setup(hub, input=_answers("y", "local2", "write", "n", ""))
+
+        assert _snapshot(hub / LOCAL_FILE) == large
+        assert (
+            f"hub setup: hub.local.json: $: larger than {LOCAL_FILE_MAX_BYTES} bytes once written\n"
+            in too_large.stderr
+        )
+        assert _environments_lines(too_large.stdout) == []
+
+        demo_workspace.write_local("{}\n")
+
+        def changed_after_read() -> bool:
+            # The step has read the file when it asks whether stdin is a terminal.
+            demo_workspace.write_local('{"environments": {}}\n')
+            return True
+
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", changed_after_read)
+
+        changed = run_setup(hub, input=_answers("y", "local2", "write", "n", ""))
+
+        assert (hub / LOCAL_FILE).read_text(encoding="utf-8") == '{"environments": {}}\n'
+        assert (
+            "hub setup: hub.local.json changed since it was read; run the command again\n"
+            in changed.stderr
+        )
+        assert _environments_lines(changed.stdout) == []
+
+    def test_checks_ignore_when_step_creates_local_file(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The step's questions come before the ignore check, so the hub.local.json they create
+        # is checked in the same run; the gitignore item still prints before environments.
+        hub = Path(demo_workspace.hub)
+        ignore_bytes = _unignore_local_file(hub)
+        demo_workspace.init_hub_repo(None)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        result = run_setup(hub, input=_answers("y", "local2", "write", "n", ""))
+
+        assert (hub / LOCAL_FILE).exists()
+        assert _items(result.stdout)[6:9] == ["identity", "gitignore", "environments"]
+        lines = result.stdout.splitlines()
+        gitignore = lines.index(GITIGNORE_LINE)
+        assert lines[gitignore + 1] == "ok      environments: local2 (write)"
+        assert len(_check_ignore_calls(env_traced_git)) == 1
+        assert (hub / ".gitignore").read_bytes() == ignore_bytes
+        assert result.exit_code == 1
+
+    def test_skips_rest_of_identity_answer_when_answer_too_long(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # An identity answer cut at ANSWER_LIMIT is a no, and the rest of its line (here `y`)
+        # is skipped: it never answers the environments question.
+        hub = _team_hub(demo_workspace)
+        monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
+
+        result = run_setup(hub, input="x" * ANSWER_LIMIT + "y\n")
+
+        assert _identity_lines(result.stdout) == [DECLINED_LINE]
+        assert result.stderr.endswith(_prompt(hub) + DECLARE_PROMPT)
+        assert NAME_PROMPT not in result.stderr
+        assert not (hub / LOCAL_FILE).exists()
+        assert result.exit_code == 1
+
+    def test_names_environments_in_help_when_yes_described(
+        self, demo_workspace: Workspace, run_setup: SetupRunner
+    ) -> None:
+        result = run_setup(demo_workspace.hub, "--help")
+
+        help_text = " ".join(unstyle(result.stdout).split())
+        assert "Write a new hub.local.json without asking, and ask no environment question." in (
+            help_text.replace("│ ", "").replace(" │", "")
+        )
+        assert result.exit_code == 0, result.output

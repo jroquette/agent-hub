@@ -9,13 +9,16 @@ import { DEV_SERVER, apiProxy } from "./src/lib/devProxy";
 // The production build goes into the API package, which serves it and ships it (D26).
 const OUT_DIR = "../../packages/api/src/agent_hub/api/web_dist";
 
-export default defineConfig(({ command }) => ({
+export default defineConfig(({ command, mode }) => ({
   plugins: [react()],
   // The checkout `make dev` serves, so a shake can preselect its workdir (O8); null in a build, so
-  // web_dist holds no absolute path (AC-260.18).
+  // web_dist holds no absolute path (AC-260.18), and under Vitest (mode "test"), so no test reads
+  // where the checkout lives (tests that need one mock servedCheckout).
   define: {
     __AH_DEV_CHECKOUT__: JSON.stringify(
-      command === "serve" ? realpathSync(resolve(import.meta.dirname, "../..")) : null,
+      command === "serve" && mode !== "test"
+        ? realpathSync(resolve(import.meta.dirname, "../.."))
+        : null,
     ),
   },
   // `make dev` and `make live` (vite) only; the production app is served by `hub web` itself.
