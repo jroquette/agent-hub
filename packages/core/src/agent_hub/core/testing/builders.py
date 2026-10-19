@@ -195,6 +195,48 @@ def a_guard_infra() -> dict[str, list[str]]:
     }
 
 
+def _hub_hook(script: str) -> dict[str, Any]:
+    return {
+        "type": "command",
+        "command": f'python3 "$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks/{script}"',
+        "timeout": 10,
+    }
+
+
+def a_hub_settings_document() -> dict[str, Any]:
+    """Build a synthetic hub ``.claude/settings.json`` as plain JSON data; a fresh copy per call.
+
+    Besides ``hooks`` it holds ``permissions``, ``sandbox``, ``env`` and ``enabledPlugins``. The
+    hooks name four scripts as ``$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks/<f>.py``, plus one
+    ``Stop`` command with no variable (``echo done``) and one ``Notification`` command written
+    ``${CLAUDE_PROJECT_DIR}/x.py``.
+    """
+    return {
+        "permissions": {"allow": ["Bash(make:*)"], "deny": ["Read(./.env)"]},
+        "sandbox": {"enabled": True, "network": {"allowedDomains": ["example.com"]}},
+        "env": {"X": "1"},
+        "enabledPlugins": {"demo@example": True},
+        "hooks": {
+            "SessionStart": [
+                {"matcher": "startup|resume|clear|compact", "hooks": [_hub_hook("session_start.py")]},
+                {"hooks": [_hub_hook("event_sensor.py")]},
+            ],
+            "PreToolUse": [{"matcher": "Bash|Read", "hooks": [_hub_hook("guard.py")]}],
+            "Stop": [
+                {
+                    "hooks": [
+                        _hub_hook("stop_gate.py"),
+                        {"type": "command", "command": "echo done"},
+                    ]
+                }
+            ],
+            "Notification": [
+                {"hooks": [{"type": "command", "command": 'python3 "${CLAUDE_PROJECT_DIR}/x.py"'}]}
+            ],
+        },
+    }
+
+
 def an_issue(**overrides: object) -> Issue:
     """Build a synthetic open ``DEM`` issue; ``url`` follows ``id`` unless overridden."""
     fields: dict[str, object] = {
