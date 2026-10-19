@@ -1,6 +1,7 @@
 """The feature folder reader on real folders (plan F.6): bounded, no link followed."""
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from agent_hub.core.features.feature_reviews import REVIEW_HEAD_BYTES
 from agent_hub.core.features.feature_status import (
     HEAD_BYTES,
     MAX_PLAN_BYTES,
+    MAX_ROUND_NAMES,
     MAX_UX_FILES,
     UX_HEAD_BYTES,
     FeatureFolder,
@@ -417,6 +419,45 @@ def test_lists_linked_ux_design_with_its_problem(tmp_path: Path) -> None:
     )
 
 
+# AGH-323 (two-level-flows AC-1.8, P3): the names of reviews/<ticket>/<reviewer>-r<N>.json, never
+# their bytes.
+def test_lists_review_round_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    rounds = folder / "reviews" / "AGH-1"
+    rounds.mkdir(parents=True)
+    for name in ("spec-r1.json", "quality-r1.json", "notes.txt", "Spec-r2.json", ".x-r1.json"):
+        (rounds / name).write_bytes(b'{"schema": "agent-hub/review/1"}')
+    (folder / "reviews" / "AGH-1.md").write_bytes(b"")
+    (folder / "reviews" / ".hidden").mkdir()
+    (folder / "reviews" / ".hidden" / "spec-r1.json").write_bytes(b"{}")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "spec-r1.json").write_bytes(b"{}")
+    (folder / "reviews" / "AGH-2").symlink_to(outside)
+    reads = Reads(monkeypatch)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.review_rounds == ("AGH-1/quality-r1.json", "AGH-1/spec-r1.json")
+    assert reads.bytes == 0
+
+
+def test_keeps_review_round_names_up_to_the_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    for ticket in ("AGH-2", "AGH-1"):
+        (folder / "reviews" / ticket).mkdir(parents=True)
+        for index in (1, 2):
+            (folder / "reviews" / ticket / f"spec-r{index}.json").write_bytes(b"{}")
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_ROUND_NAMES", 3)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.review_rounds == ("AGH-1/spec-r1.json", "AGH-1/spec-r2.json", "AGH-2/spec-r1.json")
+    assert MAX_ROUND_NAMES == 2000
+
+
 # AGH-323 (two-level-flows P1): plan.md is read whole up to MAX_PLAN_BYTES, so its amendments are seen.
 def test_reads_plan_whole_up_to_its_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     features = features_of(tmp_path)
@@ -491,7 +532,10 @@ def test_reads_same_folder_when_outputs_added(
     legacy = read_feature_folder(tmp_path / "legacy", "demo-feature")
     mixed = read_feature_folder(tmp_path / "mixed", "demo-feature")
 
-    assert mixed == legacy
+    # Only the review round names are listed (AGH-323 P3); no output is read as a record.
+    assert mixed is not None
+    assert mixed.review_rounds == ("DEM-1/quality-r1.json", "DEM-1/spec-r1.json", "DEM-3/spec-r1.json")
+    assert replace(mixed, review_rounds=()) == legacy
     assert legacy is not None
     assert [head.name for head in legacy.evals] == ["dem-1.md", "dem-2.md"]
     assert [head.name for head in legacy.reviews] == ["DEM-1.md"]
