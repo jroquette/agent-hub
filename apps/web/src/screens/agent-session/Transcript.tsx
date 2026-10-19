@@ -347,8 +347,10 @@ export function Transcript({
     );
     if (!element || !card) return;
     release();
-    // `.as-scroll` is positioned, so the card's offset is from the scroller's top.
-    element.scrollTop = Math.max(0, card.offsetTop - OPEN_MARGIN_PX);
+    // Measured against the scroller, not by offsetTop: the settled entry around the card is
+    // contained (content-visibility), which makes it the card's offsetParent in the browser.
+    const offset = card.getBoundingClientRect().top - element.getBoundingClientRect().top;
+    element.scrollTop = Math.max(0, element.scrollTop + offset - OPEN_MARGIN_PX);
   }, [oldestPending, release]);
 
   // The earlier entries, a frame after the first render; what was in view stays in view (the
