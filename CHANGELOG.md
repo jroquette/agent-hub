@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub setup` has an environments step (AGH-289): on a terminal without `--yes` it asks whether to declare your own
+  environments, then each one's name, access and whether it is production (no unless you answer `y`), and adds them to
+  `hub.local.json` only, checked as `hub env add --local` checks them. An `environments` item lists the declared
+  environments, with a `production environment:` sub-line per production one; a hub with none prints no line.
+
 ## [0.17.0] - 2026-10-19
 
 ### Added
