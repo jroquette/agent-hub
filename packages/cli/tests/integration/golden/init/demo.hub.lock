@@ -213,7 +213,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "12842fc2a470c78df55f65f46525812a13442415195d917df35dd844e1b66d95"
+      "sha256": "9beba6079d184137cbdf3095620f84ed5efa2df66d1a1fe68b56e13de825d5e8"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -335,12 +335,12 @@
     "plugin/hub-workflow/hooks/session_start.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "f3c47f792df5855dc33a016a31785ba3b7bf236938408e7b88a61a49da9bea76"
+      "sha256": "0482a97d2fbb99ea97e689affbcf1e11c9b3af2add8d2fecc094b38ef0101836"
     },
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b6d7f7b79e2ff2f9b7942e6cbb7d7d1dfb1cd9f613b32b332030a0cc5744d93e"
+      "sha256": "4e278ff11eba82a7f6713422c02df926353ca64f6b55c1a562ba1806fec26175"
     },
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,

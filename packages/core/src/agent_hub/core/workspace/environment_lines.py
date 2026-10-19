@@ -8,9 +8,11 @@ effective view, committed ones first. Only the ``production`` flag counts, never
 ``brief_block`` is the session brief's Environments block: each environment with its access,
 ``PRODUCTION``, source and credential names, each service's endpoint per environment, then the
 blocked words; at most ``MAX_BLOCK_LINES`` lines and ``MAX_BLOCK_CHARS`` characters, then a line
-naming how many more. Names and words are code spans (their shapes hold no backtick); a
-description, url, resource or note is the project's free text, read by the agent: cut at
-``MAX_FREE_TEXT_CHARS`` (a url keeps its own bound) and escaped, so it never reads as Markdown.
+naming how many more. Names and words are code spans (their shapes hold no backtick). A url or
+resource is an identifier the agent copies: a code span whose fence is longer than any backtick
+run in it, the value as written (a resource cut at ``MAX_FREE_TEXT_CHARS``, a url within its own
+bound). A description or note is the project's free text: cut at ``MAX_FREE_TEXT_CHARS`` and
+escaped, so it never reads as Markdown.
 """
 
 import re
@@ -31,6 +33,7 @@ ENDPOINTS_LEAD: Final = "Endpoints:"
 WORDS_LEAD: Final = "Blocked words (the guard denies them): "
 _MORE: Final = "… {count} more: ./hub env list"
 _MARKDOWN_SIGNIFICANT: Final = re.compile(r"([\\`*_\[\]<>#|~])")
+_BACKTICKS: Final = re.compile("`+")
 
 
 def production_line(name: str, access: str, source: str) -> str:
@@ -50,6 +53,14 @@ def production_lines(view: EffectiveEnvironments) -> tuple[str, ...]:
 def escaped_text(text: str) -> str:
     """``text`` with a backslash before each Markdown-significant character."""
     return _MARKDOWN_SIGNIFICANT.sub(r"\\\1", text)
+
+
+def code_span(text: str) -> str:
+    """``text`` as a Markdown code span: a fence longer than its longest backtick run, and a
+    space inside it when the text starts or ends with a backtick (CommonMark)."""
+    fence = "`" * (max((len(run) for run in _BACKTICKS.findall(text)), default=0) + 1)
+    padding = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{padding}{text}{padding}{fence}"
 
 
 def brief_block(view: EffectiveEnvironments) -> tuple[str, ...]:
@@ -86,9 +97,11 @@ def _target(sourced: SourcedEndpoint) -> str:
     endpoint = sourced.endpoint
     parts = []
     if endpoint.url:
-        parts.append(escaped_text(endpoint.url))
+        parts.append(code_span(endpoint.url))
     if endpoint.resource:
-        parts.append(f"resource {_free_text(endpoint.resource)}")
+        resource = endpoint.resource
+        cut = "…" if len(resource) > MAX_FREE_TEXT_CHARS else ""
+        parts.append(f"resource {code_span(resource[:MAX_FREE_TEXT_CHARS])}{cut}")
     target = ", ".join(parts)
     if endpoint.note:
         target += f"; note: {_free_text(endpoint.note)}"

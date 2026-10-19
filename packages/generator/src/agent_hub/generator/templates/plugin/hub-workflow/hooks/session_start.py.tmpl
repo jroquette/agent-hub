@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from hubhooks import Config, emit, load_config, read_input, run_hook
-    from stdlib_reader import PlatformSection
+    from stdlib_reader import PlatformSection, secret_shaped
 except Exception as error:  # a partial install: skip, never error the session
     print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
     sys.exit(0)
@@ -42,6 +42,7 @@ SNAPSHOT_CAP = 2500
 JOURNAL_COUNT = 3
 ENVIRONMENT_LINES = 60
 UNUSABLE_LOCAL = "{file} is unusable: your own environments are not shown"
+HIDDEN_NAME = "<hidden>"
 
 
 def release_source(repository: str | None, version: str) -> str:
@@ -120,12 +121,13 @@ def latest_journal(hub: Path) -> list[str]:
 
 def environment_lines(cfg: Config) -> list[str]:
     """The mini brief's Environments section: one line per effective environment (names are
-    safe segments, so they print as code spans), then the unusable-file line; none without
-    either."""
+    safe segments, so they print as code spans; a secret-shaped one, which the CLI refuses, as
+    HIDDEN_NAME), then the unusable-file line; none without either."""
     lines = []
     for environment in cfg.environments[:ENVIRONMENT_LINES]:
         flags = ", PRODUCTION" if environment.production else ""
-        lines.append(f"- `{environment.name}` ({environment.access}{flags})")
+        name = HIDDEN_NAME if secret_shaped(environment.name) else environment.name
+        lines.append(f"- `{name}` ({environment.access}{flags})")
     more = len(cfg.environments) - ENVIRONMENT_LINES
     if more > 0:
         lines.append(f"… {more} more: ./hub env list")
