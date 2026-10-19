@@ -289,6 +289,21 @@ async def test_ends_longest_idle_when_limit_reached(make_rig: MakeRig) -> None:
     assert (await rig.control.snapshot(newer.id)).status == AgentSessionStatus.IDLE
 
 
+async def test_keeps_idle_session_with_running_task_when_limit_reached(
+    make_rig: MakeRig,
+) -> None:
+    started = TaskEvent(task_id="task-1", status="running", description="Review")
+    rig = make_rig(limits=SessionLimits(sessions_max=1), replies={"Review.": (started,)})
+    first = await rig.create("Review.")
+    await rig.until_status(first.id, "idle")
+    rig.clock.advance(60)
+
+    with pytest.raises(LiveLimitError):
+        await rig.create()
+
+    assert (await rig.control.snapshot(first.id)).ended_at is None
+
+
 async def test_reopens_session_ended_for_a_slot_when_message_sent(make_rig: MakeRig) -> None:
     rig = make_rig(limits=SessionLimits(sessions_max=1), past_sessions=(PAST,))
     first = await rig.create("Say hello.", resume_session_id=PAST.session_id)
