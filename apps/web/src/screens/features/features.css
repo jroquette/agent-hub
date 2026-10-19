@@ -1,4 +1,4 @@
-/* Features list as an inbox: Needs you, In progress, Shipped (spec 17, grouped). */
+/* Features list: In progress (rows that need you carry a warning), Evaluated, Shipped (spec 17, grouped). */
 .ft-head {
   display: flex;
   flex-direction: column;
@@ -76,9 +76,6 @@
   margin: 0;
   font: inherit;
 }
-.ft-group[data-group="needs"] .ft-group-count {
-  color: var(--waiting);
-}
 .ft-group-hint {
   font-weight: 400;
   color: var(--text-subtle);
@@ -110,9 +107,6 @@
   background: var(--surface);
   overflow: hidden;
 }
-.ft-group[data-group="needs"] .ft-card {
-  border-left: 3px solid var(--waiting);
-}
 .ft-rows {
   list-style: none;
   margin: 0;
@@ -139,10 +133,13 @@
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
-/* The edge repeats what the line already says in words (E11); the Needs you card carries the amber one. */
+/* The edge repeats what the line already says in words (E11): a row that needs you is flagged inside its group. */
 .ft-row[data-tone="failed"],
 .ft-row[data-tone="blocked"] {
   box-shadow: inset 3px 0 0 var(--failed);
+}
+.ft-row[data-tone="waiting"] {
+  box-shadow: inset 3px 0 0 var(--waiting);
 }
 .ft-row-lead {
   display: inline-flex;
