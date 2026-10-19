@@ -30,7 +30,7 @@ const KIND_NOTE: Record<FileKind, string> = {
   code: "The files of your repo this session changed: what goes in the pull request.",
   plan: "The plans Claude wrote for this work. They stay on this machine.",
   feature:
-    "The feature's record in the brain: spec, plan, research, evals, and the spec and quality reviews of the workflow. Not part of your pull request.",
+    "What the workflow keeps on the feature in the brain: its spec and quality reviews, the spec, plan, research and evals. Not part of your pull request.",
   learning:
     "Notes for the brain: what Claude proposes to remember, and the brain's own notes it changed.",
   scratch:
