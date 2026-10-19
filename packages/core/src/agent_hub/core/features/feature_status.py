@@ -59,6 +59,8 @@ EVAL: Final = "eval.md"
 RECORD_FILES: Final = (SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL)
 # How much of ``spec.md`` and ``eval.md`` is read for the frontmatter and the verdict.
 HEAD_BYTES: Final = 65_536
+# ``plan.md`` is read whole up to this size, so its ``## Amendments`` at the end is seen (P1).
+MAX_PLAN_BYTES: Final = 262_144
 _VERDICT_LINE_CHARS: Final = 200
 _SIZES: Final = ("spike", "bounded", "architectural")
 
@@ -94,6 +96,8 @@ class FeatureFolder:
     ``spec_head`` and ``eval_head`` are the first ``HEAD_BYTES`` of ``spec.md`` and ``eval.md``.
     ``evals`` and ``reviews`` hold the heads of ``evals/*.md`` and ``reviews/*.md`` sorted by
     name; ``evals_skipped`` and ``reviews_skipped`` count the files left unread over the cap.
+    ``plan`` holds ``plan.md`` whole, None when absent or larger than ``MAX_PLAN_BYTES``
+    (``plan_too_large`` then says so).
     """
 
     slug: str
@@ -105,6 +109,8 @@ class FeatureFolder:
     reviews: tuple[RecordHead, ...] = ()
     evals_skipped: int = 0
     reviews_skipped: int = 0
+    plan: bytes | None = None
+    plan_too_large: bool = False
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
