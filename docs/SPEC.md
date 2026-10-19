@@ -551,7 +551,7 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   stored as `session.title` ([ADR 0035](adr/0035-session-titles.md), below).
 
 **Skills tab (AGH-164, built; named Toolkit since AGH-271).** Knowledge › Toolkit shows what a hub's agents can do, read from its files on request;
-only the version history below is stored:
+only the version history below is stored, and only its restore writes into the hub:
 
 - **Catalog.** `GET /api/v1/projects/{project}/skills` lists the hub's skills, agents and hooks: the base plugin
   `plugin/hub-workflow/`, the project and other plugins under `plugin/`, real entries in `.claude/skills/` and
@@ -578,7 +578,7 @@ only the version history below is stored:
   kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog
   says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
   hub by its listing's fingerprint.
-- **Version history (AGH-295, capture so far; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
+- **Version history (AGH-295: capture, history, diff and restore so far; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
   The catalog and the detail, and the Workflows list and detail, record a version of each unit they show in
   agent-hub's database (table `item_versions`): a skill's whole folder, an agent's file, a hook's whole file (every
   hook of a file shares it), a hub workflow's file. A
@@ -590,6 +590,23 @@ only the version history below is stored:
   `settings.local.json`. A catalog read stops reading new units once 16 MiB have been read (the read that crosses it
   still finishes); the rest wait for a later read. A capture that cannot write within the database's busy timeout
   answers 503, and the next read captures again. The hub's files stay untouched.
+  `GET .../skills/{kind}/{source}/{name}/versions` and `GET /api/v1/workflows/{project}/{name}/versions` list a
+  unit's versions newest first (1 to 200 a page, default 50, with a cursor), after capturing that unit, with its
+  `state` now (`ok`, `too_large`, `secret`, `unreadable`), whether `hub.lock` manages it and how many items share it
+  (the hooks of one file list the same versions); `.../versions/{version_id}` serves one version's files (texts and
+  executable bits), only within the item's own unit. An item with no unit (a link, a built-in) has no history (404).
+  `POST .../versions/{version_id}/restore` (Toolkit and Workflows) writes a version back into the hub's tree, the
+  first route that does: a file through a temporary file and a rename, a skill folder staged beside it and swapped in
+  (its files and executable bits equal to the version, its hidden entries kept), a hook's whole file. One write runs
+  at a time. In order: the hub must be writable and have an effective identity, no component of the path may be a
+  link and the unit must be readable whole (else 409 `hub_read_only`, `no_author`, `link_in_path`,
+  `unit_unreadable`); a version equal to the disk writes and records nothing (`changed: false`); the disk's content
+  is recorded first as `external` when it changed, so a hand edit stays restorable; a unit with a secret match on
+  disk is refused (409 `secret_unversioned`), and one `hub.lock` manages needs `confirm_managed: true` (else 409
+  `managed_confirmation_required`); then the write, and a `restore` version naming its source (`restored_from`) by
+  the hub's effective identity. A failed write records nothing more and answers 500 without a path. Restore is a
+  strict write that needs `hub web`'s launch cookie; in the container it answers 409 `hub_read_only`. It never runs
+  git: the change shows in the hub's working tree.
 
 **Workflows (AGH-225 API, AGH-226 screen).** `GET /api/v1/workflows` lists each project's workflows (the
 hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema.md)) with their source (`hub` or
@@ -607,6 +624,37 @@ draws its graph by layers (a column per layer, arrows for `depends_on`, a list v
 keyboard-reachable node panel) and shows its document read-only. Run detail draws an engine run as that graph, each
 node with its state, attempt, skip cause and failure kind (issue-to-pr runs keep their stage pipeline), and the
 Workflow runs list filters by workflow and failure kind.
+
+**Playground delivery (AGH-314, built).** What the owner validated in the live playground of 2026-10-17/18
+([ADR 0036](adr/0036-live-playground-and-auto-mode.md)), delivered as one change; the writes and runs it adds are
+[ADR 0040](adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md):
+
+- **Sessions** reads as an inbox: a summary strip of counts that filters the list, then Needs you, Working, Your turn
+  and Finished (the latest five, more on request), each a table with a status badge, a Chat or Terminal tag, what the
+  session does in plain words and one visible action. A driven chat carries its last prompt, last reply (redacted,
+  280 characters) and changed files (`agent_sessions` columns, migration 0006). `GET /agent-sessions?wrote=<path>`
+  lists the sessions whose tool calls wrote a file.
+- **Chat**: a header with Review changes, an Events link and a Session actions menu; a one-line live activity bar and
+  a Steps drawer (Ctrl/Cmd+Alt+.); Changed files opens on the net diff of every change; a turn's result ends every
+  message folded into it. An ended terminal session can be continued in the chat from its detail.
+- **Features** groups Needs you, In progress, Evaluated and Shipped with search and filters; a feature can get a
+  nickname kept on this machine (`GET`/`PUT /feature-names`). **Feature detail**: a calm golden path, one Waiting on
+  you banner with the owner sign-off (`POST /features/{project}/{slug}/owner-signoff`, a SHIP eval with `provenance:
+  owner`), an Eval tab with history per scope and who ran each eval, Approve at the end of the spec, research and plan
+  with the spec's open questions, ticket sessions on each ticket, and Run on an AC's recorded check (with Claude by
+  default, or `POST …/acs/{ac}/check-runs`, never recorded).
+- **Workflows** lists one plain row per workflow (`step_types`, `inputs` and an outline in the API) and a detail as a
+  step list; New workflow asks a Claude session to write and validate the YAML in the hub.
+- **Settings** connects Linear with a key kept on this machine (`GET`/`PUT`/`DELETE /tracker/linear`; the environment
+  still wins) and syncs a hub pinned to another release (`POST /hubs/{id}/platform-sync`); **Health** counts the
+  findings `hub doctor --fix` fixes (it rewrites every `brain.leak` on the brain side) and runs it
+  (`POST /hubs/{id}/doctor-fix`). Neither commits in the hub.
+- **Hub config** (`/projects/{project}/config`, sidebar, `g c`) shows per repo the default branch, the branch, commit
+  and PR title patterns, the checks, who commits, guard and blocked words, the tracker and the models, each with its
+  layer (`GET /projects/{project}/config`), and edits the developer's `hub.local.json`
+  (`PUT /projects/{project}/config/local`).
+- The Portfolio, Brain note frontmatter and the shell's scrolling are calmer; every screen above has a visual test on
+  the demo data ([TESTING.md](TESTING.md)).
 
 ## Data sources and event model
 

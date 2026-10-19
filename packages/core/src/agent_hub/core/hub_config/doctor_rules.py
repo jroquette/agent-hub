@@ -41,6 +41,7 @@ CONFIG_STOP_GATE_RULE: Final = "config.stop_gate"
 BRAIN_MEMORY_RULE: Final = "brain.memory"
 SANDBOX_WORKFLOW_RULE: Final = "sandbox.workflow"
 WORKFLOWS_VALID_RULE: Final = "workflows.valid"
+ITEM_LEFTOVERS_RULE: Final = "items.leftovers"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -68,6 +69,7 @@ RULE_IDS: Final = (
     BRAIN_MEMORY_RULE,
     SANDBOX_WORKFLOW_RULE,
     WORKFLOWS_VALID_RULE,
+    ITEM_LEFTOVERS_RULE,
 )
 
 # The rules a module owns: they run and may be configured only when the module is selected.
@@ -196,3 +198,4 @@ class DoctorRules(ConfigObject):
     brain_memory: RuleSettings | None = absent_by_default(alias="brain.memory")
     sandbox_workflow: RuleSettings | None = absent_by_default(alias="sandbox.workflow")
     workflows_valid: RuleSettings | None = absent_by_default(alias="workflows.valid")
+    items_leftovers: RuleSettings | None = absent_by_default(alias="items.leftovers")

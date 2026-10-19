@@ -11,6 +11,8 @@ import {
   aSkillCatalog,
   aSkillDetail,
   anAgentDetail,
+  anItemVersion,
+  anItemVersionPage,
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
@@ -234,6 +236,25 @@ describe("SkillDetailScreen nav", () => {
       "href",
       "/projects/demo/skills/agent/hub-workflow/requirements-analyst",
     );
+  });
+});
+
+describe("SkillDetailScreen history", () => {
+  it("history_panel on a skill detail lists the folder's versions when opened", async () => {
+    const { requests } = openDetail(undefined, {
+      [`${DETAIL}/versions`]: anItemVersionPage({
+        items: [anItemVersion({ origin: "external", first: true, author: null })],
+      }),
+    });
+
+    const panel = await screen.findByRole("region", { name: "History" });
+    expect(paths(requests)).toEqual([DETAIL]);
+    fireEvent.click(within(panel).getByRole("button", { name: "Show history" }));
+
+    const table = await within(panel).findByRole("table", { name: "Versions of feature" });
+    expect(table).toHaveTextContent("First seen");
+    expect(table).toHaveTextContent("Outside the app");
+    expect(paths(requests)).toEqual([DETAIL, `${DETAIL}/versions`]);
   });
 });
 

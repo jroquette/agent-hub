@@ -12,7 +12,8 @@ before any file is read.
 
 With ``capture`` (AGH-295, D2), the catalog hands every unit its items are versioned in (each
 once: the hooks of one file share it) to ``CaptureItemVersions`` with the unit's stat mark, and
-the detail its one item's unit; ``unit_of`` names an item's unit without capturing.
+the detail its one item's unit; ``marked_unit`` names an item's unit without capturing, with
+the mark the reads capture it under and how many items share it.
 """
 
 import re
@@ -29,6 +30,7 @@ from agent_hub.core.item_versions.item_units import (
     unit_fingerprint,
     unit_of_item,
 )
+from agent_hub.core.item_versions.item_version_ports import MarkedUnit
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_catalog import build_catalog, catalog_reads, may_hold
 from agent_hub.core.skills.skill_sources import (
@@ -52,6 +54,7 @@ from agent_hub.core.skills.skill_view import (
     SkillUsage,
     Usage,
     item_id,
+    text_of,
 )
 
 MEMO_ENTRIES: Final = 16
@@ -101,15 +104,6 @@ def _usage_of(item: CatalogItem, usage: SkillUsage | None) -> Usage | None:
         return _ZERO
     found = usage.by_skill if item.kind is ItemKind.SKILL else usage.by_agent
     return found.get(item.name, _ZERO)
-
-
-def _text_of(content: bytes) -> str | None:
-    if b"\x00" in content:
-        return None
-    try:
-        return content.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
 
 
 class SkillReads:
@@ -188,13 +182,25 @@ class SkillReads:
             raise missing
         return _bundled_text(bundled, read)
 
-    def unit_of(
+    def marked_unit(
         self, project: str, hub_path: str, *, kind: ItemKind, source: str, name: str
-    ) -> ItemUnit | None:
-        """The unit the item is versioned in, or None (a link, local settings); an unknown item
+    ) -> MarkedUnit | None:
+        """The unit the item is versioned in, with its capture mark (the one ``detail`` uses) and
+        the number of catalog items it holds, or None (a link, local settings); an unknown item
         is ``EntityNotFoundError``. Reads no unit."""
-        sources, _, detail = self._detail(project, hub_path, kind=kind, source=source, name=name)
-        return unit_of_item(detail, SourceIndex(sources), project=project)
+        sources, folded, detail = self._detail(
+            project, hub_path, kind=kind, source=source, name=name
+        )
+        index = SourceIndex(sources)
+        unit = unit_of_item(detail, index, project=project)
+        if unit is None:
+            return None
+        shared_by = sum(
+            1 for item in folded.catalog.items if unit_of_item(item, index, project=project) == unit
+        )
+        return MarkedUnit(
+            hub_path=hub_path, unit=unit, mark=unit_fingerprint(index, unit), shared_by=shared_by
+        )
 
     def _capture_items(
         self, project: str, hub_path: str, sources: SkillSources, *items: CatalogItem
@@ -283,7 +289,7 @@ def _frozen(texts: dict[str, bytes | UnreadHubFile]) -> Mapping[str, bytes | Unr
 
 
 def _bundled_text(bundled: BundledFile, content: bytes) -> BundledFileText:
-    text = _text_of(content)
+    text = text_of(content)
     return BundledFileText(
         id=bundled.id,
         path=bundled.path,

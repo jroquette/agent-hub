@@ -395,6 +395,11 @@ a.ah-flow-card-title:hover > span:last-child {
 .ah-table.ah-ticket-table td.ah-nowrap {
   white-space: nowrap;
 }
+/* The title takes the room the fixed columns leave, but never less than a readable line: on a narrow
+   screen the table scrolls sideways (its wrap overflows) instead of squeezing the title to one word a line. */
+.ah-table.ah-ticket-table .ah-ticket-title-col {
+  min-width: 280px;
+}
 .ah-ticket-table tr[data-epic="true"] .ah-ticket-title {
   font-weight: 600;
 }

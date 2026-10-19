@@ -18,9 +18,17 @@ in the main checkout only when no file sets the prefix), and, from a Claude Code
 (AGH-134: run inside the session's sandbox, it shows whether a sandboxed fetch can work). The
 findings go to stdout as lines and totals, or as one JSON object with ``--json``; the exit is 1
 when one is an error, else 0. ``check_hub`` is the same check on a given root, for ``hub setup``.
+
+``--fix`` first rewrites what can be fixed without a person, all at once: today every
+``brain.leak`` (the brain note gets a pointer to the repo line in place of the copied text,
+``brain_leak_fix``). It lists each file it wrote on stderr, then checks the hub again and
+reports what is left, so the exit says whether anything still needs a person.
 """
 
+import contextlib
 import os
+import secrets
+import stat
 from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path
@@ -42,6 +50,7 @@ from agent_hub.cli.hub_config_reader import (
 from agent_hub.cli.hub_root import local_home
 from agent_hub.cli.init_report import shown_path
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
+from agent_hub.core.doctor.brain_leak_fix import BrainEdit, brain_leak_edits
 from agent_hub.core.doctor.config_rules import config_state
 from agent_hub.core.doctor.finding import Finding
 from agent_hub.core.doctor.registry import REGISTRY
@@ -52,7 +61,7 @@ from agent_hub.core.doctor.run_rules import (
     select_rules,
 )
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, HubFiles, RemoteProbe
-from agent_hub.core.hub_config.doctor_rules import RULE_IDS
+from agent_hub.core.hub_config.doctor_rules import BRAIN_LEAK_RULE, RULE_IDS
 from agent_hub.core.hub_config.effective_identity import (
     IdentityValues,
     Sourced,
@@ -93,6 +102,12 @@ def doctor(
     as_json: Annotated[
         bool, typer.Option("--json", help="Print one JSON object instead of lines.")
     ] = False,
+    fix: Annotated[
+        bool,
+        typer.Option(
+            "--fix", help="Fix every finding that needs no person (brain.leak), then check again."
+        ),
+    ] = False,
 ) -> None:
     """Check the hub's rules, links, dead references and instruction size."""
     wanted = tuple(only or ())
@@ -102,6 +117,8 @@ def doctor(
     root = root_or_exit(None)
     _hub_or_exit(root)
     run = check_hub(root, only=wanted)
+    if fix and isinstance(run, DoctorRun) and _fix_all(root, run):
+        run = check_hub(root, only=wanted)
     if isinstance(run, UsageProblem):
         context.fail(run.message)
     for note in run.notes:
@@ -120,6 +137,7 @@ class DoctorRun(NamedTuple):
 
     findings: tuple[Finding, ...]
     notes: tuple[str, ...]
+    snapshot: DoctorSnapshot | None = None
 
 
 def check_hub(root: str, *, only: Sequence[str] = ()) -> DoctorRun | UsageProblem:
@@ -156,7 +174,76 @@ def check_hub(root: str, *, only: Sequence[str] = ()) -> DoctorRun | UsageProble
             branch_prefix=_prefix_reader(config, local=local, home=home),
             remote_probes=_remote_prober(root, config),
         )
-    return DoctorRun(findings=run_rules(selection, snapshot), notes=selection.notes)
+    return DoctorRun(
+        findings=run_rules(selection, snapshot), notes=selection.notes, snapshot=snapshot
+    )
+
+
+def _fix_all(root: str, run: DoctorRun) -> bool:
+    """Rewrite every brain note a ``brain.leak`` finding points at; True when one was written.
+
+    Only when the run found a leak (so the rule was selected and the repos were read). Each
+    file is written in place, never through a link; one that cannot be written is named on
+    stderr and left as it was. A summary line goes to stderr.
+    """
+    if run.snapshot is None or not any(f.rule == BRAIN_LEAK_RULE for f in run.findings):
+        typer.echo("fix: nothing to fix", err=True)
+        return False
+    written = [edit for edit in brain_leak_edits(run.snapshot) if _write(root, edit)]
+    for edit in written:
+        done = (
+            f"{edit.replaced} lines now point at the repo"
+            if edit.promoted_to is None
+            else f"promoted draft, now a stub pointing at {shown_path(edit.promoted_to)}"
+        )
+        typer.echo(f"fixed {shown_path(edit.path)}: {done}", err=True)
+    lines = sum(edit.replaced for edit in written)
+    typer.echo(
+        f"fix: {lines} brain lines in {len(written)} files; review with git diff brain/", err=True
+    )
+    return bool(written)
+
+
+def _write(root: str, edit: BrainEdit) -> bool:
+    """Replace the note whole: its new text goes to a file beside it, which then takes its place.
+
+    The note is opened for writing first, never truncated and without following a link, so a
+    link, a missing note or one this user may not write is refused as before, and the new file
+    gets its mode; a failure leaves the note as it was.
+    """
+    path = os.path.join(root, edit.path)
+    try:
+        note = os.open(path, os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            mode = stat.S_IMODE(os.fstat(note).st_mode)
+        finally:
+            os.close(note)
+        _replace_with(path, edit.text.encode(), mode=mode)
+    except OSError as error:
+        typer.echo(f"could not fix {shown_path(edit.path)}: {error.strerror or error}", err=True)
+        return False
+    return True
+
+
+def _replace_with(path: str, data: bytes, *, mode: int) -> None:
+    """Write ``data`` to a new file beside ``path`` (mode ``mode``), then move it over ``path``."""
+    temporary = os.path.join(
+        os.path.dirname(path), f".{os.path.basename(path)}.{secrets.token_hex(8)}.tmp"
+    )
+    descriptor = os.open(
+        temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as file:
+            os.fchmod(file.fileno(), mode)
+            file.write(data)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
 
 
 def _hub_or_exit(root: str) -> None:

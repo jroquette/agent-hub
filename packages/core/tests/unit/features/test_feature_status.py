@@ -484,3 +484,26 @@ def test_reads_linear_ids_when_spec_frontmatter_read(
     head: bytes | None, ids: tuple[str, ...]
 ) -> None:
     assert spec_linear(head) == ids
+
+
+# AC-PG-11.1: feature status shows the deciding "Final verdict" line (any case) as its verdict line.
+def test_shows_final_verdict_line_when_addendum_reverses_first() -> None:
+    head = b"# Eval\n\n**Verdict: NO-SHIP.** 1 of 2.\n\n**final verdict: SHIP** after addendum 2.\n"
+    folder = FeatureFolder(slug="done", files=("eval.md",), eval_head=head)
+
+    view = feature_view(folder, project="demo")
+
+    assert view.verdict == "SHIP"
+    assert view.verdict_line == "**final verdict: SHIP** after addendum 2."
+
+
+# AC-PG-11.1: the verdict line is cut to at most 200 characters.
+def test_clips_verdict_line_to_200_chars_when_line_long() -> None:
+    line = b"**Final verdict: SHIP.** " + b"x" * 400
+    folder = FeatureFolder(slug="done", files=("eval.md",), eval_head=b"# Eval\n\n" + line + b"\n")
+
+    view = feature_view(folder, project="demo")
+
+    assert view.verdict_line is not None
+    assert len(view.verdict_line) == 200
+    assert view.verdict_line == line.decode()[:200]

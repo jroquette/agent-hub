@@ -1,0 +1,227 @@
+/* Hub configuration: team and local values per repo, each with the layer that set it. */
+.ah-config-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.ah-config-head .ah-icon {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+}
+
+.ah-config-layout {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+.ah-config-rail {
+  position: sticky;
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ah-config-rail a {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+.ah-config-rail a:hover,
+.ah-config-rail a:focus-visible {
+  background: var(--surface-hover, var(--surface));
+  color: var(--text);
+}
+.ah-config-rail .ah-config-rail-sub {
+  padding-left: 20px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.ah-config-section {
+  padding: var(--space-4) var(--space-5);
+  scroll-margin-top: var(--space-4);
+}
+.ah-config-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.ah-config-section-head h2 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ah-config-rows {
+  display: flex;
+  flex-direction: column;
+}
+.ah-config-row {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) auto 28px;
+  gap: var(--space-3);
+  align-items: start;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  min-height: 32px;
+}
+.ah-config-label {
+  font-weight: 500;
+  padding-top: 2px;
+}
+.ah-config-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-top: 2px;
+}
+.ah-config-src {
+  padding-top: 1px;
+}
+.ah-config-act {
+  display: flex;
+  justify-content: flex-end;
+}
+.ah-config-code {
+  font-size: 12.5px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, var(--surface));
+  border: 1px solid var(--border);
+}
+.ah-config-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.ah-config-example {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.ah-config-example > .ah-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.ah-config-note {
+  margin: var(--space-2) 0 0;
+}
+
+.ah-config-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ah-config-source[data-dashed] {
+  border-style: dashed;
+  border-color: var(--text-subtle);
+  color: var(--text-muted);
+}
+.ah-config-source .ah-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.ah-config-repo {
+  border-top: 1px solid var(--border);
+}
+.ah-config-repo:first-of-type {
+  border-top: 0;
+}
+.ah-config-repo > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.ah-config-repo > summary::-webkit-details-marker {
+  display: none;
+}
+.ah-config-repo .ah-config-chevron {
+  transition: transform 120ms;
+}
+.ah-config-repo[open] .ah-config-chevron {
+  transform: rotate(90deg);
+}
+.ah-config-repo-name {
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+.ah-config-repo .ah-config-rows {
+  padding: 0 0 var(--space-2) 22px;
+}
+
+.ah-config-field-label {
+  font-weight: 500;
+}
+.ah-config-textarea {
+  height: auto;
+  min-height: 64px;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+.ah-config-error {
+  color: var(--failed);
+  margin: 0;
+}
+
+.ah-config-frame {
+  container-type: inline-size;
+}
+.ah-config-section {
+  container-type: inline-size;
+}
+@container (max-width: 900px) {
+  .ah-config-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ah-config-rail {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+}
+@container (max-width: 640px) {
+  .ah-config-row {
+    grid-template-columns: minmax(0, 1fr) auto 28px;
+  }
+  .ah-config-label {
+    grid-column: 1 / -1;
+    padding-top: 0;
+  }
+  .ah-config-repo .ah-config-rows {
+    padding-left: 0;
+  }
+}
+
+.ah-config-toast {
+  position: fixed;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: 50;
+}

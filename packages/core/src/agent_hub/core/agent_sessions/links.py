@@ -7,10 +7,25 @@ tile ``waiting`` while a permission request is open (AC-165.25). The other way r
 observed twin, to fill ``AgentSession.observed_session_id`` (D2).
 """
 
-from collections.abc import Callable, Iterable
-from typing import Protocol
+import re
+from collections.abc import Callable, Collection, Iterable
+from typing import Final, Protocol
 
+from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.readmodels.view_types import ViewModel
+
+# The first prompt's slash command and the issue it names: ``/feature AGH-305`` (the Start of a
+# ticket, the hub's ``/feature <ISSUE>``); the issue's team is checked later against the hub's.
+_PROMPT_ISSUE: Final = re.compile(r"\s*/[\w:-]+\s+([A-Za-z][A-Za-z0-9]{0,9}-[1-9][0-9]{0,8})\b")
+_PROMPT_KINDS: Final[frozenset[RecordKind]] = frozenset({"user.message"})
+
+
+def prompt_issue(text: object) -> str | None:
+    """The issue id (uppercased) a prompt opening with ``/<command> <ISSUE>`` names, or None."""
+    if not isinstance(text, str):
+        return None
+    found = _PROMPT_ISSUE.match(text)
+    return None if found is None else found.group(1).upper()
 
 
 class AgentSessionLink(ViewModel):
@@ -18,6 +33,10 @@ class AgentSessionLink(ViewModel):
 
     agent_session_id: str
     waiting: bool = False
+    # The issue the session's first prompt names (``/feature AGH-305``), not yet checked
+    # against the hub's tracker teams: what a session started from a ticket is about before
+    # its branch or worktree says so.
+    prompt_issue: str | None = None
 
 
 class AgentSessionLinkLookup(Protocol):
@@ -44,6 +63,17 @@ class AgentSessionStoreLinks(Protocol):
         """The agent session's id, or None."""
         ...
 
+    def records(
+        self,
+        agent_session_id: str,
+        *,
+        after: int = 0,
+        limit: int = 200,
+        kinds: Collection[RecordKind] | None = None,
+    ) -> tuple[LogRecord, ...]:
+        """The session's records after ``after``, in order (the first prompt, here)."""
+        ...
+
 
 class AgentSessionLinks:
     """``AgentSessionLinkLookup`` over the live sessions first (they know whether a
@@ -57,11 +87,26 @@ class AgentSessionLinks:
     ) -> None:
         self._live_link = live_link
         self._store = store
+        # The first prompt never changes once stored, so its issue is read once per session.
+        self._prompt_issues: dict[str, str | None] = {}
 
     def link_of(self, project: str, claude_session_id: str) -> AgentSessionLink | None:
         """The link of ``claude_session_id`` in ``project``, or None."""
         live = self._live_link(project, claude_session_id)
-        if live is not None:
-            return live
-        found = self._store.link_of(project, claude_session_id)
-        return None if found is None else AgentSessionLink(agent_session_id=found)
+        if live is None:
+            found = self._store.link_of(project, claude_session_id)
+            if found is None:
+                return None
+            live = AgentSessionLink(agent_session_id=found)
+        issue = self._prompt_issue(live.agent_session_id)
+        return live if issue is None else live.model_copy(update={"prompt_issue": issue})
+
+    def _prompt_issue(self, agent_session_id: str) -> str | None:
+        if agent_session_id in self._prompt_issues:
+            return self._prompt_issues[agent_session_id]
+        first = self._store.records(agent_session_id, limit=1, kinds=_PROMPT_KINDS)
+        if not first:
+            return None  # no prompt stored yet: asked again on the next read
+        issue = prompt_issue(first[0].body.get("text"))
+        self._prompt_issues[agent_session_id] = issue
+        return issue

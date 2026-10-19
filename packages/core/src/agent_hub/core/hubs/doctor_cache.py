@@ -6,8 +6,9 @@ and nothing else runs; an unusable file is ``config.schema`` findings), the hub'
 ``hub.local.json``, then the snapshot the selected rules read. The findings equal
 ``hub doctor --json`` run in that hub. ``DoctorCache`` keeps one run per hub for
 ``DOCTOR_TTL``, or until a watched file's modification time changes (``hub.json``,
-``hub.lock``, ``hub.local.json``, every path the run looked at, and the ``workflows/`` folders
-above them, whose times change when a workflow file is added or removed).
+``hub.lock``, ``hub.local.json``, every path the run looked at, the ``workflows/`` folders
+above them, whose times change when a workflow file is added or removed, and the item folders
+``items.leftovers`` scanned, whose times change when a temp entry appears or goes).
 """
 
 import threading
@@ -69,7 +70,12 @@ def run_doctor(reader: HubFileReader, hub_path: str, *, running_version: str) ->
             local=local,
         )
     looked_at = {*snapshot.hub.entries, *snapshot.hub.listed}
-    folders = {HUB_WORKFLOWS_FOLDER, *snapshot.workflow_folders, *_workflow_folders(looked_at)}
+    folders = {
+        HUB_WORKFLOWS_FOLDER,
+        *snapshot.workflow_folders,
+        *snapshot.item_folders,
+        *_workflow_folders(looked_at),
+    }
     watched = tuple(sorted({HUB_JSON, HUB_LOCK_PATH, LOCAL_FILE, *looked_at, *folders}))
     return DoctorRun(findings=run_rules(selection, snapshot), watched=watched)
 

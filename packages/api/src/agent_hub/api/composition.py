@@ -22,6 +22,11 @@ container (``settings.sessions_off``, L2) none of it is built.
 The workflow-run commands (AC-213.19) start ``hub workflow run`` children through
 ``ProcessRunLauncher`` with ``environ`` (minus ``LINEAR_API_KEY``) and the web's database; like
 the sessions, they are not built inside the container.
+
+An item's history (AGH-295) captures through one ``CaptureItemVersions`` shared by the reads
+and the write step; a Restore writes through ``FileSystemHubItemWriter`` (or the
+``item_writer`` given, for a fault test) as the hub's effective identity, the learning
+decisions' ``hub_of`` (a hub without one refuses with ``no_author``, O2).
 """
 
 import ipaddress
@@ -36,6 +41,7 @@ from typing import Final
 
 from fastapi import FastAPI
 
+from agent_hub.api.ac_check import AcCheckError, AcCheckRunner, ac_check_problem
 from agent_hub.api.agent_session_runtime import (
     SessionRuntime,
     UnavailableCloudLauncher,
@@ -44,6 +50,15 @@ from agent_hub.api.agent_session_runtime import (
 from agent_hub.api.app import create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
 from agent_hub.api.dependencies import ApiPorts
+from agent_hub.api.feature_names import FILE_NAME as FEATURE_NAMES_FILE
+from agent_hub.api.feature_names import FeatureNames
+from agent_hub.api.linear_connection import (
+    KEY_FILE_NAME,
+    LinearConnection,
+    LinearEnviron,
+    LinearKeyFile,
+)
+from agent_hub.api.owner_signoff_files import HubEvalWriter, ProjectHubPaths
 from agent_hub.api.rfc9457 import (
     ProblemFactory,
     busy_problem,
@@ -51,6 +66,7 @@ from agent_hub.api.rfc9457 import (
     hub_invalid_problem,
     hub_registry_problem,
     invalid_cursor_problem,
+    owner_signoff_problem,
 )
 from agent_hub.api.run_launcher import ProcessRunLauncher
 from agent_hub.api.settings import ApiSettings, utc_now
@@ -68,6 +84,7 @@ from agent_hub.core.agent_sessions.control import AgentSessionControl, WorkdirSo
 from agent_hub.core.agent_sessions.driver import SessionDriver
 from agent_hub.core.agent_sessions.links import AgentSessionLinks, ObservedSessionLookup
 from agent_hub.core.agent_sessions.store import AgentSessionStore
+from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRequest,
     TicketSnapshots,
@@ -94,6 +111,11 @@ from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
+from agent_hub.core.item_versions.hub_item_writer import HubItemWriter
+from agent_hub.core.item_versions.item_version import VersionAuthor
+from agent_hub.core.item_versions.read_item_versions import ReadItemVersions
+from agent_hub.core.item_versions.record_and_write import AuthorLookup, NoAuthor, RecordAndWrite
+from agent_hub.core.item_versions.restore_item_version import RestoreItemVersion
 from agent_hub.core.learnings.brain_change_requests import BrainChangeRequests, CommitAuthor
 from agent_hub.core.learnings.decide_learning import DecideLearning
 from agent_hub.core.learnings.learning_ports import LearningHub
@@ -114,6 +136,7 @@ from agent_hub.core.tracker.tracker_reader import TrackerReader
 from agent_hub.core.workflows.gate_decisions import DecideWorkflowGate, WorkflowGates
 from agent_hub.core.workflows.launch import ControlWorkflowRun, RunGuard, StartWorkflowRun
 from agent_hub.core.workflows.workflow_reads import ListedWorkflowSource, ReadWorkflows
+from agent_hub.generator.hub_item_writer import FileSystemHubItemWriter
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
@@ -127,6 +150,8 @@ from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE, 
 
 # The errors of the wired adapters, each answered by its problem (API.md "Error mapping").
 COMPOSED_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
+    OwnerSignOffError: owner_signoff_problem,
+    AcCheckError: ac_check_problem,
     DatabaseBusyError: busy_problem,
     InvalidCursorError: invalid_cursor_problem,
     HubInvalidError: hub_invalid_problem,
@@ -306,6 +331,19 @@ class RegisteredHubFacts:
             author=CommitAuthor(name=name.value, email=email.value),
         )
         return _HubFacts(hub=hub, label_rules=rules, transport=transport)
+
+
+def item_author_of(hub_of: Callable[[str], LearningHub | UnavailableHub]) -> AuthorLookup:
+    """Who an item write is by: the project's hub's effective identity, the one a learning
+    decision commits as (ADR 0016), or why there is none (``no_author``, O2)."""
+
+    def author_of(project: str) -> VersionAuthor | NoAuthor:
+        hub = hub_of(project)
+        if isinstance(hub, UnavailableHub):
+            return NoAuthor(reason=hub.reason)
+        return VersionAuthor(name=hub.author.name, email=hub.author.email)
+
+    return author_of
 
 
 class CachedAvailability:
@@ -512,6 +550,7 @@ def hub_read_models(  # noqa: PLR0913 - the hub reads' ports, all keyword-only
     usage: SkillUsageSource,
     ticket_snapshots: TicketSnapshots | None,
     capture: CaptureItemVersions | None = None,
+    read_git: Callable[[str], GitReader] = _files_only,
 ) -> HubFilesReadModels:
     """The hub read models of ``hub web``: ``activity`` and ``usage`` are the event read models
     (the project cards' numbers, the Skills tab's 30-day counts); ``capture`` records the units
@@ -533,6 +572,7 @@ def hub_read_models(  # noqa: PLR0913 - the hub reads' ports, all keyword-only
         ticket_snapshots=ticket_snapshots,
         usage=usage,
         capture=capture,
+        read_git=read_git,
     )
 
 
@@ -548,6 +588,7 @@ def build_app(
     tracker_reader: TrackerReader | None = None,
     session_driver: SessionDriver | None = None,
     cloud_launcher: CloudLauncher | None = None,
+    item_writer: HubItemWriter | None = None,
 ) -> FastAPI:
     """The app of ``hub web``: every route wired to the real adapters.
 
@@ -558,6 +599,7 @@ def build_app(
     time) through ``linear_post`` (default ``urllib``), or ``tracker_reader`` when given (tests).
     The agent sessions run on ``session_driver`` and ``cloud_launcher`` (default
     ``claude_adapters`` over ``environ``); none is built when ``settings.sessions_off``.
+    A Restore writes through ``item_writer`` (default ``FileSystemHubItemWriter``).
     ``DatabaseAccessError`` when the store cannot be opened.
     """
     store = open_event_store(settings.db_path)
@@ -566,7 +608,8 @@ def build_app(
     ingest = IngestHook(store, ClaudeHookMapper(), tail, status=counters)
     hub_paths = _HubPaths()
     reader = HubFileSystem() if read_git is None else HubFileSystem(read_git=read_git)
-    capture = CaptureItemVersions(open_item_version_store(settings.db_path), reader, settings.clock)
+    versions = open_item_version_store(settings.db_path)
+    capture = CaptureItemVersions(versions, reader, settings.clock)
     registry = JsonHubRegistry(settings.registry_path)
     facts = RegisteredHubFacts(
         registry=registry,
@@ -592,9 +635,11 @@ def build_app(
         sessions=sessions,
     )
     observed.events = events
+    key_file = LinearKeyFile(settings.registry_path.parent / KEY_FILE_NAME)
+    linear_environ = LinearEnviron(os.environ if environ is None else environ, key_file)
     snapshots = ticket_snapshots(
         facts,
-        environ=environ,
+        environ=linear_environ,
         linear_post=linear_post,
         tracker_reader=tracker_reader,
         clock=settings.clock,
@@ -607,6 +652,7 @@ def build_app(
         usage=events,
         ticket_snapshots=snapshots,
         capture=capture,
+        read_git=_files_only if read_git is None else read_git,
     )
     hub_paths.hubs = hubs
     changes = default_brain_changes() if brain_changes is None else brain_changes
@@ -644,6 +690,33 @@ def build_app(
         run_control=None if guard is None else ControlWorkflowRun(hubs, guard),
         workflow_gates=gates,
         gate_decisions=None if guard is None else DecideWorkflowGate(gates, guard),
+        item_version_reads=ReadItemVersions(
+            versions, reader=reader, toolkit_units=hubs, workflow_units=workflows, capture=capture
+        ),
+        item_version_writes=RestoreItemVersion(
+            versions,
+            toolkit_units=hubs,
+            workflow_units=workflows,
+            step=RecordAndWrite(
+                versions,
+                reader=reader,
+                writer=FileSystemHubItemWriter() if item_writer is None else item_writer,
+                author_of=item_author_of(facts.hub_of),
+                clock=settings.clock,
+                capture=capture,
+            ),
+        ),
+        owner_signoff=SignOffOwnerSteps(
+            ProjectHubPaths(hubs), reader, HubEvalWriter(), clock=settings.clock
+        ),
+        feature_names=FeatureNames(settings.registry_path.parent / FEATURE_NAMES_FILE),
+        ac_checks=AcCheckRunner(hubs),
+        linear=LinearConnection(
+            linear_environ,
+            key_file,
+            clock=settings.clock,
+            post=linear_post,
+        ),
     )
     return create_app(
         settings,

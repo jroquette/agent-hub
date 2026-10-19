@@ -4910,6 +4910,7 @@ ADAPTER_MODULES = frozenset(
         "brain_files.py",
         "skill_files.py",
         "unit_files.py",
+        "hub_item_writer.py",
         "registered_hub_files.py",
         "workflow_discovery.py",
         "workflow_fixtures.py",

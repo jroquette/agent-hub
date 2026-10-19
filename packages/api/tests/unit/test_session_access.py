@@ -1,7 +1,11 @@
 import pytest
+from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
+from starlette.responses import JSONResponse
+from starlette.types import Receive, Scope, Send
 
 from agent_hub.api.session_access import (
+    SessionAccessMiddleware,
     exchange_location,
     is_agent_session_path,
     read_refusal,
@@ -9,6 +13,9 @@ from agent_hub.api.session_access import (
 )
 
 HOST = "127.0.0.1:7420"
+TOKEN = "synthetic-launch-token-abcdefghijklmnopqrstuvwxyz01"  # noqa: S105 -- synthetic
+RESTORE = "/api/v1/projects/demo/skills/agent/demo/scout/versions/v-1/restore"
+WORKFLOW_RESTORE = "/api/v1/workflows/demo/review/versions/v-1/restore"
 
 
 @pytest.mark.parametrize(
@@ -75,3 +82,48 @@ def test_refuses_read_when_origin_foreign_or_site_not_own(headers: dict[str, str
 )
 def test_accepts_read_when_origin_missing_or_own(headers: dict[str, str]) -> None:
     assert read_refusal(Headers({"host": HOST, **headers})) is None
+
+
+async def _served(scope: Scope, receive: Receive, send: Send) -> None:
+    await JSONResponse({"served": True})(scope, receive, send)
+
+
+def _client(*, sessions_off: bool, signed_in: bool = False) -> TestClient:
+    app = SessionAccessMiddleware(_served, port=7420, token=TOKEN, sessions_off=sessions_off)
+    client = TestClient(app, base_url=f"http://{HOST}")
+    if signed_in:
+        client.cookies.set("agent_hub_7420", TOKEN)
+    return client
+
+
+@pytest.mark.parametrize("signed_in", [False, True])
+@pytest.mark.parametrize("path", [RESTORE, WORKFLOW_RESTORE])
+def test_answers_hub_read_only_when_item_write_in_container(path: str, *, signed_in: bool) -> None:
+    response = _client(sessions_off=True, signed_in=signed_in).post(path, json={})
+
+    assert response.status_code == 409
+    assert response.headers["content-type"] == "application/problem+json"
+    body = response.json()
+    assert (body["code"], body["title"]) == ("hub_read_only", "Item write refused")
+    assert body["reason"]
+    assert "served" not in body
+
+
+@pytest.mark.parametrize("path", [RESTORE, WORKFLOW_RESTORE])
+def test_answers_unauthorized_when_item_write_without_cookie(path: str) -> None:
+    response = _client(sessions_off=False).post(path, json={})
+
+    assert response.status_code == 401
+    assert response.json()["type"] == "urn:agent-hub:problem:agent-session-unauthorized"
+
+
+def test_serves_item_write_when_cookie_matches() -> None:
+    response = _client(sessions_off=False, signed_in=True).post(RESTORE, json={})
+
+    assert response.json() == {"served": True}
+
+
+def test_serves_item_version_read_when_in_container_without_cookie() -> None:
+    response = _client(sessions_off=True).get(RESTORE.removesuffix("/v-1/restore"))
+
+    assert response.json() == {"served": True}

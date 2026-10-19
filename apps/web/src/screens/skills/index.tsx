@@ -15,6 +15,7 @@ import { bundledFileAnchor, resolveSkillLink } from "../../lib/skillLinks";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { CountCell, KnowledgeProjectIndex } from "../knowledge-index";
+import { HistoryPanel } from "../item-history";
 import { NotFoundBody } from "../not-found";
 import { AboutRail } from "./AboutRail";
 import { BodyView, scrollToAnchor, type BodyMode } from "./BodyView";
@@ -203,6 +204,7 @@ function DetailBody({
               </div>
             </details>
           )}
+          <HistoryPanel target={{ kind: "item", project, item }} />
         </div>
         <AboutRail project={project} detail={detail} />
       </div>

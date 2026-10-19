@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
+from agent_hub.core.item_versions.item_version_ports import ItemWriteResult
 from agent_hub.core.testing.read_model_builders import a_hub_view
 from agent_hub.core.workflows.gate_decisions import GateDecided, GateDecisionRequest
 
@@ -436,3 +437,114 @@ def test_refuses_gate_decision_without_deciding_when_body_over_cap(wired: Any) -
 
     assert response.status_code == 413
     assert wired.gate_calls == []
+
+
+# The item writes (AGH-295, AC-295.33): a restore writes into a hub's working tree, so it takes
+# the strict rule and the launch cookie; nothing reaches the port when one fails.
+VERSION_ID = "0199f0a0-0000-7000-8000-00000000000a"
+ITEM_VERSION_WRITES = [
+    pytest.param(
+        f"/api/v1/projects/demo/skills/agent/demo/scout/versions/{VERSION_ID}/restore",
+        id="item_versions-restore-skill",
+    ),
+    pytest.param(
+        f"/api/v1/workflows/demo/review/versions/{VERSION_ID}/restore",
+        id="item_versions-restore-workflow",
+    ),
+]
+
+
+class ItemWrites:
+    """An ``ItemVersionWrites`` that records each restore and answers it unchanged."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, str, bool]] = []
+
+    def restore(self, ref: object, version_id: str, *, confirm_managed: bool) -> ItemWriteResult:
+        self.calls.append((ref, version_id, confirm_managed))
+        return ItemWriteResult(changed=False, versioned=False, reason=None, version=None)
+
+
+def _post_restore(wired: Any, path: str, **headers: str) -> tuple[Any, ItemWrites]:
+    writes = ItemWrites()
+    wired.wire(item_version_writes=writes)
+    sent = {"Origin": OWN_ORIGIN, "Content-Type": "application/json", **headers}
+    response = wired.client.post(
+        path, content=b'{"confirm_managed": true}', headers={k: v for k, v in sent.items() if v}
+    )
+    return response, writes
+
+
+@pytest.mark.parametrize("path", ITEM_VERSION_WRITES)
+def test_accepts_item_versions_restore_when_origin_own_and_body_json(wired: Any, path: str) -> None:
+    response, writes = _post_restore(wired, path, **{"Sec-Fetch-Site": "same-origin"})
+
+    assert response.status_code == 200, response.text
+    assert [(version, confirmed) for _, version, confirmed in writes.calls] == [(VERSION_ID, True)]
+
+
+@pytest.mark.parametrize(
+    ("headers", "status", "title"),
+    [
+        ({"Origin": ""}, 403, "Forbidden origin"),
+        ({"Origin": "http://attacker.example"}, 403, "Forbidden origin"),
+        ({"Origin": "http://localhost:7420"}, 403, "Forbidden origin"),
+        ({"Origin": "http://127.0.0.1:5173"}, 403, "Forbidden origin"),
+        ({"Sec-Fetch-Site": "cross-site"}, 403, "Forbidden fetch site"),
+        ({"Sec-Fetch-Site": "same-site"}, 403, "Forbidden fetch site"),
+        ({"Content-Type": "text/plain"}, 415, "Unsupported media type"),
+        ({"Content-Type": "application/x-www-form-urlencoded"}, 415, "Unsupported media type"),
+        ({"Content-Type": ""}, 415, "Unsupported media type"),
+    ],
+)
+@pytest.mark.parametrize("path", ITEM_VERSION_WRITES)
+def test_refuses_item_versions_restore_without_writing_when_strict_rule_broken(
+    wired: Any, *, path: str, headers: dict[str, str], status: int, title: str
+) -> None:
+    response, writes = _post_restore(wired, path, **headers)
+
+    assert response.status_code == status
+    assert response.json()["title"] == title
+    assert writes.calls == []
+
+
+@pytest.mark.parametrize("path", ITEM_VERSION_WRITES)
+def test_refuses_item_versions_restore_without_writing_when_no_cookie(
+    wired: Any, path: str
+) -> None:
+    wired.client.cookies.clear()
+
+    response, writes = _post_restore(wired, path)
+
+    assert response.status_code == 401
+    assert response.json()["type"] == "urn:agent-hub:problem:agent-session-unauthorized"
+    assert writes.calls == []
+
+
+@pytest.mark.parametrize("path", ITEM_VERSION_WRITES)
+def test_refuses_item_versions_restore_without_writing_when_body_over_cap(
+    wired: Any, path: str
+) -> None:
+    writes = ItemWrites()
+    wired.wire(item_version_writes=writes)
+
+    response = wired.client.post(
+        path,
+        content=b"{" + b" " * MAX_BODY_BYTES + b"}",
+        headers={"Origin": OWN_ORIGIN, "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert writes.calls == []
+
+
+def test_reads_item_versions_without_cookie_when_get(wired: Any) -> None:
+    wired.client.cookies.clear()
+
+    for path in (
+        "/api/v1/projects/demo/skills/agent/demo/scout/versions",
+        f"/api/v1/workflows/demo/review/versions/{VERSION_ID}",
+    ):
+        response = wired.client.get(path, headers={"Origin": OWN_ORIGIN})
+        # Not wired here: the route answers, the access rules let it through.
+        assert response.status_code == 501, (path, response.text)

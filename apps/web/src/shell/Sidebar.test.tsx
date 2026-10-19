@@ -31,6 +31,7 @@ describe("Sidebar", () => {
       "Brain",
       "Toolkit",
       "Health",
+      "Hub config",
       "Settings",
     ]);
     for (const group of ["Work", "Knowledge"]) {
@@ -107,6 +108,27 @@ describe("Sidebar", () => {
     );
   });
 
+  it("AC-PG-38.2 points Hub config at the project in scope, else the /config picker", () => {
+    const { unmount } = renderSidebar("/sessions?scope=agent-hub");
+    expect(screen.getByRole("link", { name: "Hub config" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/config",
+    );
+    unmount();
+
+    renderSidebar("/sessions");
+    expect(screen.getByRole("link", { name: "Hub config" })).toHaveAttribute("href", "/config");
+  });
+
+  it("AC-PG-38.2 points Hub config at the project in view over the one in scope", () => {
+    renderSidebar("/projects/demo/brain?scope=agent-hub");
+
+    expect(screen.getByRole("link", { name: "Hub config" })).toHaveAttribute(
+      "href",
+      "/projects/demo/config",
+    );
+  });
+
   it("marks the current destination as the page when its route is open", () => {
     renderSidebar("/sessions/abc");
 
@@ -159,7 +181,7 @@ describe("Sidebar", () => {
     const names = within(foot as HTMLElement)
       .getAllByRole("link")
       .map((link) => link.textContent);
-    expect(names).toEqual(["Health", "Settings"]);
+    expect(names).toEqual(["Health", "Hub config", "Settings"]);
   });
 
   it("opens the shortcut sheet from its footer button", () => {
