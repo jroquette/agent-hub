@@ -18,6 +18,7 @@ from typing import Final
 from agent_hub.cli.errors import CliError
 from agent_hub.cli.exclusive_write import TEMP_INFIX
 from agent_hub.cli.init_report import shown_path
+from agent_hub.core.bench.bench_session import EFFORTS
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 from agent_hub.core.runner.session_settings import (
     HubPathError,
@@ -29,10 +30,8 @@ from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes
 SETTINGS_FOLDER: Final = (".agent-runs", "session-settings")
 MAX_SETTINGS_BYTES: Final = 1 << 20
 _HUB_SETTINGS: Final = (".claude", "settings.json")
-# The ``effortLevel`` values ``hub run`` and the workflow nodes pass; each names a file.
-EFFORT_LEVELS: Final = ("low", "medium", "high")
-# The most of a script path an error shows: the path comes from a file a session can write.
-_SHOWN_SCRIPT_CHARS: Final = 120
+# The most of a script path or an effort an error shows.
+_SHOWN_CHARS: Final = 120
 _FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 # O_EXCL: the temp is this call's own; O_NOFOLLOW: never through a planted link.
 _TEMP_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -46,9 +45,9 @@ class HubHooksError(CliError):
 
 
 def session_settings_path(hub: Path, effort: str) -> Path:
-    """Where the settings file for ``effort`` lives in ``hub``; ``ValueError`` for other efforts."""
-    if effort not in EFFORT_LEVELS:
-        raise ValueError(f"unknown effort {effort!r}: use one of {', '.join(EFFORT_LEVELS)}")
+    """Where the settings file for ``effort`` lives in ``hub``; ``HubHooksError`` for an effort
+    Claude Code does not take, since it names the file."""
+    _check_effort(effort)
     return hub.joinpath(*SETTINGS_FOLDER, f"{effort}.json")
 
 
@@ -57,8 +56,10 @@ def hub_hooks_settings(hub: Path, effort: str) -> bytes:
 
     Raises ``HubHooksError`` when the hub's settings are missing, unreadable, too large, not JSON
     or hold no ``hooks`` object or a command core refuses, when a hook script they name is not a
-    regular file in the hub, or when the hub's path is not UTF-8 or holds a shell character.
+    regular file in the hub, or when the hub's path is not UTF-8 or holds a shell character,
+    and first of all when ``effort`` is not a level Claude Code takes.
     """
+    _check_effort(effort)
     path = hub.joinpath(*_HUB_SETTINGS)
     shown = shown_path(str(path))
     content = read_file_bytes(path, max_bytes=MAX_SETTINGS_BYTES)
@@ -87,10 +88,19 @@ def hub_hooks_settings(hub: Path, effort: str) -> bytes:
     return built
 
 
+def _check_effort(effort: str) -> None:
+    if effort not in EFFORTS:
+        raise HubHooksError(f"unknown effort {_shown_cut(effort)}: use {', '.join(EFFORTS)}")
+
+
 def _shown_script(script: str) -> str:
     # Only the hub-relative path, cut at its cap: never the rest of the command.
-    cut = script[:_SHOWN_SCRIPT_CHARS]
-    return shown_path(cut if cut == script else f"{cut}...")
+    return _shown_cut(script)
+
+
+def _shown_cut(text: str) -> str:
+    cut = text[:_SHOWN_CHARS]
+    return shown_path(cut if cut == text else f"{cut}...")
 
 
 def write_session_settings(hub: Path, effort: str) -> Path:
@@ -103,8 +113,8 @@ def write_session_settings(hub: Path, effort: str) -> Path:
     ``HubHooksError`` for what ``hub_hooks_settings`` refuses, and ``cannot write <path>:
     <reason>`` when the write fails.
     """
-    content = hub_hooks_settings(hub, effort)
     path = session_settings_path(hub, effort)
+    content = hub_hooks_settings(hub, effort)
     try:
         _replace_file(hub, path.name, content)
     except OSError as error:
