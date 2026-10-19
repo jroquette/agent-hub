@@ -237,9 +237,7 @@ def _round_names(parent: int) -> tuple[str, ...]:
             tickets = sorted(
                 entry.name
                 for entry in entries
-                if not entry.name.startswith(".")
-                and _is_utf8(entry.name)
-                and entry.is_dir(follow_symlinks=False)
+                if not entry.name.startswith(".") and entry.is_dir(follow_symlinks=False)
             )
         for ticket in tickets:
             if len(found) >= MAX_ROUND_NAMES:
@@ -250,14 +248,6 @@ def _round_names(parent: int) -> tuple[str, ...]:
     finally:
         os.close(reviews)
     return tuple(found)
-
-
-def _is_utf8(name: str) -> bool:
-    try:
-        name.encode()
-    except UnicodeEncodeError:
-        return False
-    return True
 
 
 def _rounds_of(reviews: int, ticket: str) -> list[str]:
