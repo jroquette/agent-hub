@@ -424,6 +424,7 @@ export function FeatureDetailScreen() {
         onRefresh={() => void tickets.refetch()}
         refreshing={tickets.isFetching}
         acPasses={Object.fromEntries(detail.ac_rows.map((ac) => [ac.id, ac.passes]))}
+        acRows={detail.ac_rows}
       />
     );
   } else if (tab === "eval") {

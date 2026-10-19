@@ -260,13 +260,15 @@ export interface TooltipProps {
   open?: boolean | undefined;
   children?: ReactNode;
   block?: boolean | undefined;
+  /** The tooltip's id, so the element it describes can point at it with `aria-describedby`. */
+  id?: string | undefined;
 }
-export function Tooltip({ label, open, children, block }: TooltipProps) {
+export function Tooltip({ label, open, children, block, id }: TooltipProps) {
   if (label === undefined || label === null || label === "") return <>{children}</>;
   return (
     <span className="ah-tip-wrap" style={block ? { display: "flex", width: "100%" } : undefined}>
       {children}
-      <span role="tooltip" className={cx("ah-tip", open && "ah-tip-open")}>
+      <span id={id} role="tooltip" className={cx("ah-tip", open && "ah-tip-open")}>
         {label}
       </span>
     </span>
