@@ -34,8 +34,8 @@ describe("tileOf (grid tiles from sessions)", () => {
     expect(tile).toMatchObject({
       status: "waiting",
       reason: "Waiting · Guard ask",
-      title: "AGH-48 · /feature",
-      detail: "agent-hub · dev/agh-48-live-tiles",
+      title: "AGH-48: live-tiles",
+      detail: "/feature · agent-hub · dev/agh-48-live-tiles",
       lastAction: "Waiting 1 min · a guard ask has no timeout",
       lastIcon: "file-pen",
       notice: "make check failed 2 times",

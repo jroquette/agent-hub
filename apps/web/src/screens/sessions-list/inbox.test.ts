@@ -550,8 +550,13 @@ describe("rowTitle", () => {
   it("is a chat's title or Untitled session, and an observed session's identity", () => {
     expect(rowTitle(anAgentSession({ title: "Fix the build" }))).toBe("Fix the build");
     expect(rowTitle(anAgentSession({ title: null }))).toBe("Untitled session");
-    expect(rowTitle(observed({ label: aSessionLabel({ title: "Readable names" }) }))).toBe(
-      "Readable names",
+    expect(
+      rowTitle(observed({ label: aSessionLabel({ title: "Readable names", issue: null }) })),
+    ).toBe("Readable names");
+    const onTicket = observed({ label: aSessionLabel({ title: "Readable names" }) });
+    expect(rowTitle(onTicket)).toBe("AGH-48: live-tiles");
+    expect(rowTitle(onTicket, new Map([["AGH-48", "session-names"]]))).toBe(
+      "AGH-48: session-names",
     );
     expect(
       rowTitle(observed({ label: aSessionLabel({ issue: "AGH-9", workflow: "/feature" }) })),
