@@ -190,6 +190,9 @@ class TaskEvent(DriverModel):
     status: TaskStatus
     description: str | None = None
     tool_use_id: str | None = None
+    # What runs it, as the CLI names it (``local_bash``, ``local_agent``, ``remote_agent``...);
+    # on a start only.
+    task_type: str | None = None
 
 
 class PermissionSuggestion(DriverModel):

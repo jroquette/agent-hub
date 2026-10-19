@@ -2391,3 +2391,101 @@ body.as-resizing .as-drawer {
   flex: none;
   width: 7px;
 }
+
+/* The Background drawer: the tasks running beside the conversation, then the ended ones. */
+.as-bg-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-3) var(--space-4);
+}
+.as-bg-section {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: var(--space-3) var(--space-1) var(--space-2);
+  font-weight: 500;
+}
+.as-bg-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.as-bg-toggle:hover {
+  color: var(--text);
+}
+.as-bg-empty {
+  margin: 0 var(--space-1);
+}
+.as-bg-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.as-bg-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-2) var(--space-3);
+}
+.as-bg-row:not(.as-bg-running) {
+  border-color: transparent;
+  background: none;
+  padding-block: var(--space-1);
+}
+.as-bg-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+button.as-bg-head {
+  cursor: pointer;
+}
+.as-bg-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-bg-running .as-bg-label {
+  font-weight: 500;
+}
+.as-bg-sub {
+  margin: 2px 0 0 22px;
+}
+.as-bg-calls {
+  list-style: none;
+  margin: var(--space-2) 0 0 22px;
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.as-bg-calls li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-bg-completed .ah-icon {
+  color: var(--done);
+}
+.as-bg-failed .ah-icon {
+  color: var(--failed);
+}
+.as-bg-stopped .ah-icon {
+  color: var(--text-subtle);
+}

@@ -559,6 +559,7 @@ RECORD_BODIES: dict[str, dict[str, JsonValue]] = {
         "status": "running",
         "description": "Review the change",
         "tool_use_id": "toolu_02",
+        "task_type": "local_agent",
     },
     "permission.request": {
         "request_id": "req-1",
