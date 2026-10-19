@@ -40,6 +40,7 @@ import {
   useRepoChanges,
 } from "./queries";
 import { repoSummary, withRepoChanges } from "./repoChanges";
+import { ChatRefsContext, useChatRefs } from "./chatRefs";
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
@@ -248,6 +249,8 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const repoChanges = useRepoChanges(agentSessionId, repoVersion);
   const repos = repoChanges.data?.repos;
   const files = useMemo(() => withRepoChanges(ownFiles, repos), [ownFiles, repos]);
+  const filePaths = useMemo(() => files.map((file) => file.path), [files]);
+  const refs = useChatRefs(session?.project ?? null, filePaths, openFile);
   const threads = useMemo(
     () => reviewThreads(state.entries, state.sending),
     [state.entries, state.sending],
@@ -440,58 +443,60 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
       </header>
       {/* The chords answer the oldest pending tool permission: its card names them (AC-234.29). */}
       <OldestPendingContext.Provider value={pending[0]}>
-        <Transcript
-          state={state}
-          onAnswerPermission={ended ? undefined : commands.answer}
-          scrollerRef={setScroller}
-          follow={follow}
-          screenshotUrl={screenshotUrl}
-          messageScreenshots={messageScreenshots}
-          onActivityOpen={closePanels}
-          files={files}
-          reviewed={review.reviewed}
-          onOpenFile={openFile}
-          footer={
-            <BackgroundCard
-              tasks={tasks}
-              since={lastMessageAt(state)}
-              onOpen={() => {
-                setBackground(true);
-              }}
-            />
-          }
-          sidePanel={
-            backgroundOpen ? (
-              <BackgroundPanel
+        <ChatRefsContext.Provider value={refs}>
+          <Transcript
+            state={state}
+            onAnswerPermission={ended ? undefined : commands.answer}
+            scrollerRef={setScroller}
+            follow={follow}
+            screenshotUrl={screenshotUrl}
+            messageScreenshots={messageScreenshots}
+            onActivityOpen={closePanels}
+            files={files}
+            reviewed={review.reviewed}
+            onOpenFile={openFile}
+            footer={
+              <BackgroundCard
                 tasks={tasks}
-                onClose={closeBackground}
-                onStop={cloud || ended ? undefined : commands.stopTask}
-              />
-            ) : liveOpen && steps.end !== null ? (
-              <StepsPanel steps={steps} onClose={closeLive} focusOnOpen={stepsFocus} />
-            ) : filesOpen ? (
-              <FilesPanel
-                files={files}
-                sessionId={agentSessionId}
-                onClose={closeFiles}
-                workdirLabel={session.workdir_label}
-                repoNote={repoSummary(repos)}
-                review={review}
-                initialPath={filePick.path}
-                pickNonce={filePick.nonce}
-                comments={{
-                  threads,
-                  resolved: resolvedThreads,
-                  // A comment is a message to this session's Claude: it answers in the chat too.
-                  onComment:
-                    cloud || (ended && !canResume)
-                      ? undefined
-                      : (text) => transcript.send(text, (message) => commands.send(message)),
+                since={lastMessageAt(state)}
+                onOpen={() => {
+                  setBackground(true);
                 }}
               />
-            ) : undefined
-          }
-        />
+            }
+            sidePanel={
+              backgroundOpen ? (
+                <BackgroundPanel
+                  tasks={tasks}
+                  onClose={closeBackground}
+                  onStop={cloud || ended ? undefined : commands.stopTask}
+                />
+              ) : liveOpen && steps.end !== null ? (
+                <StepsPanel steps={steps} onClose={closeLive} focusOnOpen={stepsFocus} />
+              ) : filesOpen ? (
+                <FilesPanel
+                  files={files}
+                  sessionId={agentSessionId}
+                  onClose={closeFiles}
+                  workdirLabel={session.workdir_label}
+                  repoNote={repoSummary(repos)}
+                  review={review}
+                  initialPath={filePick.path}
+                  pickNonce={filePick.nonce}
+                  comments={{
+                    threads,
+                    resolved: resolvedThreads,
+                    // A comment is a message to this session's Claude: it answers in the chat too.
+                    onComment:
+                      cloud || (ended && !canResume)
+                        ? undefined
+                        : (text) => transcript.send(text, (message) => commands.send(message)),
+                  }}
+                />
+              ) : undefined
+            }
+          />
+        </ChatRefsContext.Provider>
       </OldestPendingContext.Provider>
       <footer className="as-footer">
         <div className="as-column">
