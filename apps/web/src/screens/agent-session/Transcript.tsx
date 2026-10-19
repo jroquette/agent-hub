@@ -366,12 +366,19 @@ export function Transcript({
       cancelAnimationFrame(frame);
     };
   }, [start]);
+  // A chat that follows the bottom stays there: the position read a frame earlier may predate the
+  // stick-to-bottom hook's first write, and restoring it would land near the top and detach.
+  const following = follow?.atBottom ?? false;
   useLayoutEffect(() => {
     const element = scroller.current;
     const was = before.current;
     before.current = null;
     if (start !== 0 || !element || !was) return;
-    element.scrollTop = was.top + element.scrollHeight - was.height;
+    element.scrollTop = following
+      ? element.scrollHeight
+      : was.top + element.scrollHeight - was.height;
+    // Only the moment the earlier entries arrive; following is read, not watched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [start]);
 
   // Entries that arrived while the reader was away from the bottom (AC-234.19).
