@@ -211,8 +211,8 @@ describe("EvalTab rows", () => {
     expect(screen.getByRole("button", { name: /^AGH-201\b.*evals/ })).toHaveTextContent(
       "Claim lifecycle",
     );
-    expect(rowOf("agh-201-r2")).toHaveTextContent(/Run 2\s*latest/);
-    expect(within(rowOf("agh-201")).getByText("replaced by Run 2")).toBeInTheDocument();
+    expect(rowOf("agh-201-r2")).toHaveTextContent(/Eval 2\s*latest/);
+    expect(within(rowOf("agh-201")).getByText("replaced by Eval 2")).toBeInTheDocument();
   });
 
   it("shows an eval's ACs as the Tickets tab does, with how many pass", () => {
@@ -228,6 +228,14 @@ describe("EvalTab rows", () => {
     );
 
     expect(within(rowOf("agh-201")).getByText("2/3 ACs passing")).toBeInTheDocument();
+  });
+
+  it("keeps the owner's callout in view when its group is folded", async () => {
+    renderWithApi(tab({ evals: runs }));
+
+    await userEvent.click(screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ }));
+    expect(screen.queryByRole("button", { name: /^agh-201-r2,/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Mark owner steps done" })).toBeInTheDocument();
   });
 
   it("folds the whole list and remembers it", async () => {
@@ -248,15 +256,15 @@ describe("EvalTab rows", () => {
       routes: { [`POST ${SIGNOFF}`]: written },
     });
 
-    expect(within(rowOf("agh-201")).queryByRole("button", { name: "Needs more work" })).toBeNull();
-    await userEvent.click(
-      within(rowOf("agh-201-r2")).getByRole("button", { name: "Needs more work" }),
-    );
+    // One callout, for the newest eval only, says it waits on the owner.
+    expect(screen.getAllByRole("button", { name: "Needs more work" })).toHaveLength(1);
+    expect(screen.getByText(/AGH-201 · Eval 2 passed with owner steps/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Needs more work" }));
     await userEvent.type(
       screen.getByRole("textbox", { name: "Note (optional)" }),
       "Run the migration",
     );
-    await userEvent.click(screen.getByRole("button", { name: "Record more work needed" }));
+    await userEvent.click(screen.getByRole("button", { name: "Needs more work" }));
 
     await waitFor(() => {
       expect(onSelect).toHaveBeenCalledWith("owner-signoff");
@@ -280,9 +288,7 @@ describe("EvalTab rows", () => {
     renderWithApi(tab({ evals: [...runs, review] }));
 
     expect(within(rowOf("agh-201-r2")).getByText("you found more work")).toBeInTheDocument();
-    expect(
-      within(rowOf("agh-201-r2")).queryByRole("button", { name: "Owner steps done" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
     expect(rowOf("owner-signoff")).toHaveTextContent("Owner: more work");
   });
 });

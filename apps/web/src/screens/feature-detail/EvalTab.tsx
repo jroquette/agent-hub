@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useId, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
@@ -30,6 +30,7 @@ import { NoteView } from "../brain/NoteView";
 import { VERDICT_STATUS } from "../features/parts";
 import { agentSessionHref } from "../sessions-list/control";
 import { splitTitle } from "./PlanningView";
+import { passOf } from "./CriteriaTab";
 import { AcList } from "./TicketsTab";
 import { useCreateAgentSession, useHubSessionStart } from "../sessions-list/queries";
 
@@ -571,54 +572,57 @@ export function OwnerSignOff({
 
 /* ---------- The owner's decision on one eval ---------- */
 
-const DECISION: Record<OwnerDecision, { action: string; confirm: string; detail: string }> = {
+const DECISION: Record<OwnerDecision, { action: string; title: string; detail: string }> = {
   done: {
-    action: "Owner steps done",
-    confirm: "Yes, I did them",
-    detail:
-      "Confirm you did the owner steps this eval lists. This writes an owner-signoff eval with verdict SHIP over its waiting ACs, signed by you; the eval itself is kept.",
+    action: "Mark owner steps done",
+    title: "Mark the owner steps done",
+    detail: "Writes an owner sign-off eval (SHIP) over its waiting ACs. This eval is kept.",
   },
   more_work: {
     action: "Needs more work",
-    confirm: "Record more work needed",
+    title: "Record that more work is needed",
     detail:
-      "You checked the owner steps and the delivery needs more before it ships. This writes an owner eval with verdict NO-SHIP over its waiting ACs, so they read as open until it is evaluated again.",
+      "Writes an owner eval (NO-SHIP) over its waiting ACs: they stay open until the next eval.",
   },
 };
 
-/** Settles one SHIP-WITH-OWNER-STEPS eval: the owner did the steps, or found more work. */
-function OwnerDecisionForm({
+/**
+ * The latest eval of a scope waits on owner steps no one settled: a "Waiting on you" callout
+ * under its row (principle 2), where the owner says the steps are done or that more work is
+ * needed, with an optional note. The same banner as the page's owner sign-off.
+ */
+function OwnerStepsCallout({
   project,
   slug,
   record,
   label,
-  decision,
-  onCancel,
+  ownerAcs,
   onShow,
 }: {
   project: string;
   slug: string;
   record: EvalRecord;
-  /** How the eval reads in the table ("Run 2"). */
+  /** How the eval reads in the table ("DEMO-1562 · Eval 1"). */
   label: string;
-  decision: OwnerDecision;
-  onCancel: () => void;
+  /** The eval's ACs that are manual owner steps, to name them. */
+  ownerAcs: readonly string[];
   onShow: (delivery: string) => void;
 }) {
   const client = useQueryClient();
+  const formId = useId();
+  const [decision, setDecision] = useState<OwnerDecision | null>(null);
   const [note, setNote] = useState("");
   const path = { path: { project, slug } };
-  const look = DECISION[decision];
-  const settle = useMutation<EvalRecord, ApiProblem>({
-    mutationFn: () =>
+  const settle = useMutation<EvalRecord, ApiProblem, OwnerDecision>({
+    mutationFn: (chosen) =>
       apiPost(
         "/api/v1/features/{project}/{slug}/owner-signoff",
-        { delivery: record.delivery, decision, note: note.trim() || null },
+        { delivery: record.delivery, decision: chosen, note: note.trim() || null },
         path,
       ),
     onSuccess: (written) => {
       onShow(written.delivery);
-      onCancel();
+      setDecision(null);
       for (const key of [
         apiKey("/api/v1/features"),
         apiKey("/api/v1/features/{project}/{slug}", path),
@@ -628,57 +632,101 @@ function OwnerDecisionForm({
       }
     },
   });
-  return (
-    <form
-      className="ah-eval-decision ah-stack"
-      aria-label={`${look.action}: ${label}`}
-      onSubmit={(event) => {
-        event.preventDefault();
-        settle.mutate();
+  const choose = (chosen: OwnerDecision) => (
+    <Button
+      size="sm"
+      variant={chosen === "done" ? "primary" : "default"}
+      icon={chosen === "done" ? "check" : "rotate-ccw"}
+      onClick={() => {
+        setDecision(chosen);
       }}
     >
-      <span className="ah-small">
-        <b>
-          {look.action} · {label}
-        </b>{" "}
-        <span className="ah-muted">{look.detail}</span>
-      </span>
-      <textarea
-        className="ah-input"
-        rows={2}
-        maxLength={2000}
-        value={note}
-        aria-label="Note (optional)"
-        placeholder={
-          decision === "done" ? "Optional: what you did" : "Optional: what is still left to do"
-        }
-        onChange={(event) => {
-          setNote(event.target.value);
+      {DECISION[chosen].action}
+    </Button>
+  );
+  const action = decision ? (
+    <span className="ah-row" style={{ gap: 8, alignSelf: "flex-end" }}>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          setDecision(null);
         }}
-      />
-      {settle.error && (
-        <ProblemError
-          compact
-          title="Could not record your decision"
-          detail={settle.error.detail ?? settle.error.title}
-          status={settle.error.status || undefined}
-        />
-      )}
-      <span className="ah-row" style={{ gap: 8, justifyContent: "flex-end" }}>
-        <Button size="sm" variant="ghost" type="button" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button
-          size="sm"
-          variant="primary"
-          type="submit"
-          icon={decision === "done" ? "check" : "rotate-ccw"}
-          disabled={settle.isPending}
+      >
+        Cancel
+      </Button>
+      <Button
+        size="sm"
+        variant="primary"
+        type="submit"
+        form={formId}
+        icon={decision === "done" ? "check" : "rotate-ccw"}
+        disabled={settle.isPending}
+      >
+        {settle.isPending ? "Saving…" : DECISION[decision].action}
+      </Button>
+    </span>
+  ) : (
+    <span className="ah-row" style={{ gap: 8 }}>
+      {choose("more_work")}
+      {choose("done")}
+    </span>
+  );
+  return (
+    <Banner tone="warning" boxed icon="hand" action={action}>
+      {decision ? (
+        <form
+          id={formId}
+          className="ah-eval-decision ah-stack"
+          aria-label={`${DECISION[decision].title}: ${label}`}
+          onSubmit={(event) => {
+            event.preventDefault();
+            settle.mutate(decision);
+          }}
         >
-          {settle.isPending ? "Saving…" : look.confirm}
-        </Button>
-      </span>
-    </form>
+          <span className="ah-stack" style={{ gap: 2 }}>
+            <b>
+              {DECISION[decision].title} · {label}
+            </b>
+            <span className="ah-small ah-muted">{DECISION[decision].detail}</span>
+          </span>
+          <label className="ah-stack ah-small" style={{ gap: 4 }}>
+            <span>Note (optional)</span>
+            <textarea
+              className="ah-input ah-eval-note"
+              rows={2}
+              maxLength={2000}
+              value={note}
+              placeholder={decision === "done" ? "What you did" : "What is still left to do"}
+              onChange={(event) => {
+                setNote(event.target.value);
+              }}
+            />
+          </label>
+          {settle.error && (
+            <ProblemError
+              compact
+              title="Could not record your decision"
+              detail={settle.error.detail ?? settle.error.title}
+              status={settle.error.status || undefined}
+            />
+          )}
+        </form>
+      ) : (
+        <span className="ah-stack" style={{ gap: 2 }}>
+          <span>
+            <b>Waiting on you</b>
+            <span className="ah-muted"> · {label} passed with owner steps. Did you do them?</span>
+          </span>
+          {ownerAcs.length > 0 && (
+            <span className="ah-small ah-muted">
+              Owner step{ownerAcs.length === 1 ? "" : "s"}:{" "}
+              <span className="ah-mono">{ownerAcs.join(", ")}</span>
+            </span>
+          )}
+        </span>
+      )}
+    </Banner>
   );
 }
 
@@ -789,14 +837,12 @@ export interface EvalTabProps {
 
 /** What a table row shows besides the eval itself. */
 interface RowFacts {
-  /** "Run 3", "Owner sign-off". */
+  /** "Eval 3", "Owner sign-off". */
   label: string;
-  /** The newest agent run of its scope, when there are several. */
+  /** The newest agent eval of its scope, when there are several. */
   current: boolean;
-  /** The label of the newer run of its scope that decides its ACs now. */
+  /** The label of the newer eval of its scope that decides its ACs now. */
   supersededBy: string | undefined;
-  /** Waits on owner steps no one settled yet: the owner can say done, or more work. */
-  actionable: boolean;
 }
 
 /** Whether the evals list is folded, kept on this machine. */
@@ -818,7 +864,45 @@ function writeListOpen(open: boolean) {
   }
 }
 
-/** How a row names its eval: "Run 3" for an agent's run, the owner's decisions by what they are. */
+/** The AC ids an eval names, `all` read as every AC of the feature. */
+function evalAcs(e: EvalRecord, allAcs: readonly string[]): readonly string[] {
+  return e.acs === "all" ? allAcs : e.acs;
+}
+
+/**
+ * One scope's evals as the table reads them: each one's label, the agent evals newest first, the
+ * newest of them, and that one when it waits on owner steps no owner decision settled yet.
+ */
+function groupFacts(evals: readonly EvalRecord[], settled: ReadonlyMap<string, EvalRecord>) {
+  const runs = evals.filter((e) => e.provenance !== "owner");
+  const current = runs[0];
+  const waits =
+    current?.verdict === "SHIP-WITH-OWNER-STEPS" && !current.problem && !settled.has(current.path);
+  return { labels: runLabels(evals), runs, current, waiting: waits ? current : undefined };
+}
+
+/** The evals that wait on the owner: the newest of each scope, owner steps not settled. */
+export function ownerStepsWaiting(
+  evals: readonly EvalRecord[],
+  tickets: readonly string[],
+  epics: readonly string[],
+): { scope: string; record: EvalRecord; label: string }[] {
+  const settled = settledOwnerSteps(evals);
+  return evalHistory(evals, tickets, epics).flatMap((group) => {
+    const { labels, waiting } = groupFacts(group.evals, settled);
+    return waiting
+      ? [
+          {
+            scope: group.scope,
+            record: waiting,
+            label: labels.get(waiting.path) ?? waiting.delivery,
+          },
+        ]
+      : [];
+  });
+}
+
+/** How a row names its eval: "Eval 3" for an agent's eval, the owner's decisions by what they are. */
 export function runLabels(evals: readonly EvalRecord[]): Map<string, string> {
   const labels = new Map<string, string>();
   let run = 0;
@@ -826,7 +910,7 @@ export function runLabels(evals: readonly EvalRecord[]): Map<string, string> {
     if (e.legacy) labels.set(e.path, fileName(e.path));
     else if (e.provenance === "owner") {
       labels.set(e.path, e.verdict === "NO-SHIP" ? "Owner: more work" : "Owner sign-off");
-    } else labels.set(e.path, `Run ${String((run += 1))}`);
+    } else labels.set(e.path, `Eval ${String((run += 1))}`);
   }
   return labels;
 }
@@ -874,7 +958,6 @@ export function EvalTab({
   acRows = [],
 }: EvalTabProps) {
   const [listOpen, setListOpen] = useState(readListOpen);
-  const [deciding, setDeciding] = useState<{ path: string; decision: OwnerDecision } | null>(null);
   const history = evalHistory(evals, tickets, epics);
   const selectedScope = history.find((g) => g.evals.some((e) => e.path === selected?.path))?.scope;
   // A group the owner opened or closed stays so; any other is open when it holds the selected
@@ -976,33 +1059,11 @@ export function EvalTab({
             Unreadable: {e.problem}
           </span>
         ) : e.verdict ? (
-          <span className="ah-row ah-wrap" style={{ gap: 8 }}>
-            <VerdictBadge
-              record={e}
-              settledBy={settled.get(e.path)}
-              supersededBy={row.supersededBy}
-            />
-            {row.actionable &&
-              (["done", "more_work"] as const).map((decision) => (
-                <Button
-                  key={decision}
-                  size="sm"
-                  variant={decision === "done" ? "default" : "ghost"}
-                  icon={decision === "done" ? "check" : "rotate-ccw"}
-                  aria-pressed={deciding?.path === e.path && deciding.decision === decision}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setDeciding(
-                      deciding?.path === e.path && deciding.decision === decision
-                        ? null
-                        : { path: e.path, decision },
-                    );
-                  }}
-                >
-                  {DECISION[decision].action}
-                </Button>
-              ))}
-          </span>
+          <VerdictBadge
+            record={e}
+            settledBy={settled.get(e.path)}
+            supersededBy={row.supersededBy}
+          />
         ) : (
           <span className="ah-subtle">—</span>
         ),
@@ -1015,7 +1076,7 @@ export function EvalTab({
           <Scope acs={e.acs} />
         ) : (
           <AcList
-            ids={e.acs === "all" ? allAcs : e.acs}
+            ids={evalAcs(e, allAcs)}
             acPasses={acRows.length > 0 ? acPasses : undefined}
             acRows={acById}
           />
@@ -1058,9 +1119,7 @@ export function EvalTab({
             </thead>
 
             {history.map((group) => {
-              const labels = runLabels(group.evals);
-              const runs = group.evals.filter((e) => e.provenance !== "owner");
-              const current = runs[0];
+              const { labels, runs, current, waiting } = groupFacts(group.evals, settled);
               const latest = group.evals[0];
               const open = isOpen(group.scope);
               const title = groupTitle(group.scope, ticketRows);
@@ -1072,12 +1131,24 @@ export function EvalTab({
                   e.provenance !== "owner" && current && e !== current
                     ? labels.get(current.path)
                     : undefined,
-                actionable:
-                  e === current &&
-                  e.verdict === "SHIP-WITH-OWNER-STEPS" &&
-                  !e.problem &&
-                  !settled.has(e.path),
               });
+              const callout = waiting && (
+                <tr className="ah-eval-owner-row">
+                  <td colSpan={columns.length}>
+                    <OwnerStepsCallout
+                      project={project}
+                      slug={slug}
+                      record={waiting}
+                      label={`${group.scope === FEATURE_SCOPE ? "The whole feature" : group.scope} · ${labels.get(waiting.path) ?? waiting.delivery}`}
+                      ownerAcs={evalAcs(waiting, allAcs).filter((id) => {
+                        const ac = acById.get(id);
+                        return ac ? passOf(ac) === "owner" : false;
+                      })}
+                      onShow={onSelect}
+                    />
+                  </td>
+                </tr>
+              );
               return (
                 <tbody key={group.scope}>
                   <tr className="ah-eval-group" data-open={open || undefined}>
@@ -1109,6 +1180,7 @@ export function EvalTab({
                       </button>
                     </th>
                   </tr>
+                  {!open && callout}
                   {open &&
                     group.evals.map((e) => {
                       const row = facts(e);
@@ -1126,23 +1198,7 @@ export function EvalTab({
                               </td>
                             ))}
                           </tr>
-                          {deciding?.path === e.path && row.actionable && (
-                            <tr className="ah-eval-decision-row">
-                              <td colSpan={columns.length}>
-                                <OwnerDecisionForm
-                                  project={project}
-                                  slug={slug}
-                                  record={e}
-                                  label={`${row.label} (${e.delivery})`}
-                                  decision={deciding.decision}
-                                  onCancel={() => {
-                                    setDeciding(null);
-                                  }}
-                                  onShow={onSelect}
-                                />
-                              </td>
-                            </tr>
-                          )}
+                          {e === waiting && callout}
                         </Fragment>
                       );
                     })}
