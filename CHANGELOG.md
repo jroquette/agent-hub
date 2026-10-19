@@ -15,6 +15,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 - `hub web` Feature detail: the golden path's Review and Shipped steps read "Partial" once some tickets are
   reviewed or Done in Linear, instead of "Not reached" next to a partial Evaluate (AGH-322).
+- The guard decides a long quote- or dot-dense Bash command (`echo 'a'a'a…`) in time linear in its length (AGH-302):
+  before, its secret-file rule took quadratic time, so a command near or over the blocked-words 1 MiB cap ran past
+  the 10 s hook timeout and Claude Code went on with no verdict (no "too large" ask).
 
 ### Added
 
