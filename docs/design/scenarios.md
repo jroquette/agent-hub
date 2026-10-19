@@ -9,11 +9,11 @@ an action gets, and the two run modes. Why: [ADR 0041](../adr/0041-scenarios-act
 
 ## Contract
 
-All optional and project-owned; a hub without `scenarios/`, `actions/` and `environments` behaves as before. Actions
-are `actions/<pack>/<name>.yaml`, scripts under `actions/<pack>/scripts/` (by real path, no symlink); scenarios are
-`scenarios/<pack>/<name>.yaml` with `kind: scenario` (only there). Both load as workflows do (strict YAML,
-256 KiB, unknown keys refused, errors name file, line and key), ≤ 200 files per root. `hub init` writes one example
-action (`effect: read`) and scenario; `hub sync` never adds them and `hub.lock` does not list them.
+All optional and project-owned; a hub without `scenarios/`, `actions/` and `environments` behaves as before. Actions are
+`actions/<pack>/<name>.yaml`, scripts under `actions/<pack>/scripts/` (by real path, no symlink); scenarios are
+`scenarios/<pack>/<name>.yaml` with `kind: scenario` (each root refuses the other kind). Both load as workflows do
+(strict YAML, 256 KiB, unknown keys refused, errors name file, line and key), ≤ 200 files per root. `hub init` writes
+one example action (`effect: read`) and scenario; `hub sync` never adds them and `hub.lock` does not list them.
 
 ### Kind and node keys
 
@@ -61,10 +61,10 @@ gate-needing steps that do not depend on each other are a plan error naming both
 
 ### Credentials
 
-- An environment's `credentials` (or an endpoint's, which wins when the action's endpoints declare exactly one set;
-  two differing sets are a plan problem) may name `env_file`: a dotenv file relative to the workspace holding the hub
-  and its repos (`demo-api/environment/.env.staging`), ≤ 200 characters, no `..`, `~`, leading `/` or secret shape, in
-  `hub.json` or `hub.local.json` (own environments), written by `hub env add|set --env-file`; never shown to agents.
+- An environment's `credentials` (or an endpoint's, which wins when the action's endpoints declare exactly one set; two
+  differing sets are a plan problem) may name `env_file`: a dotenv file relative to the workspace holding the hub and
+  its repos (`demo-api/.env.staging`), ≤ 200 characters, no `..`, `~`, leading `/` or secret shape, in `hub.json` or
+  `hub.local.json` (own environments), set by `hub env add|set --env-file`; AGENTS.md and the brief never show it.
 - One loader, shared by `hub action run` and the engine's action executor, reads it when an action starts: inside the
   workspace by real path, a regular file, ≤ 64 KiB and 200 variables, `NAME=value` lines (`#` comments, optional
   `export `, quotes, no interpolation). It injects **every** variable, plus `AWS_PROFILE` from `aws_profile` and the
@@ -119,9 +119,9 @@ Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), e
 `approver`, `status`, `failure_kind`), `policy.decision` (`action` or node, `environment`, `effect`, `origin`,
 `decision`, `reason_kind`), `expect.poll` (`poll` count, `held` bool), `context.capture` (`name`), `finding`
 (`finding_id`, `step`), `workaround.start`/`workaround.end` (`workaround_id`, `option` id, `steps` count, `status`);
-`gate.request` gains `reason`. Args, outputs, captured values, findings and the conversation stay in the run record.
-Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24 h, ≤ 1000 polls; action stdout ≤ 512 KiB; plan mode ≤ 60 s; ≤ 64
-`--input` values of ≤ 64 KiB; a proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; an API record read ≤ 8 MiB.
+`gate.request` gains `reason`. Args, outputs, captures, findings, chat stay in the run record (`.agent-runs/`). Bounds:
+`expect` `every` ≥ 5 s, `timeout` ≤ 24 h, ≤ 1000 polls; action stdout ≤ 512 KiB; plan mode ≤ 60 s; ≤ 64 `--input` values
+of ≤ 64 KiB; a proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; API record reads ≤ 8 MiB.
 
 ### Known limits
 

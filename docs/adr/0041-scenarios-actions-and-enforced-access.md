@@ -53,8 +53,9 @@ Chosen option: 1.
   process workflow that declares `environment` (`shell` and `script` take an optional `effect`, default `write`).
   Agent nodes there get `HUB_RUN_ENVIRONMENT`, and the guard asks when a command or URL names one of that
   environment's endpoints while its access is `read` or it is production: **best effort**, said so in the docs and UI.
-- **Credentials.** An environment (or one of its endpoints, which wins) may name a dotenv file,
-  `credentials.env_file`, a path relative to the workspace that holds the hub and its repos; `hub.json` and the
+- **Credentials.** An environment (or one of its endpoints, which wins when the action's endpoints declare exactly one
+  set; differing sets are a plan problem) may name a dotenv file, `credentials.env_file`, a path relative to the
+  workspace that holds the hub and its repos; `hub.json` and the
   developer's `hub.local.json` (for their own environments) accept it, `hub env add|set --env-file` writes it, and no
   rendered file or brief shows it. The action runner alone (`hub action run` and the engine's action executor, one
   loader) reads it at the moment an action starts, in memory, and injects all its variables, plus the environment's
