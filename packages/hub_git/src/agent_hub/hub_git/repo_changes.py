@@ -19,9 +19,11 @@ file's commits come from ``git log --numstat`` over ``<fork>..HEAD``.
 """
 
 import hashlib
+import json
 import os
 import shutil
 import stat
+import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -40,6 +42,7 @@ from agent_hub.core.agent_sessions.repo_changes import (
     RepoFileChange,
     RepoFileCommit,
     RepoFileStatus,
+    RepoPullRequest,
 )
 from agent_hub.hub_git.git_runner import GIT_OPTIONS, ProcessResult, child_env, run_process
 
@@ -50,6 +53,8 @@ READ_LIMIT: Final = 16 * 1024 * 1024
 # Paths as they are (no octal escapes), no colour, no pager, no external diff tool.
 _READ_OPTIONS: Final = (*GIT_OPTIONS, "-c", "core.quotePath=false", "--no-pager")
 _BASES: Final = ("origin/main", "origin/master", "main", "master")
+# How long ``gh`` may take to name a branch's pull request.
+PR_SECONDS: Final = 8.0
 # How git's reflog names a branch's first entry: ``branch: Created from <ref>``.
 _CREATED_FROM: Final = "branch: Created from "
 _RECORD: Final = "\x1e"
@@ -213,12 +218,14 @@ class GitRepoChanges:
         self,
         *,
         git: str = "git",
+        gh: str = "gh",
         environ: Mapping[str, str] | None = None,
         launch: ReadLaunch = _LAUNCH,
         seconds: float = READ_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._git = git
+        self._gh = gh
         self._env = child_env(dict(os.environ if environ is None else environ))
         self._launch = launch
         self._seconds = seconds
@@ -240,16 +247,104 @@ class GitRepoChanges:
         commits, by_path = _history(run, fork)
         files, cut = _files(run, root, fork, by_path=by_path)
         truncated = cut or len(commits) > MAX_COMMITS
+        head = run.text("rev-parse", "--verify", "--quiet", "HEAD", check=False).strip()
         return RepoChanges(
             root=root,
             label=label,
             branch=branch or None,
             base=base,
             base_sha=fork,
+            head_sha=head or None,
             commits=tuple(commits[:MAX_COMMITS]),
             files=files,
             truncated=truncated,
         )
+
+    def read_recorded(  # noqa: PLR0913 -- what a review recorded of one repository
+        self,
+        repo_root: str,
+        *,
+        label: str,
+        root: str,
+        branch: str | None,
+        base: str | None,
+        base_sha: str,
+        head_sha: str,
+    ) -> RepoChanges:
+        """The recorded commits, read in the repo's own checkout (see the port)."""
+        run = self._run(repo_root, label=label)
+        head = _commit(run, head_sha)
+        if head is None and branch:
+            head = _commit(run, f"refs/remotes/origin/{branch}") or _commit(
+                run, f"refs/heads/{branch}"
+            )
+        fork = _commit(run, base_sha)
+        if head is None or fork is None:
+            raise RepoChangesError(label)
+        commits, by_path = parse_log(
+            run.text(
+                "log",
+                "--no-color",
+                f"--format={_RECORD}%H{_FIELD}%an{_FIELD}%aI{_FIELD}%s",
+                "--numstat",
+                "--no-renames",
+                f"--max-count={MAX_COMMITS + 1}",
+                f"{fork}..{head}",
+            )
+        )
+        patch = run.result("diff", "--no-color", "--no-ext-diff", "-M", fork, head, "--")
+        if patch.returncode != 0:
+            raise RepoChangesError(label)
+        patches = parse_patch(patch.stdout.decode("utf-8", errors="replace"))
+        cut = len(patch.stdout) >= READ_LIMIT and bool(patches)
+        if cut:
+            patches.pop()
+        files = [
+            _file_change(
+                root,
+                item,
+                commits=[*by_path.get(item.path, ()), *by_path.get(item.old_path or "", ())],
+                uncommitted=False,
+            )
+            for item in patches
+        ]
+        return RepoChanges(
+            root=root,
+            label=label,
+            branch=branch,
+            base=base,
+            base_sha=fork,
+            head_sha=head,
+            source="recorded",
+            commits=tuple(commits[:MAX_COMMITS]),
+            files=tuple(files[:MAX_REPO_FILES]),
+            truncated=cut or len(commits) > MAX_COMMITS or len(files) > MAX_REPO_FILES,
+        )
+
+    def pull_request(self, root: str, *, branch: str) -> RepoPullRequest | None:
+        """``gh pr list --head <branch>``: the branch's newest pull request, open or not; None
+        without ``gh``, when it is not signed in or GitHub does not answer in time."""
+        program = shutil.which(self._gh, path=self._env.get("PATH") or "")
+        if program is None or not branch or branch.startswith("-"):
+            return None
+        argv = [
+            os.path.abspath(program),
+            *("pr", "list", "--head", branch, "--state", "all", "--limit", "1"),
+            *("--json", "number,url,state,headRefOid"),
+        ]
+        # A worktree that is gone: ask from the nearest folder left (its repo, usually).
+        folder = Path(root)
+        while not folder.is_dir() and folder != folder.parent:
+            folder = folder.parent
+        try:
+            result = self._launch(
+                argv, cwd=folder, env=self._env, timeout=PR_SECONDS, keep_stdout=True
+            )
+        except OSError, subprocess.SubprocessError:
+            return None
+        if result.returncode != 0:
+            return None
+        return _pull_request(result.stdout)
 
     def commit_diff(self, root: str, *, sha: str, paths: Sequence[str]) -> RepoCommitDiff:
         """What commit ``sha`` changed in ``paths`` (``git show``, renames found); the first file
@@ -318,6 +413,16 @@ def _started_from(run: _Run, branch: str) -> tuple[str, ...]:
     if upstream and upstream != branch and not upstream.endswith(f"/{branch}"):
         found.append(upstream)
     return tuple(found)
+
+
+def _commit(run: _Run, ref: str) -> str | None:
+    """The full sha of ``ref`` when it names a commit here, else None."""
+    if ref.startswith("-"):
+        return None
+    found = run.result("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    if found.returncode != 0:
+        return None
+    return found.stdout.decode().strip() or None
 
 
 def _history(run: _Run, fork: str) -> tuple[list[RepoCommit], dict[str, list[RepoFileCommit]]]:
@@ -450,3 +555,23 @@ class _Run:
         if check and result.returncode != 0:
             raise RepoChangesError(str(self._cwd))
         return result.stdout.decode("utf-8", errors="replace") if result.returncode == 0 else ""
+
+
+def _pull_request(stdout: bytes) -> RepoPullRequest | None:
+    """The first pull request of ``gh pr list --json number,url,state,headRefOid``."""
+    try:
+        found = json.loads(stdout.decode("utf-8"))
+    except UnicodeDecodeError, ValueError:
+        return None
+    if not isinstance(found, list) or not found or not isinstance(found[0], dict):
+        return None
+    item = found[0]
+    number, url, state, head = (item.get(k) for k in ("number", "url", "state", "headRefOid"))
+    if not isinstance(number, int) or not isinstance(url, str):
+        return None
+    return RepoPullRequest(
+        number=number,
+        url=url,
+        state=state if isinstance(state, str) else "OPEN",
+        head_sha=head if isinstance(head, str) else None,
+    )

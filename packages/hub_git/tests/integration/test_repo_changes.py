@@ -162,6 +162,51 @@ def test_a_branch_pushed_with_its_upstream_still_compares_with_where_it_started(
     assert changes.base == "origin/main"
 
 
+def test_a_removed_worktree_is_read_from_its_recorded_commits(tmp_path: Path) -> None:
+    work, env = _stacked(tmp_path)
+    tree = work / ".claude" / "worktrees" / "tip-3"
+    _git(work, env, "worktree", "add", "-q", "-b", "tip-3", str(tree), "origin/main")
+    (tree / "tip3.py").write_text("t\n")
+    _git(tree, env, "add", ".")
+    _git(tree, env, "commit", "-m", "tip 3")
+    reader = GitRepoChanges(environ=env)
+    live = reader.read(str(tree), label="app/tip-3")
+    _git(work, env, "worktree", "remove", "--force", str(tree))
+    _git(work, env, "branch", "-D", "tip-3")
+    assert live.base_sha is not None
+    assert live.head_sha is not None
+
+    recorded = reader.read_recorded(
+        str(work),
+        label="app/tip-3",
+        root=str(tree),
+        branch="tip-3",
+        base=live.base,
+        base_sha=live.base_sha,
+        head_sha=live.head_sha,
+    )
+
+    assert recorded.source == "recorded"
+    assert [file.path for file in recorded.files] == [str(tree / "tip3.py")]
+    assert [commit.subject for commit in recorded.commits] == ["tip 3"]
+    assert recorded.head_sha == live.head_sha
+
+
+def test_recorded_commits_no_longer_here_cannot_be_read(tmp_path: Path) -> None:
+    work, env = _stacked(tmp_path)
+
+    with pytest.raises(RepoChangesError):
+        GitRepoChanges(environ=env).read_recorded(
+            str(work),
+            label="app/gone",
+            root=str(work / "gone"),
+            branch="gone",
+            base="origin/main",
+            base_sha="1" * 40,
+            head_sha="2" * 40,
+        )
+
+
 def test_a_folder_that_is_not_a_checkout_cannot_be_read(tmp_path: Path) -> None:
     with pytest.raises(RepoChangesError):
         GitRepoChanges(environ=_env(tmp_path)).read(str(tmp_path), label="plain")

@@ -1,6 +1,14 @@
 """Parsing ``git diff`` and ``git log --numstat`` output into a repository's file changes."""
 
-from agent_hub.hub_git.repo_changes import parse_log, parse_patch
+import os
+from collections.abc import Sequence
+from pathlib import Path
+
+import pytest
+
+from agent_hub.core.agent_sessions.repo_changes import RepoPullRequest
+from agent_hub.hub_git.git_runner import ProcessResult
+from agent_hub.hub_git.repo_changes import GitRepoChanges, parse_log, parse_patch
 
 _PATCH = """\
 diff --git a/src/app.py b/src/app.py
@@ -95,3 +103,38 @@ def test_parse_log_reads_commits_newest_first_and_each_file_s_lines() -> None:
         ("bbb", 10, 0),
     ]
     assert [(c.added, c.removed) for c in by_path["logo.png"]] == [(0, 0)]
+
+
+def test_names_the_branch_s_pull_request_as_gh_lists_it(tmp_path: Path) -> None:
+    asked: list[list[str]] = []
+
+    def launch(argv: Sequence[str], **_: object) -> ProcessResult:
+        asked.append(list(argv))
+        out = b'[{"number":545,"url":"https://github.com/acme/ui/pull/545","state":"OPEN","headRefOid":"abc"}]'
+        return ProcessResult(returncode=0, stdout=out)
+
+    reader = GitRepoChanges(gh="git", launch=launch, environ={"PATH": os.environ["PATH"]})
+
+    pull = reader.pull_request(str(tmp_path / "gone" / "tree"), branch="tip-1")
+
+    assert pull == RepoPullRequest(
+        number=545, url="https://github.com/acme/ui/pull/545", state="OPEN", head_sha="abc"
+    )
+    assert asked[0][1:5] == ["pr", "list", "--head", "tip-1"]
+
+
+@pytest.mark.parametrize("stdout", [b"[]", b"not json", b'[{"number":"x"}]'])
+def test_no_pull_request_when_gh_names_none(tmp_path: Path, stdout: bytes) -> None:
+    reader = GitRepoChanges(
+        gh="git",
+        launch=lambda argv, **_: ProcessResult(returncode=0, stdout=stdout),
+        environ={"PATH": os.environ["PATH"]},
+    )
+
+    assert reader.pull_request(str(tmp_path), branch="tip-1") is None
+
+
+def test_no_pull_request_for_a_branch_that_reads_as_an_option(tmp_path: Path) -> None:
+    reader = GitRepoChanges(gh="git", environ={"PATH": os.environ["PATH"]})
+
+    assert reader.pull_request(str(tmp_path), branch="--web") is None

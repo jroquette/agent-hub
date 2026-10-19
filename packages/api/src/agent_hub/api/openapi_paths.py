@@ -85,6 +85,8 @@ AGENT_SESSION_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/{agent_session_id}"),
         ("delete", "/{agent_session_id}"),
         ("get", "/{agent_session_id}/events"),
+        ("get", "/{agent_session_id}/repo-changes"),
+        ("get", "/{agent_session_id}/repo-changes/commit"),
         ("get", "/{agent_session_id}/stream"),
         ("post", "/{agent_session_id}/messages"),
         ("post", "/{agent_session_id}/interrupt"),
