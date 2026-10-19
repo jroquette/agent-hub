@@ -38,7 +38,7 @@ type AcRow = components["schemas"]["AcRow"];
 type EvalRecord = components["schemas"]["EvalRecord"];
 
 export type Pass = "yes" | "owner" | "none";
-const PASS: Record<Pass, { icon: IconName; tone: string; label: string; title: string }> = {
+export const PASS: Record<Pass, { icon: IconName; tone: string; label: string; title: string }> = {
   yes: { icon: "circle-check", tone: "done", label: "Passes", title: "Its check passes" },
   owner: { icon: "hand", tone: "waiting", label: "Owner step", title: "Waits on a manual check" },
   none: { icon: "clock", tone: "idle", label: "Not passing", title: "Not passing yet" },
@@ -466,17 +466,23 @@ function CitationList({
   );
 }
 
+/** The Given, When and Then parts of an AC description, or null when it is plain text. */
+export function gwtParts(text: string): { given: string; when: string; then: string } | null {
+  const m = /^Given (.*?), when (.*?), then (.*)$/.exec(text);
+  return m ? { given: m[1] ?? "", when: m[2] ?? "", then: m[3] ?? "" } : null;
+}
+
 /** A Given / When / Then description as three labelled lines; any other text as a paragraph. */
 function WhatMustBeTrue({ text }: { text: string }) {
-  const m = /^Given (.*?), when (.*?), then (.*)$/.exec(text);
-  if (!m) return <p className="ah-ac-text">{text}</p>;
+  const gwt = gwtParts(text);
+  if (!gwt) return <p className="ah-ac-text">{text}</p>;
   return (
     <dl className="ah-ac-facts ah-ac-gwt">
       {(
         [
-          ["Given", m[1]],
-          ["When", m[2]],
-          ["Then", m[3]],
+          ["Given", gwt.given],
+          ["When", gwt.when],
+          ["Then", gwt.then],
         ] as const
       ).map(([k, v]) => (
         <Fragment key={k}>
@@ -593,6 +599,8 @@ export function CriteriaTab({ detail }: { detail: Detail }) {
     const row = document.getElementById(`ac-row-${asked}`);
     // jsdom has no scrollIntoView.
     if (row && "scrollIntoView" in row) row.scrollIntoView({ block: "center" });
+    // Scrolling alone leaves keyboard focus at the top of the page: move it to the row's toggle.
+    row?.querySelector<HTMLElement>("button[aria-expanded]")?.focus({ preventScroll: true });
   }, [asked]);
 
   if (detail.problem) {

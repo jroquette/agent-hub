@@ -748,22 +748,25 @@ export function aFeatureRecord(overrides: Partial<FeatureRecord> = {}): FeatureR
   };
 }
 
+export function anAcRow(overrides: Partial<Schemas["AcRow"]> = {}): Schemas["AcRow"] {
+  return {
+    command: "npm test",
+    description: "The sidebar lists the Phase 2 items",
+    evidence: "src/shell/Sidebar.test.tsx",
+    id: "AC-200.42",
+    manual: false,
+    passes: true,
+    repo: "agent-hub",
+    ...overrides,
+  };
+}
+
 export function aFeatureDetail(
   overrides: Partial<Schemas["FeatureDetail"]> = {},
 ): Schemas["FeatureDetail"] {
   return {
     ...aFeature(),
-    ac_rows: [
-      {
-        command: "npm test",
-        description: "The sidebar lists the Phase 2 items",
-        evidence: "src/shell/Sidebar.test.tsx",
-        id: "AC-200.42",
-        manual: false,
-        passes: true,
-        repo: "agent-hub",
-      },
-    ],
+    ac_rows: [anAcRow()],
     records: [
       aFeatureRecord({ name: "spec" }),
       aFeatureRecord({ name: "research" }),
