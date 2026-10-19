@@ -16,6 +16,7 @@ import json
 import re
 from typing import Final
 
+from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import JsonValue
 
 PROJECT_DIR: Final = "$CLAUDE_PROJECT_DIR/"
@@ -26,6 +27,27 @@ _SHELL_CHARACTERS: Final = frozenset('"$`\\')
 # The reasons ``hooks_settings`` gives; a caller that shows a path its own way matches on them.
 NO_HOOKS: Final = 'no "hooks" object'
 HUB_PATH_PROBLEM: Final = "the hub's path holds \" $ ` or \\"
+
+
+
+class SessionSettingsError(AgentHubError, ValueError):
+    """Why the settings file cannot be built; ``reason`` is one line and names no path."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+class NoHooksError(SessionSettingsError):
+    """The source holds no ``hooks`` object."""
+
+
+class HubPathError(SessionSettingsError):
+    """The hub's path cannot be written into a command; the caller shows the path."""
+
+
+class HookCommandError(SessionSettingsError):
+    """A hook command cannot be given to a repo-cwd session as written."""
 
 
 def hooks_settings(source: JsonValue, *, effort: str, hub: str) -> tuple[bytes, tuple[str, ...]]:

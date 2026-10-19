@@ -207,9 +207,8 @@ def a_hub_settings_document() -> dict[str, Any]:
     """Build a synthetic hub ``.claude/settings.json`` as plain JSON data; a fresh copy per call.
 
     Besides ``hooks`` it holds ``permissions``, ``sandbox``, ``env`` and ``enabledPlugins``. The
-    hooks name four scripts as ``$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks/<f>.py``, plus one
-    ``Stop`` command with no variable (``echo done``) and one ``Notification`` command written
-    ``${CLAUDE_PROJECT_DIR}/x.py``.
+    hooks name four scripts as ``"$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks/<f>.py"``, plus one
+    ``Stop`` and one ``Notification`` command with no variable (``echo done``, ``echo notified``).
     """
     return {
         "permissions": {"allow": ["Bash(make:*)"], "deny": ["Read(./.env)"]},
@@ -234,7 +233,7 @@ def a_hub_settings_document() -> dict[str, Any]:
                 }
             ],
             "Notification": [
-                {"hooks": [{"type": "command", "command": 'python3 "${CLAUDE_PROJECT_DIR}/x.py"'}]}
+                {"hooks": [{"type": "command", "command": "echo notified"}]}
             ],
         },
     }
