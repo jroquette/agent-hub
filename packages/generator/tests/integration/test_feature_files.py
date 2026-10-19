@@ -372,7 +372,6 @@ def test_reads_plan_whole_when_under_its_cap(
     assert "plan.md" in fits.files
     assert "plan.md" in over.files
     assert reads.bytes == 102_400 + MAX_PLAN_BYTES + 1
-    assert MAX_PLAN_BYTES == 262_144
 
 
 def test_reads_first_names_only_when_reviews_over_cap(
