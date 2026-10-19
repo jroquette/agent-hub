@@ -589,7 +589,8 @@ def test_asks_when_guard_crashes(
 
 
 # argv: a JSON list of stdins as latin-1 text. For each, a fresh stdin for read_input(), then
-# another for read_event(); a last case whose read raises OSError. Prints both results per case.
+# another for read_event(); a case whose read raises OSError, then a closed stdin (ValueError).
+# Prints both results per case.
 READ_EVENT = """\
 import io, json
 from hubhooks import read_event, read_input
@@ -611,6 +612,10 @@ sys.stdin = Broken()
 plain = read_input()
 sys.stdin = Broken()
 found.append([plain, list(read_event())])
+closed = stdin(b"{}")
+closed.close()
+sys.stdin = closed
+found.append([read_input(), list(read_event())])
 print(json.dumps(found))
 """
 
@@ -647,6 +652,7 @@ def test_flags_unreadable_stdin_when_event_read(
         [{}, [{}, True]],
         [{}, [{}, True]],
         [event, [event, False]],
+        [{}, [{}, True]],
         [{}, [{}, True]],
     ]
 
