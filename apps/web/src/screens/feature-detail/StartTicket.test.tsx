@@ -156,6 +156,42 @@ describe("StartTicket", () => {
     });
   });
 
+  it("offers the stacked Start as a default button and starts nothing when the dialog is cancelled", async () => {
+    const view = renderWithApi(
+      <TicketsTab
+        project="agent-hub"
+        slug="claims"
+        data={aFeatureTickets({
+          tickets: [done, inReview, stacked],
+          planning: aTicketPlan({
+            layers: [["T1"], ["T2"], ["T3"]],
+            can_start: [],
+            waiting: ["T3"],
+          }),
+        })}
+        onRefresh={() => undefined}
+      />,
+      { routes: driving },
+    );
+
+    const start = await within(rowOf("T3")).findByRole("button", {
+      name: "Start AGH-3 on AGH-2's branch (AGH-2 is in review, not merged)",
+    });
+    expect(start).not.toHaveClass("ah-btn-primary");
+    await waitFor(() => {
+      expect(start).toBeEnabled();
+    });
+    await userEvent.click(start);
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Start AGH-3 on AGH-2's branch?",
+    });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("alertdialog")).toBe(null);
+    expect(view.requests.some((r) => r.method === "POST")).toBe(false);
+    expect(view.router.state.location.pathname).toBe("/");
+  });
+
   it("asks /feature to work this one ticket from its workspace step, with its context", () => {
     const prompt = ticketPrompt("agent-hub", "claims", { ...ready, id: "AGH-2" }, [done, ready]);
 
@@ -233,7 +269,7 @@ describe("StartTicket", () => {
       },
     );
 
-    const link = await card().findByRole("link", { name: /Waiting/ });
+    const link = await card().findByRole("link", { name: /^Newest session: Waiting, started / });
     expect(link).toHaveAttribute("href", "/sessions/sess-2");
     expect(card().queryByRole("button", { name: "Start AGH-2" })).toBe(null);
   });
