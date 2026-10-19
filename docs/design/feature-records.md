@@ -55,14 +55,13 @@ frontmatter lists no `acs` or `tickets` (it was the one eval per feature; one th
 header `verdict` is that eval's verdict, and none before one exists: ticket-scoped evals never set it, even when
 together they cover every AC (two-level-flows AC-1.6, AGH-323).
 
-### `plan.md`, `brief.md` and `ux-*.md`
+### `plan.md`
 
 `plan.md` is read whole up to 256 KiB (`MAX_PLAN_BYTES`); over it, its version is a record problem ("plan.md is larger
 than 256 KiB; its version could not be read."). Its version is `v1` plus one per distinct entry
-`A<n> (<YYYY-MM-DD>, <who>): <title>` (optionally a list item or bold) under a `## Amendments…` heading, up to the
-next level-1 or level-2 heading; lines in fenced code blocks do not count (`agent_hub.core.features.plan_version`).
-`brief.md` (the `/feature` intake) is only checked present. The folder's own `ux-*.md` designs are read as heads of
-4 KiB, at most 50 by name (the rest counted as skipped); a `ux-*.md` in a subfolder is not a design.
+`A<n> (<YYYY-MM-DD>, <who>): <title>` (a bare line or a `- ` list item, its head optionally `**` bold) under a
+`## Amendments…` heading, up to the next level-1 or level-2 heading; each entry's anchor is that heading's text. Lines
+in fenced code blocks do not count (`agent_hub.core.features.plan_version`).
 
 ### `reviews/<ticket>.md`
 
@@ -82,10 +81,6 @@ words are read), so `hub web` opens a record tab on its summary ("For humans") w
 note route gives for the record.
 
 ### Agent outputs: `reviews/<ticket>/<reviewer>-r<N>.json` and `evals/<delivery>.json`
-
-The app keeps only the names of the review rounds, `<ticket>/<reviewer>-r<N>.json` (`<reviewer>` lower-case
-letters), at most 2,000 in all, as evidence that a round exists; it never reads their bytes and never reads them as
-review records.
 
 JSON the agents hand to `/feature` ([ADR 0028](../adr/0028-agent-outputs-as-validated-json.md)), checked by
 `agent_hub.core.features.agent_outputs` (`review_problems`, `eval_problems`: bytes in, every problem at its JSON path

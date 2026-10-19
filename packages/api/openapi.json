@@ -616,7 +616,7 @@
       },
       "AmendmentView": {
         "additionalProperties": false,
-        "description": "One ``A<n> (<date>, <who>): <title>`` entry of the plan's ``## Amendments``; ``anchor`` is\nthe text of the heading it is under, which the Plan record view links to.",
+        "description": "One ``A<n> (<date>, <who>): <title>`` entry of the plan's ``## Amendments``; ``anchor`` is\nthe text of that ``## Amendments…`` heading, which the Plan record view links to.",
         "properties": {
           "anchor": {
             "title": "Anchor",
