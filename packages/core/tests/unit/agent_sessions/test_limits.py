@@ -45,6 +45,11 @@ def test_accepts_no_session_limit_when_sessions_max_zero() -> None:
     assert SessionLimits(sessions_max=0).sessions_max == 0
 
 
+@pytest.mark.parametrize("sessions_max", [1, 16])
+def test_accepts_session_limit_when_sessions_max_in_range(sessions_max: int) -> None:
+    assert SessionLimits(sessions_max=sessions_max).sessions_max == sessions_max
+
+
 def test_accepts_low_caps_when_test_configures_them() -> None:
     limits = SessionLimits(sessions_max=2, log_records=100, log_bytes=65_536)
 
