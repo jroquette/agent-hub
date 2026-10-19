@@ -6,6 +6,7 @@ from agent_hub.api.openapi_paths import (
     DOCTOR_FIX_PATHS,
     FEATURE_NAME_PATHS,
     GATE_PATHS,
+    ITEM_VERSION_PATHS,
     LINEAR_PATHS,
     OWNER_SIGNOFF_PATHS,
     P2_PATHS,
@@ -131,6 +132,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | WORKFLOW_PATHS
         | RUN_COMMAND_PATHS
         | GATE_PATHS
+        | ITEM_VERSION_PATHS
         | LINEAR_PATHS
         | OWNER_SIGNOFF_PATHS
         | FEATURE_NAME_PATHS
@@ -153,6 +155,7 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | WORKFLOW_PATHS
         | RUN_COMMAND_PATHS
         | GATE_PATHS
+        | ITEM_VERSION_PATHS
         | LINEAR_PATHS
         | OWNER_SIGNOFF_PATHS
         | FEATURE_NAME_PATHS
@@ -192,6 +195,22 @@ def test_lists_gate_paths_when_document_built(api_settings: ApiSettings) -> None
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
+def test_lists_item_version_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-295.36 (slices 2a, 2e): today's paths plus the four history reads and the two restores,
+    # and nothing else.
+    skill = "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions"
+    workflow = "/api/v1/workflows/{project}/{name}/versions"
+    assert {
+        ("get", skill),
+        ("get", f"{skill}/{{version_id}}"),
+        ("post", f"{skill}/{{version_id}}/restore"),
+        ("get", workflow),
+        ("get", f"{workflow}/{{version_id}}"),
+        ("post", f"{workflow}/{{version_id}}/restore"),
+    } == ITEM_VERSION_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
 def test_marks_agent_deprecated_when_document_built(api_settings: ApiSettings) -> None:
     schemas = create_app(api_settings).openapi()["components"]["schemas"]
 
@@ -207,6 +226,16 @@ def test_documents_action_problems_when_document_built(api_settings: ApiSettings
     for action in ("accept", "reject"):
         operation = paths[f"/api/v1/learnings/{{learning_id}}/{action}"]["post"]
         assert {"201", "409", "415", "502", "504"} <= set(operation["responses"]), action
+
+
+def test_documents_item_write_problems_when_document_built(api_settings: ApiSettings) -> None:
+    paths = create_app(api_settings).openapi()["paths"]
+
+    restores = [path for method, path in ITEM_VERSION_PATHS if method == "post"]
+    assert len(restores) == 2
+    for path in restores:
+        operation = paths[path]["post"]
+        assert {"200", "401", "409", "415"} <= set(operation["responses"]), path
 
 
 def test_documents_problem_responses_when_document_built(api_settings: ApiSettings) -> None:

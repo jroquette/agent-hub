@@ -62,6 +62,29 @@ describe("apiGet", () => {
     });
   });
 
+  it("keeps the problem's code and reason members when it names them", async () => {
+    stubApi({
+      "/api/v1/sessions/x": aProblem({
+        status: 409,
+        title: "Item write refused",
+        code: "secret_unversioned",
+        reason: "The item on disk holds a secret match and has no version",
+      }),
+      "/api/v1/sessions/y": aProblem({ status: 409, title: "Conflict", code: 7 }),
+    });
+
+    const named = (id: string) =>
+      apiGet("/api/v1/sessions/{session_id}", { path: { session_id: id } }).catch(
+        (e: unknown) => e,
+      );
+
+    expect(await named("x")).toMatchObject({
+      code: "secret_unversioned",
+      reason: "The item on disk holds a secret match and has no version",
+    });
+    expect(await named("y")).toMatchObject({ code: null, reason: null });
+  });
+
   it("rejects with a status-based problem when the error body is not a problem", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("oops", { status: 502, statusText: "Bad Gateway" }),

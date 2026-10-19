@@ -1,5 +1,10 @@
 from agent_hub.core.brain.brain_note import BrainEntry
+from agent_hub.core.doctor.item_leftovers_rule import ITEM_LEFTOVERS
+from agent_hub.core.doctor.run_rules import Selection
 from agent_hub.core.features.feature_status import FeatureFolder
+from agent_hub.core.hub_config.local_config import LocalConfig
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader
 
 HUB = "/home/demo/demo-hub"
@@ -85,3 +90,26 @@ def test_records_feature_reads_when_folders_listed_or_read() -> None:
         ("demo-feature", "/hubs/demo"),
         ("nope", "/hubs/demo"),
     ]
+
+
+def test_gives_item_leftovers_only_when_rule_selected() -> None:
+    hub = FakeHub(
+        item_folders=("plugin/demo/skills",),
+        item_leftovers=("plugin/demo/skills/.a.hub-tmp-0123abcd",),
+    )
+    reader = FakeHubFileReader({"/hubs/demo": hub})
+    config = HubConfig.model_validate(a_hub_document())
+
+    def snapshot(selection: Selection) -> tuple[object, object]:
+        found = reader.doctor_snapshot(
+            "/hubs/demo",
+            config=config,
+            running_version="0.1.0",
+            selection=selection,
+            local=LocalConfig(),
+        )
+        return found.item_leftovers, found.item_folders
+
+    selected = Selection(rules=(ITEM_LEFTOVERS,), notes=(), severities={})
+    assert snapshot(Selection(rules=(), notes=(), severities={})) == (None, ())
+    assert snapshot(selected) == (hub.item_leftovers, hub.item_folders)

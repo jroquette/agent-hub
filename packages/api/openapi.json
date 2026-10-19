@@ -3425,6 +3425,208 @@
         "title": "ItemKind",
         "type": "string"
       },
+      "ItemVersionContent": {
+        "additionalProperties": false,
+        "description": "A version's content: a file unit's one file, or a folder's files in path order (S6).",
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/VersionFileView"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "unit_kind": {
+            "$ref": "#/components/schemas/UnitKind"
+          }
+        },
+        "required": [
+          "id",
+          "unit_kind",
+          "files"
+        ],
+        "title": "ItemVersionContent",
+        "type": "object"
+      },
+      "ItemVersionPage": {
+        "additionalProperties": false,
+        "description": "A page of a unit's versions, newest first, with what the disk holds now: ``state`` (S8,\nS10, A1), ``managed`` (A4), the unit and how many items share it.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemVersionView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "managed": {
+            "title": "Managed",
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "shared_by": {
+            "minimum": 1.0,
+            "title": "Shared By",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/UnitState"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          },
+          "unit_kind": {
+            "$ref": "#/components/schemas/UnitKind"
+          },
+          "unit_path": {
+            "title": "Unit Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate",
+          "state",
+          "managed",
+          "unit_path",
+          "unit_kind",
+          "shared_by"
+        ],
+        "title": "ItemVersionPage",
+        "type": "object"
+      },
+      "ItemVersionView": {
+        "additionalProperties": false,
+        "description": "One version as the history lists it (``author`` None for ``external``, D11).",
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VersionAuthor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "draft_id": {
+            "anyOf": [
+              {
+                "pattern": "^(skill|agent|hook)-[a-z0-9]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Id"
+          },
+          "first": {
+            "title": "First",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/VersionOrigin"
+          },
+          "recorded_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "restored_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restored From"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "first",
+          "author",
+          "recorded_at",
+          "content_hash",
+          "size",
+          "restored_from"
+        ],
+        "title": "ItemVersionView",
+        "type": "object"
+      },
+      "ItemWriteResult": {
+        "additionalProperties": false,
+        "description": "What a Publish or Restore did: ``changed`` False when the content was equal (nothing\nwritten or recorded, D12); ``versioned`` False with its ``reason`` when the written content\nwas not stored (D9, A2); ``version`` the version recorded.",
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UnversionedReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemVersionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "versioned": {
+            "title": "Versioned",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "changed",
+          "versioned",
+          "reason",
+          "version"
+        ],
+        "title": "ItemWriteResult",
+        "type": "object"
+      },
       "JsonValue-Input": {},
       "KeySource": {
         "enum": [
@@ -6472,6 +6674,19 @@
         "title": "Resolution",
         "type": "string"
       },
+      "RestoreVersionBody": {
+        "additionalProperties": false,
+        "description": "``POST .../versions/{version_id}/restore``: ``confirm_managed`` true writes over a unit\n``hub.lock`` manages (S9), after the web's warning; only JSON ``true`` confirms.",
+        "properties": {
+          "confirm_managed": {
+            "default": false,
+            "title": "Confirm Managed",
+            "type": "boolean"
+          }
+        },
+        "title": "RestoreVersionBody",
+        "type": "object"
+      },
       "ResumableList": {
         "additionalProperties": false,
         "description": "``GET /agent-sessions/resumable``: past Claude sessions of a workdir, newest first.",
@@ -9284,6 +9499,35 @@
         "title": "TurnCost",
         "type": "object"
       },
+      "UnitKind": {
+        "description": "What a unit is: a skill's folder, an agent's file, a hook file or a hub workflow file.",
+        "enum": [
+          "skill",
+          "agent",
+          "hook",
+          "workflow"
+        ],
+        "title": "UnitKind",
+        "type": "string"
+      },
+      "UnitState": {
+        "description": "What the last read found in a unit: stored (or equal to its last version), or why not.",
+        "enum": [
+          "ok",
+          "too_large",
+          "secret",
+          "unreadable"
+        ],
+        "title": "UnitState",
+        "type": "string"
+      },
+      "UnversionedReason": {
+        "enum": [
+          "secret",
+          "too_large"
+        ],
+        "type": "string"
+      },
       "Usage": {
         "additionalProperties": false,
         "description": "How often a skill or agent was used in the window: counts and a time only (D6, ADR 0019).\n\n``user_count`` counts invocations typed by a person, ``model_count`` the ones the model made.",
@@ -9363,6 +9607,76 @@
           "SHIP-WITH-OWNER-STEPS",
           "NO-SHIP"
         ],
+        "type": "string"
+      },
+      "VersionAuthor": {
+        "additionalProperties": false,
+        "description": "Who wrote a ``publish`` or ``restore`` version: the hub's effective identity (ADR 0016).",
+        "properties": {
+          "email": {
+            "minLength": 1,
+            "title": "Email",
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "email"
+        ],
+        "title": "VersionAuthor",
+        "type": "object"
+      },
+      "VersionFileView": {
+        "additionalProperties": false,
+        "description": "One file of a version: ``text`` is None for a binary file (a NUL, or not UTF-8).",
+        "properties": {
+          "executable": {
+            "title": "Executable",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "path",
+          "executable",
+          "size",
+          "text"
+        ],
+        "title": "VersionFileView",
+        "type": "object"
+      },
+      "VersionOrigin": {
+        "description": "Where a version came from: the app's Publish or Restore, or the disk as the app read it.",
+        "enum": [
+          "publish",
+          "restore",
+          "external"
+        ],
+        "title": "VersionOrigin",
         "type": "string"
       },
       "Workdir": {
@@ -13806,6 +14120,344 @@
         ]
       }
     },
+    "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions": {
+      "get": {
+        "description": "The versions of the item's unit, newest first, and what its disk holds now.",
+        "operationId": "list_skill_versions_api_v1_projects__project__skills__kind___source___name__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ItemKind"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemVersionPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Skill Versions",
+        "tags": [
+          "item versions"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}": {
+      "get": {
+        "description": "One version of the item's unit: its files, their texts and executable bits.",
+        "operationId": "get_skill_version_api_v1_projects__project__skills__kind___source___name__versions__version_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ItemKind"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemVersionContent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Skill Version",
+        "tags": [
+          "item versions"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}/restore": {
+      "post": {
+        "description": "Write the version back into the hub and record a ``restore`` version naming it.",
+        "operationId": "restore_skill_version_api_v1_projects__project__skills__kind___source___name__versions__version_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ItemKind"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreVersionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemWriteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "No launch cookie (open hub web's address)"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Write refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, secret_unversioned or managed_confirmation_required"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The body is not application/json"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Restore Skill Version",
+        "tags": [
+          "item versions"
+        ]
+      }
+    },
     "/api/v1/search": {
       "get": {
         "description": "Search ids, paths, commands and tool names.",
@@ -15584,6 +16236,293 @@
         "summary": "Get Workflow",
         "tags": [
           "workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{project}/{name}/versions": {
+      "get": {
+        "description": "The versions of the hub workflow's file, newest first, and what the disk holds now.",
+        "operationId": "list_workflow_versions_api_v1_workflows__project___name__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemVersionPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Workflow Versions",
+        "tags": [
+          "item versions"
+        ]
+      }
+    },
+    "/api/v1/workflows/{project}/{name}/versions/{version_id}": {
+      "get": {
+        "description": "One version of the hub workflow's file.",
+        "operationId": "get_workflow_version_api_v1_workflows__project___name__versions__version_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemVersionContent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Workflow Version",
+        "tags": [
+          "item versions"
+        ]
+      }
+    },
+    "/api/v1/workflows/{project}/{name}/versions/{version_id}/restore": {
+      "post": {
+        "description": "Write the version back into the hub workflow's file and record a ``restore`` version.",
+        "operationId": "restore_workflow_version_api_v1_workflows__project___name__versions__version_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreVersionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemWriteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "No launch cookie (open hub web's address)"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Write refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, secret_unversioned or managed_confirmation_required"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The body is not application/json"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Restore Workflow Version",
+        "tags": [
+          "item versions"
         ]
       }
     }

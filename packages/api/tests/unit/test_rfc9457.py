@@ -17,6 +17,17 @@ from agent_hub.api.rfc9457 import (
 from agent_hub.core.agent_sessions.errors import InvalidScreenshotError, ScreenshotTooLargeError
 from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
 from agent_hub.core.brain.brain_path import BrainPathError
+from agent_hub.core.item_versions.hub_item_writer import (
+    HubItemWriteError,
+    ItemWriteRefusedError,
+    rollback_failed,
+)
+from agent_hub.core.item_versions.record_and_write import (
+    ItemWrittenRaceLostError,
+    ItemWrittenUnrecordedError,
+)
+from agent_hub.core.item_versions.unit_content import CorruptVersionError
+from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
 from agent_hub.core.learnings.brain_change_requests import (
     ChangeRequestConflictError,
     ChangeRequestError,
@@ -319,3 +330,62 @@ def test_points_at_the_refused_image_when_message_screenshot_invalid() -> None:
             "message": "The screenshot must be a base64-encoded PNG.",
         }
     ]
+
+
+UNIT_PATH = "plugin/demo/agents/scout.md"
+
+
+def test_maps_item_write_refusal_when_raised() -> None:
+    found = _mapped(ItemWriteRefusedError("managed_confirmation_required"))
+    no_author = _mapped(ItemWriteRefusedError("no_author", "No commit author for this hub"))
+
+    assert (found.status, found.title) == (409, "Item write refused")
+    assert found.members == {
+        "code": "managed_confirmation_required",
+        "reason": "The item is managed: the next hub sync rewrites it",
+    }
+    assert found.detail == found.members["reason"]
+    assert no_author.members == {"code": "no_author", "reason": "No commit author for this hub"}
+
+
+def test_answers_write_failed_without_path_when_item_write_fails() -> None:
+    failed = _mapped(HubItemWriteError(f"rename failed in /home/demo/{UNIT_PATH}"))
+    rolled = _mapped(rollback_failed())
+
+    assert (failed.status, failed.members) == (500, {"code": "write_failed", "kind": "failed"})
+    assert rolled.members == {"code": "write_failed", "kind": "rollback_failed"}
+    for found in (failed, rolled):
+        assert "/" not in str(found.detail)
+        assert "scout" not in str(found.detail)
+
+
+def test_answers_server_error_without_content_when_version_corrupt() -> None:
+    found = _mapped(CorruptVersionError(f"frame of {UNIT_PATH} past its length"))
+
+    assert (found.status, found.members) == (500, {"code": "corrupt_version"})
+    assert "scout" not in str(found.detail)
+
+
+def test_says_whether_written_when_version_race_lost() -> None:
+    lost = ItemVersionSequenceError("demo", UNIT_PATH, expected=3, got=2)
+    before = _mapped(lost)
+    after = _mapped(ItemWrittenRaceLostError(lost))
+    busy = _mapped(ItemWrittenUnrecordedError())
+
+    assert (before.status, before.members) == (503, {"code": "version_race", "written": False})
+    for written in (after, busy):
+        assert (written.status, written.members) == (
+            503,
+            {"code": "written_not_recorded", "written": True},
+        )
+    for found in (before, after, busy):
+        assert found.headers == {"Retry-After": "1"}
+        assert "scout" not in str(found.detail)
+
+
+def test_words_version_problems_neutrally_when_read_or_written() -> None:
+    corrupt = _mapped(CorruptVersionError("frame past its length"))
+    race = _mapped(ItemVersionSequenceError("demo", UNIT_PATH, expected=3, got=2))
+
+    for found in (corrupt, race):
+        assert "written" not in str(found.detail)

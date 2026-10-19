@@ -24,6 +24,7 @@ from agent_hub.core.doctor.instruction_rules import (
     INSTRUCTIONS_REFS,
     INSTRUCTIONS_SIZE,
 )
+from agent_hub.core.doctor.item_leftovers_rule import ITEM_LEFTOVERS
 from agent_hub.core.doctor.links_rule import LINKS_DEAD
 from agent_hub.core.doctor.lock_rules import LOCK_DRIFT
 from agent_hub.core.doctor.makefile_rules import MAKEFILE_OVERRIDE
@@ -60,4 +61,5 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     BRAIN_MEMORY,
     SANDBOX_WORKFLOW,
     WORKFLOWS_VALID,
+    ITEM_LEFTOVERS,
 )
