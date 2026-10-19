@@ -322,6 +322,24 @@ describe("FilesPanel (kinds of file)", () => {
     expect(within(file).getByLabelText(/Change 1 to .*l\.md/)).toHaveTextContent("+# A learning");
   });
 
+  it("renders markdown even after a diff was open in the drawer", async () => {
+    const files = filesOf([
+      tool("m1", "Write", { file_path: "/repo/src/new.ts", content: "export const a = 1;" }),
+      tool("m2", "Write", { file_path: "/repo/docs/guide.md", content: "# Guide" }),
+    ]);
+    render(<FilesPanel files={files} sessionId="s1" onClose={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /new\.ts/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Next file" }));
+
+    const file = screen.getByRole("region", { name: /guide\.md$/ });
+    expect(within(file).getByRole("heading", { name: "Guide" })).toBeInTheDocument();
+    expect(within(file).getByRole("button", { name: "Preview" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
   it("opens on the tab of the file a card asked for", () => {
     render(
       <FilesPanel
