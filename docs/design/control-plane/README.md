@@ -117,7 +117,7 @@ This system is the north star for the people and agents building the REST API (`
 | Agent | A role with instructions, tools and a model: `hub-workflow:evaluator` | bot, assistant |
 | Session | One Claude Code session of an agent | run, job, execution |
 | Workflow | A versioned sequence of steps | pipeline |
-| Run | One WorkflowRun (one issue taken to a PR); it contains sessions | session |
+| Run | One WorkflowRun: a workflow run (such as one issue taken to a PR) or, always qualified, a scenario run; it contains sessions | session |
 | Scenario run | One run of a scenario in one environment and mode; a WorkflowRun underneath | run (alone) |
 | Gate | An automatic check or a human approval a step must pass | — |
 | Brain · Learning · Inbox · Decision | Curated knowledge · something learned (proposed → accepted/rejected) · unreviewed proposals · a recorded choice | wiki · insight, tip |
