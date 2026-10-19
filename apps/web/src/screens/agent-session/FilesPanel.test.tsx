@@ -224,27 +224,27 @@ describe("FilesPanel (final result)", () => {
     render(
       <FilesPanel
         files={filesOf([
-          tool("t1", "Write", { file_path: "/r/a.md", content: "one\ntwo\n" }),
-          tool("t2", "Edit", { file_path: "/r/a.md", old_string: "two", new_string: "2" }),
+          tool("t1", "Write", { file_path: "/r/a.txt", content: "one\ntwo\n" }),
+          tool("t2", "Edit", { file_path: "/r/a.txt", old_string: "two", new_string: "2" }),
         ])}
         sessionId="s1"
         onClose={vi.fn()}
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: /a\.md/ }));
+    await userEvent.click(screen.getByRole("button", { name: /a\.txt/ }));
 
     expect(screen.getByRole("button", { name: "Final result" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    expect(screen.getByLabelText("Final diff of r/a.md")).toHaveTextContent("+2");
-    expect(screen.queryByLabelText("Change 1 to r/a.md")).toBeNull();
+    expect(screen.getByLabelText("Final diff of r/a.txt")).toHaveTextContent("+2");
+    expect(screen.queryByLabelText("Change 1 to r/a.txt")).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Each change (2)" }));
 
-    expect(screen.getByLabelText("Change 1 to r/a.md")).toBeInTheDocument();
-    expect(screen.getByLabelText("Change 2 to r/a.md")).toBeInTheDocument();
+    expect(screen.getByLabelText("Change 1 to r/a.txt")).toBeInTheDocument();
+    expect(screen.getByLabelText("Change 2 to r/a.txt")).toBeInTheDocument();
   });
 
   it("AC-PG-18.3: says the file ends as it began when its changes cancel out", async () => {
@@ -279,5 +279,71 @@ describe("FilesPanel (final result)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Each change (2)" }));
     expect(screen.getByLabelText("Change 1 to r/b.md")).toBeInTheDocument();
     expect(screen.getByLabelText("Change 2 to r/b.md")).toBeInTheDocument();
+  });
+});
+
+describe("FilesPanel (kinds of file)", () => {
+  const MIXED = [
+    tool("k1", "Write", {
+      file_path: "/Users/me/.claude/plans/p.md",
+      content: "# The plan\n\n- step",
+    }),
+    tool("k2", "Write", { file_path: "/repo/src/new.ts", content: "export const a = 1;" }),
+    tool("k3", "Write", {
+      file_path: "/hub/brain/_inbox/l.md",
+      content: "---\ntype: gotcha\n---\n\n# A learning",
+    }),
+    tool("k4", "Write", { file_path: "/tmp/scratch.md", content: "notes" }),
+  ];
+
+  it("puts the code first and Claude's plans, learnings and scratch in their own tabs", async () => {
+    render(<FilesPanel files={filesOf(MIXED)} sessionId="s1" onClose={vi.fn()} />);
+
+    const tabs = screen.getByRole("tablist", { name: "Kind of file" });
+    expect(
+      within(tabs)
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent),
+    ).toEqual(["Code1", "Plans1", "Learnings1", "Scratch1"]);
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(
+      within(list)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Anew.ts+1−0"]);
+
+    await userEvent.click(within(tabs).getByRole("tab", { name: /Learnings/ }));
+    await userEvent.click(screen.getByRole("button", { name: /l\.md/ }));
+    const file = screen.getByRole("region", { name: /l\.md$/ });
+    // Markdown opens rendered, its frontmatter apart.
+    expect(within(file).getByRole("heading", { name: "A learning" })).toBeInTheDocument();
+    expect(within(file).getByLabelText("Frontmatter")).toHaveTextContent("type: gotcha");
+    await userEvent.click(within(file).getByRole("button", { name: /Each change/ }));
+    expect(within(file).getByLabelText(/Change 1 to .*l\.md/)).toHaveTextContent("+# A learning");
+  });
+
+  it("opens on the tab of the file a card asked for", () => {
+    render(
+      <FilesPanel
+        files={filesOf(MIXED)}
+        sessionId="s1"
+        onClose={vi.fn()}
+        initialPath="/Users/me/.claude/plans/p.md"
+      />,
+    );
+    expect(screen.getByRole("tab", { name: /Plans/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "The plan" })).toBeInTheDocument();
+  });
+
+  it("leaves Claude's scratch out of what waits for review", () => {
+    render(
+      <ChangedFilesChip
+        files={filesOf(MIXED)}
+        review={{ reviewed: {}, toggle: vi.fn() }}
+        open={false}
+        onToggle={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /3 to review/ })).toBeInTheDocument();
   });
 });
