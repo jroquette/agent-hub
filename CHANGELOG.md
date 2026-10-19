@@ -37,6 +37,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   and the outside-content brain rule are each shortened to one line, with the same meaning. `hub sync` adds the skill
   and its link after you bump `platform.version`.
 
+### Changed
+
+- `hub web --sessions-max 0` (`AGENT_HUB_SESSIONS_MAX=0`) sets no limit on live agent sessions: none is ended or
+  refused for the limit. `make playground` starts its conductor that way, instead of 16 sessions.
+
 ## [0.17.0] - 2026-10-19
 
 ### Added
