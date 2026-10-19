@@ -11,6 +11,9 @@ describe("fileKind", () => {
     ["/Users/me/hub/brain/_inbox/2026-10-19-gotcha.md", "learning"],
     ["/home/me/hub/brain/learnings/gotchas/retry.md", "learning"],
     ["/Users/me/.claude/projects/-Users-me-app/memory/MEMORY.md", "learning"],
+    ["/Users/me/hub/brain/decisions/0007-retries.md", "learning"],
+    ["/Users/me/hub/brain/features/claims/spec.md", "feature"],
+    ["/Users/me/hub/brain/features/claims/reviews/TIP-1/quality-r1.json", "feature"],
     ["/tmp/notes.md", "scratch"],
     ["/private/tmp/claude-501/out.json", "scratch"],
     ["/var/folders/x1/T/scratch.md", "scratch"],
@@ -23,6 +26,7 @@ describe("fileKind", () => {
     expect(isReviewable("/repo/src/index.ts")).toBe(true);
     expect(isReviewable("/Users/me/.claude/plans/p.md")).toBe(false);
     expect(isReviewable("/hub/brain/_inbox/l.md")).toBe(false);
+    expect(isReviewable("/hub/brain/features/f/reviews/T/spec-r1.json")).toBe(false);
     expect(isReviewable("/tmp/notes.md")).toBe(false);
   });
 
