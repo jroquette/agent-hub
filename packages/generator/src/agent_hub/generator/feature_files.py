@@ -4,9 +4,10 @@ Bounded and never through a link: each folder on the way (``brain``, ``features`
 opened relative to its parent with ``O_NOFOLLOW``, so a linked folder is skipped; a slug starting
 with ``.`` is skipped, as a shell glob does, and at most ``MAX_FEATURE_FOLDERS`` are read, in name
 order. In each folder only the record files are looked at, as regular files: ``features.json``
-whole up to ``MAX_RECORD_BYTES`` (else a one-line problem), ``spec.md`` and ``eval.md`` up to
-``HEAD_BYTES``; the other record files are only checked as regular files, never read. What the
-files mean is core's (``feature_status``).
+whole up to ``MAX_RECORD_BYTES`` (else a one-line problem), ``plan.md`` whole up to
+``MAX_PLAN_BYTES`` (else ``plan_too_large``), ``spec.md`` and ``eval.md`` up to ``HEAD_BYTES``; the
+other record files (``brief.md`` among them) are only checked as regular files, never read. What
+the files mean is core's (``feature_status``).
 
 The record folders ``evals/`` and ``reviews/`` are opened the same way, relative to the slug's
 folder: in each, the ``.md`` names not hidden are read in name order, at most ``MAX_EVAL_FILES``
@@ -45,6 +46,8 @@ from agent_hub.core.features.feature_reviews import (
 from agent_hub.core.features.feature_status import (
     EVAL,
     HEAD_BYTES,
+    MAX_PLAN_BYTES,
+    PLAN,
     RECORD,
     RECORD_FILES,
     SPEC,
@@ -140,6 +143,8 @@ def _limit(name: str) -> int:
     too large), the heads kept, nothing of the files only checked present."""
     if name == RECORD:
         return MAX_RECORD_BYTES + 1
+    if name == PLAN:
+        return MAX_PLAN_BYTES + 1
     return HEAD_BYTES if name in {SPEC, EVAL} else 0
 
 
@@ -160,7 +165,8 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
         )
     finally:
         os.close(folder)
-    record = reads[RECORD]
+    record, plan = reads[RECORD], reads[PLAN]
+    too_large = isinstance(plan, bytes) and len(plan) > MAX_PLAN_BYTES
     return FeatureFolder(
         slug=slug,
         files=tuple(name for name, read in reads.items() if isinstance(read, bytes)),
@@ -171,6 +177,8 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
         reviews=reviews,
         evals_skipped=evals_skipped,
         reviews_skipped=reviews_skipped,
+        plan=plan if isinstance(plan, bytes) and not too_large else None,
+        plan_too_large=too_large,
     )
 
 
