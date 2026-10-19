@@ -701,13 +701,11 @@ def test_refuses_write_when_file_is_symlink(local_hub: Path, tmp_path: Path) -> 
 
 
 def test_hides_secret_repo_dir_when_local_file_names_one(hub: Path) -> None:
-    (hub / "hub.local.json").write_bytes(
-        hub_bytes({"repos": [{"dir": AWS_KEY, "services": {}}]})
-    )
+    (hub / "hub.local.json").write_bytes(hub_bytes({"repos": [{"dir": AWS_KEY, "services": {}}]}))
 
     result = run_env(hub, "list")
 
     assert (result.exit_code, result.stdout) == (1, ""), result.output
     assert result.stderr == (
-        "hub.local.json: repos[0].dir: repo dir \"<name>\" is not in hub.json's repos\n"
+        'hub.local.json: repos[0].dir: repo dir "<name>" is not in hub.json\'s repos\n'
     )
