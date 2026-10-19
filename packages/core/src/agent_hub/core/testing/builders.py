@@ -218,7 +218,10 @@ def a_hub_settings_document() -> dict[str, Any]:
         "enabledPlugins": {"demo@example": True},
         "hooks": {
             "SessionStart": [
-                {"matcher": "startup|resume|clear|compact", "hooks": [_hub_hook("session_start.py")]},
+                {
+                    "matcher": "startup|resume|clear|compact",
+                    "hooks": [_hub_hook("session_start.py")],
+                },
                 {"hooks": [_hub_hook("event_sensor.py")]},
             ],
             "PreToolUse": [{"matcher": "Bash|Read", "hooks": [_hub_hook("guard.py")]}],
