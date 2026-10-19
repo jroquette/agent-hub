@@ -13,6 +13,7 @@ import {
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
+import { HistoryPanel } from "../item-history";
 import { NodePanel, useNodeParam, WorkflowGraph } from "./WorkflowGraph";
 import { StartRun, startableFromWeb } from "../runs-list/StartRun";
 import { StepList } from "./StepList";
@@ -395,6 +396,11 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
           </section>
         </div>
       </details>
+      {workflow.source === "hub" && (
+        <HistoryPanel
+          target={{ kind: "workflow", project: workflow.project, name: workflow.name }}
+        />
+      )}
     </Page>
   );
 }

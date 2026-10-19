@@ -9,7 +9,7 @@ With ``capture`` (AGH-295, D8, D14, A3), the list hands the capture every hub wo
 loads and the detail its one workflow, each as the hub-relative file the discovery loaded
 (``.yaml`` or ``.json``) marked with that file's own fingerprint entry, so an edit re-reads only
 its file; one list request shares one capture budget across its hubs. A built-in has no unit,
-and ``unit_of`` names a workflow's unit without capturing.
+and ``marked_workflow_unit`` names a workflow's unit and its capture mark without capturing.
 A file that does not load is a problem of the list, never an item, and its detail is not found.
 A list scoped to an unknown project is empty; a detail of one raises ``EntityNotFoundError``.
 """
@@ -29,6 +29,7 @@ from agent_hub.core.item_versions.capture_item_versions import (
 )
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import UnitKind
+from agent_hub.core.item_versions.item_version_ports import MarkedUnit
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
@@ -231,11 +232,16 @@ class ReadWorkflows:
             raise EntityNotFoundError(entity="workflow", entity_id=f"{project}/{name}")
         return hub_path, plan
 
-    def unit_of(self, project: str, name: str) -> ItemUnit | None:
-        """The unit the workflow is versioned in, or None (a built-in, D14); an unknown project
-        or workflow is ``EntityNotFoundError``. Reads no unit."""
+    def marked_workflow_unit(self, project: str, name: str) -> MarkedUnit | None:
+        """The unit the workflow is versioned in, with the mark the reads capture the file under,
+        or None (a built-in, D14); an unknown project or workflow is ``EntityNotFoundError``.
+        Reads no unit."""
         hub_path, plan = self.workflow_plan(project, name)
-        return _unit_of(project, plan, self._read(hub_path))
+        read = self._read(hub_path)
+        unit = _unit_of(project, plan, read)
+        if unit is None:
+            return None
+        return MarkedUnit(hub_path=hub_path, unit=unit, mark=_mark_of(read, unit), shared_by=1)
 
     def _capture_plans(
         self,
@@ -251,8 +257,7 @@ class ReadWorkflows:
         for plan in plans:
             unit = _unit_of(project, plan, read)
             if unit is not None:
-                # A file the listing does not hold (never expected) falls back to the whole one.
-                marked.append((unit, read.marks.get(unit.unit_path, read.fingerprint)))
+                marked.append((unit, _mark_of(read, unit)))
         self._capture.capture(project, hub_path, marked, budget=budget)
 
     def _read(self, hub_path: str) -> _Read:
@@ -278,6 +283,12 @@ def _unit_of(project: str, plan: WorkflowPlan, read: _Read) -> ItemUnit | None:
     if unit_path is None:
         return None
     return ItemUnit(project=project, unit_path=unit_path, kind=UnitKind.WORKFLOW)
+
+
+def _mark_of(read: _Read, unit: ItemUnit) -> SourceStat | tuple[SourceStat, ...]:
+    """The unit's capture mark: its file's own fingerprint entry; a file the listing does not
+    hold (never expected) falls back to the whole fingerprint."""
+    return read.marks.get(unit.unit_path, read.fingerprint)
 
 
 def _workflow_files(files: Iterable[WorkflowFile | LoadProblem]) -> Iterator[WorkflowFile]:

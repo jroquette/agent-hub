@@ -1,5 +1,6 @@
 """The Phase 2 contract's paths, the paths control-plane clarity, ticket planning, the Skills
-tab, the workflows and the run commands add, and the paths an app's OpenAPI document lists."""
+tab, the workflows, the run commands and the item versions add, and the paths an app's OpenAPI
+document lists."""
 
 from fastapi import FastAPI
 
@@ -128,6 +129,18 @@ RUN_COMMAND_PATHS: frozenset[tuple[str, str]] = frozenset(
     )
 )
 
+# An item's version history (AGH-295, S7): its versions, one version and its restore (a strict
+# write that needs the launch cookie), Toolkit and workflows.
+ITEM_VERSION_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}{item}{path}")
+    for item in ("/projects/{project}/skills/{kind}/{source}/{name}", "/workflows/{project}/{name}")
+    for method, path in (
+        ("get", "/versions"),
+        ("get", "/versions/{version_id}"),
+        ("post", "/versions/{version_id}/restore"),
+    )
+)
+
 # Connecting hub web to Linear from Settings (playground): its check, the key's save and removal.
 LINEAR_PATHS: frozenset[tuple[str, str]] = frozenset(
     (method, f"{API_PREFIX}/tracker/linear") for method in ("get", "put", "delete")
@@ -168,6 +181,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | WORKFLOW_PATHS
     | RUN_COMMAND_PATHS
     | GATE_PATHS
+    | ITEM_VERSION_PATHS
     | LINEAR_PATHS
     | OWNER_SIGNOFF_PATHS
     | FEATURE_NAME_PATHS

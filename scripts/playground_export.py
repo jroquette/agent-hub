@@ -85,6 +85,10 @@ SCREEN_ROUTES: Mapping[str, tuple[Route, ...]] = {
     "features": (Route("features", "/features"),),
     "health": (Route("health", "/health"),),
     "hub-config": (Route("config", "/projects/demo/config"),),
+    # The History panel (AGH-297) shows on a Toolkit item's detail and a hub workflow's page.
+    "item-history": (
+        Route("item-history", "/projects/demo/skills", follow="/projects/demo/skills/"),
+    ),
     "knowledge-index": (Route("skills", "/knowledge/skills"), Route("brain", "/knowledge/brain")),
     "knowledge-phase3": (Route("knowledge", "/knowledge/decisions"),),
     "learnings": (Route("learnings", "/knowledge/learnings"),),

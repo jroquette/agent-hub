@@ -3,13 +3,14 @@
 The server binds 127.0.0.1 only, but a page on any site can still make the browser send it a
 request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a ``POST`` or
 ``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the learning
-actions, the workflow-run writes and a workflow gate's decision also need that ``Origin``, a
-same-origin fetch and a JSON body (S7), so do the hub registry writes (``POST /hubs``, ``DELETE
-/hubs/{id}``; a missing ``Origin`` is refused too, A11: a registered hub is a folder sessions
-may start in), bodies stop at 1 MiB (8 MiB for ``POST /agent-sessions``, which may carry a
-screenshot), API answers are never cached, a CSP keeps the app to its own origin, and no CORS
-header is ever sent. No route speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is
-closed with 1008 before it is accepted, so an upgrade never skips these checks (P7, AC-165.54).
+actions, the workflow-run writes, a workflow gate's decision and the item writes (a Restore into
+a hub's tree) also need that ``Origin``, a same-origin fetch and a JSON body (S7), so do the
+hub registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is refused too,
+A11: a registered hub is a folder sessions may start in), bodies stop at 1 MiB (8 MiB for
+``POST /agent-sessions``, which may carry a screenshot), API answers are never cached, a CSP
+keeps the app to its own origin, and no CORS header is ever sent. No route speaks WebSocket
+(ADR 0031, D3): any ``websocket`` scope is closed with 1008 before it is accepted, so an upgrade
+never skips these checks (P7, AC-165.54).
 
 ``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``
 names, for example the host port a container publishes; never a wildcard.
@@ -41,8 +42,16 @@ RUN_WRITES = re.compile(
     r"|approvals/[^/]+/decision"
     r"|features/[^/]+/[^/]+/acs/[^/]+/check-runs)$"
 )
+# The item writes (AGH-295, S7, D13) write into a hub's working tree: strict too, and they need
+# the launch's cookie (``session_access``, which answers 409 ``hub_read_only`` in the container).
+# Restore of a Toolkit item's or a hub workflow's version; Publish joins them in PR 3.
+ITEM_WRITES = re.compile(
+    rf"^{re.escape(API_PREFIX)}/(projects/[^/]+/skills/[^/]+/[^/]+/[^/]+"
+    r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore$"
+)
 STRICT_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"
+    rf"|{ITEM_WRITES.pattern}"
 )
 # The hub registry writes (A11): this server's exact ``Origin`` is required, a missing one too.
 # A script (``make connect``, the demo seed) sends its base URL as ``Origin``.
@@ -153,6 +162,11 @@ def is_run_write(method: str, path: str) -> bool:
     """Whether a request starts, cancels, resumes or abandons a workflow run, or decides one's
     gate (``RUN_WRITES``)."""
     return method in STATE_CHANGING_METHODS and RUN_WRITES.fullmatch(path) is not None
+
+
+def is_item_write(method: str, path: str) -> bool:
+    """Whether a request writes a Toolkit item or a hub workflow into its hub (``ITEM_WRITES``)."""
+    return method in STATE_CHANGING_METHODS and ITEM_WRITES.fullmatch(path) is not None
 
 
 def is_hub_registry_write(method: str, path: str) -> bool:

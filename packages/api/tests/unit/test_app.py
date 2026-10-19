@@ -45,6 +45,12 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/workflow-runs/{run_id}/cancel"): {},
     ("post", "/api/v1/workflow-runs/{run_id}/resume"): {},
     ("post", "/api/v1/workflow-runs/{run_id}/abandon"): {},
+    # A restore is a strict write too (AGH-295, D13).
+    (
+        "post",
+        "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}/restore",
+    ): {},
+    ("post", "/api/v1/workflows/{project}/{name}/versions/{version_id}/restore"): {},
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {

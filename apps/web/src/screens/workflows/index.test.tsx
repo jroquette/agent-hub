@@ -9,6 +9,8 @@ import {
   aWorkflowCatalog,
   aWorkflowDetail,
   aWorkflowSummary,
+  anItemVersion,
+  anItemVersionPage,
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
@@ -95,6 +97,34 @@ describe("WorkflowsScreen", () => {
 
     await screen.findByRole("table", { name: "Files that do not load" });
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("WorkflowDetailScreen history", () => {
+  it("history_panel on a hub workflow and none on a builtin", async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderWithApi(<WorkflowDetailScreen />, {
+      routes: {
+        [DETAIL]: aWorkflowDetail(),
+        [`${DETAIL}/versions`]: anItemVersionPage({
+          unit_kind: "workflow",
+          unit_path: "workflows/team/feature-flow.yaml",
+          items: [anItemVersion({ origin: "external", author: null })],
+        }),
+      },
+      path: "/workflows/agent-hub/feature-flow",
+      route: "/workflows/:project/:name",
+    });
+
+    const panel = await screen.findByRole("region", { name: "History" });
+    await user.click(within(panel).getByRole("button", { name: "Show history" }));
+    const table = await within(panel).findByRole("table", { name: "Versions of feature-flow" });
+    expect(table).toHaveTextContent("Changed outside the app");
+    unmount();
+
+    renderDetail(aWorkflowDetail({ source: "builtin" }));
+    await screen.findByRole("group", { name: "Workflow graph" });
+    expect(screen.queryByRole("region", { name: "History" })).toBeNull();
   });
 });
 

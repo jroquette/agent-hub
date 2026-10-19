@@ -57,6 +57,9 @@ export type WorkflowSummary = Schemas["WorkflowSummary"];
 export type WorkflowCatalogView = Schemas["WorkflowCatalogView"];
 export type WorkflowDetail = Schemas["WorkflowDetail"];
 export type WorkflowProblem = Schemas["WorkflowProblemView"];
+export type ItemVersion = Schemas["ItemVersionView"];
+export type ItemVersionPage = Schemas["ItemVersionPage"];
+export type ItemVersionContent = Schemas["ItemVersionContent"];
 
 /** The synthetic clock every builder uses. */
 export const T0 = "2026-10-11T14:00:00.000Z";
@@ -1548,6 +1551,49 @@ export function aWorkflowDetail(overrides: Partial<WorkflowDetail> = {}): Workfl
         { id: "review", type: "approval", depends_on: ["build", "docs"], message: "Ship it?" },
       ],
     },
+    ...overrides,
+  };
+}
+
+/** A version as the history lists it: by default the app's Publish, by the hub's identity. */
+export function anItemVersion(overrides: Partial<ItemVersion> = {}): ItemVersion {
+  return {
+    id: "0199f0a1-0000-7000-8000-000000000001",
+    origin: "publish",
+    first: false,
+    author: { name: "Example Owner", email: "owner@example.com" },
+    recorded_at: "2026-10-18T09:00:00Z",
+    content_hash: `sha256:${"a1b2c3d4".repeat(8)}`,
+    size: 120,
+    restored_from: null,
+    draft_id: null,
+    ...overrides,
+  };
+}
+
+/** A page of a skill folder's versions, newest first, whose disk is stored (`state` ok). */
+export function anItemVersionPage(overrides: Partial<ItemVersionPage> = {}): ItemVersionPage {
+  return {
+    items: [anItemVersion()],
+    managed: false,
+    next_cursor: null,
+    shared_by: 1,
+    state: "ok",
+    total_estimate: overrides.items?.length ?? 1,
+    unit_kind: "skill",
+    unit_path: "plugin/hub-workflow/skills/feature",
+    ...overrides,
+  };
+}
+
+/** One version's content: a skill folder's files in path order. */
+export function anItemVersionContent(
+  overrides: Partial<ItemVersionContent> = {},
+): ItemVersionContent {
+  return {
+    id: "0199f0a1-0000-7000-8000-000000000001",
+    unit_kind: "skill",
+    files: [{ path: "SKILL.md", executable: false, size: 24, text: "---\nname: feature\n---\n" }],
     ...overrides,
   };
 }
