@@ -194,6 +194,42 @@ def test_allows_command_when_no_bash_rule_matches(evaluate: Evaluate) -> None:
     assert verdicts == dict.fromkeys(verdicts)
 
 
+# AGH-277 (AC-277.20): a mutating `hub env` changes the environments agents see, so it asks
+# first, however the launcher is reached; reading them does not.
+ENV_COMMAND_REASON = (
+    "hub env {} changes the agents' environments (hub.json or hub.local.json); confirm"
+)
+ENV_COMMAND_WRITES = {
+    "./hub env add x --access write": "add",
+    "hub env set live --access write": "set",
+    "./hub env service remove demo-api api": "service remove",
+    "uvx --from x hub env remove y": "remove",
+    "./hub env service add demo-api cache --env local --url redis://localhost:6379": "service add",
+    "git status && './hub' env add qa --access ask": "add",
+}
+ENV_COMMAND_READS = [
+    "./hub env list",
+    "./hub env show staging",
+    "hub env list --json",
+    "./hub env show live --json",
+]
+
+
+def test_asks_when_env_command_mutates(evaluate: Evaluate) -> None:
+    verdicts = verdicts_of(evaluate, [bash(command) for command in ENV_COMMAND_WRITES])
+
+    assert verdicts == {
+        bash(command): ("ask", ENV_COMMAND_REASON.format(verb))
+        for command, verb in ENV_COMMAND_WRITES.items()
+    }
+
+
+def test_passes_when_env_command_reads(evaluate: Evaluate) -> None:
+    verdicts = verdicts_of(evaluate, [bash(command) for command in ENV_COMMAND_READS])
+
+    assert verdicts == dict.fromkeys(verdicts)
+
+
 # AC-45.6: the spec's legacy table, then the quoted and wrapped forms of AC-45.14.
 LEGACY_INFRA_COMMANDS = [
     "terraform apply x",
@@ -3650,6 +3686,7 @@ RULE_EVENTS: tuple[tuple[str, dict[str, Any], str | None], ...] = (
     ("Bash", {"command": "rm tests/test_a.py"}, "test_bash_edit"),
     ("Bash", {"command": "echo x > brain/notes.md"}, "brain_curated"),
     ("Bash", {"command": "git status"}, None),
+    ("Bash", {"command": "./hub env add qa --access ask"}, "env_command"),
     ("Read", {"file_path": "app/.env"}, "secret_file"),
     ("Grep", {"pattern": "KEY", "glob": "**/.env"}, "secret_file"),
     (
