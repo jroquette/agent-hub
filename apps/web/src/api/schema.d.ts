@@ -1796,6 +1796,11 @@ export interface components {
       open_permission?: components["schemas"]["OpenPermission"] | null;
       /** Project */
       project: string;
+      /**
+       * Review Targets
+       * @default []
+       */
+      review_targets: components["schemas"]["ReviewTarget"][];
       status: components["schemas"]["AgentSessionStatus"];
       /** Title */
       title?: string | null;
@@ -3954,8 +3959,13 @@ export interface components {
      * @description One repository's changes against its base. ``root`` is the folder git ran in, ``branch``
      *     its checked-out branch (null when detached), ``base`` the ref the branch is compared with
      *     (``origin/main``…, null when none was found: then nothing is compared and ``files`` is
-     *     empty), ``base_sha`` the commit the branch forked from. ``truncated`` says commits or files
-     *     were left out past the bounds.
+     *     empty), ``base_sha`` the commit the branch forked from, ``head_sha`` the branch's last
+     *     commit. ``truncated`` says commits or files were left out past the bounds.
+     *
+     *     ``source`` is ``worktree`` when git read the checkout as it is now (uncommitted changes
+     *     included), ``recorded`` when that folder is gone and the review reads the commits it
+     *     recorded from the repo's own checkout (``root`` is still the old folder, so the paths match
+     *     the chat's). ``pull_request`` is the branch's pull request, when one is found.
      */
     RepoChanges: {
       /** Base */
@@ -3974,10 +3984,15 @@ export interface components {
        * @default []
        */
       files: components["schemas"]["RepoFileChange"][];
+      /** Head Sha */
+      head_sha?: string | null;
       /** Label */
       label: string;
+      pull_request?: components["schemas"]["RepoPullRequest"] | null;
       /** Root */
       root: string;
+      /** @default worktree */
+      source: components["schemas"]["RepoSource"];
       /**
        * Truncated
        * @default false
@@ -4096,6 +4111,23 @@ export interface components {
     /** @enum {string} */
     RepoFileStatus: "added" | "modified" | "deleted" | "renamed";
     /**
+     * RepoPullRequest
+     * @description The branch's pull request on GitHub: its number, link, state (``OPEN``, ``MERGED``,
+     *     ``CLOSED``) and the commit it is at.
+     */
+    RepoPullRequest: {
+      /** Head Sha */
+      head_sha?: string | null;
+      /** Number */
+      number: number;
+      /** State */
+      state: string;
+      /** Url */
+      url: string;
+    };
+    /** @enum {string} */
+    RepoSource: "worktree" | "recorded";
+    /**
      * RepoView
      * @description A repo of the project as ``hub.json`` and its checkout describe it.
      */
@@ -4161,6 +4193,35 @@ export interface components {
     ResumableList: {
       /** Items */
       items: components["schemas"]["PastSession"][];
+    };
+    /**
+     * ReviewTarget
+     * @description What a session's review read in one repository, kept so the review outlives the folder:
+     *     the hub repo (``repo``, its ``hub.json`` name) and the checkout it read (``root``, a worktree
+     *     that may be removed later), its branch, the ``base`` it was compared with and the commit it
+     *     forked from (``base_sha``), the last commit read (``head_sha``) and the branch's pull request
+     *     once one is found. With these the review reads the branch's commits from the repo's own
+     *     checkout once the worktree is gone.
+     */
+    ReviewTarget: {
+      /** Base */
+      base?: string | null;
+      /** Base Sha */
+      base_sha?: string | null;
+      /** Branch */
+      branch?: string | null;
+      /** Head Sha */
+      head_sha?: string | null;
+      /** Label */
+      label: string;
+      /** Pr Number */
+      pr_number?: number | null;
+      /** Pr Url */
+      pr_url?: string | null;
+      /** Repo */
+      repo?: string | null;
+      /** Root */
+      root: string;
     };
     /**
      * RunAccepted

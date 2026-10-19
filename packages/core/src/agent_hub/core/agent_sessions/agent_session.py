@@ -35,6 +35,8 @@ MAX_CLOUD_TASK_CHARS: Final = 65536
 # The Sessions list's glimpse of a session: the last prompt and reply, and the files changed.
 MAX_SNIPPET_CHARS: Final = 280
 MAX_CHANGED_FILES: Final = 200
+# At most this many repositories a session's review remembers.
+MAX_REVIEW_TARGETS: Final = 8
 
 
 class AgentSessionStatus(StrEnum):
@@ -93,6 +95,25 @@ class ChangedFile(ViewModel):
     last_change_id: str
 
 
+class ReviewTarget(ViewModel):
+    """What a session's review read in one repository, kept so the review outlives the folder:
+    the hub repo (``repo``, its ``hub.json`` name) and the checkout it read (``root``, a worktree
+    that may be removed later), its branch, the ``base`` it was compared with and the commit it
+    forked from (``base_sha``), the last commit read (``head_sha``) and the branch's pull request
+    once one is found. With these the review reads the branch's commits from the repo's own
+    checkout once the worktree is gone."""
+
+    repo: str | None = None
+    label: str
+    root: str
+    branch: str | None = None
+    base: str | None = None
+    base_sha: str | None = None
+    head_sha: str | None = None
+    pr_number: int | None = None
+    pr_url: str | None = None
+
+
 class AgentSession(ViewModel):
     """One session ``hub web`` started (or one cloud start, ``kind="cloud"``).
 
@@ -128,6 +149,7 @@ class AgentSession(ViewModel):
     last_prompt: str | None = Field(default=None, max_length=MAX_SNIPPET_CHARS)
     last_reply: str | None = Field(default=None, max_length=MAX_SNIPPET_CHARS)
     changed_files: tuple[ChangedFile, ...] = Field(default=(), max_length=MAX_CHANGED_FILES)
+    review_targets: tuple[ReviewTarget, ...] = Field(default=(), max_length=MAX_REVIEW_TARGETS)
     open_permission: OpenPermission | None = None
     observed_session_id: str | None = None
 
