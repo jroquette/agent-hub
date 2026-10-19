@@ -331,7 +331,7 @@ describe("TicketsTab", () => {
     expect(within(rowOf(withPr.ref)).getAllByRole("cell").at(-1)).toContainElement(link);
   });
 
-  it("shows the title's scope in its own column, apart from the words (tickets)", () => {
+  it("shows the title's words without its conventional prefix, and no Scope column (tickets)", () => {
     const data = aFeatureTickets();
     show({
       ...data,
@@ -340,9 +340,9 @@ describe("TicketsTab", () => {
       ),
     });
 
+    expect(screen.queryByRole("columnheader", { name: "Scope" })).not.toBeInTheDocument();
     const cells = within(rowOf("AGH-201")).getAllByRole("cell");
-    expect(nth(cells, 1)).toHaveTextContent(/^brand-api$/);
-    expect(nth(cells, 2)).toHaveTextContent(/^add the bank details$/);
+    expect(nth(cells, 1)).toHaveTextContent(/^add the bank details$/);
   });
 
   it("links the sessions that worked on each ticket, asked by its issue (sessions)", async () => {

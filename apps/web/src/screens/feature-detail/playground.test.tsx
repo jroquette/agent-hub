@@ -250,14 +250,12 @@ describe("the tickets table", () => {
     const width = (name: string) => within(table).getByRole("columnheader", { name }).style.width;
     expect({
       Ticket: width("Ticket"),
-      Scope: width("Scope"),
       Status: width("Status"),
       ACs: width("ACs"),
       Sessions: width("Sessions"),
       Readiness: width("Readiness"),
     }).toEqual({
       Ticket: "110px",
-      Scope: "90px",
       Status: "110px",
       ACs: "150px",
       Sessions: "150px",
