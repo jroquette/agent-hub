@@ -254,7 +254,7 @@ LAUNCHERS = ("hub", "agent")
 WRITE_TARGET = re.compile(r">>?\s*([^\s;&|<>()`]+)")
 WRITE_ARGS = re.compile(r"\b(?:tee|sed\s+(?:-\w*i\w*|--in-place)|rm|mv|cp|truncate|ln)\b(.*)")
 HUB_PREFIX = "@hub"
-# AGH-277: a `hub env` verb that writes hub.json or hub.local.json, behind any launcher path or
+# A `hub env` verb that writes hub.json or hub.local.json, behind any launcher path or
 # quote (`./hub`, `'hub'`, a tool runner's `--from x hub`). Each part of the pattern is a fixed
 # word or one run of blanks, so a search stays linear in the command's length.
 ENV_COMMAND = re.compile(
