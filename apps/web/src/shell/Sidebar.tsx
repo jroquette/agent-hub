@@ -8,6 +8,8 @@ import { useScope } from "../lib/scope";
 export interface SidebarCounts {
   live?: number | undefined;
   learnings?: number | undefined;
+  /** Features that need you (a session waits on you, NO-SHIP, owner steps, a broken record). */
+  features?: number | undefined;
   health?: number | undefined;
 }
 
@@ -95,7 +97,15 @@ export const NAV: readonly NavGroup[] = [
       },
       { id: "runs", label: "Workflow runs", to: "/runs", icon: "route" },
       { id: "workflows", label: "Workflows", to: "/workflows", icon: "workflow" },
-      { id: "features", label: "Features", to: "/features", icon: "list-checks" },
+      {
+        id: "features",
+        label: "Features",
+        to: "/features",
+        icon: "list-checks",
+        countKey: "features",
+        countNoun: () => "need you",
+        tone: "waiting",
+      },
     ],
   },
   {
