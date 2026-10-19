@@ -86,6 +86,20 @@ async def test_queries_plain_text_when_no_image(tmp_path: Path) -> None:
     assert await _sent(tmp_path, "Say hello.", ()) == ["Say hello."]
 
 
+async def test_queries_agent_mention_when_text_starts_with_agent_command(
+    tmp_path: Path,
+) -> None:
+    sent = await _sent(tmp_path, "/agent-research find the flaky test", ())
+
+    assert sent == ["@agent-research find the flaky test"]
+
+
+async def test_queries_text_as_is_when_agent_command_is_not_leading(tmp_path: Path) -> None:
+    text = "ask /agent-research later; /agent-"
+
+    assert await _sent(tmp_path, text, ()) == [text]
+
+
 async def test_queries_image_then_text_when_image_given(tmp_path: Path) -> None:
     png = a_png_bytes()
     image = DriverImage(media_type="image/png", data=png)

@@ -91,6 +91,20 @@ def test_maps_init_once_when_cli_repeats_it_each_turn() -> None:
     assert again == []
 
 
+def test_maps_init_agents_when_cli_lists_them() -> None:
+    message = _init()
+    message.data["agents"] = ["general-purpose", "research"]
+
+    [event] = EventMapper().to_events(message)
+
+    assert event == InitEvent(
+        session_id=SESSION,
+        model="claude-stub-model",
+        slash_commands=("review",),
+        agents=("general-purpose", "research"),
+    )
+
+
 def test_numbers_deltas_and_blocks_when_text_streams() -> None:
     mapper = EventMapper()
 

@@ -1011,11 +1011,15 @@ function withoutEcho(sending: SendingView[], seq: number, text: string): Sending
 export const MAX_COMMANDS = 200;
 export const MAX_COMMAND_CHARS = 100;
 
-/** The init record's slash commands then skills: strings of at most 100 characters, each once
- * as `/name`, the first 200. Anything else is dropped silently (the menu reads "No commands"). */
+/** The init record's slash commands, skills, then subagents: strings of at most 100 characters,
+ * each once as `/name` (a subagent as `/agent-name`, which the session sends to Claude as
+ * `@agent-name`), the first 200. Anything else is dropped silently (the menu reads "No commands"). */
 function commandsOf(body: JsonObject): string[] {
   const names = new Set<string>();
-  for (const item of [...arr(body.slash_commands), ...arr(body.skills)]) {
+  const agents = arr(body.agents).map((agent) =>
+    typeof agent === "string" ? `agent-${agent}` : agent,
+  );
+  for (const item of [...arr(body.slash_commands), ...arr(body.skills), ...agents]) {
     if (names.size >= MAX_COMMANDS) break;
     if (typeof item !== "string" || item.length > MAX_COMMAND_CHARS) continue;
     const name = item.replace(/^\//, "");
