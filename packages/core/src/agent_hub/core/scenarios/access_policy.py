@@ -11,7 +11,10 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from agent_hub.core.hub_config.effective_environments import SourcedEnvironment
+from agent_hub.core.hub_config.effective_environments import (
+    EffectiveEnvironments,
+    SourcedEnvironment,
+)
 from agent_hub.core.hub_config.environments import Access
 
 Effect = Literal["read", "write", "destroy"]
@@ -61,3 +64,11 @@ def decide(
     if decision == "allow" and effect != "read" and origin == "agent":
         return PolicyDecision(decision="ask", reason_kind="agent_origin")
     return PolicyDecision(decision=decision, reason_kind="table")
+
+
+def find_environment(view: EffectiveEnvironments, name: str) -> SourcedEnvironment | None:
+    """The effective environment ``name`` (its access as ``hub.local.json`` tightened it), or
+    ``None`` when neither file declares it."""
+    return next(
+        (environment for environment in view.environments if environment.name == name), None
+    )

@@ -3,8 +3,22 @@ from typing import Final
 
 import pytest
 
-from agent_hub.core.hub_config.effective_environments import SourcedEnvironment
-from agent_hub.core.scenarios.access_policy import Effect, Origin, PolicyDecision, decide
+from agent_hub.core.hub_config.effective_environments import (
+    EffectiveEnvironments,
+    SourcedEnvironment,
+    effective_environments,
+)
+from agent_hub.core.hub_config.environments import Access
+from agent_hub.core.hub_config.local_config import LocalConfig
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.scenarios.access_policy import (
+    Effect,
+    Origin,
+    PolicyDecision,
+    decide,
+    find_environment,
+)
+from agent_hub.core.testing.builders import an_environments_document
 
 EFFECTS: Final[tuple[Effect, ...]] = ("read", "write", "destroy")
 ORIGINS: Final[tuple[Origin, ...]] = ("author", "human", "agent")
@@ -82,3 +96,58 @@ def test_denies_when_access_policy_draft(environment: str, effect: Effect, origi
     decision = decide(an_environment(environment), effect, origin, draft=True)
 
     assert decision == PolicyDecision(decision="deny", reason_kind="draft")
+
+
+ACCESSES: Final[tuple[Access, ...]] = ("read", "ask", "write")
+LOOSENESS: Final = {"deny": 0, "ask": 1, "allow": 2}
+
+
+def effective(
+    access: Access, *, production: bool = False, local_access: Access | None = None
+) -> EffectiveEnvironments:
+    document = an_environments_document()
+    document["environments"]["staging"] = {"access": access, "production": production}
+    local = {"environments": {"staging": {"access": local_access}}} if local_access else {}
+    return effective_environments(
+        HubConfig.model_validate(document), LocalConfig.model_validate(local)
+    )
+
+
+@pytest.mark.parametrize("committed", ["ask", "write"])
+def test_uses_tightened_access_when_access_policy_effective_local_tightens(
+    committed: Access,
+) -> None:
+    # AC-350.2: hub.local.json tightens staging to read; a write is then denied.
+    view = effective(committed, local_access="read")
+
+    decision = decide(find_environment(view, "staging"), "write", "author")
+
+    assert decision == PolicyDecision(decision="deny", reason_kind="table")
+    assert find_environment(view, "qa") is None
+
+
+def test_never_looser_when_access_policy_effective_local_given() -> None:
+    # AC-350.2: no local access, tighter or not, gives a looser decision than hub.json alone.
+    for committed, local_access, production, effect, origin in itertools.product(
+        ACCESSES, ACCESSES, (False, True), EFFECTS, ORIGINS
+    ):
+        alone = decide(
+            find_environment(effective(committed, production=production), "staging"),
+            effect,
+            origin,
+        )
+        layered = decide(
+            find_environment(
+                effective(committed, production=production, local_access=local_access),
+                "staging",
+            ),
+            effect,
+            origin,
+        )
+        assert LOOSENESS[layered.decision] <= LOOSENESS[alone.decision], (
+            committed,
+            local_access,
+            production,
+            effect,
+            origin,
+        )
