@@ -118,27 +118,81 @@ def test_refuses_command_when_variable_left_after_rewrite(command: str) -> None:
     assert '"PreToolUse"' in str(raised.value)
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        "python3 $CLAUDE_PROJECT_DIR/plugin/x.py",
-        "python3 '$CLAUDE_PROJECT_DIR/plugin/x.py'",
-        'python3 "x"$CLAUDE_PROJECT_DIR/plugin/x.py',
-        'python3 "\\$CLAUDE_PROJECT_DIR/plugin/x.py"',
-        'python3 "$(echo "$CLAUDE_PROJECT_DIR/plugin/x.py")"',
-    ],
-    ids=["unquoted", "single-quoted", "after-closing-quote", "escaped", "nested-quotes"],
-)
-def test_refuses_command_when_variable_not_double_quoted(command: str) -> None:
-    with pytest.raises(HookCommandError, match="double quotes"):
+ONLY_PLAIN_WORDS = 'must use only "$CLAUDE_PROJECT_DIR/<path>" and plain words'
+# Every form a shell could read as an expansion of the variable outside one plain
+# double-quoted word, or that hides one from a simple reader (spec AM-1).
+REFUSED_COMMANDS = {
+    "unquoted": "python3 $CLAUDE_PROJECT_DIR/plugin/x.py",
+    "single-quoted": "python3 '$CLAUDE_PROJECT_DIR/plugin/x.py'",
+    "after-closing-quote": 'python3 "x"$CLAUDE_PROJECT_DIR/plugin/x.py',
+    "escaped": 'python3 "\\$CLAUDE_PROJECT_DIR/plugin/x.py"',
+    "nested-quotes": 'python3 "$(echo "$CLAUDE_PROJECT_DIR/plugin/x.py")"',
+    "ansi-c": "echo $'\\'\"' $CLAUDE_PROJECT_DIR/x '\"'",
+    "command-substitution": 'python3 "$(echo $CLAUDE_PROJECT_DIR/x)"',
+    "backticks": 'python3 "`echo $CLAUDE_PROJECT_DIR/x`"',
+    "default-expansion": 'python3 "${x:-$CLAUDE_PROJECT_DIR/y}"',
+    "pid-prefix": 'python3 "$$CLAUDE_PROJECT_DIR/x"',
+    "comment": 'python3 "$CLAUDE_PROJECT_DIR/x.py" # say "hi"',
+    "heredoc": 'python3 "$CLAUDE_PROJECT_DIR/x.py" <<EOF\nsay "hi"\nEOF',
+    "odd-quotes": 'python3 "$CLAUDE_PROJECT_DIR/x.py" "',
+    "glued-word": 'python3 a"$CLAUDE_PROJECT_DIR/x.py"',
+    "other-variable": 'python3 "$CLAUDE_PROJECT_DIR/x.py" $HOME',
+}
+
+
+@pytest.mark.parametrize("command", REFUSED_COMMANDS.values(), ids=REFUSED_COMMANDS.keys())
+def test_refuses_command_when_not_only_plain_words(command: str) -> None:
+    with pytest.raises(HookCommandError) as raised:
         hooks_settings(with_guard_command(command), effort="low", hub=HUB)
+
+    message = str(raised.value)
+    assert ONLY_PLAIN_WORDS in message
+    assert '"PreToolUse"' in message
+    assert "\n" not in message
+
+
+# The shape of every command a synced hub's settings hold today.
+HUB_HOOK_SCRIPTS = (
+    "event_sensor.py",
+    "post_edit.py",
+    "pre_compact.py",
+    "guard.py",
+    "session_end.py",
+    "session_start.py",
+    "stop_gate.py",
+    "readonly_gate.py",
+)
+
+
+@pytest.mark.parametrize("script", HUB_HOOK_SCRIPTS)
+def test_rewrites_command_when_hub_hook_shape(script: str) -> None:
+    command = f'python3 "$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks/{script}"'
+
+    content, scripts = hooks_settings(with_guard_command(command), effort="low", hub=HUB)
+
+    hooks = json.loads(content)["hooks"]
+    built = hooks["PreToolUse"][0]["hooks"][0]["command"]
+    assert built == f'python3 "{HUB}/plugin/hub-workflow/hooks/{script}"'
+    assert f"plugin/hub-workflow/hooks/{script}" in scripts
+
+
+def test_caps_event_name_when_command_refused() -> None:
+    event = "E" * 300
+    source = a_hub_settings_document()
+    source["hooks"] = {event: [{"hooks": [{"type": "command", "command": "echo $X"}]}]}
+
+    with pytest.raises(HookCommandError) as raised:
+        hooks_settings(source, effort="low", hub=HUB)
+
+    assert "E" * 120 in str(raised.value)
+    assert "E" * 121 not in str(raised.value)
 
 
 @pytest.mark.parametrize("hub", ["/w/c;touch PWNED;", "/w/c\nid", "/w/c'x"])
 def test_refuses_command_when_hub_path_would_run_as_shell(hub: str) -> None:
     source = with_guard_command("python3 $CLAUDE_PROJECT_DIR/plugin/x.py")
 
-    with pytest.raises(HookCommandError, match="double quotes"):
+    with pytest.raises(HookCommandError, match="plain words"):
         hooks_settings(source, effort="low", hub=hub)
 
 
