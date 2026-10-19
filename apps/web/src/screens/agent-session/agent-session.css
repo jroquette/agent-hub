@@ -2528,3 +2528,27 @@ button.as-bg-head {
 .as-workdir-label {
   overflow-wrap: anywhere;
 }
+.as-transcript-footer {
+  padding-bottom: var(--space-3);
+}
+.as-bg-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: auto;
+  max-width: 420px;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: left;
+  cursor: pointer;
+}
+.as-bg-card:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+.as-bg-card:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

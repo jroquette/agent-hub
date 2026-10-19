@@ -818,6 +818,12 @@ function applyTask(state: TranscriptState, record: LogRecord): TranscriptState {
   return { ...state, tasks: { ...state.tasks, [id]: task } };
 }
 
+/** When the last message the owner sent was written; null before any. */
+export function lastMessageAt(state: TranscriptState): string | null {
+  const user = state.entries.findLast((entry) => entry.kind === "user" && !entry.queued);
+  return user?.kind === "user" ? user.at : null;
+}
+
 /** The tasks still running, oldest first. */
 export function runningTasks(state: TranscriptState): TaskView[] {
   return Object.values(state.tasks).filter((task) => task.status === "running");

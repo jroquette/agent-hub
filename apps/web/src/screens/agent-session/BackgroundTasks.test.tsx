@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { aLogRecord } from "../../testing/builders";
-import { BackgroundChip, BackgroundPanel } from "./BackgroundTasks";
+import { BackgroundCard, BackgroundChip, BackgroundPanel } from "./BackgroundTasks";
 import { backgroundTasks } from "./liveActivity";
 import { initialTranscript, reduceTranscript, type StreamItem } from "./model";
 
@@ -114,5 +114,38 @@ describe("BackgroundPanel stop", () => {
   it("offers no stop without a way to stop", () => {
     render(<BackgroundPanel tasks={tasks()} onClose={vi.fn()} />);
     expect(screen.queryByRole("button", { name: /^Stop / })).toBeNull();
+  });
+});
+
+describe("BackgroundCard", () => {
+  it("says what ended since the last message and what runs, and opens the drawer", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const list = tasks();
+    const since = list.done[1]?.task.endedAt ?? null;
+    render(<BackgroundCard tasks={list} since={since} onOpen={onOpen} />);
+
+    await user.click(screen.getByRole("button", { name: "2 background tasks done, 2 running" }));
+    expect(onOpen).toHaveBeenCalled();
+  });
+
+  it("names commands as commands and hides once nothing is news", () => {
+    const list = tasks();
+    const commands = { running: list.running.slice(1), done: [] };
+    const { rerender, container } = render(
+      <BackgroundCard tasks={commands} since={null} onOpen={vi.fn()} />,
+    );
+    expect(
+      screen.getByRole("button", { name: "1 background command running" }),
+    ).toBeInTheDocument();
+
+    rerender(
+      <BackgroundCard
+        tasks={{ running: [], done: list.done }}
+        since="2999-01-01T00:00:00Z"
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
   });
 });

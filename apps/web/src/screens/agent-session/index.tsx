@@ -20,7 +20,7 @@ import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
 import { backgroundTasks, liveActivity, turnSteps } from "./liveActivity";
-import { BackgroundChip, BackgroundPanel } from "./BackgroundTasks";
+import { BackgroundCard, BackgroundChip, BackgroundPanel } from "./BackgroundTasks";
 import { LiveActivityBar, StepsPanel, StepsToggle } from "./LiveActivityBar";
 import { readStored, writeStored } from "../../lib/storage";
 import { CostMeter } from "./CostMeter";
@@ -42,6 +42,7 @@ import {
   changedFiles,
   modeLabel,
   pendingPermissions,
+  lastMessageAt,
   resumable,
   runningTasks,
   type TranscriptState,
@@ -437,6 +438,15 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           files={files}
           reviewed={review.reviewed}
           onOpenFile={openFile}
+          footer={
+            <BackgroundCard
+              tasks={tasks}
+              since={lastMessageAt(state)}
+              onOpen={() => {
+                setBackground(true);
+              }}
+            />
+          }
           sidePanel={
             backgroundOpen ? (
               <BackgroundPanel
