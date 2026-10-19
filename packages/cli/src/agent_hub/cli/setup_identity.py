@@ -54,6 +54,8 @@ from agent_hub.core.workspace.setup_checklist import (
 
 # An answer is read up to this many bytes; one that fills them without ending is no ``y``.
 ANSWER_LIMIT: Final = 64
+# Reads made to skip the rest of a cut answer's line: a terminal line is bounded anyway.
+_DRAIN_READS: Final = 1024
 _YES: Final = frozenset({"y", "yes"})
 _NO_VALUES: Final = IdentityValues(branch_prefix=None, author_name=None, author_email=None)
 _GIT_KEYS: Final = (IdentityKey.AUTHOR_NAME, IdentityKey.AUTHOR_EMAIL)
@@ -185,9 +187,20 @@ def _write_item(
 def _is_yes(answer: bytes) -> bool:
     """Whether the answer read is ``y`` or ``yes`` (any case, spaces around).
 
-    An answer that fills ``ANSWER_LIMIT`` bytes without a newline was cut: it is no ``y``.
-    Bytes that are not UTF-8 are replaced, so they never match and never raise.
+    An answer that fills ``ANSWER_LIMIT`` bytes without a newline was cut: it is no ``y``, and
+    the rest of its line is skipped, so it never answers the next question. Bytes that are not
+    UTF-8 are replaced, so they never match and never raise.
     """
     if len(answer) >= ANSWER_LIMIT and not answer.endswith(b"\n"):
+        skip_line()
         return False
     return answer.decode("utf-8", errors="replace").strip().lower() in _YES
+
+
+def skip_line() -> None:
+    """Skip the rest of a stdin line cut at ``ANSWER_LIMIT``, so it is not read as the next
+    answer; the end of input ends it too."""
+    for _ in range(_DRAIN_READS):
+        rest = sys.stdin.buffer.readline(ANSWER_LIMIT)
+        if not rest or rest.endswith(b"\n"):
+            return
