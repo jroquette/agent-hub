@@ -1,4 +1,4 @@
-# 0041. No limit on live sessions in the playground's conductor
+# 0042. No limit on live sessions in the playground's conductor
 
 - Status: proposed
 - Date: 2026-10-19

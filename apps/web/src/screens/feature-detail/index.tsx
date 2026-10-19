@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -43,6 +43,7 @@ export { acReference, allCommands } from "./CriteriaTab";
 type TicketRow = components["schemas"]["TicketRow"];
 
 type RecordName = components["schemas"]["FeatureRecordName"];
+type PlanView = components["schemas"]["PlanView"];
 
 /** The record tabs read from `brain/features/<slug>/<name>.md` (D3), in golden-path order. */
 const RECORDS: Readonly<
@@ -165,6 +166,7 @@ function RecordTab({
           Open in Brain
         </Link>
       </div>
+      {meta.name === "plan" && detail.plan && <PlanVersionLine plan={detail.plan} />}
       <ApproveRecord
         project={detail.project}
         slug={detail.slug}
@@ -192,6 +194,41 @@ function RecordTab({
         )}
       </ApproveRecord>
     </div>
+  );
+}
+
+/**
+ * The plan's version (AC-1.4): v1 plus one per amendment, each amendment a link to the section it
+ * is in, in the record as the agents wrote it; the reason when the version could not be read.
+ */
+function PlanVersionLine({ plan }: { plan: PlanView }) {
+  const [params] = useSearchParams();
+  if (plan.version == null) {
+    return (
+      <p className="ah-small ah-muted" style={{ margin: 0 }}>
+        {plan.problem}
+      </p>
+    );
+  }
+  const agent = new URLSearchParams(params);
+  agent.set("view", "agent");
+  const amendments = plan.amendments;
+  return (
+    <p className="ah-small" style={{ margin: 0 }}>
+      Plan v{String(plan.version)} · {amendments.length === 0 ? "no amendments" : "amendments "}
+      {amendments.map((a, i) => (
+        <Fragment key={a.id}>
+          {i > 0 && ", "}
+          <Link
+            to={{ search: `?${agent.toString()}`, hash: `#${encodeURIComponent(a.anchor)}` }}
+            replace
+            title={`${a.id} (${a.date}, ${a.who}): ${a.title}`}
+          >
+            {a.id}
+          </Link>
+        </Fragment>
+      ))}
+    </p>
   );
 }
 
@@ -484,7 +521,7 @@ export function FeatureDetailScreen() {
             <StatusBadge
               status={VERDICT_STATUS[detail.verdict]}
               label={detail.verdict}
-              title="Verdict from eval.md"
+              title="Verdict of the latest whole-feature eval"
             />
           )}
           {detail.size && <span className="ah-fm-chip">{detail.size}</span>}

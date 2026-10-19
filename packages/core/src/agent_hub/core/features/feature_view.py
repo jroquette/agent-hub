@@ -120,9 +120,41 @@ class FeatureRecord(ViewModel):
     present: bool
 
 
+class AmendmentView(ViewModel):
+    """One ``A<n> (<date>, <who>): <title>`` entry of the plan's ``## Amendments``; ``anchor`` is
+    the text of that ``## Amendments…`` heading, which the Plan record view links to."""
+
+    id: str
+    date: str
+    who: str
+    title: str
+    anchor: str
+
+
+class PlanView(ViewModel):
+    """The plan's version (AC-1.4): ``v<amendments + 1>``. ``version`` is None and ``problem``
+    says why when ``plan.md`` could not be read (larger than its cap)."""
+
+    version: int | None = Field(ge=1)
+    amendments: tuple[AmendmentView, ...] = ()
+    problem: str | None = None
+
+
+class AcceptanceEval(ViewModel):
+    """The feature's acceptance eval (AC-1.6): the latest whole-feature eval (``acs: all``, or a
+    legacy ``eval.md`` with no scope), by its ``delivery`` (``legacy`` for ``eval.md``)."""
+
+    delivery: str
+    verdict: Verdict
+
+
 class FeatureDetail(FeatureView):
-    """A feature with its acceptance criteria rows, its records (D3) and every eval."""
+    """A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``
+    (None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is
+    the header's ``verdict``."""
 
     ac_rows: tuple[AcRow, ...] = ()
     records: tuple[FeatureRecord, ...] = ()
     evals: tuple[EvalRecord, ...] = ()
+    plan: PlanView | None = None
+    acceptance_eval: AcceptanceEval | None = None

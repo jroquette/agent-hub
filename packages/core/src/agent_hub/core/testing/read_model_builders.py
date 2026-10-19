@@ -17,11 +17,14 @@ from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.approvals.approval import Approval, ApprovalKind
 from agent_hub.core.brain.brain_note import BrainEntry, BrainNote, BrainTree
 from agent_hub.core.features.feature_view import (
+    AcceptanceEval,
     AcCounts,
+    AmendmentView,
     EvalRecord,
     FeatureView,
     GoldenPath,
     GoldenStep,
+    PlanView,
 )
 from agent_hub.core.features.ticket_view import (
     FeatureTickets,
@@ -501,6 +504,30 @@ def a_feature_tickets(**overrides: object) -> FeatureTickets:
         "sources_missing": ("github",),
     }
     return FeatureTickets.model_validate(fields | overrides)
+
+
+def a_plan_view(**overrides: object) -> PlanView:
+    """The synthetic feature's plan at v2: one amendment under ``## Amendments``."""
+    fields: dict[str, object] = {
+        "version": 2,
+        "amendments": (
+            AmendmentView(
+                id="A1",
+                date="2026-10-20",
+                who="Ana",
+                title="Split the ticket in two.",
+                anchor="Amendments",
+            ),
+        ),
+        "problem": None,
+    }
+    return PlanView.model_validate(fields | overrides)
+
+
+def an_acceptance_eval(**overrides: object) -> AcceptanceEval:
+    """The synthetic feature's whole-feature eval, ``evals/feature.md``: SHIP."""
+    fields: dict[str, object] = {"delivery": "feature", "verdict": "SHIP"}
+    return AcceptanceEval.model_validate(fields | overrides)
 
 
 def an_eval_record(**overrides: object) -> EvalRecord:

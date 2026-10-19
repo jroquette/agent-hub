@@ -507,3 +507,92 @@ def test_clips_verdict_line_to_200_chars_when_line_long() -> None:
     assert view.verdict_line is not None
     assert len(view.verdict_line) == 200
     assert view.verdict_line == line.decode()[:200]
+
+
+def an_eval_head(name: str, *, verdict: str, scope: str) -> RecordHead:
+    delivery = name.removesuffix(".md")
+    text = f"---\ntype: eval\ndelivery: {delivery}\nverdict: {verdict}\n{scope}\n---\n# Eval\n"
+    return RecordHead(name=name, head=text.encode(), problem=None)
+
+
+PLAN_V2 = b"# Plan\n\n## Amendments\n\n- A1 (2026-10-20, Ana): Split the ticket.\n"
+
+
+# two-level-flows AC-1.6 (AGH-323): the header verdict is the acceptance eval's, none before one.
+def test_header_verdict_comes_from_the_acceptance_eval_when_evals_read() -> None:
+    ticket = an_eval_head("dem-7.md", verdict="NO-SHIP", scope="tickets: [DEM-7]")
+    whole = an_eval_head("feature.md", verdict="SHIP-WITH-OWNER-STEPS", scope="acs: all")
+    only_tickets = FeatureFolder(
+        slug="demo-feature", files=("features.json",), features_json=a_record(), evals=(ticket,)
+    )
+    with_whole = FeatureFolder(
+        slug="demo-feature",
+        files=("features.json",),
+        features_json=a_record(),
+        evals=(ticket, whole),
+    )
+
+    before = feature_detail(only_tickets, project="demo")
+    after = feature_detail(with_whole, project="demo")
+
+    assert (before.verdict, before.verdict_line, before.acceptance_eval) == (None, None, None)
+    assert after.verdict == "SHIP-WITH-OWNER-STEPS"
+    assert after.verdict_line == "Verdict: SHIP-WITH-OWNER-STEPS, from the feature eval"
+    assert feature_view(with_whole, project="demo").verdict == "SHIP-WITH-OWNER-STEPS"
+
+
+# two-level-flows AC-1.4, AC-1.6 (AGH-323).
+def test_detail_serves_plan_version_and_acceptance_eval_when_records_present() -> None:
+    folder = FeatureFolder(
+        slug="demo-feature",
+        files=("plan.md", "features.json"),
+        features_json=a_record(),
+        plan=PLAN_V2,
+        evals=(an_eval_head("feature.md", verdict="SHIP", scope="acs: all"),),
+    )
+
+    detail = feature_detail(folder, project="demo")
+
+    assert detail.plan is not None
+    assert detail.plan.version == 2
+    assert detail.plan.problem is None
+    assert [a.model_dump() for a in detail.plan.amendments] == [
+        {
+            "id": "A1",
+            "date": "2026-10-20",
+            "who": "Ana",
+            "title": "Split the ticket.",
+            "anchor": "Amendments",
+        }
+    ]
+    assert detail.acceptance_eval is not None
+    assert (detail.acceptance_eval.delivery, detail.acceptance_eval.verdict) == ("feature", "SHIP")
+
+
+def test_detail_has_no_plan_when_plan_absent() -> None:
+    detail = feature_detail(a_complete_folder(), project="demo")
+
+    assert detail.plan is None
+    assert detail.acceptance_eval is not None
+    assert detail.acceptance_eval.delivery == "legacy"
+
+
+# two-level-flows P1 (AGH-323): a plan over the cap is a record problem, not a page failure.
+def test_plan_too_large_is_a_record_problem_when_over_cap() -> None:
+    folder = FeatureFolder(
+        slug="demo-feature",
+        files=("spec.md", "plan.md", "features.json"),
+        features_json=a_record(),
+        spec_head=SPEC,
+        plan_too_large=True,
+    )
+
+    detail = feature_detail(folder, project="demo")
+
+    assert detail.plan is not None
+    assert detail.plan.version is None
+    assert detail.plan.amendments == ()
+    assert detail.plan.problem == "plan.md is larger than 256 KiB; its version could not be read."
+    assert detail.problem is None
+    assert detail.size == "bounded"
+    assert detail.acs is not None
