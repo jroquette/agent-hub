@@ -14,6 +14,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
     ChangedFile,
     EndReason,
+    ReviewTarget,
 )
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, StoreSequenceError
 from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
@@ -168,6 +169,29 @@ class AgentSessionStoreContract:
             f"the digest reads back in order: {updated}",
         )
         _check(agent_session_store.list()[0].changed_files == files, "the list shows it too")
+
+    def test_keeps_review_targets_when_updated(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST))
+        targets = (
+            ReviewTarget(
+                repo="api",
+                label="api/tip-1",
+                root="/hubs/api/.claude/worktrees/tip-1",
+                branch="tip-1",
+                base="origin/main",
+                base_sha="a" * 40,
+                head_sha="b" * 40,
+                pr_number=7,
+                pr_url="https://github.com/acme/api/pull/7",
+            ),
+        )
+
+        updated = agent_session_store.update(FIRST, review_targets=targets)
+
+        _check(updated == agent_session_store.get(FIRST), "update answers the stored session")
+        _check(updated.review_targets == targets, f"the targets read back: {updated}")
 
     def test_starts_with_empty_digest_when_created(
         self, agent_session_store: AgentSessionStore

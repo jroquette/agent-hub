@@ -4,12 +4,13 @@ from collections.abc import Callable, Sequence
 
 import pytest
 
-from agent_hub.core.agent_sessions.agent_session import AgentSession, ChangedFile
+from agent_hub.core.agent_sessions.agent_session import AgentSession, ChangedFile, ReviewTarget
 from agent_hub.core.agent_sessions.repo_changes import (
     MAX_REPOS,
     RepoChanges,
     RepoChangesError,
     RepoCommitDiff,
+    RepoPullRequest,
     relative_to_root,
     repo_roots,
 )
@@ -139,15 +140,57 @@ def test_a_worktree_is_named_by_its_whole_path(mention: str) -> None:
 
 
 class _Reader:
-    def __init__(self, failing: frozenset[str] = frozenset()) -> None:
+    def __init__(
+        self,
+        failing: frozenset[str] = frozenset(),
+        pull: RepoPullRequest | None = None,
+    ) -> None:
         self.read_roots: list[str] = []
+        self.recorded: list[tuple[str, str, str]] = []
+        self.pr_asks = 0
         self._failing = failing
+        self._pull = pull
 
     def read(self, root: str, *, label: str) -> RepoChanges:
         self.read_roots.append(root)
         if root in self._failing:
             raise RepoChangesError(label)
-        return RepoChanges(root=root, label=label, branch="tip-1", base="origin/main")
+        return RepoChanges(
+            root=root,
+            label=label,
+            branch="tip-1",
+            base="origin/main",
+            base_sha="f" * 40,
+            head_sha="e" * 40,
+        )
+
+    def read_recorded(  # noqa: PLR0913 -- the port's signature
+        self,
+        repo_root: str,
+        *,
+        label: str,
+        root: str,
+        branch: str | None,
+        base: str | None,
+        base_sha: str,
+        head_sha: str,
+    ) -> RepoChanges:
+        self.recorded.append((repo_root, root, head_sha))
+        if repo_root in self._failing:
+            raise RepoChangesError(label)
+        return RepoChanges(
+            root=root,
+            label=label,
+            branch=branch,
+            base=base,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            source="recorded",
+        )
+
+    def pull_request(self, root: str, *, branch: str) -> RepoPullRequest | None:
+        self.pr_asks += 1
+        return self._pull
 
     def commit_diff(self, root: str, *, sha: str, paths: Sequence[str]) -> RepoCommitDiff:
         self.read_roots.append(root)
@@ -217,6 +260,94 @@ async def test_repo_changes_reads_the_worktree_the_session_s_calls_worked_in(
 
     assert reader.read_roots == [WORKTREE_PATH]
     assert [repo.label for repo in changes.repos] == ["api/tip-1"]
+
+
+PULL = RepoPullRequest(
+    number=7, url="https://github.com/acme/api/pull/7", state="OPEN", head_sha="e" * 40
+)
+
+
+async def test_what_the_review_read_is_recorded_on_the_session_with_its_pull_request(
+    make_rig: MakeRig,
+) -> None:
+    reader = _Reader(pull=PULL)
+    rig, session = await _ended_session_with_files(make_rig, reader, f"{WORKTREE_PATH}/a.py")
+
+    changes = await rig.control.repo_changes(session.id)
+
+    assert [repo.pull_request for repo in changes.repos] == [PULL]
+    assert rig.store.get(session.id).review_targets == (
+        ReviewTarget(
+            repo="api",
+            label="api/tip-1",
+            root=WORKTREE_PATH,
+            branch="tip-1",
+            base="origin/main",
+            base_sha="f" * 40,
+            head_sha="e" * 40,
+            pr_number=7,
+            pr_url=PULL.url,
+        ),
+    )
+
+
+async def test_github_is_asked_for_a_branch_s_pull_request_at_most_once_a_minute(
+    make_rig: MakeRig,
+) -> None:
+    reader = _Reader(pull=PULL)
+    rig, session = await _ended_session_with_files(make_rig, reader, f"{WORKTREE_PATH}/a.py")
+
+    await rig.control.repo_changes(session.id)
+    await rig.control.repo_changes(session.id)
+
+    assert reader.pr_asks == 1
+
+
+async def test_a_removed_worktree_is_read_from_the_commits_it_recorded(make_rig: MakeRig) -> None:
+    reader = _Reader()
+    gone = "/hubs/api/.claude/worktrees/tip-0"
+    rig, session = await _ended_session_with_files(make_rig, reader, f"{HUB_PATH}/brain/x.md")
+    target = ReviewTarget(
+        repo="api",
+        label="api/tip-0",
+        root=gone,
+        branch="tip-0",
+        base="origin/main",
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        pr_number=3,
+        pr_url="https://github.com/acme/api/pull/3",
+    )
+    rig.store.update(session.id, review_targets=(target,))
+
+    changes = await rig.control.repo_changes(session.id)
+
+    assert reader.recorded == [(REPO_PATH, gone, "b" * 40)]
+    assert [(repo.label, repo.source) for repo in changes.repos] == [("api/tip-0", "recorded")]
+    # GitHub did not answer: the pull request the session recorded still shows.
+    assert changes.repos[0].pull_request == RepoPullRequest(
+        number=3, url="https://github.com/acme/api/pull/3", state="UNKNOWN"
+    )
+
+
+async def test_a_removed_worktree_is_left_out_when_the_session_works_on_its_repo_elsewhere(
+    make_rig: MakeRig,
+) -> None:
+    reader = _Reader()
+    rig, session = await _ended_session_with_files(make_rig, reader, f"{WORKTREE_PATH}/a.py")
+    old = ReviewTarget(
+        repo="api",
+        label="api/tip-0",
+        root="/hubs/api/.claude/worktrees/tip-0",
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+    )
+    rig.store.update(session.id, review_targets=(old,))
+
+    changes = await rig.control.repo_changes(session.id)
+
+    assert [repo.label for repo in changes.repos] == ["api/tip-1"]
+    assert reader.recorded == []
 
 
 async def test_a_repository_git_cannot_read_is_named_in_the_warnings(make_rig: MakeRig) -> None:

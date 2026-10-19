@@ -77,18 +77,39 @@ class RepoFileChange(ViewModel):
     uncommitted: bool = False
 
 
+type RepoSource = Literal["worktree", "recorded"]
+
+
+class RepoPullRequest(ViewModel):
+    """The branch's pull request on GitHub: its number, link, state (``OPEN``, ``MERGED``,
+    ``CLOSED``) and the commit it is at."""
+
+    number: int
+    url: str
+    state: str
+    head_sha: str | None = None
+
+
 class RepoChanges(ViewModel):
     """One repository's changes against its base. ``root`` is the folder git ran in, ``branch``
     its checked-out branch (null when detached), ``base`` the ref the branch is compared with
     (``origin/main``…, null when none was found: then nothing is compared and ``files`` is
-    empty), ``base_sha`` the commit the branch forked from. ``truncated`` says commits or files
-    were left out past the bounds."""
+    empty), ``base_sha`` the commit the branch forked from, ``head_sha`` the branch's last
+    commit. ``truncated`` says commits or files were left out past the bounds.
+
+    ``source`` is ``worktree`` when git read the checkout as it is now (uncommitted changes
+    included), ``recorded`` when that folder is gone and the review reads the commits it
+    recorded from the repo's own checkout (``root`` is still the old folder, so the paths match
+    the chat's). ``pull_request`` is the branch's pull request, when one is found."""
 
     root: str
     label: str
     branch: str | None = None
     base: str | None = None
     base_sha: str | None = None
+    head_sha: str | None = None
+    source: RepoSource = "worktree"
+    pull_request: RepoPullRequest | None = None
     commits: tuple[RepoCommit, ...] = ()
     files: tuple[RepoFileChange, ...] = ()
     truncated: bool = False
@@ -124,6 +145,28 @@ class RepoChangesReader(Protocol):
     def commit_diff(self, root: str, *, sha: str, paths: Sequence[str]) -> RepoCommitDiff:
         """What commit ``sha`` changed in ``paths`` (relative to ``root``: a file and the name it
         had before a rename); ``RepoChangesError`` when git cannot read it (no such commit)."""
+        ...
+
+    def read_recorded(
+        self,
+        repo_root: str,
+        *,
+        label: str,
+        root: str,
+        branch: str | None,
+        base: str | None,
+        base_sha: str,
+        head_sha: str,
+    ) -> RepoChanges:
+        """The commits ``base_sha..head_sha`` read in the repo checked out at ``repo_root`` (a
+        worktree's commits live in its repo), else ``base_sha..origin/<branch>``; the files named
+        under ``root``, the folder they were read in first. ``RepoChangesError`` when neither
+        is there any more."""
+        ...
+
+    def pull_request(self, root: str, *, branch: str) -> RepoPullRequest | None:
+        """The pull request of ``branch`` (the newest, open or not), None when there is none or
+        GitHub cannot be asked."""
         ...
 
 

@@ -43,7 +43,7 @@ import asyncio
 import contextlib
 import uuid
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import partial
@@ -53,6 +53,7 @@ from pydantic import JsonValue
 
 from agent_hub.core.agent_sessions import record_text, subscription
 from agent_hub.core.agent_sessions.agent_session import (
+    MAX_REVIEW_TARGETS,
     AgentSession,
     AgentSessionList,
     AgentSessionStatus,
@@ -62,6 +63,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     OpenPermission,
     PermissionDecision,
     ResumableList,
+    ReviewTarget,
     SendMessage,
     SessionSettings,
     WorkdirList,
@@ -125,9 +127,12 @@ from agent_hub.core.agent_sessions.records import (
     UserMessageBody,
 )
 from agent_hub.core.agent_sessions.repo_changes import (
+    MAX_REPOS,
+    RepoChanges,
     RepoChangesError,
     RepoChangesReader,
     RepoCommitDiff,
+    RepoPullRequest,
     SessionRepoChanges,
     relative_to_root,
     repo_roots,
@@ -147,7 +152,7 @@ from agent_hub.core.agent_sessions.session_state import (
     start_state,
 )
 from agent_hub.core.agent_sessions.store import AgentSessionFields, AgentSessionStore
-from agent_hub.core.agent_sessions.workdirs import WorkdirListing
+from agent_hub.core.agent_sessions.workdirs import ResolvedWorkdir, WorkdirListing
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.sessions.session import TokenUsage
 
@@ -163,6 +168,10 @@ DRAIN_SECONDS: Final = 1.0
 # Records the server writes while a session ends, and the driver's last ones: they use the
 # log's headroom (E12).
 _RESERVED_KINDS: Final = frozenset({"result", "exited"})
+# How long a branch's pull request, as GitHub named it, is reused before asking again.
+PR_CHECK_SECONDS: Final = 60
+
+
 # The tool calls ``repo_changes`` reads for the worktrees a session names, a page at a time.
 CALL_KINDS: Final[frozenset[RecordKind]] = frozenset({"tool.call"})
 MAX_CALLS_READ: Final = 5000
@@ -390,6 +399,8 @@ class AgentSessionControl:
         self._observed_sessions = observed_sessions
         self._session_title = session_title
         self._repo_changes = repo_changes
+        # Each branch's pull request as GitHub last named it, and when: (root, branch) -> ...
+        self._pull_requests: dict[tuple[str, str], tuple[datetime, RepoPullRequest | None]] = {}
         self._live: dict[str, LiveSession] = {}
         # Per CLI process: what its reported running cost adds to (see ``_session_cost``).
         self._cost_bases: weakref.WeakKeyDictionary[LiveSession, Decimal] = (
@@ -435,10 +446,12 @@ class AgentSessionControl:
         return (await self._with_twins([await self._session(agent_session_id)]))[0]
 
     async def repo_changes(self, agent_session_id: str) -> SessionRepoChanges:
-        """Each listed repo or worktree the session started in or changed a file in, as git
-        reads it against its base branch (``repo_changes``); empty without a reader, or when the
-        session's project or workdir is gone. A repository git cannot read is named in
-        ``warnings``."""
+        """Each listed repo or worktree the session started in, changed a file in or named, as
+        git reads it against its base branch (``repo_changes``), with its pull request; and each
+        repository it recorded before (``review_targets``) whose folder is gone, read from the
+        commits it recorded. Empty without a reader, or when the session's project is gone. A
+        repository git cannot read is named in ``warnings``. What was read is recorded on the
+        session, so the review outlives the folders."""
         session = await self._session(agent_session_id)
         reader = self._repo_changes
         if reader is None:
@@ -447,23 +460,137 @@ class AgentSessionControl:
             listing = await self._listing(session.project)
         except Exception:  # noqa: BLE001 -- an unknown project reads as no repository
             return SessionRepoChanges()
-        mentions = await asyncio.to_thread(self._call_inputs, agent_session_id)
-        roots = repo_roots(
-            listing,
-            workdir_id=session.workdir_id,
-            paths=(file.path for file in session.changed_files),
-            mentions=mentions,
-        )
-        repos = []
-        warnings = []
+        roots = await self._review_roots(session, listing)
+        warnings: list[str] = []
+        repos: list[tuple[RepoChanges, str | None]] = []
         for root in roots:
             try:
-                repos.append(
-                    await asyncio.to_thread(reader.read, root.path, label=root.workdir.label)
-                )
+                read = await asyncio.to_thread(reader.read, root.path, label=root.workdir.label)
+                repos.append((read, root.workdir.repo))
             except RepoChangesError:
                 warnings.append(f"{root.workdir.label} could not be read by git")
-        return SessionRepoChanges(repos=tuple(repos), warnings=tuple(warnings))
+        repos += await self._read_recorded(
+            reader, session=session, listing=listing, roots=roots, warnings=warnings
+        )
+        found = [
+            (await self._with_pull_request(reader, session, read), repo) for read, repo in repos
+        ]
+        await self._record_targets(session, found)
+        return SessionRepoChanges(repos=tuple(read for read, _ in found), warnings=tuple(warnings))
+
+    async def _review_roots(
+        self, session: AgentSession, listing: WorkdirListing
+    ) -> list[ResolvedWorkdir]:
+        """The folders read as they are now: ``repo_roots``, then each recorded one still listed."""
+        mentions = await asyncio.to_thread(self._call_inputs, session.id)
+        roots = list(
+            repo_roots(
+                listing,
+                workdir_id=session.workdir_id,
+                paths=(file.path for file in session.changed_files),
+                mentions=mentions,
+            )
+        )
+        recorded = {target.root for target in session.review_targets}
+        for entry in listing.entries:
+            if entry.path in recorded and entry.workdir.kind != "hub" and entry not in roots:
+                roots.append(entry)
+        return roots[:MAX_REPOS]
+
+    async def _read_recorded(
+        self,
+        reader: RepoChangesReader,
+        *,
+        session: AgentSession,
+        listing: WorkdirListing,
+        roots: Sequence[ResolvedWorkdir],
+        warnings: list[str],
+    ) -> list[tuple[RepoChanges, str | None]]:
+        """Each recorded folder that is gone, from its commits in its repo's own checkout;
+        unless the session works on that repo elsewhere now (it moved to a new worktree: that one
+        is the change)."""
+        read_roots = {root.path for root in roots}
+        live_repos = {root.workdir.repo for root in roots}
+        checkouts = {
+            entry.workdir.repo: entry.path
+            for entry in listing.entries
+            if entry.workdir.kind == "repo" and entry.workdir.repo
+        }
+        found: list[tuple[RepoChanges, str | None]] = []
+        for target in session.review_targets:
+            gone = target.root not in read_roots and target.repo not in live_repos
+            if not (gone and target.repo and target.base_sha and target.head_sha):
+                continue
+            repo_root = checkouts.get(target.repo)
+            try:
+                if repo_root is None:
+                    raise RepoChangesError(target.label)
+                read = await asyncio.to_thread(
+                    partial(
+                        reader.read_recorded,
+                        repo_root,
+                        label=target.label,
+                        root=target.root,
+                        branch=target.branch,
+                        base=target.base,
+                        base_sha=target.base_sha,
+                        head_sha=target.head_sha,
+                    )
+                )
+                found.append((read, target.repo))
+            except RepoChangesError:
+                warnings.append(f"{target.label}: its folder is gone and its commits are not here")
+        return found
+
+    async def _with_pull_request(
+        self, reader: RepoChangesReader, session: AgentSession, read: RepoChanges
+    ) -> RepoChanges:
+        """``read`` with its branch's pull request: asked of GitHub at most once a minute per
+        branch, else the one the session recorded."""
+        if not read.branch:
+            return read
+        key = (read.root, read.branch)
+        now = self._clock()
+        cached = self._pull_requests.get(key)
+        if cached is not None and (now - cached[0]).total_seconds() < PR_CHECK_SECONDS:
+            pull = cached[1]
+        else:
+            branch = read.branch
+            pull = await asyncio.to_thread(lambda: reader.pull_request(read.root, branch=branch))
+            self._pull_requests[key] = (now, pull)
+        if pull is None:
+            recorded = next(
+                (t for t in session.review_targets if t.root == read.root and t.pr_url), None
+            )
+            if recorded is not None and recorded.pr_number is not None and recorded.pr_url:
+                pull = RepoPullRequest(
+                    number=recorded.pr_number, url=recorded.pr_url, state="UNKNOWN"
+                )
+        return read if pull is None else read.model_copy(update={"pull_request": pull})
+
+    async def _record_targets(
+        self, session: AgentSession, found: Sequence[tuple[RepoChanges, str | None]]
+    ) -> None:
+        """Keep what was read on the session (the targets of folders not read this time stay)."""
+        targets = {target.root: target for target in session.review_targets}
+        for read, repo in found:
+            if read.base_sha is None:
+                continue
+            pull = read.pull_request
+            targets[read.root] = ReviewTarget(
+                repo=repo,
+                label=read.label,
+                root=read.root,
+                branch=read.branch,
+                base=read.base,
+                base_sha=read.base_sha,
+                head_sha=read.head_sha,
+                pr_number=pull.number if pull else None,
+                pr_url=pull.url if pull else None,
+            )
+        recorded = tuple(targets.values())[-MAX_REVIEW_TARGETS:]
+        if recorded != session.review_targets:
+            await asyncio.to_thread(lambda: self._store.update(session.id, review_targets=recorded))
 
     def _call_inputs(self, agent_session_id: str) -> list[str]:
         """The text of every tool call's input in the session's log, oldest first (at most

@@ -497,6 +497,15 @@
             "title": "Project",
             "type": "string"
           },
+          "review_targets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ReviewTarget"
+            },
+            "maxItems": 8,
+            "title": "Review Targets",
+            "type": "array"
+          },
           "status": {
             "$ref": "#/components/schemas/AgentSessionStatus"
           },
@@ -6532,7 +6541,7 @@
       },
       "RepoChanges": {
         "additionalProperties": false,
-        "description": "One repository's changes against its base. ``root`` is the folder git ran in, ``branch``\nits checked-out branch (null when detached), ``base`` the ref the branch is compared with\n(``origin/main``…, null when none was found: then nothing is compared and ``files`` is\nempty), ``base_sha`` the commit the branch forked from. ``truncated`` says commits or files\nwere left out past the bounds.",
+        "description": "One repository's changes against its base. ``root`` is the folder git ran in, ``branch``\nits checked-out branch (null when detached), ``base`` the ref the branch is compared with\n(``origin/main``…, null when none was found: then nothing is compared and ``files`` is\nempty), ``base_sha`` the commit the branch forked from, ``head_sha`` the branch's last\ncommit. ``truncated`` says commits or files were left out past the bounds.\n\n``source`` is ``worktree`` when git read the checkout as it is now (uncommitted changes\nincluded), ``recorded`` when that folder is gone and the review reads the commits it\nrecorded from the repo's own checkout (``root`` is still the old folder, so the paths match\nthe chat's). ``pull_request`` is the branch's pull request, when one is found.",
         "properties": {
           "base": {
             "anyOf": [
@@ -6583,13 +6592,38 @@
             "title": "Files",
             "type": "array"
           },
+          "head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
           "label": {
             "title": "Label",
             "type": "string"
           },
+          "pull_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RepoPullRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "root": {
             "title": "Root",
             "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/RepoSource",
+            "default": "worktree"
           },
           "truncated": {
             "default": false,
@@ -6857,6 +6891,49 @@
         ],
         "type": "string"
       },
+      "RepoPullRequest": {
+        "additionalProperties": false,
+        "description": "The branch's pull request on GitHub: its number, link, state (``OPEN``, ``MERGED``,\n``CLOSED``) and the commit it is at.",
+        "properties": {
+          "head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "url",
+          "state"
+        ],
+        "title": "RepoPullRequest",
+        "type": "object"
+      },
+      "RepoSource": {
+        "enum": [
+          "worktree",
+          "recorded"
+        ],
+        "type": "string"
+      },
       "RepoView": {
         "additionalProperties": false,
         "description": "A repo of the project as ``hub.json`` and its checkout describe it.",
@@ -7006,6 +7083,103 @@
           "items"
         ],
         "title": "ResumableList",
+        "type": "object"
+      },
+      "ReviewTarget": {
+        "additionalProperties": false,
+        "description": "What a session's review read in one repository, kept so the review outlives the folder:\nthe hub repo (``repo``, its ``hub.json`` name) and the checkout it read (``root``, a worktree\nthat may be removed later), its branch, the ``base`` it was compared with and the commit it\nforked from (``base_sha``), the last commit read (``head_sha``) and the branch's pull request\nonce one is found. With these the review reads the branch's commits from the repo's own\ncheckout once the worktree is gone.",
+        "properties": {
+          "base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "base_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Sha"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "root"
+        ],
+        "title": "ReviewTarget",
         "type": "object"
       },
       "RunAccepted": {

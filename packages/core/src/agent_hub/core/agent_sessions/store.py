@@ -24,6 +24,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
     ChangedFile,
     EndReason,
+    ReviewTarget,
 )
 from agent_hub.core.agent_sessions.driver import PermissionMode
 from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
@@ -49,6 +50,7 @@ class AgentSessionFields(TypedDict, total=False):
     last_prompt: str | None
     last_reply: str | None
     changed_files: tuple[ChangedFile, ...]
+    review_targets: tuple[ReviewTarget, ...]
 
 
 class AgentSessionStore(Protocol):
