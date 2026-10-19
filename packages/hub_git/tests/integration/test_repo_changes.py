@@ -105,6 +105,63 @@ def test_the_fingerprint_changes_when_the_file_s_diff_does(
     assert before["new.py"] == after["new.py"]
 
 
+def _stacked(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    """A clone whose ``batatinha`` (one commit past ``origin/main``) is pushed, then the work
+    tree's own clone of it."""
+    env = _env(tmp_path)
+    bare = tmp_path / "origin.git"
+    _git(tmp_path, env, "init", "--bare", "--initial-branch=main", str(bare))
+    work = tmp_path / "work"
+    _git(tmp_path, env, "clone", str(bare), str(work))
+    _git(work, env, "checkout", "-b", "main")
+    (work / "app.py").write_text("a\n")
+    _git(work, env, "add", ".")
+    _git(work, env, "commit", "-m", "base")
+    _git(work, env, "push", "origin", "main")
+    _git(work, env, "remote", "set-head", "origin", "main")
+    _git(work, env, "checkout", "-b", "batatinha")
+    (work / "batatinha.py").write_text("b\n")
+    _git(work, env, "add", ".")
+    _git(work, env, "commit", "-m", "batatinha")
+    _git(work, env, "push", "-u", "origin", "batatinha")
+    _git(work, env, "checkout", "main")
+    return work, env
+
+
+@pytest.mark.parametrize("start", ["batatinha", "origin/batatinha"])
+def test_a_worktree_started_from_a_branch_is_compared_with_that_branch(
+    tmp_path: Path, start: str
+) -> None:
+    work, env = _stacked(tmp_path)
+    tree = work / ".claude" / "worktrees" / "tip-2"
+    _git(work, env, "worktree", "add", "-q", "-b", "tip-2", str(tree), start)
+    (tree / "tip2.py").write_text("t\n")
+    _git(tree, env, "add", ".")
+    _git(tree, env, "commit", "-m", "tip 2")
+
+    changes = GitRepoChanges(environ=env).read(str(tree), label="app/tip-2")
+
+    assert changes.base == start
+    assert [os.path.basename(file.path) for file in changes.files] == ["tip2.py"]
+
+
+def test_a_branch_pushed_with_its_upstream_still_compares_with_where_it_started(
+    tmp_path: Path,
+) -> None:
+    work, env = _stacked(tmp_path)
+    _git(work, env, "checkout", "-q", "-b", "roquettejh/agh-1", "batatinha")
+    (work / "agh.py").write_text("x\n")
+    _git(work, env, "add", ".")
+    _git(work, env, "commit", "-m", "agh")
+    _git(work, env, "push", "-q", "-u", "origin", "roquettejh/agh-1")
+    _git(work, env, "reflog", "expire", "--expire=all", "--all")
+
+    changes = GitRepoChanges(environ=env).read(str(work), label="app")
+
+    # No reflog left and an upstream that is its own pushed copy: the remote's default.
+    assert changes.base == "origin/main"
+
+
 def test_a_folder_that_is_not_a_checkout_cannot_be_read(tmp_path: Path) -> None:
     with pytest.raises(RepoChangesError):
         GitRepoChanges(environ=_env(tmp_path)).read(str(tmp_path), label="plain")
