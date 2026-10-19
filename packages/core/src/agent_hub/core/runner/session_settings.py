@@ -73,7 +73,7 @@ def hooks_settings(source: JsonValue, *, effort: str, hub: str) -> tuple[bytes, 
         raise HubPathError("the hub's path holds \" $ ` or \\")
     scripts: list[str] = []
     built = {
-        event: _rewritten(groups, event=event, prefix=f"{hub}/", scripts=scripts, is_command=False)
+        event: _rewritten(groups, event=event, hub_dir=f"{hub}/", scripts=scripts, is_command=False)
         for event, groups in hooks.items()
     }
     text = json.dumps({"effortLevel": effort, "hooks": built}, indent=2, ensure_ascii=False)
@@ -83,24 +83,24 @@ def hooks_settings(source: JsonValue, *, effort: str, hub: str) -> tuple[bytes, 
 
 
 def _rewritten(
-    value: JsonValue, *, event: str, prefix: str, scripts: list[str], is_command: bool
+    value: JsonValue, *, event: str, hub_dir: str, scripts: list[str], is_command: bool
 ) -> JsonValue:
     if isinstance(value, dict):
         return {
             key: _rewritten(
-                item, event=event, prefix=prefix, scripts=scripts, is_command=key == "command"
+                item, event=event, hub_dir=hub_dir, scripts=scripts, is_command=key == "command"
             )
             for key, item in value.items()
         }
     if isinstance(value, list):
         return [
-            _rewritten(item, event=event, prefix=prefix, scripts=scripts, is_command=False)
+            _rewritten(item, event=event, hub_dir=hub_dir, scripts=scripts, is_command=False)
             for item in value
         ]
     if is_command and isinstance(value, str):
         _check_command(value, event=event)
         scripts.extend(path for path in _PROJECT_WORD.findall(value) if path)
-        return _PROJECT_WORD.sub(lambda word: f'"{prefix}{word.group(1)}"', value)
+        return _PROJECT_WORD.sub(lambda word: f'"{hub_dir}{word.group(1)}"', value)
     return value
 
 
