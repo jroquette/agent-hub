@@ -130,3 +130,21 @@ def test_marks_pack_draft_when_helper_uncommitted(hub: Path) -> None:
     git(hub, "add", "actions")
     git(hub, "commit", "-q", "-m", "helpers")
     assert set(drafts(hub).values()) == {False}
+
+
+@pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
+def test_marks_draft_when_change_hidden_from_status(hub: Path, flag: str) -> None:
+    # Committed means HEAD holds these exact bytes, whatever git status shows.
+    git(hub, "init", "-q", "-b", "main")
+    git(hub, "add", "actions")
+    git(hub, "commit", "-q", "-m", "actions")
+    git(hub, "update-index", flag, "actions/orders/scripts/get-order.sh")
+    script = hub / "actions" / "orders" / "scripts" / "get-order.sh"
+    script.write_text("#!/bin/sh\necho '{\"hidden\": true}'\n", encoding="utf-8")
+
+    assert drafts(hub) == {
+        "get-cover": False,
+        "get-invoice": False,
+        "get-order": True,
+        "get-quote": False,
+    }
