@@ -15,7 +15,8 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
-import { canStartTicket, stackedOn, ticketPrompt } from "./StartTicket";
+import { stackedOn } from "./PlanningView";
+import { canStartTicket, ticketPrompt } from "./StartTicket";
 import { TicketsTab } from "./TicketsTab";
 
 const AGENT = "/api/v1/agent-sessions";
@@ -104,8 +105,9 @@ describe("StartTicket", () => {
     expect(prompt).toContain("Open this ticket's pull request against AGH-2's branch");
   });
 
-  it("labels the stacked Start with the blocker it builds on", async () => {
-    renderWithApi(
+  it("reads as startable on the blocker's branch and confirms the risk before starting", async () => {
+    const created = anAgentSession({ id: anId(8, "0192a5e6"), status: "running" });
+    const view = renderWithApi(
       <TicketsTab
         project="agent-hub"
         slug="claims"
@@ -119,11 +121,34 @@ describe("StartTicket", () => {
         })}
         onRefresh={() => undefined}
       />,
-      { routes: driving },
+      { routes: { ...driving, [`POST ${AGENT}`]: created } },
     );
 
-    const start = await within(rowOf("T3")).findByRole("button", { name: "Start AGH-3 on AGH-2" });
-    expect(start).toHaveTextContent("Start on AGH-2");
+    const row = within(rowOf("T3"));
+    expect(row.getByText(/Can start on/)).toHaveTextContent("Can start on T2's branch");
+    expect(row.getByText("AGH-2 is in review, not merged")).toBeInTheDocument();
+    expect(row.queryByText(/Waiting on/)).toBe(null);
+    const start = await row.findByRole("button", {
+      name: "Start AGH-3 on AGH-2's branch (AGH-2 is in review, not merged)",
+    });
+    expect(start).toHaveTextContent("Start");
+    await waitFor(() => {
+      expect(start).toBeEnabled();
+    });
+    await userEvent.click(start);
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Start AGH-3 on AGH-2's branch?",
+    });
+    expect(dialog).toHaveTextContent(
+      "AGH-2 is in review and not merged: its code may still change.",
+    );
+    expect(view.requests.some((r) => r.method === "POST")).toBe(false);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start AGH-3" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${created.id}`);
+    });
   });
 
   it("asks /feature to work this one ticket from its workspace step, with its context", () => {

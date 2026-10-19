@@ -14,6 +14,22 @@ type ExternalBlocker = components["schemas"]["ExternalBlocker"];
 type IssueStateType = components["schemas"]["IssueStateType"];
 type Readiness = components["schemas"]["Readiness"];
 
+export type InReview = TicketRow & { id: string; pr_url: string };
+
+/**
+ * The blocker a waiting ticket can be stacked on: its only blocker not done, a ticket of this
+ * feature already started with a pull request open (in review, not merged). Working on top of its
+ * branch saves waiting for the merge. Null when the ticket waits on anything else.
+ */
+export function stackedOn(row: TicketRow, rows: readonly TicketRow[]): InReview | null {
+  if (row.id == null || row.readiness !== "waiting" || row.waiting_on.length !== 1) return null;
+  const blocker = rows.find((r) => r.ref === row.waiting_on[0]);
+  if (blocker?.id == null || blocker.pr_url == null || blocker.readiness !== "in_progress") {
+    return null;
+  }
+  return blocker as InReview;
+}
+
 /** The badge tone of a Linear state type; the badge text is always the state's own name. */
 const STATE_STATUS: Record<IssueStateType, Status> = {
   triage: "queued",
@@ -50,7 +66,8 @@ export function StateBadge({ row }: { row: TicketRow }) {
 export const READINESS_HELP: Record<Readiness, string> = {
   can_start: "Not started in Linear and every blocker is done: pick it up now.",
   in_progress: "Started in Linear (In Progress, In Review…): someone is on it.",
-  waiting: "Not started yet; a blocker is not done.",
+  waiting:
+    "Not started yet; a blocker is not done. When its only blocker is in review, it can start on that blocker's branch.",
   done: "Completed in Linear.",
   canceled: "Canceled or a duplicate in Linear: it blocks nothing.",
   in_cycle: "Waits on a ticket that waits on it back: break the cycle.",
@@ -126,12 +143,30 @@ export function ReadinessText({
         </span>
       );
     }
-    case "waiting":
+    case "waiting": {
+      const base = stackedOn(row, rows);
+      if (!base) {
+        return (
+          <span title={help} style={{ color: "var(--waiting)" }}>
+            Waiting on {refs(row.waiting_on)}
+          </span>
+        );
+      }
+      const branch = <>Can start on {refs([base.ref])}'s branch</>;
+      if (brief) {
+        return (
+          <span title={help} style={{ color: "var(--text-muted)" }}>
+            {branch}
+          </span>
+        );
+      }
       return (
-        <span title={help} style={{ color: "var(--waiting)" }}>
-          Waiting on {refs(row.waiting_on)}
+        <span className="ah-stack" style={{ gap: 2 }} title={help}>
+          <b style={{ fontWeight: 500 }}>{branch}</b>
+          <span className="ah-small ah-subtle">{base.id} is in review, not merged</span>
         </span>
       );
+    }
     default:
       return (
         <span className="ah-muted" title={help}>
@@ -870,6 +905,10 @@ function FlowLegend({ showCritical }: { showCritical: boolean }) {
                   : "Done in Linear"}
           </span>
         ))}
+        <span title={READINESS_HELP.waiting}>
+          <span className="ah-flow-dot" data-tone="waiting" aria-hidden="true" />
+          Can start on a blocker's branch: its only blocker is in review
+        </span>
         <span>
           <span className="ah-flow-line" aria-hidden="true" />
           Blocks: in the plan and in Linear

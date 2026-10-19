@@ -1,27 +1,13 @@
+import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import type { components } from "../../api/schema";
-import { Button, Tooltip } from "../../components";
+import { Button, ConfirmDialog, Tooltip } from "../../components";
 import { agentSessionHref } from "../sessions-list/control";
 import { useCreateAgentSession, useHubSessionStart } from "../sessions-list/queries";
+import { stackedOn } from "./PlanningView";
 
 type TicketRow = components["schemas"]["TicketRow"];
-
-type InReview = TicketRow & { id: string; pr_url: string };
-
-/**
- * The blocker a waiting ticket can be stacked on: its only blocker not done, a ticket of this
- * feature already started with a pull request open (in review, not merged). Working on top of its
- * branch saves waiting for the merge. Null when the ticket waits on anything else.
- */
-export function stackedOn(row: TicketRow, rows: readonly TicketRow[]): InReview | null {
-  if (row.id == null || row.readiness !== "waiting" || row.waiting_on.length !== 1) return null;
-  const blocker = rows.find((r) => r.ref === row.waiting_on[0]);
-  if (blocker?.id == null || blocker.pr_url == null || blocker.readiness !== "in_progress") {
-    return null;
-  }
-  return blocker as InReview;
-}
 
 /**
  * Whether a ticket shows the Start button: created in the tracker and free to pick up now, or
@@ -99,8 +85,11 @@ export function StartTicketButton({
   const create = useCreateAgentSession();
   const navigate = useNavigate();
   const base = stackedOn(row, rows);
-  const label = base ? `Start ${row.id} on ${base.id}` : `Start ${row.id}`;
-  const text = base ? `Start on ${base.id}` : "Start";
+  const [asking, setAsking] = useState(false);
+  const label = base
+    ? `Start ${row.id} on ${base.id}'s branch (${base.id} is in review, not merged)`
+    : `Start ${row.id}`;
+  const variant = base ? "default" : "primary";
 
   const begin = async () => {
     if (!start.hubWorkdirId) return;
@@ -121,36 +110,62 @@ export function StartTicketButton({
       <Tooltip label={blocked}>
         <Button
           size="sm"
-          variant="primary"
+          variant={variant}
           icon="play"
           disabled
           aria-label={`${label}. ${blocked}`}
         >
-          {text}
+          Start
         </Button>
       </Tooltip>
     );
   }
   return (
-    <Tooltip
-      label={
-        failed
-          ? `Could not start: ${failed}`
-          : base
-            ? `${base.id} is in review, not merged: start a Claude session that works ${row.id} with /feature on top of its branch`
-            : `Start a Claude session that works ${row.id} with /feature`
-      }
-    >
-      <Button
-        size="sm"
-        variant={base ? "default" : "primary"}
-        icon={base ? "git-branch" : "play"}
-        aria-label={label}
-        disabled={create.isPending}
-        onClick={() => void begin()}
+    <>
+      <Tooltip
+        label={
+          failed
+            ? `Could not start: ${failed}`
+            : base
+              ? `${base.id} is in review, not merged. Start a Claude session that builds ${row.id} on its branch and opens a stacked pull request.`
+              : `Start a Claude session that works ${row.id} with /feature`
+        }
       >
-        {create.isPending ? "Starting…" : failed ? "Retry" : text}
-      </Button>
-    </Tooltip>
+        <Button
+          size="sm"
+          variant={variant}
+          icon="play"
+          aria-label={label}
+          disabled={create.isPending}
+          onClick={() => {
+            if (base) setAsking(true);
+            else void begin();
+          }}
+        >
+          {create.isPending ? "Starting…" : failed ? "Retry" : "Start"}
+        </Button>
+      </Tooltip>
+      {base && asking && (
+        <ConfirmDialog
+          title={`Start ${row.id} on ${base.id}'s branch?`}
+          tone="primary"
+          consequences={[
+            `${base.id} is in review and not merged: its code may still change.`,
+            `The worktree starts from ${base.id}'s pull request branch, and ${row.id}'s pull request targets that branch.`,
+            `If ${base.id} changes, the session rebases onto it; once it merges, rebase onto the default branch and retarget.`,
+          ]}
+          confirmLabel={create.isPending ? "Starting…" : `Start ${row.id}`}
+          pending={create.isPending}
+          onCancel={() => {
+            setAsking(false);
+          }}
+          onConfirm={() => {
+            void begin().finally(() => {
+              setAsking(false);
+            });
+          }}
+        />
+      )}
+    </>
   );
 }
