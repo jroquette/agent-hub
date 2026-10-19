@@ -243,6 +243,19 @@ async def test_refuses_third_when_limit_two_and_both_running(make_rig: MakeRig) 
     assert third.status == AgentSessionStatus.IDLE
 
 
+async def test_starts_every_session_when_no_limit(make_rig: MakeRig) -> None:
+    rig = make_rig(limits=SessionLimits(sessions_max=0), replies={"Work.": (Hold(),)})
+    idle = await rig.create()
+    busy = [await rig.create("Work.") for _ in range(3)]
+
+    extra = await rig.create()
+
+    assert extra.status == AgentSessionStatus.IDLE
+    assert (await rig.control.snapshot(idle.id)).status == AgentSessionStatus.IDLE
+    snapshots = [await rig.control.snapshot(s.id) for s in busy]
+    assert all(s.ended_at is None for s in snapshots)
+
+
 async def test_ends_longest_idle_when_limit_reached(make_rig: MakeRig) -> None:
     rig = make_rig(limits=SessionLimits(sessions_max=2), replies={"Work.": (Hold(),)})
     oldest = await rig.create()

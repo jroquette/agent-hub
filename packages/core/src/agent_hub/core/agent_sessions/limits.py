@@ -17,7 +17,8 @@ MIB = 1024 * KIB
 class SessionLimits(ViewModel):
     """How many live sessions, how long they wait, how much each one logs."""
 
-    sessions_max: int = Field(default=4, ge=1, le=16)
+    # 0: no limit on the live sessions (the playground's conductor).
+    sessions_max: int = Field(default=4, ge=0, le=16)
     idle_seconds: int = Field(default=1800, ge=1, le=86_400)
     permission_timeout_seconds: int = Field(default=600, ge=1, le=86_400)
     log_records: int = Field(default=50_000, ge=100, le=1_000_000)
