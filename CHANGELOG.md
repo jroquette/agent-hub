@@ -11,11 +11,19 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-19
+
 ### Added
 
 - `hub doctor` warns with `items.leftovers` about each `.<name>.hub-tmp-<8 hex>` entry an interrupted
   `hub web` Publish or Restore left beside a skill, agent, hook, script or workflow (a skill's stage or old
   folder may hold the only copy of its hidden files); check it, then remove it.
+- Declared environments and blocked words (AGH-277): `hub.json` can declare `environments` (an `access` of `read`,
+  `write` or `ask`, a `production` flag, credential names, never values) and `repos[].services` with their endpoints,
+  and `hub.local.json` a developer's own ones and stricter access; `AGENTS.md` and the session brief list them. The
+  guard denies any command, path or listed file that names a `guard.blocked_words` word. `hub env` (`list`, `show`,
+  `add`, `set`, `remove`, `service add|remove`) lists and edits them without prompts (`--local` for `hub.local.json`,
+  `--json`), checking each write before it happens ([environments.md](docs/design/environments.md)).
 - The Toolkit keeps a version history of every skill folder, agent file and hook file, and the Workflows page of every
   hub workflow file (AGH-296): reading the catalog, the Workflows list or an item's detail stores a baseline the first
   time a unit is seen and a new version when its content changed,
@@ -656,7 +664,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/jroquette/agent-hub/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/jroquette/agent-hub/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/jroquette/agent-hub/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/jroquette/agent-hub/compare/v0.14.0...v0.15.0
