@@ -11,14 +11,15 @@ import {
   ProblemError,
   Skeleton,
   StatusBadge,
-  type TicketSlugs,
+  type TicketLookup,
 } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtClock, fmtInt } from "../../lib/format";
 import { rowHref } from "./drivenRows";
 import { readStored } from "../../lib/storage";
 import { reviewedKey } from "../agent-session/FilesPanel";
-import { useTicketSlugs } from "../features/queries";
+import { FeatureChip } from "../features/FeatureChip";
+import { useTicketLookup } from "../features/queries";
 import { filesToReview, rowTitle, rowView, summaryOf, type Tone, type ViewContext } from "./inbox";
 import type { AgentSession } from "./queries";
 import { openHref } from "./rows";
@@ -172,14 +173,14 @@ function Row({
   ctx: Omit<ViewContext, "group" | "drv"> & {
     drv: AgentSession | null;
     canDrive: boolean;
-    slugs: TicketSlugs;
+    tickets: TicketLookup;
   };
   onOpen: (href: string) => void;
 }) {
   const view = rowView(row, { ...ctx, group });
   const talk = view.conversation;
   const files = ctx.drv ? filesToReview(summaryOf(ctx.drv).files, readReviewed(ctx.drv.id)) : null;
-  const title = rowTitle(row, ctx.slugs);
+  const title = rowTitle(row, ctx.tickets);
   const named = isDriven(row) || Boolean(row.label?.title?.trim());
   const href = openHref(row);
   const lineId = `sl-line-${row.id}`;
@@ -240,6 +241,7 @@ function Row({
   const place = [where.project, where.repo].filter(Boolean).join(" / ");
   const placeText = where.branch ? (place ? `${place} · ${where.branch}` : where.branch) : place;
   const hasExtra = Boolean(where.issue ?? where.run) || (files !== null && files.total > 0);
+  const feature = where.issue ? ctx.tickets.get(where.issue.toUpperCase()) : undefined;
   const activity = (
     <div
       className="sl-row-line"
@@ -353,6 +355,7 @@ function Row({
         {hasExtra && (
           <div className="sl-where-extra">
             {where.issue && <IssueLink id={where.issue} />}
+            {feature && <FeatureChip project={feature.project} slug={feature.slug} />}
             {where.run && <span className="sl-where-run">{where.run}</span>}
             {files && files.total > 0 && (
               <span
@@ -398,7 +401,7 @@ function Row({
 }
 
 function Group({ group, tz, props }: { group: InboxGroup; tz: Tz; props: SessionsInboxProps }) {
-  const slugs = useTicketSlugs();
+  const tickets = useTicketLookup();
   const [expanded, setExpanded] = useState(false);
   const open = group.fixed || !group.collapsed;
   const shown =
@@ -502,7 +505,7 @@ function Group({ group, tz, props }: { group: InboxGroup; tz: Tz; props: Session
                       commonRepo: props.commonRepo,
                       showProject: props.showProject,
                       canDrive: props.canDrive,
-                      slugs,
+                      tickets,
                     }}
                     onOpen={props.onOpen}
                   />

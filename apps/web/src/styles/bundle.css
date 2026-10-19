@@ -3035,3 +3035,19 @@ button.ah-nav-item {
 .ah-feed-link:hover {
   color: var(--accent-text, var(--text));
 }
+/* The feature a session works on: a label that opens the feature's panel. */
+.ah-feature-chip {
+  height: 22px;
+  max-width: 260px;
+  text-decoration: none;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.ah-feature-chip:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ah-feature-chip-slug {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

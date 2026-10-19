@@ -1,9 +1,10 @@
 /**
  * What a session is about (S1, AC-201.4, AC-201.5): its name over `ACME-1511 · /feature · repo · branch`.
  *
- * A session on a ticket is named as its commits are: `ACME-1511: checkout-redesign`, the ticket then
+ * A session on a ticket is named as its commits are, the ticket then what it is about:
+ * `ACME-1511: Export orders as CSV` (the ticket's title, when the hub's features have read it), else
  * its slug (the hub feature's slug for that ticket, else what the branch or worktree says after the
- * ticket), else the ticket then Claude's title. Otherwise the name is the session's title (the
+ * ticket), else Claude's title. Otherwise the name is the session's title (the
  * user's `/rename`, else the one Claude Code wrote, ADR 0035). Without one, the title is
  * `ACME-1511 · /feature` over `repo · branch`, as before.
  *
@@ -33,8 +34,16 @@ export interface SessionIdentity {
 
 export const shortSessionId = (id: string) => id.replace(/-/g, "").slice(0, 8);
 
-/** The slug of each ticket a hub feature works on, by ticket id (uppercased). */
-export type TicketSlugs = ReadonlyMap<string, string>;
+/** A ticket a hub feature works on: the feature, and the ticket's title once read. */
+export interface TicketInfo {
+  project: string;
+  /** The feature's slug. */
+  slug: string;
+  title: string | null;
+}
+
+/** The tickets the hub's features work on, by ticket id (uppercased). */
+export type TicketLookup = ReadonlyMap<string, TicketInfo>;
 
 const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -48,11 +57,13 @@ export function slugAfterIssue(text: string | null | undefined, issue: string): 
 }
 
 /** A ticket session's name, as its commits read: `ACME-12: fix-login`; null without an issue. */
-export function ticketName(label: Label | null | undefined, slugs?: TicketSlugs): string | null {
+export function ticketName(label: Label | null | undefined, tickets?: TicketLookup): string | null {
   const issue = label?.issue;
   if (!issue) return null;
+  const known = tickets?.get(issue.toUpperCase());
   const slug =
-    slugs?.get(issue.toUpperCase()) ??
+    known?.title?.trim() ??
+    known?.slug ??
     slugAfterIssue(label.branch, issue) ??
     slugAfterIssue(label.worktree, issue) ??
     label.title?.trim();
@@ -62,12 +73,12 @@ export function ticketName(label: Label | null | undefined, slugs?: TicketSlugs)
 const joined = (...parts: (string | null | undefined)[]) =>
   parts.filter((part): part is string => Boolean(part)).join(" · ");
 
-export function sessionIdentity(session: LabelledSession, slugs?: TicketSlugs): SessionIdentity {
+export function sessionIdentity(session: LabelledSession, tickets?: TicketLookup): SessionIdentity {
   const label = session.label ?? null;
   const what = joined(label?.issue, label?.workflow);
   const where = joined(label?.repo ?? session.repo, label?.branch);
   const short = shortSessionId(session.id);
-  const ticket = ticketName(label, slugs);
+  const ticket = ticketName(label, tickets);
   if (ticket)
     return { title: ticket, detail: joined(label?.workflow, where) || short, named: true };
   const name = label?.title?.trim();

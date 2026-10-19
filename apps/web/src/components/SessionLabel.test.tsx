@@ -155,16 +155,23 @@ describe("SessionLabel", () => {
 });
 
 describe("ticket names", () => {
-  it("names a ticket session as its commits read, the feature's slug first", () => {
+  it("names a ticket session as its commits read: the ticket's title, else the feature's slug", () => {
     const label = aSessionLabel({
       issue: "TIP-1563",
       branch: "roquettejh/tip-1563-allianz-claim-api",
       title: "Status do agente em execução",
     });
 
-    expect(ticketName(label, new Map([["TIP-1563", "allianz-ecommerce-claim"]]))).toBe(
+    const feature = { project: "tipple", slug: "allianz-ecommerce-claim" };
+    expect(ticketName(label, new Map([["TIP-1563", { ...feature, title: null }]]))).toBe(
       "TIP-1563: allianz-ecommerce-claim",
     );
+    expect(
+      ticketName(
+        label,
+        new Map([["TIP-1563", { ...feature, title: "Allianz claims from the e-commerce flow" }]]),
+      ),
+    ).toBe("TIP-1563: Allianz claims from the e-commerce flow");
     expect(ticketName(label)).toBe("TIP-1563: allianz-claim-api");
     expect(sessionIdentity(aSession({ label }))).toMatchObject({
       title: "TIP-1563: allianz-claim-api",

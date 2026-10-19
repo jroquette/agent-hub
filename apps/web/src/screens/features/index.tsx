@@ -1,3 +1,4 @@
+import { featureHref } from "./FeatureChip";
 import "./features.css";
 
 import { useEffect, useRef, useState } from "react";
@@ -76,8 +77,7 @@ function matches(f: Feature, key: FilterKey, values: string[]): boolean {
   }
 }
 
-export const featureHref = (f: Pick<Feature, "project" | "slug">) =>
-  `/features/${encodeURIComponent(f.project)}/${encodeURIComponent(f.slug)}`;
+export { featureHref } from "./FeatureChip";
 
 const COLLAPSED_KEY = "ah.features.collapsed";
 

@@ -1,7 +1,8 @@
+import { useQueries } from "@tanstack/react-query";
 import { useMemo } from "react";
 
-import type { TicketSlugs } from "../../components";
-import { useApi } from "../../lib/api";
+import type { TicketInfo, TicketLookup } from "../../components";
+import { apiGet, apiKey, useApi } from "../../lib/api";
 import { issueId, reasonOf, sessionWaitOf } from "./groups";
 
 /** How often the open Features list rereads the records (local files, Linear cached server-side). */
@@ -17,23 +18,61 @@ export function useFeatures(project: string | null) {
 }
 
 /**
- * The slug of each ticket a hub feature works on (`ACME-12` → `checkout-redesign`), so a session
- * on that ticket is named `ACME-12: checkout-redesign`. It reads the Features list's cache (no
- * polling of its own); the first feature naming a ticket wins.
+ * The tickets the hub's features work on (`ACME-12` → its feature and, once read, its title), so a
+ * session on that ticket is named `ACME-12: Export orders as CSV` and links to its feature. Titles
+ * come only from tickets already in the cache (the Tickets tab, or `useTicketTitles` of an open
+ * session): a list of sessions never makes the server read Linear. The first feature naming a ticket
+ * wins.
  */
-export function useTicketSlugs(project: string | null = null): TicketSlugs {
+export function useTicketLookup(project: string | null = null): TicketLookup {
   const items = useApi("/api/v1/features", { query: { project } }, { staleTime: 60_000 }).data
     ?.items;
+  const cached = useQueries({
+    queries: (items ?? []).map((feature) => ({
+      queryKey: ticketsKey(feature.project, feature.slug),
+      queryFn: () => apiGet(TICKETS, ticketsParams(feature.project, feature.slug)),
+      enabled: false,
+    })),
+  });
+  const rows = cached.map((query) => query.data?.tickets);
+  const signature = cached.map((query) => query.dataUpdatedAt).join(",");
   return useMemo(() => {
-    const slugs = new Map<string, string>();
-    for (const feature of items ?? [])
+    const lookup = new Map<string, TicketInfo>();
+    (items ?? []).forEach((feature, index) => {
+      const titles = new Map(
+        (rows[index] ?? []).flatMap((row) =>
+          row.id && row.title ? [[row.id.toUpperCase(), row.title] as const] : [],
+        ),
+      );
       for (const issue of feature.issues) {
         const id = issueId(issue).toUpperCase();
-        if (!slugs.has(id)) slugs.set(id, feature.slug);
+        if (lookup.has(id)) continue;
+        lookup.set(id, {
+          project: feature.project,
+          slug: feature.slug,
+          title: titles.get(id) ?? null,
+        });
       }
-    return slugs;
-  }, [items]);
+    });
+    return lookup;
+    // `rows` is new each render; its content changes with `signature`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, signature]);
 }
+
+/** Reads one feature's tickets once (titles from Linear's cached snapshot, else the plan), for the
+ * session open on it: what `useTicketLookup` names it by. No polling, unlike the Tickets tab. */
+export function useTicketTitles(ticket: TicketInfo | undefined) {
+  useApi(TICKETS, ticketsParams(ticket?.project ?? "", ticket?.slug ?? ""), {
+    enabled: ticket !== undefined,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
+const TICKETS = "/api/v1/features/{project}/{slug}/tickets" as const;
+const ticketsParams = (project: string, slug: string) => ({ path: { project, slug } });
+const ticketsKey = (project: string, slug: string) => apiKey(TICKETS, ticketsParams(project, slug));
 
 /** While a session is live, the list rereads the sessions this often, so a wait shows within seconds. */
 export const LIVE_SESSIONS_REFRESH_MS = 5_000;
