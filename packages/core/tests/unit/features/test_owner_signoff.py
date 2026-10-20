@@ -445,10 +445,20 @@ def a_later_sign_off(folder: FeatureFolder, *, day: int = 18) -> tuple[SignOffOw
 
 # A11: once an owner decision newer than the acceptance eval settled it, either decision on the
 # acceptance eval is refused, writing nothing (the same request twice writes once).
-@pytest.mark.parametrize("first", ["done", "more_work"])
+@pytest.mark.parametrize(
+    ("first", "reason"),
+    [
+        ("done", "the owner already signed off the owner steps of feature"),
+        (
+            "more_work",
+            "AC-7.1, AC-7.2, AC-7.3 were reopened by an owner decision; "
+            "an agent evaluates them again first",
+        ),
+    ],
+)
 @pytest.mark.parametrize("second", ["done", "more_work"])
 def test_refuses_writing_nothing_when_owner_already_settled_acceptance_eval(
-    first: OwnerDecision, second: OwnerDecision
+    first: OwnerDecision, reason: str, second: OwnerDecision
 ) -> None:
     whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
     folder = a_planned_folder(whole)
@@ -459,16 +469,40 @@ def test_refuses_writing_nothing_when_owner_already_settled_acceptance_eval(
     with pytest.raises(OwnerSignOffError) as refused:
         again("demo", SLUG, delivery="feature", decision=second)
 
-    assert refused.value.reason.startswith("the owner already settled feature")
+    assert refused.value.reason == reason
     assert rewriter.written == {}
 
 
-def test_signs_off_again_when_agent_evaluated_after_owner_more_work() -> None:
+# A11: an owner NO-SHIP from settling a ticket eval also reopens what Acceptance waits on.
+def test_refuses_writing_nothing_when_owner_more_work_on_ticket_eval_reopened_an_ac() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    ticket = a_head("acme-1520", "SHIP-WITH-OWNER-STEPS", scope="tickets: [T1]", at="2026-10-11")
+    folder = a_planned_folder(whole, ticket)
+    sign_off, writer = a_sign_off_of(folder)
+    sign_off("demo", SLUG, delivery="acme-1520", decision="more_work")
+    again, rewriter = a_later_sign_off(signed(folder, writer))
+
+    with pytest.raises(OwnerSignOffError) as refused:
+        again("demo", SLUG, delivery="feature")
+
+    assert refused.value.reason == (
+        "AC-7.1 was reopened by an owner decision; an agent evaluates it again first"
+    )
+    assert rewriter.written == {}
+
+
+@pytest.mark.parametrize(
+    ("agent", "decision", "verdict"),
+    [("SHIP", "done", "SHIP"), ("NO-SHIP", "more_work", "NO-SHIP")],
+)
+def test_decides_again_when_agent_evaluated_after_owner_more_work(
+    agent: str, decision: OwnerDecision, verdict: str
+) -> None:
     whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
     folder = a_planned_folder(whole)
     sign_off, writer = a_sign_off_of(folder)
     sign_off("demo", SLUG, delivery="feature", decision="more_work")
-    redone = a_head("acme-1522", "SHIP", scope="acs: [AC-7.1, AC-7.2, AC-7.3]", at="2026-10-18")
+    redone = a_head("acme-1522", agent, scope="acs: [AC-7.1, AC-7.2, AC-7.3]", at="2026-10-18")
     reevaluated = signed(folder, writer)
     again, rewriter = a_later_sign_off(
         FeatureFolder(
@@ -480,32 +514,9 @@ def test_signs_off_again_when_agent_evaluated_after_owner_more_work() -> None:
         day=19,
     )
 
-    written = again("demo", SLUG, delivery="feature")
+    written = again("demo", SLUG, delivery="feature", decision=decision)
 
-    assert (written.verdict, written.acs) == ("SHIP", ("AC-7.1", "AC-7.2", "AC-7.3"))
-    assert list(rewriter.written) == ["owner-signoff-r2.md"]
-
-
-def test_allows_more_work_again_when_agent_no_ship_follows_owner_more_work() -> None:
-    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
-    folder = a_planned_folder(whole)
-    sign_off, writer = a_sign_off_of(folder)
-    sign_off("demo", SLUG, delivery="feature", decision="more_work")
-    failed = a_head("acme-1523", "NO-SHIP", scope="acs: [AC-7.1, AC-7.2, AC-7.3]", at="2026-10-18")
-    reevaluated = signed(folder, writer)
-    again, rewriter = a_later_sign_off(
-        FeatureFolder(
-            slug=SLUG,
-            files=reevaluated.files,
-            features_json=PLANNED,
-            evals=(*reevaluated.evals, failed),
-        ),
-        day=19,
-    )
-
-    written = again("demo", SLUG, delivery="feature", decision="more_work")
-
-    assert (written.verdict, written.acs) == ("NO-SHIP", ("AC-7.1", "AC-7.2", "AC-7.3"))
+    assert (written.verdict, written.acs) == (verdict, ("AC-7.1", "AC-7.2", "AC-7.3"))
     assert list(rewriter.written) == ["owner-signoff-r2.md"]
 
 

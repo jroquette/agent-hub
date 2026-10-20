@@ -236,7 +236,13 @@ class SignOffOwnerSteps:
             and accepted.verdict == "SHIP-WITH-OWNER-STEPS"
         )
         if delivery is None or on_acceptance:
-            waiting = _owner_wait(folder, record, evals, refuse_reopened=decision == "done")
+            waiting = _owner_wait(
+                folder,
+                record,
+                evals,
+                refuse_reopened=decision == "done",
+                named=delivery if on_acceptance else None,
+            )
             if not ranks_newer(waiting.acceptance, delivery=name_of_delivery, at=at):
                 raise OwnerSignOffError(
                     f"a sign-off would not be newer than {waiting.acceptance.delivery}: "
@@ -282,27 +288,26 @@ def _owner_wait(
     evals: tuple[EvalRecord, ...],
     *,
     refuse_reopened: bool,
+    named: str | None,
 ) -> OwnerWait:
     """What ``folder``'s whole-feature sign-off covers (``owner_wait``, the rule the Acceptance
     step shares); ``OwnerSignOffError`` when it has nothing it can sign off (A9, A10), or when
-    an owner decision newer than the acceptance eval already settled it (A11)."""
+    an owner decision newer than the acceptance eval already settled it (A11). ``named`` is the
+    acceptance eval when the request named it (``delivery``), None for the whole-feature path."""
     if folder.evals_skipped:
         raise OwnerSignOffError(f"more than {MAX_EVAL_FILES} evals; not all were read")
     waiting = owner_wait(evals, record.acs, tickets=record.tickets)
     if waiting is None:
-        accepted = acceptance_eval(evals)
-        if accepted is not None and accepted.verdict == "SHIP-WITH-OWNER-STEPS":
-            raise OwnerSignOffError(
-                f"the owner already settled {accepted.delivery}: its owner steps are signed off"
-            )
+        if named is not None:
+            raise OwnerSignOffError(f"the owner already signed off the owner steps of {named}")
         raise OwnerSignOffError("no AC waits on owner steps")
     if not waiting.acs:
         raise OwnerSignOffError("features.json lists no AC to sign off")
     if waiting.settled:
         settled = ", ".join(waiting.settled)
+        was, them = ("was", "it") if len(waiting.settled) == 1 else ("were", "them")
         raise OwnerSignOffError(
-            f"the owner already settled {waiting.acceptance.delivery}: {settled} reopened by "
-            "the owner; an agent evaluates them again first"
+            f"{settled} {was} reopened by an owner decision; an agent evaluates {them} again first"
         )
     if refuse_reopened and waiting.reopened:
         reopened = ", ".join(waiting.reopened)
