@@ -262,3 +262,70 @@ def test_hides_credentials_from_hub_step_when_credential_injection_workflow_runs
     assert "DEMO_DB_URL" not in seen
     assert "AWS_PROFILE" not in seen
     assert seen["DUMP"] == str(tmp_path / "dump")
+
+
+DECLARED_ACTION = """\
+version: 1
+name: show-token
+description: Show what the action sees, its output declared
+effect: read
+runtime: sh
+script: scripts/show-env.sh
+output_format:
+  type: object
+  required: [seen, token]
+  properties: {seen: {type: string}, token: {type: string}}
+"""
+SCENARIO = """\
+version: 1
+kind: scenario
+name: show-walk
+revision: 1
+nodes:
+  - id: show
+    type: action
+    action: show-env
+  - id: shown
+    type: expect
+    depends_on: [show]
+    action: show-token
+    every: 5s
+    timeout: 5s
+    until_when: "$self.output.token != ''"
+    capture: {token: $self.output.token}
+"""
+
+
+def test_hides_secret_everywhere_when_credential_injection_scenario_runs(
+    tmp_path: Path, credentials_env: dict[str, str]
+) -> None:
+    hub = an_action_hub(tmp_path)
+    (hub / "actions" / "ops" / "show-token.yaml").write_text(DECLARED_ACTION)
+    git = shutil.which("git")
+    assert git is not None
+    identity = ("-c", "user.name=Demo Dev", "-c", "user.email=dev@example.com")
+    for git_args in (("add", "-A"), ("commit", "-q", "-m", "show-token")):
+        command = [git, *identity, *git_args]
+        subprocess.run(command, cwd=hub, check=True, capture_output=True)  # noqa: S603 - absolute git, fixed arguments
+    (hub / "scenarios" / "ops").mkdir(parents=True)
+    (hub / "scenarios" / "ops" / "show-walk.yaml").write_text(SCENARIO)
+    args = ("scenario", "run", "show-walk", "--env", "staging", "--mode", "regression")
+
+    result = run_hub(hub, *args, "--run-id", "creds-1", env=credentials_env)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[-1] == "run creds-1: done"
+    # The action saw the env file's variable and the declared one, as an authored step does.
+    seen = variables(tmp_path / "dump" / "action.env")
+    assert seen["AWS_PROFILE"] == "demo-staging"
+    assert seen["DEMO_DB_URL"] == SECRET
+    assert seen["DEMO_TOKEN"] == SECRET + "-file"
+    # Not in the CLI output, any file of the run's folder, or the events database.
+    assert SECRET not in result.output
+    run = hub / ".agent-runs" / "workflows" / "creds-1"
+    assert (run / "records.jsonl").exists()
+    assert stored_anywhere(SECRET, run, tmp_path / "events.db") == []
+    assert stored_anywhere(SECRET, hub / ".agent-runs") == []
+    assert (tmp_path / "events.db").exists()
+    records = (run / "records.jsonl").read_text()
+    assert "<credential DEMO_TOKEN>" in records
