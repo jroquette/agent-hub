@@ -12,4 +12,5 @@ export * from "./OptionRow";
 export * from "./ScreenshotLightbox";
 export * from "./SessionLabel";
 export * from "./status";
+export * from "./StepBar";
 export * from "./trace";

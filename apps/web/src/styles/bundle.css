@@ -2413,6 +2413,14 @@ pre {
   font: 600 10px var(--font-mono);
 }
 
+/* Step bar: it names its step under the segments, so it reads without a hover. */
+.ah-step-label {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 /* Golden path stepper */
 .ah-golden {
   display: flex;

@@ -1,13 +1,12 @@
-/* The Features list: what is moving (with a warning on the rows that need the owner), what was evaluated, what shipped. */
+/* The Features list: what is moving (with a warning on the rows that need the owner) and what shipped. */
 import type { components } from "../../api/schema";
 import { GOLDEN_STEP_LABEL, ownerWaitStep, type IconName } from "../../components";
-import { waitsOnOwner } from "./GoldenPathBar";
 import { phaseIndex } from "./parts";
 
 type Feature = components["schemas"]["FeatureView"];
 type LiveTile = components["schemas"]["LiveTile"];
 
-export type GroupId = "progress" | "evaluated" | "shipped";
+export type GroupId = "progress" | "shipped";
 
 export const GROUPS: readonly {
   id: GroupId;
@@ -23,13 +22,6 @@ export const GROUPS: readonly {
     summary: "in progress",
     hint: "What needs you first, then furthest along and most ACs passing",
     empty: "No feature in progress.",
-  },
-  {
-    id: "evaluated",
-    title: "Evaluated",
-    summary: "evaluated",
-    hint: "The evaluator said ship and every AC passes; shipped once the tickets are read as done",
-    empty: "No feature waits on its tickets after a ship verdict.",
   },
   {
     id: "shipped",
@@ -160,10 +152,6 @@ export const isLinearGap = (reason: string | null) =>
 export const missesLinear = (features: readonly Feature[]) =>
   features.some((f) => f.golden_path.steps.some((s) => isLinearGap(s.reason)));
 
-/** Every AC passes (owner steps counted as done). */
-const allAcsPass = (f: Feature) =>
-  f.acs !== null && f.acs.total > 0 && f.acs.passing + f.acs.owner_steps >= f.acs.total;
-
 /** A step's reason for the row's line, short; the Linear one is said once above the list. */
 function shortReason(reason: string): string | null {
   return isLinearGap(reason) ? null : reason.replace(/[.;]\s*open the \w+ tab\.?$/i, "");
@@ -192,7 +180,7 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
       doc: "eval",
     };
   }
-  if (f.phase !== "shipped" && waitsOnOwner(f.golden_path)) {
+  if (f.phase !== "shipped" && ownerWaitStep(f.golden_path.steps)) {
     return {
       group: "progress",
       needs: "owner-steps",
@@ -210,19 +198,6 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
       tone: "done",
       line: "Shipped",
       doc: null,
-    };
-  }
-  if (f.verdict === "SHIP" && allAcsPass(f)) {
-    const detail = verdictDetail(f.verdict_line);
-    return {
-      group: "evaluated",
-      needs: null,
-      icon: "circle-check",
-      tone: null,
-      line: detail
-        ? `Evaluator says ship · ${detail}`
-        : "Evaluator says ship · tickets not read as done",
-      doc: "eval",
     };
   }
   const steps = f.golden_path.steps;
