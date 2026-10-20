@@ -181,3 +181,51 @@ def test_points_at_the_node_when_a_node_level_rule_fails(
         parse_workflow(a_document(nodes=[node]))
 
     assert [(p.loc, p.message) for p in caught.value.problems] == [(("nodes", 0), message)]
+
+
+def a_scenario(*nodes: dict[str, object], **overrides: object) -> dict[str, object]:
+    action = {"id": "fetch-order", "type": "action", "action": "send-queue-message"}
+    return a_document(kind="scenario", nodes=list(nodes) or [action], **overrides)
+
+
+def test_loads_workflow_when_scenario_kind_absent() -> None:
+    assert parse_workflow(a_document()).kind == "workflow"
+    scenario = parse_workflow(a_scenario())
+    assert scenario.kind == "scenario"
+    assert scenario.nodes[0].type == "action"
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"id": "x", "type": "shell", "command": ["true"]},
+        {"id": "x", "type": "script", "runtime": "sh", "script": "a.sh"},
+        {"id": "x", "type": "agent", "prompt": "p"},
+        {"id": "x", "type": "loop", "prompt": "p", "max_iterations": 2, "until": "done"},
+        {"id": "x", "type": "halt", "reason": "stop"},
+    ],
+    ids=lambda node: str(node["type"]),
+)
+def test_refuses_node_when_scenario_kind_forbids_type(node: dict[str, object]) -> None:
+    action = {"id": "fetch-order", "type": "action", "action": "send-queue-message"}
+    until = "$x.output == 'a'"
+    group = {"id": "poll", "type": "loop_group", "max_iterations": 2, "until_when": until}
+    group["nodes"] = [node]
+
+    assert problems_of(a_scenario(action, node)) == [
+        (
+            "nodes[1].type",
+            f'the node "x" has type {node["type"]}: a scenario takes only action, expect,'
+            " approval, wait, loop_group and include nodes",
+        )
+    ]
+    assert [key for key, _ in problems_of(a_scenario(action, group))] == ["nodes[1].nodes[0].type"]
+    assert parse_workflow(a_document(nodes=[action, node])).kind == "workflow"
+
+
+@pytest.mark.parametrize("key", ["auto_approve", "policy", "skip_gates"])
+def test_refuses_key_when_no_gate_bypass_key_given(key: str) -> None:
+    action = {"id": "fetch-order", "type": "action", "action": "send-queue-message"}
+
+    assert problems_of(a_scenario(**{key: True})) == [(key, "unknown key")]
+    assert problems_of(a_scenario(action | {key: True})) == [(f"nodes[0].{key}", "unknown key")]

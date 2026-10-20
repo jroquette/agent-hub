@@ -373,10 +373,64 @@ class IncludeNode(_Node):
     )
 
 
+# ``<name>``, an action of the scenario's pack, or ``<pack>/<name>``.
+ActionRef = Annotated[
+    StrictStr, Field(pattern=r"^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$")
+]
+
+
+def _whole_ref(value: str) -> str:
+    try:
+        parse_ref(value)
+    except SubstitutionError as error:
+        raise ValueError(str(error)) from None
+    return value
+
+
+WholeRef = Annotated[StrictStr, AfterValidator(_whole_ref)]
+
+
+class _ActionKeys(_Node):
+    """An action call (docs/design/scenarios.md): ``with`` fills the action's inputs, ``capture``
+    names values of its output for ``$CTX``. Its output format is the action's own."""
+
+    action: ActionRef
+    with_: Annotated[Mapping[VariableName, JsonValue], *READ_ONLY] = Field(
+        default_factory=empty, alias="with"
+    )
+    capture: Annotated[Mapping[VariableName, WholeRef], *READ_ONLY] = Field(default_factory=empty)
+    retry: Retry | None = None
+
+
+class ActionNode(_ActionKeys):
+    """Runs one action once, through the engine's runner."""
+
+    type: Literal["action"]
+    timeout: Duration | None = None
+
+
+class ExpectNode(_ActionKeys):
+    """Runs a read action every ``every`` until ``until_when`` holds over its output
+    (``$self.output``), or fails ``timeout`` once ``timeout`` has passed."""
+
+    type: Literal["expect"]
+    every: Duration
+    timeout: Duration
+    until_when: Text
+
+
 type ExecutableNode = AgentNode | ShellNode | ScriptNode | LoopNode
 type GateNode = ApprovalNode | WaitNode
 BodyNode = Annotated[
-    AgentNode | ShellNode | ScriptNode | LoopNode | ApprovalNode | HaltNode | WaitNode,
+    AgentNode
+    | ShellNode
+    | ScriptNode
+    | LoopNode
+    | ApprovalNode
+    | HaltNode
+    | WaitNode
+    | ActionNode
+    | ExpectNode,
     Field(discriminator="type"),
 ]
 
@@ -410,7 +464,9 @@ Node = Annotated[
     | HaltNode
     | WaitNode
     | IncludeNode
-    | LoopGroupNode,
+    | LoopGroupNode
+    | ActionNode
+    | ExpectNode,
     Field(discriminator="type"),
 ]
 
