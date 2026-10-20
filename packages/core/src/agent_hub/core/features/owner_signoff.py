@@ -18,8 +18,11 @@ with them), and the rest of the feature does not have to be covered yet. Its ``d
 which writes a NO-SHIP over those ACs, so they read as open until an agent evaluates them again.
 The owner's optional ``note`` (what was done, or what is left) goes into the note's body. When
 ``delivery`` is the acceptance eval itself, its ACs and refusals are the whole-feature sign-off's
-(``owner_wait``; ``more_work`` is not refused over ACs already reopened), so the app never writes
-a sign-off over the acceptance eval that differs from what the Acceptance step waits on.
+(``owner_wait``; ``more_work`` is not refused over ACs an agent's eval reopened), so the app never
+writes a sign-off over the acceptance eval that differs from what the Acceptance step waits on.
+Either decision is then refused once an owner decision newer than the acceptance eval settled it
+(A11): its owner SHIP signed off every waiting AC, or its owner NO-SHIP is still the latest eval
+of a waiting AC (the same request twice writes once; an agent's new eval lifts the refusal).
 """
 
 from collections.abc import Callable, Iterable
@@ -281,14 +284,26 @@ def _owner_wait(
     refuse_reopened: bool,
 ) -> OwnerWait:
     """What ``folder``'s whole-feature sign-off covers (``owner_wait``, the rule the Acceptance
-    step shares); ``OwnerSignOffError`` when it has nothing it can sign off (A9, A10)."""
+    step shares); ``OwnerSignOffError`` when it has nothing it can sign off (A9, A10), or when
+    an owner decision newer than the acceptance eval already settled it (A11)."""
     if folder.evals_skipped:
         raise OwnerSignOffError(f"more than {MAX_EVAL_FILES} evals; not all were read")
     waiting = owner_wait(evals, record.acs, tickets=record.tickets)
     if waiting is None:
+        accepted = acceptance_eval(evals)
+        if accepted is not None and accepted.verdict == "SHIP-WITH-OWNER-STEPS":
+            raise OwnerSignOffError(
+                f"the owner already settled {accepted.delivery}: its owner steps are signed off"
+            )
         raise OwnerSignOffError("no AC waits on owner steps")
     if not waiting.acs:
         raise OwnerSignOffError("features.json lists no AC to sign off")
+    if waiting.settled:
+        settled = ", ".join(waiting.settled)
+        raise OwnerSignOffError(
+            f"the owner already settled {waiting.acceptance.delivery}: {settled} reopened by "
+            "the owner; an agent evaluates them again first"
+        )
     if refuse_reopened and waiting.reopened:
         reopened = ", ".join(waiting.reopened)
         raise OwnerSignOffError(

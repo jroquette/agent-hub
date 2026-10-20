@@ -114,18 +114,7 @@ def eval_coverage(
 ) -> EvalCoverage:
     """What ``records`` cover of ``acs`` (S7); ``tickets`` tie a plan key to its tracker id."""
     live = tuple(ac for ac in acs if not ac.withdrawn)
-    aliases = ticket_aliases(tickets)
-    naming: dict[str, list[int]] = {}
-    scoped: list[EvalRecord] = []
-    for record in records:
-        if record.problem is not None or record.verdict is None:
-            continue
-        named = _scope(record, live, aliases)
-        if named is None:
-            continue
-        for ac_id in dict.fromkeys(named):
-            naming.setdefault(ac_id, []).append(len(scoped))
-        scoped.append(record)
+    scoped, naming = _naming(records, live, ticket_aliases(tickets))
     keys = [_order_key(record) for record in scoped]
     decided: dict[tuple[int, ...], Verdict] = {}
     verdicts: dict[str, Verdict] = {}
@@ -157,12 +146,7 @@ def acceptance_eval(records: Iterable[EvalRecord]) -> EvalRecord | None:
     if not whole:
         return None
     keys = [_order_key(record) for record in whole]
-    group = tuple(range(len(whole)))
-    latest = [
-        index
-        for index in group
-        if not any(_newer(keys[other], keys[index]) for other in group if other != index)
-    ] or list(group)
+    latest = _latest(tuple(range(len(whole))), keys)
     verdicts = {whole[index].verdict for index in latest}
     verdict = next(verdict for verdict in _CONSERVATIVE if verdict in verdicts)
     # The listing order picks one among equals (and all of them when the order loops).
@@ -178,11 +162,16 @@ class OwnerWait:
     when the feature lists no such AC (no ``features.json``, or every AC withdrawn): there is
     nothing the app can sign off, and the eval still waits (A10). ``reopened`` are those of
     ``acs`` whose latest eval of any scope is NO-SHIP: a sign-off is refused over them (A9).
+    ``settled`` are those of ``reopened`` whose latest evals include a NO-SHIP with
+    ``provenance: owner`` that ranks newer than the acceptance eval: the owner already decided
+    "more work" there, so either decision on the acceptance eval is refused until an agent
+    evaluates them again (A11).
     """
 
     acceptance: EvalRecord
     acs: tuple[str, ...]
     reopened: tuple[str, ...] = ()
+    settled: tuple[str, ...] = ()
 
 
 def owner_wait(
@@ -224,7 +213,20 @@ def owner_wait(
     named = tuple(whole if record is accepted else record for record in records)
     uncovered = set(eval_coverage(named, live, tickets=tickets).uncovered)
     reopened = tuple(ac_id for ac_id in left if ac_id in uncovered)
-    return OwnerWait(acceptance=accepted, acs=left, reopened=reopened)
+    scoped, naming = _naming(named, live, ticket_aliases(tickets))
+    keys = [_order_key(record) for record in scoped]
+    since = _order_key(accepted)
+    settled = tuple(
+        ac_id
+        for ac_id in reopened
+        if any(
+            scoped[index].provenance == "owner"
+            and scoped[index].verdict == "NO-SHIP"
+            and _newer(keys[index], since)
+            for index in _latest(tuple(naming.get(ac_id, ())), keys)
+        )
+    )
+    return OwnerWait(acceptance=accepted, acs=left, reopened=reopened, settled=settled)
 
 
 def ranks_newer(record: EvalRecord, *, delivery: str, at: datetime) -> bool:
@@ -449,17 +451,38 @@ def _newer(first: _OrderKey, second: _OrderKey) -> bool:
     return first.stem == second.stem and first.rerun > second.rerun
 
 
-def _latest_verdict(
-    group: tuple[int, ...], records: Sequence[EvalRecord], keys: Sequence[_OrderKey]
-) -> Verdict:
-    """The verdict of the latest evals in ``group``: those no other is newer than (all of them
-    if the order loops), the conservative one when they disagree."""
-    latest = [
+def _naming(
+    records: Iterable[EvalRecord], live: tuple[RecordAc, ...], aliases: dict[str, frozenset[str]]
+) -> tuple[list[EvalRecord], dict[str, list[int]]]:
+    """The readable evals that name some of ``live``, and for each AC the indexes of those."""
+    naming: dict[str, list[int]] = {}
+    scoped: list[EvalRecord] = []
+    for record in records:
+        if record.problem is not None or record.verdict is None:
+            continue
+        named = _scope(record, live, aliases)
+        if named is None:
+            continue
+        for ac_id in dict.fromkeys(named):
+            naming.setdefault(ac_id, []).append(len(scoped))
+        scoped.append(record)
+    return scoped, naming
+
+
+def _latest(group: tuple[int, ...], keys: Sequence[_OrderKey]) -> list[int]:
+    """The latest of ``group``: those no other is newer than (all of them if the order loops)."""
+    return [
         index
         for index in group
         if not any(_newer(keys[other], keys[index]) for other in group if other != index)
     ] or list(group)
-    verdicts = {records[index].verdict for index in latest}
+
+
+def _latest_verdict(
+    group: tuple[int, ...], records: Sequence[EvalRecord], keys: Sequence[_OrderKey]
+) -> Verdict:
+    """The verdict of the latest evals in ``group``, the conservative one when they disagree."""
+    verdicts = {records[index].verdict for index in _latest(group, keys)}
     return next(verdict for verdict in _CONSERVATIVE if verdict in verdicts)
 
 

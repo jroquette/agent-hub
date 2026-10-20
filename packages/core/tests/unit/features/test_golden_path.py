@@ -589,6 +589,7 @@ def _feature_inputs(draw: st.DrawFn) -> GoldenInputs:
             evals=draw(st.integers(min_value=0, max_value=3)),
             covered=draw(st.integers(min_value=0, max_value=total)),
             owner_steps=draw(st.sampled_from((None, 0, 1))),
+            reopened=draw(st.sampled_from((0, 0, 1))),
             skipped=draw(st.sampled_from((0, 0, 0, 1))),
             acceptance=draw(st.sampled_from(_VERDICTS)),
         ),

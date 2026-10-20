@@ -217,6 +217,7 @@ def feature_parts(
         evals=len(evals),
         covered=len(coverage.covered),
         owner_steps=None if waiting is None else len(waiting.acs),
+        reopened=0 if waiting is None else len(waiting.reopened),
         skipped=folder.evals_skipped,
         acceptance=None if accepted is None else accepted.verdict,
     )
