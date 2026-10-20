@@ -65,3 +65,14 @@ def test_restores_polls_when_expect_poll_recorded() -> None:
     # resumes too, each once (E-7); a plain action call is no poll.
     assert state.polls == {"wait": 3, "other": 1}
     assert state.attempts["wait"] == 2
+
+
+def test_syncs_line_when_record_durable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    synced: list[int] = []
+    monkeypatch.setattr(workflow_runs.os, "fsync", synced.append)
+
+    workflow_runs.append_record(tmp_path, {"event": "plain"})
+    workflow_runs.append_record(tmp_path, {"event": "action_start"}, durable=True)
+
+    assert len(synced) == 1
+    assert len((tmp_path / workflow_runs.RECORDS).read_text().splitlines()) == 2
