@@ -59,7 +59,10 @@ def sign_off_owner_steps(
     the acceptance eval is undated or future-dated, or when not every eval was read. With
     ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes a SHIP
     over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words. A ``delivery``
-    naming the acceptance eval follows the no-body rule for its ACs and refusals."""
+    naming the acceptance eval covers what the Acceptance step waits on, with the no-body
+    refusals, except that ``more_work`` is not refused over ACs an agent's eval reopened; either
+    decision there is refused once an owner decision newer than the acceptance eval settled it
+    (its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one)."""
     if body is None:
         return sign_off(project, slug)
     return sign_off(project, slug, delivery=body.delivery, decision=body.decision, note=body.note)
