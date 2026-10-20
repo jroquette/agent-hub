@@ -78,7 +78,7 @@ def test_refuses_document_when_kind_differs_from_root(hub: Path, tmp_path: Path)
     assert scenarios.workflows == ()
     [problem] = scenarios.problems
     assert (problem.path.name, problem.line) == ("plain.yaml", None)
-    assert problem.reason == "a document in scenarios/ declares kind: scenario"
+    assert problem.reason == "a document in scenarios/ must declare kind: scenario"
     assert workflows.workflows == ()
     [problem] = workflows.problems
     assert (problem.path.name, problem.line) == ("walk.yaml", 2)
@@ -89,6 +89,6 @@ def test_refuses_document_when_kind_differs_from_root(hub: Path, tmp_path: Path)
             "scenarios/orders/plain.yaml",
             None,
             "$",
-            "a document in scenarios/ declares kind: scenario",
+            "a document in scenarios/ must declare kind: scenario",
         )
     ]
