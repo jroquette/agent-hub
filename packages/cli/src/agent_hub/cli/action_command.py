@@ -187,7 +187,7 @@ def run_command(name: Name, *, environment: Environment, given: Inputs = None) -
     events.policy_decided(facts, reason_kind=decision.reason_kind, at=now())
     if decision.decision == "ask":
         question = f"run {entry.ref} ({entry.document.effect}) in {resolved.environment_name}?"
-        if not typer.confirm(question, default=False):
+        if not _confirmed(question):
             _send(events)
             fail(f"{_RUN_PREFIX}: {entry.ref}: not run")
         facts = facts.model_copy(update={"approver": getpass.getuser()})
@@ -375,3 +375,12 @@ def _send(events: ScenarioEvents) -> None:
     except (AgentHubError, OSError) as error:
         reason = " ".join(str(error).split()) or type(error).__name__
         typer.echo(f"{_RUN_PREFIX}: event store unavailable: {reason}", err=True)
+
+
+def _confirmed(question: str) -> bool:
+    """A ``y`` to ``question``; the end of input (or Ctrl-C) at the prompt is a ``n``."""
+    try:
+        return typer.confirm(question, default=False)
+    except typer.Abort:
+        typer.echo("", err=True)
+        return False
