@@ -80,8 +80,10 @@ from agent_hub.core.runner.verdict import SessionReply, last_json_line, parse_se
 from agent_hub.core.workflows.engine import MAX_PARALLEL
 from agent_hub.core.workflows.failures import NodeFailedError, kind_for_exit
 from agent_hub.core.workflows.nodes import (
+    ActionNode,
     AgentNode,
     ExecutableNode,
+    ExpectNode,
     LoopNode,
     ScriptNode,
     ShellNode,
@@ -144,6 +146,9 @@ class WorkflowExecutors:
 
     def run(self, call: NodeCall) -> NodeReply:
         node = call.node
+        if isinstance(node, ActionNode | ExpectNode):
+            # Actions need the access policy and their pinned content: a scenario run's.
+            raise NodeFailedError("config", f"{node.type} nodes run only in a scenario run")
         if isinstance(node, AgentNode | LoopNode):
             return self._agent(call, node)
         stdin = None

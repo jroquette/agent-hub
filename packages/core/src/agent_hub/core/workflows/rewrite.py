@@ -14,8 +14,10 @@ from pydantic import JsonValue
 
 from agent_hub.core.workflows.document import Loc
 from agent_hub.core.workflows.nodes import (
+    ActionNode,
     AgentNode,
     ApprovalNode,
+    ExpectNode,
     FromBinding,
     HaltNode,
     LoopGroupNode,
@@ -52,8 +54,16 @@ class RewriteError(Exception):
 class Rewrite(ABC):
     """How one node's ids and references are rewritten as it is copied."""
 
-    def text(self, loc: Loc, text: str) -> str:
-        return rewritten(loc, text, lambda ref, spelling: self.reference(loc, ref, spelling))
+    # Whether the document's texts read in the scenario grammar (``$CTX``, ``$self``).
+    scenario: bool = False
+
+    def text(self, loc: Loc, text: str, *, scenario: bool | None = None) -> str:
+        """``text`` rewritten, in the scenario grammar when ``scenario`` (default: this
+        rewrite's ``scenario``) says so."""
+        grammar = self.scenario if scenario is None else scenario
+        return rewritten(
+            loc, text, lambda ref, spelling: self.reference(loc, ref, spelling), scenario=grammar
+        )
 
     @abstractmethod
     def reference(self, loc: Loc, ref: Ref, spelling: str) -> str: ...
@@ -70,6 +80,7 @@ class Local(Rewrite):
 
     def __init__(self, outer: Rewrite, local: frozenset[str]) -> None:
         self.outer, self.local = outer, local
+        self.scenario = outer.scenario
 
     def reference(self, loc: Loc, ref: Ref, spelling: str) -> str:
         if isinstance(ref, NodeRef | LoopPrevRef) and ref.node in self.local:
@@ -83,9 +94,9 @@ class Local(Rewrite):
         return target if target in self.local else self.outer.resume(target, loc)
 
 
-def rewritten(loc: Loc, text: str, replace: _Replace) -> str:
+def rewritten(loc: Loc, text: str, replace: _Replace, *, scenario: bool = False) -> str:
     try:
-        return rewrite_refs(text, replace)
+        return rewrite_refs(text, replace, scenario=scenario)
     except SubstitutionError as error:
         raise RewriteError(loc, str(error)) from None
 
@@ -99,16 +110,38 @@ def map_node(node: Node, rewrite: Rewrite) -> Node:
         update |= _agent_update(node, rewrite)
     elif isinstance(node, ShellNode | ScriptNode):
         update |= _command_update(node, rewrite)
-    elif isinstance(node, ApprovalNode):
-        update["message"] = rewrite.text(("message",), node.message)
-    elif isinstance(node, HaltNode):
-        update["reason"] = rewrite.text(("reason",), node.reason)
-    elif isinstance(node, WaitNode):
-        texts = {"until": node.until, "attention": node.attention}
-        update |= {key: rewrite.text((key,), text) for key, text in texts.items() if text}
+    elif isinstance(node, ApprovalNode | HaltNode | WaitNode):
+        update |= _gate_update(node, rewrite)
     elif isinstance(node, LoopGroupNode):
         update |= _group_update(node, rewrite)
+    elif isinstance(node, ActionNode | ExpectNode):
+        update |= _action_update(node, rewrite)
     return node.model_copy(update=update)
+
+
+def _gate_update(node: ApprovalNode | HaltNode | WaitNode, rewrite: Rewrite) -> dict[str, object]:
+    """An approval's message, a halt's reason, a wait's ``until`` or ``attention``."""
+    if isinstance(node, ApprovalNode):
+        return {"message": rewrite.text(("message",), node.message)}
+    if isinstance(node, HaltNode):
+        return {"reason": rewrite.text(("reason",), node.reason)}
+    texts = {"until": node.until, "attention": node.attention}
+    return {key: rewrite.text((key,), text) for key, text in texts.items() if text}
+
+
+def _action_update(node: ActionNode | ExpectNode, rewrite: Rewrite) -> dict[str, object]:
+    """An action call's ``with`` values, ``capture`` refs and an expect's ``until_when``."""
+    texts = {
+        name: _json_texts(("with", name), value, rewrite) for name, value in node.with_.items()
+    }
+    captures = {
+        name: rewrite.text(("capture", name), ref, scenario=True)
+        for name, ref in node.capture.items()
+    }
+    update: dict[str, object] = {"with_": read_only(texts), "capture": read_only(captures)}
+    if isinstance(node, ExpectNode):
+        update["until_when"] = rewrite.text(("until_when",), node.until_when, scenario=True)
+    return update
 
 
 def _group_update(node: LoopGroupNode, rewrite: Rewrite) -> dict[str, object]:
