@@ -24,11 +24,11 @@ from agent_hub.core.features.feature_evals import (
     eval_coverage,
     eval_records,
     legacy_verdict_line,
+    owner_wait,
 )
 from agent_hub.core.features.feature_record import (
     RECORD_FILE,
     FeatureRecordFile,
-    PlannedTicket,
     RecordAc,
     record_from_bytes,
 )
@@ -201,10 +201,11 @@ def feature_parts(folder: FeatureFolder, read: SnapshotRead | None = None) -> Fe
         approved=approved,
     )
     source: TicketsSource = "plan" if snapshot is None else "linear"
+    waiting = owner_wait(evals, acs, tickets=tickets)
     gate = EvalGate(
         evals=len(evals),
         covered=len(coverage.covered),
-        owner_steps=_unsigned_owner_steps(accepted, evals, acs, tickets=tickets),
+        owner_steps=None if waiting is None else len(waiting.acs),
         skipped=folder.evals_skipped,
         acceptance=None if accepted is None else accepted.verdict,
     )
@@ -275,23 +276,6 @@ def feature_detail(
             else AcceptanceEval(delivery=accepted.delivery, verdict=accepted.verdict)
         ),
     )
-
-
-def _unsigned_owner_steps(
-    accepted: EvalRecord | None,
-    evals: tuple[EvalRecord, ...],
-    acs: tuple[RecordAc, ...],
-    *,
-    tickets: tuple[PlannedTicket, ...],
-) -> int:
-    """The ACs a SHIP-WITH-OWNER-STEPS acceptance eval leaves as owner steps with no later SHIP
-    by the owner (Amendment A3): read over that eval and the owner's sign-offs only, so a
-    ticket eval never signs an owner step off."""
-    if accepted is None or accepted.verdict != "SHIP-WITH-OWNER-STEPS":
-        return 0
-    signoffs = (e for e in evals if e.provenance == "owner" and e.verdict == "SHIP")
-    left = eval_coverage((accepted, *signoffs), acs, tickets=tickets)
-    return len(left.owner_steps) + len(left.uncovered)
 
 
 def _ux_designs(folder: FeatureFolder) -> tuple[tuple[bool, ...], str | None]:

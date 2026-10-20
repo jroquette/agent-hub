@@ -279,7 +279,7 @@ def test_marks_acceptance_done_when_whole_feature_ship() -> None:
 
 
 def test_marks_acceptance_done_when_owner_steps_signed_off() -> None:
-    gate = EvalGate(evals=2, covered=6, owner_steps=0, acceptance="SHIP-WITH-OWNER-STEPS")
+    gate = EvalGate(evals=2, covered=6, acceptance="SHIP-WITH-OWNER-STEPS")
 
     path = golden_path(_all_done(coverage=gate))
 
@@ -557,7 +557,7 @@ def _feature_inputs(draw: st.DrawFn) -> GoldenInputs:
         coverage=EvalGate(
             evals=draw(st.integers(min_value=0, max_value=3)),
             covered=draw(st.integers(min_value=0, max_value=total)),
-            owner_steps=draw(st.integers(min_value=0, max_value=1)),
+            owner_steps=draw(st.sampled_from((None, 0, 1))),
             skipped=draw(st.sampled_from((0, 0, 0, 1))),
             acceptance=draw(st.sampled_from(_VERDICTS)),
         ),

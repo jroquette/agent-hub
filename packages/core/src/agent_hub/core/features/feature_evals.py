@@ -174,6 +174,55 @@ def acceptance_eval(records: Iterable[EvalRecord]) -> EvalRecord | None:
     return max((whole[i] for i in latest if whole[i].verdict == verdict), key=_listing_key)
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OwnerWait:
+    """A SHIP-WITH-OWNER-STEPS acceptance eval still waiting on the owner (two-level-flows A3).
+
+    ``acceptance`` is that eval; ``acs`` the non-withdrawn ACs it leaves as owner steps that no
+    later owner sign-off covers, in ``features.json`` order: what a sign-off must cover. Empty
+    when the feature lists no such AC (no ``features.json``, or every AC withdrawn): there is
+    nothing the app can sign off, and the eval still waits.
+    """
+
+    acceptance: EvalRecord
+    acs: tuple[str, ...]
+
+
+def owner_wait(
+    records: Iterable[EvalRecord],
+    acs: Iterable[RecordAc],
+    *,
+    tickets: Iterable[PlannedTicket] = (),
+) -> OwnerWait | None:
+    """What the owner must still sign off (A3, the one rule the Acceptance step and the sign-off
+    share); None when nothing waits: no acceptance eval, one that is not
+    SHIP-WITH-OWNER-STEPS, or one the owner signed off.
+
+    The acceptance eval is whole-feature (``acs: all``, or a legacy ``eval.md`` with no scope,
+    A6), so it leaves every non-withdrawn AC as an owner step, whether or not ``features.json``
+    marks it passing. Only a later SHIP eval with ``provenance: owner`` signs one off; ticket
+    evals never do (AC-1.6). With no AC to count, a later owner SHIP of any scope signs it off.
+    """
+    records = tuple(records)
+    accepted = acceptance_eval(records)
+    if accepted is None or accepted.verdict != "SHIP-WITH-OWNER-STEPS":
+        return None
+    signoffs = tuple(
+        record
+        for record in records
+        if record.problem is None and record.provenance == "owner" and record.verdict == "SHIP"
+    )
+    live = tuple(ac for ac in acs if not ac.withdrawn)
+    if not live:
+        since = _order_key(accepted)
+        if any(_newer(_order_key(signoff), since) for signoff in signoffs):
+            return None
+        return OwnerWait(acceptance=accepted, acs=())
+    whole = accepted.model_copy(update={"acs": ALL_ACS})
+    left = eval_coverage((whole, *signoffs), live, tickets=tickets).owner_steps
+    return OwnerWait(acceptance=accepted, acs=left) if left else None
+
+
 def _whole_feature(record: EvalRecord) -> bool:
     if record.acs == ALL_ACS:
         return True

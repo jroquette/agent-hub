@@ -572,7 +572,7 @@ export interface paths {
     /**
      * Sign Off Owner Steps
      * @description The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over
-     *     the ACs that waited on them (409 when no AC waits, or one is not covered by a SHIP).
+     *     the ACs the Acceptance step waits on (409 when none waits, or the feature lists no AC).
      */
     post: operations["sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post"];
     delete?: never;
