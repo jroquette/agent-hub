@@ -206,7 +206,7 @@ def test_signs_off_every_ac_when_legacy_eval_without_scope_ships_with_owner_step
     assert acceptance_of(signed(folder, writer)).state == "done"
 
 
-# two-level-flows A3 (AGH-325 Q2): with no AC to list, the app has nothing to sign off.
+# two-level-flows A10: with no AC to list, the app has nothing to sign off.
 def test_refuses_when_features_json_lists_no_live_ac() -> None:
     record = json.dumps({"acs": []}).encode()
     whole = an_eval("feature.md", "SHIP-WITH-OWNER-STEPS")

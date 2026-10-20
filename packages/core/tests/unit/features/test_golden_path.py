@@ -726,12 +726,32 @@ def test_keeps_acceptance_waiting_when_legacy_eval_ships_with_owner_steps() -> N
     assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: sign off 3 ACs")
 
 
-# two-level-flows A3 (AGH-325 Q2): no AC to count is no sign-off, so the owner steps still wait.
+# two-level-flows A10: no AC to count is no sign-off, so the owner steps still wait.
 def test_keeps_acceptance_waiting_when_owner_steps_eval_has_no_live_ac() -> None:
     planned_only = b'{"tickets": [{"key": "T1", "id": "ACME-1520", "order": 1}], "acs": []}'
     merged = _linear(_summary("ACME-1520", _DONE))
 
     path = feature_parts(_folder(_WHOLE_OWNER, features_json=planned_only), merged).golden_path
+
+    acceptance = _step(path, "acceptance")
+    assert (acceptance.state, acceptance.meta) == (
+        "current",
+        "Waiting on owner steps · no ACs listed",
+    )
+    assert path.phase == "acceptance"
+
+
+# two-level-flows A10: every AC withdrawn leaves no live AC to count, so the owner steps wait.
+def test_keeps_acceptance_waiting_when_every_ac_is_withdrawn() -> None:
+    withdrawn = (
+        b'{"tickets": [{"key": "T1", "id": "ACME-1520", "order": 1}], "acs": ['
+        b'{"id": "AC-7.1", "description": "d", "passes": true, "withdrawn": true},'
+        b'{"id": "AC-7.2", "description": "d", "passes": false, "withdrawn": true}'
+        b"]}"
+    )
+    merged = _linear(_summary("ACME-1520", _DONE))
+
+    path = feature_parts(_folder(_WHOLE_OWNER, features_json=withdrawn), merged).golden_path
 
     acceptance = _step(path, "acceptance")
     assert (acceptance.state, acceptance.meta) == (
