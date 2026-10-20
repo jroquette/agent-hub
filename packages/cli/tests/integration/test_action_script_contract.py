@@ -33,14 +33,14 @@ output_format:
   type: object
   required: [message_id]
   properties: {{message_id: {{type: string}}}}
-"""
+{extra}"""
 ENDPOINT = {"queue": {"url": "https://queue.staging.example.com/demo", "resource": None}}
 
 
-def an_action_call(hub: Path, script: str, *, timeout: str = "1m") -> ActionCall:
+def an_action_call(hub: Path, script: str, *, timeout: str = "1m", extra: str = "") -> ActionCall:
     pack = hub / "actions" / "demo"
     (pack / "scripts").mkdir(parents=True)
-    (pack / "send.yaml").write_text(ACTION.format(timeout=timeout))
+    (pack / "send.yaml").write_text(ACTION.format(timeout=timeout, extra=extra))
     (pack / "scripts" / "send.sh").write_text(script)
     (pack / "scripts" / "lib.sh").write_text("MESSAGE=m-1\n")
     (pack / "scripts" / ".notes").write_text("not pinned\n")
@@ -214,3 +214,35 @@ def test_redacts_credential_cut_by_tail_when_action_script_contract_fails(
     detail = str(raised.value)
     leaked = [value[i : i + 4] for i in range(len(value) - 3) if value[i : i + 4] in detail]
     assert leaked == []
+
+
+# A value JSON escapes: a quote, a backslash and a non-ASCII letter.
+ESCAPED_SECRET = "x-" + 'sec"r' + "\\" + "\u00e9t-y"
+
+
+def test_redacts_escaped_credential_when_action_script_contract_output_parsed(
+    tmp_path: Path, environ: dict[str, str]
+) -> None:
+    printed = json.dumps({"message_id": ESCAPED_SECRET, ESCAPED_SECRET: [ESCAPED_SECRET, 7]})
+    assert ESCAPED_SECRET not in printed
+    call = an_action_call(tmp_path / "hub", f"printf '%s' '{printed}'\n")
+
+    output = run_action(call, environ=environ, credentials={"DEMO_TOKEN": ESCAPED_SECRET})
+
+    placeholder = "<credential DEMO_TOKEN>"
+    assert output == {"message_id": placeholder, placeholder: [placeholder, 7]}
+
+
+def test_redacts_escaped_credential_when_action_script_contract_schema_fails(
+    tmp_path: Path, environ: dict[str, str]
+) -> None:
+    printed = json.dumps({"message_id": "m-1", ESCAPED_SECRET: "not an integer"})
+    extra = "  additionalProperties: {type: integer}\n"
+    call = an_action_call(tmp_path / "hub", f"printf '%s' '{printed}'\n", extra=extra)
+
+    with pytest.raises(NodeFailedError) as raised:
+        run_action(call, environ=environ, credentials={"DEMO_TOKEN": ESCAPED_SECRET})
+
+    assert raised.value.kind == "output_contract"
+    assert "<credential DEMO_TOKEN>" in str(raised.value)
+    assert ESCAPED_SECRET not in str(raised.value)
