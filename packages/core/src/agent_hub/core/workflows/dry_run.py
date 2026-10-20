@@ -29,8 +29,10 @@ from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.failures import FailureKind, NodeFailedError, RetryRecord
 from agent_hub.core.workflows.gates import GateAnswer, GateError
 from agent_hub.core.workflows.nodes import (
+    ActionNode,
     ApprovalNode,
     ExecutableNode,
+    ExpectNode,
     KebabId,
     LoopNode,
     Node,
@@ -290,7 +292,8 @@ def _reply(node: ExecutableNode, stub: Stub) -> NodeReply:
         raise NodeFailedError(stub.fail, "a stubbed failure")
     if stub.text is not None:
         return NodeReply(stub.text)
-    if node.output_format is not None:
+    # An action's output is always JSON; its format is the action's own.
+    if isinstance(node, ActionNode | ExpectNode) or node.output_format is not None:
         return NodeReply(json.dumps(stub.output, allow_nan=False))
     return NodeReply(canonical_text(stub.output))
 
