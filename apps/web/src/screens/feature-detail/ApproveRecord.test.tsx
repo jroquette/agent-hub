@@ -11,7 +11,13 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
-import { ApproveRecord, approvalMessage, featureSessions, writersOf } from "./ApproveRecord";
+import {
+  ApproveRecord,
+  approvalMessage,
+  featureSessions,
+  isApproved,
+  writersOf,
+} from "./ApproveRecord";
 
 const AGENT = "/api/v1/agent-sessions";
 const PATH = "brain/features/real-cost/spec.md";
@@ -161,6 +167,33 @@ describe("ApproveRecord", () => {
     renderWithApi(ui());
     expect(await screen.findByText("The spec")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve spec" })).toBe(null);
+  });
+
+  it("says the record is approved and offers no approval again", async () => {
+    renderWithApi(ui(), {
+      routes: {
+        ...sessions([author], [author]),
+        "/api/v1/projects/agent-hub/brain/note": aBrainNote({
+          path: "features/real-cost/spec.md",
+          frontmatter: { type: "spec", status: "approved", last_verified: "2026-10-20" },
+          markdown: "# Spec\n\n## Open questions\n\n- Q1. **Port.** Which one? Research.\n",
+        }),
+      },
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Spec approved · last verified 2026-10-20.",
+    );
+    expect(screen.getByText("The spec")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Approve spec/ })).toBe(null);
+    expect(screen.queryByRole("region", { name: "Open questions" })).toBe(null);
+  });
+
+  it("reads only an `approved` status as approved", () => {
+    expect(isApproved("approved")).toBe(true);
+    expect(isApproved(" Approved ")).toBe(true);
+    expect(isApproved("draft")).toBe(false);
+    expect(isApproved(["approved"])).toBe(false);
+    expect(isApproved(undefined)).toBe(false);
   });
 
   describe("open questions", () => {
