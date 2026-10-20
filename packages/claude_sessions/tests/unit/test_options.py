@@ -114,3 +114,27 @@ def test_sets_cli_path_absolute_when_claude_on_path(
 def test_finds_no_claude_when_path_lacks_it(tmp_path: Path) -> None:
     assert claude_path({"PATH": str(tmp_path)}) is None
     assert claude_path({}) is None
+
+
+def test_restricts_tools_to_reading_when_session_read_only() -> None:
+    spec = _spec(tool_access="read_only", add_dirs=("/work/api", "/work/web"))
+
+    options = sdk_options(spec, can_use_tool=_can_use_tool, cli_path=CLI, environ={})
+
+    assert options.tools == ["Read", "Grep", "Glob"]
+    assert options.allowed_tools == ["Read", "Grep", "Glob"]
+    assert {"Bash", "Edit", "MultiEdit", "Write", "NotebookEdit"} <= set(options.disallowed_tools)
+    assert {"WebFetch", "WebSearch", "Task", "Agent"} <= set(options.disallowed_tools)
+    assert options.strict_mcp_config is True
+    assert options.add_dirs == ["/work/api", "/work/web"]
+    assert options.setting_sources is None
+
+
+def test_leaves_tools_alone_when_session_has_all_tools() -> None:
+    options = sdk_options(_spec(), can_use_tool=_can_use_tool, cli_path=CLI, environ={})
+
+    assert options.tools is None
+    assert options.allowed_tools == []
+    assert options.disallowed_tools == []
+    assert options.strict_mcp_config is False
+    assert options.add_dirs == []

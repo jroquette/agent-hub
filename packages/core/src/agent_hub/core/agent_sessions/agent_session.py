@@ -6,7 +6,7 @@ redacted in the stored record). A cloud start is a row of the same table (``kind
 shown as a ``CloudSession``.
 """
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from enum import StrEnum
 from typing import Annotated, Final, Literal
 
@@ -18,6 +18,7 @@ from agent_hub.core.agent_sessions.driver import (
     PermissionMode,
     PermissionSuggestion,
     RequestKind,
+    ToolAccess,
 )
 from agent_hub.core.readmodels.view_types import ApiTimestamp, Money, ViewModel
 from agent_hub.core.sessions.session import TokenUsage
@@ -124,7 +125,8 @@ class AgentSession(ViewModel):
     ``last_prompt`` and ``last_reply`` are the latest ``user.message`` and assistant ``text`` of
     the stored (redacted) log as one line of at most 280 characters, the reply's markdown
     marks dropped; ``changed_files`` the files changed, latest change first, at most 200
-    (``digest``).
+    (``digest``). ``tool_access`` is the tools it may use, kept so a reopened session keeps
+    them; it is the server's own (``exclude``: never in an answer, so the contract is unchanged).
     """
 
     id: str
@@ -152,6 +154,22 @@ class AgentSession(ViewModel):
     review_targets: tuple[ReviewTarget, ...] = Field(default=(), max_length=MAX_REVIEW_TARGETS)
     open_permission: OpenPermission | None = None
     observed_session_id: str | None = None
+    tool_access: ToolAccess = Field(default="all", exclude=True)
+
+    def with_fields(self, fields: Mapping[str, object]) -> AgentSession:
+        """This session with ``fields`` changed, validated again; ``tool_access`` is kept,
+        though a dump leaves it out."""
+        return AgentSession.model_validate(
+            self.model_dump() | {"tool_access": self.tool_access} | dict(fields)
+        )
+
+
+class FinalReply(ViewModel):
+    """What a session answered its last message: the assistant's text (None before any) and
+    whether that turn was interrupted."""
+
+    text: str | None = None
+    interrupted: bool = False
 
 
 class AgentSessionList(ViewModel):

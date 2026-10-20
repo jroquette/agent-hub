@@ -133,6 +133,17 @@ between that check and the replace is overwritten: a narrow window). `remove` re
 environment; a committed write prints `run ./hub sync to update AGENTS.md`. The guard asks before a mutating
 `hub env` and an edit of `hub.local.json`; `list` and `show` pass. `hub setup`'s optional step writes only it.
 
+### Discoveries
+
+`hub web` can find services with Claude ([ADR 0043](../adr/0043-read-only-discovery-sessions.md)): the person picks
+repos and declared environments (and whether Claude may suggest new ones); the server starts a read-only session
+(`Read`, `Grep`, `Glob` only) in the hub with the repos attached, and Claude ends its reply with one JSON proposal of
+environments, services and their addresses, each with evidence. The server checks every item with this file's
+shapes (an invalid one is listed as dropped, with the reason), sets `access` and `production` from the preset Claude
+names, and marks each item `new`, `differs` or `declared` against the effective config. Nothing is written until the
+person applies the rows they pick through the batch edit. Routes: `/api/v1/projects/{project}/environment-discoveries`
+(POST, GET) and `/{discovery_id}` (GET, DELETE); one file per discovery under `<hub>/.agent-runs/env-discoveries/`.
+
 ### Known limits
 
 Blocked words are a best-effort text tripwire, not a security boundary: the boundary is which credentials the

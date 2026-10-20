@@ -15,6 +15,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSession,
     AgentSessionStatus,
     ChangedFile,
+    CreateAgentSession,
     EndReason,
     PermissionDecision,
     SendMessage,
@@ -73,7 +74,7 @@ from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL, R
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
 from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.fakes import InMemoryEventStore
-from agent_hub.core.testing.read_model_builders import a_workdir
+from agent_hub.core.testing.read_model_builders import WORKDIR_ID, a_workdir
 from agent_hub.core.testing.session_driver_fakes import Hold, InMemorySessionDriver
 from agent_hub.core.testing.session_scenarios import a_session_events
 
@@ -1713,3 +1714,62 @@ async def test_folds_log_again_when_reopened(make_rig: MakeRig) -> None:
         "toolu_write",
         "toolu_edit",
     ]
+
+
+async def test_starts_and_reopens_read_only_when_server_asks_for_it(make_rig: MakeRig) -> None:
+    rig = make_rig(past_sessions=(PAST,))
+    request = CreateAgentSession(
+        project="demo",
+        workdir_id=WORKDIR_ID,
+        prompt="Read the repos.",
+        resume_session_id=PAST.session_id,
+    )
+    created = await rig.control.create(
+        request, tool_access="read_only", add_dirs=("/hubs/demo-api",)
+    )
+    await rig.until_status(created.id, "idle")
+    await rig.control.close(created.id)
+
+    await rig.control.send(created.id, SendMessage(text="Look again."))
+    await rig.until_status(created.id, "idle")
+
+    first, reopened = _start_spec(rig.driver, 0), _start_spec(rig.driver, 1)
+    assert (first.tool_access, first.add_dirs) == ("read_only", ("/hubs/demo-api",))
+    assert reopened.tool_access == "read_only"
+    assert rig.store.get(created.id).tool_access == "read_only"
+    assert "tool_access" not in created.model_dump()
+
+
+async def test_starts_with_all_tools_when_created_from_the_body(make_rig: MakeRig) -> None:
+    rig = make_rig()
+
+    created = await rig.create("Say hello.")
+
+    assert _start_spec(rig.driver).tool_access == "all"
+    assert rig.store.get(created.id).tool_access == "all"
+
+
+async def test_answers_text_after_last_message_when_final_reply_read(make_rig: MakeRig) -> None:
+    rig = make_rig(
+        replies={
+            "First.": (TextBlock(block=0, text="old answer"),),
+            "Second.": (TextBlock(block=0, text="part one"), TextBlock(block=1, text="part two")),
+        }
+    )
+    created = await rig.create("First.")
+    await rig.until_status(created.id, "idle")
+    await rig.control.send(created.id, SendMessage(text="Second."))
+    await rig.until(lambda: rig.kinds(created.id).count("result") == 2)
+
+    reply = await rig.control.final_reply(created.id)
+
+    assert (reply.text, reply.interrupted) == ("part one\n\npart two", False)
+
+
+async def test_answers_none_when_final_reply_read_before_any_text(make_rig: MakeRig) -> None:
+    rig = make_rig()
+    created = await rig.create()
+
+    reply = await rig.control.final_reply(created.id)
+
+    assert (reply.text, reply.interrupted) == (None, False)

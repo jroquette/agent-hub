@@ -3,6 +3,7 @@ from agent_hub.api.openapi_paths import (
     AC_CHECK_PATHS,
     AGENT_SESSION_PATHS,
     CLARITY_PATHS,
+    DISCOVERY_PATHS,
     DOCTOR_FIX_PATHS,
     FEATURE_NAME_PATHS,
     GATE_PATHS,
@@ -145,6 +146,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | PLATFORM_SYNC_PATHS
         | DOCTOR_FIX_PATHS
         | AC_CHECK_PATHS
+        | DISCOVERY_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -168,6 +170,7 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | PLATFORM_SYNC_PATHS
         | DOCTOR_FIX_PATHS
         | AC_CHECK_PATHS
+        | DISCOVERY_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -267,3 +270,15 @@ def test_documents_screenshot_when_create_schema_read(api_settings: ApiSettings)
     assert "#/components/schemas/Screenshot" in refs
     # Pydantic writes a one-value Literal as ``const`` (the plan said ``enum: ["image/png"]``).
     assert schemas["Screenshot"]["properties"]["media_type"]["const"] == "image/png"
+
+
+def test_lists_discovery_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # ADR 0043: start, list, read and discard a project's environment discoveries.
+    discoveries = "/api/v1/projects/{project}/environment-discoveries"
+    assert {
+        ("post", discoveries),
+        ("get", discoveries),
+        ("get", f"{discoveries}/{{discovery_id}}"),
+        ("delete", f"{discoveries}/{{discovery_id}}"),
+    } == DISCOVERY_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS

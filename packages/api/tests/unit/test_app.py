@@ -57,6 +57,7 @@ BODIES: dict[tuple[str, str], object] = {
         "scope": "local",
         "name": "staging",
     },
+    ("post", "/api/v1/projects/{project}/environment-discoveries"): {"repos": ["api"]},
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
@@ -67,10 +68,13 @@ QUERIES = {
 }
 # Agent session ids are UUIDs (the route's convertor); the other ids take any text.
 AGENT_SESSION_ID = "01929a4e-7a11-7c00-8a00-00000000a001"
+# Discovery ids are 12 hex digits (the route's pattern).
+DISCOVERY_ID = "0123456789ab"
 
 
 def _concrete(path: str) -> str:
     path = path.replace("{agent_session_id}", AGENT_SESSION_ID)
+    path = path.replace("{discovery_id}", DISCOVERY_ID)
     # Run commands take the CLI's run ids only.
     if path.endswith(("/cancel", "/resume", "/abandon")):
         path = path.replace("{run_id}", "run-1")

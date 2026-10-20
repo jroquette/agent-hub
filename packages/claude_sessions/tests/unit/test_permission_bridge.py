@@ -12,7 +12,12 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import PermissionRuleValue
 
-from agent_hub.claude_sessions.permission_bridge import CLOSED, INTERRUPTED, PermissionBridge
+from agent_hub.claude_sessions.permission_bridge import (
+    CLOSED,
+    INTERRUPTED,
+    READ_ONLY_DENIED,
+    PermissionBridge,
+)
 from agent_hub.core.agent_sessions.driver import (
     Allow,
     Deny,
@@ -211,3 +216,29 @@ async def test_passes_no_update_when_answer_carries_mode_or_directories() -> Non
 
     assert isinstance(result, PermissionResultAllow)
     assert result.updated_permissions is None
+
+
+async def test_denies_without_asking_when_read_only_session_asks_for_other_tool() -> None:
+    events: list[DriverEvent] = []
+    bridge = PermissionBridge(events.append, allowed=frozenset({"Read", "Grep", "Glob"}))
+
+    result = await bridge.can_use_tool("Bash", {"command": "rm -rf build"}, _context("toolu_b"))
+
+    assert isinstance(result, PermissionResultDeny)
+    assert result.message == READ_ONLY_DENIED == "This session can only read files."
+    assert events == []
+    assert bridge.pending() == ()
+
+
+async def test_parks_request_when_read_only_session_asks_for_reading_tool() -> None:
+    events: list[DriverEvent] = []
+    bridge = PermissionBridge(events.append, allowed=frozenset({"Read", "Grep", "Glob"}))
+    asked = asyncio.ensure_future(
+        bridge.can_use_tool("Read", {"file_path": "/work/api/serverless.yml"}, _context("toolu_r"))
+    )
+    while not events:
+        await asyncio.sleep(0)
+
+    assert bridge.pending() == ("toolu_r",)
+    bridge.answer("toolu_r", Allow())
+    assert isinstance(await asked, PermissionResultAllow)

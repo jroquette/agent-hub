@@ -59,6 +59,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
     CreateAgentSession,
     EndReason,
+    FinalReply,
     MessageAccepted,
     OpenPermission,
     PermissionDecision,
@@ -84,6 +85,7 @@ from agent_hub.core.agent_sessions.driver import (
     StartSpec,
     TaskEvent,
     TextDelta,
+    ToolAccess,
     ToolCall,
     ToolResult,
     TurnResult,
@@ -176,6 +178,10 @@ PR_CHECK_SECONDS: Final = 60
 
 # The tool calls ``repo_changes`` reads for the worktrees a session names, a page at a time.
 CALL_KINDS: Final[frozenset[RecordKind]] = frozenset({"tool.call"})
+# The records ``final_reply`` reads: the messages, to find the last one, the replies and any
+# interrupt after it.
+REPLY_KINDS: Final[frozenset[RecordKind]] = frozenset({"user.message", "text", "interrupt"})
+REPLY_PAGE: Final = 500
 MAX_CALLS_READ: Final = 5000
 CALLS_PAGE: Final = 500
 
@@ -659,6 +665,29 @@ class AgentSessionControl:
         more = len(records) == limit and records[-1].seq < session.last_seq
         return LogRecordPage(items=records, next_after=records[-1].seq if more else None)
 
+    async def final_reply(self, agent_session_id: str) -> FinalReply:
+        """The assistant's text after the session's last message, as stored (redacted), its
+        blocks joined by a blank line, and whether that turn was interrupted."""
+        await self._session(agent_session_id)
+        return await asyncio.to_thread(self._final_reply, agent_session_id)
+
+    def _final_reply(self, agent_session_id: str) -> FinalReply:
+        texts: list[str] = []
+        interrupted = False
+        after = 0
+        while page := self._store.records(
+            agent_session_id, after=after, limit=REPLY_PAGE, kinds=REPLY_KINDS
+        ):
+            for record in page:
+                if record.kind == "user.message":
+                    texts, interrupted = [], False
+                elif record.kind == "interrupt":
+                    interrupted = True
+                elif isinstance(text := record.body.get("text"), str):
+                    texts.append(text)
+            after = page[-1].seq
+        return FinalReply(text="\n\n".join(texts) if texts else None, interrupted=interrupted)
+
     async def delete(self, agent_session_id: str) -> None:
         """Remove an ended session and its log (L4); a live one raises ``SessionLiveError``."""
         if agent_session_id in self._live:
@@ -677,10 +706,19 @@ class AgentSessionControl:
 
     # Commands
 
-    async def create(self, request: CreateAgentSession) -> AgentSession:
+    async def create(
+        self,
+        request: CreateAgentSession,
+        *,
+        tool_access: ToolAccess = "all",
+        add_dirs: tuple[str, ...] = (),
+    ) -> AgentSession:
         """Start a session in a listed workdir (and send its first prompt, with the screenshot,
         the images and the files attached to it): ``running`` with a prompt, else ``idle``
-        (E13). A refused image or file raises before anything starts or is stored."""
+        (E13). A refused image or file raises before anything starts or is stored.
+
+        ``tool_access`` and ``add_dirs`` are the server's own choices (a discovery starts a
+        ``read_only`` session that reads the picked repos); the routes never pass them."""
         prompt = request.prompt
         if prompt is not None:
             self._check_size(prompt)
@@ -717,6 +755,7 @@ class AgentSessionControl:
                 last_prompt=prompt_snippet(prompt) if prompt else None,
                 created_at=now,
                 updated_at=now,
+                tool_access=tool_access,
             )
             await asyncio.to_thread(self._store.create, session)
             spec = StartSpec(
@@ -728,6 +767,8 @@ class AgentSessionControl:
                 session_id=minted,
                 environment_extra=self._environment_extra,
                 plugin_dirs=resolved.plugin_dirs,
+                tool_access=tool_access,
+                add_dirs=add_dirs,
             )
             live = await self._start(session, spec, state)
             try:
@@ -1095,6 +1136,8 @@ class AgentSessionControl:
                 session_id=None,
                 environment_extra=self._environment_extra,
                 plugin_dirs=resolved.plugin_dirs,
+                # A read-only session stays read-only once reopened.
+                tool_access=reopened.tool_access,
             )
             state = start_state(with_prompt=False)
             live = await self._start(reopened, spec, state)

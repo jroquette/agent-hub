@@ -7,6 +7,8 @@ refuses before routing, so a refused request never reaches a port.
   same path with the other query parameters; when the token is this launch's, it also sets the
   cookie ``agent_hub_<port>`` (``HttpOnly; SameSite=Strict; Path=/``). The redirect drops the
   token, so it is one hop, never a loop, and the token leaves the address bar.
+- **Discoveries.** A project's ``environment-discoveries`` routes start and read read-only
+  sessions (ADR 0043), so they follow every rule of the agent-session routes below.
 - **Off.** With ``sessions_off`` (the container, L2) every route under ``/api/v1/agent-sessions``
   answers 404 ``agent-sessions-off``, cookie or not, and so does every workflow-run write
   (``run-control-off``): both start processes in a hub.
@@ -26,6 +28,7 @@ refuses before routing, so a refused request never reaches a port.
 The token, the cookie and the query string are never logged or echoed in a problem.
 """
 
+import re
 from urllib.parse import parse_qsl, quote, urlencode
 
 from starlette.datastructures import Headers
@@ -59,9 +62,17 @@ CONTAINER_READ_ONLY = ItemWriteRefusedError(
 _PATH_SAFE = "/:@!$&'()*+,;=-._~%"
 
 
+# A project's environment discoveries start and read Claude sessions (ADR 0043): they follow the
+# agent-session rules (off in the container, the cookie, the Origin).
+_DISCOVERIES = re.compile(
+    rf"^{re.escape(API_PREFIX)}/projects/[^/]+/environment-discoveries(/.*)?$"
+)
+
+
 def is_agent_session_path(path: str) -> bool:
-    """Whether ``path`` is under ``/api/v1/agent-sessions``."""
-    return path == AGENT_SESSIONS or path.startswith(f"{AGENT_SESSIONS}/")
+    """Whether ``path`` is under ``/api/v1/agent-sessions``, or a project's discoveries."""
+    in_sessions = path == AGENT_SESSIONS or path.startswith(f"{AGENT_SESSIONS}/")
+    return in_sessions or _DISCOVERIES.fullmatch(path) is not None
 
 
 def _is_api_path(path: str) -> bool:

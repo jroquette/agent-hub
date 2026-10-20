@@ -335,14 +335,15 @@ def test_keeps_csp_when_agent_session_page_served(wired: Any) -> None:
 
 
 def _pre_existing_reads(wired: Any) -> list[str]:
-    """Every ``GET`` of the document outside the agent sessions, path parameters filled in, the
-    endless streams left out."""
+    """Every ``GET`` of the document outside the agent sessions and the discoveries (which take
+    the session cookie too), path parameters filled in, the endless streams left out."""
     paths: dict[str, dict[str, object]] = wired.client.app.openapi()["paths"]
     return [
         re.sub(r"\{[^}]+\}", "demo", path)
         for path, item in sorted(paths.items())
         if "get" in item
         and not path.startswith("/api/v1/agent-sessions")
+        and "/environment-discoveries" not in path
         and not path.endswith("/stream")
     ]
 
