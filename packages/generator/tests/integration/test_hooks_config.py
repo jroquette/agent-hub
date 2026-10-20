@@ -1610,3 +1610,40 @@ def test_labels_found_file_when_cached_hooks_load(
     # home, so the local file beside it never counts.
     assert walked["words"] == [["prod", "hub.json"], ["demo-live", "hub.local.json"]]
     assert named["words"] == [["edge", "$HUB_CONFIG"], ["prod", "$HUB_CONFIG"]]
+
+
+# AGH-354 (P-13, P-25): the guard's env files and endpoints are hub.json's, then hub.local.json's
+# (each env file once, with the first environment naming it); a local file only adds to them.
+TARGETS_CODE = (
+    "import dataclasses, json\nfrom hubhooks import load_config\ncfg = load_config(None)\n"
+    "print(json.dumps({'env_files': [dataclasses.asdict(e) for e in cfg.env_files],"
+    " 'endpoints': [dataclasses.asdict(e) for e in cfg.endpoints]}))\n"
+)
+
+
+def test_merges_env_files_and_endpoints_when_local_declares_them(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    document = builders.an_environments_document()
+    document["environments"]["staging"]["credentials"]["env_file"] = (
+        "demo-api/environment/.env.test"
+    )
+    write_hub_json(hub, document)
+    local = builders.a_local_environments_document()
+    local["environments"]["jane-cloud"]["credentials"]["env_file"] = "demo-api/.env.jane"
+    local["environments"]["live"] = {"credentials": {"env_file": "demo-api/environment/.env.test"}}
+    write_local_json(hub, local)
+
+    found = run_python(hook_python, TARGETS_CODE, path=hub / HOOKS, cwd=elsewhere)
+
+    assert found["env_files"] == [
+        {"path": "demo-api/environment/.env.test", "environment": "staging"},
+        {"path": "demo-api/.env.jane", "environment": "jane-cloud"},
+    ]
+    assert found["endpoints"] == [
+        {"environment": "local", "host": "localhost", "resource": ""},
+        {"environment": "staging", "host": "api.staging.example.com", "resource": ""},
+        {"environment": "live", "host": "api.example.com", "resource": ""},
+        {"environment": "staging", "host": "", "resource": "demo-orders-staging"},
+        {"environment": "jane-cloud", "host": "api.jane.example.com", "resource": ""},
+    ]

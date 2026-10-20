@@ -43,7 +43,15 @@ this reader falls back instead.
 - ``environments`` keeps each entry whose name is a safe segment of at most 40 characters, whose
   ``access`` is ``read``, ``write`` or ``ask`` and whose ``production`` (default ``false``) is a
   boolean; any other entry is dropped. ``credential_env`` keeps the ``credentials.env`` items with
-  the model's variable-name shape. Endpoints and services are not read.
+  the model's variable-name shape.
+- ``env_files`` and ``endpoints`` (also ``load_local_targets`` for ``hub.local.json``): each
+  ``credentials.env_file`` of an environment, then of a ``repos[].services`` endpoint, once per path
+  with the first environment naming it; and each endpoint's host (lowercase, from its ``url``) and
+  ``resource``. An entry is kept only under a safe environment name; a path only with the model's
+  ``EnvFilePath`` shape (no ``..`` segment, no leading ``/`` or ``~``, no secret shape), a url only
+  with the model's ``Url`` shape, a resource only as non-blank text without a control character or
+  secret shape; anything else is dropped, and only that entry. Whether the environment is declared
+  is not checked: the guard only tightens with them (docs/design/scenarios.md § Credentials).
 - Elsewhere, unknown keys and comment keys (``_`` first) are ignored. ``modules`` and
   ``doctor.rules`` keep each entry's settings, minus comment keys, without checking them.
 - ``hub.local.json`` (one developer's ``project.branch_prefix``, ``author_name``,
@@ -148,6 +156,16 @@ ENVIRONMENT_NAME = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*")
 ENVIRONMENT_NAME_MAX_CHARS = 40
 ACCESS_LEVELS = ("read", "write", "ask")
 ENV_VAR_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
+# The model's ``EnvFilePath`` (printable ASCII without space, not starting with ``/`` or ``~``, at
+# most 200 characters, no ``..`` segment) and ``Url`` (``scheme://host[:port][/path]``, no user
+# info, query or fragment, at most 200 characters) shapes, for ``fullmatch``; the url's host is
+# group 1.
+ENV_FILE_PATH = re.compile(r"[!-.0-}][!-~]*")
+ENV_FILE_PATH_MAX_CHARS = 200
+ENDPOINT_URL = re.compile(
+    r"[A-Za-z][A-Za-z0-9+.-]*://([A-Za-z0-9.-]+)(?::[0-9]{1,5})?(?:/[!\"$->A-~]*)?"
+)
+ENDPOINT_URL_MAX_CHARS = 200
 # core/secret_shapes.py's shapes that fit an environment name or a blocked word (letters, digits
 # and -_. only): the private-key, credential-assignment and Fernet shapes need a space or "=".
 # The JWT shape is the old lint's, which matches what core's linear rewrite matches; the texts
@@ -256,6 +274,32 @@ class EnvironmentEntry:
 
 
 @dataclass(frozen=True)
+class EnvFileEntry:
+    """A declared env file: its path relative to the workspace and the first environment naming it."""
+
+    path: str
+    environment: str
+
+
+@dataclass(frozen=True)
+class EndpointEntry:
+    """A service's endpoint in one environment: its url's host (lowercase) and its resource, each
+    ``""`` when absent."""
+
+    environment: str
+    host: str = ""
+    resource: str = ""
+
+
+@dataclass(frozen=True)
+class EnvironmentTargets:
+    """What a file's environments reach: their env files and their services' endpoints."""
+
+    env_files: tuple[EnvFileEntry, ...] = ()
+    endpoints: tuple[EndpointEntry, ...] = ()
+
+
+@dataclass(frozen=True)
 class DoctorSection:
     """``doctor``: each rule id with its settings, unchecked."""
 
@@ -275,6 +319,8 @@ class HubFile:
     environments: tuple[EnvironmentEntry, ...] = ()
     modules: dict[str, dict[str, object]] = field(default_factory=dict)
     doctor: DoctorSection = field(default_factory=DoctorSection)
+    env_files: tuple[EnvFileEntry, ...] = ()
+    endpoints: tuple[EndpointEntry, ...] = ()
 
 
 def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
@@ -287,6 +333,7 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
     project_branch = _text(project, "default_branch", ProjectSection.default_branch)
     blocked, blocked_problem = _blocked(guard, GUARD_KEYS)
     blocked_problem = _guard_shape_problem(document) or blocked_problem
+    targets = _targets(document)
     return HubFile(
         # ``bool`` is an ``int``; only a JSON integer is a schema version.
         schema_version=schema_version if type(schema_version) is int else None,
@@ -327,6 +374,8 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
         environments=_environments(document.get("environments")),
         modules=_settings_by_id(document.get("modules")),
         doctor=DoctorSection(rules=_settings_by_id(_object(document.get("doctor")).get("rules"))),
+        env_files=targets.env_files,
+        endpoints=targets.endpoints,
     )
 
 
@@ -386,6 +435,15 @@ def load_local_layer(path: str | os.PathLike[str]) -> LocalLayer:
         blocked_words_env=lists.get("blocked_words_env", ()),
         problem=problem,
     )
+
+
+def load_local_targets(path: str | os.PathLike[str]) -> EnvironmentTargets:
+    """``hub.local.json``'s env files and endpoints at ``path``; none when the file is absent or
+    cannot be used (the guard then asks for the file itself, ``LocalLayer.file_problem``)."""
+    if not os.path.lexists(path):
+        return EnvironmentTargets()
+    document = _read_object(path, max_bytes=LOCAL_FILE_MAX_BYTES)
+    return EnvironmentTargets() if document is None else _targets(document)
 
 
 class EffectiveValues:
@@ -677,6 +735,71 @@ def _environments(value: object, *, needs_access: bool = True) -> tuple[Environm
         )
         entries.append(EnvironmentEntry(name, access, production, credential_env))
     return tuple(entries)
+
+
+def _environment_name(name: object) -> bool:
+    return (
+        isinstance(name, str)
+        and len(name) <= ENVIRONMENT_NAME_MAX_CHARS
+        and _is_shaped(name, ENVIRONMENT_NAME)
+        and not secret_shaped(name)
+    )
+
+
+def _env_file(credentials: object) -> str:
+    """``credentials.env_file`` when it has the model's ``EnvFilePath`` shape, else ``""``."""
+    value = _object(credentials).get("env_file")
+    if (
+        not isinstance(value, str)
+        or len(value) > ENV_FILE_PATH_MAX_CHARS
+        or not _is_shaped(value, ENV_FILE_PATH)
+        or ".." in value.split("/")
+        or secret_shaped(value)
+    ):
+        return ""
+    return value
+
+
+def _endpoint(environment: str, item: object) -> EndpointEntry | None:
+    """The endpoint's host and resource; ``None`` when neither is usable."""
+    endpoint = _object(item)
+    url, resource = endpoint.get("url"), endpoint.get("resource")
+    host = ""
+    if isinstance(url, str) and len(url) <= ENDPOINT_URL_MAX_CHARS and not secret_shaped(url):
+        found = ENDPOINT_URL.fullmatch(url)
+        host = found.group(1).lower() if found and _is_shaped(url, ENDPOINT_URL) else ""
+    if not (isinstance(resource, str) and resource.strip() and _is_shaped(resource, FREE_STRING)) or (
+        secret_shaped(resource)
+    ):
+        resource = ""
+    return EndpointEntry(environment, host, resource) if host or resource else None
+
+
+def _targets(document: dict[str, object]) -> EnvironmentTargets:
+    """The env files (environments' first, then endpoints', each path once) and the endpoints of
+    ``environments`` and ``repos[].services``; a bad entry is dropped, and only that entry."""
+    env_files: dict[str, str] = {}
+    endpoints = []
+    for name, item in _object(document.get("environments")).items():
+        path = _env_file(_object(item).get("credentials"))
+        if _environment_name(name) and path:
+            env_files.setdefault(path, name)
+    repos = document.get("repos")
+    for repo in repos if isinstance(repos, list) else []:
+        for service in _object(_object(repo).get("services")).values():
+            for name, item in _object(_object(service).get("endpoints")).items():
+                if not _environment_name(name):
+                    continue
+                path = _env_file(_object(item).get("credentials"))
+                if path:
+                    env_files.setdefault(path, name)
+                endpoint = _endpoint(name, item)
+                if endpoint is not None:
+                    endpoints.append(endpoint)
+    return EnvironmentTargets(
+        env_files=tuple(EnvFileEntry(path, name) for path, name in env_files.items()),
+        endpoints=tuple(endpoints),
+    )
 
 
 def _team_keys(tracker: dict[str, object]) -> tuple[str, ...]:
