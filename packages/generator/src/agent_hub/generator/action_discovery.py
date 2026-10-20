@@ -231,7 +231,11 @@ class _Scan:
             return
         document_path = self._shown(path)
         script_path = self._shown(pack_root / document.script)
-        script = dict(scripts)[script_path]
+        script = dict(scripts).get(script_path)
+        if script is None:
+            reason = f"{document.script} is in a folder an action's scripts never use"
+            self._at(path, loaded, WorkflowProblem(("script",), reason))
+            return
         helpers = [file for file in scripts if file[0] not in declared]
         self.files[document_path] = ((document_path, content), (script_path, script), *helpers)
         self.found.append(

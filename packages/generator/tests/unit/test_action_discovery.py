@@ -167,3 +167,25 @@ def test_pins_helpers_when_pack_scripts_hold_more_files(hub: Path, tmp_path: Pat
             "scripts/lib/linked.sh is a link; a pack's scripts are read by their real path",
         )
     ]
+
+
+def test_refuses_script_when_folder_not_read(hub: Path) -> None:
+    # A script in a folder the pack's read skips is a problem at its key, never a crash.
+    _action(hub, "orders", "get-order")
+    cached = ACTION.format(name="cached", effect="read", output_type="object").replace(
+        "scripts/cached.sh", "scripts/__pycache__/cached.sh"
+    )
+    _write(hub / "actions" / "orders" / "cached.yaml", cached)
+    _write(hub / "actions" / "orders" / "scripts" / "__pycache__" / "cached.sh", "#!/bin/sh\n")
+
+    found = discover_actions(hub)
+
+    assert [entry.ref for entry in found.actions] == ["orders/get-order"]
+    assert _shown(found) == [
+        (
+            "actions/orders/cached.yaml",
+            6,
+            "script",
+            "scripts/__pycache__/cached.sh is in a folder an action's scripts never use",
+        )
+    ]
