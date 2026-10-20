@@ -379,3 +379,27 @@ def test_exits_one_when_unordered_gates_planned(hub: Path, marker: Path) -> None
         " between them: one must depend on the other"
     )
     assert "run" not in modes(marker)
+
+
+def test_exits_one_when_deny_refuses_start_plan_access_read(hub: Path, marker: Path) -> None:
+    document = json.loads((hub / "hub.json").read_text())
+    document["environments"]["review"] = {"access": "read"}
+    endpoints = document["repos"][0]["services"]["api"]["endpoints"]
+    endpoints["review"] = {"url": "https://api.review.example.com"}
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+
+    result = plan_hub(hub, marker, "review")
+
+    assert result.exit_code == 1, result.output
+    lines = plain(result.stdout).splitlines()
+    assert lines[0] == "scenario: order-walk (environment review, access read)"
+    assert lines[1] == (
+        "send-order  action  demo/send-order  write"
+        "  deny (access read in review does not allow write)"
+    )
+    assert "order-held  expect  demo/get-order  read  allow" in lines
+    assert "check-order  action  demo/get-order  read  allow" in lines
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario plan: order-walk cannot start in review: a step is denied"
+    ]
+    assert "run" not in modes(marker)
