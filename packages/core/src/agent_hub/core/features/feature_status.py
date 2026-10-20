@@ -17,7 +17,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
-from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_evals import (
     acceptance_eval,
@@ -279,23 +278,14 @@ def feature_detail(
 
 
 def _ux_designs(folder: FeatureFolder) -> tuple[tuple[bool, ...], str | None]:
-    """Whether each UX design says ``status: approved``, and why they could not all be read:
-    one unreadable, or more than the cap (an unread one could be a draft)."""
+    """Whether each UX design says ``status: approved`` (one whose head could not be read is a
+    draft), and why they could not all be read: more than the cap (an unread one could be a
+    draft)."""
     if folder.ux_skipped:
         return (), f"more than {MAX_UX_FILES} UX designs; not all were read"
-    approved: list[bool] = []
-    for design in folder.ux_designs:
-        front = (
-            None
-            if design.head is None
-            else split_frontmatter(design.head.decode("utf-8", "replace"))
-        )
-        problem = design.problem if front is None else front.problem
-        if front is None or problem is not None:
-            why = problem or "could not be read"
-            return (), one_line(f"{design.name} could not be read ({why}). Fix it in a hub PR.")
-        approved.append(front.fields.get("status") == "approved")
-    return tuple(approved), None
+    return tuple(
+        _frontmatter(design.head).get("status") == "approved" for design in folder.ux_designs
+    ), None
 
 
 def _records(folder: FeatureFolder) -> tuple[FeatureRecord, ...]:

@@ -61,9 +61,10 @@ acceptance eval (Amendment A3).
 
 `brief.md` (the `/feature` intake brief) is checked present, never read; it has no tab of its own. The folder's own
 `ux-*.md` files (top level only, not in subfolders) are the UX designs: at most 50 are read in name order, each up to
-4 KiB for its frontmatter `status`, never through a link. A design that cannot be read (a link, malformed
-frontmatter), or more than 50 of them, makes the UX design step `unknown` with the problem: an unread design could be
-a draft (AGH-325).
+4 KiB for its frontmatter `status`, never through a link. A design that cannot be read (a link) or has no valid
+frontmatter counts as a draft; more than 50 of them makes the UX design step `unknown`: an unread design could be a
+draft (AGH-325). Only screen designs use the `ux-` prefix at a feature folder's top level: a review or a note must
+not, since every top-level `ux-*.md` counts as a design.
 
 ### `plan.md`
 
