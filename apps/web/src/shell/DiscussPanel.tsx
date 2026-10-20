@@ -1,6 +1,6 @@
 import "./discuss.css";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 
 import {
@@ -292,6 +292,7 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
     setSessionId(null);
   }, [target, onOwner]);
   const what = `${target.kind} · ${target.title}`;
+  const chips = <ReferenceChips references={references} onRemove={removeReference} />;
 
   return (
     <div className="ah-discuss-body">
@@ -321,7 +322,6 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
           }
         />
       </div>
-      <ReferenceChips references={references} onRemove={removeReference} />
       {sessionId ? (
         <DiscussChat
           agentSessionId={sessionId}
@@ -329,11 +329,13 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
           prepareMessage={(text) => referencedMessage(references, text)}
           onSent={clearReferences}
           metaSlot={statusSlot}
+          composerAccessory={chips}
         />
       ) : (
         <StartDiscussion
           target={target}
           references={references}
+          accessory={chips}
           onStarted={(id) => {
             rememberDiscussSession(target, id);
             setSessionId(id);
@@ -380,10 +382,12 @@ function withScreenText(brief: string | undefined, text: string): string {
 function StartDiscussion({
   target,
   references,
+  accessory,
   onStarted,
 }: {
   target: DiscussTarget;
   references: readonly DiscussReference[];
+  accessory: ReactNode;
   onStarted: (id: string) => void;
 }) {
   const capabilities = useAgentCapabilities();
@@ -485,6 +489,7 @@ function StartDiscussion({
             disabledReason={reason}
             acceptsImages
             acceptsFiles
+            accessory={accessory}
           />
           {error instanceof ApiProblem && (
             <p className="ah-small as-error" role="alert">

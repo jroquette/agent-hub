@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   AttachButton,
@@ -76,6 +84,8 @@ export interface ComposerProps {
   acceptsImages?: boolean | undefined;
   /** PDFs and text files may be attached too (up to `MAX_MESSAGE_FILES`, 5 MB each). */
   acceptsFiles?: boolean | undefined;
+  /** What rides with the next message, shown inside the card above it (the Discuss references). */
+  accessory?: ReactNode;
 }
 
 const bytesOf = (text: string) => new TextEncoder().encode(text).length;
@@ -110,6 +120,7 @@ export function Composer({
   resumable = false,
   acceptsImages = false,
   acceptsFiles = false,
+  accessory,
 }: ComposerProps) {
   const { text, setText, accepted } = useDraft(draftId);
   const [sending, setSending] = useState(false);
@@ -256,6 +267,7 @@ export function Composer({
       }}
       {...dropProps}
     >
+      {accessory}
       <AttachmentList
         images={images}
         files={files}
@@ -398,17 +410,25 @@ export function Composer({
           />
           <Button
             size="sm"
-            variant="ghost"
             icon="circle-stop"
-            className="as-composer-stop"
+            className="as-composer-stop as-round"
             disabled={!canStop}
             aria-disabled={stoppingShown || undefined}
+            title={stoppingShown ? "Stopping…" : "Stop (Esc)"}
             onClick={stop}
           >
-            {stoppingShown ? "Stopping…" : "Stop"}
+            <span className="ah-sr">{stoppingShown ? "Stopping…" : "Stop"}</span>
           </Button>
-          <Button type="submit" size="sm" variant="primary" icon="arrow-up" disabled={!canSend}>
-            {sending ? "Sending…" : "Send"}
+          <Button
+            type="submit"
+            size="sm"
+            variant="primary"
+            icon="arrow-up"
+            className="as-round"
+            title={sending ? "Sending…" : "Send"}
+            disabled={!canSend}
+          >
+            <span className="ah-sr">{sending ? "Sending…" : "Send"}</span>
           </Button>
         </div>
       </div>
