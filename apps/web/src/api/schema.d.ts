@@ -636,7 +636,8 @@ export interface paths {
      * @description The owner settles the owner steps: without a body, writes an ``owner-signoff`` SHIP eval
      *     over every AC that waited on them (409 when no AC waits, or one is not covered by a SHIP).
      *     With ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes
-     *     a SHIP over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words.
+     *     a SHIP over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words. With
+     *     ``acs``, signs off those criteria as checked by hand, whatever their evals say.
      */
     post: operations["sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post"];
     delete?: never;
@@ -1669,7 +1670,8 @@ export interface components {
     };
     /**
      * AcRow
-     * @description One acceptance criterion of ``features.json``.
+     * @description One acceptance criterion of ``features.json``; ``signed_off`` when it does not pass there
+     *     but the owner's latest eval of it (``provenance: owner``) says SHIP: checked by hand.
      */
     AcRow: {
       /** Command */
@@ -1689,6 +1691,11 @@ export interface components {
       passes: boolean;
       /** Repo */
       repo: string | null;
+      /**
+       * Signed Off
+       * @default false
+       */
+      signed_off: boolean;
     };
     /**
      * AcceptLearningBody
@@ -3486,9 +3493,12 @@ export interface components {
     Outcome: "done" | "stopped" | "blocked" | "error";
     /**
      * OwnerSignOffBody
-     * @description ``POST .../owner-signoff``: the eval to settle, the owner's decision and an optional note.
+     * @description ``POST .../owner-signoff``: the eval to settle (or the ACs the owner checked by hand), the
+     *     owner's decision and an optional note.
      */
     OwnerSignOffBody: {
+      /** Acs */
+      acs?: string[] | null;
       /**
        * Decision
        * @default done

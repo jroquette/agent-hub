@@ -75,12 +75,14 @@ class AcCounts(ViewModel):
 
 
 class AcRow(ViewModel):
-    """One acceptance criterion of ``features.json``."""
+    """One acceptance criterion of ``features.json``; ``signed_off`` when it does not pass there
+    but the owner's latest eval of it (``provenance: owner``) says SHIP: checked by hand."""
 
     id: str
     description: str
     repo: str | None
     passes: bool
+    signed_off: bool = False
     manual: bool = False
     evidence: str | None = None
     command: str | None = None

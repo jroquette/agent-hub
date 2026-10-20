@@ -56,10 +56,18 @@ def sign_off_owner_steps(
     """The owner settles the owner steps: without a body, writes an ``owner-signoff`` SHIP eval
     over every AC that waited on them (409 when no AC waits, or one is not covered by a SHIP).
     With ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes
-    a SHIP over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words."""
+    a SHIP over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words. With
+    ``acs``, signs off those criteria as checked by hand, whatever their evals say."""
     if body is None:
         return sign_off(project, slug)
-    return sign_off(project, slug, delivery=body.delivery, decision=body.decision, note=body.note)
+    return sign_off(
+        project,
+        slug,
+        delivery=body.delivery,
+        decision=body.decision,
+        note=body.note,
+        acs=body.acs,
+    )
 
 
 @router.post("/features/{project}/{slug}/acs/{ac}/check-runs")

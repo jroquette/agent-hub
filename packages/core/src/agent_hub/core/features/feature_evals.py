@@ -81,7 +81,9 @@ class EvalCoverage:
     ``covered`` (SHIP or SHIP-WITH-OWNER-STEPS), ``owner_steps`` (the covered ones whose deciding
     verdict is SHIP-WITH-OWNER-STEPS) and ``uncovered`` (NO-SHIP, or no eval names it) hold AC ids
     in ``features.json`` order; ``total`` counts them. ``unscoped`` is True when a legacy
-    ``eval.md`` without scope could not count ("partial: scope not recorded").
+    ``eval.md`` without scope could not count ("partial: scope not recorded"). ``signed_off``
+    holds the covered ACs whose latest evals are all the owner's SHIP (``provenance: owner``):
+    the owner checked them by hand, so they pass even when ``features.json`` still says no.
     """
 
     covered: tuple[str, ...]
@@ -89,6 +91,7 @@ class EvalCoverage:
     uncovered: tuple[str, ...]
     total: int
     unscoped: bool
+    signed_off: tuple[str, ...] = ()
 
 
 def eval_records(
@@ -131,20 +134,28 @@ def eval_coverage(
             naming.setdefault(ac_id, []).append(len(scoped))
         scoped.append(record)
     keys = [_order_key(record) for record in scoped]
-    decided: dict[tuple[int, ...], Verdict] = {}
-    verdicts: dict[str, Verdict] = {}
+    decided: dict[tuple[int, ...], tuple[Verdict, bool]] = {}
+    verdicts: dict[str, tuple[Verdict, bool]] = {}
     for ac_id, indexes in naming.items():
         group = tuple(indexes)
         if group not in decided:
-            decided[group] = _latest_verdict(group, scoped, keys)
+            latest = _latest(group, keys)
+            decided[group] = (
+                _conservative(latest, scoped),
+                all(scoped[index].provenance == "owner" for index in latest),
+            )
         verdicts[ac_id] = decided[group]
-    covered = tuple(ac.id for ac in live if verdicts.get(ac.id) in _SHIPPED)
+    verdict_of = {ac_id: verdict for ac_id, (verdict, _) in verdicts.items()}
+    covered = tuple(ac.id for ac in live if verdict_of.get(ac.id) in _SHIPPED)
     return EvalCoverage(
         covered=covered,
-        owner_steps=tuple(ac.id for ac in live if verdicts.get(ac.id) == "SHIP-WITH-OWNER-STEPS"),
+        owner_steps=tuple(ac.id for ac in live if verdict_of.get(ac.id) == "SHIP-WITH-OWNER-STEPS"),
         uncovered=tuple(ac.id for ac in live if ac.id not in covered),
         total=len(live),
         unscoped=unscoped,
+        signed_off=tuple(
+            ac.id for ac in live if verdicts.get(ac.id, (None, False)) == ("SHIP", True)
+        ),
     )
 
 
@@ -387,16 +398,18 @@ def _newer(first: _OrderKey, second: _OrderKey) -> bool:
     return first.stem == second.stem and first.rerun > second.rerun
 
 
-def _latest_verdict(
-    group: tuple[int, ...], records: Sequence[EvalRecord], keys: Sequence[_OrderKey]
-) -> Verdict:
-    """The verdict of the latest evals in ``group``: those no other is newer than (all of them
-    if the order loops), the conservative one when they disagree."""
-    latest = [
+def _latest(group: tuple[int, ...], keys: Sequence[_OrderKey]) -> list[int]:
+    """The latest evals in ``group``: those no other is newer than (all of them if the order
+    loops)."""
+    return [
         index
         for index in group
         if not any(_newer(keys[other], keys[index]) for other in group if other != index)
     ] or list(group)
+
+
+def _conservative(latest: Sequence[int], records: Sequence[EvalRecord]) -> Verdict:
+    """The verdict of the ``latest`` evals, the conservative one when they disagree."""
     verdicts = {records[index].verdict for index in latest}
     return next(verdict for verdict in _CONSERVATIVE if verdict in verdicts)
 

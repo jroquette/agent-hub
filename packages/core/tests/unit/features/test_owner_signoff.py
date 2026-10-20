@@ -189,3 +189,50 @@ def test_refuses_more_work_when_no_eval_named() -> None:
 
     with pytest.raises(OwnerSignOffError, match="name the eval"):
         sign_off("demo", SLUG, decision="more_work")
+
+
+OPEN = json.dumps(
+    {
+        "acs": [
+            {"id": "AC-7.1", "description": "d", "passes": True},
+            {"id": "AC-7.2", "description": "d", "passes": False, "verification": "pnpm tsc"},
+        ]
+    }
+).encode()
+
+
+def an_open_sign_off(*evals: RecordHead) -> tuple[SignOffOwnerSteps, Writer]:
+    folder = FeatureFolder(slug=SLUG, files=("features.json",), features_json=OPEN, evals=evals)
+    writer = Writer()
+    return SignOffOwnerSteps(Hubs(), Folders(folder), writer, clock=lambda: NOW), writer
+
+
+def test_signs_off_named_acs_when_owner_checked_them_by_hand() -> None:
+    sign_off, writer = an_open_sign_off(an_eval("abc-1.md", "NO-SHIP"))
+
+    written = sign_off("demo", SLUG, acs=("AC-7.2",), note="Clicked through the page.")
+
+    assert (written.verdict, written.acs, written.tickets) == ("SHIP", ("AC-7.2",), ())
+    text = writer.written["owner-signoff.md"]
+    assert "acs: [AC-7.2]\n" in text
+    assert "these acceptance criteria by hand pass" in text
+    heads = (RecordHead(name="owner-signoff.md", head=text.encode(), problem=None),)
+    record = record_from_bytes(OPEN)
+    assert not isinstance(record, str)
+    records = eval_records((an_eval("abc-1.md", "NO-SHIP"), *heads), None, slug=SLUG)
+    assert eval_coverage(records, record.acs).signed_off == ("AC-7.2",)
+
+
+def test_refuses_named_acs_when_unknown() -> None:
+    sign_off, writer = an_open_sign_off()
+
+    with pytest.raises(OwnerSignOffError, match="no AC AC-9"):
+        sign_off("demo", SLUG, acs=("AC-9",))
+    assert writer.written == {}
+
+
+def test_refuses_named_acs_when_an_eval_is_named_too() -> None:
+    sign_off, _ = an_open_sign_off(an_eval("abc-1.md", "SHIP-WITH-OWNER-STEPS"))
+
+    with pytest.raises(OwnerSignOffError, match="not both"):
+        sign_off("demo", SLUG, delivery="abc-1", acs=("AC-7.2",))

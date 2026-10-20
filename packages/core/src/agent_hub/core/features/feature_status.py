@@ -127,13 +127,15 @@ class FeatureFolder:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class FeatureParts:
     """What the feature views share: the parsed ``record`` (its one-line problem, or None when
-    absent), every eval, the ticket ``board``, the ``golden_path`` and the tickets' ``source``."""
+    absent), every eval, the ticket ``board``, the ``golden_path``, the tickets' ``source`` and
+    the ACs the owner ``signed_off`` by hand (``EvalCoverage.signed_off``)."""
 
     record: FeatureRecordFile | str | None
     evals: tuple[EvalRecord, ...]
     board: TicketBoard
     golden_path: GoldenPath
     source: TicketsSource
+    signed_off: tuple[str, ...] = ()
 
 
 def ticket_ids(folder: FeatureFolder) -> tuple[str, ...]:
@@ -221,7 +223,14 @@ def feature_parts(
             not_loaded=read is not None and snapshot is None and read.failure is None,
         )
     )
-    return FeatureParts(record=record, evals=evals, board=board, golden_path=path, source=source)
+    return FeatureParts(
+        record=record,
+        evals=evals,
+        board=board,
+        golden_path=path,
+        source=source,
+        signed_off=coverage.signed_off,
+    )
 
 
 def feature_view(
@@ -240,7 +249,12 @@ def feature_detail(
     front = _frontmatter(folder.spec_head)
     parts = feature_parts(folder, read)
     record = parts.record
-    rows = () if not isinstance(record, FeatureRecordFile) else tuple(_row(ac) for ac in record.acs)
+    signed = frozenset(parts.signed_off)
+    rows = (
+        ()
+        if not isinstance(record, FeatureRecordFile)
+        else tuple(_row(ac, signed_off=ac.id in signed) for ac in record.acs)
+    )
     accepted = acceptance_eval(parts.evals)
     verdict, verdict_line = _verdict(accepted, folder.eval_head)
     spec_repos = _listed(front.get("repos"))
@@ -300,12 +314,13 @@ def _record(read: bytes | str | None) -> FeatureRecordFile | str | None:
     return record_from_bytes(read)
 
 
-def _row(ac: RecordAc) -> AcRow:
+def _row(ac: RecordAc, *, signed_off: bool = False) -> AcRow:
     return AcRow(
         id=ac.id,
         description=ac.description,
         repo=ac.repo,
         passes=ac.passes,
+        signed_off=signed_off and not ac.passes,
         manual=ac.verification is not None and _MANUAL.match(ac.verification) is not None,
         evidence=ac.evidence,
         command=ac.verification,
@@ -314,9 +329,9 @@ def _row(ac: RecordAc) -> AcRow:
 
 def _counts(rows: tuple[AcRow, ...]) -> AcCounts:
     return AcCounts(
-        passing=sum(row.passes for row in rows),
+        passing=sum(row.passes or row.signed_off for row in rows),
         total=len(rows),
-        owner_steps=sum(row.manual and not row.passes for row in rows),
+        owner_steps=sum(row.manual and not (row.passes or row.signed_off) for row in rows),
     )
 
 

@@ -103,6 +103,35 @@ def test_lets_latest_eval_decide_when_ac_reevaluated_latest_wins() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("owner_verdict", "agent_after", "signed_off"),
+    [("SHIP", None, ("AC-7.1",)), ("NO-SHIP", None, ()), ("SHIP", "SHIP", ())],
+    ids=["owner-ship-latest", "owner-no-ship", "agent-eval-later"],
+)
+def test_lists_signed_off_when_owner_ship_is_latest(
+    owner_verdict: str, agent_after: str | None, signed_off: tuple[str, ...]
+) -> None:
+    heads = (
+        an_eval("dem-1.md", verdict="NO-SHIP", acs="[AC-7.1]", evaluated_at="2026-10-10"),
+        an_eval(
+            "owner-signoff.md",
+            verdict=owner_verdict,
+            acs="[AC-7.1]",
+            evaluated_at="2026-10-11",
+            provenance="owner",
+        ),
+        *(
+            [an_eval("dem-1-r2.md", verdict=agent_after, acs="[AC-7.1]", evaluated_at="2026-10-12")]
+            if agent_after
+            else []
+        ),
+    )
+
+    coverage = eval_coverage(eval_records(heads, None, slug=SLUG), acs_named(2))
+
+    assert coverage.signed_off == signed_off
+
+
 def test_orders_by_date_before_rerun_when_dates_differ_latest_wins() -> None:
     heads = (
         an_eval("acme-1521.md", verdict="SHIP", acs="[AC-7.1]", evaluated_at="2026-10-12"),

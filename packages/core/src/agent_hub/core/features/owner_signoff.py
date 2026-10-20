@@ -13,6 +13,10 @@ with them), and the rest of the feature does not have to be covered yet. Its ``d
 ``done`` (verdict SHIP) or ``more_work``: the owner found more to do before the delivery ships,
 which writes a NO-SHIP over those ACs, so they read as open until an agent evaluates them again.
 The owner's optional ``note`` (what was done, or what is left) goes into the note's body.
+
+The owner can also sign off named ACs (``acs``), whatever their evals say: the criteria they
+checked by hand (a manual test, a look at the screen). The note then covers exactly those ACs,
+with no source eval, and ``done`` makes them pass (``EvalCoverage.signed_off``).
 """
 
 from collections.abc import Callable, Iterable
@@ -93,24 +97,29 @@ def signoff_note(
     tickets: tuple[str, ...] = (),
     decision: OwnerDecision = "done",
     note: str | None = None,
+    by_hand: bool = False,
 ) -> str:
-    """The eval note of the owner's sign-off (``more_work``: the owner's NO-SHIP)."""
+    """The eval note of the owner's sign-off (``more_work``: the owner's NO-SHIP); ``by_hand``
+    when the owner named the ACs themselves rather than an eval's owner steps."""
     listed = ", ".join(acs)
     from_evals = ", ".join(sources) or "the latest eval"
+    checked = f"the owner steps listed in {from_evals}"
+    if by_hand:
+        checked = "these acceptance criteria by hand"
     verdict = _VERDICT_OF[decision]
     ticket_line = f"tickets: [{', '.join(tickets)}]\n" if tickets else ""
     if decision == "done":
         title = f"# Owner sign-off: {slug}"
         lead = (
-            "**Verdict: SHIP.** The owner confirmed in agent-hub that the owner steps listed in "
-            f"{from_evals} are done."
+            f"**Verdict: SHIP.** The owner confirmed in agent-hub that {checked} "
+            f"{'pass' if by_hand else 'are done'}."
         )
         footer = f"ACs signed off: {listed}."
     else:
         title = f"# Owner review: {slug}"
         lead = (
-            "**Verdict: NO-SHIP.** The owner checked the owner steps listed in "
-            f"{from_evals} in agent-hub and found more work is needed before this ships."
+            f"**Verdict: NO-SHIP.** The owner checked {checked} in agent-hub and found more "
+            "work is needed before this ships."
         )
         footer = f"ACs reopened: {listed}."
     body = f"\n\n## Owner's note\n\n{note}\n" if note else ""
@@ -162,6 +171,19 @@ def _feature_scope(evals: tuple[EvalRecord, ...], coverage: EvalCoverage) -> _Sc
     return coverage.owner_steps, sources, ()
 
 
+def _named_acs(record: FeatureRecordFile, acs: tuple[str, ...]) -> _Scope:
+    """The owner's own sign-off: the named live ACs, in ``features.json`` order."""
+    live = tuple(ac.id for ac in record.acs if not ac.withdrawn)
+    unknown = [ac for ac in acs if ac not in live]
+    if unknown:
+        raise OwnerSignOffError(f"no AC {unknown[0][:32]} in this feature")
+    wanted = set(acs)
+    named = tuple(ac for ac in live if ac in wanted)
+    if not named:
+        raise OwnerSignOffError("name at least one AC")
+    return named, (), ()
+
+
 def _eval_scope(
     evals: tuple[EvalRecord, ...],
     coverage: EvalCoverage,
@@ -185,6 +207,27 @@ def _eval_scope(
     if not acs:
         raise OwnerSignOffError(f"no AC of {source.delivery} waits on owner steps")
     return acs, (source.delivery,), source.tickets
+
+
+def _chosen_scope(
+    evals: tuple[EvalRecord, ...],
+    coverage: EvalCoverage,
+    *,
+    record: FeatureRecordFile,
+    delivery: str | None,
+    decision: OwnerDecision,
+    acs: tuple[str, ...] | None,
+) -> _Scope:
+    """The sign-off's scope: the named ACs, one eval's waiting ACs, or the whole feature's."""
+    if acs is not None:
+        if delivery is not None:
+            raise OwnerSignOffError("name either an eval or ACs, not both")
+        return _named_acs(record, acs)
+    if delivery is None:
+        if decision != "done":
+            raise OwnerSignOffError("name the eval whose owner steps need more work")
+        return _feature_scope(evals, coverage)
+    return _eval_scope(evals, coverage, record=record, delivery=delivery)
 
 
 class SignOffOwnerSteps:
@@ -211,6 +254,7 @@ class SignOffOwnerSteps:
         delivery: str | None = None,
         decision: OwnerDecision = "done",
         note: str | None = None,
+        acs: tuple[str, ...] | None = None,
     ) -> EvalRecord:
         missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
         try:
@@ -226,24 +270,22 @@ class SignOffOwnerSteps:
             raise OwnerSignOffError("features.json is missing or invalid")
         evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
         coverage = eval_coverage(evals, record.acs, tickets=record.tickets)
-        if delivery is None:
-            if decision != "done":
-                raise OwnerSignOffError("name the eval whose owner steps need more work")
-            acs, sources, tickets = _feature_scope(evals, coverage)
-        else:
-            acs, sources, tickets = _eval_scope(evals, coverage, record=record, delivery=delivery)
+        scope, sources, tickets = _chosen_scope(
+            evals, coverage, record=record, delivery=delivery, decision=decision, acs=acs
+        )
         name_of_delivery = signoff_name(found.delivery for found in evals if not found.legacy)
         name = f"{name_of_delivery}{NOTE_SUFFIX}"
         at = self._clock()
         text = signoff_note(
             slug=folder.slug,
             delivery=name_of_delivery,
-            acs=acs,
+            acs=scope,
             sources=sources,
             at=at,
             tickets=tickets,
             decision=decision,
             note=_clean_note(note),
+            by_hand=acs is not None,
         )
         try:
             self._writer.create_eval(hub_path, slug=folder.slug, name=name, text=text)
@@ -254,7 +296,7 @@ class SignOffOwnerSteps:
             path=f"features/{folder.slug}/{EVALS_FOLDER}/{name}",
             verdict=_VERDICT_OF[decision],
             tickets=tickets,
-            acs=acs,
+            acs=scope,
             prs=(),
             commit=None,
             evaluated_at=at.isoformat(timespec="seconds"),

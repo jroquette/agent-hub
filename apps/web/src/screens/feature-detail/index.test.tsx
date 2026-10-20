@@ -75,6 +75,7 @@ const rows = Array.from({ length: 12 }, (_, i) => ({
   repo: "agent-hub",
   passes: i < 10,
   manual: false,
+  signed_off: false,
   evidence: i < 10 ? `test run ${String(i + 1)}` : null,
   command: `uv run pytest -k case_${String(i + 1)}`,
 }));
@@ -84,6 +85,7 @@ rows.push({
   repo: "agent-hub",
   passes: false,
   manual: true,
+  signed_off: false,
   evidence: "eval.md §Owner steps",
   command: "manual: open a session in the hub",
 });
@@ -756,6 +758,7 @@ describe("FeatureDetailScreen", () => {
                 repo: null,
                 passes: false,
                 manual: false,
+                signed_off: false,
                 evidence: null,
                 command: null,
               },
