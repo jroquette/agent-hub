@@ -125,8 +125,8 @@ environment; a committed write prints `run ./hub sync to update AGENTS.md`. The 
 Blocked words are a best-effort text tripwire, not a security boundary: the boundary is which credentials the
 agent's machine holds. The guard runs only on Bash, Read, Grep, Glob, Edit, Write, MultiEdit, NotebookEdit and WebFetch.
 
-1. **`hub run`'s implement step** runs `claude -p` in the app repo's worktree, where the hub's SessionStart brief and
-   guard do not load: no Environments block and no blocked-word guard there (older than this contract; AGH-278).
+1. **`hub run` and repo-cwd agent nodes** run under the hub's hooks through a hooks-only `--settings` file,
+   `.agent-runs/session-settings/<effort>.json`, rebuilt before each session (AGH-278); a guard `ask` is refused there.
 2. **`CLAUDE_ENV_FILE`:** variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` reach Bash only; the guard
    hook sees neither them nor the variable, so they are not scanned. Shell and settings `env` variables are.
 3. **Plugin-cache mode with `$HUB_CONFIG`** has no identity home, so it reads no `hub.local.json`.
