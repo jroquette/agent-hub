@@ -282,10 +282,12 @@ def _tickets(facts: _Facts) -> _Own:
 
 
 def _build(facts: _Facts) -> _Own:
-    """Build is every ticket merged (Done in Linear); its meta also counts those in progress."""
+    """Build is every ticket merged (Done in Linear); its meta also counts those in progress.
+    With no ticket to build (Tickets done by ``issues.md`` alone, or only epics) it is never
+    done: "No tickets planned"."""
     total = len(facts.active)
     if total == 0:
-        return _Own(holds=False, reason="no tickets planned")
+        return _Own(holds=False, meta="No tickets planned", reason="no tickets planned")
     if not facts.linear:
         meta, reason = facts.unread
         return _Own(holds=None, meta=meta, reason=reason)

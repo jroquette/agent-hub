@@ -128,7 +128,7 @@ ticket's implement, review and eval belong to the ticket, not to the golden path
 | UX design | every `ux-*.md` says `status: approved` ("2 designs · 1 draft" otherwise); none while a later record exists is `skipped`, "No screen change recorded" |
 | Research, Plan | its file exists (one missing while a later record exists is `skipped`); Plan's meta is the plan's version ("v3 · 2 amendments") |
 | Tickets | every planned ticket has a tracker id ("15 of 17 created") |
-| Build | every ticket is merged, Done in Linear (state type `completed`) ("1 of 3 merged · 1 in progress") |
+| Build | every ticket is merged, Done in Linear (state type `completed`) ("1 of 3 merged · 1 in progress"); with no ticket to build (Tickets done by `issues.md` alone, or only epics) it is never done, "No tickets planned" |
 | Acceptance | the acceptance eval is SHIP, or SHIP-WITH-OWNER-STEPS whose owner steps are signed off: each AC it leaves as an owner step has a later SHIP with `provenance: owner` (ticket evals never sign one off) |
 | Shipped | Build and Acceptance are done |
 
