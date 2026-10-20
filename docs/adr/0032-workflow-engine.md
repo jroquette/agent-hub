@@ -49,7 +49,9 @@ hooks, event pipeline and privacy rules.
    `scripts/`, `fixtures/`), and the project owns them ([ADR 0009](0009-hub-sync-by-file-ownership.md)). Discovery
    reads the hub's `workflows/`, then the built-ins, a hub workflow overriding a built-in of the same name.
 6. **Steps call real `hub step …` subcommands** (`worktree`, `commits`, `pr`, `report`) from shell nodes. Agent nodes
-   run `claude -p` with the hub's settings and plugin, so the guard, stop gate, readonly gate and event sensor apply.
+   run `claude -p` under the hub's hooks: from the hub's settings when the node runs in the hub, and from a hooks-only
+   `--settings` file built from them when its cwd is a repo (AGH-278). The guard, stop gate, readonly gate and event
+   sensor apply either way.
 7. **Typed failure kinds** (AGH-179): `transient`, `timeout`, `rate_limited` and `overloaded`
    retry with backoff; `exec_failed`, `output_contract`, `max_iterations` and `unknown` retry only when the node opts
    in; `config`, `auth`, `cancelled` and `fatal` never retry. A kind is set where the failure happens, never from
