@@ -23,7 +23,8 @@ Scenario nodes (``action``, ``expect``): their ``with`` texts, ``until_when`` an
 refs are checked as above; a path into their output is not (the action's own ``output_format``
 is not core's to read). ``$self.output`` reads only in an expect's ``until_when`` and in a
 ``capture``; ``$CTX.<name>`` needs one node upstream that captures ``<name>``, and no name is
-captured twice. ``WorkflowPlan.captures`` names each capture's node, as recorded.
+captured twice. ``WorkflowPlan.captures`` names each capture's node, as recorded. A scenario's
+includes may bring only the node types a scenario takes.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -37,6 +38,7 @@ from agent_hub.core.workflows.document import (
     WorkflowDocument,
     WorkflowLoadError,
     WorkflowProblem,
+    kind_problems,
 )
 from agent_hub.core.workflows.includes import IncludeResolver, expand_includes
 from agent_hub.core.workflows.loops import local_id, record_body
@@ -123,6 +125,8 @@ def plan_workflow(
     """The plan of ``document``, its includes expanded through ``includes`` (``includes.py``);
     raises ``WorkflowLoadError`` naming every problem found, on the document's own nodes."""
     expansion = expand_includes(document, includes)
+    if kinds := [expansion.locate(p) for p in kind_problems(expansion.document)]:
+        raise WorkflowLoadError(kinds)
     try:
         plan = _plan(expansion.document)
     except WorkflowLoadError as error:
