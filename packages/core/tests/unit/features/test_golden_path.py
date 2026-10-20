@@ -482,7 +482,12 @@ def test_counts_issues_md_when_no_tickets_planned() -> None:
 
     assert _states(path)["tickets"] == "done"
     assert path.phase == "build"
-    assert _step(path, "build").reason == "no tickets planned"
+    build = _step(path, "build")
+    assert (build.state, build.meta, build.reason) == (
+        "current",
+        "No tickets planned",
+        "no tickets planned",
+    )
 
 
 def test_excludes_withdrawn_when_counting_acs() -> None:
