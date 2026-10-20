@@ -561,3 +561,18 @@ def test_refuses_or_join_when_scenario_include_when_reads_ctx() -> None:
             "cannot join a 'when:' holding '||' with a root's own: there are no parentheses",
         )
     ]
+
+
+def test_refuses_ctx_with_when_scenario_include_given_ctx() -> None:
+    source = {"id": "source", "type": "action", "action": "x", "capture": {"a": "$self.output"}}
+    step = {"id": "step", "type": "action", "action": "x", "with": {"ref": "$INPUTS.ref"}}
+    block = document("blk", step, inputs={"ref": {"required": True}}, kind="scenario")
+    fills = {"with": {"ref": "$CTX.a"}}
+
+    problems = problems_of(
+        source, include("first", "blk", "source", **fills), library=(block,), kind="scenario"
+    )
+
+    assert problems == [
+        ("nodes[1].with.ref", "an include's 'with' reads only $INPUTS and node outputs")
+    ]
