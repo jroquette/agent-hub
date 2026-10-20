@@ -35,11 +35,13 @@ class PolicyGateError(AgentHubError):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class PolicyAsk:
-    """Why a step asks: its action (``<pack>/<name>``), effect and environment."""
+    """Why a step asks: its action (``<pack>/<name>``), effect and environment; ``again`` when
+    an earlier attempt of it started and never ended, so it may have run already."""
 
     action: str
     effect: Effect
     environment: str
+    again: bool = False
 
 
 def ask_gate(step: str) -> str:
@@ -101,9 +103,11 @@ def _gated(
 
 def _approval(node: Node, ask: PolicyAsk, *, step: str) -> ApprovalNode:
     """The gate before ``node``: built valid under a plain id, then given its reserved one."""
-    message = (
-        f"policy ask: step {step} runs {ask.action} ({ask.effect}) in {ask.environment};"
-        " approve to run it"
+    message = f"policy ask: step {step} runs {ask.action} ({ask.effect}) in {ask.environment};"
+    message += (
+        " an earlier attempt started and never ended, so it may have run: approve to run it again"
+        if ask.again
+        else " approve to run it"
     )
     gate = ApprovalNode.model_validate({"id": "gate", "type": "approval", "message": message})
     return gate.model_copy(
