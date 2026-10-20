@@ -274,7 +274,7 @@
     "plugin/hub-workflow/agents/requirements-analyst.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "d5702ea0391a96d356ebd9e1b83195cd1828efb509dfb56cfcc611560484d063"
+      "sha256": "a89674148648b6e5d17365d6e0d997e9a921c7d9f54a47fd99b63494aecc3353"
     },
     "plugin/hub-workflow/agents/researcher.md": {
       "executable": false,
@@ -379,7 +379,7 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "8a5811df302b0d075371ad545ec035fda9ce30ac771fa1bd8a451feb5a82d59e"
+      "sha256": "4d0d716e2337f58c193e0777a15bf2a6b4dcd35323f0b036645b1c3efef38330"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,

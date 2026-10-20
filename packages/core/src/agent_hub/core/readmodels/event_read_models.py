@@ -501,9 +501,9 @@ class FoldedEventReadModels:
         return decorated
 
     def _of_issue(self, sessions: Iterable[Session], issue: str) -> list[Session]:
-        """The sessions about ``issue`` (any case): the issue their run names, else the one
-        their branch, worktree or first prompt (``/feature AGH-305``) names for the hub's
-        tracker teams."""
+        """The sessions about ``issue`` (any case): the issue their first prompt
+        (``/feature AGH-305``) names, else their branch or worktree, for the hub's tracker
+        teams, else the one their run names."""
         wanted = issue.casefold()
         rules: dict[str, LabelRules | None] = {}
         found: list[Session] = []

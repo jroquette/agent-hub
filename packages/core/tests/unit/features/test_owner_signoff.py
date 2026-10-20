@@ -106,3 +106,86 @@ def test_raises_not_found_when_feature_unknown() -> None:
 
 def test_names_rerun_when_signoff_exists() -> None:
     assert signoff_name(("owner-signoff", "abc-1")) == "owner-signoff-r2"
+
+
+TICKETED = json.dumps(
+    {
+        "acs": [
+            {"id": "AC-7.1", "description": "d", "passes": True, "ticket": "DEM-1"},
+            {"id": "AC-7.2", "description": "d", "passes": True, "ticket": "DEM-2"},
+        ]
+    }
+).encode()
+
+
+def a_ticket_eval(name: str, verdict: str, ticket: str) -> RecordHead:
+    head = (
+        f"---\ntype: eval\nverdict: {verdict}\ntickets: [{ticket}]\nevaluated_at: 2026-10-08\n---\n"
+    )
+    return RecordHead(name=name, head=head.encode(), problem=None)
+
+
+def a_ticket_sign_off(*evals: RecordHead) -> tuple[SignOffOwnerSteps, Writer]:
+    folder = FeatureFolder(slug=SLUG, files=("features.json",), features_json=TICKETED, evals=evals)
+    writer = Writer()
+    return SignOffOwnerSteps(Hubs(), Folders(folder), writer, clock=lambda: NOW), writer
+
+
+def test_settles_one_eval_when_rest_of_feature_uncovered() -> None:
+    sign_off, writer = a_ticket_sign_off(
+        a_ticket_eval("dem-1.md", "SHIP-WITH-OWNER-STEPS", "DEM-1")
+    )
+
+    written = sign_off("demo", SLUG, delivery="dem-1", note="Deployed the config by hand.")
+
+    assert (written.verdict, written.acs, written.tickets) == ("SHIP", ("AC-7.1",), ("DEM-1",))
+    text = writer.written["owner-signoff.md"]
+    assert "tickets: [DEM-1]\n" in text
+    assert "## Owner's note\n\nDeployed the config by hand.\n" in text
+
+
+def test_writes_no_ship_when_owner_finds_more_work() -> None:
+    source = a_ticket_eval("dem-1.md", "SHIP-WITH-OWNER-STEPS", "DEM-1")
+    sign_off, writer = a_ticket_sign_off(source)
+
+    written = sign_off("demo", SLUG, delivery="dem-1", decision="more_work")
+
+    assert written.verdict == "NO-SHIP"
+    text = writer.written["owner-signoff.md"]
+    heads = (RecordHead(name="owner-signoff.md", head=text.encode(), problem=None),)
+    record = record_from_bytes(TICKETED)
+    assert not isinstance(record, str)
+    coverage = eval_coverage(eval_records((source, *heads), None, slug=SLUG), record.acs)
+    assert coverage.uncovered == ("AC-7.1", "AC-7.2")
+    assert coverage.owner_steps == ()
+
+
+def test_refuses_eval_when_not_owner_steps() -> None:
+    sign_off, _ = a_ticket_sign_off(a_ticket_eval("dem-1.md", "SHIP", "DEM-1"))
+
+    with pytest.raises(OwnerSignOffError, match="not a SHIP-WITH-OWNER-STEPS"):
+        sign_off("demo", SLUG, delivery="dem-1")
+
+
+def test_refuses_eval_when_unknown() -> None:
+    sign_off, _ = a_ticket_sign_off(a_ticket_eval("dem-1.md", "SHIP-WITH-OWNER-STEPS", "DEM-1"))
+
+    with pytest.raises(OwnerSignOffError, match="no eval dem-9"):
+        sign_off("demo", SLUG, delivery="dem-9")
+
+
+def test_refuses_eval_when_already_settled() -> None:
+    sign_off, _ = a_ticket_sign_off(
+        a_ticket_eval("dem-1.md", "SHIP-WITH-OWNER-STEPS", "DEM-1"),
+        a_ticket_eval("dem-1-r2.md", "SHIP", "DEM-1"),
+    )
+
+    with pytest.raises(OwnerSignOffError, match="no AC of dem-1 waits"):
+        sign_off("demo", SLUG, delivery="dem-1")
+
+
+def test_refuses_more_work_when_no_eval_named() -> None:
+    sign_off, _ = a_sign_off(an_eval("abc-1.md", "SHIP-WITH-OWNER-STEPS"))
+
+    with pytest.raises(OwnerSignOffError, match="name the eval"):
+        sign_off("demo", SLUG, decision="more_work")

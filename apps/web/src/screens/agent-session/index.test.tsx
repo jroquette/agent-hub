@@ -10,8 +10,16 @@ import { AppShell } from "../../shell/AppShell";
 import { seriousViolations } from "../../testing/axe";
 import {
   aCapabilities,
+  aCatalogItem,
+  aFeature,
+  aFeatureTickets,
   aPage,
+  aProjectDetail,
   aProjectSummary,
+  aSession,
+  aSessionLabel,
+  aSkillCatalog,
+  aTicketRow,
   aDeltaFrame,
   aLogRecord,
   aPermissionRequest,
@@ -479,10 +487,10 @@ const CARD_TOP: Record<string, number> = { "req-1": 300, "req-2": 700 };
 function stubScrolling() {
   vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1000);
   vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(400);
-  vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    return CARD_TOP[this.dataset.requestId ?? ""] ?? 0;
+  // A card's box against the scroller's (at 0): its place in the content less the scroll.
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    const card = this instanceof HTMLElement ? CARD_TOP[this.dataset.requestId ?? ""] : undefined;
+    return DOMRect.fromRect({ y: card === undefined ? 0 : card - scrolled.top });
   });
   const writes = vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (
     this: Element,
@@ -1536,5 +1544,176 @@ describe("AgentSessionScreen (review-comments)", () => {
     const panel = screen.getByRole("complementary", { name: "Changed files" });
     expect(within(panel).getByText("+a = 2", { exact: false })).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: /^Comment on/ })).toBeNull();
+  });
+});
+
+describe("AgentSessionScreen (chat-refs)", () => {
+  it("links a ticket Claude names to Linear, never one in your own message", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 3 }),
+        [EVENTS]: {
+          items: [
+            aLogRecord("init", { seq: 1 }),
+            aLogRecord("user.message", { seq: 2, body: { text: "Where is AGH-7?" } }),
+            aLogRecord("text", { seq: 3, body: { block: 0, text: "Moved AGH-7 to review." } }),
+          ],
+          next_after: null,
+        },
+        "/api/v1/projects/agent-hub": aProjectDetail(),
+        "/api/v1/tracker/linear": {
+          connected: true,
+          source: "settings",
+          account: {
+            name: "Ada Example",
+            email: "ada@example.com",
+            workspace: "Example",
+            url: "https://linear.app/example",
+          },
+          problem: null,
+          problem_kind: null,
+          checked_at: "2026-10-17T12:00:00Z",
+          key_path: "/home/dev/.config/agent-hub/linear-api-key",
+        },
+      }),
+    );
+
+    const link = await screen.findByRole("link", { name: /^AGH-7\b/ });
+    expect(link).toHaveAttribute("href", "https://linear.app/example/issue/AGH-7");
+    expect(screen.getAllByRole("link", { name: /^AGH-7\b/ })).toHaveLength(1);
+    expect(screen.getByText("Where is AGH-7?")).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (hub-slash-menu)", () => {
+  it("lists the hub's skills and agents first in the / menu, tagged from the hub", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 2 }),
+        [EVENTS]: {
+          items: [
+            aLogRecord("init", {
+              seq: 1,
+              body: { slash_commands: ["compact", "hub-workflow:fix"] },
+            }),
+            aLogRecord("result", { seq: 2, body: { subtype: "success" } }),
+          ],
+          next_after: null,
+        },
+        "/api/v1/projects/agent-hub/skills": aSkillCatalog({
+          project: "agent-hub",
+          items: [
+            aCatalogItem({ name: "fix", description: "Fix a bug" }),
+            aCatalogItem({ kind: "agent", name: "researcher", mode: null }),
+          ],
+        }),
+      }),
+    );
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "/");
+
+    const options = within(screen.getByRole("listbox", { name: "Commands" })).getAllByRole(
+      "option",
+    );
+    expect(options.map((option) => option.querySelector(".as-slash-command")?.textContent)).toEqual(
+      ["/fix", "/agent-researcher", "/compact"],
+    );
+    expect(screen.getByRole("option", { name: "/fix, from the hub" })).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (background-tasks)", () => {
+  const TASK_STOP = `${SESSION}/tasks/t1/stop`;
+  const backgroundLog = () => [
+    aLogRecord("init", { seq: 1 }),
+    aLogRecord("user.message", { seq: 2, body: { text: "Run the checks in the background." } }),
+    aLogRecord("task", {
+      seq: 3,
+      body: {
+        task_id: "t1",
+        status: "running",
+        description: "Rerun the checks",
+        task_type: "local_bash",
+      },
+    }),
+    aLogRecord("result", { seq: 4, body: { subtype: "success" } }),
+  ];
+  const backgroundRoutes = () =>
+    routes({
+      [SESSION]: anAgentSession({ status: "idle", last_seq: 4 }),
+      [EVENTS]: { items: backgroundLog(), next_after: null },
+      [`POST ${TASK_STOP}`]: anAgentSession({ status: "idle", last_seq: 4 }),
+    });
+
+  it("reads an idle session with a task running as at work, and the header chip opens the drawer", async () => {
+    renderChat(backgroundRoutes());
+
+    expect(await screen.findByText("Background · 1 command")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Background tasks, 1 running" }));
+
+    const drawer = screen.getByRole("complementary", { name: "Background tasks" });
+    expect(within(drawer).getByText("Rerun the checks")).toBeInTheDocument();
+  });
+
+  it("stops a running task from the drawer with an empty JSON body", async () => {
+    const view = renderChat(backgroundRoutes());
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Background tasks, 1 running" }),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop Rerun the checks" }));
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/tasks/t1/stop")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/tasks/t1/stop")[0])).toEqual({});
+  });
+
+  it("lists the task in the live bar between turns, which opens the drawer", async () => {
+    renderChat(backgroundRoutes());
+
+    const bar = await screen.findByRole("region", { name: "Live activity" });
+    expect(bar).toHaveTextContent("Running in the background: 1 command");
+    await userEvent.click(within(bar).getByRole("button"));
+
+    expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
+  });
+
+  it("closes the conversation with a card that opens the drawer", async () => {
+    renderChat(backgroundRoutes());
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "1 background command running" }),
+    );
+
+    expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (session-name)", () => {
+  it("names a session on a ticket by the ticket's title and links its feature", async () => {
+    const observed = anId(1, "5091b986");
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ observed_session_id: observed, title: "Run the tests" }),
+        [`/api/v1/sessions/${observed}`]: aSession({
+          id: observed,
+          label: aSessionLabel({ issue: "AGH-202", branch: "dev/agh-202-ticket-summaries" }),
+        }),
+        "/api/v1/features": aPage([aFeature({ issues: ["AGH-202"] })]),
+        "/api/v1/features/agent-hub/control-plane/tickets": aFeatureTickets({
+          tickets: [aTicketRow()],
+        }),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "AGH-202: Serve the ticket summaries" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /control-plane/ })).toHaveAttribute(
+      "href",
+      "/features/agent-hub/control-plane",
+    );
   });
 });

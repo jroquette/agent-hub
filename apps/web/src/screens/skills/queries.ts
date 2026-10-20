@@ -11,9 +11,10 @@ export interface SkillRef {
   name: string;
 }
 
-/** A project's skills, agents and hooks with 30-day usage (D3). */
-export function useSkillCatalog(project: string) {
-  return useApi("/api/v1/projects/{project}/skills", { path: { project } });
+/** A project's skills, agents and hooks with 30-day usage (D3); nothing is fetched while
+ * `enabled` is false. */
+export function useSkillCatalog(project: string, enabled = true) {
+  return useApi("/api/v1/projects/{project}/skills", { path: { project } }, { enabled });
 }
 
 /** One item's detail by its id `kind/source/name` (D4). */

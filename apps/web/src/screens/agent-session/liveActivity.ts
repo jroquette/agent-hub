@@ -1,21 +1,27 @@
 /**
  * What a live turn is doing right now, for the activity bar above the composer: the phase (thinking,
  * writing, a tool, waiting for you, planning), the calls still running (subagents with their own
- * running calls nested), the todo in progress and when the turn and its last record started. Pure:
+ * running calls nested), the todo in progress and when the turn and its last record started. Between
+ * turns it is the background agents still at work, so an idle session that waits on them never
+ * reads as stopped. Pure:
  * derived from the transcript state, so the bar reads the same as the conversation below it.
  */
 import { resultText } from "./ToolCallCard";
 import {
   diffStats,
+  isCommandTask,
+  sessionTasks,
   toolDiff,
   toolState,
   toolSummary,
   type ToolState,
+  type TaskView,
   type ToolView,
   type TranscriptState,
 } from "./model";
 
-export type LivePhase = "waiting" | "writing" | "subagents" | "tool" | "thinking" | "planning";
+export type LivePhase =
+  "waiting" | "writing" | "subagents" | "tool" | "thinking" | "planning" | "background";
 
 export interface LiveCall {
   id: string;
@@ -37,7 +43,8 @@ export interface LiveActivity {
   calls: LiveCall[];
   /** The todo in progress, as Claude phrased it. */
   todo: string | null;
-  /** When the open turn started (its user message), null when unknown. */
+  /** When the open turn started (its user message), null when unknown; in the background phase,
+   * when the oldest background agent started. */
   turnStartedAt: string | null;
   /** When the last record arrived. */
   lastEventAt: string | null;
@@ -221,9 +228,65 @@ export function turnSteps(state: TranscriptState): TurnSteps {
   return { activity, feed, earlier, end, tookMs };
 }
 
-/** What the session is doing now; null when no turn runs (idle, ended, failed). */
+/** One task as the Background panel and bar show it: what it does, and its calls so far when it
+ * is an agent whose calls the log holds. */
+export interface TaskRow {
+  task: TaskView;
+  label: string;
+  /** The calling tool, read as a live call (its running calls nested); null when unknown. */
+  call: LiveCall | null;
+}
+
+function taskRow(state: TranscriptState, task: TaskView): TaskRow {
+  const tool = task.toolUseId ? state.tools[task.toolUseId] : undefined;
+  const call = tool ? liveCall(state, tool, 0) : null;
+  const label = isCommandTask(task)
+    ? (task.description ?? call?.label ?? "Background command")
+    : (call?.label ?? task.description ?? "Background agent");
+  return { task, label, call };
+}
+
+/** The session's tasks: the running ones oldest first, the ended ones latest ended first. */
+export function backgroundTasks(state: TranscriptState): { running: TaskRow[]; done: TaskRow[] } {
+  const all = sessionTasks(state).map((task) => taskRow(state, task));
+  return {
+    running: all.filter((row) => row.task.status === "running"),
+    done: all
+      .filter((row) => row.task.status !== "running")
+      .sort((a, b) => (b.task.endedAt ?? "").localeCompare(a.task.endedAt ?? "")),
+  };
+}
+
+/** The background tasks an idle session waits on, latest first; null when there are none. */
+function backgroundActivity(state: TranscriptState): LiveActivity | null {
+  const { running } = backgroundTasks(state);
+  if (running.length === 0) return null;
+  const calls = running
+    .map(({ task, label, call }): LiveCall => ({
+      id: task.id,
+      name: call?.name ?? (isCommandTask(task) ? "Bash" : "Agent"),
+      label,
+      startedAt: task.startedAt,
+      subagent: !isCommandTask(task),
+      running: call?.running ?? [],
+      calls: call?.calls ?? 0,
+    }))
+    .reverse();
+  return {
+    phase: "background",
+    calls,
+    todo: null,
+    turnStartedAt: running[0]?.task.startedAt ?? null,
+    lastEventAt: state.lastAt,
+    ...turnFeed(state, { ended: true }),
+  };
+}
+
+/** What the session is doing now: the open turn, else the background agents an idle session
+ * waits on; null when neither (idle, ended, failed). */
 export function liveActivity(state: TranscriptState): LiveActivity | null {
   const { status } = state;
+  if (status === "idle") return backgroundActivity(state);
   if (status !== "running" && status !== "waiting_permission") return null;
   const turnStartedAt = turnStart(state);
   // Calls of an earlier, interrupted turn never got a result: only this turn's count.

@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
-import { EmptyState, ProblemError, Skeleton, StatusBadge } from "../../components";
+import { EmptyState, Icon, ProblemError, Skeleton, StatusBadge, Tooltip } from "../../components";
 import { useApi, type ApiProblem } from "../../lib/api";
 import { fmtClock, fmtDateTime, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
@@ -10,16 +10,18 @@ import { badgeOf } from "../sessions-list/badge";
 import { rowHref } from "../sessions-list/drivenRows";
 import type { Session } from "../sessions-list/queries";
 import {
-  AcMeter,
+  AcCount,
   PlanningView,
   ReadinessText,
   StateBadge,
   TicketIdLine,
+  TicketPrLink,
   TicketRef,
   splitTitle,
   ticketAnchor,
   type TicketAction,
 } from "./PlanningView";
+import { PASS, gwtParts, passOf } from "./CriteriaTab";
 import { StartTicketButton, canStartTicket } from "./StartTicket";
 import { TICKETS_REFRESH_MS } from "./queries";
 import { TicketNotice } from "./TicketNotice";
@@ -27,6 +29,7 @@ import { TicketNotice } from "./TicketNotice";
 type FeatureTickets = components["schemas"]["FeatureTickets"];
 type TicketRow = components["schemas"]["TicketRow"];
 type EdgeSource = components["schemas"]["EdgeSource"];
+type AcRow = components["schemas"]["AcRow"];
 /** Whether each AC passes, by id. */
 type AcPasses = Readonly<Record<string, boolean>>;
 
@@ -48,13 +51,20 @@ function TicketId({ row }: { row: TicketRow }) {
   return <TicketIdLine row={row} />;
 }
 
-/** The conventional prefix of the title (`feat(brand-api)`) as a chip in its own column. */
-function ScopeCell({ row }: { row: TicketRow }) {
-  const { type, scope } = splitTitle(row.title ?? "");
-  if (!type) return <span className="ah-subtle">—</span>;
+/** The ticket's pull request (`PR #69`), else a dash with the reason in its tooltip. */
+function PrCell({ row }: { row: TicketRow }) {
+  if (row.pr_url) return <TicketPrLink row={row} />;
+  if (!row.id) return <span className="ah-subtle">—</span>;
   return (
-    <span className="ah-ticket-scope" title={`${type}${scope ? `(${scope})` : ""}`}>
-      {scope ?? type}
+    <span
+      className="ah-subtle"
+      title={
+        row.reviewed === true
+          ? "The review record names no pull request on GitHub (still pending, or a repo outside this hub)."
+          : "No pull request yet: /feature records it in the ticket's review once both reviewers pass."
+      }
+    >
+      —
     </span>
   );
 }
@@ -78,7 +88,14 @@ function TitleCell({ row, child }: { row: TicketRow; child: boolean }) {
 /** How many sessions one ticket row shows before the rest fold away. */
 const SESSIONS_SHOWN = 2;
 
-function SessionLink({ session }: { session: Session }) {
+function SessionLink({
+  session,
+  context,
+}: {
+  session: Session;
+  /** What the link is to the reader ("Newest session"), leading its accessible name. */
+  context?: string | undefined;
+}) {
   const { tz } = usePreferences();
   const [status, label] = badgeOf(session);
   const day = new Date(session.started_at).toLocaleDateString("en-GB", {
@@ -97,6 +114,11 @@ function SessionLink({ session }: { session: Session }) {
       className="ah-ticket-session"
       to={rowHref(session)}
       title={`Open the session: ${facts.join(" · ")}`}
+      aria-label={
+        context
+          ? `${context}: ${label}, started ${day}, ${fmtClock(session.started_at, tz)}`
+          : undefined
+      }
     >
       <StatusBadge status={status} label={label} quiet />
       <span className="ah-small">
@@ -133,13 +155,17 @@ function CardAction({
   const sessions = useTicketSessions(project, row);
   const newest = sessions.data?.items[0];
   const open = newest != null && newest.status !== "ended";
-  const start = canStartTicket(row) && !open && (
+  const start = canStartTicket(row, rows) && !open && (
     <StartTicketButton project={project} slug={slug} row={row} rows={rows} />
   );
-  if (!newest) return start || null;
+  if (!newest) return start ? <span className="ah-flow-card-action">{start}</span> : null;
   return (
-    <span className="ah-row ah-wrap" style={{ gap: 8 }}>
-      <SessionLink session={newest} />
+    <span className="ah-flow-card-action">
+      <span className="ah-flow-card-fact">
+        <Icon name="square-terminal" size="sm" />
+        Session
+      </span>
+      <SessionLink session={newest} context="Newest session" />
       {start}
     </span>
   );
@@ -218,40 +244,68 @@ function Blockers({ row, data }: { row: TicketRow; data: FeatureTickets }) {
   );
 }
 
-/** How many of the ticket's ACs pass, with the ids one click away (a long list stays folded). */
-function Acs({ row, acPasses }: { row: TicketRow; acPasses?: AcPasses | undefined }) {
-  if (row.acs.length === 0) return <span className="ah-subtle">—</span>;
-  const passing = acPasses ? row.acs.filter((ac) => acPasses[ac]).length : null;
-  const links = (
-    <span className="ah-row ah-wrap" style={{ gap: 6 }}>
-      {row.acs.map((ac) => (
-        <Link
-          key={ac}
-          className="ah-mono ah-small"
-          to={{ search: `?ac=${encodeURIComponent(ac)}` }}
-          title={`Open ${ac} in Criteria${acPasses ? (acPasses[ac] ? " · passing" : " · not passing yet") : ""}`}
-          style={acPasses && !acPasses[ac] ? { color: "var(--waiting)" } : undefined}
-        >
-          {ac}
-        </Link>
-      ))}
-    </span>
-  );
-  if (row.acs.length <= 3) return links;
+/**
+ * One AC id, linking to it in Criteria. Hover or focus shows what must be true (the "Then" of a
+ * Given / When / Then, else the whole text) for a quick check; its status is the icon.
+ */
+function AcLink({
+  id,
+  row,
+  passes,
+}: {
+  id: string;
+  row?: AcRow | undefined;
+  passes?: boolean | undefined;
+}) {
+  const tipId = useId();
+  const pass = row
+    ? PASS[passOf(row)]
+    : passes === undefined
+      ? null
+      : PASS[passes ? "yes" : "none"];
+  const summary = row ? (gwtParts(row.description)?.then ?? row.description) : null;
   return (
-    <details>
-      <summary className="ah-small" style={{ cursor: "pointer", whiteSpace: "nowrap" }}>
-        {passing === null ? (
-          `${String(row.acs.length)} ACs`
-        ) : (
-          <AcMeter
-            passing={passing}
-            total={row.acs.length}
-            label={`${String(passing)}/${String(row.acs.length)} passing`}
-          />
-        )}
+    <Tooltip id={tipId} label={summary && <span className="ah-ticket-ac-tip">{summary}</span>}>
+      <Link
+        className="ah-row ah-mono ah-small"
+        style={{ gap: 4 }}
+        to={{ search: `?doc=acs&ac=${encodeURIComponent(id)}` }}
+        aria-describedby={summary ? tipId : undefined}
+      >
+        {pass && <Icon name={pass.icon} size="sm" />}
+        {id}
+        {pass && <span className="ah-sr"> {pass.label}</span>}
+      </Link>
+    </Tooltip>
+  );
+}
+
+/**
+ * How many of a list of ACs pass, the same meter as a ticket's card; the ids fold under it. The
+ * Tickets table shows a ticket's ACs with it, the Eval table an eval's.
+ */
+export function AcList({
+  ids,
+  acPasses,
+  acRows,
+}: {
+  ids: readonly string[];
+  acPasses?: AcPasses | undefined;
+  acRows?: ReadonlyMap<string, AcRow> | undefined;
+}) {
+  if (ids.length === 0) return <span className="ah-subtle">—</span>;
+  return (
+    <details className="ah-ticket-acs">
+      <summary className="ah-small">
+        <AcCount row={{ acs: ids }} acPasses={acPasses} />
       </summary>
-      <div style={{ paddingTop: 4 }}>{links}</div>
+      <ul className="ah-stack">
+        {ids.map((ac) => (
+          <li key={ac}>
+            <AcLink id={ac} row={acRows?.get(ac)} passes={acPasses?.[ac]} />
+          </li>
+        ))}
+      </ul>
     </details>
   );
 }
@@ -276,11 +330,13 @@ function TicketsTable({
   data,
   project,
   acPasses,
+  acRows,
   ticketAction,
 }: {
   data: FeatureTickets;
   project: string;
   acPasses?: AcPasses | undefined;
+  acRows?: ReadonlyMap<string, AcRow> | undefined;
   ticketAction?: TicketAction | undefined;
 }) {
   const byRef = new Set(data.tickets.map((t) => t.ref));
@@ -293,7 +349,6 @@ function TicketsTable({
     cell: (row: TicketRow) => ReactNode;
   }[] = [
     { label: "Ticket", width: 110, nowrap: true, cell: (row) => <TicketId row={row} /> },
-    { label: "Scope", width: 90, nowrap: true, cell: (row) => <ScopeCell row={row} /> },
     {
       label: "Title",
       className: "ah-ticket-title-col",
@@ -302,7 +357,11 @@ function TicketsTable({
     { label: "Status", width: 110, nowrap: true, cell: (row) => <StateBadge row={row} /> },
     { label: "Assignee", width: 110, cell: (row) => <Assignee row={row} /> },
     { label: "Blocked by", width: 110, cell: (row) => <Blockers row={row} data={data} /> },
-    { label: "ACs", width: 120, cell: (row) => <Acs row={row} acPasses={acPasses} /> },
+    {
+      label: "ACs",
+      width: 150,
+      cell: (row) => <AcList ids={row.acs} acPasses={acPasses} acRows={acRows} />,
+    },
     {
       label: "Sessions",
       width: 150,
@@ -319,6 +378,7 @@ function TicketsTable({
         </span>
       ),
     },
+    { label: "PR", width: 100, nowrap: true, cell: (row) => <PrCell row={row} /> },
   ];
   return (
     <div className="ah-table-wrap">
@@ -400,12 +460,14 @@ export interface TicketsTabProps {
   refreshing?: boolean | undefined;
   /** Whether each AC passes (by id), from the feature record; shows each ticket's progress. */
   acPasses?: AcPasses | undefined;
+  /** The feature's ACs, for each AC's text and status (owner step included) in the ids list. */
+  acRows?: readonly AcRow[] | undefined;
 }
 
 /**
  * The Tickets tab (AC-136.28): where the data comes from, the flow of the tickets (what runs in
  * parallel, in which order, and where each one is now), then one row per ticket (Linear link,
- * scope, title, status, assignee, blockers, ACs, the sessions that worked on it, readiness).
+ * title, status, assignee, blockers, ACs, the sessions that worked on it, readiness).
  */
 export function TicketsTab({
   project,
@@ -415,7 +477,9 @@ export function TicketsTab({
   onRefresh,
   refreshing,
   acPasses,
+  acRows,
 }: TicketsTabProps) {
+  const acById = acRows && new Map(acRows.map((ac) => [ac.id, ac]));
   if (error) {
     return (
       <ProblemError
@@ -428,7 +492,7 @@ export function TicketsTab({
   }
   if (!data) return <Loading />;
   const ticketAction: TicketAction = (row) =>
-    canStartTicket(row) ? (
+    canStartTicket(row, data.tickets) ? (
       <StartTicketButton project={project} slug={slug} row={row} rows={data.tickets} />
     ) : null;
   const cardAction: TicketAction = (row) => (
@@ -456,6 +520,7 @@ export function TicketsTab({
             data={data}
             project={project}
             acPasses={acPasses}
+            acRows={acById}
             ticketAction={ticketAction}
           />
         </>

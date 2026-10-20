@@ -37,6 +37,7 @@ from agent_hub.core.agent_sessions.driver import (
     PermissionRequest,
     PermissionSuggestion,
     StartSpec,
+    TaskEvent,
     TextBlock,
     Thinking,
     ToolCall,
@@ -64,11 +65,13 @@ from agent_hub.core.agent_sessions.permission_policy import CLOSED_MESSAGE, TIME
 from agent_hub.core.agent_sessions.records import LogRecord, StatusFrame, StreamPosition
 from agent_hub.core.agent_sessions.screenshot import MAX_SCREENSHOT_BYTES
 from agent_hub.core.agent_sessions.store import AgentSessionFields
+from agent_hub.core.agent_sessions.workdirs import ResolvedWorkdir, WorkdirListing
 from agent_hub.core.readmodels.event_read_models import FoldedEventReadModels
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL, Rig
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
 from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.fakes import InMemoryEventStore
+from agent_hub.core.testing.read_model_builders import a_workdir
 from agent_hub.core.testing.session_driver_fakes import Hold, InMemorySessionDriver
 from agent_hub.core.testing.session_scenarios import a_session_events
 
@@ -243,6 +246,32 @@ async def test_refuses_third_when_limit_two_and_both_running(make_rig: MakeRig) 
     assert third.status == AgentSessionStatus.IDLE
 
 
+async def test_starts_every_session_when_no_limit(make_rig: MakeRig) -> None:
+    rig = make_rig(limits=SessionLimits(sessions_max=0), replies={"Work.": (Hold(),)})
+    idle = await rig.create()
+    busy = [await rig.create("Work.") for _ in range(3)]
+
+    extra = await rig.create()
+
+    assert extra.status == AgentSessionStatus.IDLE
+    assert (await rig.control.snapshot(idle.id)).status == AgentSessionStatus.IDLE
+    snapshots = [await rig.control.snapshot(s.id) for s in busy]
+    assert all(s.ended_at is None for s in snapshots)
+
+
+async def test_refuses_no_start_when_no_limit_and_every_session_running(
+    make_rig: MakeRig,
+) -> None:
+    rig = make_rig(limits=SessionLimits(sessions_max=0), replies={"Work.": (Hold(),)})
+    busy = [await rig.create("Work.") for _ in range(17)]
+
+    extra = await rig.create()
+
+    assert extra.status == AgentSessionStatus.IDLE
+    snapshots = [await rig.control.snapshot(s.id) for s in busy]
+    assert [s.ended_at for s in snapshots] == [None] * 17
+
+
 async def test_ends_longest_idle_when_limit_reached(make_rig: MakeRig) -> None:
     rig = make_rig(limits=SessionLimits(sessions_max=2), replies={"Work.": (Hold(),)})
     oldest = await rig.create()
@@ -258,6 +287,21 @@ async def test_ends_longest_idle_when_limit_reached(make_rig: MakeRig) -> None:
     close = next(r for r in rig.records(oldest.id) if r.kind == "close")
     assert (close.by, close.body) == ("server", {"reason": "idle_timeout"})
     assert (await rig.control.snapshot(newer.id)).status == AgentSessionStatus.IDLE
+
+
+async def test_keeps_idle_session_with_running_task_when_limit_reached(
+    make_rig: MakeRig,
+) -> None:
+    started = TaskEvent(task_id="task-1", status="running", description="Review")
+    rig = make_rig(limits=SessionLimits(sessions_max=1), replies={"Review.": (started,)})
+    first = await rig.create("Review.")
+    await rig.until_status(first.id, "idle")
+    rig.clock.advance(60)
+
+    with pytest.raises(LiveLimitError):
+        await rig.create()
+
+    assert (await rig.control.snapshot(first.id)).ended_at is None
 
 
 async def test_reopens_session_ended_for_a_slot_when_message_sent(make_rig: MakeRig) -> None:
@@ -431,6 +475,27 @@ async def test_reopens_ended_session_in_place_when_message_sent(make_rig: MakeRi
     assert (spec.resume, spec.fork, spec.session_id) == (PAST.session_id, False, None)
     assert (spec.mode, spec.cwd) == (created.mode, HUB_PATH)
     assert len(rig.store.list()) == 1
+
+
+async def test_starts_and_reopens_with_hub_plugins_when_workdir_lists_them(
+    make_rig: MakeRig,
+) -> None:
+    plugins = ("/hubs/demo-hub/plugin/hub-workflow",)
+
+    def workdirs(project: str) -> WorkdirListing:
+        assert project == "demo"
+        entry = ResolvedWorkdir(workdir=a_workdir(), path=HUB_PATH, plugin_dirs=plugins)
+        return WorkdirListing(entries=(entry,))
+
+    rig = make_rig(workdirs=workdirs, past_sessions=(PAST,))
+    created = await rig.create("Say hello.", resume_session_id=PAST.session_id)
+    await rig.until_status(created.id, "idle")
+    await rig.control.close(created.id)
+    await rig.control.send(created.id, SendMessage(text="Go on."))
+    await rig.until_status(created.id, "idle")
+
+    assert _start_spec(rig.driver, 0).plugin_dirs == plugins
+    assert _start_spec(rig.driver, 1).plugin_dirs == plugins
 
 
 async def test_counts_the_log_it_already_holds_when_reopened(make_rig: MakeRig) -> None:
@@ -997,6 +1062,46 @@ async def test_keeps_running_session_when_idle_limit_passes(make_rig: MakeRig) -
     await rig.control.sweep(rig.clock.advance(60))
 
     assert (await rig.control.snapshot(created.id)).status == AgentSessionStatus.RUNNING
+
+
+async def test_keeps_idle_session_until_its_tasks_end_when_idle_limit_passes(
+    make_rig: MakeRig,
+) -> None:
+    started = TaskEvent(task_id="task-1", status="running", description="Review")
+    ended = TaskEvent(task_id="task-1", status="completed")
+    rig = make_rig(
+        limits=SessionLimits(idle_seconds=2),
+        replies={"Review.": (started,), "Report.": (ended,)},
+    )
+    created = await rig.create("Review.")
+    await rig.until_status(created.id, "idle")
+
+    await rig.control.sweep(rig.clock.advance(60))
+    kept = await rig.control.snapshot(created.id)
+    await rig.control.send(created.id, SendMessage(text="Report."))
+    await rig.until(lambda: rig.kinds(created.id).count("result") == 2)
+    await rig.control.sweep(rig.clock.advance(1))
+    still = await rig.control.snapshot(created.id)
+    await rig.control.sweep(rig.clock.advance(2))
+
+    assert kept.status == AgentSessionStatus.IDLE
+    assert still.ended_at is None
+    assert (await rig.until_status(created.id, "ended")).end_reason == EndReason.IDLE_TIMEOUT
+    task = next(r for r in rig.records(created.id) if r.kind == "task")
+    assert (task.by, task.body["status"]) == ("driver", "running")
+
+
+async def test_stops_running_task_only_when_asked(make_rig: MakeRig) -> None:
+    started = TaskEvent(task_id="task-1", status="running", description="Review")
+    rig = make_rig(replies={"Review.": (started,)})
+    created = await rig.create("Review.")
+    await rig.until_status(created.id, "idle")
+
+    await rig.control.stop_task(created.id, "task-1")
+    await rig.control.stop_task(created.id, "task-unknown")
+
+    stops = [call.args for call in rig.driver.calls if call.method == "stop_task"]
+    assert stops == [("task-1",)]
 
 
 async def test_purges_ended_after_retention_when_swept(make_rig: MakeRig) -> None:

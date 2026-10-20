@@ -99,7 +99,8 @@ FEATURE_SPEC = "---\ntype: spec\nprocess_size: bounded\nrepos: [demo-api]\nlinea
 # The demo hub's GitHub remote, mapped to a local bare repository by the git config the server
 # runs with (``url.<bare>.insteadOf``), so nothing reaches the network.
 DEMO_HUB_URL = "https://github.com/acme/demo-hub.git"
-# The live session works in a worktree named after the issue (label "DEM-7 · /feature").
+# The live session works in a worktree named after the issue: it reads "DEM-7: <its slug>", then
+# the ticket's title.
 LIVE_CWD = "/work/demo-api/.claude/worktrees/dem-7-export-button"
 INBOX_NOTE = "brain/_inbox/rerun-flaky-tests.md"
 INBOX_TEXT = (

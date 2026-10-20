@@ -117,6 +117,8 @@ agent_sessions = Table(
     Column("last_prompt", String, nullable=True),
     Column("last_reply", String, nullable=True),
     Column("changed_files", JSON, nullable=False, server_default=text("'[]'")),
+    # What the session's review read in each repository, so it outlives the folders.
+    Column("review_targets", JSON, nullable=False, server_default=text("'[]'")),
     Index("ix_agent_sessions_project_claude_session_id", "project", "claude_session_id"),
     Index("ix_agent_sessions_status", "status"),
     Index("ix_agent_sessions_ended_at", "ended_at"),

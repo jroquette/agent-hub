@@ -560,12 +560,17 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
     // 10 px per entry shown; the card sits at its index, the scroller writes are recorded.
     const shown = () => document.querySelectorAll(".as-entry").length;
     vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => shown() * 10);
-    vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
-      this: HTMLElement,
-    ) {
-      return this.dataset.requestId ? (shown() - 1902) * 10 + 1000 : 0;
-    });
     const top = { value: 0 };
+    // The card's box against the scroller's (at 0): its place in the content less the scroll.
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const at =
+        this instanceof HTMLElement && this.dataset.requestId
+          ? (shown() - 1902) * 10 + 1000 - top.value
+          : 0;
+      return DOMRect.fromRect({ y: at });
+    });
     vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(() => top.value);
     vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation((value) => {
       top.value = value;
@@ -579,6 +584,30 @@ describe("Transcript (long-transcript)", { timeout: 30_000 }, () => {
 
     expect(screen.getByRole("log").children).toHaveLength(2002);
     expect(top.value).toBe(1984);
+  });
+
+  it("stays at the bottom as earlier entries come when nothing waits for you", () => {
+    const runFrame = manualFrames();
+    const state = longState({
+      type: "record",
+      record: aLogRecord("text", { seq: 2001, body: { text: "Done" } }),
+    });
+    const shown = () => document.querySelectorAll(".as-entry").length;
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => shown() * 10);
+    // The stick-to-bottom hook has not written yet when the frame reads the position.
+    const top = { value: 0 };
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(() => top.value);
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation((value) => {
+      top.value = value;
+    });
+    const follow = { atBottom: true, pin: vi.fn(), release: vi.fn() };
+
+    render(<Transcript state={state} follow={follow} />);
+    runFrame();
+
+    expect(screen.getByRole("log").children).toHaveLength(state.entries.length);
+    expect(top.value).toBe(state.entries.length * 10);
+    expect(follow.release).not.toHaveBeenCalled();
   });
 });
 
@@ -677,12 +706,14 @@ describe("Transcript (tool-cards) attached permission", () => {
     ].reduce(reduceTranscript, initialTranscript());
     // Each card its own offset: opening on the wrong one lands elsewhere.
     const offsets: Record<string, number> = { b: 400, "req-later": 900 };
-    vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
-      this: HTMLElement,
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
     ) {
-      return offsets[this.dataset.requestId ?? ""] ?? 0;
+      const at = this instanceof HTMLElement ? (offsets[this.dataset.requestId ?? ""] ?? 0) : 0;
+      return DOMRect.fromRect({ y: at });
     });
     const top = { value: 0 };
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(() => top.value);
     vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation((value) => {
       top.value = value;
     });

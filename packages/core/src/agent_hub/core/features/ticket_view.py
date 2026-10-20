@@ -39,6 +39,7 @@ class TicketRow(ViewModel):
     its blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).
     ``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent
     issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
+    ``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.
     """
 
     ref: str
@@ -60,6 +61,7 @@ class TicketRow(ViewModel):
     reviewed: bool | None
     parent: str | None = None
     children: tuple[str, ...] = ()
+    pr_url: str | None = None
 
 
 class ExternalBlocker(ViewModel):

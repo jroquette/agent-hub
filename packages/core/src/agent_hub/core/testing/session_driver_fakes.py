@@ -158,6 +158,10 @@ class InMemorySessionDriver:
         live.deny_pending(INTERRUPTED)
         live.wake.set()
 
+    async def stop_task(self, handle: DriverHandle, task_id: str) -> None:
+        """Log the stop; a test scripts the task's end itself."""
+        self._open(handle, "stop_task", task_id)
+
     async def answer_permission(
         self, handle: DriverHandle, request_id: str, answer: DriverAnswer
     ) -> None:
