@@ -475,18 +475,21 @@ export function FeatureDetailScreen() {
       { replace: true },
     );
   };
+  const records = Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id }));
+  // The criteria sit right after the spec that defines them; the rest follow the golden path.
   const tabs = [
-    ...Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id })),
-    {
-      id: "tickets",
-      label: "Tickets",
-      count: tickets.data?.tickets.length ?? issueIds.length,
-    },
+    ...records.slice(0, 1),
     {
       id: "acs",
       label: "Acceptance criteria",
       icon: "list-checks" as const,
       count: detail.acs?.total,
+    },
+    ...records.slice(1),
+    {
+      id: "tickets",
+      label: "Tickets",
+      count: tickets.data?.tickets.length ?? issueIds.length,
     },
     { id: "eval", label: "Eval" },
   ];
