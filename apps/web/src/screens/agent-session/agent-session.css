@@ -2993,3 +2993,177 @@ button.as-bg-head {
   white-space: nowrap;
   font-family: var(--font-mono);
 }
+
+/*
+ * The sessions rail, left of the chat: switch between agents as between conversations in a chat
+ * app. 260 px, quiet, on the app's bg so the chat's surface reads as the document; folds to a
+ * 48 px strip of status dots (kept per browser).
+ */
+.as-chat-layout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+.as-chat-layout > .as-page {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.as-rail {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+.as-rail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 40px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+}
+.as-rail-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.as-rail-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-3) var(--space-2);
+  padding: 0 var(--space-2);
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-subtle);
+}
+.as-rail-filter:focus-within {
+  border-color: var(--accent);
+}
+.as-rail-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.as-rail-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-2) var(--space-4);
+}
+.as-rail-group {
+  margin: var(--space-3) var(--space-2) var(--space-1);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-subtle);
+}
+.as-rail-list,
+.as-rail-strip {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.as-rail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  text-decoration: none;
+}
+.as-rail-row:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+.as-rail-row:focus-visible,
+.as-rail-strip-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.as-rail-current,
+.as-rail-current:hover {
+  background: var(--surface-turn);
+}
+.as-rail-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.as-rail-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 20px;
+}
+.as-rail-current .as-rail-name {
+  font-weight: 600;
+}
+.as-rail-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+.as-rail-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: var(--radius-full);
+}
+.as-rail-dot-running {
+  color: var(--live);
+}
+.as-rail-dot-waiting {
+  color: var(--waiting);
+}
+.as-rail-dot-idle {
+  color: var(--text-subtle);
+}
+.as-rail-dot-failed {
+  color: var(--failed);
+}
+.as-rail-empty {
+  margin: var(--space-3) var(--space-2);
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+.as-rail-folded {
+  width: 48px;
+  align-items: center;
+  padding-top: var(--space-2);
+  gap: var(--space-2);
+}
+.as-rail-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+.as-rail-strip-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+}
+.as-rail-strip-item:hover {
+  background: var(--surface-hover);
+}
+.as-rail-strip-item .as-rail-dot {
+  margin-top: 0;
+}
