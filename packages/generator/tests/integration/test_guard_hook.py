@@ -3721,6 +3721,13 @@ RULE_EVENTS: tuple[tuple[str, dict[str, Any], str | None], ...] = (
         "skip_marker",
     ),
     ("WebFetch", {"url": "https://prod.example.com/x"}, "deny_hosts"),
+    # AGH-293 (AC-293.8): without blocked words an input tool gets no verdict, a deny_hosts host
+    # in its input included (only the blocked-word rule runs on these tools)
+    ("mcp__web__fetch", {"url": "https://prod.example.com/x"}, None),
+    ("WebSearch", {"query": "status", "mode": "standard"}, None),
+    ("Task", {"prompt": "x", "subagent_type": "general-purpose"}, None),
+    ("Agent", {"prompt": "x", "subagent_type": "general-purpose"}, None),
+    ("SendMessage", {"to": "t", "message": "x"}, None),
 )
 # argv: the hooks folder. rule_of on the reasons no workspace event above produces.
 RULE_OF = """
@@ -4919,6 +4926,25 @@ def test_states_input_limits_when_constants_read(
 
     assert limits == [1_048_576, 50_000]
     assert (INPUT_CHARS_CAP, INPUT_VALUES_CAP) == (1 << 20, 50_000)
+
+
+# AC-293.8 (D-tools): a tool that is not Bash, a file tool or an input tool gets no verdict, even
+# with a blocked word in its input; the MCP call in the same batch shows the guard read the input.
+def test_passes_tool_when_not_input_tool(blocked_hub: Path, guard: Guard) -> None:
+    events = [
+        tool_call("TodoWrite", todos=[{"content": "prod", "status": "pending"}]),
+        tool_call("Skill", skill="prod", args="prod"),
+        tool_call("BashOutput", bash_id="prod"),
+        tool_call("TaskOutput", task_id="prod"),
+        tool_call("mcp__db__query", host="db.prod.example.com"),
+    ]
+
+    verdicts = guard(
+        blocked_hub / HOOKS, [(at(event, blocked_hub), blocked_hub) for event in events]
+    )
+
+    denied = blocked_word("prod", input_where("mcp__db__query"))
+    assert verdicts == [None] * 4 + [(denied[0], "[hub guard] " + denied[1])]
 
 
 # AC-277.14: (path from ws, its text, the word, the layer listing the word); Lc is written.

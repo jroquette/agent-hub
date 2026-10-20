@@ -1005,6 +1005,42 @@ def test_skips_extension_when_blocked_word_denies(hub: Path, guard: Guard, marke
     assert seen(marker) == ["Bash"]
 
 
+def input_calls(text: str) -> list[dict[str, Any]]:
+    """An MCP, a WebSearch, an Agent and a SendMessage call, each holding ``text``."""
+    return [
+        {"tool_name": "mcp__db__query", "tool_input": {"host": text}},
+        {"tool_name": "WebSearch", "tool_input": {"query": text, "mode": "standard"}},
+        {"tool_name": "Agent", "tool_input": {"prompt": text, "subagent_type": "general-purpose"}},
+        {"tool_name": "SendMessage", "tool_input": {"to": "t", "message": text}},
+    ]
+
+
+# AC-293.9 (O-3): the project extension never runs on an input tool, with or without blocked words.
+def test_skips_extension_when_input_tool(hub: Path, guard: Guard, marker: Path) -> None:
+    install(hub, marker=marker, body='return ("deny", "project says no")')
+
+    clean = guard(hub / HOOKS, [(call, hub) for call in input_calls("status")])
+    clean_seen = seen(marker)
+    with_blocked_words(hub)
+    blocked = guard(hub / HOOKS, [(call, hub) for call in input_calls("prod")])
+    blocked_seen = seen(marker)
+    [bash_verdict] = guard(hub / HOOKS, [(bash("git status"), hub)])
+
+    assert clean == [None] * 4
+    assert clean_seen == []
+    assert blocked == [
+        (
+            "deny",
+            f"{PREFIX}blocked word `prod` (guard.blocked_words, hub.json) in the input of"
+            f" `{call['tool_name']}`: agents do not reach what a blocked word names",
+        )
+        for call in input_calls("prod")
+    ]
+    assert blocked_seen == []
+    assert bash_verdict == ("deny", f"{PREFIX}project guard: project says no")
+    assert seen(marker) == ["Bash"]
+
+
 @pytest.mark.serial
 def test_keeps_latency_ceiling_when_blocked_words_set(
     *,
