@@ -2,12 +2,12 @@ import { useEffect, useId, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Banner, Button, Icon, OptionRow, ProblemError, Skeleton } from "../../components";
+import { Button, Icon, OptionRow, ProblemError, Skeleton } from "../../components";
 import { useApi } from "../../lib/api";
-import { EnvFileVariables } from "./EnvFileVariables";
+import { AccessFields, SecretsFields } from "./environmentFields";
+import type { SecretsFrom } from "./environmentFields";
 import { SetupFlow } from "./SetupFlow";
 import {
-  ACCESSES,
   ACCESS_LOOK,
   ENVIRONMENT_PRESETS,
   NAME_PATTERN,
@@ -21,7 +21,6 @@ import type { Access, HubConfigView, SavedState } from "./environments";
 import "./hub-config.css";
 
 type Scope = "local" | "team";
-type SecretsFrom = "file" | "shell" | "none";
 
 const STEPS = ["Kind", "Name", "Access", "Who it is for", "Secrets", "Review"] as const;
 const DESCRIPTION_MAX = 80;
@@ -270,47 +269,14 @@ function AddEnvironmentFlow({ view }: { view: HubConfigView }) {
       help =
         "Scripted actions follow this strictly. Free commands like aws or psql follow it as an instruction.";
       body = (
-        <div className="ah-stack" style={{ gap: 16 }}>
-          <fieldset className="ah-env-fieldset">
-            <legend className="ah-sr">{question}</legend>
-            <div className="ah-options">
-              {ACCESSES.map((candidate) => (
-                <OptionRow
-                  key={candidate}
-                  type="radio"
-                  name={fieldId("access")}
-                  icon={ACCESS_LOOK[candidate].icon}
-                  label={ACCESS_LOOK[candidate].card}
-                  recommended={production && candidate === "read"}
-                  description={ACCESS_LOOK[candidate].help}
-                  checked={access === candidate}
-                  onToggle={() => {
-                    setAccess(candidate);
-                  }}
-                />
-              ))}
-            </div>
-          </fieldset>
-          <div className="ah-options">
-            <OptionRow
-              type="checkbox"
-              name={fieldId("production")}
-              icon="shield-x"
-              label="This is production"
-              description="Real customers and real data. Agents never write or delete here, whatever you pick above."
-              checked={production}
-              onToggle={() => {
-                setProduction(!production);
-              }}
-            />
-          </div>
-          {production && access !== "read" && (
-            <Banner tone="warning" boxed>
-              Production where agents can {access === "ask" ? "ask to change" : "change"} data:
-              doctor will warn. Read only is recommended.
-            </Banner>
-          )}
-        </div>
+        <AccessFields
+          idPrefix={fieldId("step-access")}
+          legend={question}
+          access={access}
+          onAccess={setAccess}
+          production={production}
+          onProduction={setProduction}
+        />
       );
       break;
     case 3:
@@ -365,121 +331,21 @@ function AddEnvironmentFlow({ view }: { view: HubConfigView }) {
           : "Remove the value after = first.";
       nextLabel = secretsFrom === "none" && awsProfile.trim() === "" ? "Skip" : "Continue";
       body = (
-        <div className="ah-stack" style={{ gap: 20 }}>
-          <fieldset className="ah-env-fieldset">
-            <legend className="ah-sr">{question}</legend>
-            <div className="ah-options">
-              <OptionRow
-                type="radio"
-                name={fieldId("secrets")}
-                icon="file-text"
-                label="In an env file"
-                recommended
-                description="A .env file in a repo, ignored by git. Actions get its variables."
-                checked={secretsFrom === "file"}
-                onToggle={() => {
-                  setSecretsFrom("file");
-                }}
-              >
-                {secretsFrom === "file" && (
-                  <span className="ah-stack ah-setup-inline" style={{ gap: 6 }}>
-                    <label htmlFor={fieldId("file")} className="ah-config-field-label">
-                      Env file path
-                    </label>
-                    <input
-                      id={fieldId("file")}
-                      className="ah-input ah-mono ah-setup-input"
-                      value={envFile}
-                      autoComplete="off"
-                      spellCheck={false}
-                      placeholder={`${view.repos[0]?.dir ?? "my-repo"}/.env.${name.trim() || "staging"}`}
-                      onChange={(event) => {
-                        setEnvFile(event.target.value);
-                      }}
-                    />
-                    <span className="ah-small ah-muted">
-                      Relative to the folder that holds the hub and its repos. Only scripted actions
-                      read it; agents never do.
-                    </span>
-                    <EnvFileVariables project={project} path={envFile} />
-                  </span>
-                )}
-              </OptionRow>
-              <OptionRow
-                type="radio"
-                name={fieldId("secrets")}
-                icon="square-terminal"
-                label="In my shell"
-                description="Variables you export in your terminal, like in ~/.zshrc."
-                checked={secretsFrom === "shell"}
-                onToggle={() => {
-                  setSecretsFrom("shell");
-                }}
-              >
-                {secretsFrom === "shell" && (
-                  <span className="ah-stack ah-setup-inline" style={{ gap: 4 }}>
-                    <label htmlFor={fieldId("variables")} className="ah-config-field-label">
-                      Variable names
-                    </label>
-                    <textarea
-                      id={fieldId("variables")}
-                      className="ah-input ah-mono ah-config-textarea ah-setup-input"
-                      rows={3}
-                      value={variables}
-                      spellCheck={false}
-                      autoComplete="off"
-                      placeholder="DATABASE_URL"
-                      aria-invalid={valueLine !== null ? true : undefined}
-                      onChange={(event) => {
-                        setVariables(event.target.value);
-                      }}
-                    />
-                    <span
-                      aria-live="polite"
-                      className={
-                        valueLine !== null ? "ah-small ah-config-error" : "ah-small ah-muted"
-                      }
-                    >
-                      {valueLine !== null
-                        ? `Line ${String(valueLine)}: only the name. Remove = and what follows.`
-                        : "Names only, never a value. One per line."}
-                    </span>
-                  </span>
-                )}
-              </OptionRow>
-              <OptionRow
-                type="radio"
-                name={fieldId("secrets")}
-                icon="circle-dashed"
-                label="Not yet"
-                description="Actions get no secrets here for now. You can add them later."
-                checked={secretsFrom === "none"}
-                onToggle={() => {
-                  setSecretsFrom("none");
-                }}
-              />
-            </div>
-          </fieldset>
-          <div className="ah-stack" style={{ gap: 4 }}>
-            <label htmlFor={fieldId("aws")} className="ah-config-field-label">
-              AWS profile <span className="ah-muted">(optional)</span>
-            </label>
-            <input
-              id={fieldId("aws")}
-              className="ah-input ah-mono ah-setup-input ah-setup-input-short"
-              value={awsProfile}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={`${project}-${name.trim() || "staging"}`}
-              onChange={(event) => {
-                setAwsProfile(event.target.value);
-              }}
-            />
-            <span className="ah-small ah-muted">
-              If it runs on AWS: the profile name in ~/.aws/config, never its keys.
-            </span>
-          </div>
-        </div>
+        <SecretsFields
+          idPrefix={fieldId("step-secrets")}
+          legend={question}
+          project={project}
+          firstRepo={view.repos[0]?.dir}
+          environmentName={name.trim()}
+          secretsFrom={secretsFrom}
+          onSecretsFrom={setSecretsFrom}
+          envFile={envFile}
+          onEnvFile={setEnvFile}
+          variables={variables}
+          onVariables={setVariables}
+          awsProfile={awsProfile}
+          onAwsProfile={setAwsProfile}
+        />
       );
       break;
     }

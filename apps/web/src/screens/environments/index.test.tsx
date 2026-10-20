@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { environmentsLink } from "../../shell/Sidebar";
 import { DiscussProvider } from "../../shell/discuss";
 import { seriousViolations } from "../../testing/axe";
-import { aProblem, renderWithApi } from "../../testing/builders";
+import { renderWithApi } from "../../testing/builders";
 import type { ApiRoutes, RouteReply } from "../../testing/builders";
 import { EnvironmentsScreen } from "./index";
 
@@ -150,39 +150,48 @@ describe("EnvironmentsScreen", () => {
     expect(screen.getByRole("button", { name: "Add a service to demo-web" })).toBeVisible();
   });
 
-  it("shows a refused access under its field", async () => {
-    open(withEnvironments(), {
-      [WRITE]: aProblem({
-        status: 422,
-        title: "This change was not saved",
-        errors: [
-          {
-            pointer: "environments.live.access",
-            message: "hub.local.json: may only tighten hub.json's read",
-          },
-        ],
-      }),
-    });
+  it("opens an environment's page from its name and from Edit", async () => {
+    const { router } = open(withEnvironments());
 
-    await userEvent.click(await screen.findByRole("button", { name: "Edit: live" }));
-    const dialog = screen.getByRole("dialog", { name: "Edit environment live" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Save for the team" }));
+    const table = await screen.findByRole("table", { name: "Environments and what agents may do" });
+    expect(within(table).getByRole("link", { name: /^live/ })).toHaveAttribute(
+      "href",
+      "/projects/demo/environment/live",
+    );
+    await userEvent.click(within(table).getByRole("button", { name: "Edit: live" }));
 
-    expect(await within(dialog).findByText("May only tighten hub.json's read")).toBeVisible();
+    expect(router.state.location.pathname).toBe("/projects/demo/environment/live");
   });
-
-  it("asks to remove the addresses of an environment still in use first", async () => {
-    open(withEnvironments());
+  it("removes an environment in use and its addresses in one confirmed write", async () => {
+    const { requests } = open(withEnvironments(), { [WRITE]: withEnvironments() });
 
     await userEvent.click(
       await screen.findByRole("button", { name: "Remove environment jane-cloud" }),
     );
-
-    const dialog = screen.getByRole("dialog", { name: /jane-cloud is still used by 1 address$/ });
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Remove jane-cloud and its 1 address?",
+    });
     expect(within(dialog).getByText(/demo-api › api/)).toBeVisible();
-    expect(within(dialog).getByRole("button", { name: "Remove 1 address" })).toBeVisible();
-  });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Remove environment and 1 address" }),
+    );
 
+    expect(await screen.findByText("Removed jane-cloud")).toBeVisible();
+    const post = requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({
+      op: "batch",
+      ops: [
+        {
+          op: "remove_endpoint",
+          scope: "local",
+          repo: "demo-api",
+          service: "api",
+          environment: "jane-cloud",
+        },
+        { op: "remove_environment", scope: "local", name: "jane-cloud" },
+      ],
+    });
+  });
   it("confirms before going back to the team's looser access", async () => {
     const { requests } = open(withEnvironments(), { [WRITE]: withEnvironments() });
 
@@ -202,23 +211,67 @@ describe("EnvironmentsScreen", () => {
     });
   });
 
-  it("confirms before removing an address", async () => {
-    const { requests } = open(withEnvironments());
+  it("changes a service's addresses together in its panel", async () => {
+    const { requests } = open(withEnvironments(), { [WRITE]: withEnvironments() });
 
     await userEvent.click(
       await screen.findByRole("button", {
         name: /Edit the address of demo-api › api in local/,
       }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Remove address" }));
-
-    const dialog = screen.getByRole("alertdialog", {
-      name: "Remove the local address of demo-api › api?",
-    });
-    expect(within(dialog).getByText(/hub.json changes/)).toBeVisible();
+    const panel = screen.getByRole("dialog", { name: "demo-api › api" });
+    expect(within(panel).getByRole("textbox", { name: "Address in local" })).toHaveFocus();
+    await userEvent.type(
+      within(panel).getByRole("textbox", { name: "Address in live" }),
+      "https://api.example.com",
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "Remove the jane-cloud address" }),
+    );
+    expect(within(panel).getByText("Removed on save")).toBeVisible();
     expect(requests.some((r) => r.method === "POST")).toBe(false);
+    await userEvent.click(within(panel).getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByText("Saved 2 addresses of demo-api › api")).toBeVisible();
+    const post = requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({
+      op: "batch",
+      ops: [
+        {
+          op: "add_endpoint",
+          scope: "team",
+          repo: "demo-api",
+          service: "api",
+          environment: "live",
+          url: "https://api.example.com",
+          resource: null,
+          note: null,
+          replace: false,
+        },
+        {
+          op: "remove_endpoint",
+          scope: "local",
+          repo: "demo-api",
+          service: "api",
+          environment: "jane-cloud",
+        },
+      ],
+    });
   });
 
+  it("asks before closing a panel with unsaved changes", async () => {
+    open(withEnvironments());
+
+    await userEvent.click(await screen.findByRole("button", { name: "Open demo-api › api" }));
+    const panel = screen.getByRole("dialog", { name: "demo-api › api" });
+    await userEvent.type(
+      within(panel).getByRole("textbox", { name: "Address in live" }),
+      "orders-table",
+    );
+    await userEvent.click(within(panel).getByRole("button", { name: "Close demo-api › api" }));
+
+    expect(screen.getByRole("alertdialog", { name: "Discard 1 change?" })).toBeVisible();
+  });
   it("has no serious a11y violations", async () => {
     const { container } = open();
     await screen.findByRole("heading", { level: 1, name: "Environments" });

@@ -19,7 +19,12 @@ export type EnvironmentEdit =
   | components["schemas"]["RemoveEnvironment"]
   | components["schemas"]["AddEndpoint"]
   | components["schemas"]["RemoveEndpoint"]
-  | components["schemas"]["AddService"];
+  | components["schemas"]["AddService"]
+  | components["schemas"]["RenameEnvironment"]
+  | components["schemas"]["SetService"]
+  | components["schemas"]["EditBatch"];
+/** One edit, as a batch holds them (a batch never holds another batch). */
+export type SingleEdit = Exclude<EnvironmentEdit, components["schemas"]["EditBatch"]>;
 
 /** An endpoint's values: the generated type is ``unknown`` (its schema is an ``anyOf``). */
 export interface EndpointValues {
@@ -41,6 +46,10 @@ export function endpointText(endpoint: SourcedEndpoint): string {
 /** The Hub config screen's Environments section, and the two setup flows. */
 export function environmentsHome(project: string): string {
   return `/projects/${encodeURIComponent(project)}/config#environments`;
+}
+/** One environment's own page. Singular, so an environment named "new" never meets the flows. */
+export function environmentPath(project: string, name: string): string {
+  return `/projects/${encodeURIComponent(project)}/environment/${encodeURIComponent(name)}`;
 }
 export function addEnvironmentPath(project: string): string {
   return `/projects/${encodeURIComponent(project)}/environments/new`;
@@ -161,6 +170,17 @@ export async function postEnvironmentEdit(
   return fresh;
 }
 
+/** Sends several edits as one write: all of them or none (one edit goes as it is). */
+export async function postEnvironmentEdits(
+  client: QueryClient,
+  project: string,
+  ops: readonly SingleEdit[],
+): Promise<HubConfigView> {
+  const [only] = ops;
+  if (ops.length === 1 && only) return postEnvironmentEdit(client, project, only);
+  return postEnvironmentEdit(client, project, { op: "batch", ops: [...ops] });
+}
+
 /** The fields a server problem lands under, by its JSON path. */
 const FIELD_OF: readonly [RegExp, string][] = [
   [/\.credentials\.env\[(\d+)\]/, "credential_env"],
@@ -241,9 +261,10 @@ export function linesOf(text: string): string[] {
 }
 
 /** The first line holding "=" (a value pasted after a name), 1-based, else null. */
-/** "1 endpoint", "3 endpoints". */
+/** "1 address", "3 addresses", "2 services". */
 export function count(amount: number, noun: string): string {
-  return `${String(amount)} ${noun}${amount === 1 ? "" : "s"}`;
+  if (amount === 1) return `${String(amount)} ${noun}`;
+  return `${String(amount)} ${noun}${noun.endsWith("s") ? "es" : "s"}`;
 }
 
 export function lineWithValue(text: string): number | null {

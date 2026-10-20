@@ -2,25 +2,15 @@ import { useEffect, useId, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
-import {
-  Button,
-  EmptyState,
-  Icon,
-  OptionRow,
-  ProblemError,
-  Skeleton,
-  StatusBadge,
-} from "../../components";
+import { Button, EmptyState, Icon, OptionRow, ProblemError, Skeleton } from "../../components";
 import { useApi } from "../../lib/api";
 import { SetupFlow } from "./SetupFlow";
+import { AddressList } from "./environmentFields";
 import {
-  ACCESS_LOOK,
   NAME_PATTERN,
   SERVICE_KINDS,
   addEnvironmentPath,
-  addressKind,
   flowOrigin,
-  exampleAddress,
   isTeams,
   postEnvironmentEdit,
   refusalOf,
@@ -318,50 +308,15 @@ function AddServiceFlow({ view }: { view: HubConfigView }) {
       blocked = "Fill at least one address.";
       body = (
         <div className="ah-stack" style={{ gap: 12 }}>
-          <div className="ah-setup-addresses">
-            {environments.map((environment) => {
-              const value = addresses[environment.name] ?? "";
-              const look = ACCESS_LOOK[environment.access];
-              const inputId = fieldId(`at-${environment.name}`);
-              return (
-                <div key={environment.name} className="ah-setup-address">
-                  <div className="ah-stack" style={{ gap: 4 }}>
-                    <span className="ah-env-name">
-                      <code className="ah-mono">{environment.name}</code>
-                      {environment.production && (
-                        <StatusBadge status="guard" label="Production" quiet />
-                      )}
-                    </span>
-                    <span className="ah-small ah-muted ah-env-access">
-                      <Icon name={look.icon} /> {look.short}
-                    </span>
-                  </div>
-                  <div className="ah-stack" style={{ gap: 4 }}>
-                    <input
-                      id={inputId}
-                      className="ah-input ah-mono ah-setup-input"
-                      aria-label={`Address in ${environment.name}`}
-                      value={value}
-                      autoComplete="off"
-                      spellCheck={false}
-                      placeholder={kind ? exampleAddress(kind, environment) : "address"}
-                      aria-describedby={`${inputId}-kind`}
-                      onChange={(event) => {
-                        setAddresses({ ...addresses, [environment.name]: event.target.value });
-                      }}
-                    />
-                    <span id={`${inputId}-kind`} className="ah-small ah-muted">
-                      {value.trim() === ""
-                        ? "Empty: it does not run here."
-                        : addressKind(value.trim()) === "url"
-                          ? "A URL."
-                          : "A resource name."}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <AddressList
+            idPrefix={fieldId("step-addresses")}
+            environments={environments}
+            kind={kind}
+            values={addresses}
+            onChange={(environment, value) => {
+              setAddresses({ ...addresses, [environment]: value });
+            }}
+          />
           <p className="ah-small ah-muted" style={{ margin: 0 }}>
             <Icon name="lock" /> Never a password: a URL takes no user or token.
           </p>

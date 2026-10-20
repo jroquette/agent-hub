@@ -1,11 +1,8 @@
-import { Fragment, useContext, useState } from "react";
-import { useNavigate } from "react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { Fragment, useContext } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
 import {
   Button,
-  ConfirmDialog,
-  Dialog,
   EmptyState,
   Icon,
   IconButton,
@@ -14,34 +11,30 @@ import {
   Tooltip,
 } from "../../components";
 import { AskBlocked, ConfigSource, Mono, NoneText, useAttach } from "./parts";
-import { EndpointDialog } from "./EndpointDialog";
-import type { EndpointTarget } from "./EndpointDialog";
-import { EnvironmentDialog } from "./EnvironmentDialog";
+import { ServicePanel } from "./ServicePanel";
+import { useEnvironmentRemoval } from "./EnvironmentRemoval";
 import {
   ACCESS_LOOK,
   LOCAL_FILE,
   addEnvironmentPath,
   addServicePath,
-  count,
+  environmentPath,
   endpointText,
   endpointValues,
-  endpointsIn,
   isMine,
   isTeams,
-  postEnvironmentEdit,
-  refusalOf,
   serviceKind,
   serviceLabel,
 } from "./environments";
 import type { FlowOrigin, HubConfigView, SourcedEnvironment, SourcedService } from "./environments";
 
 /** Production, by icon and word, never by colour alone. */
-function ProductionBadge() {
+export function ProductionBadge() {
   return <StatusBadge status="guard" label="Production" quiet />;
 }
 
 /** What agents may do there, in a person's words. */
-function AccessValue({ environment }: { environment: SourcedEnvironment }) {
+export function AccessValue({ environment }: { environment: SourcedEnvironment }) {
   const look = ACCESS_LOOK[environment.access];
   return (
     <span className="ah-env-access">
@@ -52,7 +45,7 @@ function AccessValue({ environment }: { environment: SourcedEnvironment }) {
 }
 
 /** The credential names (never a value), or that there are none. */
-function CredentialLine({ environment }: { environment: SourcedEnvironment }) {
+export function CredentialLine({ environment }: { environment: SourcedEnvironment }) {
   const credentials = environment.credentials;
   const parts = [];
   if (credentials?.aws_profile)
@@ -86,7 +79,7 @@ function CredentialLine({ environment }: { environment: SourcedEnvironment }) {
 }
 
 /** Who set the environment: the team, you, or the team with your stricter access. */
-function EnvironmentSource({ environment }: { environment: SourcedEnvironment }) {
+export function EnvironmentSource({ environment }: { environment: SourcedEnvironment }) {
   if (isTeams(environment) && isMine(environment))
     return (
       <Tooltip
@@ -106,11 +99,6 @@ function EnvironmentSource({ environment }: { environment: SourcedEnvironment })
     />
   );
 }
-
-type Removal =
-  | { kind: "environment"; environment: SourcedEnvironment }
-  | { kind: "in-use"; environment: SourcedEnvironment }
-  | { kind: "loosen"; environment: SourcedEnvironment };
 
 export const ADD_ENVIRONMENT_ID = "ah-env-add-environment";
 
@@ -136,74 +124,38 @@ export function EnvironmentsSection({
   /** Where the add flows come back to. */
   origin: FlowOrigin;
 }) {
-  const client = useQueryClient();
   const navigate = useNavigate();
   const { attach, isAttached } = useAttach();
   const blocked = useContext(AskBlocked);
   const environments = view.environments.environments;
   const services = view.environments.services;
-  const [editing, setEditing] = useState<SourcedEnvironment | null>(null);
-  const [endpoint, setEndpoint] = useState<EndpointTarget | null>(null);
-  const [removal, setRemoval] = useState<Removal | null>(null);
-  const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-
-  const startRemove = (environment: SourcedEnvironment) => {
-    setFailure(null);
-    const used = endpointsIn(view.environments, environment.name);
-    setRemoval({ kind: used.length > 0 ? "in-use" : "environment", environment });
+  const [params, setParams] = useSearchParams();
+  const opened = params.get("service");
+  const [panelRepo, panelService] = opened ? opened.split("/", 2) : [];
+  const panel =
+    panelRepo && panelService
+      ? { repo: panelRepo, service: panelService, environment: params.get("env") ?? undefined }
+      : null;
+  /** Opens a service's panel (on one environment's address), or closes it with null. */
+  const openService = (repo: string | null, service?: string, environment?: string) => {
+    setParams(
+      (prev) => {
+        prev.delete("service");
+        prev.delete("env");
+        if (repo !== null && service) {
+          prev.set("service", `${repo}/${service}`);
+          if (environment) prev.set("env", environment);
+        }
+        return prev;
+      },
+      { replace: true },
+    );
   };
-
-  const removeEnvironment = (environment: SourcedEnvironment) => {
-    setPending(true);
-    // A tightened team environment: removing it here drops only my stricter access.
-    const scope = isMine(environment) ? "local" : "team";
-    postEnvironmentEdit(client, view.project, {
-      op: "remove_environment",
-      scope,
-      name: environment.name,
-    })
-      .then(() => {
-        setPending(false);
-        setRemoval(null);
-        focusAddEnvironment();
-        onSaved(
-          isTeams(environment) && scope === "local"
-            ? `${environment.name} is back to the team's access`
-            : `Removed ${environment.name}`,
-          scope === "team",
-        );
-      })
-      .catch((error: unknown) => {
-        setPending(false);
-        setFailure(refusalOf(error).summary);
-      });
-  };
-
-  const removeEndpoints = async (environment: SourcedEnvironment) => {
-    setPending(true);
-    setFailure(null);
-    let team = false;
-    try {
-      for (const { service, endpoint: used } of endpointsIn(view.environments, environment.name)) {
-        const scope = used.source === LOCAL_FILE ? "local" : "team";
-        team ||= scope === "team";
-        await postEnvironmentEdit(client, view.project, {
-          op: "remove_endpoint",
-          scope,
-          repo: service.repo,
-          service: service.name,
-          environment: environment.name,
-        });
-      }
-      setRemoval({ kind: "environment", environment });
-      onSaved(`Removed the addresses of ${environment.name}`, team);
-    } catch (error: unknown) {
-      setFailure(refusalOf(error).summary);
-    } finally {
-      setPending(false);
-    }
-  };
+  const { startRemove, startLoosen, dialogs } = useEnvironmentRemoval({
+    view,
+    onSaved,
+    onDone: focusAddEnvironment,
+  });
 
   const servicesOf = (dir: string): SourcedService[] =>
     services.filter((service) => service.repo === dir);
@@ -278,7 +230,13 @@ export function EnvironmentsSection({
                         <th scope="row">
                           <span className="ah-stack" style={{ gap: 2 }}>
                             <span className="ah-env-name">
-                              <Mono>{environment.name}</Mono>
+                              <Link
+                                className="ah-env-name-link"
+                                to={environmentPath(view.project, environment.name)}
+                              >
+                                <Mono>{environment.name}</Mono>
+                                <Icon name="chevron-right" />
+                              </Link>
                               {environment.production && <ProductionBadge />}
                             </span>
                             {environment.description && (
@@ -329,7 +287,7 @@ export function EnvironmentsSection({
                               icon="pencil"
                               aria-label={`Edit: ${environment.name}`}
                               onClick={() => {
-                                setEditing(environment);
+                                void navigate(environmentPath(view.project, environment.name));
                               }}
                             >
                               Edit
@@ -341,8 +299,7 @@ export function EnvironmentsSection({
                                 icon="undo-2"
                                 aria-label={`Use the team's access for ${environment.name}`}
                                 onClick={() => {
-                                  setFailure(null);
-                                  setRemoval({ kind: "loosen", environment });
+                                  startLoosen(environment);
                                 }}
                               >
                                 Use team&apos;s
@@ -442,7 +399,16 @@ export function EnvironmentsSection({
                         {servicesOf(repo.dir).map((service) => (
                           <tr key={service.name}>
                             <th scope="row" className="ah-env-service">
-                              <Mono>{service.name}</Mono>
+                              <button
+                                type="button"
+                                className="ah-link-button ah-mono"
+                                aria-label={`Open ${serviceLabel(repo.dir, service.name)}`}
+                                onClick={() => {
+                                  openService(repo.dir, service.name);
+                                }}
+                              >
+                                {service.name}
+                              </button>
                               {service.kind && (
                                 <span className="ah-muted">
                                   {" "}
@@ -465,11 +431,7 @@ export function EnvironmentsSection({
                                       className="ah-env-add"
                                       aria-label={`Add address for ${where} in ${environment.name}`}
                                       onClick={() => {
-                                        setEndpoint({
-                                          repo: repo.dir,
-                                          service: service.name,
-                                          environment: environment.name,
-                                        });
+                                        openService(repo.dir, service.name, environment.name);
                                       }}
                                     >
                                       Add address
@@ -485,12 +447,7 @@ export function EnvironmentsSection({
                                     className="ah-env-cell"
                                     aria-label={`Edit the address of ${where} in ${environment.name}: ${shown}${found.source === LOCAL_FILE ? " · set by you" : ""}${note ? ` · note: ${note}` : ""}`}
                                     onClick={() => {
-                                      setEndpoint({
-                                        repo: repo.dir,
-                                        service: service.name,
-                                        environment: environment.name,
-                                        endpoint: found,
-                                      });
+                                      openService(repo.dir, service.name, environment.name);
                                     }}
                                   >
                                     <span className="ah-mono">
@@ -536,128 +493,19 @@ export function EnvironmentsSection({
         </>
       )}
 
-      {editing !== null && (
-        <EnvironmentDialog
+      {panel && (
+        <ServicePanel
           view={view}
-          editing={editing}
+          repo={panel.repo}
+          service={panel.service}
+          focusEnvironment={panel.environment}
           onClose={() => {
-            setEditing(null);
+            openService(null);
           }}
           onSaved={onSaved}
         />
       )}
-      {endpoint !== null && (
-        <EndpointDialog
-          view={view}
-          target={endpoint}
-          onClose={() => {
-            setEndpoint(null);
-          }}
-          onSaved={onSaved}
-        />
-      )}
-      {removal?.kind === "environment" && (
-        <ConfirmDialog
-          title={`Remove environment ${removal.environment.name}?`}
-          confirmLabel={pending ? "Removing…" : "Remove environment"}
-          pending={pending}
-          requireText={removal.environment.production ? removal.environment.name : undefined}
-          consequences={[
-            `Agents stop seeing ${removal.environment.name}.`,
-            ...(isMine(removal.environment)
-              ? []
-              : ["hub.json changes; run ./hub sync and open a hub PR."]),
-            ...(removal.environment.production
-              ? [`Type ${removal.environment.name} to confirm.`]
-              : []),
-          ]}
-          onCancel={() => {
-            setRemoval(null);
-          }}
-          onConfirm={() => {
-            removeEnvironment(removal.environment);
-          }}
-        >
-          {failure && (
-            <p role="alert" className="ah-config-error">
-              {failure}
-            </p>
-          )}
-        </ConfirmDialog>
-      )}
-      {removal?.kind === "loosen" && (
-        <ConfirmDialog
-          title={`Use the team's access for ${removal.environment.name}?`}
-          tone="primary"
-          confirmLabel={pending ? "Saving…" : "Use the team's access"}
-          pending={pending}
-          consequences={[
-            `Your agents ${ACCESS_LOOK[removal.environment.team_access ?? "write"].short} in ${removal.environment.name} again, as the team set it.`,
-            "Your stricter setting is removed from hub.local.json.",
-          ]}
-          onCancel={() => {
-            setRemoval(null);
-          }}
-          onConfirm={() => {
-            removeEnvironment(removal.environment);
-          }}
-        >
-          {failure && (
-            <p role="alert" className="ah-config-error">
-              {failure}
-            </p>
-          )}
-        </ConfirmDialog>
-      )}
-      {removal?.kind === "in-use" && (
-        <Dialog
-          title={`${removal.environment.name} is still used by ${count(endpointsIn(view.environments, removal.environment.name).length, "address")}`}
-          size="sm"
-          pending={pending}
-          onClose={() => {
-            setRemoval(null);
-          }}
-          footer={
-            <>
-              <Button
-                disabled={pending}
-                onClick={() => {
-                  setRemoval(null);
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                disabled={pending}
-                onClick={() => {
-                  void removeEndpoints(removal.environment);
-                }}
-              >
-                {pending
-                  ? "Removing…"
-                  : `Remove ${count(endpointsIn(view.environments, removal.environment.name).length, "address")}`}
-              </Button>
-            </>
-          }
-        >
-          <ul className="ah-consequences">
-            {endpointsIn(view.environments, removal.environment.name).map(
-              ({ service, endpoint: used }) => (
-                <li key={`${service.repo}/${service.name}`}>
-                  {serviceLabel(service.repo, service.name)} · <Mono>{endpointText(used)}</Mono>
-                </li>
-              ),
-            )}
-          </ul>
-          <p className="ah-muted">Remove them first, then the environment.</p>
-          {failure && (
-            <p role="alert" className="ah-config-error">
-              {failure}
-            </p>
-          )}
-        </Dialog>
-      )}
+      {dialogs}
     </div>
   );
 }

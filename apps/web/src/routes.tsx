@@ -9,6 +9,7 @@ import { FeaturesScreen } from "./screens/features";
 import { NewFeatureScreen } from "./screens/features/NewFeature";
 import { HealthScreen } from "./screens/health";
 import { EnvironmentsPickerScreen, EnvironmentsScreen } from "./screens/environments";
+import { EnvironmentScreen } from "./screens/environments/EnvironmentPage";
 import { HubConfigPickerScreen, HubConfigScreen } from "./screens/hub-config";
 import { AddEnvironmentScreen } from "./screens/hub-config/AddEnvironmentFlow";
 import { AddServiceScreen } from "./screens/hub-config/AddServiceFlow";
@@ -70,6 +71,7 @@ export const appRoutes: RouteObject[] = [
           { path: "projects/:project/environments/services/new", element: <AddServiceScreen /> },
           { path: "config", element: <HubConfigPickerScreen /> },
           { path: "projects/:project/environments", element: <EnvironmentsScreen /> },
+          { path: "projects/:project/environment/:name", element: <EnvironmentScreen /> },
           { path: "environments", element: <EnvironmentsPickerScreen /> },
           { path: "projects/:project/skills", element: <SkillsScreen /> },
           { path: "projects/:project/skills/new/:kind", element: <NewDraftScreen /> },
