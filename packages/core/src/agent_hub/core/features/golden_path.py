@@ -234,7 +234,7 @@ def _spec(facts: _Facts) -> _Own:
 def _ux_design(facts: _Facts) -> _Own:
     designs = facts.inputs.ux_designs
     if facts.inputs.ux_problem is not None:
-        return _Own(holds=None, reason=facts.inputs.ux_problem, started=bool(designs))
+        return _Own(holds=None, reason=facts.inputs.ux_problem)
     if not designs:
         later = _later_record(facts, (RESEARCH_FILE, PLAN_FILE))
         meta = "No screen change recorded" if later else None
