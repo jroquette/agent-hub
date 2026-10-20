@@ -713,6 +713,57 @@ def test_keeps_acceptance_waiting_when_legacy_eval_ships_with_owner_steps() -> N
     assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: 3 owner steps")
 
 
+# two-level-flows A3 (AGH-325 Q2): no AC to count is no sign-off, so the owner steps still wait.
+def test_keeps_acceptance_waiting_when_owner_steps_eval_has_no_live_ac() -> None:
+    planned_only = b'{"tickets": [{"key": "T1", "id": "ACME-1520", "order": 1}], "acs": []}'
+    merged = _linear(_summary("ACME-1520", _DONE))
+
+    path = feature_parts(_folder(_WHOLE_OWNER, features_json=planned_only), merged).golden_path
+
+    acceptance = _step(path, "acceptance")
+    assert (acceptance.state, acceptance.meta) == (
+        "current",
+        "Waiting on owner steps · no ACs listed",
+    )
+    assert path.phase == "acceptance"
+
+
+# The hub's workflows-engine: no features.json, ticket SWOS evals, then an acs:all SWOS final.md.
+_WORKFLOWS_FINAL = _eval_head(
+    "final",
+    verdict="SHIP-WITH-OWNER-STEPS",
+    scope="tickets: [AGH-213, AGH-232]\nacs: all",
+    at="2026-10-16T09:15:00Z",
+)
+_WORKFLOWS_SLICE = _eval_head(
+    "slice-7-r2",
+    verdict="SHIP-WITH-OWNER-STEPS",
+    scope="tickets: [AGH-213, AGH-232]\nacs: [AC-213.19, AC-213.20]",
+    at="2026-10-16T08:49:11Z",
+)
+
+
+def test_keeps_acceptance_waiting_when_folder_is_shaped_like_workflows_engine() -> None:
+    folder = _folder(
+        _WORKFLOWS_SLICE,
+        _WORKFLOWS_FINAL,
+        files=("research.md", "plan.md", "issues.md"),
+        features_json=None,
+    )
+    signoff = _eval_head(
+        "owner-signoff", verdict="SHIP", scope="tickets: [AGH-213]", at="2026-10-17", owner=True
+    )
+    signed = _folder(
+        _WORKFLOWS_SLICE, _WORKFLOWS_FINAL, signoff, files=folder.files, features_json=None
+    )
+
+    waiting = _step(feature_parts(folder).golden_path, "acceptance")
+    after = _step(feature_parts(signed).golden_path, "acceptance")
+
+    assert (waiting.state, waiting.meta) == ("partial", "Waiting on owner steps · no ACs listed")
+    assert (after.state, after.meta) == ("blocked", "Owner steps signed off")
+
+
 # two-level-flows A3: the sign-off is never the acceptance eval nor the header verdict.
 def test_never_makes_owner_signoff_the_acceptance_eval_when_it_lists_acs() -> None:
     alone = feature_detail(_folder(_SIGNOFF), project="demo", read=_MERGED)
