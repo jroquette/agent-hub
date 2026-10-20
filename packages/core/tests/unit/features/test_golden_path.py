@@ -141,6 +141,13 @@ def test_makes_spec_current_when_brief_only() -> None:
     assert "brief" not in {step.name for step in path.steps}
 
 
+def test_omits_brief_only_meta_when_spec_skipped() -> None:
+    path = golden_path(_inputs(files=("brief.md", "plan.md")))
+
+    spec = _step(path, "spec")
+    assert (spec.state, spec.meta) == ("skipped", None)
+
+
 # two-level-flows AC-1.3: UX design.
 def test_skips_ux_design_when_no_designs_and_later_record_exists() -> None:
     path = golden_path(_inputs(files=("spec.md", "research.md")))
