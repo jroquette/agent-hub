@@ -571,3 +571,13 @@ def test_refuses_tokens_when_run_context_tokens_in_scenario() -> None:
     assert problems_of(action("self"), kind="scenario") == [
         ("nodes[0].id", "the id self is reserved: $self reads a node's own output")
     ]
+
+
+def test_reads_ctx_until_when_run_context_wait_in_scenario_only() -> None:
+    source = action("source", capture={"deadline": "$self.output.at"})
+    wait = {"id": "hold", "type": "wait", "until": "$CTX.deadline", "depends_on": ["source"]}
+
+    assert plan_of(source, wait, kind="scenario").layers == (("source",), ("hold",))
+    assert problems_of(shell("source"), wait) == [
+        ("nodes[1].until", "a wait's until is an instant or one whole reference ($CTX: scenarios)")
+    ]

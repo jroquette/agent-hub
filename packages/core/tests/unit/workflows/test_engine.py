@@ -1287,3 +1287,16 @@ def test_counts_polls_across_attempts_when_expect_node_retried() -> None:
     assert len(runner.calls) == engine_module.MAX_EXPECT_POLLS
     assert {call.attempt for call in runner.calls} == {1, 2}
     assert run.status_of("wait") == ("failed", None, None, "timeout")
+
+
+def test_waits_until_ctx_when_run_context_wait_in_scenario() -> None:
+    source = action("source", capture={"deadline": "$self.output.at"})
+    wait = {"id": "hold", "type": "wait", "until": "$CTX.deadline", "depends_on": ["source"]}
+    runner = ScriptedRunner({"source": ['{"at": "2026-10-16T09:00:00+00:00"}']})
+
+    run = Run(plan_of(source, wait, kind="scenario"), runner)
+
+    assert run.report.status == "paused"
+    assert [gate.due.isoformat() for gate in run.recorder.gates if gate.due] == [
+        "2026-10-16T09:00:00+00:00"
+    ]
