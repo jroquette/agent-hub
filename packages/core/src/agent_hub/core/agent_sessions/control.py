@@ -74,6 +74,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverCapabilities,
     DriverError,
     DriverEvent,
+    DriverFile,
     DriverImage,
     Exited,
     InitEvent,
@@ -103,6 +104,7 @@ from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.agent_sessions.links import AgentSessionLink, ObservedSessionLookup
 from agent_hub.core.agent_sessions.live_session import LiveSession, OpenRequest
 from agent_hub.core.agent_sessions.log_caps import Full, LogBudget, Truncated
+from agent_hub.core.agent_sessions.message_file import decode_message_file
 from agent_hub.core.agent_sessions.permission_policy import (
     closed_answer,
     deadline,
@@ -225,9 +227,14 @@ def _event_body(event: DriverEvent) -> dict[str, JsonValue]:
     return body
 
 
-def _user_message_body(text: str, images: tuple[DriverImage, ...]) -> UserMessageBody:
-    """A user message's record: its text and a marker per image, never the image's bytes."""
+def _user_message_body(
+    text: str, images: tuple[DriverImage, ...], files: tuple[DriverFile, ...] = ()
+) -> UserMessageBody:
+    """A user message's record: its text and a marker per file and image, never their bytes."""
     attachments = tuple(
+        Attachment(kind="file", media_type=file.media_type, bytes=len(file.data), name=file.name)
+        for file in files
+    ) + tuple(
         Attachment(kind="screenshot", media_type=image.media_type, bytes=len(image.data))
         for image in images
     )
@@ -772,16 +779,20 @@ class AgentSessionControl:
             decode_screenshot(screenshot, pointer=f"/screenshots/{index}/data")
             for index, screenshot in enumerate(message.screenshots or ())
         )
+        files = tuple(
+            decode_message_file(message_file, pointer=f"/files/{index}/data")
+            for index, message_file in enumerate(message.files or ())
+        )
         live = await self._commandable(agent_session_id, reopen=True)
         async with live.commands:
             self._refuse(live, Send())
-            body = _user_message_body(message.text, images)
+            body = _user_message_body(message.text, images, files)
             seq = await self._emit(live, "user.message", body.as_body(), by="web")
             if seq is None:
                 raise await self._log_full(live)
             live.state = apply(live.state, Send())
             await self._sync(live)
-            await self._driver.send(live.handle, message.text, images=images)
+            await self._driver.send(live.handle, message.text, images=images, files=files)
         return MessageAccepted(seq=seq)
 
     async def stop_task(self, agent_session_id: str, task_id: str) -> AgentSession:

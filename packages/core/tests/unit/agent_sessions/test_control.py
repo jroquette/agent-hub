@@ -31,6 +31,7 @@ from agent_hub.core.agent_sessions.driver import (
     Deny,
     DriverCapabilities,
     DriverEvent,
+    DriverFile,
     DriverHandle,
     DriverImage,
     PastSession,
@@ -47,6 +48,7 @@ from agent_hub.core.agent_sessions.driver import (
 from agent_hub.core.agent_sessions.errors import (
     AgentSessionNotFoundError,
     InvalidDecisionError,
+    InvalidMessageFileError,
     InvalidScreenshotError,
     InvalidWorkdirError,
     LiveLimitError,
@@ -1507,6 +1509,54 @@ async def test_sends_message_with_images_when_screenshots_sent(make_rig: MakeRig
     message = next(record for record in rig.records(created.id) if record.seq == accepted.seq)
     assert message.body == {"text": "Look.", "attachments": [SCREENSHOT_MARKER] * 2}
     assert PNG_BASE64 not in message.model_dump_json()
+
+
+async def test_sends_message_with_files_when_files_attached(make_rig: MakeRig) -> None:
+    rig = make_rig()
+    created = await rig.create("Say hello.")
+    await rig.until_status(created.id, "idle")
+    text = b"id,name\n1,Ada\n"
+    attached = {
+        "name": "people.csv",
+        "media_type": "text/plain",
+        "data": base64.b64encode(text).decode(),
+    }
+
+    accepted = await rig.control.send(
+        created.id, SendMessage.model_validate({"text": "Read it.", "files": [attached]})
+    )
+    await rig.until_status(created.id, "idle")
+
+    sends = [call.args for call in rig.driver.calls if call.method == "send"]
+    assert sends[-1] == (
+        "Read it.",
+        (),
+        (DriverFile(name="people.csv", media_type="text/plain", data=text),),
+    )
+    message = next(record for record in rig.records(created.id) if record.seq == accepted.seq)
+    marker = {"kind": "file", "media_type": "text/plain", "bytes": len(text), "name": "people.csv"}
+    assert message.body == {"text": "Read it.", "attachments": [marker]}
+    assert "1,Ada" not in message.model_dump_json()
+
+
+async def test_refuses_message_file_before_logging_when_not_pdf(make_rig: MakeRig) -> None:
+    rig = make_rig()
+    created = await rig.create("Say hello.")
+    await rig.until_status(created.id, "idle")
+    before = rig.kinds(created.id)
+    fake_pdf = {
+        "name": "a.pdf",
+        "media_type": "application/pdf",
+        "data": base64.b64encode(b"hi").decode(),
+    }
+
+    with pytest.raises(InvalidMessageFileError) as refused:
+        await rig.control.send(
+            created.id, SendMessage.model_validate({"text": "Read it.", "files": [fake_pdf]})
+        )
+
+    assert refused.value.pointer == "/files/0/data"
+    assert rig.kinds(created.id) == before
 
 
 async def test_refuses_message_image_before_logging_when_not_png(make_rig: MakeRig) -> None:

@@ -3639,6 +3639,22 @@ export interface components {
       seq: number;
     };
     /**
+     * MessageFile
+     * @description A file attached to a message for Claude to read: a PDF or a UTF-8 text, base64-encoded;
+     *     its decoded size and content are checked by ``decode_message_file`` (413, 422).
+     */
+    MessageFile: {
+      /** Data */
+      data: string;
+      /**
+       * Media Type
+       * @enum {string}
+       */
+      media_type: "application/pdf" | "text/plain";
+      /** Name */
+      name: string;
+    };
+    /**
      * Mode
      * @description Who can invoke a skill (S5, L2); ``neither`` reads "Hidden" in the UI.
      * @enum {string}
@@ -4660,10 +4676,12 @@ export interface components {
       "session" | "run" | "approval" | "learning" | "feature" | "file" | "command" | "tool";
     /**
      * SendMessage
-     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413), with the images
-     *     pasted in it, sent to Claude before the text.
+     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413), with the files and
+     *     images attached to it, sent to Claude before the text.
      */
     SendMessage: {
+      /** Files */
+      files?: components["schemas"]["MessageFile"][] | null;
       /** Screenshots */
       screenshots?: components["schemas"]["Screenshot"][] | null;
       /** Text */

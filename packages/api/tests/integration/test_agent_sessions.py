@@ -1066,6 +1066,48 @@ def test_sends_images_with_message_when_screenshots_pasted(agent_session_app: An
     assert message.body == {"text": "And this?", "attachments": [marker, marker]}
 
 
+def test_sends_files_with_message_when_files_attached(agent_session_app: Any) -> None:
+    created = _created(agent_session_app, "Hello.")
+    agent_session_app.until_status(created["id"], "idle")
+    pdf = b"%PDF-1.7\n"
+    attached = {
+        "name": "spec.pdf",
+        "media_type": "application/pdf",
+        "data": base64.b64encode(pdf).decode(),
+    }
+
+    response = agent_session_app.client.post(
+        f"{BASE}/{created['id']}/messages", json={"text": "Read this.", "files": [attached]}
+    )
+    agent_session_app.until_status(created["id"], "idle")
+
+    assert response.status_code == 202, response.text
+    sends = [call.args for call in agent_session_app.driver.calls if call.method == "send"]
+    text, images, files = sends[-1]
+    assert (text, images) == ("Read this.", ())
+    assert [(file.name, file.data) for file in files] == [("spec.pdf", pdf)]
+
+
+def test_refuses_message_file_when_not_text(agent_session_app: Any) -> None:
+    created = _created(agent_session_app, "Hello.")
+    agent_session_app.until_status(created["id"], "idle")
+    sends_before = len(agent_session_app.driver.calls)
+    binary = {
+        "name": "a.bin",
+        "media_type": "text/plain",
+        "data": base64.b64encode(b"\x00\x01").decode(),
+    }
+
+    response = agent_session_app.client.post(
+        f"{BASE}/{created['id']}/messages", json={"text": "Read this.", "files": [binary]}
+    )
+
+    document = _problem(response, 422, "invalid-file")
+    assert "/files/0/data" in response.text
+    assert document["title"] == "Invalid file"
+    assert len(agent_session_app.driver.calls) == sends_before
+
+
 def test_refuses_message_image_when_not_png(agent_session_app: Any) -> None:
     created = _created(agent_session_app, "Hello.")
     agent_session_app.until_status(created["id"], "idle")

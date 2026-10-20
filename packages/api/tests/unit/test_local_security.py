@@ -417,7 +417,7 @@ def test_caps_message_body_at_message_cap_when_images_may_be_pasted() -> None:
     at_cap = client.post(path, content=_streamed(AGENT_SESSION_MESSAGE_BODY_BYTES))
     over = client.post(path, content=_streamed(AGENT_SESSION_MESSAGE_BODY_BYTES + 1))
 
-    assert AGENT_SESSION_MESSAGE_BODY_BYTES == 64 * 1024 * 1024
+    assert AGENT_SESSION_MESSAGE_BODY_BYTES == 100 * 1024 * 1024
     assert at_cap.status_code == 200
     assert over.status_code == 413
     assert over.json()["detail"] == (

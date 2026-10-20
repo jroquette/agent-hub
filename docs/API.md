@@ -293,8 +293,15 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 - **Images in a later message.** `POST /{id}/messages` may carry `screenshots: [{media_type: "image/png", data}]`
   (1 to 10; an image pasted in the chat, converted to PNG by the browser), sent to Claude before the message's text.
   Each is checked like the first prompt's screenshot, before anything is logged or sent (422 `invalid-screenshot`
-  points at `/screenshots/{index}/data`; 413 `screenshot-too-large`). This route's body may be up to 64 MiB. The
+  points at `/screenshots/{index}/data`; 413 `screenshot-too-large`). This route's body may be up to 100 MiB. The
   `user.message` record carries one `attachments` marker per image and never its bytes.
+- **Files in a later message.** `POST /{id}/messages` may also carry
+  `files: [{name, media_type: "application/pdf" | "text/plain", data: <base64>}]` (1 to 5, at most 5 MiB decoded
+  each), sent to Claude before the images and the text: a PDF as a document block, a text file as a text block
+  wrapped in `<file name="…">`. `data` must be strict base64 of a PDF (it starts with `%PDF-`) or of UTF-8 text
+  without NUL bytes (else 422 `invalid-file`, pointing at `/files/{index}/data`); over the size, 413
+  `file-too-large`. No file byte is stored: the record carries
+  `attachments: [{kind: "file", media_type, bytes, name}]`.
 - **Observed twin.** `GET ""` and `GET /{id}` carry `observed_session_id`: the `claude_session_id` once the hooks or
   transcripts observed that Claude session (it is then a row of `GET /api/v1/sessions`), else `null`, so a list shows a
   driven session once, with or without its twin. The other routes answer it `null`.
@@ -354,6 +361,8 @@ text or a value the browser sent):
 | `message-too-large` | 413 | a prompt or message over the limit (`limit`, `size`) |
 | `screenshot-too-large` | 413 | a screenshot over 3,932,160 bytes decoded (`limit`, `size`) |
 | `invalid-screenshot` | 422 | a screenshot that is not strict base64 of a PNG (`errors[]` points at `/screenshot/data`, or `/screenshots/{index}/data` for a message's image) |
+| `file-too-large` | 413 | a message's file over 5,242,880 bytes decoded (`limit`, `size`) |
+| `invalid-file` | 422 | a message's file that is not strict base64 of a PDF or of UTF-8 text (`errors[]` points at `/files/{index}/data`) |
 | `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
 | `cloud-unavailable` · `cloud-failed` · `cloud-timeout` | 501 · 502 · 504 | link-out guidance (`guidance`) · the step that failed (`step`) · the 60 s deadline (`seconds`) |
 

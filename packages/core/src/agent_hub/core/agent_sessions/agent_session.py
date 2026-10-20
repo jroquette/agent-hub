@@ -262,13 +262,39 @@ class CreateAgentSession(ViewModel):
 MAX_MESSAGE_SCREENSHOTS: Final = 10
 
 
+# The most files one message carries: each is a PDF or a UTF-8 text of at most
+# ``MAX_MESSAGE_FILE_BYTES``.
+MAX_MESSAGE_FILES: Final = 5
+MAX_FILE_NAME_CHARS: Final = 255
+
+MessageFileMediaType = Literal["application/pdf", "text/plain"]
+
+
+class MessageFile(ViewModel):
+    """A file attached to a message for Claude to read: a PDF or a UTF-8 text, base64-encoded;
+    its decoded size and content are checked by ``decode_message_file`` (413, 422)."""
+
+    name: str = Field(min_length=1, max_length=MAX_FILE_NAME_CHARS)
+    media_type: MessageFileMediaType
+    data: str = Field(min_length=1)
+
+    # Like ``Screenshot``: a log line or a traceback never prints the data.
+    def __repr_args__(self) -> Iterator[tuple[str, object]]:
+        yield "name", self.name
+        yield "media_type", self.media_type
+        yield "chars", len(self.data)
+
+
 class SendMessage(ViewModel):
-    """``POST /{id}/messages``: one user message (byte limit checked, 413), with the images
-    pasted in it, sent to Claude before the text."""
+    """``POST /{id}/messages``: one user message (byte limit checked, 413), with the files and
+    images attached to it, sent to Claude before the text."""
 
     text: str = Field(min_length=1)
     screenshots: tuple[Screenshot, ...] | None = Field(
         default=None, min_length=1, max_length=MAX_MESSAGE_SCREENSHOTS
+    )
+    files: tuple[MessageFile, ...] | None = Field(
+        default=None, min_length=1, max_length=MAX_MESSAGE_FILES
     )
 
 

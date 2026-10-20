@@ -25,10 +25,12 @@ from agent_hub.core.agent_sessions.errors import (
     CloudTimeoutError,
     CloudUnavailableError,
     InvalidDecisionError,
+    InvalidMessageFileError,
     InvalidScreenshotError,
     InvalidWorkdirError,
     LiveLimitError,
     LogFullError,
+    MessageFileTooLargeError,
     MessageTooLargeError,
     PermissionAnsweredError,
     ScreenshotTooLargeError,
@@ -573,6 +575,26 @@ def _invalid_screenshot_problem(error: InvalidScreenshotError) -> Problem:
     )
 
 
+def _message_file_too_large_problem(error: MessageFileTooLargeError) -> Problem:
+    return _agent_session_problem(
+        413,
+        "file-too-large",
+        "File too large",
+        detail=f"Files are limited to {error.limit} bytes (decoded); this one has {error.size}.",
+        members={"limit": error.limit, "size": error.size},
+    )
+
+
+def _invalid_message_file_problem(error: InvalidMessageFileError) -> Problem:
+    # A fixed detail: the reason never quotes the data.
+    return _body_field_problem(
+        "invalid-file",
+        "Invalid file",
+        pointer=error.pointer,
+        detail="The file must be a base64-encoded PDF or UTF-8 text.",
+    )
+
+
 def _sessions_unavailable_problem(error: SessionsUnavailableError) -> Problem:
     return _agent_session_problem(
         503,
@@ -637,6 +659,8 @@ AGENT_SESSION_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     MessageTooLargeError: _message_too_large_problem,
     ScreenshotTooLargeError: _screenshot_too_large_problem,
     InvalidScreenshotError: _invalid_screenshot_problem,
+    MessageFileTooLargeError: _message_file_too_large_problem,
+    InvalidMessageFileError: _invalid_message_file_problem,
     SessionsUnavailableError: _sessions_unavailable_problem,
     SessionsOffError: _sessions_off_problem,
     CloudUnavailableError: _cloud_unavailable_problem,
