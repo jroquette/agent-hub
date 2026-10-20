@@ -8,6 +8,7 @@ import pytest
 
 from agent_hub.cli.session_settings import (
     HubHooksError,
+    check_session_settings,
     hub_hooks_settings,
     session_settings_path,
     write_session_settings,
@@ -259,3 +260,37 @@ def test_tightens_folder_mode_when_settings_folder_is_loose(tmp_path: Path) -> N
     write_session_settings(hub, "medium")
 
     assert mode_of(folder) == 0o700
+
+
+def test_writes_nothing_when_settings_checked(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub_hooks(hub)
+
+    check_session_settings(hub, "medium")
+
+    assert not (hub / ".agent-runs").exists()
+
+
+def test_refuses_check_when_settings_folder_is_a_link(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub_hooks(hub)
+    (tmp_path / "elsewhere").mkdir()
+    (hub / ".agent-runs").mkdir()
+    (hub / ".agent-runs" / "session-settings").symlink_to(tmp_path / "elsewhere")
+
+    with pytest.raises(HubHooksError) as raised:
+        check_session_settings(hub, "medium")
+
+    assert str(raised.value).startswith(f"{PREFIX}cannot write ")
+    assert "session-settings is not a folder" in str(raised.value)
+
+
+def test_refuses_check_when_settings_name_is_a_folder(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub_hooks(hub)
+    (hub / ".agent-runs" / "session-settings" / "medium.json").mkdir(parents=True)
+
+    with pytest.raises(HubHooksError) as raised:
+        check_session_settings(hub, "medium")
+
+    assert str(raised.value).endswith("medium.json: not a regular file")

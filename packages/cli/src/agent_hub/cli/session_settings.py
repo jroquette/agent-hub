@@ -5,11 +5,13 @@ it sits in a folder a session can write), builds the file with core's ``hooks_se
 checks that each hook script it names is a regular file in the hub. ``write_session_settings``
 writes the result to ``session_settings_path``,
 ``<hub>/.agent-runs/session-settings/<effort>.json``: one path per hub and effort, so the dry
-run can name the path a live run writes. Every problem is a ``HubHooksError`` of one line
+run can name the path a live run writes; ``check_session_settings`` is the dry run's check,
+writing nothing. Every problem is a ``HubHooksError`` of one line
 naming the file.
 """
 
 import contextlib
+import errno
 import os
 import secrets
 from pathlib import Path
@@ -101,6 +103,31 @@ def _shown_script(script: str) -> str:
 def _shown_cut(text: str) -> str:
     cut = text[:_SHOWN_CHARS]
     return shown_path(cut if cut == text else f"{cut}...")
+
+
+def check_session_settings(hub: Path, effort: str) -> None:
+    """What ``write_session_settings`` would refuse, found with nothing written (the dry run).
+
+    Raises ``HubHooksError`` for what ``hub_hooks_settings`` refuses, and ``cannot write <path>:
+    <reason>`` when a folder on the way is a link or not a folder, the file's name is not a
+    regular file or a link, or the folder to create things in is not writable.
+    """
+    path = session_settings_path(hub, effort)
+    hub_hooks_settings(hub, effort)
+    shown = shown_path(str(path))
+    folder = hub
+    for part in SETTINGS_FOLDER:
+        child = folder / part
+        if not os.path.lexists(child):
+            break
+        if child.is_symlink() or not child.is_dir():
+            raise HubHooksError(f"cannot write {shown}: {shown_path(str(child))} is not a folder")
+        folder = child
+    else:
+        if os.path.lexists(path) and not (path.is_symlink() or path.is_file()):
+            raise HubHooksError(f"cannot write {shown}: not a regular file")
+    if not os.access(folder, os.W_OK | os.X_OK):
+        raise HubHooksError(f"cannot write {shown}: {os.strerror(errno.EACCES)}")
 
 
 def write_session_settings(hub: Path, effort: str) -> Path:

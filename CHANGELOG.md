@@ -23,6 +23,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The guard decides a long quote- or dot-dense Bash command (`echo 'a'a'a…`) in time linear in its length (AGH-302):
   before, its secret-file rule took quadratic time, so a command near or over the blocked-words 1 MiB cap ran past
   the 10 s hook timeout and Claude Code went on with no verdict (no "too large" ask).
+- `hub run`'s implementing session and every workflow agent node whose `cwd` is a repo now run under the hub's hooks
+  (guard, SessionStart brief, Stop gate, post-edit, event sensor), through a hooks-only `--settings` file,
+  `<hub>/.agent-runs/session-settings/<effort>.json`, rebuilt from the hub's `.claude/settings.json` before each
+  session (AGH-278). A hub whose `.claude/settings.json` or one of its hook scripts is missing is refused: `hub run`
+  exits 1 before reading the issue, dry or live, and such a workflow node fails with kind `config`. The Stop gate now
+  runs the repo's `check_fast` inside the session (at most 3 blocks), and a guard `ask` is refused there.
 - While blocked words, or a problem with the blocked-word list, are in effect, the guard asks on a tool call whose
   hook input it cannot read (not a JSON object, or nested too deep for the parser) instead of letting it through
   unchecked (AGH-293).

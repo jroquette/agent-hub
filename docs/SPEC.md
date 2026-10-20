@@ -136,7 +136,9 @@ the issue once and refuses it, dry or live and with `--from verify` too, when it
 input brief (`Problem`, `Why`, `Why now`, `Outcome`, `Invariants`, `Acceptance criteria`, as Markdown headings,
 [ADR 0026](adr/0026-input-brief-contract.md)): exit 1 with one line naming the missing sections, nothing created, and
 a live run's `failed` record at stage `PICKED`; otherwise (dry run by default: it prints every command and tracker
-write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
+write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt)
+under the hub's hooks (a hooks-only `--settings` file built from the hub's `.claude/settings.json`; when that file or
+a hook script it names is missing or unusable, the run exits 1 before the issue is read, dry or live, AGH-278), its own gate, the push and
 `gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
 `tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. A live
 run is the `issue-to-pr` workflow run through the engine ([ADR 0032](adr/0032-workflow-engine.md), AGH-224): the hub's
@@ -363,8 +365,7 @@ boundary: the boundary is which credentials the agent's machine holds. The guard
 Edit, Write, MultiEdit, NotebookEdit and WebFetch. Accepted limits: false positives; MCP tools, WebSearch and subagent
 (Task) prompts are not checked; nor are files a program opens without the command naming them (`python sync.py`
 reading `config/app.json`, `find … -exec cat`), tool output, obfuscation past the three views, Grep's search regex and
-edit contents; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen; `hub run`'s implement
-sessions run without the hub's hooks (AGH-278).
+edit contents; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen.
 
 ### Scenarios and actions (AGH-350)
 
