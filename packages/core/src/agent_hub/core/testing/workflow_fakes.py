@@ -17,6 +17,8 @@ from agent_hub.core.workflows.failures import NodeFailedError, RetryRecord
 from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import (
+    ContextCapture,
+    ExpectPoll,
     GateRequest,
     NodeCall,
     NodeReply,
@@ -122,6 +124,20 @@ class ListRecorder:
     def end_of(self, node: str) -> StepEnd:
         """The last end recorded for ``node``."""
         return [end for end in self.ends if end.node == node][-1]
+
+
+@dataclass
+class ListTrace:
+    """Keeps a run's polls and captures, in order."""
+
+    polls: list[ExpectPoll] = field(default_factory=list)
+    captures: list[ContextCapture] = field(default_factory=list)
+
+    def expect_polled(self, poll: ExpectPoll) -> None:
+        self.polls.append(poll)
+
+    def context_captured(self, capture: ContextCapture) -> None:
+        self.captures.append(capture)
 
 
 @dataclass

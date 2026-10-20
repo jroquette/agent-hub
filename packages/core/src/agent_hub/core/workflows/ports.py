@@ -170,6 +170,40 @@ class GateRequest:
     due: datetime | None = None
 
 
+@dataclass(frozen=True)
+class ExpectPoll:
+    """One poll of an ``expect`` node's attempt (from 1) and whether ``until_when`` held.
+
+    ``output`` belongs to the run's record only, never to events (ADR 0019).
+    """
+
+    node: str
+    attempt: int
+    poll: int
+    held: bool
+    at: datetime
+    output: JsonValue = None
+
+
+@dataclass(frozen=True)
+class ContextCapture:
+    """A ``capture:`` value set by a node's attempt; ``value`` stays in the run's record."""
+
+    node: str
+    attempt: int
+    name: str
+    at: datetime
+    value: JsonValue = None
+
+
+class RunTrace(Protocol):
+    """Receives a scenario run's polls and captures (``expect.poll``, ``context.capture``)."""
+
+    def expect_polled(self, poll: ExpectPoll) -> None: ...
+
+    def context_captured(self, capture: ContextCapture) -> None: ...
+
+
 class RunRecorder(Protocol):
     """Receives a run's steps, retries, gates and end, in order (events, the run's record)."""
 
