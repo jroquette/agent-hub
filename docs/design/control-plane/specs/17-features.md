@@ -311,6 +311,27 @@ otherwise, this list wins. Each item is an acceptance criterion.
   checkout's branch), when it is labelled or listed by issue, then it is attributed to the issue its first prompt
   names; a prompt issue of another team, or none, leaves the branch's issue.
 
+## Departures (AGH-326, ticket steps on the Tickets tab)
+
+Each ticket has its own seven steps, Context, Preflight, Implement, Review, Eval, PR and Merged (records:
+[feature-records.md](../../feature-records.md) "Ticket flow"; route: [API.md](../../../API.md) "Feature tickets",
+`flow`). Where AGH-136, AGH-268 or AGH-376 above say otherwise, this list wins.
+
+- **AC-1.11 Two views.** The Tickets tab shows one list in one of two views, toggled by a segmented control "Flow ·
+  Table" (named "Show the tickets as") and kept in `?tickets=` (`table`; Flow, the default, is omitted), the URL
+  replaced so the history keeps no toggle. This replaces AC-268.2's flow stacked above the table. Start appears once
+  per view: on the card in Flow, in the Readiness column in Table.
+- **AC-1.11 Step bars.** Each card (below its title) and each row (a Stage column after Title) shows the ticket's
+  `StepBar` (shared, `components/StepBar.tsx`): one segment per ticket step in its state, labelled with the current
+  step and its position, "Review · 4/7" (the Features list's format, AC-1.12; "Merged" alone once it is the current
+  step), and every step's state and meta in its tooltip and accessible name ("Ticket steps: Review. Context: not
+  recorded; …"). An epic has no steps: its row shows "—", and its card stays as AC-268.8 says.
+- **AC-1.11 Groups.** The flow's columns read "Group 1", "Group 2"… ("after group 1"); "Held back" and "Done" are
+  unchanged.
+- **Card title.** In Flow, each card holds its ticket's anchor (`#ticket-<ref>`), so a blocker named on a card leads
+  to that card; the title is plain text (the table row it linked to is in the other view). The card's readiness line
+  stays its one signal line (AC-376.6, AC-381.4).
+
 ## Screen 1: Features list
 
 **Route:** `/features` · **Answers:** "Which features are moving through the golden path, and how close is each to done?"
