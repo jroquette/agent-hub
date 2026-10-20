@@ -14,8 +14,10 @@ from pydantic import JsonValue
 
 from agent_hub.core.workflows.document import Loc
 from agent_hub.core.workflows.nodes import (
+    ActionNode,
     AgentNode,
     ApprovalNode,
+    ExpectNode,
     FromBinding,
     HaltNode,
     LoopGroupNode,
@@ -99,16 +101,35 @@ def map_node(node: Node, rewrite: Rewrite) -> Node:
         update |= _agent_update(node, rewrite)
     elif isinstance(node, ShellNode | ScriptNode):
         update |= _command_update(node, rewrite)
-    elif isinstance(node, ApprovalNode):
-        update["message"] = rewrite.text(("message",), node.message)
-    elif isinstance(node, HaltNode):
-        update["reason"] = rewrite.text(("reason",), node.reason)
-    elif isinstance(node, WaitNode):
-        texts = {"until": node.until, "attention": node.attention}
-        update |= {key: rewrite.text((key,), text) for key, text in texts.items() if text}
+    elif isinstance(node, ApprovalNode | HaltNode | WaitNode):
+        update |= _gate_update(node, rewrite)
     elif isinstance(node, LoopGroupNode):
         update |= _group_update(node, rewrite)
+    elif isinstance(node, ActionNode | ExpectNode):
+        update |= _action_update(node, rewrite)
     return node.model_copy(update=update)
+
+
+def _gate_update(node: ApprovalNode | HaltNode | WaitNode, rewrite: Rewrite) -> dict[str, object]:
+    """An approval's message, a halt's reason, a wait's ``until`` or ``attention``."""
+    if isinstance(node, ApprovalNode):
+        return {"message": rewrite.text(("message",), node.message)}
+    if isinstance(node, HaltNode):
+        return {"reason": rewrite.text(("reason",), node.reason)}
+    texts = {"until": node.until, "attention": node.attention}
+    return {key: rewrite.text((key,), text) for key, text in texts.items() if text}
+
+
+def _action_update(node: ActionNode | ExpectNode, rewrite: Rewrite) -> dict[str, object]:
+    """An action call's ``with`` values, ``capture`` refs and an expect's ``until_when``."""
+    texts = {
+        name: _json_texts(("with", name), value, rewrite) for name, value in node.with_.items()
+    }
+    captures = {name: rewrite.text(("capture", name), ref) for name, ref in node.capture.items()}
+    update: dict[str, object] = {"with_": read_only(texts), "capture": read_only(captures)}
+    if isinstance(node, ExpectNode):
+        update["until_when"] = rewrite.text(("until_when",), node.until_when)
+    return update
 
 
 def _group_update(node: LoopGroupNode, rewrite: Rewrite) -> dict[str, object]:
