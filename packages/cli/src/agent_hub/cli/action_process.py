@@ -80,13 +80,13 @@ def run_action(
         result = _spawn(call, "run", env=env, timeout=seconds, credentials=injected)
     except NodeFailedError as error:
         raise NodeFailedError(error.kind, redacted(str(error), injected)) from None
-    stdout = result.stdout
-    for secret, name in _by_length(injected):
-        stdout = stdout.replace(
-            secret.encode(errors="surrogatepass"), f"<credential {name}>".encode()
-        )
-    value = _one_value(stdout)
-    JsonSchemaOutputs().check(document.output_format, value)
+    # Parsed first, then every string (keys too) redacted: a value the script wrote JSON
+    # escaped (a quote, a backslash, a non-ASCII letter) is plain text only once parsed.
+    value = redacted_value(_one_value(result.stdout), injected)
+    try:
+        JsonSchemaOutputs().check(document.output_format, value)
+    except NodeFailedError as error:
+        raise NodeFailedError(error.kind, redacted(str(error), injected)) from None
     return value
 
 
@@ -113,6 +113,25 @@ def redacted(text: str, credentials: Mapping[str, str]) -> str:
     for value, name in _by_length(credentials):
         text = text.replace(value, f"<credential {name}>")
     return text
+
+
+def redacted_value(value: JsonValue, credentials: Mapping[str, str]) -> JsonValue:
+    """``value`` with every string redacted, object keys included; a number or boolean whose
+    JSON text holds a value becomes the redacted text."""
+    if isinstance(value, str):
+        return redacted(value, credentials)
+    if isinstance(value, dict):
+        return {
+            redacted(key, credentials): redacted_value(item, credentials)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redacted_value(item, credentials) for item in value]
+    if value is None:
+        return value
+    text = json.dumps(value)
+    hidden = redacted(text, credentials)
+    return value if hidden == text else hidden
 
 
 def _by_length(credentials: Mapping[str, str]) -> list[tuple[str, str]]:

@@ -191,3 +191,43 @@ def test_injects_credentials_only_into_action_when_credential_injection_runs(
     assert SECRET not in result.output
     assert stored_anywhere(SECRET, hub / ".agent-runs", tmp_path / "events.db") == []
     assert (tmp_path / "events.db").exists()
+
+
+QUOTED_SECRET = "x-" + 'sec"r' + "\\" + "ét-y"
+QUOTED_ACTION = """\
+version: 1
+name: show-quoted
+description: Print the quoted value JSON escaped
+effect: read
+runtime: sh
+script: scripts/show-quoted.sh
+output_format: {type: object}
+"""
+
+
+def test_hides_escaped_credential_when_credential_injection_output_parsed(
+    tmp_path: Path, credentials_env: dict[str, str]
+) -> None:
+    hub = an_action_hub(tmp_path)
+    env_file = hub.parent / ENV_FILE
+    escaped = QUOTED_SECRET.replace("\\", "\\\\").replace('"', '\\"')
+    env_file.write_text(env_file.read_text() + f'DEMO_QUOTED="{escaped}"\n')
+    printed = json.dumps({"seen": QUOTED_SECRET})
+    pack = hub / "actions" / "ops"
+    (pack / "show-quoted.yaml").write_text(QUOTED_ACTION)
+    (pack / "scripts" / "show-quoted.sh").write_text(f"cat > /dev/null\nprintf '%s' '{printed}'\n")
+    git = shutil.which("git")
+    assert git is not None
+    identity = ("-c", "user.name=Demo Dev", "-c", "user.email=dev@example.com")
+    for args in (("add", "-A"), ("commit", "-q", "-m", "quoted")):
+        command = [git, *identity, *args]
+        subprocess.run(command, cwd=hub, check=True, capture_output=True)  # noqa: S603 - absolute git, fixed arguments
+
+    result = run_hub(
+        hub, "action", "run", "ops/show-quoted", "--env", "staging", env=credentials_env
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"seen": "<credential DEMO_QUOTED>"}
+    assert QUOTED_SECRET not in result.output
+    assert stored_anywhere(QUOTED_SECRET, hub / ".agent-runs", tmp_path / "events.db") == []
