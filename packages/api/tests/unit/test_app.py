@@ -39,6 +39,7 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/agent-sessions/{agent_session_id}/settings"): {"mode": "plan"},
     # Bodiless agent-session writes still send JSON (the access rules want it).
     ("post", "/api/v1/agent-sessions/{agent_session_id}/interrupt"): {},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/tasks/{task_id}/stop"): {},
     ("post", "/api/v1/agent-sessions/{agent_session_id}/close"): {},
     # The run commands are strict writes: JSON even when bodiless.
     ("post", "/api/v1/workflow-runs"): {"project": "demo", "workflow": "fix"},

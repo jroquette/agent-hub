@@ -110,9 +110,12 @@ AGENT_SESSION_SPEC_PATHS = {
     ("get", "/api/v1/agent-sessions/{agent_session_id}"),
     ("delete", "/api/v1/agent-sessions/{agent_session_id}"),
     ("get", "/api/v1/agent-sessions/{agent_session_id}/events"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}/repo-changes"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}/repo-changes/commit"),
     ("get", "/api/v1/agent-sessions/{agent_session_id}/stream"),
     ("post", "/api/v1/agent-sessions/{agent_session_id}/messages"),
     ("post", "/api/v1/agent-sessions/{agent_session_id}/interrupt"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/tasks/{task_id}/stop"),
     ("post", "/api/v1/agent-sessions/{agent_session_id}/permissions/{request_id}"),
     ("post", "/api/v1/agent-sessions/{agent_session_id}/settings"),
     ("post", "/api/v1/agent-sessions/{agent_session_id}/close"),
@@ -120,8 +123,9 @@ AGENT_SESSION_SPEC_PATHS = {
 
 
 def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings) -> None:
-    # AC-165.48: today's paths plus exactly the 17 agent-session pairs.
-    assert len(AGENT_SESSION_SPEC_PATHS) == 17
+    # AC-165.48: today's paths plus exactly the agent-session pairs
+    # (17, then the task stop and the two repo-changes reads).
+    assert len(AGENT_SESSION_SPEC_PATHS) == 20
     assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
     assert SERVED_PATHS == (
         P2_PATHS

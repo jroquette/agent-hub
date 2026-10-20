@@ -21,7 +21,7 @@ input, same output, whatever the order of the input.
 """
 
 import re
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 from urllib.parse import urlsplit
@@ -101,6 +101,7 @@ def ticket_board(
     *,
     linear: Sequence[str] = (),
     approved: Collection[str] = (),
+    pull_requests: Mapping[str, str] | None = None,
 ) -> TicketBoard:
     """The rows and planning of a feature's tickets.
 
@@ -109,7 +110,8 @@ def ticket_board(
     it (withdrawn ones left out). ``snapshot`` is Linear's read of the ids, None when Linear was
     not read. ``approved`` names the tickets (key or id, any case) with an approved review
     record; a row is reviewed when Linear has it ``completed`` or it is approved, unknown
-    (None) without a snapshot and a record.
+    (None) without a snapshot and a record. ``pull_requests`` maps a ticket (key or id, upper
+    case) to its pull request URL.
     """
     warnings: list[str] = []
     summaries = {} if snapshot is None else {item.id: item for item in snapshot.summaries}
@@ -164,6 +166,7 @@ def ticket_board(
             waiting_on=waiting_on[node.ref],
             reviewed=_reviewed(node, approved_names, read=snapshot is not None),
             children=children.get(node.ref, ()),
+            pr_url=_pull_request(node, pull_requests or {}),
         )
         for node in nodes
     )
@@ -471,6 +474,14 @@ def _reviewed(node: _Node, approved: set[str], *, read: bool) -> bool | None:
     return False if read else None
 
 
+def _pull_request(node: _Node, pull_requests: Mapping[str, str]) -> str | None:
+    """The PR of the ticket's id, else of its plan key."""
+    for name in (node.id, node.key):
+        if name is not None and name.upper() in pull_requests:
+            return pull_requests[name.upper()]
+    return None
+
+
 def _text(text: str | None, limit: int) -> str | None:
     return None if text is None else clip(redact_text(text), limit)
 
@@ -491,6 +502,7 @@ def _row(
     waiting_on: tuple[str, ...],
     reviewed: bool | None,
     children: tuple[str, ...],
+    pr_url: str | None = None,
 ) -> TicketRow:
     summary = node.summary
     planned = node.planned
@@ -518,6 +530,7 @@ def _row(
         reviewed=reviewed,
         parent=node.parent,
         children=children,
+        pr_url=pr_url,
     )
 
 

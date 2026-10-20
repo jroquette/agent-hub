@@ -1,6 +1,13 @@
 /* Sessions as an inbox (v2 design): what each row says, in plain words, one fact per row. */
-import { sessionIdentity, TOOL_ICON, type IconName, type Status } from "../../components";
+import {
+  sessionIdentity,
+  TOOL_ICON,
+  type IconName,
+  type Status,
+  type TicketLookup,
+} from "../../components";
 import { fmtDuration } from "../../lib/format";
+import { isReviewable } from "../agent-session/fileKind";
 import { modeLabel, resumable } from "../agent-session/model";
 import type { AgentSession, Session } from "./queries";
 import { isDriven, type SectionId, type SectionRow } from "./sections";
@@ -359,8 +366,12 @@ export function filesToReview(
   reviewed: Record<string, string>,
 ): { total: number; toReview: number } {
   return {
-    total: files.length,
-    toReview: files.filter((file) => reviewed[file.path] !== file.last_change_id).length,
+    // The code only: Claude's plans, feature records, brain notes and scratch are not the change.
+    total: files.filter((file) => isReviewable(file.path)).length,
+    // Only the code waits for review: Claude's plans, learnings and scratch never do.
+    toReview: files.filter(
+      (file) => isReviewable(file.path) && reviewed[file.path] !== file.last_change_id,
+    ).length,
   };
 }
 
@@ -397,6 +408,6 @@ export function commonRepoOf(rows: readonly SectionRow[]): string | null {
 }
 
 /** The searchable title of a row (for aria names). */
-export function rowTitle(row: SectionRow): string {
-  return isDriven(row) ? (row.title ?? "Untitled session") : sessionIdentity(row).title;
+export function rowTitle(row: SectionRow, tickets?: TicketLookup): string {
+  return isDriven(row) ? (row.title ?? "Untitled session") : sessionIdentity(row, tickets).title;
 }

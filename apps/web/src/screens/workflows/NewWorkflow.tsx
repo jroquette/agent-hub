@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { useParams } from "react-router";
 
 import { AppLink, Button, Icon } from "../../components";
 import { writeStored } from "../../lib/storage";
@@ -6,6 +7,8 @@ import { useScope } from "../../lib/scope";
 import { useApi } from "../../lib/api";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { useDiscuss, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
+import { SKILLS_PICKER, skillsHome } from "../skills/routes";
+import { workflowHref, workflowsTab } from "./index";
 import { STEP_KINDS, type StepKind } from "./steps";
 
 /* New workflow: a guided form that writes the request, and Claude (the Discuss panel, in the
@@ -84,10 +87,11 @@ function composeMessage(fields: {
 /** `/workflows/new`: describe the workflow, then Claude writes it into the hub. */
 export function NewWorkflowScreen() {
   const [scope] = useScope();
+  const routeProject = useParams().project ?? null;
   const catalog = useApi("/api/v1/workflows", { query: { project: null } });
   const items = catalog.data?.items ?? [];
   const projects = [...new Set(items.map((item) => item.project))];
-  const [project, setProject] = useState<string>(scope ?? "");
+  const [project, setProject] = useState<string>(routeProject ?? scope ?? "");
   const chosenProject = project || (projects[0] ?? "");
   const [name, setName] = useState("");
   const [what, setWhat] = useState("");
@@ -131,7 +135,19 @@ export function NewWorkflowScreen() {
 
   return (
     <div style={{ padding: "16px 32px 40px", minHeight: "100%" }} className="ah-stack">
-      <Breadcrumbs items={[{ label: "Workflows", href: "/workflows" }, { label: "New" }]} />
+      <Breadcrumbs
+        items={
+          chosenProject
+            ? [
+                { label: "Portfolio", href: "/" },
+                { label: chosenProject, href: `/projects/${encodeURIComponent(chosenProject)}` },
+                { label: "Toolkit", href: skillsHome(chosenProject) },
+                { label: "Workflows", href: workflowsTab(chosenProject) },
+                { label: "New" },
+              ]
+            : [{ label: "Toolkit", href: SKILLS_PICKER }, { label: "New workflow" }]
+        }
+      />
       <h1 className="ah-h1">New workflow</h1>
       <p className="ah-muted" style={{ margin: 0, maxWidth: 760 }}>
         Say what the workflow should do in your own words. Claude turns it into steps (AI agents,
@@ -287,11 +303,7 @@ export function NewWorkflowScreen() {
               <span>
                 <span className="ah-mono">{created.name}</span> loads.
               </span>
-              <AppLink
-                href={`/workflows/${encodeURIComponent(created.project)}/${encodeURIComponent(created.name)}`}
-              >
-                See its steps
-              </AppLink>
+              <AppLink href={workflowHref(created)}>See its steps</AppLink>
             </div>
           )}
         </form>

@@ -8,6 +8,8 @@ import {
   aCapabilities,
   aWorkdir,
   anAgentSession,
+  anAcRow,
+  aTicketRow,
   anEvalRecord,
   anId,
   renderWithApi,
@@ -20,6 +22,7 @@ import {
   evalPrompt,
   pickEval,
   ranBy,
+  settledOwnerSteps,
   type EvalTabProps,
 } from "./EvalTab";
 
@@ -85,6 +88,14 @@ function rowOf(delivery: string): HTMLElement {
   return row;
 }
 
+/** Opens every folded group of the evals table. */
+async function openGroups() {
+  const table = screen.getByRole("table", { name: "Evals" });
+  for (const toggle of within(table).queryAllByRole("button", { expanded: false })) {
+    await userEvent.click(toggle);
+  }
+}
+
 beforeEach(() => {
   window.localStorage.clear();
 });
@@ -135,6 +146,213 @@ describe("evalHistory", () => {
   });
 });
 
+describe("settledOwnerSteps", () => {
+  const waiting = (delivery: string, evaluated_at: string | null) =>
+    anEvalRecord({
+      delivery,
+      path: `${delivery}.md`,
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      evaluated_at,
+    });
+  const signoff = anEvalRecord({
+    delivery: "owner-signoff",
+    path: "owner-signoff.md",
+    verdict: "SHIP",
+    provenance: "owner",
+    evaluated_at: "2026-10-19T11:57:18+02:00",
+  });
+
+  it("settles the owner-steps evals before the owner's sign-off, not the ones after", () => {
+    const before = waiting("dem-1", "2026-10-14T16:35:32+02:00");
+    const undated = waiting("dem-2", null);
+    const after = waiting("feature-r2", "2026-10-20T09:00:00+02:00");
+
+    const settled = settledOwnerSteps([before, undated, after, signoff]);
+
+    expect([...settled.keys()]).toEqual(["dem-1.md", "dem-2.md"]);
+    expect(settled.get("dem-1.md")).toBe(signoff);
+  });
+
+  it("settles nothing without an owner sign-off", () => {
+    expect(settledOwnerSteps([waiting("dem-1", "2026-10-14")]).size).toBe(0);
+  });
+
+  it("reads a signed-off eval as SHIP in the table", () => {
+    renderWithApi(tab({ evals: [waiting("dem-1", "2026-10-14T16:35:32+02:00"), signoff] }), {});
+
+    expect(within(rowOf("dem-1")).getByText("SHIP")).toBeInTheDocument();
+    expect(within(rowOf("dem-1")).getByText("owner steps signed off")).toBeInTheDocument();
+    expect(within(rowOf("dem-1")).queryByText("SHIP-WITH-OWNER-STEPS")).toBeNull();
+  });
+});
+
+describe("EvalTab rows", () => {
+  const SIGNOFF = "/api/v1/features/agent-hub/control-plane/owner-signoff";
+  const runs = [
+    anEvalRecord({
+      delivery: "agh-201",
+      path: "agh-201.md",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      evaluated_at: "2026-10-12T10:00:00Z",
+    }),
+    anEvalRecord({
+      delivery: "agh-201-r2",
+      path: "agh-201-r2.md",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      evaluated_at: "2026-10-13T10:00:00Z",
+    }),
+  ];
+
+  it("names runs by number, the group by its ticket's title, the newest as latest", () => {
+    renderWithApi(
+      tab({ evals: runs, ticketRows: [aTicketRow({ id: "AGH-201", title: "Claim lifecycle" })] }),
+    );
+
+    expect(screen.getByRole("button", { name: /^AGH-201\b.*evals/ })).toHaveTextContent(
+      "Claim lifecycle",
+    );
+    expect(rowOf("agh-201-r2")).toHaveTextContent(/Eval 2\s*latest/);
+    expect(within(rowOf("agh-201")).getByText("replaced by Eval 2")).toBeInTheDocument();
+  });
+
+  it("shows an eval's ACs as the Tickets tab does, with how many pass", () => {
+    renderWithApi(
+      tab({
+        evals: [anEvalRecord()],
+        acRows: [
+          anAcRow({ id: "AC-200.1", passes: true }),
+          anAcRow({ id: "AC-200.2", passes: false }),
+          anAcRow({ id: "AC-200.3", passes: true }),
+        ],
+      }),
+    );
+
+    expect(within(rowOf("agh-201")).getByText("2/3 ACs passing")).toBeInTheDocument();
+  });
+
+  it("lines a folded ticket's latest eval up under the table's columns", async () => {
+    renderWithApi(tab({ evals: runs }));
+
+    await userEvent.click(screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ }));
+    const summary = screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ }).closest("tr");
+    if (!summary) throw new Error("no summary row");
+    // One cell per column: the ticket, then the latest eval's verdict, ACs, author and date.
+    expect(summary.children).toHaveLength(5);
+    expect(within(summary).getByText("SHIP-WITH-OWNER-STEPS")).toBeInTheDocument();
+    expect(within(summary).getByText("3 ACs")).toBeInTheDocument();
+  });
+
+  it("keeps the owner's callout in view when its group is folded", async () => {
+    renderWithApi(tab({ evals: runs }));
+
+    await userEvent.click(screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ }));
+    expect(screen.queryByRole("button", { name: /^agh-201-r2,/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Mark owner steps done" })).toBeInTheDocument();
+  });
+
+  it("folds the whole list and remembers it", async () => {
+    const view = renderWithApi(tab({ evals: runs }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Hide list" }));
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+    view.unmount();
+    renderWithApi(tab({ evals: runs }));
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Show list" })).toBeInTheDocument();
+  });
+
+  it("records that the owner found more work on the latest run, with a note", async () => {
+    const onSelect = vi.fn();
+    const written = anEvalRecord({ delivery: "owner-signoff", verdict: "NO-SHIP" });
+    const view = renderWithApi(tab({ evals: runs, onSelect }), {
+      routes: { [`POST ${SIGNOFF}`]: written },
+    });
+
+    // One callout, for the newest eval only, says it waits on the owner.
+    expect(screen.getAllByRole("button", { name: "Needs more work" })).toHaveLength(1);
+    expect(screen.getByText(/AGH-201 Eval 2 passed with owner steps/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Needs more work" }));
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Note (optional)" }),
+      "Run the migration",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Needs more work" }));
+
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith("owner-signoff");
+    });
+    const post = view.requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({
+      delivery: "agh-201-r2",
+      decision: "more_work",
+      note: "Run the migration",
+    });
+  });
+
+  it("marks the latest run's owner steps done with a note, after a cancel that sends nothing", async () => {
+    const onSelect = vi.fn();
+    const written = anEvalRecord({ delivery: "owner-signoff", verdict: "SHIP" });
+    const view = renderWithApi(tab({ evals: runs, onSelect }), {
+      routes: { [`POST ${SIGNOFF}`]: written },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Mark owner steps done" }));
+    expect(
+      screen.getByRole("form", { name: "Mark the owner steps done: AGH-201 · Eval 2" }),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("textbox", { name: "Note (optional)" })).toBeNull();
+    expect(view.requests.some((r) => r.method === "POST")).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: "Mark owner steps done" }));
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Note (optional)" }),
+      "Deployed the config by hand",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Mark owner steps done" }));
+
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith("owner-signoff");
+    });
+    const post = view.requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({
+      delivery: "agh-201-r2",
+      decision: "done",
+      note: "Deployed the config by hand",
+    });
+  });
+
+  it("asks nothing more once an owner sign-off settles the latest run", () => {
+    const signoff = anEvalRecord({
+      delivery: "owner-signoff",
+      path: "owner-signoff.md",
+      verdict: "SHIP",
+      provenance: "owner",
+      evaluated_at: "2026-10-14T10:00:00Z",
+    });
+    renderWithApi(tab({ evals: [...runs, signoff] }));
+
+    expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
+    expect(screen.queryByText(/passed with owner steps/)).toBeNull();
+    expect(rowOf("owner-signoff")).toHaveTextContent("Owner sign-off");
+  });
+
+  it("reads a run the owner found more work on as handled, not as waiting", () => {
+    const review = anEvalRecord({
+      delivery: "owner-signoff",
+      path: "owner-signoff.md",
+      verdict: "NO-SHIP",
+      provenance: "owner",
+      evaluated_at: "2026-10-14T10:00:00Z",
+    });
+    renderWithApi(tab({ evals: [...runs, review] }));
+
+    expect(within(rowOf("agh-201-r2")).getByText("you found more work")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
+    expect(rowOf("owner-signoff")).toHaveTextContent("Owner: more work");
+  });
+});
+
 describe("evalPrompt", () => {
   it("asks the evaluator for one scope and never to touch an existing eval (AC-269.1)", () => {
     expect(evalPrompt("agent-hub", "control-plane", "feature")).toContain(
@@ -155,6 +373,9 @@ describe("EvalTab", () => {
 
     expect(rowOf("agh-202")).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("article", { name: "Eval agh-202" })).toBeInTheDocument();
+    // Only the selected eval's group opens; the others fold to their header.
+    expect(screen.queryByRole("button", { name: /^agh-201,/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^AGH-201\b.*1 eval/ }));
     await userEvent.click(screen.getByRole("button", { name: /^agh-201,/ }));
     expect(onSelect).toHaveBeenCalledWith("agh-201");
   });
@@ -226,10 +447,13 @@ describe("EvalTab", () => {
     expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
   });
 
-  it("lists every delivery's eval with its verdict, scope and date (golden)", () => {
+  it("lists every delivery's eval with its verdict, scope and date (golden)", async () => {
     renderWithApi(tab({ evals }));
 
     const table = screen.getByRole("table", { name: "Evals" });
+    // Folded: the header and a row per scope.
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    await openGroups();
     // The header, a row per scope (whole feature, AGH-201, AGH-202) and the four evals.
     expect(within(table).getAllByRole("row")).toHaveLength(8);
 
@@ -279,8 +503,10 @@ describe("EvalTab", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "AGH-200" })).toBeNull();
     expect(screen.getByRole("button", { name: "AGH-201" })).toBeInTheDocument();
-    // One scope only: no group header, the table reads as the feature's evals.
-    expect(screen.queryByRole("columnheader", { name: /Whole feature/ })).toBeNull();
+    // One scope only: its group starts open.
+    expect(
+      screen.getByRole("button", { name: /^Whole feature · AGH-200 epic\b.*1 eval/ }),
+    ).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("1 eval · newest first")).toBeInTheDocument();
   });
 

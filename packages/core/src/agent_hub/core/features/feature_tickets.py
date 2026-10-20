@@ -9,6 +9,7 @@ failure's detail is redacted (r1) and clipped: the key never shows. The MCP tran
 connected for hub web, whatever the read says.
 """
 
+from collections.abc import Mapping
 from typing import Final
 
 from agent_hub.core.errors import TrackerFailure
@@ -55,12 +56,18 @@ _ERROR_STATUSES: Final = range(400, 600)
 
 
 def feature_tickets(
-    folder: FeatureFolder, read: SnapshotRead, *, project: str, tracker: Tracker
+    folder: FeatureFolder,
+    read: SnapshotRead,
+    *,
+    project: str,
+    tracker: Tracker,
+    repos: Mapping[str, str] | None = None,
 ) -> FeatureTickets:
-    """The feature's tickets as ``read`` serves them, for the hub whose tracker is ``tracker``."""
+    """The feature's tickets as ``read`` serves them, for the hub whose tracker is ``tracker``;
+    ``repos`` maps each hub repo's ``dir`` to its GitHub ``owner/name`` (pull request links)."""
     if tracker.transport == "mcp":
         read = NOT_CONNECTED_READ
-    parts = feature_parts(folder, read)
+    parts = feature_parts(folder, read, repos=repos)
     return FeatureTickets(
         project=project,
         slug=folder.slug,

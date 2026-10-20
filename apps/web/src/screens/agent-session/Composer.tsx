@@ -5,7 +5,7 @@ import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import { imageFiles, imageToPng, MAX_MESSAGE_IMAGES } from "../../lib/pastedImage";
 import { servedCheckout } from "../../lib/devCheckout";
-import { useSlashMenu } from "./SlashMenu";
+import { useSlashMenu, type SlashOption } from "./SlashMenu";
 import { useDraft } from "./useDraft";
 import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./model";
 
@@ -45,8 +45,8 @@ export interface ComposerProps {
   /** Called as a message goes out: the chat pins the transcript to its bottom (AC-234.18). */
   onSending?: (() => void) | undefined;
   maxBytes?: number | undefined;
-  /** What the `/` menu lists: the session's slash commands and skills (AC-234.28). */
-  commands?: readonly string[] | undefined;
+  /** What the `/` menu lists: the hub's skills and agents, then the session's own (AC-234.28). */
+  commands?: readonly SlashOption[] | undefined;
   /** What ArrowUp in the empty box recalls: the last prompt sent (AC-234.29). */
   lastPrompt?: string | null | undefined;
   /** Receives the message box, so the chat can focus it (Shift+Esc). */
@@ -145,7 +145,25 @@ export function Composer({
     [inputRef],
   );
   const focusBox = () => box.current?.focus({ preventScroll: true });
-  const slash = useSlashMenu(reason === null ? text : "", commands, setText);
+  // Where the caret is, so a `/word` anywhere in the text opens the menu; null reads as the end.
+  const [caret, setCaret] = useState<number | null>(null);
+  const placeCaret = useRef<number | null>(null);
+  const slash = useSlashMenu(
+    reason === null ? text : "",
+    Math.min(caret ?? text.length, text.length),
+    commands,
+    (next, at) => {
+      placeCaret.current = at;
+      setCaret(at);
+      setText(next);
+    },
+  );
+  useLayoutEffect(() => {
+    const at = placeCaret.current;
+    if (at === null || !box.current) return;
+    placeCaret.current = null;
+    box.current.setSelectionRange(at, at);
+  }, [text]);
   // On open only: a permission that arrives later never takes focus away from here.
   const focusOnMount = useRef(focusOnOpen);
   useEffect(() => {
@@ -341,6 +359,10 @@ export function Composer({
         {...slash.inputProps}
         onChange={(event) => {
           setText(event.target.value);
+          setCaret(event.target.selectionStart);
+        }}
+        onSelect={(event) => {
+          setCaret(event.currentTarget.selectionStart);
         }}
         onPaste={(event) => {
           const files = acceptsImages ? imageFiles(event.clipboardData) : [];

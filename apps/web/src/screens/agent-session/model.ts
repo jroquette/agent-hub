@@ -10,6 +10,7 @@
  */
 import type { components } from "../../api/schema";
 import { netDiff, type NetDiff } from "./netDiff";
+import type { RepoFileInfo } from "./repoChanges";
 
 type Schemas = components["schemas"];
 export type LogRecord = Schemas["LogRecord"];
@@ -170,6 +171,21 @@ export type TranscriptEntry =
   | { kind: "permission"; key: string; requestId: string }
   | { kind: "notice"; key: string; seq: number; tone: NoticeTone; text: string };
 
+/** A task Claude started (a subagent, often in the background), from its `task` records. */
+export interface TaskView {
+  id: string;
+  /** What it does, as Claude described it when it started. */
+  description: string | null;
+  /** The call that started it, when known. */
+  toolUseId: string | null;
+  startedAt: string;
+  /** When it ended; null while it runs. */
+  endedAt: string | null;
+  status: "running" | "completed" | "failed" | "stopped";
+  /** What runs it, as the CLI names it: `local_bash`, `local_agent`, `remote_agent`... */
+  type: string | null;
+}
+
 export interface TranscriptState {
   entries: TranscriptEntry[];
   tools: Record<string, ToolView>;
@@ -197,6 +213,10 @@ export interface TranscriptState {
   sending: SendingView[];
   /** A user message started a turn whose result has not arrived. */
   turnOpen: boolean;
+  /** The tasks Claude started, by task id: a background one runs on after its turn ends. */
+  tasks: Record<string, TaskView>;
+  /** When the claude process last started or exited: a task started before it is gone. */
+  processAt: string | null;
 }
 
 export function initialTranscript(): TranscriptState {
@@ -219,6 +239,8 @@ export function initialTranscript(): TranscriptState {
     reset: null,
     sending: [],
     turnOpen: false,
+    tasks: {},
+    processAt: null,
   };
 }
 
@@ -456,8 +478,11 @@ export interface ChangedFile {
   /** The id of the latest change: a review marked before it is out of date. */
   lastChangeId: string;
   /** What the applied changes add up to, as one diff (null when they cannot be added up, or
-   * there is only one); when there is one, `added` and `removed` are its lines. */
+   * there is only one); when there is one, `added` and `removed` are its lines. Where git read
+   * the file's repository, its diff against the base branch (`repoChanges.ts`). */
   net: NetDiff | null;
+  /** What git says about the file, when it read its repository (`withRepoChanges`). */
+  repo?: RepoFileInfo;
 }
 
 /** Lines added and removed in a unified diff, headers left out. */
@@ -771,6 +796,139 @@ function applyResult(state: TranscriptState, record: LogRecord): TranscriptState
   return next;
 }
 
+const TASK_STATUSES = new Set<string>(["running", "completed", "failed", "stopped"]);
+
+/** A task started or ended: a start is kept, an end updates the start it ends. */
+function applyTask(state: TranscriptState, record: LogRecord): TranscriptState {
+  const id = str(record.body, "task_id");
+  const status = str(record.body, "status");
+  if (!id || status === null || !TASK_STATUSES.has(status)) return state;
+  const known = state.tasks[id];
+  const endedAt = status === "running" ? null : record.at;
+  const task: TaskView = known
+    ? {
+        ...known,
+        status: status as TaskView["status"],
+        endedAt,
+        // A finished agent resumed (a message sent to it) runs again from now.
+        startedAt: status === "running" && known.status !== "running" ? record.at : known.startedAt,
+      }
+    : {
+        id,
+        description: str(record.body, "description"),
+        toolUseId: str(record.body, "tool_use_id"),
+        startedAt: record.at,
+        endedAt,
+        status: status as TaskView["status"],
+        type: str(record.body, "task_type"),
+      };
+  return { ...state, tasks: { ...state.tasks, [id]: task } };
+}
+
+/** When the last message the owner sent was written; null before any. */
+export function lastMessageAt(state: TranscriptState): string | null {
+  const user = state.entries.findLast((entry) => entry.kind === "user" && !entry.queued);
+  return user?.kind === "user" ? user.at : null;
+}
+
+const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
+const AGENT_ID = /agentId:\s*([A-Za-z0-9_-]+)/;
+const HANDBACK = "SubagentHandback";
+
+/** The text of a tool result, its text blocks joined. */
+function resultTextOf(tool: ToolView): string {
+  const content = tool.result?.content;
+  if (typeof content === "string") return content;
+  return asArray(content)
+    .map((block) => {
+      const text = asObject(block)?.text;
+      return typeof text === "string" ? text : "";
+    })
+    .join("\n");
+}
+
+/**
+ * The background agents a log without `task` records shows (one from a server that did not record
+ * them): an `Agent` call with `run_in_background`, running until its last call is a
+ * `SubagentHandback` (completed), a `TaskStop` names its agent id (stopped) or the process
+ * restarted (stopped). A `SendMessage` to it after its handback runs it again.
+ */
+function inferredTasks(state: TranscriptState): TaskView[] {
+  const recorded = new Set(Object.values(state.tasks).map((task) => task.toolUseId));
+  const tools = Object.values(state.tools);
+  const top = tools.filter((tool) => tool.parentId === null);
+  return tools.flatMap((tool): TaskView[] => {
+    if (!SUBAGENT_TOOLS.has(tool.name) || tool.parentId !== null) return [];
+    if (tool.input.run_in_background !== true || recorded.has(tool.id) || !tool.startedAt)
+      return [];
+    const agentId = AGENT_ID.exec(resultTextOf(tool))?.[1] ?? null;
+    const at = (t: ToolView) => t.startedAt ?? "";
+    const handback = (state.children[tool.id] ?? [])
+      .map((id) => state.tools[id])
+      .filter((child): child is ToolView => child?.name === HANDBACK)
+      .map(at)
+      .sort()
+      .at(-1);
+    const resumed = top
+      .filter((t) => agentId !== null && t.name === "SendMessage" && t.input.to === agentId)
+      .map(at)
+      .sort()
+      .at(-1);
+    const stop = top
+      .filter((t) => agentId !== null && t.name === "TaskStop" && t.input.task_id === agentId)
+      .map(at)
+      .sort()
+      .at(-1);
+    const startedAt = resumed && (!handback || resumed > handback) ? resumed : tool.startedAt;
+    const restarted = state.processAt !== null && state.processAt > startedAt;
+    const ended: [TaskView["status"], string | null] =
+      stop && stop > startedAt
+        ? ["stopped", stop]
+        : handback && handback >= startedAt
+          ? ["completed", handback]
+          : restarted
+            ? ["stopped", state.processAt]
+            : ["running", null];
+    const description = tool.input.description;
+    return [
+      {
+        id: agentId ?? tool.id,
+        description: typeof description === "string" ? description : null,
+        toolUseId: tool.id,
+        startedAt,
+        endedAt: ended[1],
+        status: ended[0],
+        type: "local_agent",
+      },
+    ];
+  });
+}
+
+/** Every task of the session: the recorded ones, then the background agents inferred from a log
+ * that has no record of them. */
+export function sessionTasks(state: TranscriptState): TaskView[] {
+  return [...Object.values(state.tasks), ...inferredTasks(state)];
+}
+
+/** The tasks still running, oldest first. */
+export function runningTasks(state: TranscriptState): TaskView[] {
+  return sessionTasks(state).filter((task) => task.status === "running");
+}
+
+/** Whether a task is a shell command (else an agent). */
+export const isCommandTask = (task: TaskView) => task.type === "local_bash";
+
+/** "2 agents", "1 command", "1 agent, 2 commands": what a set of tasks is, in words. */
+export function tasksInWords(tasks: TaskView[]): string {
+  const commands = tasks.filter(isCommandTask).length;
+  const agents = tasks.length - commands;
+  const parts = [
+    agents > 0 ? `${String(agents)} ${agents === 1 ? "agent" : "agents"}` : null,
+    commands > 0 ? `${String(commands)} ${commands === 1 ? "command" : "commands"}` : null,
+  ];
+  return parts.filter(Boolean).join(", ");
+}
+
 function applySettings(state: TranscriptState, record: LogRecord): TranscriptState {
   const mode = str(record.body, "mode");
   const model = str(record.body, "model");
@@ -853,11 +1011,15 @@ function withoutEcho(sending: SendingView[], seq: number, text: string): Sending
 export const MAX_COMMANDS = 200;
 export const MAX_COMMAND_CHARS = 100;
 
-/** The init record's slash commands then skills: strings of at most 100 characters, each once
- * as `/name`, the first 200. Anything else is dropped silently (the menu reads "No commands"). */
+/** The init record's slash commands, skills, then subagents: strings of at most 100 characters,
+ * each once as `/name` (a subagent as `/agent-name`, which the session sends to Claude as
+ * `@agent-name`), the first 200. Anything else is dropped silently (the menu reads "No commands"). */
 function commandsOf(body: JsonObject): string[] {
   const names = new Set<string>();
-  for (const item of [...arr(body.slash_commands), ...arr(body.skills)]) {
+  const agents = arr(body.agents).map((agent) =>
+    typeof agent === "string" ? `agent-${agent}` : agent,
+  );
+  for (const item of [...arr(body.slash_commands), ...arr(body.skills), ...agents]) {
     if (names.size >= MAX_COMMANDS) break;
     if (typeof item !== "string" || item.length > MAX_COMMAND_CHARS) continue;
     const name = item.replace(/^\//, "");
@@ -940,7 +1102,7 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
     case "init": {
       const model = str(body, "model");
       return notice(
-        { ...s, model: model ?? s.model, slashCommands: commandsOf(body) },
+        { ...s, model: model ?? s.model, slashCommands: commandsOf(body), processAt: record.at },
         record.seq,
         model ? `Session started (model ${model})` : "Session started",
       );
@@ -958,11 +1120,15 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
         str(body, "message") ?? "Error",
         "error",
       );
+    case "task":
+      return applyTask(s, record);
     case "exited": {
+      // The process took its tasks with it.
+      const t = { ...s, tasks: {}, processAt: record.at };
       const code = num(body, "code");
       return code === null || code === 0
-        ? notice(s, record.seq, "claude exited")
-        : notice(s, record.seq, `claude exited with code ${String(code)}`, "error");
+        ? notice(t, record.seq, "claude exited")
+        : notice(t, record.seq, `claude exited with code ${String(code)}`, "error");
     }
     case "log.truncated": {
       const cap = str(body, "cap");

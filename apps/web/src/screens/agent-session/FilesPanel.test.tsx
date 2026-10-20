@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChangedFilesChip, FilesPanel, reviewedKey } from "./FilesPanel";
 import { changedFiles, type ToolView } from "./model";
+import { withRepoChanges } from "./repoChanges";
+import { commentMessage } from "./review";
+import { renderWithApi } from "../../testing/builders";
 
 const tool = (id: string, name: string, input: Record<string, unknown>): ToolView => ({
   id,
@@ -45,6 +48,7 @@ describe("FilesPanel (review)", () => {
     expect(
       within(list)
         .getAllByRole("button")
+        .filter((button) => button.dataset.filePath !== undefined)
         .map((button) => button.textContent),
     ).toEqual(["Anew.ts+1−0", "Mapp.ts+1−1"]);
     // Narrow, no file is open until you pick one: the list is all there is.
@@ -224,27 +228,27 @@ describe("FilesPanel (final result)", () => {
     render(
       <FilesPanel
         files={filesOf([
-          tool("t1", "Write", { file_path: "/r/a.md", content: "one\ntwo\n" }),
-          tool("t2", "Edit", { file_path: "/r/a.md", old_string: "two", new_string: "2" }),
+          tool("t1", "Write", { file_path: "/r/a.txt", content: "one\ntwo\n" }),
+          tool("t2", "Edit", { file_path: "/r/a.txt", old_string: "two", new_string: "2" }),
         ])}
         sessionId="s1"
         onClose={vi.fn()}
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: /a\.md/ }));
+    await userEvent.click(screen.getByRole("button", { name: /a\.txt/ }));
 
     expect(screen.getByRole("button", { name: "Final result" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    expect(screen.getByLabelText("Final diff of r/a.md")).toHaveTextContent("+2");
-    expect(screen.queryByLabelText("Change 1 to r/a.md")).toBeNull();
+    expect(screen.getByLabelText("Final diff of r/a.txt")).toHaveTextContent("+2");
+    expect(screen.queryByLabelText("Change 1 to r/a.txt")).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Each change (2)" }));
 
-    expect(screen.getByLabelText("Change 1 to r/a.md")).toBeInTheDocument();
-    expect(screen.getByLabelText("Change 2 to r/a.md")).toBeInTheDocument();
+    expect(screen.getByLabelText("Change 1 to r/a.txt")).toBeInTheDocument();
+    expect(screen.getByLabelText("Change 2 to r/a.txt")).toBeInTheDocument();
   });
 
   it("AC-PG-18.3: says the file ends as it began when its changes cancel out", async () => {
@@ -279,5 +283,456 @@ describe("FilesPanel (final result)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Each change (2)" }));
     expect(screen.getByLabelText("Change 1 to r/b.md")).toBeInTheDocument();
     expect(screen.getByLabelText("Change 2 to r/b.md")).toBeInTheDocument();
+  });
+});
+
+describe("FilesPanel (kinds of file)", () => {
+  const MIXED = [
+    tool("k1", "Write", {
+      file_path: "/Users/me/.claude/plans/p.md",
+      content: "# The plan\n\n- step",
+    }),
+    tool("k2", "Write", { file_path: "/repo/src/new.ts", content: "export const a = 1;" }),
+    tool("k3", "Write", {
+      file_path: "/hub/brain/_inbox/l.md",
+      content: "---\ntype: gotcha\n---\n\n# A learning",
+    }),
+    tool("k4", "Write", { file_path: "/tmp/scratch.md", content: "notes" }),
+  ];
+
+  it("puts the code first and Claude's plans, learnings and scratch in their own tabs", async () => {
+    render(<FilesPanel files={filesOf(MIXED)} sessionId="s1" onClose={vi.fn()} />);
+
+    const tabs = screen.getByRole("tablist", { name: "Kind of file" });
+    expect(
+      within(tabs)
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent),
+    ).toEqual(["Code1", "Plans1", "Learnings1", "Scratch1"]);
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(
+      within(list)
+        .getAllByRole("button")
+        .filter((button) => button.dataset.filePath !== undefined)
+        .map((b) => b.textContent),
+    ).toEqual(["Anew.ts+1−0"]);
+
+    await userEvent.click(within(tabs).getByRole("tab", { name: /Learnings/ }));
+    await userEvent.click(screen.getByRole("button", { name: /l\.md/ }));
+    const file = screen.getByRole("region", { name: /l\.md$/ });
+    // Markdown opens rendered, its frontmatter apart.
+    expect(within(file).getByRole("heading", { name: "A learning" })).toBeInTheDocument();
+    expect(within(file).getByLabelText("Frontmatter")).toHaveTextContent("type: gotcha");
+    await userEvent.click(within(file).getByRole("button", { name: /Each change/ }));
+    expect(within(file).getByLabelText(/Change 1 to .*l\.md/)).toHaveTextContent("+# A learning");
+  });
+
+  it("renders markdown even after a diff was open in the drawer", async () => {
+    const files = filesOf([
+      tool("m1", "Write", { file_path: "/repo/src/new.ts", content: "export const a = 1;" }),
+      tool("m2", "Write", { file_path: "/repo/docs/guide.md", content: "# Guide" }),
+    ]);
+    render(<FilesPanel files={files} sessionId="s1" onClose={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /new\.ts/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Next file" }));
+
+    const file = screen.getByRole("region", { name: /guide\.md$/ });
+    expect(within(file).getByRole("heading", { name: "Guide" })).toBeInTheDocument();
+    expect(within(file).getByRole("button", { name: "Preview" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("opens on the tab of the file a card asked for", () => {
+    render(
+      <FilesPanel
+        files={filesOf(MIXED)}
+        sessionId="s1"
+        onClose={vi.fn()}
+        initialPath="/Users/me/.claude/plans/p.md"
+      />,
+    );
+    expect(screen.getByRole("tab", { name: /Plans/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "The plan" })).toBeInTheDocument();
+  });
+
+  it("asks for a viewed mark on the code only", async () => {
+    render(<FilesPanel files={filesOf(MIXED)} sessionId="s1" onClose={vi.fn()} />);
+    const list = () => screen.getByRole("navigation", { name: "Files" });
+    expect(within(list()).getAllByRole("checkbox", { name: "Viewed" })).toHaveLength(1);
+    expect(within(list()).getByText("0 of 1 viewed")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: /Plans/ }));
+    expect(within(list()).queryByRole("checkbox")).toBeNull();
+    expect(within(list()).queryByText(/viewed/)).toBeNull();
+    await userEvent.click(within(list()).getByRole("button", { name: /p\.md/ }));
+    expect(screen.queryByRole("checkbox", { name: "Viewed" })).toBeNull();
+  });
+
+  it("leaves Claude's plans, learnings and scratch out of what waits for review", () => {
+    render(
+      <ChangedFilesChip
+        files={filesOf(MIXED)}
+        review={{ reviewed: {}, toggle: vi.fn() }}
+        open={false}
+        onToggle={vi.fn()}
+      />,
+    );
+    // The total is the code alone, as the pull request counts it.
+    expect(
+      screen.getByRole("button", {
+        name: "Review changes: 1 file, 1 lines added, 0 removed, 1 to review",
+      }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("FilesPanel (feature records and totals)", () => {
+  const RECORDS = [
+    tool("f1", "Write", { file_path: "/repo/src/new.ts", content: "export const a = 1;" }),
+    tool("f2", "Write", {
+      file_path: "/hub/brain/features/claims/spec.md",
+      content: "# Spec\n\none\ntwo",
+    }),
+    tool("f3", "Write", {
+      file_path: "/hub/brain/decisions/0009-retries.md",
+      content: "# Retries",
+    }),
+  ];
+
+  it("gives a feature's records a Reviews & specs tab and the brain's other notes the Learnings tab", async () => {
+    render(<FilesPanel files={filesOf(RECORDS)} sessionId="s1" onClose={vi.fn()} />);
+
+    const tabs = screen.getByRole("tablist", { name: "Kind of file" });
+    expect(
+      within(tabs)
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent),
+    ).toEqual(["Code1", "Reviews & specs1", "Learnings1"]);
+    // The drawer's header totals the code alone.
+    expect(screen.getByText(/1 code file/)).toHaveTextContent("1 code file · +1−0");
+
+    await userEvent.click(within(tabs).getByRole("tab", { name: /Reviews & specs/ }));
+    expect(
+      screen.getByText(/What the workflow keeps on the feature in the brain/),
+    ).toBeInTheDocument();
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(within(list).getByRole("button", { name: /spec\.md/ })).toBeInTheDocument();
+    expect(within(list).queryByRole("checkbox")).toBeNull();
+  });
+
+  it("says No code changes when the session changed only Claude's own files", () => {
+    render(
+      <FilesPanel
+        files={filesOf([tool("s1", "Write", { file_path: "/tmp/scratch.md", content: "n" })])}
+        sessionId="s1"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("No code changes")).toBeInTheDocument();
+  });
+
+  it("names what git compared in the Code tab note and lists the repositories there only", async () => {
+    render(
+      <FilesPanel
+        files={filesOf(RECORDS)}
+        sessionId="s1"
+        onClose={vi.fn()}
+        repoNote="api/dem-1: dem-1 against origin/main · 2 commits"
+        repos={[
+          {
+            source: "worktree",
+            root: "/repo",
+            label: "api/dem-1",
+            branch: "dem-1",
+            base: "origin/main",
+            base_sha: "f0",
+            head_sha: "h1",
+            commits: [],
+            files: [],
+            truncated: false,
+          },
+        ]}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "What the pull request has, whoever changed it (api/dem-1: dem-1 against origin/main · 2 commits).",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Repositories" })).toHaveTextContent(
+      "No pull request yet",
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /Learnings/ }));
+    expect(screen.queryByRole("list", { name: "Repositories" })).toBeNull();
+  });
+});
+
+describe("FilesPanel (long names)", () => {
+  const DEEP = [
+    tool("d1", "Write", {
+      file_path: "/Users/me/work/api/.claude/worktrees/dem-63-export/src/a/test_export.py",
+      content: "x = 1",
+    }),
+    tool("d2", "Write", {
+      file_path: "/Users/me/work/api/.claude/worktrees/dem-63-export/src/b/service.py",
+      content: "y = 2",
+    }),
+  ];
+
+  it("shows a worktree root as its repo and its name in bold, on one line, copied whole", () => {
+    render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
+    const root = screen.getByText("In").closest<HTMLElement>(".as-files-root");
+    if (!root) throw new Error("no root line");
+    expect(root).toHaveAttribute("title", "/Users/me/work/api/.claude/worktrees/dem-63-export/src");
+    expect(root.querySelector(".as-files-root-repo")).toHaveTextContent("api");
+    expect(root.querySelector(".as-files-root-rest")).toHaveTextContent("/src");
+    expect(root.querySelector(".as-files-root-lead")).toHaveTextContent("dem-63-export");
+    expect(within(root).getByRole("button", { name: "Copy folder path" })).toBeInTheDocument();
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(within(list).getByRole("list", { name: "Folder a" })).toBeInTheDocument();
+  });
+
+  it("keeps each file on one line, its whole name on hover", () => {
+    render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
+    expect(screen.getByTitle("test_export.py")).toHaveTextContent("test_export.py");
+    // Cut in the middle when it does not fit: the extension always shows.
+    const tail = screen.getByTitle("test_export.py").querySelector(".as-fit-tail");
+    expect(tail?.textContent).toMatch(/\.py$/);
+  });
+
+  it("bolds a repo session's folder by its label", () => {
+    render(
+      <FilesPanel
+        files={filesOf([
+          tool("r1", "Write", { file_path: "/Users/me/work/api/src/a.py", content: "a" }),
+          tool("r2", "Write", { file_path: "/Users/me/work/api/src/b/c.py", content: "c" }),
+        ])}
+        sessionId="s1"
+        onClose={vi.fn()}
+        workdirLabel="api"
+      />,
+    );
+    const root = screen.getByText("In").closest<HTMLElement>(".as-files-root");
+    if (!root) throw new Error("no root line");
+    expect(root.querySelector(".as-files-root-lead")).toHaveTextContent("api");
+    expect(root).toHaveTextContent("api/src");
+  });
+
+  it("falls back to the full root, home as ~, outside a worktree or the session's folder", () => {
+    render(
+      <FilesPanel
+        files={filesOf([
+          tool("h1", "Write", { file_path: "/Users/me/notes/x/a.md", content: "a" }),
+          tool("h2", "Write", { file_path: "/Users/me/notes/x/y/b.md", content: "b" }),
+        ])}
+        sessionId="s1"
+        onClose={vi.fn()}
+      />,
+    );
+    const root = screen.getByText("In").closest<HTMLElement>(".as-files-root");
+    expect(root).toHaveTextContent("~/notes/x");
+  });
+
+  it("lets you copy the open file's full path", async () => {
+    render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: /test_export/ }));
+    expect(screen.getByRole("button", { name: "Copy file path" })).toBeInTheDocument();
+  });
+});
+
+describe("FilesPanel (pull request)", () => {
+  const prFiles = () =>
+    withRepoChanges(
+      filesOf([
+        tool("t1", "Edit", { file_path: "/w/api/app.py", old_string: "b", new_string: "B" }),
+      ]),
+      [
+        {
+          source: "worktree",
+          root: "/w/api",
+          label: "api",
+          branch: "dem-1",
+          base: "origin/main",
+          base_sha: "f0",
+          commits: [
+            {
+              sha: "c2abcdef0",
+              subject: "Add d",
+              author: "Ana",
+              authored_at: "2026-10-19T15:00:00Z",
+            },
+            {
+              sha: "c1abcdef0",
+              subject: "Change b",
+              author: "Ana",
+              authored_at: "2026-10-19T14:00:00Z",
+            },
+          ],
+          files: [
+            {
+              path: "/w/api/app.py",
+              status: "modified",
+              added: 2,
+              removed: 1,
+              diff: "--- a/app.py\n+++ b/app.py\n@@ -40,3 +40,4 @@\n a\n-b\n+B\n c\n+d",
+              binary: false,
+              fingerprint: "fp1",
+              commits: [
+                { sha: "c2abcdef0", added: 1, removed: 0 },
+                { sha: "c1abcdef0", added: 1, removed: 1 },
+              ],
+              uncommitted: true,
+            },
+            {
+              path: "/w/api/gone.py",
+              status: "deleted",
+              added: 0,
+              removed: 1,
+              diff: "--- a/gone.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-x",
+              binary: false,
+              fingerprint: "fp2",
+              commits: [],
+              uncommitted: false,
+            },
+          ],
+          truncated: false,
+        },
+      ],
+    );
+
+  it("opens a file on git's diff against the base, its commits and Claude's changes a click away", async () => {
+    render(<FilesPanel files={prFiles()} sessionId="s1" onClose={vi.fn()} />);
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(
+      within(list)
+        .getAllByRole("button")
+        .filter((button) => button.dataset.filePath !== undefined)
+        .map((button) => button.textContent),
+    ).toEqual(["Mapp.py+2−1", "Dgone.py+0−1"]);
+
+    await userEvent.click(screen.getByRole("button", { name: /app\.py/ }));
+
+    expect(screen.getByRole("button", { name: "Final result" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText(/Against origin\/main/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Final diff of app.py")).toHaveTextContent("+d");
+
+    await userEvent.click(screen.getByRole("button", { name: "Commits (3)" }));
+    const history = screen.getByRole("list", { name: "Commits that changed this file" });
+    expect(
+      within(history)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      expect.stringContaining("Uncommitted changes"),
+      expect.stringContaining("c2abcdeAdd d+1−0"),
+      expect.stringContaining("c1abcdeChange b+1−1"),
+    ]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Each change (1)" }));
+    expect(screen.getByLabelText("Change 1 to app.py")).toBeInTheDocument();
+  });
+
+  it("anchors a comment on git's diff to the file's final diff, with its real line numbers", async () => {
+    const user = userEvent.setup();
+    const onComment = vi.fn(() => Promise.resolve());
+    render(
+      <FilesPanel
+        files={prFiles()}
+        sessionId="s1"
+        onClose={vi.fn()}
+        initialPath="/w/api/app.py"
+        comments={{ threads: [], resolved: { resolved: new Set(), toggle: vi.fn() }, onComment }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Comment on line 43" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Comment on Line 43" }),
+      "Why d?{Meta>}{Enter}{/Meta}",
+    );
+
+    expect(onComment).toHaveBeenCalledWith(
+      commentMessage(
+        { path: "/w/api/app.py", change: 0, side: "new", start: 43, end: 43 },
+        "+d",
+        "Why d?",
+      ),
+    );
+  });
+
+  it("opens a commit on what it changed in the file, read from git once", async () => {
+    const commitPath = "/api/v1/agent-sessions/s1/repo-changes/commit";
+    const view = renderWithApi(<FilesPanel files={prFiles()} sessionId="s1" onClose={vi.fn()} />, {
+      routes: {
+        [commitPath]: (request: Request) => ({
+          sha: new URL(request.url).searchParams.get("sha"),
+          path: "/w/api/app.py",
+          diff: "--- a/app.py\n+++ b/app.py\n@@ -42,2 +42,3 @@\n c\n+d",
+          binary: false,
+        }),
+      },
+    });
+    await userEvent.click(screen.getByRole("button", { name: /app\.py/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Commits (3)" }));
+
+    const row = screen.getByRole("button", { name: /c2abcde/ });
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(row);
+
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByLabelText("Commit c2abcde to /w/api/app.py")).toHaveTextContent("+d");
+    const [request] = view.requests;
+    expect(new URL(request?.url ?? "").searchParams.get("path")).toBe("/w/api/app.py");
+
+    await userEvent.click(row);
+    await userEvent.click(row);
+    expect(screen.getByLabelText("Commit c2abcde to /w/api/app.py")).toBeInTheDocument();
+    expect(view.requests).toHaveLength(1);
+  });
+});
+
+describe("FilesPanel (repositories)", () => {
+  it("names each repository's branch, base, pull request and where it stands", () => {
+    render(
+      <FilesPanel
+        files={filesOf(TWO_FILES)}
+        sessionId="s1"
+        onClose={vi.fn()}
+        repos={[
+          {
+            source: "worktree",
+            root: "/repo",
+            label: "api/dem-1",
+            branch: "dem-1",
+            base: "origin/main",
+            base_sha: "f0",
+            head_sha: "h1",
+            pull_request: {
+              number: 7,
+              url: "https://github.com/acme/api/pull/7",
+              state: "OPEN",
+              head_sha: "h1",
+            },
+            commits: [],
+            files: [],
+            truncated: false,
+          },
+        ]}
+      />,
+    );
+    const repos = screen.getByRole("list", { name: "Repositories" });
+    expect(repos).toHaveTextContent("dem-1 → origin/main · 0 commits");
+    expect(within(repos).getByRole("link", { name: /PR #7/ })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/api/pull/7",
+    );
+    expect(repos).toHaveTextContent("In sync with the pull request");
   });
 });
