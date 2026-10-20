@@ -54,8 +54,11 @@ class RewriteError(Exception):
 class Rewrite(ABC):
     """How one node's ids and references are rewritten as it is copied."""
 
-    def text(self, loc: Loc, text: str) -> str:
-        return rewritten(loc, text, lambda ref, spelling: self.reference(loc, ref, spelling))
+    def text(self, loc: Loc, text: str, *, scenario: bool = False) -> str:
+        """``text`` rewritten; ``scenario``: read in the scenario grammar (``$CTX``, ``$self``)."""
+        return rewritten(
+            loc, text, lambda ref, spelling: self.reference(loc, ref, spelling), scenario=scenario
+        )
 
     @abstractmethod
     def reference(self, loc: Loc, ref: Ref, spelling: str) -> str: ...
@@ -85,9 +88,9 @@ class Local(Rewrite):
         return target if target in self.local else self.outer.resume(target, loc)
 
 
-def rewritten(loc: Loc, text: str, replace: _Replace) -> str:
+def rewritten(loc: Loc, text: str, replace: _Replace, *, scenario: bool = False) -> str:
     try:
-        return rewrite_refs(text, replace)
+        return rewrite_refs(text, replace, scenario=scenario)
     except SubstitutionError as error:
         raise RewriteError(loc, str(error)) from None
 
@@ -125,10 +128,13 @@ def _action_update(node: ActionNode | ExpectNode, rewrite: Rewrite) -> dict[str,
     texts = {
         name: _json_texts(("with", name), value, rewrite) for name, value in node.with_.items()
     }
-    captures = {name: rewrite.text(("capture", name), ref) for name, ref in node.capture.items()}
+    captures = {
+        name: rewrite.text(("capture", name), ref, scenario=True)
+        for name, ref in node.capture.items()
+    }
     update: dict[str, object] = {"with_": read_only(texts), "capture": read_only(captures)}
     if isinstance(node, ExpectNode):
-        update["until_when"] = rewrite.text(("until_when",), node.until_when)
+        update["until_when"] = rewrite.text(("until_when",), node.until_when, scenario=True)
     return update
 
 

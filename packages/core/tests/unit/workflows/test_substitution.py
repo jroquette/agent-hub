@@ -344,30 +344,30 @@ def test_resolves_ctx_when_run_context_captured_upstream() -> None:
         "skipped": NodeResult("skipped"),
     }
 
-    assert find_refs("$CTX.order_id") == [substitution.CtxRef("order_id")]
-    assert render("id $CTX.order_id, $CTX.count, [$CTX.skipped]", context(ctx=ctx)) == (
-        "id o-7, 3, []"
-    )
-    assert error_code("$CTX.missing", context(ctx=ctx)) == "unknown_ctx"
-    assert error_code("$CTX.failed", context(ctx={"failed": NodeResult("failed")})) == (
-        "producer_failed"
-    )
+    failed = {"failed": NodeResult("failed")}
+
+    assert find_refs("$CTX.order_id", scenario=True) == [substitution.CtxRef("order_id")]
+    assert render(
+        "id $CTX.order_id, $CTX.count, [$CTX.skipped]", context(ctx=ctx, scenario=True)
+    ) == ("id o-7, 3, []")
+    assert error_code("$CTX.missing", context(ctx=ctx, scenario=True)) == "unknown_ctx"
+    assert error_code("$CTX.failed", context(ctx=failed, scenario=True)) == "producer_failed"
 
 
 @pytest.mark.parametrize("template", ["$CTX", "$CTX.", "$CTX.Order", "$CTX.order.id", "$CTX[0]"])
 def test_refuses_ctx_when_run_context_token_malformed(template: str) -> None:
-    assert error_code(template) == "malformed"
+    assert error_code(template, context(scenario=True)) == "malformed"
     with pytest.raises(SubstitutionError):
-        parse_ref(template)
+        parse_ref(template, scenario=True)
 
 
 def test_resolves_self_when_run_context_self_output_given() -> None:
     own = NodeResult("completed", {"status": "ON_HOLD", "ids": ["a", "b"]})
 
-    assert parse_ref("$self.output.status") == substitution.SelfRef(("status",))
-    assert parse_ref("$self.output") == substitution.SelfRef(())
-    assert render("$self.output.status $self.output.ids.1", context(self_output=own)) == (
-        "ON_HOLD b"
-    )
-    assert error_code("$self.output.status") == "not_self"
-    assert parse_ref("$selfie.output") == NodeRef("selfie", ())
+    scenario = context(self_output=own, scenario=True)
+
+    assert parse_ref("$self.output.status", scenario=True) == substitution.SelfRef(("status",))
+    assert parse_ref("$self.output", scenario=True) == substitution.SelfRef(())
+    assert render("$self.output.status $self.output.ids.1", scenario) == "ON_HOLD b"
+    assert error_code("$self.output.status", context(scenario=True)) == "not_self"
+    assert parse_ref("$selfie.output", scenario=True) == NodeRef("selfie", ())
