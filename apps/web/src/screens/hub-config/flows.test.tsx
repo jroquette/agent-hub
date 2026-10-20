@@ -115,6 +115,7 @@ describe("AddEnvironmentScreen", () => {
     await next();
     await next();
     await next();
+    await userEvent.click(screen.getByRole("radio", { name: /In my shell/ }));
     await userEvent.type(
       screen.getByRole("textbox", { name: "Variable names" }),
       "DB_URL=postgres://x",
@@ -122,6 +123,52 @@ describe("AddEnvironmentScreen", () => {
 
     expect(screen.getByText("Line 1: only the name. Remove = and what follows.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+
+  it("lists the env file's variable names and sends only the file", async () => {
+    const { requests } = openEnvironment({
+      [CONFIG]: aConfig(),
+      [WRITE]: aConfig(),
+      "/api/v1/projects/demo/env-file-keys": {
+        path: "demo-api/dotenv.staging",
+        exists: true,
+        holder: "demo-api",
+        ignored: false,
+        keys: ["DATABASE_URL", "STRIPE_KEY"],
+        truncated: false,
+        problem: null,
+      },
+    });
+
+    await userEvent.click(await screen.findByRole("radio", { name: /Test or staging/ }));
+    await next();
+    await next();
+    await next();
+    await next();
+    expect(screen.getByRole("button", { name: "Skip" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("radio", { name: /In an env file/ }));
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Env file path" }),
+      "demo-api/dotenv.staging",
+    );
+
+    const listed = await screen.findByRole("list", { name: "Variables in the env file" });
+    expect(listed).toHaveTextContent("DATABASE_URL");
+    expect(listed).toHaveTextContent("STRIPE_KEY");
+    expect(screen.getByText(/git does not ignore this file in demo-api/)).toBeVisible();
+    await next();
+    await userEvent.click(screen.getByRole("button", { name: /Add environment for/ }));
+
+    const post = requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toMatchObject({
+      env_file: "demo-api/dotenv.staging",
+      credential_env: [],
+    });
+    const asked = requests.find((r) => r.url.includes("env-file-keys"));
+    expect(new URL(asked?.url ?? "http://x").searchParams.get("path")).toBe(
+      "demo-api/dotenv.staging",
+    );
   });
 
   it("refuses a name another environment has, ignoring case", async () => {

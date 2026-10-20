@@ -46,8 +46,8 @@ from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS
 from agent_hub.generator.built_json import base_hooks_block
 from agent_hub.generator.doctor_tree import read_checkout, read_doctor_tree
+from agent_hub.generator.env_file_reader import locate_env_file
 from agent_hub.generator.errors import GeneratorError
-from agent_hub.generator.git_answers import git_answer
 from agent_hub.generator.hub_tree import read_root_entry
 from agent_hub.generator.workflow_discovery import HUB_WORKFLOWS
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
@@ -110,44 +110,21 @@ def env_file_facts(
     ignores it there (``git check-ignore``)."""
     if not isinstance(local, LocalConfig) or local_environment_problems(config, local):
         local = LocalConfig()
-    workspace = Path(root).parent
-    holders = {
-        name: Path(os.path.realpath(workspace / name))
-        for name in (Path(root).name, *(repo.dir for repo in config.repos))
-    }
+    repo_dirs = [repo.dir for repo in config.repos]
     facts = []
     for declared in declared_env_files(effective_environments(config, local)):
-        real = Path(os.path.realpath(workspace / declared.path))
-        held = next(
-            (
-                (name, top)
-                for name, top in holders.items()
-                if real != top and real.is_relative_to(top)
-            ),
-            None,
-        )
+        found = locate_env_file(root, repo_dirs, declared.path)
         facts.append(
             EnvFileFacts(
                 path=declared.path,
                 environment=declared.environment,
                 source=declared.source,
-                exists=real.exists(),
-                holder=held[0] if held else None,
-                ignored=_is_ignored(held[1], real.relative_to(held[1]).as_posix())
-                if held
-                else None,
+                exists=found.exists,
+                holder=found.holder,
+                ignored=found.ignored,
             )
         )
     return tuple(facts)
-
-
-def _is_ignored(checkout: Path, path: str) -> bool | None:
-    """Whether git ignores ``path`` in ``checkout`` (a tracked file never is); ``None`` when git
-    cannot answer. Any failure, such as a folder that is no git checkout, is "not ignored"."""
-    if not _is_folder(str(checkout)):
-        return False
-    answer = git_answer(("check-ignore", "-q", "--", path), cwd=checkout)
-    return None if answer is None else answer[0] == 0
 
 
 # The folders a unit's temp entries sit in: ``.claude`` (its hook files), its skills and agents,

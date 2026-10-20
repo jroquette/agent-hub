@@ -65,6 +65,9 @@ gate-needing steps that do not depend on each other are a plan error naming both
   differing sets are a plan problem) may name `env_file`: a dotenv file relative to the workspace holding the hub and
   its repos (`demo-api/.env.staging`), ≤ 200 characters, no `..`, `~`, leading `/` or secret shape, in `hub.json` or
   `hub.local.json` (own environments), set by `hub env add|set --env-file`; AGENTS.md and the brief never show it.
+- hub web may list the file's variable **names** (`GET /projects/{project}/env-file-keys?path=`), never a value: a
+  regular file of at most 64 KiB held by the hub or a declared repo by real path, `NAME=` and `export NAME=` lines
+  (a quoted value spanning lines is skipped), at most 200 names; it also says whether git ignores the file there.
 - One loader, shared by `hub action run` and the engine's action executor, reads it when an action starts: inside the
   workspace by real path, a regular file, ≤ 64 KiB and 200 variables, `NAME=value` lines (`#` comments, optional
   `export `, quotes, no interpolation). It injects **every** variable, plus `AWS_PROFILE` from `aws_profile` and the

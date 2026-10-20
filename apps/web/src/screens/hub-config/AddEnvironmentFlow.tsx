@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { Banner, Button, Icon, OptionRow, ProblemError, Skeleton } from "../../components";
 import { useApi } from "../../lib/api";
+import { EnvFileVariables } from "./EnvFileVariables";
 import { ChoiceTile, SetupFlow } from "./SetupFlow";
 import {
   ACCESSES,
@@ -21,7 +22,7 @@ import "./hub-config.css";
 
 type Scope = "local" | "team";
 
-const STEPS = ["Kind", "Name", "Access", "Who it is for", "Connection", "Review"] as const;
+const STEPS = ["Kind", "Name", "Access", "Who it is for", "Secrets", "Review"] as const;
 const DESCRIPTION_MAX = 80;
 
 /** `/projects/:project/environments/new`: add an environment, one question at a time. */
@@ -70,6 +71,7 @@ function AddEnvironmentFlow({ view }: { view: HubConfigView }) {
   const [awsProfile, setAwsProfile] = useState("");
   const [variables, setVariables] = useState("");
   const [envFile, setEnvFile] = useState("");
+  const [secretsFrom, setSecretsFrom] = useState<"file" | "shell" | "none">("none");
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -87,10 +89,13 @@ function AddEnvironmentFlow({ view }: { view: HubConfigView }) {
           ? null
           : "Letters, digits, - and _ only, starting with a letter or digit; up to 40.";
   const valueLine = lineWithValue(variables);
+  // Only the chosen place counts: a path typed, then a switch to the shell, is not sent.
+  const sentFile = secretsFrom === "file" ? envFile.trim() : "";
+  const sentVariables = secretsFrom === "shell" ? linesOf(variables) : [];
   const credentialNames = [
+    sentFile && `env file ${sentFile}`,
+    sentVariables.length > 0 && `shell variables ${sentVariables.join(", ")}`,
     awsProfile.trim() && `AWS profile ${awsProfile.trim()}`,
-    ...linesOf(variables),
-    envFile.trim() && `env file ${envFile.trim()}`,
   ].filter(Boolean);
   const fieldId = (key: string) => `${id}-${key}`;
 
@@ -117,8 +122,8 @@ function AddEnvironmentFlow({ view }: { view: HubConfigView }) {
       production,
       description: description.trim() || null,
       aws_profile: awsProfile.trim() || null,
-      credential_env: linesOf(variables),
-      env_file: envFile.trim() || null,
+      credential_env: sentVariables,
+      env_file: sentFile || null,
     })
       .then(() => {
         const state: SavedState = {
@@ -339,17 +344,110 @@ function AddEnvironmentFlow({ view }: { view: HubConfigView }) {
       );
       break;
     case 4: {
-      question = "How do scripted actions log in? (optional)";
-      help = "Names only, never a password, key or token. Not sure? Skip it: you can add it later.";
-      const empty = credentialNames.length === 0;
-      nextLabel = empty ? "Skip" : "Continue";
-      canContinue = valueLine === null;
-      blocked = "Remove the value after = first.";
+      question = "Where do the secrets for scripted actions live?";
+      help =
+        "Scripted actions need passwords and keys to reach this environment. Tell agent-hub where they are, by name only. Not sure? Pick Not yet: you can add it later.";
+      const fileMissing = secretsFrom === "file" && envFile.trim() === "";
+      const shellMissing = secretsFrom === "shell" && linesOf(variables).length === 0;
+      canContinue =
+        !fileMissing && !shellMissing && (secretsFrom !== "shell" || valueLine === null);
+      blocked = fileMissing
+        ? "Give the file's path, or pick Not yet."
+        : shellMissing
+          ? "Give at least one variable name, or pick Not yet."
+          : "Remove the value after = first.";
+      nextLabel = secretsFrom === "none" && awsProfile.trim() === "" ? "Skip" : "Continue";
       body = (
-        <div className="ah-stack" style={{ gap: 16 }}>
+        <div className="ah-stack" style={{ gap: 20 }}>
+          <div className="ah-flow-tiles">
+            <ChoiceTile
+              name={fieldId("secrets")}
+              icon="file-text"
+              label="In an env file (recommended)"
+              hint="A .env file in a repo, ignored by git. Actions get all its variables."
+              checked={secretsFrom === "file"}
+              onPick={() => {
+                setSecretsFrom("file");
+              }}
+            />
+            <ChoiceTile
+              name={fieldId("secrets")}
+              icon="square-terminal"
+              label="In my shell"
+              hint="Variables you export in your terminal, like in ~/.zshrc."
+              checked={secretsFrom === "shell"}
+              onPick={() => {
+                setSecretsFrom("shell");
+              }}
+            />
+            <ChoiceTile
+              name={fieldId("secrets")}
+              icon="circle-dashed"
+              label="Not yet"
+              hint="Actions get no secrets here for now."
+              checked={secretsFrom === "none"}
+              onPick={() => {
+                setSecretsFrom("none");
+              }}
+            />
+          </div>
+
+          {secretsFrom === "file" && (
+            <div className="ah-stack" style={{ gap: 6 }}>
+              <label htmlFor={fieldId("file")} className="ah-config-field-label">
+                Env file path
+              </label>
+              <input
+                id={fieldId("file")}
+                className="ah-input ah-mono ah-flow-input"
+                value={envFile}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={`${view.repos[0]?.dir ?? "my-repo"}/.env.${name.trim() || "staging"}`}
+                onChange={(event) => {
+                  setEnvFile(event.target.value);
+                }}
+              />
+              <span className="ah-small ah-muted">
+                Relative to the folder that holds the hub and its repos. Only scripted actions read
+                it; agents never do.
+              </span>
+              <EnvFileVariables project={project} path={envFile} />
+            </div>
+          )}
+
+          {secretsFrom === "shell" && (
+            <div className="ah-stack" style={{ gap: 4 }}>
+              <label htmlFor={fieldId("variables")} className="ah-config-field-label">
+                Variable names
+              </label>
+              <textarea
+                id={fieldId("variables")}
+                className="ah-input ah-mono ah-config-textarea ah-flow-input"
+                rows={3}
+                value={variables}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="DATABASE_URL"
+                aria-invalid={valueLine !== null ? true : undefined}
+                onChange={(event) => {
+                  setVariables(event.target.value);
+                }}
+              />
+              <span
+                aria-live="polite"
+                className={valueLine !== null ? "ah-small ah-config-error" : "ah-small ah-muted"}
+              >
+                {valueLine !== null
+                  ? `Line ${String(valueLine)}: only the name. Remove = and what follows.`
+                  : "One per line, just the name. agent-hub keeps these out of agent sessions."}
+              </span>
+            </div>
+          )}
+
           <div className="ah-stack" style={{ gap: 4 }}>
             <label htmlFor={fieldId("aws")} className="ah-config-field-label">
-              AWS profile name
+              AWS profile <span className="ah-muted">(optional, if it runs on AWS)</span>
             </label>
             <input
               id={fieldId("aws")}
@@ -362,51 +460,8 @@ function AddEnvironmentFlow({ view }: { view: HubConfigView }) {
                 setAwsProfile(event.target.value);
               }}
             />
-            <span className="ah-small ah-muted">The profile in ~/.aws/config, not its keys.</span>
-          </div>
-          <div className="ah-stack" style={{ gap: 4 }}>
-            <label htmlFor={fieldId("variables")} className="ah-config-field-label">
-              Variable names
-            </label>
-            <textarea
-              id={fieldId("variables")}
-              className="ah-input ah-mono ah-config-textarea ah-flow-input"
-              rows={3}
-              value={variables}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder="DATABASE_URL"
-              aria-invalid={valueLine !== null ? true : undefined}
-              onChange={(event) => {
-                setVariables(event.target.value);
-              }}
-            />
-            <span
-              aria-live="polite"
-              className={valueLine !== null ? "ah-small ah-config-error" : "ah-small ah-muted"}
-            >
-              {valueLine !== null
-                ? `Line ${String(valueLine)}: only the name. Remove = and what follows.`
-                : "One per line: the variables that hold this environment's secrets."}
-            </span>
-          </div>
-          <div className="ah-stack" style={{ gap: 4 }}>
-            <label htmlFor={fieldId("file")} className="ah-config-field-label">
-              Env file path
-            </label>
-            <input
-              id={fieldId("file")}
-              className="ah-input ah-mono ah-flow-input"
-              value={envFile}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={`${view.repos[0]?.dir ?? "my-repo"}/.env.${name.trim() || "staging"}`}
-              onChange={(event) => {
-                setEnvFile(event.target.value);
-              }}
-            />
             <span className="ah-small ah-muted">
-              Relative to the workspace. Only actions read it; agents never do.
+              The profile name in ~/.aws/config, not its keys. Actions run with it.
             </span>
           </div>
         </div>

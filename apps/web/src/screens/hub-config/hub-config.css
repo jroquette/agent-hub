@@ -732,3 +732,32 @@ button.ah-flow-step-button:focus-visible {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+/* An env file's variable names (never values). */
+.ah-env-keys {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 520px;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+.ah-env-keys:empty {
+  display: none;
+}
+.ah-env-key-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ah-env-key-list code {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 12px;
+}

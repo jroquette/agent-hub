@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Banner, Button, Dialog, OptionRow } from "../../components";
+import { EnvFileVariables } from "./EnvFileVariables";
 import {
   ACCESSES,
   ACCESS_LOOK,
@@ -278,6 +279,7 @@ export function EnvironmentDialog({
                 {shownError("env_file") ??
                   "Relative to the workspace. Only scripted actions read it; agents never do."}
               </span>
+              <EnvFileVariables project={view.project} path={envFile} />
             </div>
             <p className="ah-small ah-muted" style={{ margin: 0 }}>
               {credentialNames.length > 0

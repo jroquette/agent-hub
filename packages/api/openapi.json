@@ -2115,6 +2115,74 @@
         "title": "Endpoint",
         "type": "object"
       },
+      "EnvFileKeys": {
+        "additionalProperties": false,
+        "description": "What hub web may show of an env file: whether it is found where it may be, whether git\nignores it, and its variable names. ``problem`` says, in words, why no names are shown.",
+        "properties": {
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "holder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Holder"
+          },
+          "ignored": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ignored"
+          },
+          "keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "exists",
+          "holder",
+          "ignored"
+        ],
+        "title": "EnvFileKeys",
+        "type": "object"
+      },
       "EnvironmentEdit": {
         "discriminator": {
           "mapping": {
@@ -15485,6 +15553,72 @@
           }
         },
         "summary": "Put Project Local Config",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/env-file-keys": {
+      "get": {
+        "description": "The variable NAMES an env file holds, never a value: only a regular file of at most\n64 KiB inside the hub or one of its repos, with whether git ignores it there.",
+        "operationId": "get_env_file_keys_api_v1_projects__project__env_file_keys_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvFileKeys"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Env File Keys",
         "tags": [
           "projects"
         ]
