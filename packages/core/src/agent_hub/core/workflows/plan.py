@@ -23,8 +23,8 @@ Scenario nodes (``action``, ``expect``): their ``with`` texts, ``until_when`` an
 refs are checked as above; a path into their output is not (the action's own ``output_format``
 is not core's to read). ``$self.output`` reads only in an expect's ``until_when`` and in a
 ``capture``; ``$CTX.<name>`` needs one node upstream that captures ``<name>``, and no name is
-captured twice. ``WorkflowPlan.captures`` names each capture's node, as recorded. A scenario's
-includes may bring only the node types a scenario takes.
+captured twice; a ``capture`` reads no ``$CTX``. ``WorkflowPlan.captures`` names each capture's
+node, as recorded. A scenario's includes may bring only the node types a scenario takes.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -84,6 +84,8 @@ _MAX_CYCLE_NAMES: Final = 10
 # The keys of a scenario node where ``$self.output`` reads.
 _SELF_KEYS: Final = frozenset({"until_when", "capture"})
 _SELF_MESSAGE: Final = "$self reads only in an expect's until_when or a capture"
+# A capture is recomputed from its node's result alone (a resume): it reads no other capture.
+_CTX_IN_CAPTURE: Final = "a capture reads no $CTX: capture from $self or node outputs"
 
 
 @dataclass(frozen=True)
@@ -251,9 +253,11 @@ class _Graph:
     producers: Mapping[str, Node]
     captures: Mapping[str, _Captured]
 
-    def problems(self, node: Node, text: str, *, own: bool = False) -> Iterator[str]:
+    def problems(
+        self, node: Node, text: str, *, own: bool = False, capture: bool = False
+    ) -> Iterator[str]:
         """What is wrong with the references ``text`` holds, read in ``node``; ``own``: a text
-        that may read the node's own output (``$self``)."""
+        that may read the node's own output (``$self``); ``capture``: a ``capture`` ref."""
         try:
             refs = find_refs(text)
         except SubstitutionError as error:
@@ -263,7 +267,7 @@ class _Graph:
             if isinstance(ref, SelfRef):
                 message = None if own else _SELF_MESSAGE
             elif isinstance(ref, CtxRef):
-                message = self.ctx_problem(node, ref.name)
+                message = _CTX_IN_CAPTURE if capture else self.ctx_problem(node, ref.name)
             else:
                 message = self._ref_problem(node, ref)
             if message is not None:
@@ -584,7 +588,7 @@ def _reference_problems(
         for loc, text in texts:
             where: Loc = (*where_node, *loc)
             own = scenario and loc[0] in _SELF_KEYS
-            messages = graph.problems(node, text, own=own)
+            messages = graph.problems(node, text, own=own, capture=scenario and loc[0] == "capture")
             yield from (WorkflowProblem(where, message) for message in messages)
         for key, argv, offset in lists:
             problems = check_argv([*([""] * offset), *argv])

@@ -540,3 +540,13 @@ def test_keeps_layers_when_action_nodes_beside_readonly_shell() -> None:
     )
 
     assert plan.layers == (("look", "send", "wait"), ("write",))
+
+
+def test_reports_ctx_when_run_context_read_in_capture() -> None:
+    first = expect("a", capture={"order_id": "$self.output.order_id"})
+    second = action("b", "a", capture={"copy": "$CTX.order_id"})
+
+    assert problems_of(first, second) == [
+        ("nodes[1].capture.copy", "a capture reads no $CTX: capture from $self or node outputs")
+    ]
+    assert plan_of(first, action("b", "a", capture={"copy": "$a.output.order_id"})).captures
