@@ -747,3 +747,41 @@ def test_records_rule_when_env_file_denies(
     assert value not in json.dumps(bodies)
     for body in bodies:
         HookEnvelope.model_validate(body)
+
+
+# AGH-354 (AC-350.25): an environment_endpoint ask is recorded with ``rule: environment_endpoint``,
+# and its reason names the environment, never the command.
+def test_records_rule_when_environment_endpoint_asks(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    event_server: Any,
+    sensor_env: dict[str, str],
+) -> None:
+    (hub / "hub.json").write_text(json.dumps(builders.an_environments_document()), encoding="utf-8")
+    event = hook_input("PreToolUse", hub) | {
+        "tool_input": {"command": "curl https://api.example.com/x-hidden-9"}
+    }
+
+    run = run_hook_file(
+        hook_python,
+        hub / HOOKS / "guard.py",
+        stdin=json.dumps(event).encode(),
+        cwd=hub,
+        env=sensor_env | {"HUB_RUN_ENVIRONMENT": "live"},
+    )
+
+    assert (run.returncode, run.stderr) == (0, b"")
+    assert json.loads(run.stdout)["hookSpecificOutput"] == {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": (
+            "[hub guard] environment endpoint: Bash reaches live (read, production)"
+        ),
+    }
+    bodies = event_server.bodies()
+    assert [body["decision"] for body in bodies] == [
+        {"by": "guard", "kind": "ask", "rule": "environment_endpoint"}
+    ]
+    HookEnvelope.model_validate(bodies[0])

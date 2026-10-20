@@ -5679,3 +5679,95 @@ def test_asks_when_event_unreadable_and_env_file_declared(
         "[hub guard] env file: this call not checked against the env files: the tool input could"
         " not be read (not a JSON object); confirm this call",
     )
+
+
+# AGH-354 (P-13, AC-350.25): the environment_endpoint rule. With HUB_RUN_ENVIRONMENT naming an
+# environment of access ``read`` or ``production: true``, a Bash command naming one of its
+# endpoints' hosts or resources, or a WebFetch of a URL on its host, asks, naming the environment
+# and never the command; anything else gets no verdict from it. ``W``: ``live`` is read and
+# production (``api.example.com``), ``staging`` ask, ``local`` write.
+ENDPOINT_REASON = "environment endpoint: {} reaches {}"
+
+
+def endpoint_ask(tool: str, environment: str = "live (read, production)") -> tuple[str, str]:
+    return ("ask", ENDPOINT_REASON.format(tool, environment))
+
+
+def run_in(environment: str) -> dict[str, str]:
+    return {"HUB_RUN_ENVIRONMENT": environment}
+
+
+def test_asks_when_environment_endpoint_named_in_bash_on_production(
+    decide: Decide, blocked_hub: Path
+) -> None:
+    live = [
+        "curl https://api.example.com/x",
+        "curl -s 'API.example.com:443/health'",
+        "ping api.example.com",
+    ]
+    document = builders.an_environments_document()
+    document["environments"]["staging"]["access"] = "read"
+    write_hub_json(blocked_hub, document)
+    staging = ["curl https://api.staging.example.com/h", "echo demo-orders-staging"]
+
+    verdicts = decide(
+        [(bash_call(command), run_in("live")) for command in live]
+        + [(bash_call(command), run_in("staging")) for command in staging]
+    )
+
+    assert verdicts == [endpoint_ask("Bash")] * len(live) + [
+        endpoint_ask("Bash", "staging (read)")
+    ] * len(staging)
+
+
+def test_asks_when_environment_endpoint_url_fetched(decide: Decide) -> None:
+    urls = ["https://api.example.com/x", "HTTPS://API.EXAMPLE.COM", "http://api.example.com:8080/a"]
+
+    verdicts = decide(
+        [(tool_call("WebFetch", url=url, prompt="x"), run_in("live")) for url in urls]
+    )
+
+    assert verdicts == [endpoint_ask("WebFetch")] * len(urls)
+
+
+def test_names_environment_not_command_when_environment_endpoint_asks(decide: Decide) -> None:
+    command = "curl https://api.example.com/x-hidden-path-9 -H 'X-Demo: v-7'"
+
+    verdicts = decide([(bash_call(command), run_in("live"))])
+
+    assert verdicts == [endpoint_ask("Bash")]
+    verdict = verdicts[0]
+    assert verdict is not None
+    for text in ("curl", "x-hidden", "api.example.com", "v-7"):
+        assert text not in verdict[1]
+
+
+def test_passes_when_environment_endpoint_without_run_environment(decide: Decide) -> None:
+    sessions: list[dict[str, str] | None] = [None, {}, run_in(""), run_in("nowhere")]
+    events = [
+        bash_call("curl https://api.example.com/x"),
+        tool_call("WebFetch", url="https://api.example.com/x", prompt="x"),
+    ]
+
+    verdicts = decide([(event, environ) for environ in sessions for event in events])
+
+    assert verdicts == [None] * len(sessions) * len(events)
+
+
+def test_passes_when_environment_endpoint_access_write(decide: Decide) -> None:
+    calls = [
+        (bash_call("curl http://localhost:8000/x"), run_in("local")),
+        (tool_call("WebFetch", url="http://localhost:8000/x", prompt="x"), run_in("local")),
+        # staging asks for writes but is neither read nor production
+        (bash_call("curl https://api.staging.example.com/h"), run_in("staging")),
+        (bash_call("echo demo-orders-staging"), run_in("staging")),
+        # another environment's endpoint, and hosts that only hold the endpoint's
+        (bash_call("curl https://api.staging.example.com/h"), run_in("live")),
+        (bash_call("curl https://xapi.example.com/x"), run_in("live")),
+        (bash_call("curl https://api.example.com.demo.net/x"), run_in("live")),
+        (tool_call("WebFetch", url="https://api.example.com.demo.net", prompt="x"), run_in("live")),
+    ]
+
+    verdicts = decide(calls)
+
+    assert verdicts == [None] * len(calls)

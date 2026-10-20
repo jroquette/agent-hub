@@ -36,6 +36,10 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/,
         a mutating hub env (add, set, remove, service add|remove; list and show pass),
+        with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
+        node of a workflow that declares it), a Bash command naming one of its endpoints' hosts or
+        resources, or a WebFetch of a URL on one of its hosts (environment_endpoint, after the env-file
+        rule; best effort: a command that hides a host passes; the reason names the environment only),
         and any Bash or file-tool call while blocked words cannot be checked: a command or a listed file over
         1 MiB, over 64 listed files or 4 MiB of them in one call, a listed file that is not regular, the
         rule's 300 ms spent, a blocked list of any layer unusable, or a hub.local.json that exists but is
@@ -1835,6 +1839,47 @@ def check_env_file(tool: str, ti: dict, cfg: Config, *, cwd: str | None = None) 
     return ("deny", ENV_FILE_REASON.format(tool, environment)) if environment else None
 
 
+# Environment endpoints (P-13): an agent node of a workflow that declares an environment runs with
+# HUB_RUN_ENVIRONMENT; when that environment is read-only or production, naming one of its
+# endpoints asks. It only tightens, and is best effort (docs/design/scenarios.md § Known limits).
+RUN_ENVIRONMENT = "HUB_RUN_ENVIRONMENT"
+ENDPOINT_REASON = "environment endpoint: {} reaches {} ({})"
+ENDPOINT_UNCHECKED_REASON = "environment endpoint: {} not checked against {}: {}; confirm this call"
+# A host as a whole name (not inside a longer one, nor followed by another label); a resource as a
+# whole word.
+ENDPOINT_HOST = r"(?<![\w.-]){}(?![\w-]|\.[\w-])"
+ENDPOINT_RESOURCE = r"(?<![A-Za-z0-9_.-]){}(?![A-Za-z0-9_-])"
+
+
+def check_environment_endpoint(tool: str, ti: dict, cfg: Config, environ: dict | None) -> Verdict:
+    """The environment_endpoint rule: an ask when a Bash command names, or a WebFetch URL's host
+    is, an endpoint of the run's environment while it is read-only or production; else None."""
+    if tool not in ("Bash", "WebFetch"):
+        return None
+    name = _str((environ or {}).get(RUN_ENVIRONMENT))
+    environment = next((e for e in cfg.environments if name and e.name == name), None)
+    if environment is None or not (environment.access == "read" or environment.production):
+        return None
+    endpoints = [e for e in cfg.endpoints if e.environment == environment.name]
+    if not endpoints:
+        return None
+    shown = environment.access + (", production" if environment.production else "")
+    reached = ("ask", ENDPOINT_REASON.format(tool, environment.name, shown))
+    if tool == "WebFetch":
+        try:
+            host = (urlsplit(_str(ti.get("url"))).hostname or "").lower()
+        except ValueError:  # a malformed URL (a bad port, an unclosed bracket)
+            host = ""
+        return reached if host and any(e.host == host for e in endpoints) else None
+    cmd = _str(ti.get("command"))
+    if len(cmd) > BLOCKED_TEXT_CAP:
+        return "ask", ENDPOINT_UNCHECKED_REASON.format(tool, environment.name, BLOCKED_TOO_LARGE)
+    patterns = [re.compile(ENDPOINT_HOST.format(re.escape(e.host)), re.I) for e in endpoints if e.host]
+    patterns += [re.compile(ENDPOINT_RESOURCE.format(re.escape(e.resource))) for e in endpoints if e.resource]
+    views = _command_views(cmd)
+    return reached if any(p.search(view) for p in patterns for view in views) else None
+
+
 FILE_TOOLS = ("Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch")
 EXTENSION_TIMEOUT = 3  # seconds, inside the guard's own 10 s hook timeout (spec Q-5)
 RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_guard_runner.py")
@@ -1861,7 +1906,7 @@ def decide(data: dict, cfg: Config, environ: dict | None = None) -> Verdict:
     env_file = check_env_file(tool, ti, cfg, cwd=cwd)
     if env_file and env_file[0] == "deny":
         return env_file
-    blocked = tighten(blocked, env_file)
+    blocked = tighten(tighten(blocked, env_file), check_environment_endpoint(tool, ti, cfg, environ))
     if tool == "Bash":
         return tighten(blocked, check_bash(_str(ti.get("command")), cfg))
     return tighten(blocked, check_file(tool, ti, cfg))
@@ -2009,6 +2054,7 @@ RULE_IDS = (
     # before the unanchored patterns below, which a path in a blocked-word reason could hold
     ("blocked_word", re.compile(r"^blocked words? ")),
     ("env_file", re.compile(r"^env file: ")),
+    ("environment_endpoint", re.compile(r"^environment endpoint: ")),
     ("deny_hosts", re.compile(r" is in guard\.deny_hosts \(hub\.json\)")),
     ("deny_paths", re.compile(r" is under guard\.deny_paths `")),
     ("guard_files", re.compile(r" is the hub's own guard or config \(")),
