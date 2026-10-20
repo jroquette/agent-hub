@@ -311,11 +311,8 @@ def _notes(entries: Iterable[os.DirEntry[str]], counted: list[int], prefix: str)
         if note.startswith(".") or not note.startswith(prefix) or not note.endswith(NOTE_SUFFIX):
             continue
         counted[0] += 1
-        try:
-            note.encode()
-        except UnicodeEncodeError:
-            continue
-        yield note
+        if _is_utf8(note):
+            yield note
 
 
 def _record_head(folder: int, name: str, *, size: int, meter: _Meter) -> RecordHead:
