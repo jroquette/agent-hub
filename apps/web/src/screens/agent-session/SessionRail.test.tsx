@@ -43,7 +43,8 @@ describe("railGroups", () => {
   });
 
   it("names a session by its title, else its last prompt on one line", () => {
-    expect(railName(sessions[3]!)).toBe("write the plan");
+    const untitled = anAgentSession({ title: null, last_prompt: "  write\nthe plan " });
+    expect(railName(untitled)).toBe("write the plan");
   });
 });
 
