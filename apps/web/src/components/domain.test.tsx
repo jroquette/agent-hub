@@ -472,13 +472,13 @@ describe("GoldenPathStepper", () => {
           aGoldenStep({
             name: "acceptance",
             state: "current",
-            meta: "Waiting on you: 2 owner steps",
+            meta: "Waiting on you: sign off 2 ACs",
           }),
         ]}
       />,
     );
 
-    expect(screen.getByText("Waiting on you: 2 owner steps")).toBeInTheDocument();
+    expect(screen.getByText("Waiting on you: sign off 2 ACs")).toBeInTheDocument();
   });
 
   it("labels the eight feature steps (AC-1.1)", () => {
@@ -523,7 +523,7 @@ describe("GoldenPathStepper", () => {
     const waiting = aGoldenStep({
       name: "acceptance",
       state: "current",
-      meta: "Waiting on you: 2 owner steps",
+      meta: "Waiting on you: sign off 2 ACs",
       reason: "2 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)",
     });
 
@@ -533,7 +533,7 @@ describe("GoldenPathStepper", () => {
         aGoldenStep({ name: "acceptance", state: "done", meta: "Owner steps signed off" }),
       ]),
     ).toBeNull();
-    expect(ownerWaitStep([aGoldenStep({ meta: "Waiting on you: 2 owner steps" })])).toBeNull();
+    expect(ownerWaitStep([aGoldenStep({ meta: "Waiting on you: sign off 2 ACs" })])).toBeNull();
     // No AC to sign off: the step waits, but there is nothing for the sign-off to write.
     expect(
       ownerWaitStep([

@@ -100,7 +100,7 @@ describe("GoldenPathBar", () => {
         aGoldenStep({
           name: "acceptance",
           state: "current",
-          meta: "Waiting on you: 2 owner steps",
+          meta: "Waiting on you: sign off 2 ACs",
         }),
       ],
     });

@@ -44,7 +44,7 @@ const detail = aFeatureDetail({
       aGoldenStep({
         name: "acceptance",
         state: "current",
-        meta: "Waiting on you: 1 owner step",
+        meta: "Waiting on you: sign off 1 AC",
         reason: "1 AC waits on owner steps (SHIP-WITH-OWNER-STEPS)",
         progress: null,
       }),

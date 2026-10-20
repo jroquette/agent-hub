@@ -185,7 +185,7 @@ def test_signs_off_counted_owner_steps_when_ticket_ship_follows_whole_feature_ev
 
     written = sign_off("demo", SLUG)
 
-    assert waiting.meta == "Waiting on you: 3 owner steps"
+    assert waiting.meta == "Waiting on you: sign off 3 ACs"
     assert written.acs == ("AC-7.1", "AC-7.2", "AC-7.3")
     assert "the owner steps listed in feature are done" in writer.written["owner-signoff.md"]
     after = acceptance_of(signed(folder, writer))
@@ -201,7 +201,7 @@ def test_signs_off_every_ac_when_legacy_eval_without_scope_ships_with_owner_step
 
     written = sign_off("demo", SLUG)
 
-    assert waiting.meta == "Waiting on you: 3 owner steps"
+    assert waiting.meta == "Waiting on you: sign off 3 ACs"
     assert written.acs == ("AC-7.1", "AC-7.2", "AC-7.3")
     assert acceptance_of(signed(folder, writer)).state == "done"
 
@@ -229,3 +229,51 @@ def test_raises_not_found_when_feature_unknown() -> None:
 
 def test_names_rerun_when_signoff_exists() -> None:
     assert signoff_name(("owner-signoff", "abc-1")) == "owner-signoff-r2"
+
+
+# two-level-flows A9 (AGH-325 R2-Q1): a sign-off that would not rank newer than the acceptance
+# eval would never turn Acceptance done, so it is refused and nothing is written.
+@pytest.mark.parametrize(
+    "dated",
+    ["", "evaluated_at: 2026-10-18\n"],
+    ids=["undated", "future-dated"],
+)
+def test_refuses_when_signoff_would_not_be_newer_than_acceptance_eval(dated: str) -> None:
+    head = f"---\ntype: eval\nverdict: SHIP-WITH-OWNER-STEPS\nacs: all\n{dated}---\n"
+    whole = RecordHead(name="feature.md", head=head.encode(), problem=None)
+    sign_off, writer = a_sign_off(whole)
+
+    with pytest.raises(OwnerSignOffError, match="would not be newer than feature"):
+        sign_off("demo", SLUG)
+    assert writer.written == {}
+
+
+# two-level-flows A9 (AGH-325 R2-m2): an AC whose latest eval is NO-SHIP is not signed off over.
+def test_refuses_naming_acs_when_their_latest_eval_is_no_ship() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    reopened = a_head("acme-1521", "NO-SHIP", scope="acs: [AC-7.2, AC-7.3]", at="2026-10-11")
+    sign_off, writer = a_sign_off_of(a_planned_folder(whole, reopened))
+
+    with pytest.raises(OwnerSignOffError) as refused:
+        sign_off("demo", SLUG)
+
+    assert refused.value.reason == (
+        "the latest eval of AC-7.2, AC-7.3 is NO-SHIP; fix or re-evaluate them first"
+    )
+    assert writer.written == {}
+
+
+# two-level-flows A9 (AGH-325 R2-m3): more evals than were read is no ground to sign off.
+def test_refuses_when_folder_holds_more_evals_than_were_read() -> None:
+    folder = FeatureFolder(
+        slug=SLUG,
+        files=("features.json",),
+        features_json=RECORD,
+        evals=(an_eval("abc-1.md", "SHIP-WITH-OWNER-STEPS"),),
+        evals_skipped=1,
+    )
+    sign_off, writer = a_sign_off_of(folder)
+
+    with pytest.raises(OwnerSignOffError, match="not all were read"):
+        sign_off("demo", SLUG)
+    assert writer.written == {}
