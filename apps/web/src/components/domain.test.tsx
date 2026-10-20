@@ -544,6 +544,16 @@ describe("GoldenPathStepper", () => {
         }),
       ]),
     ).toBeNull();
+    // Reopened ACs need a new evaluation (A11): no sign-off that the API would refuse.
+    expect(
+      ownerWaitStep([
+        aGoldenStep({
+          name: "acceptance",
+          state: "current",
+          meta: "3 ACs reopened · evaluate again",
+        }),
+      ]),
+    ).toBeNull();
   });
 
   it("never shows a step done after a gate that is not done (golden)", () => {
