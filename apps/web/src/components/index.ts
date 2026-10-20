@@ -1,4 +1,5 @@
 /* The design system port: one import for screens (`import { Button } from "../../components"`). */
+export * from "./AttachmentList";
 export * from "./charts";
 export * from "./CollectorPill";
 export * from "./core";
@@ -11,5 +12,6 @@ export * from "./Markdown";
 export * from "./OptionRow";
 export * from "./ScreenshotLightbox";
 export * from "./SessionLabel";
+export * from "./SidePanel";
 export * from "./status";
 export * from "./trace";

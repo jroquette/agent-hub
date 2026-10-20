@@ -1,17 +1,9 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
-import { Button, Icon, ScreenshotThumb } from "../../components";
+import { AttachmentList, Button, Icon, useMessageAttachments } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
-import {
-  fileSize,
-  MAX_MESSAGE_FILES,
-  MessageFileError,
-  otherFiles,
-  readMessageFile,
-  type MessageFile,
-} from "../../lib/messageFile";
-import { imageFiles, imageToPng, MAX_MESSAGE_IMAGES } from "../../lib/pastedImage";
+import type { MessageFile } from "../../lib/messageFile";
 import { servedCheckout } from "../../lib/devCheckout";
 import { useSlashMenu, type SlashOption } from "./SlashMenu";
 import { useDraft } from "./useDraft";
@@ -78,16 +70,6 @@ export interface ComposerProps {
   acceptsFiles?: boolean | undefined;
 }
 
-interface PastedImage {
-  key: number;
-  url: string;
-}
-
-interface AttachedFile {
-  key: number;
-  file: MessageFile;
-}
-
 const bytesOf = (text: string) => new TextEncoder().encode(text).length;
 
 function problemText(error: unknown, what: string): string {
@@ -122,11 +104,7 @@ export function Composer({
   acceptsFiles = false,
 }: ComposerProps) {
   const { text, setText, accepted } = useDraft(draftId);
-  const [images, setImages] = useState<PastedImage[]>([]);
-  const [files, setFiles] = useState<AttachedFile[]>([]);
-  const [reading, setReading] = useState(0);
   const [dragging, setDragging] = useState(false);
-  const imageKeys = useRef(0);
   const filePicker = useRef<HTMLInputElement | null>(null);
   const [sending, setSending] = useState(false);
   // Shown, not only guarded: a POST that never settles leaves a visibly pending Stop.
@@ -150,9 +128,15 @@ export function Composer({
       : (disabledReason ?? null);
   const size = bytesOf(text);
   const tooLong = size > maxBytes;
+  const attachments = useMessageAttachments({
+    acceptsImages,
+    acceptsFiles,
+    disabled: reason !== null,
+    onError: setError,
+  });
+  const { images, files, reading } = attachments;
   const canSend = reason === null && !sending && !tooLong && reading === 0 && text.trim() !== "";
-  const attached = images.length + files.length;
-  const needsText = attached > 0 && text.trim() === "";
+  const needsText = attachments.count > 0 && text.trim() === "";
   const attaches = acceptsImages || acceptsFiles;
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
@@ -232,70 +216,6 @@ export function Composer({
     });
   };
 
-  // Each image is read and turned into a PNG under the size limit; past the limit, it is refused.
-  const addImages = (files: readonly File[]) => {
-    if (!acceptsImages || reason !== null || files.length === 0) return;
-    const room = MAX_MESSAGE_IMAGES - images.length - reading;
-    const taken = files.slice(0, Math.max(0, room));
-    setError(
-      taken.length < files.length
-        ? `A message takes up to ${String(MAX_MESSAGE_IMAGES)} images.`
-        : null,
-    );
-    for (const file of taken) {
-      setReading((count) => count + 1);
-      imageToPng(file)
-        .then((url) => {
-          imageKeys.current += 1;
-          const key = imageKeys.current;
-          setImages((before) => [...before, { key, url }]);
-        })
-        .catch(() => {
-          setError("Could not read that image. Try another one.");
-        })
-        .finally(() => {
-          setReading((count) => count - 1);
-        });
-    }
-  };
-
-  // Each file is read and checked (a PDF, or UTF-8 text, of at most 5 MB); a refused one says why.
-  const addFiles = (picked: readonly File[]) => {
-    if (!acceptsFiles || reason !== null || picked.length === 0) return;
-    const room = MAX_MESSAGE_FILES - files.length;
-    const taken = picked.slice(0, Math.max(0, room));
-    setError(
-      taken.length < picked.length
-        ? `A message takes up to ${String(MAX_MESSAGE_FILES)} files.`
-        : null,
-    );
-    for (const one of taken) {
-      setReading((count) => count + 1);
-      readMessageFile(one)
-        .then((file) => {
-          imageKeys.current += 1;
-          const key = imageKeys.current;
-          setFiles((before) => [...before, { key, file }]);
-        })
-        .catch((cause: unknown) => {
-          setError(
-            cause instanceof MessageFileError
-              ? cause.message
-              : "Could not read that file. Try again.",
-          );
-        })
-        .finally(() => {
-          setReading((count) => count - 1);
-        });
-    }
-  };
-
-  // What a paste, a drop or the picker brought: images go as images, the rest as files.
-  const addAttachments = (source: { files: ArrayLike<File> | null } | null) => {
-    addImages(acceptsImages ? imageFiles(source) : []);
-    addFiles(acceptsFiles ? otherFiles(source) : []);
-  };
-
   const send = () => {
     if (!canSend || busy.current) return;
     onSending?.();
@@ -318,8 +238,7 @@ export function Composer({
         () => {
           accepted(message);
           // Images and files added while it was sending stay for the next message.
-          setImages((now) => now.filter((image) => !sent.includes(image)));
-          setFiles((now) => now.filter((attachedFile) => !sentFiles.includes(attachedFile)));
+          attachments.removeSent(sent, sentFiles);
         },
         (cause: unknown) => {
           setError(problemText(cause, "send the message"));
@@ -354,67 +273,24 @@ export function Composer({
         if (!attaches) return;
         event.preventDefault();
         setDragging(false);
-        addAttachments(event.dataTransfer);
+        attachments.add(event.dataTransfer);
         focusBox();
       }}
     >
-      {(attached > 0 || reading > 0) && (
-        <ul className="as-composer-images" aria-label="Attached to this message">
-          {files.map(({ key, file }) => (
-            <li key={key} className="as-composer-file">
-              <Icon name="file-text" size="sm" />
-              <span className="as-composer-file-name" title={file.name}>
-                {file.name}
-              </span>
-              <span className="ah-small ah-muted">{fileSize(file.bytes)}</span>
-              <button
-                type="button"
-                className="as-composer-image-remove"
-                aria-label={`Remove ${file.name}`}
-                title="Remove"
-                onClick={() => {
-                  setFiles((before) => before.filter((attachedFile) => attachedFile.key !== key));
-                  focusBox();
-                }}
-              >
-                <Icon name="x" size="sm" />
-              </button>
-            </li>
-          ))}
-          {images.map((image, index) => (
-            <li key={image.key} className="as-composer-image">
-              <ScreenshotThumb
-                className="as-composer-thumb"
-                src={image.url}
-                alt={`Image ${String(index + 1)}`}
-                onSave={(url) => {
-                  setImages((before) =>
-                    before.map((one) => (one.key === image.key ? { ...one, url } : one)),
-                  );
-                }}
-              />
-              <button
-                type="button"
-                className="as-composer-image-remove"
-                aria-label={`Remove image ${String(index + 1)}`}
-                title="Remove"
-                onClick={() => {
-                  setImages((before) => before.filter((one) => one.key !== image.key));
-                  focusBox();
-                }}
-              >
-                <Icon name="x" size="sm" />
-              </button>
-            </li>
-          ))}
-          {reading > 0 && (
-            <li className="as-composer-image as-composer-image-reading" aria-live="polite">
-              <Icon name="loader" size="sm" className="as-spin" />
-              <span className="ah-sr">Reading…</span>
-            </li>
-          )}
-        </ul>
-      )}
+      <AttachmentList
+        images={images}
+        files={files}
+        reading={reading}
+        onRemoveImage={(key) => {
+          attachments.removeImage(key);
+          focusBox();
+        }}
+        onRemoveFile={(key) => {
+          attachments.removeFile(key);
+          focusBox();
+        }}
+        onReplaceImage={attachments.replaceImage}
+      />
       {slash.menu}
       {/* A textbox's activedescendant is not announced everywhere: the menu says what it holds. */}
       <span className="ah-sr" aria-live="polite" aria-atomic="true">
@@ -451,14 +327,10 @@ export function Composer({
           setCaret(event.currentTarget.selectionStart);
         }}
         onPaste={(event) => {
-          const pasted = [
-            ...(acceptsImages ? imageFiles(event.clipboardData) : []),
-            ...(acceptsFiles ? otherFiles(event.clipboardData) : []),
-          ];
-          if (pasted.length === 0) return;
+          if (!attachments.takes(event.clipboardData)) return;
           // A copied file may also carry its name as text: only the file is pasted.
           event.preventDefault();
-          addAttachments(event.clipboardData);
+          attachments.add(event.clipboardData);
         }}
         onCompositionStart={() => {
           composing.current = true;
@@ -549,7 +421,7 @@ export function Composer({
                 hidden
                 tabIndex={-1}
                 onChange={(event) => {
-                  addAttachments(event.target);
+                  attachments.add(event.target);
                   event.target.value = "";
                   focusBox();
                 }}
@@ -559,12 +431,7 @@ export function Composer({
                 variant="ghost"
                 icon="plus"
                 className="as-composer-attach"
-                disabled={
-                  reason !== null ||
-                  (acceptsFiles
-                    ? images.length >= MAX_MESSAGE_IMAGES && files.length >= MAX_MESSAGE_FILES
-                    : images.length + reading >= MAX_MESSAGE_IMAGES)
-                }
+                disabled={reason !== null || attachments.full}
                 aria-label={acceptsFiles ? "Attach a file" : "Add an image"}
                 title={
                   acceptsFiles
