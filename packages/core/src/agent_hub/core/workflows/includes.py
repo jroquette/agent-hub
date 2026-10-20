@@ -85,7 +85,8 @@ class Expansion:
 
 def expand_includes(document: WorkflowDocument, resolve: IncludeResolver | None) -> Expansion:
     """``document`` with every ``include`` replaced; raises ``WorkflowLoadError``."""
-    return _expand(document, _Resolver(resolve), (document.name,))
+    scenario = document.kind == "scenario"
+    return _expand(document, _Resolver(resolve, scenario=scenario), (document.name,))
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,8 @@ class _Resolver:
 
     resolve: IncludeResolver | None
     cache: dict[tuple[str, int], _Block | RewriteError] = field(default_factory=dict)
+    # The root's kind: a scenario's texts read in the scenario grammar, its includes' too.
+    scenario: bool = False
 
 
 def _expand(document: WorkflowDocument, resolver: _Resolver, stack: tuple[str, ...]) -> Expansion:
@@ -114,7 +117,7 @@ def _expand(document: WorkflowDocument, resolver: _Resolver, stack: tuple[str, .
         return Expansion(document, tuple((index, False) for index in range(len(nodes))))
     if problems := list(_repeated_ids(nodes)):
         raise WorkflowLoadError(problems)
-    parent = _Parent(_blocks(nodes, resolver, stack))
+    parent = _Parent(_blocks(nodes, resolver, stack), scenario=resolver.scenario)
     expanded: list[Node] = []
     origins: list[tuple[int, bool]] = []
     # Every node the expanded document holds, a loop group's body included.
@@ -227,8 +230,8 @@ def _block(name: str, resolver: _Resolver, stack: tuple[str, ...]) -> _Block:
 class _Parent(Rewrite):
     """The parent's references to its includes: every sink of one, or its primary sink."""
 
-    def __init__(self, blocks: Mapping[str, _Block]) -> None:
-        self.blocks = blocks
+    def __init__(self, blocks: Mapping[str, _Block], *, scenario: bool = False) -> None:
+        self.blocks, self.scenario = blocks, scenario
         # The scopes of the block nodes placed so far, by expanded id.
         self.scopes: dict[str, RefScope] = {}
 
@@ -282,6 +285,7 @@ class _Inside(Rewrite):
 
     def __init__(self, include: IncludeNode, block: _Block, parent: _Parent) -> None:
         self.include, self.block, self.parent = include, block, parent
+        self.scenario = parent.scenario
         self.prefix = f"{include.id}{SEPARATOR}"
         self.own = {node.id for node in block.document.nodes}
         self.values = _input_texts(include, block, parent)
@@ -292,7 +296,7 @@ class _Inside(Rewrite):
         nodes: list[Node] = []
         for node in self.block.document.nodes:
             copied = map_node(node, self)
-            _check_when(node.when, copied.when, self.prefix + node.id)
+            _check_when(node.when, copied.when, self.prefix + node.id, scenario=self.scenario)
             update: dict[str, object] = {"id": self.prefix + node.id}
             if not node.depends_on:
                 update |= self._root_keys(node, when, copied.when)
@@ -303,7 +307,7 @@ class _Inside(Rewrite):
         """The include's graph keys on a root of the block."""
         keys: dict[str, object] = {
             "depends_on": self.parent.ids(self.include.depends_on),
-            "when": _joined(when, own),
+            "when": _joined(when, own, scenario=self.scenario),
         }
         explicit = "trigger_rule" in self.include.model_fields_set
         if explicit and "trigger_rule" not in node.model_fields_set:
@@ -380,29 +384,29 @@ def _check_with_refs(loc: Loc, value: str) -> None:
         raise RewriteError(loc, "an include's 'with' reads only $INPUTS and node outputs")
 
 
-def _check_when(before: str | None, after: str | None, node_id: str) -> None:
-    if before is None or after is None or before == after or not _parses(before):
+def _check_when(before: str | None, after: str | None, node_id: str, *, scenario: bool) -> None:
+    if before is None or after is None or before == after or not _parses(before, scenario):
         return
     try:
-        parse_condition(after)
+        parse_condition(after, scenario=scenario)
     except ConditionParseError as error:
         message = f'{echo(node_id)}: when: no longer parses once "with" is filled in: {error}'
         raise RewriteError(("include",), message) from None
 
 
-def _parses(expr: str) -> bool:
+def _parses(expr: str, scenario: bool) -> bool:  # noqa: FBT001 - the grammar, always passed
     try:
-        parse_condition(expr)
+        parse_condition(expr, scenario=scenario)
     except ConditionParseError:
         return False
     return True
 
 
-def _joined(include_when: str | None, own: str | None) -> str | None:
+def _joined(include_when: str | None, own: str | None, *, scenario: bool) -> str | None:
     if include_when is None or own is None:
         return include_when or own
     for expr in (include_when, own):
-        if _parses(expr) and len(parse_condition(expr).clauses) > 1:
+        if _parses(expr, scenario) and len(parse_condition(expr, scenario=scenario).clauses) > 1:
             message = (
                 "cannot join a 'when:' holding '||' with a root's own: there are no parentheses"
             )

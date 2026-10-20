@@ -54,10 +54,15 @@ class RewriteError(Exception):
 class Rewrite(ABC):
     """How one node's ids and references are rewritten as it is copied."""
 
-    def text(self, loc: Loc, text: str, *, scenario: bool = False) -> str:
-        """``text`` rewritten; ``scenario``: read in the scenario grammar (``$CTX``, ``$self``)."""
+    # Whether the document's texts read in the scenario grammar (``$CTX``, ``$self``).
+    scenario: bool = False
+
+    def text(self, loc: Loc, text: str, *, scenario: bool | None = None) -> str:
+        """``text`` rewritten, in the scenario grammar when ``scenario`` (default: this
+        rewrite's ``scenario``) says so."""
+        grammar = self.scenario if scenario is None else scenario
         return rewritten(
-            loc, text, lambda ref, spelling: self.reference(loc, ref, spelling), scenario=scenario
+            loc, text, lambda ref, spelling: self.reference(loc, ref, spelling), scenario=grammar
         )
 
     @abstractmethod
@@ -75,6 +80,7 @@ class Local(Rewrite):
 
     def __init__(self, outer: Rewrite, local: frozenset[str]) -> None:
         self.outer, self.local = outer, local
+        self.scenario = outer.scenario
 
     def reference(self, loc: Loc, ref: Ref, spelling: str) -> str:
         if isinstance(ref, NodeRef | LoopPrevRef) and ref.node in self.local:
