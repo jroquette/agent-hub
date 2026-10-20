@@ -7,13 +7,16 @@ from pydantic import Field
 from agent_hub.core.readmodels.view_types import DerivedView, ViewModel
 
 type FeaturePhase = Literal[
-    "spec", "research", "plan", "tickets", "implement", "review", "evaluate", "shipped"
+    "spec", "ux_design", "research", "plan", "tickets", "build", "acceptance", "shipped"
 ]
 type Verdict = Literal["SHIP", "SHIP-WITH-OWNER-STEPS", "NO-SHIP"]
 # A golden-path step's state (AGH-136 S8): ``partial`` is a later step with some progress,
 # ``blocked`` a step whose own condition holds while an earlier gate does not, ``unknown`` a
-# step whose evidence cannot be read (``reason`` says why).
-type StepState = Literal["done", "partial", "current", "pending", "skipped", "unknown", "blocked"]
+# step whose evidence cannot be read (``reason`` says why), ``unrecorded`` the gate step whose
+# record was never written (Acceptance with no whole-feature eval, two-level-flows AC-1.6).
+type StepState = Literal[
+    "done", "partial", "current", "pending", "skipped", "unknown", "blocked", "unrecorded"
+]
 # Where a feature's ticket data came from: Linear (a snapshot) or the plan (``features.json``).
 type TicketsSource = Literal["linear", "plan"]
 

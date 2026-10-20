@@ -10,6 +10,8 @@ from agent_hub.core.features.feature_reviews import REVIEW_HEAD_BYTES
 from agent_hub.core.features.feature_status import (
     HEAD_BYTES,
     MAX_PLAN_BYTES,
+    MAX_UX_FILES,
+    UX_HEAD_BYTES,
     FeatureFolder,
     RecordHead,
 )
@@ -173,7 +175,7 @@ def test_reads_eval_heads_when_evals_folder_present_evals(tmp_path: Path) -> Non
         RecordHead(name="acme-1520.md", head=b"x" * EVAL_HEAD_BYTES, problem=None),
         RecordHead(name="acme-1521.md", head=b"---\nverdict: NO-SHIP\n---\n", problem=None),
     )
-    assert (read.evals_skipped, read.reviews, read.reviews_skipped) == (0, (), 0)
+    assert (read.evals_skipped, read.reviews) == (0, ())
     assert read.files == ()
 
 
@@ -232,7 +234,7 @@ def test_reads_nothing_when_evals_folder_is_link(tmp_path: Path) -> None:
 
     [read] = read_feature_folders(tmp_path)
 
-    assert (read.evals, read.evals_skipped, read.reviews, read.reviews_skipped) == ((), 0, (), 0)
+    assert (read.evals, read.evals_skipped, read.reviews) == ((), 0, ())
 
 
 def test_reads_review_heads_when_reviews_present_reviews(
@@ -251,7 +253,6 @@ def test_reads_review_heads_when_reviews_present_reviews(
         RecordHead(name="acme-1520.md", head=b"y" * REVIEW_HEAD_BYTES, problem=None),
         RecordHead(name="acme-1521.md", head=b"---\noutcome: approved\n---\n", problem=None),
     )
-    assert read.reviews_skipped == 1
     assert MAX_REVIEW_FILES == 500
 
 
@@ -356,6 +357,69 @@ def test_reads_no_byte_when_record_file_only_checked_present(
     assert reads.bytes == 0
 
 
+# AGH-325 (two-level-flows AC-1.2): brief.md is a record file, checked present and never read.
+def test_lists_brief_when_only_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    a_feature(features_of(tmp_path), "demo-feature", {"brief.md": b"b" * 100})
+    reads = Reads(monkeypatch)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.files == ("brief.md",)
+    assert reads.bytes == 0
+
+
+# AGH-325 (two-level-flows AC-1.3, P2): the folder's own ux-*.md heads, at most 50, 4 KiB each.
+def test_reads_ux_design_heads_when_designs_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(
+        features_of(tmp_path),
+        "demo-feature",
+        {"ux-b.md": b"---\nstatus: draft\n---\n", "ux-a.md": b"u" * (UX_HEAD_BYTES + 10)},
+    )
+    (folder / "sub").mkdir()
+    (folder / "sub" / "ux-c.md").write_bytes(b"---\nstatus: approved\n---\n")
+    (folder / "ux-notes.txt").write_bytes(b"not a design\n")
+    (folder / ".ux-hidden.md").write_bytes(b"hidden\n")
+    reads = Reads(monkeypatch)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.ux_designs == (
+        RecordHead(name="ux-a.md", head=b"u" * UX_HEAD_BYTES, problem=None),
+        RecordHead(name="ux-b.md", head=b"---\nstatus: draft\n---\n", problem=None),
+    )
+    assert read.ux_skipped == 0
+    assert reads.bytes == UX_HEAD_BYTES + len(b"---\nstatus: draft\n---\n")
+    assert UX_HEAD_BYTES == 4096
+
+
+def test_counts_ux_design_skipped_when_over_cap(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    for index in range(MAX_UX_FILES + 1):
+        (folder / f"ux-{index:02}.md").write_bytes(b"---\n---\n")
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert len(read.ux_designs) == MAX_UX_FILES
+    assert read.ux_designs[-1].name == "ux-49.md"
+    assert read.ux_skipped == 1
+    assert MAX_UX_FILES == 50
+
+
+def test_lists_ux_design_problem_when_linked(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    secret = tmp_path / "secret.md"
+    secret.write_bytes(b"---\nstatus: approved\n---\n")
+    (folder / "ux-linked.md").symlink_to(secret)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.ux_designs == (
+        RecordHead(name="ux-linked.md", head=None, problem="not a regular file"),
+    )
+
+
 # AGH-323 (two-level-flows P1): plan.md is read whole up to MAX_PLAN_BYTES, amendments included.
 def test_reads_plan_whole_when_under_its_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -388,7 +452,6 @@ def test_reads_first_names_only_when_reviews_over_cap(
     [read] = read_feature_folders(tmp_path)
 
     assert [head.name for head in read.reviews] == ["dem-0.md", "dem-1.md"]
-    assert read.reviews_skipped == 4
     assert [name for name in reads.opened if name.startswith("dem-")] == ["dem-0.md", "dem-1.md"]
 
 
@@ -435,4 +498,4 @@ def test_reads_same_folder_when_outputs_added(
     assert legacy is not None
     assert [head.name for head in legacy.evals] == ["dem-1.md", "dem-2.md"]
     assert [head.name for head in legacy.reviews] == ["DEM-1.md"]
-    assert (legacy.evals_skipped, legacy.reviews_skipped) == (1, 1)
+    assert legacy.evals_skipped == 1

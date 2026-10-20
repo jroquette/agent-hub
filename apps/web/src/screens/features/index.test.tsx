@@ -33,21 +33,21 @@ const features = [
       phase: "plan",
       steps: [
         aGoldenStep({ name: "spec", state: "done", meta: null, progress: null }),
+        aGoldenStep({ name: "ux_design", state: "skipped", meta: null, progress: null }),
         aGoldenStep({ name: "research", state: "skipped", meta: null, progress: null }),
         aGoldenStep({ name: "plan", state: "current", meta: "plan.md", progress: null }),
         aGoldenStep({ name: "tickets", state: "pending", meta: null, progress: null }),
-        aGoldenStep({ name: "implement", state: "pending", meta: null, progress: null }),
         aGoldenStep({
-          name: "review",
+          name: "build",
           state: "unknown",
           meta: null,
           reason: "Linear not connected",
           progress: null,
         }),
         aGoldenStep({
-          name: "evaluate",
+          name: "acceptance",
           state: "partial",
-          meta: "partial: covers 2 of 9 ACs",
+          meta: "Ticket evals cover 2 of 9 ACs",
           reason: "Plan is not done",
           progress: { done: 2, total: 9 },
         }),
@@ -58,7 +58,7 @@ const features = [
   aFeature(),
   aFeature({
     slug: "layered-memory",
-    phase: "evaluate",
+    phase: "acceptance",
     files: ["spec.md", "research.md", "plan.md", "issues.md", "features.json", "eval.md"],
     acs: { owner_steps: 1, passing: 20, total: 21 },
     verdict: "SHIP-WITH-OWNER-STEPS",
@@ -111,10 +111,12 @@ const waiting = aFeature({
   verdict: "SHIP-WITH-OWNER-STEPS",
   acs: { owner_steps: 2, passing: 19, total: 21 },
   golden_path: aGoldenPath({
-    phase: "evaluate",
-    steps: [aGoldenStep({ name: "evaluate", state: "partial", meta: "waiting: owner steps" })],
+    phase: "acceptance",
+    steps: [
+      aGoldenStep({ name: "acceptance", state: "current", meta: "Waiting on you: sign off 2 ACs" }),
+    ],
   }),
-  phase: "evaluate",
+  phase: "acceptance",
 });
 
 describe("FeaturesScreen", () => {
@@ -194,16 +196,16 @@ describe("FeaturesScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: /^In progress/ }));
   });
 
-  it("reads the owner step count from Evaluate's reason when the ACs do not carry it (needs)", async () => {
+  it("reads the owner step count from Acceptance's reason when the ACs do not carry it (needs)", async () => {
     const held = aFeature({
       slug: "held-by-reason",
       acs: { owner_steps: 0, passing: 12, total: 12 },
       golden_path: aGoldenPath({
         steps: [
           aGoldenStep({
-            name: "evaluate",
-            state: "partial",
-            meta: "waiting: owner steps",
+            name: "acceptance",
+            state: "current",
+            meta: "Waiting on you: sign off 3 ACs",
             reason: "3 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)",
           }),
         ],
@@ -222,7 +224,7 @@ describe("FeaturesScreen", () => {
         steps: [
           aGoldenStep({
             state: "unknown",
-            meta: "33/33 ACs",
+            meta: "Linear not loaded yet",
             reason: "Ticket status from Linear not loaded yet; open the Tickets tab.",
           }),
         ],
@@ -231,7 +233,7 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([unread]) });
 
     await screen.findByRole("link", { name: "unread" });
-    expect(within(rowOf("unread")).getByText("Implement · step 1 of 1")).toBeInTheDocument();
+    expect(within(rowOf("unread")).getByText("Build · step 1 of 1")).toBeInTheDocument();
     expect(screen.getByRole("note")).toHaveTextContent("not read from Linear on this list");
   });
 
@@ -242,7 +244,7 @@ describe("FeaturesScreen", () => {
     await screen.findByRole("link", { name: "layered-memory" });
     const row = rowOf("layered-memory");
     expect(row).toHaveAccessibleName(
-      /^layered-memory\. .*\. golden path at Evaluate\. ACs 21 of 21\. verdict SHIP-WITH-OWNER-STEPS\. issues AGH-48, AGH-49, AGH-50$/,
+      /^layered-memory\. .*\. golden path at Acceptance\. ACs 21 of 21\. verdict SHIP-WITH-OWNER-STEPS\. issues AGH-48, AGH-49, AGH-50$/,
     );
     await userEvent.keyboard("j");
     expect(rowOf("broken-record")).toHaveFocus();
@@ -309,16 +311,18 @@ describe("FeaturesScreen", () => {
     const row = rowOf("tracker-team-cap");
     const bar = within(row).getByRole("img", { name: /^Golden path: Plan\./ });
     const name = bar.getAttribute("aria-label") ?? "";
-    expect(name).toContain("Review: unknown (Linear not connected)");
-    expect(name).toContain("Evaluate: partial · partial: covers 2 of 9 ACs (Plan is not done)");
+    expect(name).toContain("Build: unknown (Linear not connected)");
+    expect(name).toContain(
+      "Acceptance: partial · Ticket evals cover 2 of 9 ACs (Plan is not done)",
+    );
     expect(name).toContain("Shipped: blocked (Plan is not done)");
     expect(
       [...bar.querySelectorAll("[data-state]")].map((s) => s.getAttribute("data-state")),
     ).toEqual([
       "done",
       "skipped",
+      "skipped",
       "current",
-      "pending",
       "pending",
       "unknown",
       "partial",
@@ -694,16 +698,16 @@ describe("FeaturesScreen (playground delivery)", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: /^Step:/ }));
     expect(facetCount(/^Plan/)).toBe("1");
-    expect(facetCount(/^Evaluate/)).toBe("1");
+    expect(facetCount(/^Acceptance/)).toBe("1");
     expect(facetCount(/^Shipped/)).toBe("0");
 
     await userEvent.type(screen.getByRole("searchbox", { name: "Find features" }), "agh-49");
     await userEvent.click(screen.getByRole("button", { name: /^Step:/ }));
     expect(facetCount(/^Plan/)).toBe("0");
-    expect(facetCount(/^Evaluate/)).toBe("1");
+    expect(facetCount(/^Acceptance/)).toBe("1");
 
-    await userEvent.click(screen.getByRole("checkbox", { name: /^Evaluate/ }));
-    expect(router.state.location.search).toBe("?q=agh-49&phase=evaluate");
+    await userEvent.click(screen.getByRole("checkbox", { name: /^Acceptance/ }));
+    expect(router.state.location.search).toBe("?q=agh-49&phase=acceptance");
     expect(screen.getByRole("link", { name: "layered-memory" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "tracker-team-cap" })).not.toBeInTheDocument();
   });

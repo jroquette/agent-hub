@@ -53,10 +53,16 @@ def sign_off_owner_steps(
     sign_off: OwnerSignOffDep,
     body: OwnerSignOffBody | None = None,
 ) -> EvalRecord:
-    """The owner settles the owner steps: without a body, writes an ``owner-signoff`` SHIP eval
-    over every AC that waited on them (409 when no AC waits, or one is not covered by a SHIP).
-    With ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes
-    a SHIP over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words."""
+    """The owner settles the owner steps. Without a body: writes an ``owner-signoff`` SHIP eval
+    over the ACs the Acceptance step waits on; 409 with a one-line reason, writing nothing, when
+    none waits or the feature lists no AC, when one of them has a NO-SHIP as its latest eval, when
+    the acceptance eval is undated or future-dated, or when not every eval was read. With
+    ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes a SHIP
+    over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words. A ``delivery``
+    naming the acceptance eval covers what the Acceptance step waits on, with the no-body
+    refusals, except that ``more_work`` is not refused over ACs an agent's eval reopened; either
+    decision there is refused once an owner decision newer than the acceptance eval settled it
+    (its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one)."""
     if body is None:
         return sign_off(project, slug)
     return sign_off(project, slug, delivery=body.delivery, decision=body.decision, note=body.note)

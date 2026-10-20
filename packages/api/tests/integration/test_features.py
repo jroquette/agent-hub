@@ -71,17 +71,17 @@ def test_reads_counts_verdict_and_phase_from_files_when_features_listed(
     assert set(views) == {"complete", "no-eval", "malformed"}
     complete, no_eval, malformed = views["complete"], views["no-eval"], views["malformed"]
     assert complete["acs"] == {"passing": 2, "total": 2, "owner_steps": 0}
-    # Its tickets are Linear ids and no Linear is connected: Implement is unknown, so the phase
+    # Its tickets are Linear ids and no Linear is connected: Build is unknown, so the phase
     # stays there.
     assert (complete["verdict"], complete["phase"], complete["problem"]) == (
         "SHIP",
-        "implement",
+        "build",
         None,
     )
     assert no_eval["acs"] == {"passing": 1, "total": 3, "owner_steps": 1}
     assert (no_eval["verdict"], no_eval["phase"], no_eval["problem"]) == (
         None,
-        "implement",
+        "build",
         None,
     )
     assert malformed["acs"] is None
@@ -193,11 +193,11 @@ def test_carries_golden_path_when_list_and_detail_read(open_tickets: Any) -> Non
     steps = [step["name"] for step in warm_item["golden_path"]["steps"]]
     assert steps == [
         "spec",
+        "ux_design",
         "research",
         "plan",
         "tickets",
-        "implement",
-        "review",
-        "evaluate",
+        "build",
+        "acceptance",
         "shipped",
     ]

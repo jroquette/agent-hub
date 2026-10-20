@@ -53,7 +53,18 @@ The feature's **acceptance eval** is the latest whole-feature eval: `acs: all`, 
 frontmatter lists no `acs` or `tickets` (it was the one eval per feature; one that lists ACs counts only with
 `acs: all`). "Latest" is the order of the decisions below, ties going to the conservative verdict. The feature's
 header `verdict` is that eval's verdict, and none before one exists: ticket-scoped evals never set it, even when
-together they cover every AC (two-level-flows AC-1.6, AGH-323).
+together they cover every AC (two-level-flows AC-1.6, AGH-323). The owner's sign-off
+(`evals/owner-signoff[-rN].md`, `provenance: owner`) lists the ACs it signs off, never `all`, so it is never the
+acceptance eval (Amendment A3).
+
+### `brief.md` and `ux-*.md`
+
+`brief.md` (the `/feature` intake brief) is checked present, never read; it has no tab of its own. The folder's own
+`ux-*.md` files (top level only, not in subfolders) are the UX designs: at most 50 are read in name order, each up to
+4 KiB for its frontmatter `status`, never through a link. A design that cannot be read (a link) or has no valid
+frontmatter counts as a draft; more than 50 of them makes the UX design step `unknown`: an unread design could be a
+draft (AGH-325). Only screen designs use the `ux-` prefix at a feature folder's top level: a review or a note must
+not, since every top-level `ux-*.md` counts as a design.
 
 ### `plan.md`
 
@@ -109,21 +120,41 @@ Computed once in core (`agent_hub.core.features.golden_path`) and served as `gol
 detail and the tickets route: `steps` (each `name`, `state`, `meta`, `reason`, `progress {done, total}` or `null`)
 and `phase`, the first step neither `done` nor `skipped` (`shipped` when every step is done).
 
+The steps are the feature's own ([ADR 0043](../adr/0043-two-level-feature-and-ticket-flows.md), AGH-325); each
+ticket's implement, review and eval belong to the ticket, not to the golden path.
+
 | Step | Done when |
 |---|---|
-| Spec, Research, Plan | its file exists (one missing while a later record exists is `skipped`) |
+| Spec | `spec.md` exists; with only `brief.md` it is `current`, "Brief only · spec not written" |
+| UX design | every `ux-*.md` says `status: approved` ("2 designs · 1 draft" otherwise); none while a later record exists is `skipped`, "No screen change recorded" |
+| Research, Plan | its file exists (one missing while a later record exists is `skipped`); Plan's meta is the plan's version ("v3 · 2 amendments") |
 | Tickets | every planned ticket has a tracker id ("15 of 17 created") |
-| Implement | every ticket is Done in Linear and every AC passes ("1/17 tickets · 3/36 ACs") |
-| Review | every ticket is reviewed: Done in Linear (state type `completed`) or an `approved` review record; "In Review" is not |
-| Evaluate | the latest eval naming each AC is a SHIP, none `SHIP-WITH-OWNER-STEPS` waiting ("partial: covers 3 of 36 ACs") |
-| Shipped | every ticket is Done in Linear |
+| Build | every ticket is merged, Done in Linear (state type `completed`) ("1 of 3 merged · 1 in progress"); with no ticket to build (Tickets done by `issues.md` alone, or only epics) it is never done, "No tickets planned" |
+| Acceptance | the acceptance eval is SHIP, or SHIP-WITH-OWNER-STEPS whose owner steps are signed off: each AC it leaves as an owner step has a later SHIP with `provenance: owner` (ticket evals never sign one off) |
+| Shipped | Build and Acceptance are done |
 
-States: the first step that does not hold is `current` (or `unknown` when its evidence cannot be read). After it, a
-step whose own condition holds is `blocked` with a `reason` naming that earlier step; one with evidence for part of
-the feature is `partial`; one that cannot be read is `unknown`; the rest are `pending`. Without a Linear snapshot,
-ticket states are unknown: Implement's ticket count, Shipped, and Review unless every ticket has an approved record,
-are `unknown` with "Linear not connected" (or "Linear not loaded yet" when a key is set but the cache is cold).
-Canceled (and duplicate) tickets and withdrawn ACs are left out of every count.
+States: the first step that does not hold is `current` (or `unknown` when its evidence cannot be read, `unrecorded`,
+"Not recorded", when it is Acceptance with no whole-feature eval: its meta says how many ACs the ticket evals cover,
+"Ticket evals cover 6 of 23 ACs"). After it, a step whose own condition holds is `blocked` with a `reason` naming that
+earlier step; one with evidence for part of the feature (created or merged tickets, ticket evals covering some ACs, a
+design written) is `partial`; one that cannot be read is `unknown`; the rest are `pending`. A SHIP-WITH-OWNER-STEPS
+acceptance eval not signed off reads "Waiting on you: sign off n ACs" ("1 AC" for one). One rule decides which ACs
+wait (`feature_evals.owner_wait`), for the step and the sign-off alike: the acceptance eval is whole-feature, so every
+non-withdrawn AC is an owner step (a legacy `eval.md` without scope too, failing ACs included) until a later SHIP with
+`provenance: owner` names it (ticket evals never do); the sign-off lists exactly those. The sign-off is refused,
+writing nothing, with a one-line reason: when any of those ACs has a NO-SHIP as its latest eval (it names them: fix
+or re-evaluate first), when it would not rank newer than the acceptance eval (one with no `evaluated_at`, or one in
+the future), and when the folder holds more evals than were read. A sign-off that names the acceptance eval as its
+`delivery` (AGH-384's per-eval decision) follows the same rule (A11): "done" and "more work" cover exactly those ACs,
+"more work" is not refused over ACs an agent's eval reopened, and either is refused, writing nothing, once an owner
+decision newer than the acceptance eval settled it (its SHIP signed them off, or its NO-SHIP is still the latest eval
+of one). While waiting ACs have a NO-SHIP as their latest eval, the step reads "n ACs reopened · evaluate again"
+instead of a sign-off prompt. With no AC to list (no `features.json`, or every
+AC withdrawn), the step is not done, "Waiting on owner steps · no ACs listed", until a later owner SHIP of any scope
+exists; the app cannot write that one, so the owner writes it by hand. Without a Linear snapshot, ticket states are
+unknown: Build and Shipped are `unknown` with "Linear not connected" (or "Linear not loaded yet" when a key is set but
+the cache is cold). Canceled (and duplicate) tickets and withdrawn ACs are left out of every count; a ticket with
+children (an epic) counts under Tickets only.
 
 ### Planning
 
@@ -161,8 +192,8 @@ above the flow with its children's progress. Linear titles, assignees and state 
 - For each AC the latest eval naming it decides. Dated evals compare as UTC instants; when a date is missing or
   equal, a re-run (`-rN`, higher N) is newer than what it re-runs and any `evals/` file is newer than `eval.md`.
   Evals with no known order that disagree give the conservative verdict (NO-SHIP, then SHIP-WITH-OWNER-STEPS). An eval naming only `tickets` covers the ACs whose `ticket` is one of them.
-- A legacy `eval.md` without scope covers every AC only when every non-withdrawn AC passes; otherwise Evaluate reads
-  "partial: scope not recorded".
+- A legacy `eval.md` without scope covers every AC only when every non-withdrawn AC passes; it is still the
+  feature's whole-feature eval (Amendment A6), so it decides Acceptance.
 - The planner records `blocked_by` and never calls the tracker; `/feature` step 4 creates the issues, fills each `id`
   and creates the Linear "blocked by" relations.
 - `withdrawn` is a `features.json` key because the app does not read a spec's amendments.

@@ -213,6 +213,10 @@ acceptance criteria rows, the records and every eval, it carries:
 - `verdict` and `verdict_line` (here and in the list) are the acceptance eval's: a legacy `eval.md` keeps its own
   verdict line, an `evals/` record reads "Verdict: <verdict>, from the <delivery> eval". A ticket-scoped eval never
   sets them.
+- `phase` and `golden_path` (here, in the list and on the tickets route): the steps are the feature's own, `spec`,
+  `ux_design`, `research`, `plan`, `tickets`, `build`, `acceptance`, `shipped`, and a step's `state` is one of
+  `done`, `current`, `partial`, `pending`, `skipped`, `blocked`, `unknown` or `unrecorded` (Acceptance with no
+  whole-feature eval). The values `implement`, `review` and `evaluate` are gone (two-level-flows AC-1.1).
 
 ## Feature tickets
 

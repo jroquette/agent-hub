@@ -563,7 +563,7 @@ export function aFeature(overrides: Partial<FeatureView> = {}): FeatureView {
     derived: true,
     files: ["spec.md", "research.md", "plan.md"],
     issues: ["AGH-200"],
-    phase: "implement",
+    phase: "build",
     problem: null,
     project: "agent-hub",
     repos: ["agent-hub"],
@@ -578,27 +578,33 @@ export function aFeature(overrides: Partial<FeatureView> = {}): FeatureView {
   };
 }
 
-/** One golden-path step: Implement, current, with its progress. */
+/** One golden-path step: Build, current, with its progress. */
 export function aGoldenStep(overrides: Partial<GoldenStep> = {}): GoldenStep {
   return {
-    name: "implement",
+    name: "build",
     state: "current",
-    meta: "1/3 tickets · 40/66 ACs",
+    meta: "1 of 3 merged · 1 in progress",
     reason: null,
     progress: { done: 1, total: 3 },
     ...overrides,
   };
 }
 
-/** The golden path of feature `control-plane`: in Implement, 1 of 3 tickets done. */
+/** The golden path of feature `control-plane`: in Build, 1 of 3 tickets merged. */
 export function aGoldenPath(overrides: Partial<GoldenPath> = {}): GoldenPath {
-  const gate = "Implement is not done";
+  const gate = "Build is not done";
   return {
-    phase: "implement",
+    phase: "build",
     steps: [
       aGoldenStep({ name: "spec", state: "done", meta: null, progress: null }),
+      aGoldenStep({
+        name: "ux_design",
+        state: "skipped",
+        meta: "No screen change recorded",
+        progress: null,
+      }),
       aGoldenStep({ name: "research", state: "done", meta: null, progress: null }),
-      aGoldenStep({ name: "plan", state: "done", meta: null, progress: null }),
+      aGoldenStep({ name: "plan", state: "done", meta: "v1", progress: null }),
       aGoldenStep({
         name: "tickets",
         state: "done",
@@ -607,16 +613,9 @@ export function aGoldenPath(overrides: Partial<GoldenPath> = {}): GoldenPath {
       }),
       aGoldenStep(),
       aGoldenStep({
-        name: "review",
-        state: "pending",
-        meta: "1/3 reviewed",
-        reason: gate,
-        progress: { done: 1, total: 3 },
-      }),
-      aGoldenStep({
-        name: "evaluate",
+        name: "acceptance",
         state: "partial",
-        meta: "partial: covers 3 of 66 ACs",
+        meta: "Ticket evals cover 3 of 66 ACs",
         reason: gate,
         progress: { done: 3, total: 66 },
       }),

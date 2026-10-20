@@ -11,6 +11,19 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- `hub web` Features and Feature detail: the golden path shows the feature's own steps, Spec, UX design, Research,
+  Plan, Tickets, Build, Acceptance and Shipped, instead of Implement, Review and Evaluate (AGH-325). A brief alone
+  keeps Spec in progress; UX design is done when every `ux-*.md` is approved; Plan shows the plan's version; Build
+  counts the tickets merged; Acceptance moves only on a whole-feature eval (`acs: all`), reading "Not recorded" with
+  the ACs the ticket evals cover until one exists, so a feature with only ticket evals no longer reads Shipped. A
+  SHIP-WITH-OWNER-STEPS one reads "Waiting on you: sign off N ACs" until the owner signs off, and the sign-off covers
+  exactly the ACs it waits on (a legacy `eval.md` too); it is refused, writing nothing, when one of those ACs has a
+  NO-SHIP as its latest eval (named), when the eval is undated or future-dated, or when not every eval was read. With
+  no AC listed it keeps waiting until the owner writes the sign-off by hand. The API's `phase` values change to
+  match; ADR 0043 records the two levels.
+
 ## [0.18.0] - 2026-10-20
 
 ### Fixed

@@ -4,15 +4,25 @@ A SHIP-WITH-OWNER-STEPS eval waits on steps only the owner can do. Once they are
 signs off from the app: a new eval ``brain/features/<slug>/evals/owner-signoff.md`` (a re-run is
 ``owner-signoff-r2``, ``-r3``...) with ``verdict: SHIP``, ``provenance: owner`` and the AC ids
 that waited on owner steps as its scope. Being dated now, it is the latest eval of those ACs, so
-the Evaluate step turns done (``feature_evals``' order). A sign-off is refused while any AC is
-not covered by a SHIP (an agent must evaluate it first) or when no AC waits on owner steps.
+the Acceptance step turns done (two-level-flows A3; ``feature_evals``' order). It is never a
+whole-feature eval, so it never sets the header verdict. The ACs it lists are exactly those the
+Acceptance step waits on (``feature_evals.owner_wait``, the rule both share). A sign-off is
+refused, writing nothing (A9): when not every eval was read, when no AC waits on owner steps or
+the feature lists no AC to sign off (A10), when the latest eval of a waiting AC is NO-SHIP, and
+when the note would not rank newer than the acceptance eval (undated, or dated in the future).
 
 The owner can also settle one eval only (``delivery``): the sign-off then covers the ACs of that
 SHIP-WITH-OWNER-STEPS eval that still wait on owner steps, carries its tickets (so it is listed
 with them), and the rest of the feature does not have to be covered yet. Its ``decision`` is
 ``done`` (verdict SHIP) or ``more_work``: the owner found more to do before the delivery ships,
 which writes a NO-SHIP over those ACs, so they read as open until an agent evaluates them again.
-The owner's optional ``note`` (what was done, or what is left) goes into the note's body.
+The owner's optional ``note`` (what was done, or what is left) goes into the note's body. When
+``delivery`` is the acceptance eval itself, its ACs and refusals are the whole-feature sign-off's
+(``owner_wait``; ``more_work`` is not refused over ACs an agent's eval reopened), so the app never
+writes a sign-off over the acceptance eval that differs from what the Acceptance step waits on.
+Either decision is then refused once an owner decision newer than the acceptance eval settled it
+(A11): its owner SHIP signed off every waiting AC, or its owner NO-SHIP is still the latest eval
+of a waiting AC (the same request twice writes once; an agent's new eval lifts the refusal).
 """
 
 from collections.abc import Callable, Iterable
@@ -22,10 +32,15 @@ from typing import Final, Literal, Protocol
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.features.feature_evals import (
     EVALS_FOLDER,
+    MAX_EVAL_FILES,
     NOTE_SUFFIX,
     EvalCoverage,
+    OwnerWait,
+    acceptance_eval,
     eval_coverage,
     eval_records,
+    owner_wait,
+    ranks_newer,
 )
 from agent_hub.core.features.feature_record import FeatureRecordFile, record_from_bytes
 from agent_hub.core.features.feature_status import FeatureFolder
@@ -146,22 +161,6 @@ def _clean_note(note: str | None) -> str | None:
 type _Scope = tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]
 
 
-def _feature_scope(evals: tuple[EvalRecord, ...], coverage: EvalCoverage) -> _Scope:
-    """The whole feature's sign-off: every AC waiting on owner steps, once all are covered."""
-    if coverage.uncovered:
-        raise OwnerSignOffError(
-            f"{len(coverage.uncovered)} ACs are not covered by a SHIP; evaluate them first"
-        )
-    if not coverage.owner_steps:
-        raise OwnerSignOffError("no AC waits on owner steps")
-    sources = tuple(
-        found.delivery
-        for found in evals
-        if found.verdict == "SHIP-WITH-OWNER-STEPS" and found.problem is None
-    )
-    return coverage.owner_steps, sources, ()
-
-
 def _eval_scope(
     evals: tuple[EvalRecord, ...],
     coverage: EvalCoverage,
@@ -225,16 +224,35 @@ class SignOffOwnerSteps:
         if not isinstance(record, FeatureRecordFile):
             raise OwnerSignOffError("features.json is missing or invalid")
         evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
-        coverage = eval_coverage(evals, record.acs, tickets=record.tickets)
-        if delivery is None:
-            if decision != "done":
-                raise OwnerSignOffError("name the eval whose owner steps need more work")
-            acs, sources, tickets = _feature_scope(evals, coverage)
-        else:
-            acs, sources, tickets = _eval_scope(evals, coverage, record=record, delivery=delivery)
         name_of_delivery = signoff_name(found.delivery for found in evals if not found.legacy)
         name = f"{name_of_delivery}{NOTE_SUFFIX}"
-        at = self._clock()
+        at = self._clock().replace(microsecond=0)
+        accepted = acceptance_eval(evals)
+        if delivery is None and decision != "done":
+            raise OwnerSignOffError("name the eval whose owner steps need more work")
+        on_acceptance = (
+            accepted is not None
+            and accepted.delivery == delivery
+            and accepted.verdict == "SHIP-WITH-OWNER-STEPS"
+        )
+        if delivery is None or on_acceptance:
+            waiting = _owner_wait(
+                folder,
+                record,
+                evals,
+                refuse_reopened=decision == "done",
+                named=delivery if on_acceptance else None,
+            )
+            if not ranks_newer(waiting.acceptance, delivery=name_of_delivery, at=at):
+                raise OwnerSignOffError(
+                    f"a sign-off would not be newer than {waiting.acceptance.delivery}: "
+                    "it has no evaluated_at, or one at or after now"
+                )
+            scope: _Scope = waiting.acs, (waiting.acceptance.delivery,), ()
+        else:
+            coverage = eval_coverage(evals, record.acs, tickets=record.tickets)
+            scope = _eval_scope(evals, coverage, record=record, delivery=delivery)
+        acs, sources, tickets = scope
         text = signoff_note(
             slug=folder.slug,
             delivery=name_of_delivery,
@@ -262,3 +280,38 @@ class SignOffOwnerSteps:
             problem=None,
             provenance="owner",
         )
+
+
+def _owner_wait(
+    folder: FeatureFolder,
+    record: FeatureRecordFile,
+    evals: tuple[EvalRecord, ...],
+    *,
+    refuse_reopened: bool,
+    named: str | None,
+) -> OwnerWait:
+    """What ``folder``'s whole-feature sign-off covers (``owner_wait``, the rule the Acceptance
+    step shares); ``OwnerSignOffError`` when it has nothing it can sign off (A9, A10), or when
+    an owner decision newer than the acceptance eval already settled it (A11). ``named`` is the
+    acceptance eval when the request named it (``delivery``), None for the whole-feature path."""
+    if folder.evals_skipped:
+        raise OwnerSignOffError(f"more than {MAX_EVAL_FILES} evals; not all were read")
+    waiting = owner_wait(evals, record.acs, tickets=record.tickets)
+    if waiting is None:
+        if named is not None:
+            raise OwnerSignOffError(f"the owner already signed off the owner steps of {named}")
+        raise OwnerSignOffError("no AC waits on owner steps")
+    if not waiting.acs:
+        raise OwnerSignOffError("features.json lists no AC to sign off")
+    if waiting.settled:
+        settled = ", ".join(waiting.settled)
+        was, them = ("was", "it") if len(waiting.settled) == 1 else ("were", "them")
+        raise OwnerSignOffError(
+            f"{settled} {was} reopened by an owner decision; an agent evaluates {them} again first"
+        )
+    if refuse_reopened and waiting.reopened:
+        reopened = ", ".join(waiting.reopened)
+        raise OwnerSignOffError(
+            f"the latest eval of {reopened} is NO-SHIP; fix or re-evaluate them first"
+        )
+    return waiting

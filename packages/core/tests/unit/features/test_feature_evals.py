@@ -99,7 +99,6 @@ def test_lets_latest_eval_decide_when_ac_reevaluated_latest_wins() -> None:
         owner_steps=(),
         uncovered=("AC-7.2",),
         total=3,
-        unscoped=False,
     )
 
 
@@ -212,21 +211,21 @@ def test_lists_records_oldest_first_when_dates_differ() -> None:
 @pytest.mark.parametrize(
     ("head", "second_passes", "expected"),
     [
-        (b"# Eval\n\nVerdict: SHIP\n", True, ((), ("AC-7.1", "AC-7.2"), False)),
-        (b"# Eval\n\nVerdict: SHIP\n", False, ((), (), True)),
+        (b"# Eval\n\nVerdict: SHIP\n", True, ((), ("AC-7.1", "AC-7.2"))),
+        (b"# Eval\n\nVerdict: SHIP\n", False, ((), ())),
         (
             b"---\nacs: [AC-7.1]\n---\n# Eval\n**Verdict:** SHIP-WITH-OWNER-STEPS\n",
             False,
-            (("AC-7.1",), ("AC-7.1",), False),
+            (("AC-7.1",), ("AC-7.1",)),
         ),
-        (b"---\nacs: all\n---\nVerdict: SHIP\n", False, ("all", ("AC-7.1", "AC-7.2"), False)),
+        (b"---\nacs: all\n---\nVerdict: SHIP\n", False, ("all", ("AC-7.1", "AC-7.2"))),
     ],
     ids=["unscoped-all-pass", "unscoped-some-fail", "scoped", "scoped-all"],
 )
 def test_applies_legacy_rule_when_only_eval_md_legacy(
     head: bytes,
     second_passes: bool,  # noqa: FBT001 - a parametrized case
-    expected: tuple[tuple[str, ...] | str, tuple[str, ...], bool],
+    expected: tuple[tuple[str, ...] | str, tuple[str, ...]],
 ) -> None:
     records = eval_records((), head, slug=SLUG)
     acs = (an_ac("AC-7.1", passes=True), an_ac("AC-7.2", passes=second_passes))
@@ -239,7 +238,7 @@ def test_applies_legacy_rule_when_only_eval_md_legacy(
         "features/demo-feature/eval.md",
     )
     assert record.verdict in ("SHIP", "SHIP-WITH-OWNER-STEPS")
-    assert (record.acs, coverage.covered, coverage.unscoped) == expected
+    assert (record.acs, coverage.covered) == expected
 
 
 def test_keeps_legacy_without_verdict_when_no_verdict_line_legacy() -> None:
@@ -346,7 +345,7 @@ def test_ignores_withdrawn_ac_when_legacy_rule_checks_passes() -> None:
 
     coverage = eval_coverage(eval_records((), b"Verdict: SHIP\n", slug=SLUG), acs)
 
-    assert (coverage.covered, coverage.unscoped) == (("AC-7.1",), False)
+    assert coverage.covered == ("AC-7.1",)
 
 
 @pytest.mark.parametrize("name", ["acme-1520", "pr-demo-api-12", "feature", "acme-1521-r2"])
@@ -393,7 +392,6 @@ def folder_of(tree: dict[str, bytes]) -> FeatureFolder:
         evals=heads("evals"),
         reviews=heads("reviews"),
         evals_skipped=1,
-        reviews_skipped=1,
     )
 
 
@@ -412,7 +410,7 @@ def test_ignores_json_outputs_when_legacy_and_outputs_mixed() -> None:
     )
     assert review_records(mixed.reviews, slug=SLUG) == review_records(legacy.reviews, slug=SLUG)
     assert feature_detail(mixed, project="demo") == feature_detail(legacy, project="demo")
-    assert (mixed.evals_skipped, mixed.reviews_skipped) == (1, 1)
+    assert mixed.evals_skipped == 1
 
 
 def test_takes_final_verdict_when_addendum_reverses_first_legacy() -> None:

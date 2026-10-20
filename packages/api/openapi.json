@@ -2279,12 +2279,12 @@
       "FeaturePhase": {
         "enum": [
           "spec",
+          "ux_design",
           "research",
           "plan",
           "tickets",
-          "implement",
-          "review",
-          "evaluate",
+          "build",
+          "acceptance",
           "shipped"
         ],
         "type": "string"
@@ -9340,7 +9340,8 @@
           "pending",
           "skipped",
           "unknown",
-          "blocked"
+          "blocked",
+          "unrecorded"
         ],
         "type": "string"
       },
@@ -13317,7 +13318,7 @@
     },
     "/api/v1/features/{project}/{slug}/owner-signoff": {
       "post": {
-        "description": "The owner settles the owner steps: without a body, writes an ``owner-signoff`` SHIP eval\nover every AC that waited on them (409 when no AC waits, or one is not covered by a SHIP).\nWith ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes\na SHIP over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words.",
+        "description": "The owner settles the owner steps. Without a body: writes an ``owner-signoff`` SHIP eval\nover the ACs the Acceptance step waits on; 409 with a one-line reason, writing nothing, when\nnone waits or the feature lists no AC, when one of them has a NO-SHIP as its latest eval, when\nthe acceptance eval is undated or future-dated, or when not every eval was read. With\n``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes a SHIP\nover its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words. A ``delivery``\nnaming the acceptance eval covers what the Acceptance step waits on, with the no-body\nrefusals, except that ``more_work`` is not refused over ACs an agent's eval reopened; either\ndecision there is refused once an owner decision newer than the acceptance eval settled it\n(its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one).",
         "operationId": "sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post",
         "parameters": [
           {
