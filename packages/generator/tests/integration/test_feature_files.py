@@ -1,8 +1,10 @@
 """The feature folder reader on real folders (plan F.6): bounded, no link followed."""
 
 import os
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -17,11 +19,12 @@ from agent_hub.core.features.feature_status import (
     RecordHead,
 )
 from agent_hub.generator.feature_files import (
-    FOLDER_COST_BYTES,
     MAX_EVAL_FILES,
     MAX_FEATURE_FOLDERS,
     MAX_RECORD_BYTES,
     MAX_REVIEW_FILES,
+    MAX_ROUND_ENTRIES,
+    MAX_ROUND_TICKETS,
     OVER_BUDGET,
     READ_BUDGET_BYTES,
     read_feature_folder,
@@ -498,29 +501,62 @@ def test_reads_same_folder_when_outputs_added(
 
     assert legacy is not None
     assert mixed is not None
-    # The round names are listed (AGH-326), never read; every record is the same.
-    assert mixed.review_rounds == (
-        "DEM-1/quality-r1.json",
-        "DEM-1/spec-r1.json",
-        "DEM-3/spec-r1.json",
-    )
-    assert replace(mixed, review_rounds=()) == legacy
+    # The tickets with a round are listed (AGH-326), no round read; every record is the same.
+    assert mixed.review_round_tickets == ("DEM-1", "DEM-3")
+    assert replace(mixed, review_round_tickets=()) == legacy
     assert [head.name for head in legacy.evals] == ["dem-1.md", "dem-2.md"]
     assert [head.name for head in legacy.reviews] == ["DEM-1.md"]
     assert legacy.evals_skipped == 1
 
 
-# AGH-326 (two-level-flows AC-1.8, P3): the review round names of each ticket, never their bytes.
-def test_lists_review_round_names_when_ticket_folders_hold_rounds(
+class Scans:
+    """Counts the directory entries read through ``os.scandir``, by the folder's name."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.entries: dict[str, int] = {}
+        real_scandir = os.scandir
+
+        class Counted:
+            def __init__(self, scan: Any, name: str) -> None:
+                self.scan, self.name = scan, name
+
+            def __enter__(self) -> Counted:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                self.scan.close()
+
+            def __iter__(self) -> Iterator[os.DirEntry[str]]:
+                for entry in self.scan:
+                    entries[self.name] = entries.get(self.name, 0) + 1
+                    yield entry
+
+        entries = self.entries
+
+        def counting_scandir(path: Any) -> Counted:
+            name = Path(os.readlink(f"/proc/self/fd/{path}")).name if isinstance(path, int) else ""
+            return Counted(real_scandir(path), name)
+
+        monkeypatch.setattr(os, "scandir", counting_scandir)
+
+
+# AGH-326 (two-level-flows AC-1.8, P3): the ticket folders holding a review round, never read.
+def test_lists_round_tickets_when_ticket_folders_hold_rounds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     folder = a_feature(features_of(tmp_path), "demo-feature", {})
     reviews = folder / "reviews"
-    for name in ("spec-r1.json", "quality-r1.json", "notes.txt", "spec-r01.json", "lint-r1.json"):
-        (reviews / "AGH-1").mkdir(parents=True, exist_ok=True)
-        (reviews / "AGH-1" / name).write_bytes(b"{}")
-    (reviews / "AGH-1" / "spec-r2.json").mkdir()
-    (reviews / "AGH-1" / "quality-r2.json").symlink_to(reviews / "AGH-1" / "spec-r1.json")
+    for ticket, names in {
+        "AGH-1": ("spec-r1.json", "notes.txt"),
+        "AGH-3": ("notes.txt", "spec-r01.json", "lint-r1.json"),
+        "AGH-4": (),
+    }.items():
+        (reviews / ticket).mkdir(parents=True)
+        for name in names:
+            (reviews / ticket / name).write_bytes(b"{}")
+    (reviews / "AGH-4" / "spec-r1.json").mkdir()
+    (reviews / "AGH-5").mkdir()
+    (reviews / "AGH-5" / "quality-r1.json").symlink_to(reviews / "AGH-1" / "spec-r1.json")
     (reviews / "AGH-1.md").write_bytes(b"---\n---\n")
     (reviews / ".hidden").mkdir()
     (reviews / ".hidden" / "spec-r1.json").write_bytes(b"{}")
@@ -533,44 +569,56 @@ def test_lists_review_round_names_when_ticket_folders_hold_rounds(
 
     [read] = read_feature_folders(tmp_path)
 
-    assert read.review_rounds == ("AGH-1/quality-r1.json", "AGH-1/spec-r1.json")
-    assert {"spec-r1.json", "quality-r1.json"}.isdisjoint(reads.opened)
+    assert read.review_round_tickets == ("AGH-1",)
+    assert "spec-r1.json" not in reads.opened
+    assert (MAX_ROUND_TICKETS, MAX_ROUND_ENTRIES) == (500, 20_000)
 
 
-def test_opens_first_ticket_folders_only_when_rounds_over_cap(
+def test_stops_at_first_round_when_ticket_folder_holds_several(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "reviews" / "AGH-1").mkdir(parents=True)
+    for name in ("spec-r1.json", "quality-r1.json", "spec-r2.json"):
+        (folder / "reviews" / "AGH-1" / name).write_bytes(b"{}")
+    scans = Scans(monkeypatch)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.review_round_tickets == ("AGH-1",)
+    assert scans.entries["AGH-1"] == 1
+
+
+def test_stops_reading_entries_when_ticket_folders_over_entry_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    for ticket in ("AGH-1", "AGH-2", "AGH-3"):
+        (folder / "reviews" / ticket).mkdir(parents=True)
+        for name in ("a.txt", "b.txt", "c.txt"):
+            (folder / "reviews" / ticket / name).write_bytes(b"")
+    (folder / "reviews" / "AGH-3" / "spec-r1.json").write_bytes(b"{}")
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_ROUND_ENTRIES", 4)
+    scans = Scans(monkeypatch)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.review_round_tickets == ()
+    assert (scans.entries.get("AGH-1"), scans.entries.get("AGH-2")) == (3, 1)
+    assert "AGH-3" not in scans.entries
+
+
+def test_opens_first_ticket_folders_only_when_tickets_over_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     folder = a_feature(features_of(tmp_path), "demo-feature", {})
     for ticket in ("AGH-4", "AGH-1", "AGH-3", "AGH-2"):
         (folder / "reviews" / ticket).mkdir(parents=True)
-        for name in ("spec-r1.json", "quality-r1.json"):
-            (folder / "reviews" / ticket / name).write_bytes(b"{}")
-    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_ROUND_TICKETS", 3)
-    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_ROUND_NAMES", 3)
+        (folder / "reviews" / ticket / "spec-r1.json").write_bytes(b"{}")
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_ROUND_TICKETS", 2)
     reads = Reads(monkeypatch)
 
     [read] = read_feature_folders(tmp_path)
 
-    assert read.review_rounds == (
-        "AGH-1/quality-r1.json",
-        "AGH-1/spec-r1.json",
-        "AGH-2/quality-r1.json",
-    )
+    assert read.review_round_tickets == ("AGH-1", "AGH-2")
     assert [name for name in reads.opened if name.startswith("AGH-")] == ["AGH-1", "AGH-2"]
-
-
-def test_lists_folders_unread_when_ticket_folders_spend_read_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    features = features_of(tmp_path)
-    alpha = a_feature(features, "alpha", {})
-    for ticket in ("AGH-1", "AGH-2"):
-        (alpha / "reviews" / ticket).mkdir(parents=True)
-    a_feature(features, "beta", {"spec.md": b"b"})
-    monkeypatch.setattr(
-        "agent_hub.generator.feature_files.READ_BUDGET_BYTES", 2 * FOLDER_COST_BYTES
-    )
-
-    _, beta = read_feature_folders(tmp_path)
-
-    assert beta == FeatureFolder(slug="beta", files=(), features_json=OVER_BUDGET)

@@ -3,10 +3,12 @@
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from agent_hub.core.errors import TrackerFailure
+from agent_hub.core.features import ticket_flow as ticket_flow_module
 from agent_hub.core.features.feature_status import FeatureFolder, RecordHead, feature_detail
 from agent_hub.core.features.feature_tickets import (
     NOT_CONNECTED_NOTICE,
@@ -199,7 +201,7 @@ def test_serves_ticket_flows_when_folder_has_records() -> None:
     review = b"---\ntype: review\nticket: DEM-7\noutcome: approved\npr: demo-api#3\n---\n"
     folder = replace(
         a_folder(),
-        review_rounds=("DEM-7/quality-r1.json", "DEM-7/spec-r1.json"),
+        review_round_tickets=("DEM-7",),
         reviews=(RecordHead(name="DEM-7.md", head=review, problem=None),),
     )
 
@@ -235,3 +237,29 @@ def test_marks_merged_unknown_when_linear_not_read(read: SnapshotRead, meta: str
     for row in tickets.tickets:
         assert row.flow is not None
         assert (row.flow.steps[-1].state, row.flow.steps[-1].meta) == ("unknown", meta)
+
+
+# AGH-326 review Q3: the latest verdict is folded once per distinct set of evals, not per row.
+def test_folds_eval_verdict_once_when_one_eval_names_every_ticket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    head = (
+        b"---\ntype: eval\ndelivery: dem\nverdict: SHIP\ntickets: [DEM-7, DEM-8]\n"
+        b"acs: all\nevaluated_at: 2026-10-10\n---\n"
+    )
+    folder = replace(a_folder(), evals=(RecordHead(name="dem.md", head=head, problem=None),))
+    calls: list[int] = []
+    real = ticket_flow_module.latest_verdict
+
+    def counting(records: Any) -> Any:
+        calls.append(1)
+        return real(records)
+
+    monkeypatch.setattr(ticket_flow_module, "latest_verdict", counting)
+
+    tickets = feature_tickets(
+        folder, a_read(snapshot=a_snapshot()), project="demo", tracker=a_tracker()
+    )
+
+    assert [row.flow.steps[4].state for row in tickets.tickets if row.flow] == ["done", "done"]
+    assert len(calls) == 1
