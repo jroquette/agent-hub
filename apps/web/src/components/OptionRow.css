@@ -1,0 +1,111 @@
+/* A choice row: radio or checkbox, label, description (OptionRow.tsx). */
+.ah-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+.ah-option:hover {
+  border-color: var(--border-control);
+  background: var(--surface-hover);
+}
+.ah-option-checked,
+.ah-option-checked:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ah-option:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* Our own radio and checkbox: a ring that fills with the accent and shows a dot or a tick. */
+.ah-option .ah-check {
+  appearance: none;
+  flex: none;
+  display: grid;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  border: 1.5px solid var(--border-control);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.ah-option .ah-check[type="checkbox"] {
+  border-radius: 5px;
+}
+.ah-option .ah-check:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.ah-option .ah-check[type="radio"]:checked::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--on-accent);
+}
+.ah-option .ah-check[type="checkbox"]:checked::before {
+  content: "";
+  width: 9px;
+  height: 5px;
+  margin-top: -2px;
+  border-left: 2px solid var(--on-accent);
+  border-bottom: 2px solid var(--on-accent);
+  transform: rotate(-45deg);
+}
+.ah-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.ah-option-body > .ah-input {
+  margin-top: var(--space-2);
+  cursor: text;
+}
+.ah-option-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-weight: 500;
+}
+.ah-option-tag {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--done);
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  background: var(--done-soft);
+}
+fieldset:disabled .ah-option {
+  cursor: default;
+  opacity: 0.6;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ah-option,
+  .ah-option .ah-check {
+    transition: none;
+  }
+}

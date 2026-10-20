@@ -16,7 +16,7 @@ from agent_hub.core.doctor.config_rules import (
     CONFIG_STOP_GATE,
     PLATFORM_VERSION,
 )
-from agent_hub.core.doctor.environments_rule import ENVIRONMENTS_PRODUCTION
+from agent_hub.core.doctor.environments_rule import ENVIRONMENTS_ENV_FILE, ENVIRONMENTS_PRODUCTION
 from agent_hub.core.doctor.features_rule import FEATURES_TRACKER
 from agent_hub.core.doctor.finding import Rule
 from agent_hub.core.doctor.frontmatter_rule import RULES_FRONTMATTER
@@ -61,6 +61,7 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     REPOS_AGENTS,
     CONFIG_STOP_GATE,
     ENVIRONMENTS_PRODUCTION,
+    ENVIRONMENTS_ENV_FILE,
     BRAIN_MEMORY,
     SANDBOX_WORKFLOW,
     WORKFLOWS_VALID,

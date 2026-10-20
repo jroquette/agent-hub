@@ -214,21 +214,66 @@
   left: 0;
   right: 0;
   z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
   max-height: 240px;
-  overflow-y: auto;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface-overlay);
   box-shadow: var(--shadow-popover);
 }
 .as-slash-list {
+  min-height: 0;
+  overflow-y: auto;
   padding: var(--space-1);
 }
 .as-slash-option {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-md);
-  font-family: var(--font-mono);
   cursor: pointer;
+}
+.as-slash-command {
+  flex: none;
+  min-width: 18ch;
+  font-family: var(--font-mono);
+}
+/* The hub's own skills and agents, told apart from what Claude Code or a plugin brings. */
+.as-slash-hub {
+  flex: none;
+  align-self: center;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.as-slash-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-slash-open {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+.as-slash-open:hover {
+  background: var(--surface-sunken);
+  color: var(--accent);
 }
 .as-slash-option:hover,
 .as-slash-active {
@@ -821,116 +866,6 @@
 .as-question-hint {
   margin: calc(var(--space-1) * -1) 0 var(--space-1);
 }
-.as-options {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.as-option {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out);
-}
-.as-option:hover {
-  border-color: var(--border-control);
-  background: var(--surface-hover);
-}
-.as-option-checked,
-.as-option-checked:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-.as-option:has(input:focus-visible) {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-/* Our own radio and checkbox: a ring that fills with the accent and shows a dot or a tick. */
-.as-option .ah-check {
-  appearance: none;
-  flex: none;
-  display: grid;
-  place-content: center;
-  width: 18px;
-  height: 18px;
-  margin: 1px 0 0;
-  border: 1.5px solid var(--border-control);
-  border-radius: 50%;
-  background: var(--surface);
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out);
-}
-.as-option .ah-check[type="checkbox"] {
-  border-radius: 5px;
-}
-.as-option .ah-check:checked {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-.as-option .ah-check[type="radio"]:checked::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--on-accent);
-}
-.as-option .ah-check[type="checkbox"]:checked::before {
-  content: "";
-  width: 9px;
-  height: 5px;
-  margin-top: -2px;
-  border-left: 2px solid var(--on-accent);
-  border-bottom: 2px solid var(--on-accent);
-  transform: rotate(-45deg);
-}
-.as-option-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-.as-option-body > .ah-input {
-  margin-top: var(--space-2);
-  cursor: text;
-}
-.as-option-label {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  font-weight: 500;
-}
-.as-option-tag {
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 600;
-  color: var(--done);
-  padding: 0 8px;
-  border-radius: var(--radius-full);
-  background: var(--done-soft);
-}
-fieldset:disabled .as-option {
-  cursor: default;
-  opacity: 0.6;
-}
-@media (prefers-reduced-motion: reduce) {
-  .as-option,
-  .as-option .ah-check {
-    transition: none;
-  }
-}
 .as-select {
   height: 28px;
   width: auto;
@@ -1477,7 +1412,12 @@ body.as-resizing .as-drawer {
   grid-template-rows: minmax(0, 1fr);
 }
 .as-files-split {
-  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  position: relative;
+  grid-template-columns: var(--as-files-list-w, 280px) minmax(0, 1fr);
+}
+/* The list's right edge: the drawer's own grip, resizing the list against the open file. */
+.as-files-split-handle {
+  left: calc(var(--as-files-list-w, 280px) - 4px);
 }
 .as-files-nav {
   display: flex;
@@ -1511,14 +1451,58 @@ body.as-resizing .as-drawer {
   background: var(--done);
   transition: width var(--dur-base) var(--ease-out);
 }
+/* One line that fits: cut in the middle, its tail (extension, last folder) always whole. */
+.as-fit {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.as-fit-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.as-fit-tail {
+  flex: none;
+}
+/* The files' root on one line: repo, branch icon, worktree in bold, the rest; then copy. */
 .as-files-root {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   margin: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.as-files-root > .ah-subtle {
+  flex: none;
+  font-family: var(--font-sans);
+}
+.as-files-root > svg {
+  flex: none;
+  color: var(--text-subtle);
+}
+.as-files-root-repo {
+  flex: 0 1 auto;
+  min-width: 2ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  direction: rtl;
-  text-align: left;
-  font-family: var(--font-mono);
+}
+.as-files-root-lead {
+  flex: 0 1 auto;
+  color: var(--text);
+  font-weight: 600;
+}
+.as-files-root-rest {
+  flex: 0 3 auto;
+  color: var(--text-subtle);
+}
+.as-files-copy {
+  flex: none;
+  margin-left: auto;
 }
 .as-files-group ul {
   list-style: none;
@@ -1536,11 +1520,8 @@ body.as-resizing .as-drawer {
   color: var(--text-subtle);
   font-family: var(--font-mono);
 }
-.as-files-folder > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.as-files-folder > svg {
+  flex: none;
 }
 .as-files-folder + ul {
   padding-left: var(--space-3);
@@ -1583,10 +1564,6 @@ body.as-resizing .as-drawer {
 }
 .as-files-nav-name {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-family: var(--font-mono);
 }
 .as-files-stats {
@@ -1618,12 +1595,61 @@ body.as-resizing .as-drawer {
   background: var(--waiting-soft);
   color: var(--waiting);
 }
+.as-files-kind-d {
+  background: var(--failed-soft);
+  color: var(--failed);
+}
+.as-files-commits {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.as-files-commit {
+  border-radius: 6px;
+}
+.as-files-commit-head {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 10px;
+  row-gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+}
+.as-files-commit-open {
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.as-files-commit-open:hover {
+  background: var(--surface-hover);
+}
+.as-files-commit-diff {
+  padding: 0 10px 10px;
+}
+.as-files-commit:nth-child(odd) {
+  background: var(--surface-sunken);
+}
+.as-files-commit-sha {
+  color: var(--text-muted);
+}
+.as-files-commit-subject {
+  overflow-wrap: anywhere;
+}
+.as-files-commit-meta {
+  grid-column: 3 / -1;
+}
 .as-files-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 13px var(--font-mono);
+  overflow-wrap: anywhere;
+  font: 600 13px var(--font-mono);
 }
 .as-files-viewed {
   flex: none;
@@ -1675,12 +1701,24 @@ body.as-resizing .as-drawer {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
+/* The open file: its folder on one line, its name (status, lines) under it, both whole. */
 .as-files-detail-title {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
   flex: 1 1 200px;
+}
+.as-files-detail-dir {
+  overflow-wrap: anywhere;
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+}
+.as-files-detail-file {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
 }
 .as-files-stepper {
   display: inline-flex;
@@ -2038,26 +2076,34 @@ body.as-resizing .as-drawer {
 }
 .as-thread {
   margin: var(--space-2) 0;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
+  padding: 0;
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--surface);
-}
-.as-thread-resolved {
-  border-left-color: var(--done);
-  background: var(--surface-sunken);
+  overflow: hidden;
 }
 .as-thread-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-weight: 600;
+  min-height: 36px;
+  padding: 4px var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+  font-size: 12px;
 }
 .as-thread-head > svg {
-  color: var(--accent);
+  flex: none;
+  color: var(--text-muted);
+}
+.as-thread-lines {
+  font-weight: 600;
 }
 .as-thread-resolved .as-thread-head > svg {
   color: var(--done);
+}
+.as-thread-resolved:not(:has(.as-thread-messages)) .as-thread-head {
+  border-bottom: 0;
 }
 .as-thread-waiting {
   display: inline-flex;
@@ -2069,41 +2115,94 @@ body.as-resizing .as-drawer {
 }
 .as-thread-messages {
   list-style: none;
-  margin: var(--space-2) 0 0;
+  margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
 }
 .as-thread-message {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
 }
-.as-thread-you {
-  background: var(--accent-soft);
-}
-.as-thread-claude {
-  background: var(--surface-sunken);
+.as-thread-message:first-child {
+  border-top: 0;
 }
 .as-thread-pending {
   opacity: 0.7;
 }
-.as-thread-author {
-  display: block;
-  margin-bottom: 2px;
+.as-thread-avatar {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.as-thread-avatar-you {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.as-thread-avatar-claude {
+  background: #d97757;
+  color: #fff;
+}
+.as-thread-main {
+  flex: 1;
+  min-width: 0;
+}
+.as-thread-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
   font-size: 12px;
+}
+.as-thread-author {
   font-weight: 600;
+  color: var(--text);
+}
+.as-thread-badge {
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
   color: var(--text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+.as-thread-body {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
 }
 .as-thread-text {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.as-thread-reply {
-  width: 100%;
-  margin-top: var(--space-2);
+.as-thread-foot {
   padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+.as-thread-reply-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.as-thread-reply-row > .as-thread-avatar {
+  margin-top: 4px;
+}
+.as-thread-reply-row > .as-comment-box {
+  flex: 1;
+  min-width: 0;
+}
+.as-thread-reply {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -2445,4 +2544,222 @@ body.as-resizing .as-drawer {
   .as-live-open-text {
     display: none;
   }
+}
+.as-files-tabs {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) 0;
+}
+.as-files-tabs > p {
+  margin: 0 0 var(--space-1);
+}
+.as-files-preview {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-3) var(--space-4);
+}
+.as-files-frontmatter {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+.as-run-files-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px var(--space-2) 2px;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.as-run-files li:not(:first-child) > .as-run-files-kind {
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+.as-run-files-kind > b {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.as-run-files-kind-code > svg {
+  color: var(--accent);
+}
+.as-run-files-row-scratch .as-run-files-name {
+  color: var(--text-subtle);
+}
+.as-run-files-dot-none {
+  flex: none;
+  width: 7px;
+}
+
+/* The Background drawer: the tasks running beside the conversation, then the ended ones. */
+.as-bg-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-3) var(--space-4);
+}
+.as-bg-section {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: var(--space-3) var(--space-1) var(--space-2);
+  font-weight: 500;
+}
+.as-bg-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.as-bg-toggle:hover {
+  color: var(--text);
+}
+.as-bg-empty {
+  margin: 0 var(--space-1);
+}
+.as-bg-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.as-bg-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-2) var(--space-3);
+}
+.as-bg-row:not(.as-bg-running) {
+  border-color: transparent;
+  background: none;
+  padding-block: var(--space-1);
+}
+.as-bg-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+button.as-bg-head {
+  cursor: pointer;
+}
+.as-bg-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-bg-running .as-bg-label {
+  font-weight: 500;
+}
+.as-bg-sub {
+  margin: 2px 0 0 22px;
+}
+.as-bg-calls {
+  list-style: none;
+  margin: var(--space-2) 0 0 22px;
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.as-bg-calls li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-bg-completed .ah-icon {
+  color: var(--done);
+}
+.as-bg-failed .ah-icon {
+  color: var(--failed);
+}
+.as-bg-stopped .ah-icon {
+  color: var(--text-subtle);
+}
+.as-bg-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.as-bg-top > .as-bg-head {
+  flex: 1 1 auto;
+}
+.as-workdir-label {
+  overflow-wrap: anywhere;
+}
+.as-transcript-footer {
+  padding-bottom: var(--space-3);
+}
+.as-bg-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: auto;
+  max-width: 420px;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: left;
+  cursor: pointer;
+}
+.as-bg-card:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+.as-bg-card:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* The review's repositories: branch → base, commits, pull request and where it stands. */
+.as-files-repos {
+  flex: none;
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.as-files-repo {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px var(--space-2);
+  min-width: 0;
+}
+.as-files-repo > svg {
+  flex: none;
+  color: var(--text-subtle);
+}
+.as-files-repo-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
 }

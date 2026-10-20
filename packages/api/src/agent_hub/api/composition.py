@@ -83,6 +83,7 @@ from agent_hub.core.agent_sessions.cloud import CloudLauncher, CloudSessions
 from agent_hub.core.agent_sessions.control import AgentSessionControl, WorkdirSource
 from agent_hub.core.agent_sessions.driver import SessionDriver
 from agent_hub.core.agent_sessions.links import AgentSessionLinks, ObservedSessionLookup
+from agent_hub.core.agent_sessions.repo_changes import RepoChangesReader
 from agent_hub.core.agent_sessions.store import AgentSessionStore
 from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.features.ticket_snapshots import (
@@ -141,6 +142,7 @@ from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSy
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
 from agent_hub.hub_git.git_runner import GitRunner
+from agent_hub.hub_git.repo_changes import GitRepoChanges
 from agent_hub.storage.agent_session_store import open_agent_session_store
 from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
 from agent_hub.storage.hub_registry import JsonHubRegistry
@@ -493,11 +495,13 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
     url: str,
     observed_sessions: ObservedSessionLookup | None = None,
     session_title: Callable[[str, str], str | None] | None = None,
+    repo_changes: RepoChangesReader | None = None,
 ) -> AgentSessionWiring:
     """``AgentSessionControl``, ``CloudSessions`` and ``AgentSessionLinks`` over ``driver``,
     ``launcher`` and ``store``; the children get ``AGENT_HUB_WEB_URL=url`` (never the token).
     ``observed_sessions`` fills each agent session's ``observed_session_id``; ``session_title``
-    names a driven session after the title Claude Code gave it."""
+    names a driven session after the title Claude Code gave it; ``repo_changes`` reads the
+    session's repositories against their base branch (``hub_git``)."""
     control = AgentSessionControl(
         driver,
         store,
@@ -507,6 +511,7 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
         environment_extra={"AGENT_HUB_WEB_URL": url},
         observed_sessions=observed_sessions,
         session_title=session_title,
+        repo_changes=repo_changes,
     )
     cloud = CloudSessions(
         launcher=launcher,
@@ -757,4 +762,5 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
         url=web_url(settings),
         observed_sessions=observed_sessions,
         session_title=session_title,
+        repo_changes=GitRepoChanges(),
     )

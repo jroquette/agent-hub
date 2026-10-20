@@ -58,6 +58,25 @@ export function linearHref(value: string | null | undefined): string | null {
   return safe;
 }
 
+const GITHUB_PULL_PATH = /^\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/pull\/[1-9][0-9]*$/;
+
+/**
+ * A GitHub pull request link: a `safeHref` URL that is `https://github.com/<owner>/<repo>/pull/<n>`
+ * exactly (no other scheme, host, port, user, query or fragment), else `null`.
+ */
+export function githubPullHref(value: string | null | undefined): string | null {
+  const safe = safeHref(value);
+  if (safe === null) return null;
+  try {
+    const url = new URL(safe);
+    if (url.origin !== "https://github.com" || url.username || url.password) return null;
+    if (url.search || url.hash || !GITHUB_PULL_PATH.test(url.pathname)) return null;
+  } catch {
+    return null;
+  }
+  return safe;
+}
+
 /** The only links a cloud session may open (D8, AC-165.40); the server checks the same prefix. */
 export const CLAUDE_CODE_PREFIX = "https://claude.ai/code/";
 

@@ -274,6 +274,48 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/agent-sessions/{agent_session_id}/repo-changes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Agent Session Repo Changes
+     * @description What the repositories the session worked in change against their base branch, as git
+     *     reads them: the pull request's files, whoever changed them.
+     */
+    get: operations["get_agent_session_repo_changes_api_v1_agent_sessions__agent_session_id__repo_changes_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/{agent_session_id}/repo-changes/commit": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Agent Session Repo Commit Diff
+     * @description What one commit changed in one file of the session's repositories (``path`` absolute,
+     *     ``old_path`` its name before a rename).
+     */
+    get: operations["get_agent_session_repo_commit_diff_api_v1_agent_sessions__agent_session_id__repo_changes_commit_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/agent-sessions/{agent_session_id}/settings": {
     parameters: {
       query?: never;
@@ -308,6 +350,26 @@ export interface paths {
     get: operations["stream_agent_session_api_v1_agent_sessions__agent_session_id__stream_get"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/{agent_session_id}/tasks/{task_id}/stop": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Stop Agent Session Task
+     * @description Stop a background task (an agent or a command); its end follows on the stream.
+     */
+    post: operations["stop_agent_session_task_api_v1_agent_sessions__agent_session_id__tasks__task_id__stop_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -571,10 +633,13 @@ export interface paths {
     put?: never;
     /**
      * Sign Off Owner Steps
-     * @description The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over
-     *     the ACs the Acceptance step waits on; 409 with a one-line reason, writing nothing, when none
-     *     waits or the feature lists no AC, when one of them has a NO-SHIP as its latest eval, when the
-     *     acceptance eval is undated or future-dated, or when not every eval was read.
+     * @description The owner settles the owner steps. Without a body: writes an ``owner-signoff`` SHIP eval
+     *     over the ACs the Acceptance step waits on; 409 with a one-line reason, writing nothing, when
+     *     none waits or the feature lists no AC, when one of them has a NO-SHIP as its latest eval, when
+     *     the acceptance eval is undated or future-dated, or when not every eval was read. With
+     *     ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes a SHIP
+     *     over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words. A ``delivery``
+     *     naming the acceptance eval follows the no-body rule for its ACs and refusals.
      */
     post: operations["sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post"];
     delete?: never;
@@ -1744,6 +1809,11 @@ export interface components {
       open_permission?: components["schemas"]["OpenPermission"] | null;
       /** Project */
       project: string;
+      /**
+       * Review Targets
+       * @default []
+       */
+      review_targets: components["schemas"]["ReviewTarget"][];
       status: components["schemas"]["AgentSessionStatus"];
       /** Title */
       title?: string | null;
@@ -2782,6 +2852,11 @@ export interface components {
       model_tiers: {
         [key: string]: string;
       };
+      /**
+       * Model Tiers Set
+       * @default []
+       */
+      model_tiers_set: string[];
       /** Modules */
       modules: string[];
       /** Platform Version */
@@ -3412,6 +3487,22 @@ export interface components {
      * @enum {string}
      */
     Outcome: "done" | "stopped" | "blocked" | "error";
+    /**
+     * OwnerSignOffBody
+     * @description ``POST .../owner-signoff``: the eval to settle, the owner's decision and an optional note.
+     */
+    OwnerSignOffBody: {
+      /**
+       * Decision
+       * @default done
+       * @enum {string}
+       */
+      decision: "done" | "more_work";
+      /** Delivery */
+      delivery?: string | null;
+      /** Note */
+      note?: string | null;
+    };
     /** Page[ActivityItem] */
     Page_ActivityItem_: {
       /** Items */
@@ -3879,6 +3970,7 @@ export interface components {
       | "tool.call"
       | "tool.result"
       | "todos"
+      | "task"
       | "permission.request"
       | "result"
       | "error"
@@ -3913,6 +4005,84 @@ export interface components {
       source: string;
     };
     /**
+     * RepoChanges
+     * @description One repository's changes against its base. ``root`` is the folder git ran in, ``branch``
+     *     its checked-out branch (null when detached), ``base`` the ref the branch is compared with
+     *     (``origin/main``…, null when none was found: then nothing is compared and ``files`` is
+     *     empty), ``base_sha`` the commit the branch forked from, ``head_sha`` the branch's last
+     *     commit. ``truncated`` says commits or files were left out past the bounds.
+     *
+     *     ``source`` is ``worktree`` when git read the checkout as it is now (uncommitted changes
+     *     included), ``recorded`` when that folder is gone and the review reads the commits it
+     *     recorded from the repo's own checkout (``root`` is still the old folder, so the paths match
+     *     the chat's). ``pull_request`` is the branch's pull request, when one is found.
+     */
+    RepoChanges: {
+      /** Base */
+      base?: string | null;
+      /** Base Sha */
+      base_sha?: string | null;
+      /** Branch */
+      branch?: string | null;
+      /**
+       * Commits
+       * @default []
+       */
+      commits: components["schemas"]["RepoCommit"][];
+      /**
+       * Files
+       * @default []
+       */
+      files: components["schemas"]["RepoFileChange"][];
+      /** Head Sha */
+      head_sha?: string | null;
+      /** Label */
+      label: string;
+      pull_request?: components["schemas"]["RepoPullRequest"] | null;
+      /** Root */
+      root: string;
+      /** @default worktree */
+      source: components["schemas"]["RepoSource"];
+      /**
+       * Truncated
+       * @default false
+       */
+      truncated: boolean;
+    };
+    /**
+     * RepoCommit
+     * @description A commit of the branch since its base, newest first.
+     */
+    RepoCommit: {
+      /** Author */
+      author: string;
+      /** Authored At */
+      authored_at: string;
+      /** Sha */
+      sha: string;
+      /** Subject */
+      subject: string;
+    };
+    /**
+     * RepoCommitDiff
+     * @description ``GET /agent-sessions/{id}/repo-changes/commit``: what one commit changed in one file, as a
+     *     unified diff with the file's line numbers. ``diff`` is null for a binary file or one past
+     *     ``REPO_DIFF_MAX_BYTES``, empty when the commit did not touch the file.
+     */
+    RepoCommitDiff: {
+      /**
+       * Binary
+       * @default false
+       */
+      binary: boolean;
+      /** Diff */
+      diff?: string | null;
+      /** Path */
+      path: string;
+      /** Sha */
+      sha: string;
+    };
+    /**
      * RepoConfigView
      * @description One repo of ``hub.json`` with its effective branch and conventions.
      */
@@ -3936,6 +4106,77 @@ export interface components {
       /** Role */
       role: string;
     };
+    /**
+     * RepoFileChange
+     * @description A file that differs from the base: committed on the branch, staged, unstaged or
+     *     untracked. ``path`` is absolute (the repository's folder joined with git's path), as Claude's
+     *     file tools name it; ``old_path`` the name before a rename. ``diff`` is the unified diff from
+     *     the base to the working tree, with the file's line numbers; null for a binary file or one
+     *     past ``REPO_DIFF_MAX_BYTES``. ``fingerprint`` changes whenever the diff does (a review mark
+     *     is kept against it). ``commits`` are the branch's commits that touched it, newest first;
+     *     ``uncommitted`` says the working tree differs from ``HEAD`` too.
+     */
+    RepoFileChange: {
+      /** Added */
+      added: number;
+      /**
+       * Binary
+       * @default false
+       */
+      binary: boolean;
+      /**
+       * Commits
+       * @default []
+       */
+      commits: components["schemas"]["RepoFileCommit"][];
+      /** Diff */
+      diff?: string | null;
+      /** Fingerprint */
+      fingerprint: string;
+      /** Old Path */
+      old_path?: string | null;
+      /** Path */
+      path: string;
+      /** Removed */
+      removed: number;
+      status: components["schemas"]["RepoFileStatus"];
+      /**
+       * Uncommitted
+       * @default false
+       */
+      uncommitted: boolean;
+    };
+    /**
+     * RepoFileCommit
+     * @description A commit that touched a file, and the lines it added and removed there.
+     */
+    RepoFileCommit: {
+      /** Added */
+      added: number;
+      /** Removed */
+      removed: number;
+      /** Sha */
+      sha: string;
+    };
+    /** @enum {string} */
+    RepoFileStatus: "added" | "modified" | "deleted" | "renamed";
+    /**
+     * RepoPullRequest
+     * @description The branch's pull request on GitHub: its number, link, state (``OPEN``, ``MERGED``,
+     *     ``CLOSED``) and the commit it is at.
+     */
+    RepoPullRequest: {
+      /** Head Sha */
+      head_sha?: string | null;
+      /** Number */
+      number: number;
+      /** State */
+      state: string;
+      /** Url */
+      url: string;
+    };
+    /** @enum {string} */
+    RepoSource: "worktree" | "recorded";
     /**
      * RepoView
      * @description A repo of the project as ``hub.json`` and its checkout describe it.
@@ -4002,6 +4243,35 @@ export interface components {
     ResumableList: {
       /** Items */
       items: components["schemas"]["PastSession"][];
+    };
+    /**
+     * ReviewTarget
+     * @description What a session's review read in one repository, kept so the review outlives the folder:
+     *     the hub repo (``repo``, its ``hub.json`` name) and the checkout it read (``root``, a worktree
+     *     that may be removed later), its branch, the ``base`` it was compared with and the commit it
+     *     forked from (``base_sha``), the last commit read (``head_sha``) and the branch's pull request
+     *     once one is found. With these the review reads the branch's commits from the repo's own
+     *     checkout once the worktree is gone.
+     */
+    ReviewTarget: {
+      /** Base */
+      base?: string | null;
+      /** Base Sha */
+      base_sha?: string | null;
+      /** Branch */
+      branch?: string | null;
+      /** Head Sha */
+      head_sha?: string | null;
+      /** Label */
+      label: string;
+      /** Pr Number */
+      pr_number?: number | null;
+      /** Pr Url */
+      pr_url?: string | null;
+      /** Repo */
+      repo?: string | null;
+      /** Root */
+      root: string;
     };
     /**
      * RunAccepted
@@ -4345,6 +4615,23 @@ export interface components {
       sources_missing: components["schemas"]["EventSource"][];
       /** Summary */
       summary: components["schemas"]["SummaryLine"][];
+    };
+    /**
+     * SessionRepoChanges
+     * @description ``GET /agent-sessions/{id}/repo-changes``: each repository the session worked in, and the
+     *     ones that could not be read (``warnings``, named by folder label).
+     */
+    SessionRepoChanges: {
+      /**
+       * Repos
+       * @default []
+       */
+      repos: components["schemas"]["RepoChanges"][];
+      /**
+       * Warnings
+       * @default []
+       */
+      warnings: string[];
     };
     /**
      * SessionSegment
@@ -4808,6 +5095,7 @@ export interface components {
      *     its blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).
      *     ``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent
      *     issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
+     *     ``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.
      */
     TicketRow: {
       /** Acs */
@@ -4833,6 +5121,8 @@ export interface components {
       order: number | null;
       /** Parent */
       parent?: string | null;
+      /** Pr Url */
+      pr_url?: string | null;
       /** Priority */
       priority: number | null;
       readiness: components["schemas"]["Readiness"];
@@ -4944,6 +5234,11 @@ export interface components {
       review_state: string;
       /** Started State */
       started_state: string;
+      /**
+       * Team Set
+       * @default []
+       */
+      team_set: string[];
       /** Teams */
       teams: string[];
       transport: components["schemas"]["SourcedValue"];
@@ -6027,6 +6322,90 @@ export interface operations {
       };
     };
   };
+  get_agent_session_repo_changes_api_v1_agent_sessions__agent_session_id__repo_changes_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionRepoChanges"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_agent_session_repo_commit_diff_api_v1_agent_sessions__agent_session_id__repo_changes_commit_get: {
+    parameters: {
+      query: {
+        path: string;
+        sha: string;
+        old_path?: string | null;
+      };
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RepoCommitDiff"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   change_agent_session_settings_api_v1_agent_sessions__agent_session_id__settings_post: {
     parameters: {
       query?: never;
@@ -6093,6 +6472,47 @@ export interface operations {
         };
         content: {
           "text/event-stream": string;
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  stop_agent_session_task_api_v1_agent_sessions__agent_session_id__tasks__task_id__stop_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+        task_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentSession"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
@@ -6658,7 +7078,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["OwnerSignOffBody"] | null;
+      };
+    };
     responses: {
       /** @description Successful Response */
       201: {

@@ -296,3 +296,138 @@ def test_refuses_when_folder_holds_more_evals_than_were_read() -> None:
     with pytest.raises(OwnerSignOffError, match="not all were read"):
         sign_off("demo", SLUG)
     assert writer.written == {}
+
+
+TICKETED = json.dumps(
+    {
+        "acs": [
+            {"id": "AC-7.1", "description": "d", "passes": True, "ticket": "DEM-1"},
+            {"id": "AC-7.2", "description": "d", "passes": True, "ticket": "DEM-2"},
+        ]
+    }
+).encode()
+
+
+def a_ticket_eval(name: str, verdict: str, ticket: str) -> RecordHead:
+    head = (
+        f"---\ntype: eval\nverdict: {verdict}\ntickets: [{ticket}]\nevaluated_at: 2026-10-08\n---\n"
+    )
+    return RecordHead(name=name, head=head.encode(), problem=None)
+
+
+def a_ticket_sign_off(*evals: RecordHead) -> tuple[SignOffOwnerSteps, Writer]:
+    folder = FeatureFolder(slug=SLUG, files=("features.json",), features_json=TICKETED, evals=evals)
+    writer = Writer()
+    return SignOffOwnerSteps(Hubs(), Folders(folder), writer, clock=lambda: NOW), writer
+
+
+def test_settles_one_eval_when_rest_of_feature_uncovered() -> None:
+    sign_off, writer = a_ticket_sign_off(
+        a_ticket_eval("dem-1.md", "SHIP-WITH-OWNER-STEPS", "DEM-1")
+    )
+
+    written = sign_off("demo", SLUG, delivery="dem-1", note="Deployed the config by hand.")
+
+    assert (written.verdict, written.acs, written.tickets) == ("SHIP", ("AC-7.1",), ("DEM-1",))
+    text = writer.written["owner-signoff.md"]
+    assert "tickets: [DEM-1]\n" in text
+    assert "## Owner's note\n\nDeployed the config by hand.\n" in text
+
+
+def test_writes_no_ship_when_owner_finds_more_work() -> None:
+    source = a_ticket_eval("dem-1.md", "SHIP-WITH-OWNER-STEPS", "DEM-1")
+    sign_off, writer = a_ticket_sign_off(source)
+
+    written = sign_off("demo", SLUG, delivery="dem-1", decision="more_work")
+
+    assert written.verdict == "NO-SHIP"
+    text = writer.written["owner-signoff.md"]
+    heads = (RecordHead(name="owner-signoff.md", head=text.encode(), problem=None),)
+    record = record_from_bytes(TICKETED)
+    assert not isinstance(record, str)
+    coverage = eval_coverage(eval_records((source, *heads), None, slug=SLUG), record.acs)
+    assert coverage.uncovered == ("AC-7.1", "AC-7.2")
+    assert coverage.owner_steps == ()
+
+
+def test_refuses_eval_when_not_owner_steps() -> None:
+    sign_off, _ = a_ticket_sign_off(a_ticket_eval("dem-1.md", "SHIP", "DEM-1"))
+
+    with pytest.raises(OwnerSignOffError, match="not a SHIP-WITH-OWNER-STEPS"):
+        sign_off("demo", SLUG, delivery="dem-1")
+
+
+def test_refuses_eval_when_unknown() -> None:
+    sign_off, _ = a_ticket_sign_off(a_ticket_eval("dem-1.md", "SHIP-WITH-OWNER-STEPS", "DEM-1"))
+
+    with pytest.raises(OwnerSignOffError, match="no eval dem-9"):
+        sign_off("demo", SLUG, delivery="dem-9")
+
+
+def test_refuses_eval_when_already_settled() -> None:
+    sign_off, _ = a_ticket_sign_off(
+        a_ticket_eval("dem-1.md", "SHIP-WITH-OWNER-STEPS", "DEM-1"),
+        a_ticket_eval("dem-1-r2.md", "SHIP", "DEM-1"),
+    )
+
+    with pytest.raises(OwnerSignOffError, match="no AC of dem-1 waits"):
+        sign_off("demo", SLUG, delivery="dem-1")
+
+
+def test_refuses_more_work_when_no_eval_named() -> None:
+    sign_off, _ = a_sign_off(an_eval("abc-1.md", "SHIP-WITH-OWNER-STEPS"))
+
+    with pytest.raises(OwnerSignOffError, match="name the eval"):
+        sign_off("demo", SLUG, decision="more_work")
+
+
+# AGH-325 x AGH-384: settling the acceptance eval itself is the whole-feature sign-off (A9).
+def test_signs_off_what_acceptance_waits_on_when_acceptance_eval_named() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    sign_off, writer = a_sign_off_of(a_planned_folder(whole))
+
+    written = sign_off("demo", SLUG, delivery="feature", note="Done by hand.")
+
+    assert (written.verdict, written.acs, written.tickets) == (
+        "SHIP",
+        ("AC-7.1", "AC-7.2", "AC-7.3"),
+        (),
+    )
+    assert "owner steps listed in feature are done" in writer.written["owner-signoff.md"]
+
+
+def test_refuses_naming_reopened_acs_when_acceptance_eval_named() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    reopened = a_head("acme-1521", "NO-SHIP", scope="acs: [AC-7.2]", at="2026-10-11")
+    sign_off, writer = a_sign_off_of(a_planned_folder(whole, reopened))
+
+    with pytest.raises(OwnerSignOffError) as refused:
+        sign_off("demo", SLUG, delivery="feature")
+
+    assert refused.value.reason == (
+        "the latest eval of AC-7.2 is NO-SHIP; fix or re-evaluate them first"
+    )
+    assert writer.written == {}
+
+
+def test_reopens_what_acceptance_waits_on_when_more_work_on_acceptance_eval() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    sign_off, _ = a_sign_off_of(a_planned_folder(whole))
+
+    written = sign_off("demo", SLUG, delivery="feature", decision="more_work")
+
+    assert (written.verdict, written.acs) == ("NO-SHIP", ("AC-7.1", "AC-7.2", "AC-7.3"))
+
+
+def test_signs_off_only_the_rest_when_a_ticket_eval_was_settled() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    ticket = a_head("acme-1520", "SHIP-WITH-OWNER-STEPS", scope="tickets: [T1]", at="2026-10-11")
+    signed = a_head(
+        "owner-signoff", "SHIP", scope="acs: [AC-7.1]\nprovenance: owner", at="2026-10-12"
+    )
+    sign_off, _ = a_sign_off_of(a_planned_folder(whole, ticket, signed))
+
+    written = sign_off("demo", SLUG)
+
+    assert written.acs == ("AC-7.2", "AC-7.3")
+    assert written.delivery == "owner-signoff-r2"

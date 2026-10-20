@@ -76,6 +76,9 @@ class LiveSession:
     answered: set[str] = field(default_factory=set)
     last_seq: int = 0
     idle_since: datetime | None = None
+    # The tasks (background subagents, commands) started and not yet ended: they run on after the
+    # turn's result, so an idle session with one is still at work and never ends for idleness.
+    tasks: set[str] = field(default_factory=set)
     error_logged: bool = False
     # Whether Claude Code's title has been read (else ``sweep`` looks for it), and when last.
     named: bool = False

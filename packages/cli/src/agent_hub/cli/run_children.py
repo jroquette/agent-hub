@@ -25,6 +25,7 @@ from typing import Final
 
 from agent_hub.cli.child_process import git_env
 from agent_hub.cli.init_report import shown_path
+from agent_hub.cli.session_settings import session_settings_path
 from agent_hub.core.hub_config.conventions import EffectiveConventions
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.team_keys import team_of
@@ -180,6 +181,7 @@ class RunChildren:
             add_dirs=(str(self.hub), *(path for path in others if path != str(self.repo_path))),
             tools=(*IMPLEMENTING_TOOLS, *gate_tools((repo.check_fast, repo.check))),
             denied_tools=SESSION_DENIED_TOOLS,
+            settings_file=str(session_settings_path(self.hub, options.effort)),
         )
 
     @property

@@ -79,11 +79,24 @@ class ChildRunner(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class StackBase:
+    """Where a stacked task's blocker is: ``repo`` (its ``hub.json`` dir) on ``branch``.
+
+    ``hub worktree --stack-on`` reads it from the blocker's pull request (``stack_on``): that repo
+    starts from ``origin/<branch>``, the other repos from their default branch.
+    """
+
+    repo: str
+    branch: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class WorktreeTask:
     """One task's checked inputs: the name, each repo's branch and base, and the repos to touch.
 
     ``branches`` maps each of ``repos`` to its task branch, ``bases`` to
-    ``origin/<its default branch>``.
+    ``origin/<its default branch>`` (or ``origin/<base>`` when the task is stacked on a branch;
+    with ``stacked``, the blocker's repo alone starts from its pull request's branch).
     """
 
     name: str
@@ -123,6 +136,8 @@ def worktree_task(
     fetch_options: tuple[str, ...] = (),
     repos: Sequence[str] | None = None,
     fetch: bool = True,
+    base: str | None = None,
+    stacked: StackBase | None = None,
 ) -> WorktreeTask:
     """The task named ``name`` in the hub's repos (or ``only``, or the ``repos`` subset), checked.
 
@@ -140,27 +155,35 @@ def worktree_task(
     ``WorktreeUsageError`` for a name not shaped like the issue, an unknown ``only`` or
     ``repos`` dir, or a branch git refuses; ``ValueError`` when both ``only`` and ``repos`` are
     given. ``fetch`` False skips the fetch: each new worktree starts from the base as already
-    fetched (``create_worktree``).
+    fetched (``create_worktree``). ``base`` (``hub worktree --base``) starts each new worktree
+    from ``origin/<base>`` instead of the default branch: a task stacked on a branch still in
+    review; git refusing the name raises ``WorktreeUsageError``. ``stacked``
+    (``hub worktree --stack-on``) starts only ``stacked.repo``'s worktree from
+    ``origin/<stacked.branch>`` and every other repo from its default branch; a ``stacked.repo``
+    the task does not touch (``--only`` another repo) raises ``WorktreeUsageError``, and
+    ``ValueError`` when both ``base`` and ``stacked`` are given.
     """
     if only is not None and repos is not None:
         msg = "worktree_task takes only or repos, not both"
         raise ValueError(msg)
+    if base is not None and stacked is not None:
+        msg = "worktree_task takes base or stacked, not both"
+        raise ValueError(msg)
     problem = worktree_name_problem(name, teams=config.tracker.team_keys)
     if problem is not None:
         raise WorktreeUsageError(problem)
-    dirs = tuple(repo.dir for repo in config.repos)
-    if only is not None and only not in dirs:
-        raise WorktreeUsageError(
-            f"unknown repo in --only: {shown_path(only)}; use one of: {' '.join(dirs)}"
-        )
-    touched = _touched(dirs, only=only, repos=repos)
+    touched = _task_repos(config, only=only, repos=repos, stacked=stacked)
     branches = {
         repo: worktree_branch(
             name, prefix=branch_prefix, pattern=config.conventions_for(repo).branch
         )
         for repo in touched
     }
-    for branch in dict.fromkeys(branches.values()):
+    checked_names = dict.fromkeys(branches.values())
+    for shared in (base, stacked.branch if stacked is not None else None):
+        if shared is not None:
+            checked_names[shared] = None
+    for branch in checked_names:
         checked = runner(
             [git, "check-ref-format", "--branch", branch],
             cwd=hub,
@@ -176,7 +199,10 @@ def worktree_task(
     return WorktreeTask(
         name=name,
         branches=branches,
-        bases={repo: f"origin/{config.default_branch_for(repo)}" for repo in touched},
+        bases={
+            repo: f"origin/{_base_branch(config, repo, base=base, stacked=stacked)}"
+            for repo in touched
+        },
         workspace=hub.parent,
         hub=hub,
         repos=touched,
@@ -190,6 +216,39 @@ def worktree_task(
         fetch_options=fetch_options,
         fetch=fetch,
     )
+
+
+def _task_repos(
+    config: HubConfig,
+    *,
+    only: str | None,
+    repos: Sequence[str] | None,
+    stacked: StackBase | None,
+) -> tuple[str, ...]:
+    """The repos the task touches (``_touched``), after checking ``only`` and ``stacked``."""
+    dirs = tuple(repo.dir for repo in config.repos)
+    if only is not None and only not in dirs:
+        raise WorktreeUsageError(
+            f"unknown repo in --only: {shown_path(only)}; use one of: {' '.join(dirs)}"
+        )
+    touched = _touched(dirs, only=only, repos=repos)
+    if stacked is not None and stacked.repo not in touched:
+        raise WorktreeUsageError(
+            f"the blocker's pull request is in {stacked.repo}, not in this task's repos"
+            f" ({' '.join(touched)}): drop --only"
+        )
+    return touched
+
+
+def _base_branch(
+    config: HubConfig, repo: str, *, base: str | None, stacked: StackBase | None
+) -> str:
+    """The branch ``repo``'s new worktree starts from (``worktree_task``'s ``bases``)."""
+    if base is not None:
+        return base
+    if stacked is not None and stacked.repo == repo:
+        return stacked.branch
+    return config.default_branch_for(repo)
 
 
 def _touched(

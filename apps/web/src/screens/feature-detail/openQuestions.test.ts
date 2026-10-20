@@ -40,6 +40,7 @@ describe("openQuestions", () => {
       title: "Signal names",
       body: "Which OTel signal carries the cost, and its `attributes`. Research.",
       recommendation: null,
+      options: [],
     });
     expect(questions[3]?.title).toBe("scope");
     expect(questions[4]?.title).toBe("A plain question without a bold title");
@@ -56,6 +57,34 @@ describe("openQuestions", () => {
     expect(openQuestions(SPEC)[5]?.recommendation).toBe(
       "The banner compares the requests both cover, not the whole estimate.",
     );
+  });
+
+  it("reads the options nested under a question, and the recommended one", () => {
+    const [cache, wire] = openQuestions(`## Open questions
+
+- Q1. **Cache.** Where is the price list kept?
+  - **In memory** (recommended): rebuilt on start, no
+    new file.
+  - **On disk** — survives a restart.
+  - A new table
+- Q2. **Wire format.** JSON or protobuf? Recommended: JSON.
+  - JSON: what the API speaks.
+  - Protobuf (recommended)
+`);
+
+    expect(cache?.options).toEqual([
+      { label: "In memory", description: "rebuilt on start, no new file.", recommended: true },
+      { label: "On disk", description: "survives a restart.", recommended: false },
+      { label: "A new table", description: null, recommended: false },
+    ]);
+    expect(cache?.body).toBe("Where is the price list kept?");
+    // The marked option is the recommendation when the prose names none; the prose wins otherwise.
+    expect(cache?.recommendation).toBe("In memory");
+    expect(wire?.recommendation).toBe("JSON.");
+    expect(wire?.options.map((o) => [o.label, o.recommended])).toEqual([
+      ["JSON", false],
+      ["Protobuf", true],
+    ]);
   });
 
   it("finds nothing without the section", () => {

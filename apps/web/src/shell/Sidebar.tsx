@@ -3,15 +3,38 @@ import { NavLink, useMatch } from "react-router";
 import { Kbd, PhaseTag, type Phase } from "../components/core";
 import { Icon, type IconName } from "../components/Icon";
 import { useScope } from "../lib/scope";
+import { SKILLS_PICKER } from "../screens/skills/routes";
 
 /** Badge counts from the global stream's `counts` message. */
 export interface SidebarCounts {
   live?: number | undefined;
   learnings?: number | undefined;
+  /** Features that need you (a session waits on you, NO-SHIP, owner steps, a broken record). */
+  features?: number | undefined;
   health?: number | undefined;
 }
 
 type CountKey = keyof SidebarCounts;
+
+const OVERVIEW_ID = "portfolio";
+
+/**
+ * The top item: the Portfolio with All projects in scope, else the overview of the project open or
+ * in scope, so a project's own page is one click away, as Brain and Toolkit are.
+ */
+export function overviewItem(
+  open: string | null,
+  scope: string | null,
+): { label: string; to: string; icon: IconName } {
+  const project = open ?? scope;
+  return project === null
+    ? { label: "Portfolio", to: "/", icon: "layout-dashboard" }
+    : {
+        label: `Overview · ${project}`,
+        to: `/projects/${encodeURIComponent(project)}`,
+        icon: "folder-kanban",
+      };
+}
 
 const BRAIN_ID = "brain";
 /** Where Brain goes with All projects in scope: a project picker. */
@@ -27,8 +50,6 @@ export function brainLink(open: string | null, scope: string | null): string {
 }
 
 const SKILLS_ID = "skills";
-/** Where Skills goes with All projects in scope: a project picker (AGH-164). */
-const SKILLS_PICKER = "/knowledge/skills";
 
 /**
  * Skills' destination: the catalog of the project whose skills are open, else of the project in
@@ -59,6 +80,8 @@ interface NavItem {
   countNoun?: (n: number) => string;
   tone?: "waiting" | "live" | "failed";
   phase?: Phase;
+  /** Shown only once there is something in it (Workflow runs, before the first run). */
+  onlyWhenAny?: boolean;
 }
 
 interface NavGroup {
@@ -70,15 +93,16 @@ interface NavGroup {
 }
 
 /**
- * The sitemap (D20, AGH-201 D3), regrouped by what the developer comes to do: Portfolio on top, the
- * agents' Work (Sessions carries the live badge, ADR 0033; runs sit next to the workflows that start
- * them), the project's Knowledge as flat items (Brain and Skills follow the project in scope, see
+ * The sitemap (D20, AGH-201 D3), regrouped by what the developer comes to do: Portfolio on top (the
+ * project overview once a project is open or in scope, see `overviewItem`), the
+ * agents' Work (Sessions carries the live badge, ADR 0033; Workflow runs shows once a workflow has
+ * run), the project's Knowledge as flat items (Brain and Skills follow the project in scope, see
  * `brainLink` and `skillsLink`), and the hub's own Health and Settings in the footer. Metrics,
  * Bench and Tracker queue are not shipped and not shown.
  */
 export const NAV: readonly NavGroup[] = [
   {
-    items: [{ id: "portfolio", label: "Portfolio", to: "/", icon: "layout-dashboard" }],
+    items: [{ id: OVERVIEW_ID, label: "Portfolio", to: "/", icon: "layout-dashboard" }],
   },
   {
     group: "Work",
@@ -93,9 +117,17 @@ export const NAV: readonly NavGroup[] = [
         countNoun: () => "live",
         tone: "live",
       },
-      { id: "runs", label: "Workflow runs", to: "/runs", icon: "route" },
-      { id: "workflows", label: "Workflows", to: "/workflows", icon: "workflow" },
-      { id: "features", label: "Features", to: "/features", icon: "list-checks" },
+      // Hidden until a workflow has run; the workflows themselves are a tab of Toolkit.
+      { id: "runs", label: "Workflow runs", to: "/runs", icon: "route", onlyWhenAny: true },
+      {
+        id: "features",
+        label: "Features",
+        to: "/features",
+        icon: "list-checks",
+        countKey: "features",
+        countNoun: () => "need you",
+        tone: "waiting",
+      },
     ],
   },
   {
@@ -144,10 +176,12 @@ function accessibleName(item: NavItem, count: number | undefined): string | unde
 
 export interface SidebarProps {
   counts: SidebarCounts;
+  /** Whether any workflow run exists, to show Workflow runs (default: shown). */
+  showRuns?: boolean;
   onShortcuts: () => void;
 }
 
-export function Sidebar({ counts, onShortcuts }: SidebarProps) {
+export function Sidebar({ counts, showRuns = true, onShortcuts }: SidebarProps) {
   const [scope] = useScope();
   const openBrain = useMatch("/projects/:project/brain/*");
   const brainTo = brainLink(openBrain?.params.project ?? null, scope);
@@ -155,6 +189,9 @@ export function Sidebar({ counts, onShortcuts }: SidebarProps) {
   const skillsTo = skillsLink(openSkills?.params.project ?? null, scope);
   const openConfig = useMatch("/projects/:project/*");
   const configTo = configLink(openConfig?.params.project ?? null, scope);
+  const overview = overviewItem(openConfig?.params.project ?? null, scope);
+  const resolve = (item: NavItem): NavItem =>
+    item.id === OVERVIEW_ID ? { ...item, ...overview } : item;
   const itemTo = (item: NavItem): string =>
     item.id === BRAIN_ID
       ? brainTo
@@ -164,13 +201,15 @@ export function Sidebar({ counts, onShortcuts }: SidebarProps) {
           ? configTo
           : item.to;
 
-  const renderItem = (item: NavItem) => {
+  const renderItem = (navItem: NavItem) => {
+    const item = resolve(navItem);
+    if (item.onlyWhenAny && !showRuns) return null;
     const count = item.countKey ? counts[item.countKey] : undefined;
     return (
       <NavLink
         key={item.id}
         to={itemTo(item)}
-        end={item.to === "/"}
+        end={item.id === OVERVIEW_ID}
         className="ah-nav-item"
         title={item.label}
         aria-label={accessibleName(item, count)}

@@ -13,7 +13,7 @@ only: its ``problem`` says why and its criteria are unknown.
 """
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
@@ -31,7 +31,11 @@ from agent_hub.core.features.feature_record import (
     RecordAc,
     record_from_bytes,
 )
-from agent_hub.core.features.feature_reviews import approved_tickets, review_records
+from agent_hub.core.features.feature_reviews import (
+    approved_tickets,
+    review_pull_requests,
+    review_records,
+)
 from agent_hub.core.features.feature_view import (
     AcceptanceEval,
     AcCounts,
@@ -179,16 +183,24 @@ def _id_order(issue: str) -> tuple[str, int]:
     return team, int(number)
 
 
-def feature_parts(folder: FeatureFolder, read: SnapshotRead | None = None) -> FeatureParts:
+def feature_parts(
+    folder: FeatureFolder,
+    read: SnapshotRead | None = None,
+    *,
+    repos: Mapping[str, str] | None = None,
+) -> FeatureParts:
     """The feature's evals, ticket board and golden path, over ``read``'s snapshot when it holds
-    one (else the plan; ``read`` None is a hub web with no tracker reader: not connected)."""
+    one (else the plan; ``read`` None is a hub web with no tracker reader: not connected).
+    ``repos`` maps each hub repo's ``dir`` to its GitHub ``owner/name``, to link each ticket's
+    pull request from its review record."""
     record = _record(folder.features_json)
     parsed = record if isinstance(record, FeatureRecordFile) else None
     acs = () if parsed is None else parsed.acs
     tickets = () if parsed is None else parsed.tickets
     evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
     coverage = eval_coverage(evals, acs, tickets=tickets)
-    approved = approved_tickets(review_records(folder.reviews, slug=folder.slug))
+    reviews = review_records(folder.reviews, slug=folder.slug)
+    approved = approved_tickets(reviews)
     accepted = acceptance_eval(evals)
     snapshot = None if read is None else read.snapshot
     board = ticket_board(
@@ -197,6 +209,7 @@ def feature_parts(folder: FeatureFolder, read: SnapshotRead | None = None) -> Fe
         snapshot,
         linear=() if parsed is None else parsed.linear,
         approved=approved,
+        pull_requests=review_pull_requests(reviews, repos or {}),
     )
     source: TicketsSource = "plan" if snapshot is None else "linear"
     waiting = owner_wait(evals, acs, tickets=tickets)

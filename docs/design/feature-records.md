@@ -120,7 +120,7 @@ Computed once in core (`agent_hub.core.features.golden_path`) and served as `gol
 detail and the tickets route: `steps` (each `name`, `state`, `meta`, `reason`, `progress {done, total}` or `null`)
 and `phase`, the first step neither `done` nor `skipped` (`shipped` when every step is done).
 
-The steps are the feature's own ([ADR 0042](../adr/0042-two-level-feature-and-ticket-flows.md), AGH-325); each
+The steps are the feature's own ([ADR 0043](../adr/0043-two-level-feature-and-ticket-flows.md), AGH-325); each
 ticket's implement, review and eval belong to the ticket, not to the golden path.
 
 | Step | Done when |

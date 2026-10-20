@@ -165,8 +165,12 @@ def with_issue(label: SessionLabel, rules: LabelRules) -> SessionLabel:
 
 
 def with_prompt_issue(label: SessionLabel, issue: str | None, rules: LabelRules) -> SessionLabel:
-    """``label`` with ``issue`` (what the session's first prompt names) when neither its branch
-    nor its worktree names one and ``issue`` is of one of ``rules``' teams."""
-    if label.issue is not None or issue is None or team_of(issue, rules.teams) is None:
+    """``label`` with ``issue`` (what the session's first prompt names) when it is of one of
+    ``rules``' teams, over what its branch or worktree names.
+
+    The first prompt (``/feature AGH-305``) is what the session was started to do; its branch is
+    the folder's, and a session started in the hub folder gets the hub checkout's branch, which
+    may name another ticket (the hub's records of the ticket before it)."""
+    if issue is None or team_of(issue, rules.teams) is None:
         return label
     return label.model_copy(update={"issue": issue})

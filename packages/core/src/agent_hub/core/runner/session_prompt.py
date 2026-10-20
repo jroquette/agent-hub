@@ -193,8 +193,13 @@ def implementing_argv(
     add_dirs: Sequence[str],
     tools: Sequence[str],
     denied_tools: Sequence[str],
+    settings_file: str | None = None,
 ) -> list[str]:
-    """The ``claude -p`` argv of the implementing session (the repo's hooks stay on).
+    """The ``claude -p`` argv of the implementing session.
+
+    The hub's hooks load from the hub when the cwd is the hub, and from ``settings_file`` (a
+    hooks-only file the caller builds, holding ``effortLevel`` too) when the cwd is a repo;
+    without it, ``--settings`` holds ``{"effortLevel": effort}`` inline, as it always has.
 
     ``--allowedTools`` only adds to the user's and the project's allow rules, so the session
     also runs in permission mode ``dontAsk`` (anything not allowed is refused, never asked) and
@@ -215,7 +220,7 @@ def implementing_argv(
         "--model",
         model,
         "--settings",
-        json.dumps({"effortLevel": effort}),
+        json.dumps({"effortLevel": effort}) if settings_file is None else settings_file,
         *folders,
         "--permission-mode",
         PERMISSION_MODE,

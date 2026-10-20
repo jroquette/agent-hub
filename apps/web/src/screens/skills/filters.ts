@@ -33,6 +33,10 @@ export const KIND_HELP: Record<ItemKind, string> = {
     "Subagents: specialists with their own prompt, tools and context window. The main session delegates a task to one and gets back only its result.",
   hook: "Shell commands Claude Code runs by itself at lifecycle events (a session starts, a tool is about to run, a turn ends) to check, block or record what happens.",
 };
+/** Workflows sit beside the kinds in the Toolkit, though the catalog API does not list them. */
+export const WORKFLOWS_SUMMARY = "Steps the hub runs by itself, chaining agents and commands";
+export const WORKFLOWS_HELP =
+  "Jobs the hub runs from start to finish without you: a fixed list of steps where Claude writes or reviews code and commands run the checks, ending in a result such as a pull request. Each is a YAML file in the hub's workflows/ folder.";
 export const ORIGIN_LABEL: Record<Origin, string> = {
   managed: "Managed",
   "project-owned": "Project-owned",

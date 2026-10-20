@@ -1,28 +1,24 @@
-/* The Skills catalog (D3): a filter rail beside cards grouped by kind. */
-.ah-skills-layout {
-  display: flex;
-  gap: var(--space-6);
-  align-items: flex-start;
-}
-@media (max-width: 900px) {
-  .ah-skills-layout {
-    flex-direction: column;
-  }
-  .ah-skills-layout .ah-rail,
-  .ah-skills-layout .ah-skills-main {
-    width: 100%;
-  }
-}
-.ah-skills-main {
-  flex: 1 1 auto;
-  min-width: 0;
+/* The Toolkit catalog (D3): drafts, kind tabs, a toolbar, then the open tab's cards. */
+.ah-toolkit {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  container-type: inline-size;
+  min-width: 0;
+}
+.ah-toolkit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  min-width: 0;
+}
+.ah-toolkit-nomatch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 .ah-skills-search {
-  max-width: 480px;
+  width: 320px;
+  max-width: 100%;
 }
 .ah-skills-group + .ah-skills-group {
   margin-top: var(--space-4);
@@ -159,8 +155,10 @@
   margin-top: auto;
 }
 .ah-skills-count {
+  margin: 0;
   font-size: 13px;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 .ah-skills-plugins {
   list-style: none;
@@ -176,7 +174,7 @@
   align-items: center;
   gap: var(--space-2) var(--space-3);
   padding: var(--space-2) var(--space-3);
-  border: 1px dashed var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   font-size: 13px;
 }
@@ -216,7 +214,6 @@
 .ah-create-option:hover,
 .ah-create-option:focus-visible {
   background: var(--surface-hover);
-  outline: none;
 }
 .ah-create-option-text {
   display: flex;
@@ -235,80 +232,6 @@
   line-height: 16px;
 }
 
-/* Kind tiles: the tabs of the catalog, with what each kind is and how much it is used. */
-.ah-kind-tiles {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-@container (min-width: 880px) {
-  .ah-kind-tiles {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-@container (max-width: 420px) {
-  .ah-kind-tiles {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-.ah-kind-tile {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.ah-kind-tile:hover {
-  border-color: var(--border-strong);
-}
-.ah-kind-tile[aria-selected="true"] {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-.ah-kind-tile-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.ah-kind-tile-label {
-  font-weight: 600;
-  font-size: 14px;
-  line-height: 20px;
-}
-.ah-kind-tile-count {
-  margin-left: 4px;
-  color: var(--text-muted);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.ah-kind-tile-line {
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 16px;
-}
-.ah-kind-tile-used {
-  color: var(--text-subtle);
-  font-size: 12px;
-  line-height: 16px;
-}
-.ah-kind-badge {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
-  color: var(--text-muted);
-}
 .ah-skills-toolbar {
   gap: var(--space-3);
 }
@@ -448,37 +371,96 @@
   }
 }
 
-/* Drafts the Studio has in progress. */
+/* "Your drafts": a plain card of rows, solid borders (dashed means derived, chips mean filters). */
 .ah-drafts {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+.ah-drafts-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-4);
+}
+.ah-drafts-head h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+.ah-drafts-note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 16px;
 }
 .ah-drafts-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+  flex-direction: column;
 }
-.ah-draft-pill {
-  display: inline-flex;
+.ah-draft-row {
+  display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 4px var(--space-3) 4px 4px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  color: var(--text);
+  min-height: 32px;
+  color: var(--text-muted);
   font-size: 13px;
 }
-.ah-draft-pill .ah-kind-badge {
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-full);
+.ah-draft-row + .ah-draft-row {
+  border-top: 1px solid var(--border);
 }
-.ah-draft-pill:hover {
-  border-color: var(--accent);
-  text-decoration: none;
+.ah-draft-verb {
+  width: 112px;
+  flex: none;
+}
+.ah-draft-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-draft-when {
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+/* "Continue draft" on the card of an item that has an open edit draft. */
+.ah-continue-draft {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 24px;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.ah-skill-card-line {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+/* Third-party plugins, folded under the tab panel. */
+.ah-skills-plugins-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  list-style: none;
+}
+.ah-skills-plugins-fold > summary::-webkit-details-marker {
+  display: none;
+}
+.ah-skills-plugins-fold[open] > summary > .ah-icon:first-child {
+  transform: rotate(90deg);
 }

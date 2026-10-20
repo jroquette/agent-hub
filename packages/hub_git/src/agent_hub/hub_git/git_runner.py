@@ -102,8 +102,10 @@ def run_process(
     env: Mapping[str, str],
     timeout: float,
     keep_stdout: bool,
+    limit: int = OUTPUT_LIMIT,
 ) -> ProcessResult:
-    """Run ``argv`` in ``cwd`` with exactly ``env`` in a session of its own (``Launch``)."""
+    """Run ``argv`` in ``cwd`` with exactly ``env`` in a session of its own (``Launch``),
+    keeping at most ``limit`` bytes of its stdout."""
     with contextlib.ExitStack() as stack:
         out = stack.enter_context(tempfile.TemporaryFile()) if keep_stdout else None
         child = stack.enter_context(
@@ -125,7 +127,7 @@ def run_process(
         if out is None:
             return ProcessResult(returncode=returncode, stdout=b"")
         out.seek(0)
-        return ProcessResult(returncode=returncode, stdout=out.read(OUTPUT_LIMIT))
+        return ProcessResult(returncode=returncode, stdout=out.read(limit))
     raise AssertionError  # pragma: no cover - ExitStack never swallows the return
 
 

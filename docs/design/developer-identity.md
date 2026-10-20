@@ -30,6 +30,8 @@ cloud setup. The `hub.json` fields themselves are in [project-config.md](project
   and `guard.blocked_words_env` ([environments.md](environments.md) § The developer's layer); each with `hub.json`'s
   rule, plus `_` comment keys at every object level. `null` is refused. The CLI also checks them against `hub.json`
   (new names only, `access` only tightened, a known `dir`, local endpoints on local environments).
+- **Env files.** The developer's own environments and their endpoints may name `credentials.env_file`
+  ([scenarios.md](scenarios.md)); a committed environment's credentials, env file included, stay `hub.json`'s.
 - **Example:** `{"project": {"branch_prefix": "jane/", "author_name": "Jane Roe", "author_email": "jane@example.com"}}`.
 - **Problems** (CLI and doctor), one per error, `hub.local.json: <json path>: <message>`. A `hub.json` key that is not
   local: `set only in hub.json (hub.local.json's keys: docs/design/developer-identity.md)`. Any other key: `Extra inputs are not permitted`. Not an object: `$: must be a JSON object`. Too

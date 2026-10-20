@@ -6,6 +6,8 @@ import { seriousViolations } from "../../testing/axe";
 import {
   aCapabilities,
   aCloudSession,
+  aFeature,
+  aFeatureTickets,
   aPage,
   aPermissionRequest,
   aProblem,
@@ -16,12 +18,14 @@ import {
   aSessionLabel,
   aSessionsByStatus,
   aStreamCounts,
+  aTicketRow,
   anId,
   at,
   renderWithApi,
   type ApiRoutes,
   T0,
 } from "../../testing/builders";
+import { apiKey } from "../../lib/api";
 import { servedCheckout } from "../../lib/devCheckout";
 import { GLOBAL_STREAM, GlobalStreamProvider } from "../../shell/GlobalStream";
 import { SessionsListScreen } from "./index";
@@ -980,5 +984,43 @@ describe("SessionsListScreen view-toggle", () => {
 
     await shows("list");
     expect(window.localStorage.getItem(VIEW)).toBeNull();
+  });
+});
+
+describe("SessionsListScreen (session-name)", () => {
+  const feature = aFeature({ project: "storefront", slug: "orders-export", issues: ["ACME-1511"] });
+
+  it("names a row on a ticket by its feature's slug and links the feature, never reading the tickets", async () => {
+    const view = renderList(routes({ "/api/v1/features": aPage([feature]) }));
+
+    expect(await screen.findByText("ACME-1511: orders-export")).toBeInTheDocument();
+    const chip = within(rowOf("ACME-1511: orders-export")).getByRole("link", {
+      name: "orders-export",
+    });
+    expect(chip).toHaveAttribute("href", "/features/storefront/orders-export");
+    expect(view.requests.some((r) => r.url.includes("/tickets"))).toBe(false);
+  });
+
+  it("names it by the ticket's title once the tickets are in the cache", async () => {
+    const view = renderList(routes({ "/api/v1/features": aPage([feature]) }));
+    await screen.findByText("ACME-1511: orders-export");
+
+    act(() => {
+      view.queryClient.setQueryData(
+        apiKey("/api/v1/features/{project}/{slug}/tickets", {
+          path: { project: "storefront", slug: "orders-export" },
+        }),
+        aFeatureTickets({
+          project: "storefront",
+          slug: "orders-export",
+          tickets: [
+            aTicketRow({ id: "ACME-1511", ref: "ACME-1511", title: "Export orders as CSV" }),
+          ],
+        }),
+      );
+    });
+
+    expect(await screen.findByText("ACME-1511: Export orders as CSV")).toBeInTheDocument();
+    expect(view.requests.some((r) => r.url.includes("/tickets"))).toBe(false);
   });
 });

@@ -71,7 +71,7 @@ hub doctor [--only RULE]… [--json]   # checks rules, links, dead references an
 hub validate-output review|eval FILE   # checks one agent JSON output: a review round or an eval
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub env list|show|add|set|remove|service … [--local] [--json]   # the declared environments and services: list, show, or change hub.json (--local: hub.local.json), no prompt
-hub worktree NAME [--only REPO] [--remove] [--no-fetch]   # isolated worktrees for one task (--remove removes them; --no-fetch starts from the already-fetched base)
+hub worktree NAME [--only REPO] [--remove] [--no-fetch] [--base BRANCH | --stack-on PR_URL]   # isolated worktrees for one task (--remove removes them; --no-fetch starts from the already-fetched base; --base starts every repo from origin/BRANCH; --stack-on starts the open pull request's repo from its head branch, read with gh, and the other repos from their default branch: a blocker still in review)
 hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
@@ -136,7 +136,9 @@ the issue once and refuses it, dry or live and with `--from verify` too, when it
 input brief (`Problem`, `Why`, `Why now`, `Outcome`, `Invariants`, `Acceptance criteria`, as Markdown headings,
 [ADR 0026](adr/0026-input-brief-contract.md)): exit 1 with one line naming the missing sections, nothing created, and
 a live run's `failed` record at stage `PICKED`; otherwise (dry run by default: it prints every command and tracker
-write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
+write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt)
+under the hub's hooks (a hooks-only `--settings` file built from the hub's `.claude/settings.json`; when that file or
+a hook script it names is missing or unusable, the run exits 1 before the issue is read, dry or live, AGH-278), its own gate, the push and
 `gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
 `tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. A live
 run is the `issue-to-pr` workflow run through the engine ([ADR 0032](adr/0032-workflow-engine.md), AGH-224): the hub's
@@ -351,10 +353,11 @@ names one (glob tokens expanded; not `ls`, `test`, `[` or `stat`). The rule runs
 final and wins over any declared `access` and any `guard.infra.allow` match, and `prod_markers` still applies beside
 it. It never opens a file the secret-file rule treats as secret; that file keeps the secret-file reason unless its
 path or the command text holds a word. Scans are bounded (1 MiB per command or file, 64 files and 4 MiB per call,
-300 ms); over a bound, on a file that is not regular, on an unusable list in any layer and while an existing
-`hub.local.json` is unusable, the guard asks. The lists are the union of `hub.json`, `hub.local.json` and a `hub.json`
-named by `$HUB_CONFIG` (the hooks only); no layer removes an entry. A reason names the word, its first layer and the
-surface, never the command, a value or a line, and the recorded event carries `rule: blocked_word`.
+300 ms); over a bound, on a file that is not regular, on an unusable list in any layer, while an existing
+`hub.local.json` is unusable and on a hook event it cannot read as a JSON object, the guard asks. The lists are the
+union of `hub.json`, `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` (the hooks only); no layer removes an
+entry. A reason names the word, its first layer and the surface, never the command, a value or a line, and the
+recorded event carries `rule: blocked_word`.
 **`access` is not enforced by the guard in v1**: the guard cannot tell a read from a write in `psql`, `curl`, `aws` or
 an SDK script, so `access` is an instruction rendered for the agent, and the only hard blocks are blocked words and the
 existing `guard.infra`, `deny_hosts` and `deny_paths`. Blocked words are a best-effort text tripwire, not a security
@@ -362,8 +365,7 @@ boundary: the boundary is which credentials the agent's machine holds. The guard
 Edit, Write, MultiEdit, NotebookEdit and WebFetch. Accepted limits: false positives; MCP tools, WebSearch and subagent
 (Task) prompts are not checked; nor are files a program opens without the command naming them (`python sync.py`
 reading `config/app.json`, `find … -exec cat`), tool output, obfuscation past the three views, Grep's search regex and
-edit contents; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen; `hub run`'s implement
-sessions run without the hub's hooks (AGH-278).
+edit contents; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen.
 
 ### Scenarios and actions (AGH-350)
 
@@ -498,7 +500,7 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   whose owner steps the owner signed off; Build and Acceptance done), and never while an earlier step is not. Ticket
   evals never make Acceptance done: with none whole-feature it reads "Not recorded" with the ACs they cover. Plan's
   meta is the plan's version. Without Linear, Build and Shipped are `unknown`, never done
-  ([ADR 0042](adr/0042-two-level-feature-and-ticket-flows.md), proposed).
+  ([ADR 0043](adr/0043-two-level-feature-and-ticket-flows.md), proposed).
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
   scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it
   decides. A legacy `eval.md` is read as one delivery, `legacy`. The Eval tab lists every delivery.
@@ -571,7 +573,8 @@ replaces Live sessions and the separate list of driven sessions (design in
 work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub web`:
 
 - **Playground.** `make playground` runs a conductor `hub web` (7420, from a copy of the checkout taken at each
-  start) that drives the sessions, and `make live`: the checkout's API on 7421, restarted on each Python change, and
+  start) that drives the sessions, with no limit on live ones (`--sessions-max 0`,
+  [ADR 0042](adr/0042-no-live-session-limit-in-the-playground.md)), and `make live`: the checkout's API on 7421, restarted on each Python change, and
   the web app on 5173, whose proxy sends the agent-session routes to the conductor, so a change never ends a session.
   One address (`/__playground/session?token=`) signs the browser in. The dev app's shake and New session start in
   the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps never offer it.
@@ -695,6 +698,29 @@ Workflow runs list filters by workflow and failure kind.
   (`PUT /projects/{project}/config/local`).
 - The Portfolio, Brain note frontmatter and the shell's scrolling are calmer; every screen above has a visual test on
   the demo data ([TESTING.md](TESTING.md)).
+
+**Playground delivery 2 (AGH-384, built).** What the owner validated in the playground after v0.17.0, as one
+change; the live-session limit is [ADR 0042](adr/0042-no-live-session-limit-in-the-playground.md):
+
+- **Features** leads In progress with the features that need you (a warning, or a live session waiting on you), and
+  the sidebar badges Features with their count. **Feature detail**: per ticket an AC meter and a last PR column
+  (`TicketRow.pr_url`, from its review record), AC links into Criteria with a hover preview, the evals folded by
+  ticket as a tree with a Waiting on you callout, and the owner sign-off of one eval's owner steps (SHIP or NO-SHIP
+  with a note). A ticket blocked only by one in review starts on the blocker's branch:
+  `hub worktree --stack-on <PR url>` creates that repo's worktree from the pull request's head branch and the other repos' from their default
+  branch (`--base BRANCH` starts every repo from one branch); a session belongs to the issue its first prompt names.
+- **Session review**: the changed files split by kind (Code, Reviews & specs, Learnings, Scratch; only code is
+  reviewed and counted), read from git per repository (`GET /agent-sessions/{id}/repo-changes`: the branch against
+  the branch it was started from, files, commits, `…/repo-changes/commit` for one commit's diff of a file), with each
+  repository's pull request and state; what a read found is recorded on the session (`review_targets`, migration
+  0007), so the review outlives its worktree.
+- **Chat**: opens at the latest message or the pending card; open questions answered by options; links to URLs,
+  pull requests, tickets and review files; the slash menu holds the hub's skills and agents anywhere in the message.
+  Background agents and commands stay visible after a turn (task records, a Background drawer, a closing card,
+  `POST /agent-sessions/{id}/tasks/{task_id}/stop`), and a session on a ticket is named by the ticket.
+- **Toolkit** holds Workflows as a tab (`/workflows` redirects), with kind tabs, a filter toolbar and Your drafts;
+  **Hub config** shows one view of the values agents use and who set each. Generated hubs' `/feature` has
+  implementers change files with Edit or Write only.
 
 ## Data sources and event model
 

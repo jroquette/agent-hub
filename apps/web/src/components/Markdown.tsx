@@ -13,10 +13,14 @@
  * A skill body (AGH-164) passes `localLink`, asked first for every relative link (a bundled file of
  * the skill opens in the page; null falls back to the rules above, so text without a note), and
  * `stepAnchors`, which gives each top-level numbered item the id `step-<n>` (P5).
+ *
+ * The chat passes `refs`, asked for each run of text and each whole code span outside a link: what
+ * it names (a URL, a pull request, a ticket, a file of the review) becomes a link that opens in a
+ * new tab, or a button that opens it in the page; the rest stays text.
  */
 import "./Markdown.css";
 
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 
 import {
   isRelativeHref,
@@ -484,6 +488,16 @@ export interface MarkdownProps {
   /** The text is still arriving: a code block whose fence is not closed yet stays plain. */
   streaming?: boolean | undefined;
   className?: string | undefined;
+  /** Splits a run of text into text and refs (tickets, pull requests, files); null: none. */
+  refs?: ((text: string) => readonly (string | InlineRef)[] | null) | undefined;
+}
+
+/** A ref found in text by `MarkdownProps.refs`: a link to `href` (a new tab), or an action. */
+export interface InlineRef {
+  label: string;
+  href?: string | undefined;
+  open?: (() => void) | undefined;
+  title?: string | undefined;
 }
 
 /** A relative link resolved by the page: where it points (an in-page `#id`) and what opens it. */
@@ -500,6 +514,9 @@ interface Ctx {
   /** The last step number given, or null when steps are not anchored. */
   steps: number | null;
   streaming: boolean;
+  refs: MarkdownProps["refs"];
+  /** Inside a link: its text is never split into refs. */
+  inLink: boolean;
 }
 
 /** True for a plain left click, which the page handles; other clicks keep the browser's default. */
@@ -564,13 +581,47 @@ function linkNode(href: string, children: ReactNode, key: number, ctx: Ctx): Rea
   }
 }
 
+function refNode(ref: InlineRef, children: ReactNode, key: number): ReactNode {
+  if (ref.href) {
+    return (
+      <a key={key} href={ref.href} target="_blank" rel="noopener noreferrer" title={ref.title}>
+        {children} <span className="ah-sr">{NEW_TAB}</span>
+      </a>
+    );
+  }
+  return (
+    <button key={key} type="button" className="ah-md-ref" title={ref.title} onClick={ref.open}>
+      {children}
+    </button>
+  );
+}
+
+/** A run of text with its refs as links, when the page passes `refs`. */
+function textWithRefs(text: string, key: number, ctx: Ctx): ReactNode {
+  const parts = ctx.refs && !ctx.inLink ? ctx.refs(text) : null;
+  if (!parts) return text;
+  return (
+    <Fragment key={key}>
+      {parts.map((part, at) => (typeof part === "string" ? part : refNode(part, part.label, at)))}
+    </Fragment>
+  );
+}
+
+/** A code span, as a link when all of it is one ref (a path, a ticket, a pull request). */
+function codeWithRef(code: string, key: number, ctx: Ctx): ReactNode {
+  const parts = (ctx.refs && !ctx.inLink ? ctx.refs(code) : null)?.filter((part) => part !== "");
+  const only = parts?.length === 1 ? parts[0] : undefined;
+  if (only === undefined || typeof only === "string") return <code key={key}>{code}</code>;
+  return refNode(only, <code>{code}</code>, key);
+}
+
 function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
   return nodes.map((node, key) => {
     switch (node.t) {
       case "text":
-        return node.v;
+        return textWithRefs(node.v, key, ctx);
       case "code":
-        return <code key={key}>{node.v}</code>;
+        return codeWithRef(node.v, key, ctx);
       case "strong":
         return <strong key={key}>{renderInline(node.c, ctx)}</strong>;
       case "em":
@@ -578,7 +629,7 @@ function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
       case "del":
         return <del key={key}>{renderInline(node.c, ctx)}</del>;
       case "link":
-        return linkNode(node.href, renderInline(node.c, ctx), key, ctx);
+        return linkNode(node.href, renderInline(node.c, { ...ctx, inLink: true }), key, ctx);
       case "image":
         return linkNode(node.src, `Image: ${node.alt || node.src}`, key, ctx);
     }
@@ -760,6 +811,7 @@ export function Markdown({
   stepAnchors,
   streaming = false,
   className,
+  refs,
 }: MarkdownProps) {
   if (new TextEncoder().encode(source).length > MAX_MARKDOWN_BYTES) {
     return (
@@ -779,6 +831,8 @@ export function Markdown({
     ids: new Map(),
     steps: stepAnchors ? 0 : null,
     streaming,
+    refs,
+    inLink: false,
   };
   return (
     <div className={cx("ah-md", className)}>
