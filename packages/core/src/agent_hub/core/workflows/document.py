@@ -6,9 +6,10 @@ located by its key path (``loc``), never by a line: the loader that read the fil
 lines, and the catalog maps a key path to one (``catalog.WorkflowFile.line_of``).
 """
 
+import json
 import math
-from collections.abc import Mapping, Sequence
-from typing import Annotated, Literal, NamedTuple, Self
+from collections.abc import Iterator, Mapping, Sequence
+from typing import Annotated, Final, Literal, NamedTuple, Self
 
 from pydantic import (
     AfterValidator,
@@ -28,6 +29,7 @@ from agent_hub.core.workflows.nodes import (
     READ_ONLY,
     FieldName,
     KebabId,
+    LoopGroupNode,
     Node,
     NodeId,
     Text,
@@ -44,7 +46,11 @@ _INPUT_TYPES: dict[str, tuple[type, ...]] = {
     "number": (int, float),
     "boolean": (bool,),
 }
-_NODE_TYPES = "agent, shell, script, loop, loop_group, approval, wait, halt, include"
+_NODE_TYPES = (
+    "agent, shell, script, loop, loop_group, approval, wait, halt, include, action, expect"
+)
+# The node types a ``kind: scenario`` document may hold (docs/design/scenarios.md).
+SCENARIO_NODE_TYPES: Final = ("action", "expect", "approval", "wait", "loop_group", "include")
 _MESSAGES = {
     "extra_forbidden": "unknown key",
     "model_type": "must be a mapping",
@@ -120,6 +126,8 @@ class WorkflowDocument(WorkflowObject):
     """A workflow file's content: a graph of typed nodes."""
 
     version: Literal[1]
+    # ``scenario``: a scenario (docs/design/scenarios.md), holding only ``SCENARIO_NODE_TYPES``.
+    kind: Literal["workflow", "scenario"] = "workflow"
     name: KebabId
     description: Text | None = None
     revision: Annotated[StrictInt, Field(ge=1)]
@@ -145,9 +153,30 @@ class WorkflowDocument(WorkflowObject):
 def parse_workflow(content: object) -> WorkflowDocument:
     """The document ``content`` holds; raises ``WorkflowLoadError`` naming every problem."""
     try:
-        return WorkflowDocument.model_validate(content)
+        document = WorkflowDocument.model_validate(content)
     except ValidationError as error:
         raise load_error(error, content) from None
+    if problems := list(_kind_problems(document)):
+        raise WorkflowLoadError(problems)
+    return document
+
+
+def _kind_problems(document: WorkflowDocument) -> Iterator[WorkflowProblem]:
+    """Each node, a ``loop_group``'s body included, whose type the document's kind refuses."""
+    if document.kind != "scenario":
+        return
+    allowed = ", ".join(SCENARIO_NODE_TYPES[:-1]) + f" and {SCENARIO_NODE_TYPES[-1]}"
+    for index, node in enumerate(document.nodes):
+        body = node.nodes if isinstance(node, LoopGroupNode) else ()
+        located: list[tuple[Loc, Node]] = [(("nodes", index), node)]
+        located += [(("nodes", index, "nodes", inner), child) for inner, child in enumerate(body)]
+        for loc, found in located:
+            if found.type not in SCENARIO_NODE_TYPES:
+                message = (
+                    f"the node {json.dumps(found.id)} has type {found.type}: a scenario takes"
+                    f" only {allowed} nodes"
+                )
+                yield WorkflowProblem((*loc, "type"), message)
 
 
 def load_error(error: ValidationError, content: object) -> WorkflowLoadError:
