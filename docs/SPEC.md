@@ -138,7 +138,7 @@ input brief (`Problem`, `Why`, `Why now`, `Outcome`, `Invariants`, `Acceptance c
 a live run's `failed` record at stage `PICKED`; otherwise (dry run by default: it prints every command and tracker
 write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt)
 under the hub's hooks (a hooks-only `--settings` file built from the hub's `.claude/settings.json`; when that file or
-a hook script it names is missing, the run exits 1 before the issue is read, dry or live, AGH-278), its own gate, the push and
+a hook script it names is missing or unusable, the run exits 1 before the issue is read, dry or live, AGH-278), its own gate, the push and
 `gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
 `tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. A live
 run is the `issue-to-pr` workflow run through the engine ([ADR 0032](adr/0032-workflow-engine.md), AGH-224): the hub's
