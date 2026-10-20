@@ -1300,3 +1300,15 @@ def test_waits_until_ctx_when_run_context_wait_in_scenario() -> None:
     assert [gate.due.isoformat() for gate in run.recorder.gates if gate.due] == [
         "2026-10-16T09:00:00+00:00"
     ]
+
+
+def test_keeps_poll_budget_when_expect_node_resumed() -> None:
+    plan = plan_of(expect("wait", every="5s", timeout="24h"))
+    first = Run(plan, ScriptedRunner({"wait": pending(1001)}))
+    again = ScriptedRunner({"wait": pending(10)})
+
+    resumed = Run(plan, again, prior=first.report.state)
+
+    assert first.report.status == "failed"
+    assert again.calls == []
+    assert resumed.status_of("wait") == ("failed", None, None, "timeout")
