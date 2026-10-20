@@ -54,7 +54,7 @@ describe("backgroundTasks", () => {
 });
 
 describe("BackgroundChip", () => {
-  it("counts the running tasks, else the ended ones, and hides with none", () => {
+  it("shows only while tasks run: the ended ones are in the session menu", () => {
     const { rerender, container } = render(
       <BackgroundChip tasks={tasks()} open={false} onToggle={vi.fn()} />,
     );
@@ -67,7 +67,7 @@ describe("BackgroundChip", () => {
         onToggle={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Background tasks, 2 done" })).toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
 
     rerender(<BackgroundChip tasks={{ running: [], done: [] }} open={false} onToggle={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();

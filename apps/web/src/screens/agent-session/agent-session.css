@@ -27,36 +27,103 @@
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);
-  padding: var(--space-3) 0;
+  padding: 0 0 var(--space-3);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 /*
- * The full chat's header is a toolbar on the page's gutters, not in the reading column: the chrome
- * reads as the window, the column as the document. Row 1: where it is and what it cost; row 2: the
- * session and its actions.
+ * The full chat's header: a toolbar on the window and a heading in the document. Row 1 sits on the
+ * page's gutters (where the session is, then what you can open or do); row 2 sits in the reading
+ * column, so the title starts on the first message's edge and the cost ends on the composer's.
+ * Neither row wraps: the crumbs and the title truncate, and narrow widths drop words first.
  */
 .as-toolbar {
-  gap: var(--space-1);
+  height: 40px;
   padding-inline: var(--space-6);
 }
 .as-toolbar-row {
-  flex-wrap: wrap;
-  gap: var(--space-3);
+  flex-wrap: nowrap;
+  gap: var(--space-4);
   min-width: 0;
 }
-.as-toolbar-row > .as-meter {
+.as-toolbar-row > .ah-crumbs,
+.as-toolbar-row > nav {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.as-toolbar-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.as-toolbar-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.as-heading-row {
+  flex-wrap: nowrap;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-top: var(--space-1);
+}
+.as-heading-row > :not(.as-title) {
   flex: none;
 }
 .as-title {
+  flex: 0 1 auto;
   margin: 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 20px;
+  line-height: 28px;
   font-weight: 600;
+  letter-spacing: -0.005em;
+}
+/* Review changes: the one bordered control while files wait; only what waits is tinted. */
+.as-review-btn {
+  white-space: nowrap;
+}
+.as-review-due {
+  color: var(--waiting);
+  font-weight: 600;
+}
+.as-review-open,
+.as-review-open:hover {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.as-review-btn .as-files-stats {
+  font-size: 12px;
+}
+/* Width steps of the page, not the window: the page shares it with the sidebar and the panel. */
+.as-narrow-only {
+  display: none;
+}
+@container (max-width: 1099px) {
+  .as-review-btn .as-files-stats,
+  .as-toolbar-actions .as-wide-only:not(a, [tabindex]) {
+    display: none;
+  }
+}
+@container (max-width: 959px) {
+  .as-toolbar {
+    padding-inline: var(--space-4);
+  }
+  .as-toolbar-folder,
+  .as-toolbar-actions .as-wide-only {
+    display: none;
+  }
+  .as-narrow-only {
+    display: flex;
+  }
 }
 .as-body {
   position: relative;
@@ -2007,13 +2074,6 @@ body.as-resizing .as-drawer {
   color: var(--waiting);
   font-size: 12px;
   font-weight: 600;
-}
-/* Narrow column: the chip keeps its verb and what waits; the line counts live in the drawer. */
-@media (max-width: 1279px) {
-  .as-files-chip .as-files-chip-count,
-  .as-files-chip > .as-files-stats {
-    display: none;
-  }
 }
 .as-files-chip-done {
   color: var(--done);

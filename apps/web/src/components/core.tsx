@@ -298,12 +298,33 @@ export interface MenuItemProps {
   onClick?: (() => void) | undefined;
   selected?: boolean | undefined;
   danger?: boolean | undefined;
+  /** Goes there instead of acting: the item renders as a link (it can open in a new tab). */
+  href?: string | undefined;
+  className?: string | undefined;
 }
-export function MenuItem({ icon, children, hint, onClick, selected, danger }: MenuItemProps) {
+export function MenuItem({
+  icon,
+  children,
+  hint,
+  onClick,
+  selected,
+  danger,
+  href,
+  className,
+}: MenuItemProps) {
+  if (href !== undefined) {
+    return (
+      <AppLink href={href} className={cx("ah-menu-item", className)} onClick={onClick}>
+        {icon && <Icon name={icon} />}
+        <span className="ah-grow">{children}</span>
+        {hint}
+      </AppLink>
+    );
+  }
   return (
     <button
       type="button"
-      className="ah-menu-item"
+      className={cx("ah-menu-item", className)}
       aria-current={selected ? true : undefined}
       onClick={onClick}
       style={danger ? { color: "var(--failed)" } : undefined}

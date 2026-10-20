@@ -106,10 +106,7 @@
     display: none;
   }
 }
-/* In the panel the cost says enough; the tokens stay on the full chat. */
-.ah-discuss-status .as-meter > .ah-muted {
-  display: none;
-}
+
 .ah-discuss-body {
   flex: 1 1 auto;
   min-height: 0;

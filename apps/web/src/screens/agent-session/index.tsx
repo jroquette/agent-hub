@@ -9,8 +9,10 @@ import {
   ConfirmDialog,
   EmptyState,
   Icon,
+  PathText,
   ProblemError,
   Skeleton,
+  Tooltip,
 } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { useMessageScreenshots, useScreenshot } from "../../lib/screenshotCopy";
@@ -262,9 +264,13 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
     () => reviewThreads(state.entries, state.sending),
     [state.entries, state.sending],
   );
+  // Containment, as the timeline's header (01-navigation): the name is the title's alone.
   const crumbs = [
-    { label: "Sessions", href: "/sessions" },
-    { label: name ?? `Agent session ${short(agentSessionId)}` },
+    { label: "Portfolio", href: "/" },
+    ...(session
+      ? [{ label: session.project, href: `/projects/${encodeURIComponent(session.project)}` }]
+      : []),
+    { label: `Session ${short(agentSessionId)}`, mono: true },
   ];
 
   if (problem) {
@@ -342,26 +348,20 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   return (
     <div className="as-page">
       <header className="as-header">
-        <div className="as-toolbar ah-stack">
-          <div className="ah-row ah-small ah-muted as-toolbar-row">
-            <Breadcrumbs items={crumbs} />
-            <span className="ah-grow" />
-            <span className="as-toolbar-where">
-              {session.project} ›{" "}
-              <b className="ah-mono as-workdir-label">{session.workdir_label}</b>
-            </span>
-            <CostMeter meter={state.meter} />
-          </div>
-          <div className="ah-row as-toolbar-row">
-            <Icon name="square-terminal" style={{ color: "var(--text-subtle)" }} />
-            <h1 className="as-title">{name ?? "Untitled session"}</h1>
-            {feature && <FeatureChip project={feature.project} slug={feature.slug} />}
-            <AgentStatusBadge
-              status={status}
-              endReason={state.endReason ?? session.end_reason}
-              background={runningTasks(state)}
-            />
-            <span className="ah-grow" />
+        <div className="as-toolbar ah-row as-toolbar-row">
+          <Breadcrumbs items={crumbs} />
+          {session.workdir_label !== session.project && (
+            <Tooltip label={`Folder Claude works in: ${session.workdir_label}`}>
+              {/* Focusable so keyboard users reach the full folder in its tooltip. */}
+              {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+              <span className="as-toolbar-folder ah-small ah-muted" tabIndex={0}>
+                <Icon name="folder-open" size="sm" />
+                <PathText path={session.workdir_label} max={32} />
+              </span>
+            </Tooltip>
+          )}
+          <span className="ah-grow" />
+          <div className="as-toolbar-actions">
             <BackgroundChip
               tasks={tasks}
               open={backgroundOpen}
@@ -369,6 +369,24 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 setBackground(!backgroundOpen);
               }}
             />
+            {session.observed_session_id ? (
+              <AppLink
+                className="ah-btn ah-btn-ghost ah-btn-sm as-wide-only"
+                href={`/sessions/${encodeURIComponent(session.observed_session_id)}`}
+                title="Timeline, tools, errors and raw events of this session"
+              >
+                <Icon name="activity" size="sm" />
+                Open timeline
+              </AppLink>
+            ) : (
+              <Tooltip label="No hook events yet: hooks run only in the hub folder, so a session started in a repo folder has no timeline.">
+                {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+                <span className="ah-row ah-small ah-subtle as-wide-only" tabIndex={0}>
+                  <Icon name="activity" size="sm" />
+                  No timeline yet
+                </span>
+              </Tooltip>
+            )}
             {files.length > 0 && (
               <ChangedFilesChip
                 files={files}
@@ -380,28 +398,35 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
                 }}
               />
             )}
-            {session.observed_session_id ? (
-              <AppLink
-                className="ah-row ah-small"
-                href={`/sessions/${encodeURIComponent(session.observed_session_id)}`}
-                style={{ gap: 4, fontWeight: 500 }}
-                title="Timeline, tools, errors and raw events of this session"
-              >
-                <Icon name="activity" size="sm" />
-                Events
-              </AppLink>
-            ) : (
-              <span
-                className="ah-row ah-small ah-subtle"
-                style={{ gap: 4 }}
-                title="The hub's hooks have sent no event for this session yet. They run only in a folder whose .claude/settings.json has them (the hub folder), so a session started in a repo folder has no timeline."
-              >
-                <Icon name="activity" size="sm" />
-                No events
-              </span>
-            )}
             <SessionMenu
               busy={busy}
+              links={[
+                ...(session.observed_session_id
+                  ? [
+                      {
+                        icon: "activity" as const,
+                        label: "Open timeline",
+                        href: `/sessions/${encodeURIComponent(session.observed_session_id)}`,
+                        narrowOnly: true,
+                      },
+                      {
+                        icon: "coins" as const,
+                        label: "Open cost details",
+                        href: `/sessions/${encodeURIComponent(session.observed_session_id)}?tab=cost`,
+                      },
+                    ]
+                  : []),
+              ]}
+              onBackground={
+                tasks.running.length === 0 && tasks.done.length > 0
+                  ? {
+                      label: `Background tasks · ${String(tasks.done.length)} done`,
+                      run: () => {
+                        setBackground(true);
+                      },
+                    }
+                  : undefined
+              }
               onFork={
                 canFork
                   ? () => {
@@ -425,15 +450,32 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
               }
             />
           </div>
-          {actionError && (
-            <p className="ah-small as-error" role="alert">
-              {actionError}
-            </p>
-          )}
-          {transcript.streaming && (
-            <ReconnectBanner connected={transcript.health.closedSince === null} />
-          )}
         </div>
+        <div className="as-column ah-row as-heading-row">
+          <h1 className="as-title" title={name ?? undefined}>
+            {name ?? "Untitled session"}
+          </h1>
+          <AgentStatusBadge
+            status={status}
+            endReason={state.endReason ?? session.end_reason}
+            background={runningTasks(state)}
+          />
+          {feature && <FeatureChip project={feature.project} slug={feature.slug} />}
+          <span className="ah-grow" />
+          <CostMeter meter={state.meter} />
+        </div>
+        {(actionError ?? transcript.streaming) && (
+          <div className="as-column">
+            {actionError && (
+              <p className="ah-small as-error" role="alert">
+                {actionError}
+              </p>
+            )}
+            {transcript.streaming && (
+              <ReconnectBanner connected={transcript.health.closedSince === null} />
+            )}
+          </div>
+        )}
       </header>
       {/* The chords answer the oldest pending tool permission: its card names them (AC-234.29). */}
       <OldestPendingContext.Provider value={pending[0]}>

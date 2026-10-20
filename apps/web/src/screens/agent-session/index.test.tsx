@@ -369,8 +369,8 @@ describe("AgentSessionScreen (transcript)", () => {
   it("says there are no events when the hub's hooks never reported the session", async () => {
     renderChat(routes({ [SESSION]: anAgentSession({ observed_session_id: null }) }));
 
-    expect(await screen.findByText("No events")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Events" })).toBeNull();
+    expect(await screen.findByText("No timeline yet")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open timeline" })).toBeNull();
   });
 
   it("links the agent session to its observed session", async () => {
@@ -378,7 +378,7 @@ describe("AgentSessionScreen (transcript)", () => {
       routes({ [SESSION]: anAgentSession({ observed_session_id: anId(1, "5091b986") }) }),
     );
 
-    await userEvent.click(await screen.findByRole("link", { name: "Events" }));
+    await userEvent.click(await screen.findByRole("link", { name: "Open timeline" }));
     await waitFor(() => {
       expect(view.router.state.location.pathname).toBe(`/sessions/${anId(1, "5091b986")}`);
     });
@@ -1454,7 +1454,7 @@ describe("AgentSessionScreen (changed-files)", () => {
     expect(button).toHaveAccessibleName(
       "Review changes: 1 file, 1 lines added, 1 removed, 1 to review",
     );
-    expect(button).toHaveTextContent("1 file+1−11 to review");
+    expect(button).toHaveTextContent("Review changes+1−1· 1 to review");
     await userEvent.click(button);
 
     const panel = screen.getByRole("complementary", { name: "Changed files" });
