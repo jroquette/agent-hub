@@ -5771,3 +5771,29 @@ def test_passes_when_environment_endpoint_access_write(decide: Decide) -> None:
     verdicts = decide(calls)
 
     assert verdicts == [None] * len(calls)
+
+
+# AGH-354 review F1: a declared env file whose name has capitals is reached by a Glob whatever
+# the case of the pattern (the env file's forms are compared lowercased, so the pattern is too).
+MIXED_CASE_ENV_FILE = "demo-api/environment/Staging.env"
+
+
+@pytest.fixture
+def mixed_case_env_file_hub(blocked_hub: Path) -> Path:
+    """``blocked_hub`` whose ``W`` declares ``staging``'s env file with capitals in its name."""
+    document = builders.an_environments_document()
+    document["environments"]["staging"]["credentials"]["env_file"] = MIXED_CASE_ENV_FILE
+    write_hub_json(blocked_hub, document)
+    put(blocked_hub.parent, MIXED_CASE_ENV_FILE, f"DEMO_DB_URL={ENV_FILE_VALUE}\n")
+    return blocked_hub
+
+
+def test_denies_glob_when_mixed_case_env_file_matched(
+    decide: Decide, mixed_case_env_file_hub: Path
+) -> None:
+    api = mixed_case_env_file_hub.parent / "demo-api"
+    patterns = ["**/Staging.env", "environment/S*", "environment/*.env", "**/staging.ENV"]
+
+    verdicts = decide([(at(tool_call("Glob", pattern=p), api), None) for p in patterns])
+
+    assert verdicts == [env_file_denial("Glob")] * len(patterns)
