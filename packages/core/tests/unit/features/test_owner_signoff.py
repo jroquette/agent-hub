@@ -486,6 +486,29 @@ def test_signs_off_again_when_agent_evaluated_after_owner_more_work() -> None:
     assert list(rewriter.written) == ["owner-signoff-r2.md"]
 
 
+def test_allows_more_work_again_when_agent_no_ship_follows_owner_more_work() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    folder = a_planned_folder(whole)
+    sign_off, writer = a_sign_off_of(folder)
+    sign_off("demo", SLUG, delivery="feature", decision="more_work")
+    failed = a_head("acme-1523", "NO-SHIP", scope="acs: [AC-7.1, AC-7.2, AC-7.3]", at="2026-10-18")
+    reevaluated = signed(folder, writer)
+    again, rewriter = a_later_sign_off(
+        FeatureFolder(
+            slug=SLUG,
+            files=reevaluated.files,
+            features_json=PLANNED,
+            evals=(*reevaluated.evals, failed),
+        ),
+        day=19,
+    )
+
+    written = again("demo", SLUG, delivery="feature", decision="more_work")
+
+    assert (written.verdict, written.acs) == ("NO-SHIP", ("AC-7.1", "AC-7.2", "AC-7.3"))
+    assert list(rewriter.written) == ["owner-signoff-r2.md"]
+
+
 # A11: while an owner's NO-SHIP reopened ACs, Acceptance asks for a new evaluation, not a sign-off.
 def test_reads_reopened_in_acceptance_when_owner_more_work_on_acceptance_eval() -> None:
     whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
