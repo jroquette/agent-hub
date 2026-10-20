@@ -77,7 +77,7 @@ def run_action(
     seconds = timeout if timeout is not None else float(duration_seconds(document.timeout))
     env = {**untrusted_env(environ, hidden=hidden), **injected}
     try:
-        result = _spawn(call, "run", env=env, timeout=seconds)
+        result = _spawn(call, "run", env=env, timeout=seconds, credentials=injected)
     except NodeFailedError as error:
         raise NodeFailedError(error.kind, redacted(str(error), injected)) from None
     stdout = result.stdout
@@ -122,7 +122,14 @@ def _by_length(credentials: Mapping[str, str]) -> list[tuple[str, str]]:
     return sorted(eligible, key=lambda pair: -len(pair[0]))
 
 
-def _spawn(call: ActionCall, mode: Mode, *, env: Mapping[str, str], timeout: float) -> ChildResult:
+def _spawn(
+    call: ActionCall,
+    mode: Mode,
+    *,
+    env: Mapping[str, str],
+    timeout: float,
+    credentials: Mapping[str, str] | None = None,
+) -> ChildResult:
     stdin = {"mode": mode, "inputs": dict(call.inputs), "endpoint": dict(call.endpoint)}
     with tempfile.TemporaryDirectory(prefix="hub-action-") as folder:
         root = Path(folder)
@@ -138,7 +145,9 @@ def _spawn(call: ActionCall, mode: Mode, *, env: Mapping[str, str], timeout: flo
             stdin=json.dumps(stdin).encode(),
         )
     if (kind := kind_for_exit(result.returncode)) is not None:
-        tail = result.stderr.decode(errors="replace")[-MAX_DETAIL_CHARS:]
+        # Redacted whole, then cut: a cut first would leave a value's end in the tail.
+        stderr = redacted(result.stderr.decode(errors="replace"), credentials or {})
+        tail = stderr[-MAX_DETAIL_CHARS:]
         raise NodeFailedError(kind, f"{argv[0]} exited {result.returncode}: {tail}")
     if len(result.stdout) > MAX_OUTPUT_BYTES:
         raise NodeFailedError(

@@ -193,3 +193,24 @@ def test_redacts_credentials_when_action_script_contract_fails(
     assert raised.value.kind == "exec_failed"
     assert "cannot reach <credential DEMO_TOKEN> with key abc" in str(raised.value)
     assert SECRET not in str(raised.value)
+
+
+def test_redacts_credential_cut_by_tail_when_action_script_contract_fails(
+    tmp_path: Path, environ: dict[str, str]
+) -> None:
+    # The detail keeps stderr's last 1500 characters: that tail starts 20 characters into the
+    # value, so cutting before redacting would leave the value's last 20 characters.
+    value = SECRET + "-" + "q7w8e9r0t1" * 3
+    script = (
+        "printf '%s' \"$DEMO_TOKEN\" >&2\n"
+        f"head -c {1500 - 20} /dev/zero | tr '\\0' 'z' >&2\n"
+        "exit 3\n"
+    )
+    call = an_action_call(tmp_path / "hub", script)
+
+    with pytest.raises(NodeFailedError) as raised:
+        run_action(call, environ=environ, credentials={"DEMO_TOKEN": value})
+
+    detail = str(raised.value)
+    leaked = [value[i : i + 4] for i in range(len(value) - 3) if value[i : i + 4] in detail]
+    assert leaked == []
