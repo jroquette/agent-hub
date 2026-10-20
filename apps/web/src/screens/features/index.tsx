@@ -18,7 +18,10 @@ import {
   Popover,
   ProblemError,
   Skeleton,
+  StepBar,
   Tooltip,
+  goldenStepSummary,
+  shownGoldenSteps,
 } from "../../components";
 import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
@@ -27,7 +30,6 @@ import { readStored, writeStored } from "../../lib/storage";
 import { useRowKeys } from "../../lib/useRowKeys";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { typingIn } from "../../shell/goSequence";
-import { GOLDEN_PATH_ORDER, GoldenPathBar } from "./GoldenPathBar";
 import {
   GROUPS,
   byGroupOrder,
@@ -63,6 +65,10 @@ const TONE_COLOR: Record<NonNullable<Reason["tone"]>, string> = {
 };
 
 const listOf = (raw: string | null): string[] => (raw ? raw.split(",").filter(Boolean) : []);
+
+/** A step of an old link, before the eight feature steps: Implement and Review are Build, Evaluate is Acceptance. */
+const renamedPhase = (id: string) =>
+  id === "implement" || id === "review" ? "build" : id === "evaluate" ? "acceptance" : id;
 
 function matches(f: Feature, key: FilterKey, values: string[]): boolean {
   switch (key) {
@@ -239,6 +245,7 @@ function FeatureRow({
   const href = featureHref(f) + (reason.doc ? `?doc=${reason.doc}` : "");
   const lineId = `ft-line-${f.project}-${f.slug}`;
   const tags = [...(showProject ? [f.project] : []), ...f.repos.filter((r) => r !== f.project)];
+  const steps = shownGoldenSteps(f.golden_path.steps);
   return (
     // The row is one keyboard stop (Enter opens), as the Sessions inbox rows are.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -320,7 +327,12 @@ function FeatureRow({
         <span className="ft-col-issues">
           <IssuesCell issues={f.issues} />
         </span>
-        <GoldenPathBar path={f.golden_path} compact />
+        <StepBar
+          name="Golden path"
+          label={GOLDEN_STEP_LABEL[f.golden_path.phase]}
+          current={steps.findIndex((s) => s.name === f.golden_path.phase)}
+          steps={steps.map((s) => ({ state: s.state, summary: goldenStepSummary(s) }))}
+        />
         <AcCell f={f} />
       </div>
     </li>
@@ -376,7 +388,7 @@ function ColumnHeads({ withHints }: { withHints: boolean }) {
         {head("Issues", "The tracker issues of the feature.", "ft-col-issues")}
         {head(
           "Golden path",
-          `One segment per step: ${GOLDEN_PATH_ORDER}. Derived from the record files, the tickets' status read from Linear, and the review and eval records.`,
+          `One segment per step: ${Object.values(GOLDEN_STEP_LABEL).join(" → ")}. Derived from the record files, the tickets' status read from Linear, and the review and eval records.`,
         )}
         {head(
           "ACs",
@@ -489,7 +501,7 @@ function Group({
   );
 }
 
-/** Features list (spec 17, D23): what is moving (rows that need you carry a warning), what was evaluated, what shipped. */
+/** Features list (spec 17, D23): what is moving (rows that need you carry a warning) and what shipped. */
 export function FeaturesScreen() {
   const [scope] = useScope();
   const features = useFeatures(scope);
@@ -503,6 +515,20 @@ export function FeaturesScreen() {
   const [collapsed, toggle] = useCollapsed();
   const screenRef = useRef<HTMLDivElement>(null);
   useRowKeys(screenRef);
+
+  const phase = params.get("phase");
+  useEffect(() => {
+    const renamed = [...new Set(listOf(phase).map(renamedPhase))].join(",");
+    if (phase === null || renamed === phase) return;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.set("phase", renamed);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [phase, setParams]);
 
   const all = features.data?.items ?? [];
   const q = params.get("q") ?? "";
