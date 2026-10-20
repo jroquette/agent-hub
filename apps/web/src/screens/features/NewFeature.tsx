@@ -1,24 +1,29 @@
 import "../agent-session/agent-session.css";
 
-import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 
 import {
   AppLink,
+  AttachButton,
   AttachmentList,
   Banner,
   Button,
   EmptyState,
   Icon,
   Kbd,
-  SegmentedControl,
+  OptionRow,
   Skeleton,
+  useAttachmentDrop,
   useMessageAttachments,
   type AttachedFile,
   type AttachedImage,
 } from "../../components";
 import { ApiProblem, useApi } from "../../lib/api";
 import { cx } from "../../lib/cx";
+import { MAX_MESSAGE_FILES } from "../../lib/messageFile";
+import { MAX_MESSAGE_IMAGES } from "../../lib/pastedImage";
 import { useScope } from "../../lib/scope";
+import { useAutoGrow } from "../../lib/useAutoGrow";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import {
   discussPrompt,
@@ -31,14 +36,16 @@ import { useDraft } from "../agent-session/useDraft";
 import { featureHref } from "./FeatureChip";
 import { useFeatures } from "./queries";
 
-/* New feature: the brief (text, images, PDFs, text files) is the screen. One press starts the
- * conversation in the project's hub folder and opens the Discuss panel on it: Claude runs the
- * hub's golden path with the owner, from the brief to the spec. The page then watches the feature
- * records for the new one. */
+/* New feature: the brief (text, images, PDFs, text files) is the screen, the options sit beside
+ * it. One press starts the conversation in the project's hub folder and opens the Discuss panel
+ * on it: Claude runs the hub's golden path with the owner, from the brief to the spec. The page
+ * then watches the feature records for the new one. */
 
 const KEBAB = /^[a-z][a-z0-9-]*$/;
 const ISSUE = /^[A-Za-z][A-Za-z0-9]*-\d+$/;
 const MIN_IDEA = 10;
+/** The brief grows with its text up to this share of the viewport, then scrolls. */
+const BRIEF_HEIGHT_SHARE = 0.5;
 
 const SIZES: readonly { id: string; label: string; hint: string }[] = [
   { id: "", label: "Let Claude ask", hint: "Claude proposes a size and asks you." },
@@ -50,9 +57,13 @@ const SIZES: readonly { id: string; label: string; hint: string }[] = [
     hint: "A new contract between repos or services, or a decision worth an ADR.",
   },
 ];
-// The segmented control needs a non-empty id for "Let Claude ask".
-const ASK = "ask";
 const sizeLabel = (size: string) => SIZES.find((option) => option.id === size)?.label ?? size;
+
+const NEXT_STEPS = [
+  "Claude reads your brief and what you attached.",
+  "It asks one question at a time, in the panel.",
+  "It drafts the spec and shows you each file before writing it.",
+];
 
 const BRIEF = [
   "This is the start of a new feature, run on the hub's golden path: the `feature` skill of this hub (`plugin/hub-workflow/skills/feature/SKILL.md`, or `.claude/skills/feature/SKILL.md` when the plugin is not there). Read it first and follow it here, in this conversation, from step 0 (the brief).",
@@ -102,13 +113,18 @@ export function NewFeatureScreen() {
   const chosenProject = project || (projects[0] ?? "");
   const [target, setTarget] = useState<DiscussTarget | null>(null);
   const [sent, setSent] = useState<SentRequest | null>(null);
+  // A new form after "Start another feature" takes focus in its brief.
+  const [round, setRound] = useState(0);
   const { open, setOpen } = useDiscuss();
   useDiscussTarget(target);
 
+  const breadcrumbs = (
+    <Breadcrumbs items={[{ label: "Features", href: "/features" }, { label: "New" }]} />
+  );
   if (projectsQuery.data && projects.length === 0) {
     return (
       <div className="ft-new">
-        <Breadcrumbs items={[{ label: "Features", href: "/features" }, { label: "New" }]} />
+        {breadcrumbs}
         <EmptyState
           icon="folder-kanban"
           title="No project yet"
@@ -122,22 +138,21 @@ export function NewFeatureScreen() {
 
   return (
     <div className="ft-new">
-      <Breadcrumbs items={[{ label: "Features", href: "/features" }, { label: "New" }]} />
+      {breadcrumbs}
       <header className="ft-new-head">
-        <div className="ft-new-title">
+        <div>
           <h1 className="ah-h1">New feature</h1>
-          {projectsQuery.isPending ? (
-            <Skeleton width={160} height={30} />
-          ) : (
-            projects.length > 1 &&
-            !sent && (
-              <ProjectSelect projects={projects} value={chosenProject} onChange={setProject} />
-            )
-          )}
+          <p className="ft-new-lead">
+            Say what to build and attach what Claude should see. Claude writes the brief and the
+            spec with you, one question at a time.
+          </p>
         </div>
-        <p className="ft-new-lead">
-          Say what to build. Claude writes the brief and the spec with you, one question at a time.
-        </p>
+        {projectsQuery.isPending ? (
+          <Skeleton width={200} height={32} />
+        ) : (
+          projects.length > 1 &&
+          !sent && <ProjectSelect projects={projects} value={chosenProject} onChange={setProject} />
+        )}
       </header>
       {sent && target ? (
         <SentCard
@@ -148,17 +163,20 @@ export function NewFeatureScreen() {
             setOpen(true);
           }}
           onAnother={() => {
+            setOpen(false);
             setSent(null);
             setTarget(null);
+            setRound((n) => n + 1);
           }}
         />
       ) : chosenProject === "" ? (
         // The brief's draft is kept per project: the form waits for it to be known.
-        <Skeleton height={200} radius={12} />
+        <Skeleton height={320} radius={12} />
       ) : (
         <BriefForm
-          key={chosenProject}
+          key={`${chosenProject}:${String(round)}`}
           project={chosenProject}
+          focusOnOpen={round > 0}
           onStarted={(request, startedTarget) => {
             setSent(request);
             setTarget(startedTarget);
@@ -205,26 +223,31 @@ function ProjectSelect({
 
 function BriefForm({
   project,
+  focusOnOpen,
   onStarted,
 }: {
   project: string;
+  focusOnOpen: boolean;
   onStarted: (request: SentRequest, target: DiscussTarget) => void;
 }) {
   const { text: idea, setText: setIdea, accepted } = useDraft(`feature-new.${project}`);
-  const [issue, setIssue] = useState("");
+  const [issueInput, setIssueInput] = useState("");
   const [size, setSize] = useState("");
   const [slug, setSlug] = useState("");
-  const [optionsOpen, setOptionsOpen] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const filePicker = useRef<HTMLInputElement | null>(null);
   const box = useRef<HTMLTextAreaElement | null>(null);
+  const focusBox = () => box.current?.focus({ preventScroll: true });
   const discussion = useStartDiscussion(project || null);
   const attachments = useMessageAttachments({
     acceptsImages: true,
     acceptsFiles: true,
     onError: setAttachError,
   });
+  const { dragging, dropProps } = useAttachmentDrop(attachments, { onAdded: focusBox });
+  useAutoGrow(box, idea, BRIEF_HEIGHT_SHARE);
+  useEffect(() => {
+    if (focusOnOpen) box.current?.focus({ preventScroll: true });
+  }, [focusOnOpen]);
   const features = useFeatures(project || null);
   const items = (features.data?.items ?? []).filter((f) => f.project === project);
   const ids = {
@@ -234,9 +257,14 @@ function BriefForm({
     issueHint: useId(),
     slug: useId(),
     slugHint: useId(),
+    size: useId(),
     reason: useId(),
+    options: useId(),
+    next: useId(),
   };
 
+  // The issue is read as typed; it is normalized only where it is used.
+  const issue = issueInput.trim().toUpperCase();
   const badSlug = slug !== "" && !KEBAB.test(slug);
   const badIssue = issue !== "" && !ISSUE.test(issue);
   const taken = slug !== "" && items.some((f) => f.slug === slug);
@@ -252,16 +280,17 @@ function BriefForm({
           ? attachments.count > 0
             ? "Add a sentence on what to build with the attachments."
             : "Write at least a sentence, or give an issue."
-          : badIssue || badSlug || taken
-            ? "Fix the field marked above."
-            : discussion.reason;
+          : badIssue
+            ? "Fix the issue id in Options."
+            : badSlug || taken
+              ? "Fix the slug in Options."
+              : discussion.reason;
   const ready = why === null && !discussion.pending;
 
   const start = () => {
     if (!ready) return;
-    const key = newFeatureKey(project);
     const target: DiscussTarget = {
-      key,
+      key: newFeatureKey(project),
       project,
       kind: "New feature",
       title: slug || issue || "a new feature",
@@ -325,35 +354,19 @@ function BriefForm({
       }}
       onKeyDown={startOnChord}
     >
-      {discussion.unavailable && (
-        <Banner tone="warning" boxed>
-          <b>{discussion.unavailable.title}.</b> {discussion.unavailable.detail}
-        </Banner>
-      )}
-      <div className="ft-new-field">
+      <div className="ft-new-main">
+        {discussion.unavailable && (
+          <Banner tone="warning" boxed>
+            <b>{discussion.unavailable.title}.</b> {discussion.unavailable.detail}
+          </Banner>
+        )}
         <label htmlFor={ids.idea} className="ft-new-label">
           What do you want to build?
         </label>
-        {/* A file dropped anywhere on the box joins the brief; the keyboard has Attach. */}
-        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+        {/* Files dropped anywhere on the box join the brief; the keyboard has Attach. */}
         <div
           className={cx("as-composer ft-new-brief", dragging && "as-composer-drop")}
-          onDragOver={(event) => {
-            if (!event.dataTransfer.types.includes("Files")) return;
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "copy";
-            setDragging(true);
-          }}
-          onDragLeave={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null))
-              setDragging(false);
-          }}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragging(false);
-            attachments.add(event.dataTransfer);
-            box.current?.focus();
-          }}
+          {...dropProps}
         >
           <AttachmentList
             images={attachments.images}
@@ -362,11 +375,11 @@ function BriefForm({
             label="Attached to this request"
             onRemoveImage={(key) => {
               attachments.removeImage(key);
-              box.current?.focus();
+              focusBox();
             }}
             onRemoveFile={(key) => {
               attachments.removeFile(key);
-              box.current?.focus();
+              focusBox();
             }}
             onReplaceImage={attachments.replaceImage}
           />
@@ -374,7 +387,7 @@ function BriefForm({
             id={ids.idea}
             ref={box}
             className="ah-input as-composer-input ft-new-idea"
-            rows={6}
+            rows={8}
             value={idea}
             placeholder={placeholder}
             aria-describedby={ids.hint}
@@ -390,83 +403,91 @@ function BriefForm({
           />
           <div className="as-composer-bar">
             <div className="ft-new-attach">
-              <input
-                ref={filePicker}
-                type="file"
-                multiple
-                hidden
-                tabIndex={-1}
-                onChange={(event) => {
-                  attachments.add(event.target);
-                  event.target.value = "";
-                  box.current?.focus();
-                }}
-              />
-              <Button
-                size="sm"
-                variant="ghost"
-                icon="plus"
-                disabled={attachments.full}
-                aria-label="Attach a file"
-                title="Attach images, PDFs or text files up to 5 MB (or paste or drop them in the box)"
-                onClick={() => filePicker.current?.click()}
-              >
-                Attach
-              </Button>
+              <AttachButton attachments={attachments} onAdded={focusBox} />
               <span className="ah-small ah-subtle">Paste or drop images, PDFs and text files</span>
             </div>
+            <Button
+              type="submit"
+              variant="primary"
+              icon="message-square"
+              disabled={!ready}
+              aria-describedby={ids.reason}
+            >
+              {discussion.pending ? "Starting…" : "Start with Claude"}
+            </Button>
           </div>
         </div>
-        {attachError ? (
-          <p id={ids.hint} className="ft-new-hint" data-error role="alert">
-            <Icon name="circle-x" size="sm" />
-            {attachError}
+        <div className="ft-new-under">
+          {attachError ? (
+            <p id={ids.hint} className="ft-new-hint" data-error role="alert">
+              <Icon name="circle-x" size="sm" />
+              {attachError}
+            </p>
+          ) : (
+            <p id={ids.hint} className="ft-new-hint">
+              Up to {MAX_MESSAGE_IMAGES} images and {MAX_MESSAGE_FILES} files of 5 MB each.
+            </p>
+          )}
+          <p id={ids.reason} className="ft-new-hint ft-new-reason">
+            {why ?? "Opens the Discuss panel. Claude asks before writing any file."}
+            <span className="ft-new-kbd" aria-hidden="true">
+              <Kbd>Ctrl</Kbd>/<Kbd>⌘</Kbd> <Kbd>Enter</Kbd>
+            </span>
           </p>
-        ) : (
-          <p id={ids.hint} className="ft-new-hint">
-            Up to 10 images and 5 files of 5 MB each.
+        </div>
+        {startError && (
+          <p className="ft-new-hint" data-error role="alert">
+            <Icon name="circle-x" size="sm" />
+            {startError}
           </p>
         )}
+        <section className="ft-new-next" aria-labelledby={ids.next}>
+          <h2 id={ids.next} className="ft-new-label">
+            What happens next
+          </h2>
+          <ol>
+            {NEXT_STEPS.map((step, index) => (
+              <li key={step}>
+                <span className="ft-new-step" aria-hidden="true">
+                  {index + 1}
+                </span>
+                {step}
+              </li>
+            ))}
+          </ol>
+        </section>
       </div>
 
-      <div className="ft-new-field ft-new-issue">
-        <label htmlFor={ids.issue} className="ft-new-label">
-          Start from an issue (optional)
-        </label>
-        <input
-          id={ids.issue}
-          className="ah-input ah-mono"
-          value={issue}
-          placeholder="DEMO-1600"
-          aria-invalid={badIssue || undefined}
-          aria-describedby={ids.issueHint}
-          onChange={(event) => {
-            setIssue(event.target.value.trim().toUpperCase());
-          }}
-        />
-        <FieldHint id={ids.issueHint} error={badIssue ? "An issue id, like DEMO-1600." : null}>
-          Left empty, Claude writes the brief with you and creates it.
-        </FieldHint>
-      </div>
-
-      <details
-        className="ft-new-more"
-        open={optionsOpen || badSlug || taken}
-        onToggle={(event) => {
-          setOptionsOpen(event.currentTarget.open);
-        }}
-      >
-        <summary>
-          <Icon name="chevron-right" size="sm" className="ft-new-more-caret" />
-          <span>More options</span>
-          <span className="ah-small ah-subtle">
-            · Slug: {slug || "Claude picks"} · Size: {sizeLabel(size)}
-          </span>
-        </summary>
-        <div className="ft-new-more-body">
+      <aside className="ft-new-side" aria-labelledby={ids.options}>
+        <section className="ah-card ft-new-card">
+          <header className="ft-new-card-head">
+            <h2 id={ids.options} className="ah-h3">
+              Options
+            </h2>
+            <span className="ah-small ah-subtle">All optional</span>
+          </header>
+          <div className="ft-new-field">
+            <label htmlFor={ids.issue} className="ft-new-label">
+              Start from an issue
+            </label>
+            <input
+              id={ids.issue}
+              className="ah-input ah-mono"
+              value={issueInput}
+              placeholder="DEMO-1600"
+              aria-invalid={badIssue || undefined}
+              aria-describedby={ids.issueHint}
+              onChange={(event) => {
+                setIssueInput(event.target.value);
+              }}
+            />
+            <FieldHint id={ids.issueHint} error={badIssue ? "An issue id, like DEMO-1600." : null}>
+              Claude reads its brief first. Empty: Claude writes the brief with you.
+            </FieldHint>
+          </div>
           <div className="ft-new-field">
             <label htmlFor={ids.slug} className="ft-new-label">
-              Slug (optional)
+              Slug
             </label>
             <input
               id={ids.slug}
@@ -489,47 +510,29 @@ function BriefForm({
                     : null
               }
             >
-              Left empty, Claude picks one.
+              Empty: Claude picks one.
             </FieldHint>
           </div>
-          <div className="ft-new-field">
-            <span className="ft-new-label">Size</span>
-            <SegmentedControl
-              label="Size"
-              options={SIZES.map((option) => ({ id: option.id || ASK, label: option.label }))}
-              value={size || ASK}
-              onChange={(id) => {
-                setSize(id === ASK ? "" : id);
-              }}
-            />
-            <span className="ft-new-hint">{SIZES.find((option) => option.id === size)?.hint}</span>
-          </div>
-        </div>
-      </details>
-
-      <div className="ft-new-actions">
-        <Button
-          type="submit"
-          variant="primary"
-          icon="message-square"
-          disabled={!ready}
-          aria-describedby={ids.reason}
-        >
-          {discussion.pending ? "Starting…" : "Start with Claude"}
-        </Button>
-        <span id={ids.reason} className="ah-small ah-subtle">
-          {why ?? "Opens the Discuss panel. Claude asks before writing any file."}
-        </span>
-        <span className="ft-new-kbd ah-small ah-subtle" aria-hidden="true">
-          <Kbd>Ctrl</Kbd> or <Kbd>⌘</Kbd> <Kbd>Enter</Kbd>
-        </span>
-      </div>
-      {startError && (
-        <p className="ft-new-hint" data-error role="alert">
-          <Icon name="circle-x" size="sm" />
-          {startError}
-        </p>
-      )}
+          <fieldset className="ft-new-field ft-new-sizes">
+            <legend className="ft-new-label">Size</legend>
+            <div className="ah-options">
+              {SIZES.map((option) => (
+                <OptionRow
+                  key={option.id || "ask"}
+                  type="radio"
+                  name={ids.size}
+                  label={option.label}
+                  description={size === option.id ? option.hint : null}
+                  checked={size === option.id}
+                  onToggle={() => {
+                    setSize(option.id);
+                  }}
+                />
+              ))}
+            </div>
+          </fieldset>
+        </section>
+      </aside>
     </form>
   );
 }
@@ -573,9 +576,16 @@ function SentCard({
   useApi("/api/v1/features", { query: { project: project || null } }, { refetchInterval: 3_000 });
   const items = (features.data?.items ?? []).filter((f) => f.project === project);
   const created = items.find((f) => (sent.slug ? f.slug === sent.slug : !sent.known.has(f.slug)));
+  // Closing the panel leaves focus on the button that opens it again.
+  const openSpot = useRef<HTMLSpanElement | null>(null);
+  const wasOpen = useRef(panelOpen);
+  useEffect(() => {
+    if (wasOpen.current && !panelOpen) openSpot.current?.querySelector("button")?.focus();
+    wasOpen.current = panelOpen;
+  }, [panelOpen]);
 
   return (
-    <>
+    <div className="ft-new-sent-wrap">
       <section className="ah-card ft-new-sent" aria-label="Sent to Claude">
         <h2 className="ah-h3">Sent to Claude</h2>
         {sent.idea.trim() !== "" && <p className="ft-new-sent-idea">{sent.idea.trim()}</p>}
@@ -597,11 +607,13 @@ function SentCard({
             <>
               <Icon name="message-square" />
               <span>Claude is working on the brief with you in the panel.</span>
-              {!panelOpen && (
-                <Button size="sm" onClick={onOpenPanel}>
-                  Open the panel
-                </Button>
-              )}
+              <span ref={openSpot}>
+                {!panelOpen && (
+                  <Button size="sm" onClick={onOpenPanel}>
+                    Open the panel
+                  </Button>
+                )}
+              </span>
               <AppLink href={`/agent-sessions/${encodeURIComponent(sent.sessionId)}`}>
                 Open the full chat
               </AppLink>
@@ -614,6 +626,6 @@ function SentCard({
           Start another feature
         </Button>
       </div>
-    </>
+    </div>
   );
 }

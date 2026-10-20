@@ -77,22 +77,20 @@ describe("NewFeatureScreen", () => {
     expect(
       await screen.findByText("Write at least a sentence, or give an issue."),
     ).toBeInTheDocument();
-    await user.type(screen.getByLabelText("Start from an issue (optional)"), "agh-12");
+    await user.type(screen.getByLabelText("Start from an issue"), "agh-12");
     await waitFor(() => {
       expect(start).toBeEnabled();
     });
   });
 
-  it("opens More options on a slug that already names a feature", async () => {
+  it("refuses a slug that already names a feature", async () => {
     const user = userEvent.setup();
     renderNew();
 
     await user.type(await screen.findByLabelText("What do you want to build?"), IDEA);
-    await user.click(screen.getByText("More options"));
-    await user.type(screen.getByLabelText("Slug (optional)"), "control-plane");
+    await user.type(screen.getByLabelText("Slug"), "control-plane");
 
     expect(await screen.findByText("A feature with this slug already exists.")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Size" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Start with Claude" })).toBeDisabled();
   });
 
@@ -107,10 +105,9 @@ describe("NewFeatureScreen", () => {
     const strip = await screen.findByRole("list", { name: "Attached to this request" });
     expect(await within(strip).findByText("orders.csv")).toBeInTheDocument();
     await user.type(idea, IDEA);
-    await user.type(screen.getByLabelText("Start from an issue (optional)"), "AGH-12");
-    await user.click(screen.getByText("More options"));
-    await user.type(screen.getByLabelText("Slug (optional)"), "orders-csv");
-    await user.click(screen.getByRole("button", { name: "Bounded" }));
+    await user.type(screen.getByLabelText("Start from an issue"), "AGH-12");
+    await user.type(screen.getByLabelText("Slug"), "orders-csv");
+    await user.click(screen.getByRole("radio", { name: "Bounded" }));
     await waitFor(async () => {
       expect(await ready()).toBeEnabled();
     });
@@ -194,6 +191,36 @@ describe("NewFeatureScreen", () => {
     const { container } = renderNew();
 
     await ready();
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  it("has no serious a11y violations with an attachment and a refused file (a11y)", async () => {
+    const { container } = renderNew();
+
+    const idea = await screen.findByLabelText("What do you want to build?");
+    fireEvent.paste(idea, {
+      clipboardData: {
+        files: [
+          new File(["# Notes"], "notes.md", { type: "text/markdown" }),
+          new File([new Uint8Array([0, 1, 2])], "app.bin"),
+        ],
+      },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("“app.bin” is neither");
+    expect(await screen.findByText("notes.md")).toBeInTheDocument();
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  it("has no serious a11y violations on the sent card (a11y)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderNew();
+
+    await user.type(await screen.findByLabelText("What do you want to build?"), IDEA);
+    await waitFor(async () => {
+      expect(await ready()).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: "Start with Claude" }));
+    await screen.findByRole("region", { name: "Sent to Claude" });
     expect(await seriousViolations(container)).toEqual([]);
   });
 });

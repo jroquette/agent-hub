@@ -17,6 +17,18 @@ button) · **Answers:** "What do I want built, and has Claude started on it?"
 > `17-features.md` has no section for it. Once this design is approved, add the route under `/features` in the sitemap
 > and a short "New feature" section to `17-features.md` (from this file), in the same PR as the code.
 
+## Revision after the first build (the developer's review)
+
+The one-column form left most of a desktop screen empty and the primary action far from the brief. The built screen
+now uses two columns (max 1200 px): on the left the brief box, with **Start with Claude** in its bar beside Attach
+(as Send sits in the chat), the limits and the reason under it, and "What happens next" as three numbered steps; on
+the right a sticky **Options** card ("All optional"): Start from an issue, Slug, and Size as `OptionRow` radios (the
+chosen one shows its hint). "More options" is gone: the options are visible but secondary. Below 1100 px (or with
+the Discuss panel docked) the card goes under the brief. A message takes up to 10 files (was 5). Closing the panel
+returns focus to "Open the panel"; "Start another feature" closes the panel and focuses the new brief. The paste,
+drop and picker handlers live in `AttachmentList.tsx` (`useAttachmentDrop`, `AttachButton`) and the auto-grow in
+`lib/useAutoGrow.ts`, shared with the chat composer.
+
 ## What changes
 
 | Section | Before (code today) | After |
