@@ -833,10 +833,11 @@ describe("FeatureDetailScreen", () => {
 
       await userEvent.click(await screen.findByRole("tab", { name: /Tickets/ }));
 
-      const table = await screen.findByRole("table", { name: "Tickets" });
-      expect(table).toHaveTextContent("Load the memory layers");
-      expect(within(table).getByText("Can start now")).toBeInTheDocument();
-      expect(within(table).getByText(/Waiting on/)).toBeInTheDocument();
+      // The Flow view opens first (AC-1.11); its cards say what each ticket waits on.
+      const flow = await screen.findByRole("region", { name: "Ticket flow" });
+      expect(flow).toHaveTextContent("Load the memory layers");
+      expect(within(flow).getByText("Can start now")).toBeInTheDocument();
+      expect(within(flow).getByText(/Waiting on/)).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
       expect(router.state.location.search).toBe("?doc=tickets");
       expect(asked(requests, TICKETS)).toBe(1);
@@ -849,7 +850,7 @@ describe("FeatureDetailScreen", () => {
           { [TICKETS]: tickets },
           "/features/agent-hub/layered-memory?doc=tickets",
         );
-        await screen.findByRole("table", { name: "Tickets" });
+        await screen.findByRole("region", { name: "Ticket flow" });
         const record = asked(requests, API);
         const linear = asked(requests, TICKETS);
 
@@ -872,14 +873,14 @@ describe("FeatureDetailScreen", () => {
     it("opens the Tickets tab from an old ?doc=issues link (tickets)", async () => {
       open({ [TICKETS]: tickets }, "/features/agent-hub/layered-memory?doc=issues");
 
-      expect(await screen.findByRole("table", { name: "Tickets" })).toBeInTheDocument();
+      expect(await screen.findByRole("region", { name: "Ticket flow" })).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
     });
 
     it("shows each header chip with its Linear status and title on hover, and no PR placeholder (tickets)", async () => {
       open({ [TICKETS]: tickets }, "/features/agent-hub/layered-memory?doc=tickets");
 
-      await screen.findByRole("table", { name: "Tickets" });
+      await screen.findByRole("region", { name: "Ticket flow" });
 
       const header = screen.getByRole("group", { name: "Tickets of this feature" });
       const link = within(header).getByRole("link", { name: /AGH-48/ });
@@ -894,7 +895,7 @@ describe("FeatureDetailScreen", () => {
     it("opens on the Tickets tab while the feature is in Build (tabs)", async () => {
       const { requests } = open({ [API]: { ...detail, phase: "build" }, [TICKETS]: tickets });
 
-      expect(await screen.findByRole("table", { name: "Tickets" })).toBeInTheDocument();
+      expect(await screen.findByRole("region", { name: "Ticket flow" })).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
       expect(asked(requests, TICKETS)).toBe(1);
     });
@@ -906,7 +907,7 @@ describe("FeatureDetailScreen", () => {
         await screen.findByRole("button", { name: "Open the ticket plan of build" }),
       );
 
-      expect(await screen.findByRole("table", { name: "Tickets" })).toBeInTheDocument();
+      expect(await screen.findByRole("region", { name: "Ticket flow" })).toBeInTheDocument();
       expect(router.state.location.search).toBe("?doc=tickets");
       await userEvent.click(screen.getByRole("button", { name: "Open the eval of acceptance" }));
       expect(screen.getByRole("tab", { name: "Eval" })).toHaveAttribute("aria-selected", "true");
@@ -957,7 +958,7 @@ describe("FeatureDetailScreen", () => {
         "/features/agent-hub/layered-memory?doc=tickets",
       );
 
-      await screen.findByRole("table", { name: "Tickets" });
+      await screen.findByRole("region", { name: "Ticket flow" });
 
       await waitFor(() => {
         const path = screen.getByRole("list", { name: "Golden path" });
@@ -998,7 +999,7 @@ describe("FeatureDetailScreen", () => {
         { [TICKETS]: tickets },
         "/features/agent-hub/layered-memory?doc=tickets",
       );
-      await screen.findByRole("table", { name: "Tickets" });
+      await screen.findByRole("region", { name: "Ticket flow" });
 
       expect(await seriousViolations(container)).toEqual([]);
     });

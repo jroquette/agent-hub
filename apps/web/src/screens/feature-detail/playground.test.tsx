@@ -243,7 +243,7 @@ describe("the tickets table", () => {
         error={null}
         onRefresh={() => undefined}
       />,
-      { routes: { "/api/v1/sessions": aPage([]) } },
+      { routes: { "/api/v1/sessions": aPage([]) }, path: "/?tickets=table" },
     );
 
     const table = screen.getByRole("table", { name: "Tickets" });
