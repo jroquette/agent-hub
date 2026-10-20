@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Button, EmptyState, Icon, ProblemError, Skeleton, StatusBadge } from "../../components";
@@ -11,7 +11,7 @@ import {
   SERVICE_KINDS,
   addEnvironmentPath,
   addressKind,
-  environmentsHome,
+  flowOrigin,
   exampleAddress,
   isTeams,
   postEnvironmentEdit,
@@ -74,6 +74,7 @@ function AddServiceFlow({ view }: { view: HubConfigView }) {
   const client = useQueryClient();
   const [params] = useSearchParams();
   const project = view.project;
+  const origin = flowOrigin(useLocation().state, project);
   const environments = view.environments.environments;
 
   const [index, setIndex] = useState(0);
@@ -120,7 +121,7 @@ function AddServiceFlow({ view }: { view: HubConfigView }) {
           saved: `Added ${serviceLabel(repo, name.trim())}`,
           team: filled.some((environment) => isTeams(environment)),
         };
-        void navigate(environmentsHome(project), { state });
+        void navigate(origin.returnTo, { state });
       })
       .catch((error: unknown) => {
         setPending(false);
@@ -366,6 +367,7 @@ function AddServiceFlow({ view }: { view: HubConfigView }) {
   return (
     <SetupFlow
       project={project}
+      origin={origin}
       title="Add service"
       intro="A service is something a repo runs: an API, a portal, a database, a queue. Tell agents where to find it in each environment."
       steps={steps}

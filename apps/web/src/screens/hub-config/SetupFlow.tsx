@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { Button, Icon } from "../../components";
 import { cx } from "../../lib/cx";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
-import { environmentsHome } from "./environments";
+import type { FlowOrigin } from "./environments";
 
 /* A setup flow: one question at a time, the steps on the left with what was answered, a live
    preview of the result on the right. The step circles mirror the first-run screen's. */
@@ -18,6 +18,8 @@ export interface FlowStep {
 
 export interface SetupFlowProps {
   project: string;
+  /** The page the flow was opened from: Cancel and the breadcrumb lead back there. */
+  origin: FlowOrigin;
   /** The page title and the last breadcrumb, e.g. "Add environment". */
   title: string;
   intro: ReactNode;
@@ -42,6 +44,7 @@ export interface SetupFlowProps {
 
 export function SetupFlow({
   project,
+  origin,
   title,
   intro,
   steps,
@@ -61,7 +64,7 @@ export function SetupFlow({
 }: SetupFlowProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const last = index === steps.length - 1;
-  const back = environmentsHome(project);
+  const back = origin.returnTo;
 
   useEffect(() => {
     heading.current?.focus();
@@ -79,7 +82,7 @@ export function SetupFlow({
         items={[
           { label: "Portfolio", href: "/" },
           { label: project, href: `/projects/${encodeURIComponent(project)}` },
-          { label: "Hub configuration", href: back },
+          { label: origin.returnLabel, href: back },
           { label: title },
         ]}
       />

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Banner, Button, Icon, OptionRow, ProblemError, Skeleton } from "../../components";
@@ -10,7 +10,7 @@ import {
   ACCESS_LOOK,
   ENVIRONMENT_PRESETS,
   NAME_PATTERN,
-  environmentsHome,
+  flowOrigin,
   lineWithValue,
   linesOf,
   postEnvironmentEdit,
@@ -56,6 +56,7 @@ function AddEnvironmentFlow({ view }: { view: HubConfigView }) {
   const navigate = useNavigate();
   const client = useQueryClient();
   const project = view.project;
+  const origin = flowOrigin(useLocation().state, project);
   const localBroken = view.local_file.problems.length > 0;
 
   const [index, setIndex] = useState(0);
@@ -124,7 +125,7 @@ function AddEnvironmentFlow({ view }: { view: HubConfigView }) {
           saved: `Added ${name.trim()} ${scope === "team" ? "for the team" : "for you"}`,
           team: scope === "team",
         };
-        void navigate(environmentsHome(project), { state });
+        void navigate(origin.returnTo, { state });
       })
       .catch((error: unknown) => {
         setPending(false);
@@ -468,6 +469,7 @@ function AddEnvironmentFlow({ view }: { view: HubConfigView }) {
   return (
     <SetupFlow
       project={project}
+      origin={origin}
       title="Add environment"
       intro="An environment is a place where your systems run: your machine, a test stack, production. Agents learn where they are and what they may do there."
       steps={steps}

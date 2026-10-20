@@ -1,18 +1,9 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
+import { Navigate, useLocation, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
-import {
-  Banner,
-  Button,
-  CopyButton,
-  Icon,
-  ProblemError,
-  Skeleton,
-  Toast,
-  Tooltip,
-} from "../../components";
+import { Banner, Button, Icon, ProblemError, Skeleton, Tooltip } from "../../components";
 import type { IconName } from "../../components";
 import { useApi } from "../../lib/api";
 import { useScope } from "../../lib/scope";
@@ -24,7 +15,8 @@ import { sessionControlUnavailable } from "../sessions-list/control";
 import type { DiscussReference, DiscussStarter } from "../../shell/discuss";
 import { KnowledgeProjectIndex } from "../knowledge-index";
 import { EnvironmentsSection } from "./EnvironmentsSection";
-import type { SavedState } from "./environments";
+import { hubConfigOrigin } from "./environments";
+import { SavedToast, UncommittedNotice, useSaveNotices } from "./notices";
 import { LocalSettingsDialog } from "./LocalSettingsDialog";
 import { AskBlocked, ConfigRow, ConfigSource, Mono, NoneText, Section, useAttach } from "./parts";
 import type { RowAsk, Source } from "./parts";
@@ -693,7 +685,11 @@ function ConfigBody({
             </div>
           </Section>
 
-          <EnvironmentsSection view={view} onSaved={onEnvironmentSaved} />
+          <EnvironmentsSection
+            view={view}
+            onSaved={onEnvironmentSaved}
+            origin={hubConfigOrigin(view.project)}
+          />
 
           <Section
             id="tracker"
@@ -851,35 +847,14 @@ export function HubConfigScreen() {
   const { setOpen, addReference } = useDiscuss();
   const [editing, setEditing] = useState(false);
   const location = useLocation();
-  const navigate = useNavigate();
-  const handed = location.state as SavedState | null;
-  const [saved, setSaved] = useState<string | null>(handed?.saved ?? null);
-  // hub.json was changed from this page and is not committed yet: the person syncs and opens a PR.
-  const [teamChanged, setTeamChanged] = useState(handed?.team ?? false);
-  useEffect(() => {
-    // A setup flow handed its result over once: keep it out of a later back or reload.
-    if (handed)
-      void navigate(`${location.pathname}${location.hash}`, { replace: true, state: null });
-  }, [handed, location.pathname, location.hash, navigate]);
-  useEffect(() => {
-    if (saved === null) return;
-    const timer = setTimeout(() => {
-      setSaved(null);
-    }, 4000);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [saved]);
+  const notices = useSaveNotices();
   const capabilities = useAgentCapabilities();
   const unavailable = sessionControlUnavailable(capabilities.error, capabilities.data);
   const blocked = unavailable ? `${unavailable.title}. ${unavailable.detail}` : null;
   const onSaved = () => {
-    setSaved("Saved your settings");
+    notices.onSaved("Saved your settings");
   };
-  const onEnvironmentSaved = (message: string, team: boolean) => {
-    setSaved(message);
-    if (team) setTeamChanged(true);
-  };
+  const onEnvironmentSaved = notices.onSaved;
   useDiscussTarget({
     key: `config:${project}`,
     project,
@@ -1010,38 +985,8 @@ export function HubConfigScreen() {
             {view.local_file.problems.join("; ")}
           </Banner>
         )}
-        {teamChanged && (
-          <Banner
-            tone="info"
-            onDismiss={() => {
-              setTeamChanged(false);
-            }}
-            action={
-              <span className="ah-row" style={{ gap: 8 }}>
-                <CopyButton text="./hub sync" label="Copy ./hub sync" />
-                <Button
-                  size="sm"
-                  icon="message-square"
-                  disabled={blocked !== null}
-                  onClick={() => {
-                    addReference({
-                      id: "config:hub.json-environments",
-                      label: "Uncommitted hub.json",
-                      source: "hub.json",
-                      quote:
-                        "hub.json has environment changes made from hub web that are not committed. Run ./hub sync, show me the diff, and open a hub PR after I agree.",
-                    });
-                    setOpen(true);
-                  }}
-                >
-                  Ask Claude to open the hub PR
-                </Button>
-              </span>
-            }
-          >
-            hub.json has changes that are not committed. Run ./hub sync to update AGENTS.md, then
-            review the diff and open a hub PR.
-          </Banner>
+        {notices.teamChanged && (
+          <UncommittedNotice blocked={blocked} onDismiss={notices.dismissTeamChanged} />
         )}
         {body}
         {editing && view && (
@@ -1054,11 +999,7 @@ export function HubConfigScreen() {
             onSaved={onSaved}
           />
         )}
-        {saved !== null && (
-          <div className="ah-config-toast">
-            <Toast>{saved}</Toast>
-          </div>
-        )}
+        <SavedToast message={notices.saved} />
       </div>
     </AskBlocked.Provider>
   );

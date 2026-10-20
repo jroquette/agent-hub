@@ -31,7 +31,7 @@ import {
   refusalOf,
   serviceLabel,
 } from "./environments";
-import type { HubConfigView, SourcedEnvironment, SourcedService } from "./environments";
+import type { FlowOrigin, HubConfigView, SourcedEnvironment, SourcedService } from "./environments";
 
 /** Production, by icon and word, never by colour alone. */
 function ProductionBadge() {
@@ -127,9 +127,12 @@ function focusAddEnvironment() {
 export function EnvironmentsSection({
   view,
   onSaved,
+  origin,
 }: {
   view: HubConfigView;
   onSaved: (message: string, team: boolean) => void;
+  /** Where the add flows come back to. */
+  origin: FlowOrigin;
 }) {
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -236,7 +239,7 @@ export function EnvironmentsSection({
               variant="primary"
               icon="plus"
               onClick={() => {
-                void navigate(addEnvironmentPath(view.project));
+                void navigate(addEnvironmentPath(view.project), { state: origin });
               }}
             >
               Add environment
@@ -261,7 +264,7 @@ export function EnvironmentsSection({
               id={ADD_ENVIRONMENT_ID}
               icon="plus"
               onClick={() => {
-                void navigate(addEnvironmentPath(view.project));
+                void navigate(addEnvironmentPath(view.project), { state: origin });
               }}
             >
               Add environment
@@ -366,7 +369,7 @@ export function EnvironmentsSection({
             <Button
               icon="plus"
               onClick={() => {
-                void navigate(addServicePath(view.project));
+                void navigate(addServicePath(view.project), { state: origin });
               }}
             >
               Add service
@@ -387,7 +390,7 @@ export function EnvironmentsSection({
                 variant="primary"
                 icon="plus"
                 onClick={() => {
-                  void navigate(addServicePath(view.project));
+                  void navigate(addServicePath(view.project), { state: origin });
                 }}
               >
                 Add service
@@ -430,7 +433,9 @@ export function EnvironmentsSection({
                                     icon="plus"
                                     aria-label={`Add a service to ${repo.dir}`}
                                     onClick={() => {
-                                      void navigate(addServicePath(view.project, repo.dir));
+                                      void navigate(addServicePath(view.project, repo.dir), {
+                                        state: origin,
+                                      });
                                     }}
                                   >
                                     Add service

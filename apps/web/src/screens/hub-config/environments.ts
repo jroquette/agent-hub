@@ -50,6 +50,34 @@ export function addServicePath(project: string, repo?: string): string {
   return repo ? `${path}?repo=${encodeURIComponent(repo)}` : path;
 }
 
+export function environmentsPage(project: string): string {
+  return `/projects/${encodeURIComponent(project)}/environments`;
+}
+
+/** Where a setup flow was opened from, so it returns there: the Environments page or the Hub
+ * configuration's section. */
+export interface FlowOrigin {
+  returnTo: string;
+  returnLabel: string;
+}
+
+export function hubConfigOrigin(project: string): FlowOrigin {
+  return { returnTo: environmentsHome(project), returnLabel: "Hub configuration" };
+}
+
+/** The origin a flow was handed, when it is one of this project's pages; else Hub config's. */
+export function flowOrigin(state: unknown, project: string): FlowOrigin {
+  const handed = state as Partial<FlowOrigin> | null;
+  const prefix = `/projects/${encodeURIComponent(project)}/`;
+  if (
+    typeof handed?.returnTo === "string" &&
+    typeof handed.returnLabel === "string" &&
+    handed.returnTo.startsWith(prefix)
+  )
+    return { returnTo: handed.returnTo, returnLabel: handed.returnLabel };
+  return hubConfigOrigin(project);
+}
+
 /** What a flow hands back to the config screen after a save: its toast and whether hub.json
  * changed. */
 export interface SavedState {

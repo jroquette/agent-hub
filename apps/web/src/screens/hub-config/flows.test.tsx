@@ -6,6 +6,7 @@ import { seriousViolations } from "../../testing/axe";
 import { renderWithApi, type ApiRoutes } from "../../testing/builders";
 import { AddEnvironmentScreen } from "./AddEnvironmentFlow";
 import { AddServiceScreen } from "./AddServiceFlow";
+import { flowOrigin } from "./environments";
 
 const CONFIG = "/api/v1/projects/demo/config";
 const WRITE = "POST /api/v1/projects/demo/config/environments";
@@ -205,5 +206,21 @@ describe("AddServiceScreen", () => {
     await screen.findByRole("heading", { name: "What runs?" });
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("flowOrigin", () => {
+  it("returns to the page that opened the flow, only within the project", () => {
+    const page = { returnTo: "/projects/demo/environments", returnLabel: "Environments" };
+    const config = {
+      returnTo: "/projects/demo/config#environments",
+      returnLabel: "Hub configuration",
+    };
+
+    expect(flowOrigin(page, "demo")).toEqual(page);
+    expect(flowOrigin({ returnTo: "https://evil.example", returnLabel: "x" }, "demo")).toEqual(
+      config,
+    );
+    expect(flowOrigin(null, "demo")).toEqual(config);
   });
 });
