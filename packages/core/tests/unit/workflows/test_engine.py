@@ -1237,3 +1237,28 @@ def test_states_scenario_limits_when_constants_read() -> None:
     assert workflow_nodes.MAX_EXPECT_TIMEOUT_SECONDS == 24 * 3600
     assert workflow_nodes.MAX_ACTION_TIMEOUT_SECONDS == 3600
     assert engine_module.MAX_EXPECT_POLLS == 1000
+
+
+def test_resolves_ctx_after_resume_when_run_context_from_prior() -> None:
+    plan = plan_of(
+        expect("wait", capture={"order_id": "$self.output.order_id"}),
+        action("use", "wait", **{"with": {"id": "$CTX.order_id", "note": "order $CTX.order_id"}}),
+        kind="scenario",
+    )
+    held = '{"status": "ON_HOLD", "order_id": "o-7"}'
+    first = ScriptedRunner({"wait": [held], "use": [fails()]})
+
+    failed = traced(plan, first)
+    second = ScriptedRunner({"use": ["{}"]})
+    resumed = traced(plan, second, prior=failed.report.state)
+
+    assert failed.report.status == "failed"
+    assert [call.inputs for call in first.calls if call.node.id == "use"] == [
+        {"id": "o-7", "note": "order o-7"}
+    ]
+    assert [call.inputs for call in second.calls] == [{"id": "o-7", "note": "order o-7"}]
+    assert resumed.recorder.end_of("wait").skip_cause == "prior_success"
+    assert resumed.trace.polls == []
+    [use] = [start for start in resumed.recorder.starts if start.node == "use"]
+    assert use.attempt == 2
+    assert resumed.report.status == "done"
