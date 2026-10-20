@@ -1071,6 +1071,37 @@ def test_keeps_latency_ceiling_when_blocked_words_set(
     assert p95(samples) <= LATENCY_CEILING
 
 
+# AGH-293 NFR: the ceiling holds with an MCP call whose input is walked (1,000 clean strings).
+@pytest.mark.serial
+def test_keeps_latency_ceiling_when_input_tool_scanned(
+    *,
+    hook_python: str,
+    rendered_tree: Callable[..., Path],
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+) -> None:
+    hub = render_at(rendered_tree, tmp_path / "ws" / "demo-hub")
+    with_blocked_words(hub)
+    env = {"HOME": str(tmp_path)}
+    rows = [f"{n:04d}-" + "x" * 59 for n in range(1000)]
+    assert {len(row) for row in rows} == {64}
+    event = {"tool_name": "mcp__db__query", "tool_input": {"rows": rows}, "cwd": str(hub)}
+    stdin = json.dumps(event).encode()
+    samples: list[float] = []
+
+    for _ in range(LATENCY_RUNS):
+        start = time.perf_counter()
+        completed = run_hook_file(
+            hook_python, hub / HOOKS / "guard.py", stdin=stdin, cwd=hub, env=env
+        )
+        samples.append(time.perf_counter() - start)
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout == b"", completed.stdout
+
+    assert len(samples) == LATENCY_RUNS
+    assert p95(samples) <= LATENCY_CEILING
+
+
 # argv: none. The blocked-word rule's own time on one Bash call with W and no file to scan: the
 # median of 50 runs, each compiling its pattern afresh (``re.purge``), with 40 more variables set.
 RULE_TIME = """
