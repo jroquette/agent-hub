@@ -11,7 +11,9 @@ and no ``workflow``.
 (``name``). Source ``executor``, session ``run:<run>``, ``workflow`` the run's label
 (``scenario:<name>``) and ``step`` the node id as recorded, as the run's other events
 (``workflows.events``). Outputs and captured values stay in the run's record, never here
-(ADR 0019). ``source_id`` is ``<run>:<step>:<attempt>:<type>:<poll or name>``.
+(ADR 0019). ``source_id`` is ``<run>:<step>:<attempt>:<type>:<poll or name>``: an expect's
+action call gives its ``poll`` (from 1), so each poll's call is an event of its own (the store
+keeps one event per source id); a plain call has none.
 """
 
 from datetime import datetime
@@ -77,25 +79,50 @@ class ScenarioEvents:
         self.session = session if session is not None else f"run:{run_id}"
         self.events: list[Event] = []
 
-    def policy_decided(self, facts: ActionFacts, *, reason_kind: ReasonKind, at: datetime) -> None:
+    def policy_decided(
+        self, facts: ActionFacts, *, reason_kind: ReasonKind, at: datetime, poll: int = 0
+    ) -> None:
         payload = {**facts.decided(), "reason_kind": reason_kind}
         self._add(
-            EventType.POLICY_DECISION, facts.step, facts.attempt, item="", at=at, payload=payload
+            EventType.POLICY_DECISION,
+            facts.step,
+            facts.attempt,
+            item=_poll_item(poll),
+            at=at,
+            payload=payload,
         )
 
-    def action_started(self, facts: ActionFacts, *, at: datetime) -> None:
+    def action_started(self, facts: ActionFacts, *, at: datetime, poll: int = 0) -> None:
         payload = facts.called()
         self._add(
-            EventType.ACTION_START, facts.step, facts.attempt, item="", at=at, payload=payload
+            EventType.ACTION_START,
+            facts.step,
+            facts.attempt,
+            item=_poll_item(poll),
+            at=at,
+            payload=payload,
         )
 
     def action_ended(
-        self, facts: ActionFacts, *, status: str, failure_kind: str | None, at: datetime
+        self,
+        facts: ActionFacts,
+        *,
+        status: str,
+        failure_kind: str | None,
+        at: datetime,
+        poll: int = 0,
     ) -> None:
         payload: dict[str, JsonValue] = {**facts.called(), "status": status}
         if failure_kind is not None:
             payload["failure_kind"] = failure_kind
-        self._add(EventType.ACTION_END, facts.step, facts.attempt, item="", at=at, payload=payload)
+        self._add(
+            EventType.ACTION_END,
+            facts.step,
+            facts.attempt,
+            item=_poll_item(poll),
+            at=at,
+            payload=payload,
+        )
 
     def expect_polled(self, poll: ExpectPoll) -> None:
         payload: dict[str, JsonValue] = {"poll": poll.poll, "held": poll.held}
@@ -145,3 +172,8 @@ class ScenarioEvents:
                 step=step,
             )
         )
+
+
+def _poll_item(poll: int) -> str:
+    """An action call's ``source_id`` item: its expect poll, or nothing for a plain call."""
+    return str(poll) if poll else ""
