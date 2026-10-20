@@ -30,7 +30,8 @@ far are under it, so the total goes over by one folder at most (9,019,394 bytes,
 ``features.json`` 1 MiB + 1, ``plan.md`` 256 KiB + 1, two 64 KiB heads, 200 eval heads of 16 KiB,
 500 review heads of 8 KiB and 50 UX design heads of 4 KiB); each folder past it is listed with
 ``OVER_BUDGET`` as its record problem and files unread.
-``read_feature_folder`` reads the one folder a slug names, as the listing would, and nothing else.
+``read_feature_folder`` reads the one folder a slug names, as the listing would, plus which of its
+``reviews/`` ticket folders hold a review round.
 """
 
 import contextlib
