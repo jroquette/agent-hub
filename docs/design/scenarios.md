@@ -77,7 +77,7 @@ gate-needing steps that do not depend on each other are a plan error naming both
 - The guard denies, in every session, a file tool on a declared env file (by real path: a symlink or `..` is caught),
   a `Grep` or `Glob` that can reach one, and a Bash command or WebFetch URL naming one (rule `env_file`, reason `env
   file: <tool> names the env file of <env>`). Doctor's `environments.env_file` warns when a declared file is missing,
-  not ignored by the git checkout that holds it, or outside the hub and every declared repo.
+  not ignored by the git checkout that holds it, outside the hub and every declared repo, or reached through a link.
 
 ### Plan and modes
 

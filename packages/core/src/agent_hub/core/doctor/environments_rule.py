@@ -93,13 +93,15 @@ def _env_file_problems(facts: EnvFileFacts) -> Iterable[str]:
         yield "is outside the hub and every declared repo"
     elif facts.ignored is False:
         yield f"is not ignored by git in {facts.holder}"
+    if facts.linked:
+        yield "is reached through a link"
 
 
 ENVIRONMENTS_ENV_FILE: Final = Rule(
     id=ENVIRONMENTS_ENV_FILE_RULE,
     severity=Severity.WARNING,
-    summary="each declared env file, a warning when it is missing, not git-ignored or outside"
-    " the hub and its repos",
+    summary="each declared env file, a warning when it is missing, not git-ignored, outside"
+    " the hub and its repos or reached through a link",
     module=RULE_MODULES.get(ENVIRONMENTS_ENV_FILE_RULE),
     reads=frozenset({Read.ENV_FILES}),
     check=_environments_env_file,
