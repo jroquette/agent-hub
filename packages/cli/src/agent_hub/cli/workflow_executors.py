@@ -5,7 +5,7 @@ settings, hooks and plugin load from the hub; the hub's repos are attached with 
 With a ``cwd`` inside a repo (issue-to-pr's worktree) it runs there as ``hub run``'s session
 does: the hub and the other repos attached, that repo's gates allowed, and the hub's hooks given
 through a hooks-only ``--settings`` file (``session_settings``, AGH-278), written again before
-every attempt and every ``--resume``. A hub whose hooks cannot be wired fails the node with
+every attempt and every ``--resume``; never when the cwd resolves inside the hub. A hub whose hooks cannot be wired fails the node with
 ``config`` before ``claude`` starts. Its argv is
 ``hub run``'s (``implementing_argv``: permission mode ``dontAsk``, the tracker's tools denied),
 with the node's tier from ``hub.json`` → ``models.tiers`` and its ``limits`` as ``--max-turns`` and
@@ -182,7 +182,9 @@ class WorkflowExecutors:
         caps = self.session if node.id == IMPLEMENT_STEP else None
         effort = AGENT_EFFORT if caps is None else caps.effort
         settings_file = None
-        if home is not None:
+        # A cwd in the resolved hub loads the hub's own settings: a hooks file there (a repo that
+        # is the hub or holds it) would run each hook twice.
+        if home is not None and not cwd.is_relative_to(self.hub.resolve()):
             try:
                 settings_file = str(write_session_settings(self.hub, effort))
             except HubHooksError as error:
