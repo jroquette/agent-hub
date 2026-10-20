@@ -35,6 +35,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Blocked words reach MCP tool calls, WebSearch queries, subagent prompts (Task, Agent) and SendMessage: the guard
+  denies a call whose input holds a blocked word in any key or string value, and asks when the input is over 1 MiB or
+  50,000 values or its 300 ms budget runs out; only this rule runs on those tools, and the project extension does not
+  (AGH-293). Still not checked: tool and MCP server names (AGH-373); `deny_hosts` does not apply to these inputs
+  (AGH-372); Skill, TodoWrite, ExitPlanMode and AskUserQuestion (AGH-373); a recorded guard event carries their input
+  whole (AGH-371); the guard's stdin has no byte cap (AGH-375).
+
 - `hub web` Feature detail: the Plan tab shows the plan's version line ("Plan v3 · amendments A1, A2", one link per
   amendment to its section of the plan), and the header verdict is the latest whole-feature eval's (`acs: all`, or a
   legacy `eval.md` without scope); a ticket-scoped eval no longer sets it (AGH-323). The feature detail API serves
@@ -93,6 +100,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   Change for me.
 
 ### Changed
+
+- The guard's `PreToolUse` matcher is now
+  `^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent|SendMessage)$|^mcp__`.
+  **Run `hub sync` after you bump `platform.version`**: until then your hub keeps the old matcher, the new tools stay
+  unchecked, and `hub doctor` reports `hooks.PreToolUse: a base hook group is missing or changed` (AGH-293).
 
 - `hub web --sessions-max 0` (`AGENT_HUB_SESSIONS_MAX=0`) sets no limit on live agent sessions: none is ended or
   refused for the limit. `make playground` starts its conductor that way, instead of 16 sessions (AGH-383,
