@@ -709,3 +709,58 @@ def test_hides_secret_repo_dir_when_local_file_names_one(hub: Path) -> None:
     assert result.stderr == (
         'hub.local.json: repos[0].dir: repo dir "<name>" is not in hub.json\'s repos\n'
     )
+
+
+ENV_FILE = "demo-api/environment/.env.test"
+
+
+def test_writes_env_file_when_add_given_env_file(hub: Path) -> None:
+    # AC-350.43: hub env add --env-file writes credentials.env_file in hub.json.
+    document = json.loads((hub / "hub.json").read_bytes())
+
+    result = run_env(hub, "add", "demo", "--access", "write", "--env-file", ENV_FILE)
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    assert result.stdout.splitlines() == ["hub.json: added environment demo", SYNC_HINT]
+    document["environments"]["demo"] = {"access": "write", "credentials": {"env_file": ENV_FILE}}
+    assert (hub / "hub.json").read_bytes() == hub_bytes(document)
+    assert sorted(path.name for path in hub.iterdir()) == ["hub.json"]
+
+
+def test_writes_local_env_file_when_set_local_env_file(local_hub: Path) -> None:
+    # AC-350.43: hub env set --local --env-file writes it on the developer's own environment.
+    local = json.loads((local_hub / "hub.local.json").read_bytes())
+    hub_before = (local_hub / "hub.json").read_bytes()
+
+    result = run_env(local_hub, "set", "jane-cloud", "--local", "--env-file", ENV_FILE)
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    assert result.stdout.splitlines() == ["hub.local.json: updated environment jane-cloud"]
+    local["environments"]["jane-cloud"]["credentials"]["env_file"] = ENV_FILE
+    assert (local_hub / "hub.local.json").read_bytes() == hub_bytes(local)
+    assert (local_hub / "hub.json").read_bytes() == hub_before
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("/etc/x", id="absolute"),
+        pytest.param("../x", id="parent"),
+        pytest.param("demo-api/../../x", id="inner_parent"),
+        pytest.param("~/x", id="home"),
+        pytest.param("a" * 201, id="201_chars"),
+        pytest.param(AWS_KEY, id="aws_key"),
+    ],
+)
+def test_refuses_env_file_when_path_unsafe(local_hub: Path, path: str) -> None:
+    # AC-350.43: an unsafe path exits 1, changes nothing and is never echoed.
+    before = snapshot(local_hub)
+
+    added = run_env(local_hub, "add", "demo", "--access", "write", "--env-file", path)
+    set_local = run_env(local_hub, "set", "jane-cloud", "--local", "--env-file", path)
+
+    for result in (added, set_local):
+        assert (result.exit_code, result.stdout) == (1, ""), result.output
+        assert "credentials.env_file" in result.stderr
+        assert path not in result.stderr
+    assert snapshot(local_hub) == before

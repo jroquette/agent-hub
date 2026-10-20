@@ -147,13 +147,20 @@ def parse_workflow(content: object) -> WorkflowDocument:
     try:
         return WorkflowDocument.model_validate(content)
     except ValidationError as error:
-        problems = []
-        for detail in error.errors(include_url=False, include_input=False):
-            loc = _document_loc(detail["loc"], content)
-            if detail["type"] in _TYPE_ERRORS:
-                loc = (*loc, "type")
-            problems.append(WorkflowProblem(loc, _message(detail["type"], detail["msg"])))
-        raise WorkflowLoadError(problems) from None
+        raise load_error(error, content) from None
+
+
+def load_error(error: ValidationError, content: object) -> WorkflowLoadError:
+    """The load error of a document model's ``error`` on ``content``: each problem at the key
+    path it has in ``content`` (shared by the documents loaded as workflows are, such as
+    actions)."""
+    problems = []
+    for detail in error.errors(include_url=False, include_input=False):
+        loc = _document_loc(detail["loc"], content)
+        if detail["type"] in _TYPE_ERRORS:
+            loc = (*loc, "type")
+        problems.append(WorkflowProblem(loc, _message(detail["type"], detail["msg"])))
+    return WorkflowLoadError(problems)
 
 
 def _document_loc(loc: Sequence[str | int], content: object) -> Loc:
