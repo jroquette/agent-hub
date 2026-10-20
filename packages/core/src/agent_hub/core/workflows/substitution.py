@@ -3,6 +3,10 @@
 Reference grammar, one token at each ``$``:
 
 - ``$INPUTS.<name>`` and ``$WITH.<name>``, ``<name>`` matching ``[a-z][a-z0-9_]*``; no path.
+- In the scenario grammar (``scenario=True``, or ``RefContext.scenario``: a ``kind: scenario``
+  document, and any ``until_when`` or ``capture`` of an action node) also ``$CTX.<name>`` (a
+  captured value) and ``$self.output``, the node's own output, with a path as below; elsewhere
+  ``$CTX`` is text and ``$self.output`` reads a node named ``self``, as before scenarios.
 - ``$<id>.output`` and ``$LOOP_PREV.<id>.output``, ``<id>`` matching ``[a-z][a-z0-9_-]*`` (so
   ``-`` and the include namespace ``__`` belong to it), then a path of ``.<segment>``, a segment
   being ``[A-Za-z0-9_]+``; an all-digit segment indexes an array (``.0``).
@@ -10,14 +14,15 @@ Reference grammar, one token at each ``$``:
 
 A path stops at the first character that cannot continue it: the dot ending the sentence
 ``$plan.output.summary.`` stays text, and ``$plan.output-x`` is the reference then ``-x``. A ``$``
-that starts none of these (``$1``, ``${HOME}``, ``$plan.outputs``) stays text. ``INPUTS``, ``WITH``
-and ``LOOP_PREV`` followed by anything but a valid token, and ``[`` or ``?.`` right after a
-reference, are ``malformed`` errors, never text.
+that starts none of these (``$1``, ``${HOME}``, ``$plan.outputs``) stays text. ``INPUTS``, ``WITH``,
+``LOOP_PREV`` (and ``CTX`` in the scenario grammar) followed by anything but a valid token, and
+``[`` or ``?.`` right after a reference, are ``malformed`` errors, never text.
 
 Values render as canonical text (``canonical_text``), in one left-to-right pass: inserted text is
 never scanned again. A skipped producer, an absent key or item, and ``$LOOP_PREV`` before a first
-iteration read as empty text; a failed producer, a node with no result, an unknown input or
-``with`` name, a path through a scalar, and a NaN or infinity are errors. In argv a reference
+iteration read as empty text; a failed producer, a node with no result, an unknown input,
+``with`` or ``$CTX`` name, ``$self`` with no own output, a path through a scalar, and a NaN or
+infinity are errors. In argv a reference
 must be a whole element, never the program nor a ``-c`` script (``check_argv``).
 """
 
@@ -36,6 +41,8 @@ type SubstitutionErrorCode = Literal[
     "malformed",
     "unknown_input",
     "unknown_with",
+    "unknown_ctx",
+    "not_self",
     "unknown_node",
     "producer_failed",
     "bad_path",
@@ -60,6 +67,12 @@ _TOKEN = re.compile(
     rf"|(?P<node>{_ID})\.output(?P<path>{_PATH})(?![A-Za-z0-9_]|{_FOREIGN}))"
 )
 _RESERVED = re.compile(r"\$(?:INPUTS|WITH|LOOP_PREV)(?![A-Za-z0-9_])")
+# The scenario grammar: the same tokens, plus ``$CTX.<name>`` and ``$self.output[.path]``.
+_SCENARIO_TOKEN = re.compile(
+    rf"\$(?:CTX\.(?P<ctx>{_NAME})(?![A-Za-z0-9_.])"
+    rf"|self\.output(?P<self_path>{_PATH})(?![A-Za-z0-9_]|{_FOREIGN}))"
+)
+_SCENARIO_RESERVED = re.compile(r"\$CTX(?![A-Za-z0-9_])")
 _BAD_SUFFIX = re.compile(rf"\$(?:LOOP_PREV\.)?{_ID}\.output{_PATH}{_FOREIGN}")
 _LEADING_ZERO = re.compile(r"0[0-9]+")
 # A short-option cluster (``-e``, ``+ec``); one holding ``c`` is a script flag. No ``*`` around
@@ -89,7 +102,21 @@ class LoopPrevRef:
     path: tuple[str, ...]
 
 
-type Ref = InputRef | WithRef | NodeRef | LoopPrevRef
+@dataclass(frozen=True)
+class CtxRef:
+    """``$CTX.<name>``: the value a scenario node captured (``capture:``)."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class SelfRef:
+    """``$self.output[.path]``: the node's own output, in ``until_when`` and ``capture``."""
+
+    path: tuple[str, ...]
+
+
+type Ref = InputRef | WithRef | NodeRef | LoopPrevRef | CtxRef | SelfRef
 
 
 @dataclass(frozen=True)
@@ -102,12 +129,20 @@ class NodeResult:
 
 @dataclass(frozen=True)
 class RefContext:
-    """What references resolve against; ``loop_prev`` is ``None`` outside a ``loop_group`` body."""
+    """What references resolve against; ``loop_prev`` is ``None`` outside a ``loop_group`` body.
+
+    ``ctx`` holds each captured name as its capturing node's result (its value as output), and
+    ``self_output`` the node's own result while its ``until_when`` and ``capture`` are read;
+    ``scenario`` renders texts in the scenario grammar.
+    """
 
     inputs: Mapping[str, JsonValue]
     nodes: Mapping[str, NodeResult]
     loop_prev: Mapping[str, NodeResult] | None = None
     with_values: Mapping[str, JsonValue] = field(default_factory=dict)
+    ctx: Mapping[str, NodeResult] = field(default_factory=dict)
+    self_output: NodeResult | None = None
+    scenario: bool = False
 
 
 class SubstitutionError(AgentHubError):
@@ -143,24 +178,24 @@ class ArgvProblem:
     error: SubstitutionError
 
 
-def parse_ref(text: str) -> Ref:
+def parse_ref(text: str, *, scenario: bool = False) -> Ref:
     """Return the one reference ``text`` is, whole; anything else is ``malformed``."""
-    match = _TOKEN.fullmatch(text)
-    if match is None or match["dollar"]:
+    match = (scenario and _SCENARIO_TOKEN.fullmatch(text)) or _TOKEN.fullmatch(text)
+    if not match or match.groupdict().get("dollar"):
         raise SubstitutionError("malformed", text, "not one whole reference")
     return _ref_of(match)
 
 
-def find_refs(template: str) -> list[Ref]:
+def find_refs(template: str, *, scenario: bool = False) -> list[Ref]:
     """Return the references of ``template`` in order, without resolving them."""
-    return [ref for _, _, ref in _scan(template) if ref is not None]
+    return [ref for _, _, ref in _scan(template, scenario=scenario) if ref is not None]
 
 
 def render(template: str, context: RefContext) -> str:
     """Replace every reference by its value's canonical text, in one pass."""
     parts: list[str] = []
     last = 0
-    for start, end, ref in _scan(template):
+    for start, end, ref in _scan(template, scenario=context.scenario):
         parts.append(template[last:start])
         parts.append("$" if ref is None else resolve_text(ref, context, template[start:end]))
         last = end
@@ -168,11 +203,13 @@ def render(template: str, context: RefContext) -> str:
     return "".join(parts)
 
 
-def rewrite_refs(template: str, replace: Callable[[Ref, str], str]) -> str:
+def rewrite_refs(
+    template: str, replace: Callable[[Ref, str], str], *, scenario: bool = False
+) -> str:
     """Replace each reference by ``replace(ref, spelling)``, in one pass; ``$$`` stays ``$$``."""
     parts: list[str] = []
     last = 0
-    for start, end, ref in _scan(template):
+    for start, end, ref in _scan(template, scenario=scenario):
         parts.append(template[last:start])
         parts.append(template[start:end] if ref is None else replace(ref, template[start:end]))
         last = end
@@ -186,7 +223,7 @@ def spell(ref: NodeRef | LoopPrevRef) -> str:
     return f"{start}{ref.node}.output" + "".join(f".{segment}" for segment in ref.path)
 
 
-def check_argv(argv: Sequence[str]) -> list[ArgvProblem]:
+def check_argv(argv: Sequence[str], *, scenario: bool = False) -> list[ArgvProblem]:
     """Return the references argv refuses, by index, without resolving any.
 
     A reference must fill a whole element and never be the program (``argv[0]``). Shell option
@@ -198,7 +235,7 @@ def check_argv(argv: Sequence[str]) -> list[ArgvProblem]:
     script is refused too; the ones after it are positional parameters, the only way a script
     gets values.
     """
-    problems, whole = _whole_references(argv)
+    problems, whole = _whole_references(argv, scenario=scenario)
     if not problems and not whole:
         return []
     reach = _check_script_flags(argv, set(whole), problems)
@@ -212,13 +249,15 @@ def check_argv(argv: Sequence[str]) -> list[ArgvProblem]:
     return sorted(problems, key=lambda problem: problem.index)
 
 
-def _whole_references(argv: Sequence[str]) -> tuple[list[ArgvProblem], list[int]]:
+def _whole_references(
+    argv: Sequence[str], *, scenario: bool
+) -> tuple[list[ArgvProblem], list[int]]:
     """Problems of malformed and partial references, and the indexes of whole ones."""
     problems: list[ArgvProblem] = []
     whole: list[int] = []
     for index, element in enumerate(argv):
         try:
-            tokens = _scan(element)
+            tokens = _scan(element, scenario=scenario)
         except SubstitutionError as malformed:
             problems.append(ArgvProblem(index, malformed))
             continue
@@ -256,7 +295,7 @@ def _problem(
 
 def render_argv(argv: Sequence[str], context: RefContext) -> list[str]:
     """Render each element, after refusing what ``check_argv`` reports (its first problem)."""
-    if problems := check_argv(argv):
+    if problems := check_argv(argv, scenario=context.scenario):
         raise problems[0].error
     return [render(element, context) for element in argv]
 
@@ -286,6 +325,19 @@ def resolve(ref: Ref, context: RefContext, text: str) -> JsonValue:
             if node not in context.nodes:
                 raise SubstitutionError("unknown_node", text, f"node {echo(node)} has no result")
             return _read(context.nodes[node], path, text)
+        case CtxRef() | SelfRef():
+            return _run_context(ref, context, text)
+
+
+def _run_context(ref: CtxRef | SelfRef, context: RefContext, text: str) -> JsonValue:
+    """A scenario's ``$CTX.<name>`` or ``$self.output[.path]``."""
+    if isinstance(ref, SelfRef):
+        if context.self_output is None:
+            raise SubstitutionError("not_self", text, "$self reads only in until_when, capture")
+        return _read(context.self_output, ref.path, text)
+    if ref.name not in context.ctx:
+        raise SubstitutionError("unknown_ctx", text, f"nothing captured {echo(ref.name)}")
+    return _read(context.ctx[ref.name], (), text)
 
 
 def _named(
@@ -321,17 +373,22 @@ def _read(result: NodeResult, path: tuple[str, ...], text: str) -> JsonValue:
     return value
 
 
-def _scan(template: str) -> list[tuple[int, int, Ref | None]]:
+def _scan(template: str, *, scenario: bool = False) -> list[tuple[int, int, Ref | None]]:
     """Return ``(start, end, ref)`` for each token, ``ref`` ``None`` for ``$$``."""
     tokens: list[tuple[int, int, Ref | None]] = []
     position = template.find("$")
     while position != -1:
-        match = _TOKEN.match(template, position)
-        if match is not None:
-            tokens.append((position, match.end(), None if match["dollar"] else _ref_of(match)))
+        match = (scenario and _SCENARIO_TOKEN.match(template, position)) or _TOKEN.match(
+            template, position
+        )
+        if match:
+            dollar = match.groupdict().get("dollar")
+            tokens.append((position, match.end(), None if dollar else _ref_of(match)))
             position = template.find("$", match.end())
             continue
         bad = _RESERVED.match(template, position) or _BAD_SUFFIX.match(template, position)
+        if scenario and bad is None:
+            bad = _SCENARIO_RESERVED.match(template, position)
         if bad is not None:
             raise SubstitutionError(
                 "malformed", template[position : bad.end()], "malformed reference"
@@ -341,6 +398,11 @@ def _scan(template: str) -> list[tuple[int, int, Ref | None]]:
 
 
 def _ref_of(match: re.Match[str]) -> Ref:
+    groups = match.groupdict()
+    if groups.get("ctx"):
+        return CtxRef(groups["ctx"])
+    if groups.get("self_path") is not None:
+        return SelfRef(_segments(groups["self_path"], match[0]))
     if match["input"]:
         return InputRef(match["input"])
     if match["with"]:

@@ -181,3 +181,99 @@ def test_points_at_the_node_when_a_node_level_rule_fails(
         parse_workflow(a_document(nodes=[node]))
 
     assert [(p.loc, p.message) for p in caught.value.problems] == [(("nodes", 0), message)]
+
+
+def a_scenario(*nodes: dict[str, object], **overrides: object) -> dict[str, object]:
+    action = {"id": "fetch-order", "type": "action", "action": "send-queue-message"}
+    return a_document(kind="scenario", nodes=list(nodes) or [action], **overrides)
+
+
+def test_loads_workflow_when_scenario_kind_absent() -> None:
+    assert parse_workflow(a_document()).kind == "workflow"
+    scenario = parse_workflow(a_scenario())
+    assert scenario.kind == "scenario"
+    assert scenario.nodes[0].type == "action"
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"id": "x", "type": "shell", "command": ["true"]},
+        {"id": "x", "type": "script", "runtime": "sh", "script": "a.sh"},
+        {"id": "x", "type": "agent", "prompt": "p"},
+        {"id": "x", "type": "loop", "prompt": "p", "max_iterations": 2, "until": "done"},
+        {"id": "x", "type": "halt", "reason": "stop"},
+    ],
+    ids=lambda node: str(node["type"]),
+)
+def test_refuses_node_when_scenario_kind_forbids_type(node: dict[str, object]) -> None:
+    action = {"id": "fetch-order", "type": "action", "action": "send-queue-message"}
+    until = "$x.output == 'a'"
+    group = {"id": "poll", "type": "loop_group", "max_iterations": 2, "until_when": until}
+    group["nodes"] = [node]
+
+    assert problems_of(a_scenario(action, node)) == [
+        (
+            "nodes[1].type",
+            f'the node "x" has type {node["type"]}: a scenario takes only action, expect,'
+            " approval, wait, loop_group and include nodes",
+        )
+    ]
+    assert [key for key, _ in problems_of(a_scenario(action, group))] == ["nodes[1].nodes[0].type"]
+    assert parse_workflow(a_document(nodes=[action, node])).kind == "workflow"
+
+
+@pytest.mark.parametrize("key", ["auto_approve", "policy", "skip_gates"])
+def test_refuses_key_when_no_gate_bypass_key_given(key: str) -> None:
+    action = {"id": "fetch-order", "type": "action", "action": "send-queue-message"}
+
+    assert problems_of(a_scenario(**{key: True})) == [(key, "unknown key")]
+    assert problems_of(a_scenario(action | {key: True})) == [(f"nodes[0].{key}", "unknown key")]
+
+
+def an_expect(**keys: object) -> dict[str, object]:
+    expect = {"id": "order-on-hold", "type": "expect", "action": "get-order", "every": "10s"}
+    return expect | {"timeout": "5m", "until_when": "$self.output.status == 'ON_HOLD'"} | keys
+
+
+@pytest.mark.parametrize("every", ["1s", "4s"])
+def test_refuses_every_when_expect_node_below_floor(every: str) -> None:
+    assert problems_of(a_scenario(an_expect(every=every))) == [
+        ("nodes[0].every", "must be at least 5s")
+    ]
+    assert parse_workflow(a_scenario(an_expect(every="5s"))).nodes[0].type == "expect"
+
+
+def test_refuses_timeout_when_expect_node_over_ceiling() -> None:
+    action = {"id": "fetch-order", "type": "action", "action": "send-queue-message"}
+
+    assert problems_of(a_scenario(an_expect(timeout="25h"))) == [
+        ("nodes[0].timeout", "must be at most 24h")
+    ]
+    assert problems_of(a_scenario(action | {"timeout": "61m"})) == [
+        ("nodes[0].timeout", "must be at most 1h")
+    ]
+    assert parse_workflow(a_scenario(an_expect(timeout="24h"), action | {"timeout": "1h"}))
+
+
+RESERVED = "an id ending __ask or __investigation is reserved for the engine's gates"
+
+
+@pytest.mark.parametrize(
+    ("node_id", "message"),
+    [
+        ("self", "the id self is reserved: $self reads a node's own output"),
+        ("fetch__ask", RESERVED),
+        ("fetch__investigation", RESERVED),
+    ],
+)
+def test_refuses_id_when_reserved_suffix_or_self_used(node_id: str, message: str) -> None:
+    action = {"id": node_id, "type": "action", "action": "send-queue-message"}
+    approval = {"id": node_id, "type": "approval", "message": "m"}
+
+    assert problems_of(a_scenario(action)) == [("nodes[0].id", message)]
+    if node_id == "self":
+        # Reserved in scenarios only: a workflow's node may still be named self.
+        assert parse_workflow(a_document(nodes=[approval])).nodes[0].id == "self"
+    else:
+        assert problems_of(a_document(nodes=[approval])) == [("nodes[0].id", message)]
