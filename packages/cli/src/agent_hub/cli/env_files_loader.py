@@ -3,19 +3,20 @@
 
 ``hub action run`` and the engine's action executor both call ``load_env_file``; nothing else
 reads the file, and plan mode never does. The path is relative to the workspace (the folder
-holding the hub and its repos); its real path must stay inside the workspace, so a link may
-point within it but never out. The file is opened without following a last link, never
-blocking (a FIFO is refused, not waited on), must be a regular file of at most
-``MAX_ENV_FILE_BYTES``, is read once into memory and parsed by core's dotenv grammar. Any
-problem refuses the action before its process starts with ``environment <env>: env file
-<path> is <reason>``: the path as configured and a reason, never a value.
+holding the hub and its repos) and must lie, by its real path, inside the hub or one of the
+repos ``hub.json`` declares (``roots``, workspace-relative), never elsewhere in the workspace.
+The file is opened without following a last link, never blocking (a FIFO is refused, not
+waited on), must be a regular file of at most ``MAX_ENV_FILE_BYTES``, is read once into memory
+and parsed by core's dotenv grammar. Any problem refuses the action before its process starts
+with ``environment <env>: env file <path> is <reason>``: the path as configured and a reason,
+never a value.
 """
 
 import errno
 import os
 import stat
-from collections.abc import Callable
-from pathlib import Path
+from collections.abc import Callable, Sequence
+from pathlib import Path, PurePosixPath
 from typing import Final
 
 from agent_hub.core.errors import AgentHubError
@@ -28,10 +29,13 @@ class EnvFileLoadError(AgentHubError):
     """An env file the action cannot use, as one plain line without a value."""
 
 
-def load_env_file(workspace: Path, relative: str, *, environment: str) -> dict[str, str]:
-    """The variables of ``environment``'s env file ``relative`` (to ``workspace``); raises
-    ``EnvFileLoadError`` when it is missing, unreadable, too large, not a regular file,
-    outside the workspace or not a dotenv file."""
+def load_env_file(
+    workspace: Path, relative: str, *, roots: Sequence[str], environment: str
+) -> dict[str, str]:
+    """The variables of ``environment``'s env file ``relative`` (to ``workspace``), which must
+    be inside one of ``roots`` (the hub's and the repos' folders); raises ``EnvFileLoadError``
+    when it is missing, unreadable, too large, not a regular file, outside the workspace,
+    outside the hub and its repos or not a dotenv file."""
 
     def refused(reason: str) -> EnvFileLoadError:
         return EnvFileLoadError(f"environment {environment}: env file {relative} is {reason}")
@@ -40,11 +44,30 @@ def load_env_file(workspace: Path, relative: str, *, environment: str) -> dict[s
     real = os.path.realpath(os.path.join(root, relative))
     if os.path.commonpath([root, real]) != root:
         raise refused("outside the workspace")
+    if _root_of(root, relative, real, roots=roots) is None:
+        raise refused("outside the hub and its repos")
     content = _read(real, refused)
     try:
         return parse_env_file(content)
     except EnvFileError as error:
         raise refused(error.reason) from None
+
+
+def _root_of(workspace: str, relative: str, real: str, *, roots: Sequence[str]) -> str | None:
+    """The root ``relative`` names as its leading folders and whose real path holds ``real``,
+    the deepest when roots nest; ``None`` when there is none."""
+    parts = PurePosixPath(relative).parts
+    found = None
+    for candidate in roots:
+        prefix = PurePosixPath(candidate).parts
+        if not prefix or parts[: len(prefix)] != prefix or len(parts) <= len(prefix):
+            continue
+        folder = os.path.realpath(os.path.join(workspace, *prefix))
+        if os.path.commonpath([folder, real]) == folder and (
+            found is None or len(prefix) > len(PurePosixPath(found).parts)
+        ):
+            found = candidate
+    return found
 
 
 def _read(path: str, refused: Callable[[str], EnvFileLoadError]) -> bytes:

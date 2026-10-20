@@ -480,3 +480,42 @@ def test_fails_plainly_when_env_file_missing_for_action(
     assert [kind for kind, _ in events] == ["policy.decision", "action.start", "action.end"]
     assert events[-1][1]["failure_kind"] == "config"
     assert secret not in json.dumps([payload for _, payload in events])
+
+
+def declare_env_file_at(hub: Path, relative: str) -> Path:
+    """``staging`` names the env file ``relative``; its path in the workspace, holding a value."""
+    document = json.loads((hub / "hub.json").read_text())
+    document["environments"]["staging"]["credentials"] = {"env_file": relative}
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+    git(hub, "commit", "-q", "-am", "staging reads an env file")
+    path = hub.parent / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"DEMO_DB_URL={ENV_SECRET}\n")
+    return path
+
+
+def test_fails_plainly_when_env_file_outside_hub_and_repos(hub: Path, marker: Path) -> None:
+    declare_env_file_at(hub, "elsewhere/.env.staging")
+
+    result = run_action_command(
+        hub, marker, "run", "demo/get-order", "--env", "staging", "--input", "target=api"
+    )
+
+    assert result.exit_code == 1, result.output
+    assert result.stderr == (
+        "hub action run: demo/get-order: config: environment staging: env file"
+        " elsewhere/.env.staging is outside the hub and its repos\n"
+    )
+    assert modes(marker) == []
+    assert ENV_SECRET not in result.output
+
+
+def test_runs_when_env_file_in_hub(hub: Path, marker: Path) -> None:
+    declare_env_file_at(hub, f"{hub.name}/environment/.env.staging")
+
+    result = run_action_command(
+        hub, marker, "run", "demo/get-order", "--env", "staging", "--input", "target=api"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert modes(marker) == ["run"]

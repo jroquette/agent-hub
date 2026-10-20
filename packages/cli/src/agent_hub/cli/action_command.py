@@ -95,6 +95,8 @@ class ResolvedCall:
     environment_name: str
     plan: ActionCallPlan
     decision: PolicyDecision
+    # The folders an env file may be in, relative to the workspace: the hub's and each repo's.
+    roots: tuple[str, ...]
 
     @property
     def call(self) -> ActionCall:
@@ -216,7 +218,12 @@ def credentials(resolved: ResolvedCall) -> dict[str, str]:
         values = (
             {}
             if env_file is None
-            else load_env_file(resolved.hub.parent, env_file, environment=resolved.environment_name)
+            else load_env_file(
+                resolved.hub.parent,
+                env_file,
+                roots=resolved.roots,
+                environment=resolved.environment_name,
+            )
         )
     except (CredentialsError, EnvFileLoadError) as error:
         raise NodeFailedError("config", str(error)) from None
@@ -254,6 +261,7 @@ def resolve_call(name: str, *, environment: str, given: list[str]) -> ResolvedCa
         environment_name=environment,
         plan=plan,
         decision=decide(declared, entry.document.effect, "human", draft=entry.draft),
+        roots=(hub.name, *(repo.dir for repo in effective.config.repos)),
     )
 
 
