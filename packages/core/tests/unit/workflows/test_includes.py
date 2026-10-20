@@ -539,3 +539,25 @@ def test_refuses_include_when_scenario_kind_root_expands_workflow_nodes() -> Non
         ),
     ]
     assert plan_of(include("first", "plain"), library=(plain,)).document.kind == "workflow"
+
+
+def test_refuses_or_join_when_scenario_include_when_reads_ctx() -> None:
+    capture = {"a": "$self.output.a", "b": "$self.output.b", "c": "$self.output.c"}
+    source = {"id": "source", "type": "action", "action": "x", "capture": capture}
+    step = {"id": "step", "type": "action", "action": "x", "when": "$CTX.c == 'z'"}
+    block = document("blk", step, kind="scenario")
+    either = "$CTX.a == 'x' || $CTX.b == 'y'"
+
+    problems = problems_of(
+        source,
+        include("first", "blk", "source", when=either),
+        library=(block,),
+        kind="scenario",
+    )
+
+    assert problems == [
+        (
+            "nodes[1].when",
+            "cannot join a 'when:' holding '||' with a root's own: there are no parentheses",
+        )
+    ]
