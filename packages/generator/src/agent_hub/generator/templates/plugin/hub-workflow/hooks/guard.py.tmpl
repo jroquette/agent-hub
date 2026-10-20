@@ -568,6 +568,11 @@ def _printable(text: str) -> str:
     return "".join(ch if " " <= ch <= "~" else _escaped(ch) for ch in text)
 
 
+def _code_escaped(text: str) -> str:
+    """text as _escaped, a backtick too (as \\u0060), so it cannot close a reason's code span."""
+    return _escaped(text).replace("`", "\\u0060")
+
+
 def _infra_value(text: str, escape: Callable[[str], str] = _escaped) -> str:
     """text escaped, at most INFRA_VALUE_CAP characters ("..." marks a cut), so an infra reason
     stays one short line whatever hub.json or the command holds."""
@@ -1565,7 +1570,7 @@ def _input_found(scan: _BlockedScan, tool: str, ti: dict) -> tuple[str, str] | N
                 raise BlockedScanUnchecked(BLOCKED_INPUT_TOO_LARGE)
             word = scan.hit(value)
             if word:
-                return word, f"the input of `{_infra_value(tool)}`"
+                return word, f"the input of `{_infra_value(tool, _code_escaped)}`"
         elif isinstance(value, dict):
             stack.append(itertools.chain.from_iterable(value.items()))
         elif isinstance(value, list):
