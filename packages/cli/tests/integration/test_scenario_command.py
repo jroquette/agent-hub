@@ -11,7 +11,10 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
+import sys
+import time
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -20,6 +23,7 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli.main import app
+from agent_hub.cli.workflow_runs import snapshot_hash
 from agent_hub.core.events.event import Event
 from agent_hub.core.testing.builders import an_environments_document
 from agent_hub.storage.event_store import open_event_store
@@ -770,3 +774,167 @@ def test_fails_step_when_regression_policy_asks_without_gate_at_resume(
         " and this scenario run has no gate for it: start a new scenario run"
     )
     assert modes(marker) == []
+
+
+def hub_process(hub: Path, marker: Path, *args: str) -> subprocess.Popen[bytes]:
+    """The hub as its own process (``python -m agent_hub.cli``), to be signalled or killed."""
+    environ = {
+        **os.environ,
+        "AGENT_HUB_ROOT": str(hub),
+        "MARKER": str(marker),
+        "AGENT_HUB_DB": str(hub.parent.parent / "events.db"),
+    }
+    command = [sys.executable, "-m", "agent_hub.cli", *args]
+    return subprocess.Popen(  # noqa: S603 - this interpreter, fixed arguments
+        command, env=environ, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+
+
+def live_members(group: int) -> list[int]:
+    """The processes of ``group`` that are not zombies, read from ``/proc``."""
+    members = []
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat.read_text().rsplit(")", 1)[1].split()
+        except OSError:
+            continue
+        if int(fields[2]) == group and fields[0] != "Z":
+            members.append(int(stat.parent.name))
+    return members
+
+
+SLOW_SCRIPT = """\
+cat > /dev/null
+echo $$ >> "$MARKER.groups"
+sleep 4
+echo late >> "$MARKER.late"
+printf '{"order": "o-1"}'
+"""
+SLOW_WALK = """\
+version: 1
+kind: scenario
+name: slow-walk
+revision: 1
+nodes:
+  - id: slow-a
+    type: action
+    action: slow-order
+    with: {target: api}
+  - id: slow-b
+    type: action
+    action: slow-order
+    with: {target: api}
+"""
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="reads /proc")
+def test_kills_action_groups_when_regression_run_interrupted(hub: Path, marker: Path) -> None:
+    write_action(hub, "slow-order", "read")
+    (hub / "actions" / "demo" / "scripts" / "slow-order.sh").write_text(SLOW_SCRIPT)
+    write_scenario(hub, SLOW_WALK)
+    commit_all(hub, "slow walk")
+    groups_file = Path(f"{marker}.groups")
+
+    process = hub_process(
+        hub, marker, "scenario", "run", "slow-walk", "--env", "local", "--mode", "regression"
+    )
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and len(_lines(groups_file)) < 2:
+        time.sleep(0.05)
+    started = time.monotonic()
+    process.send_signal(signal.SIGINT)
+    process.communicate(timeout=30)
+
+    groups = [int(line) for line in _lines(groups_file)]
+    assert len(groups) == 2
+    assert all(live_members(group) == [] for group in groups)
+    # Past the scripts' own end: an action left running would have written it by now.
+    time.sleep(max(0.0, started + 5 - time.monotonic()))
+    assert not Path(f"{marker}.late").exists()
+
+
+def _lines(path: Path) -> list[str]:
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def test_refuses_resume_when_pinned_action_tampered(hub: Path, marker: Path) -> None:
+    run_scenario(hub, marker, "staging")
+    folder = hub / ".agent-runs" / "workflows" / RUN
+    script = folder / "snapshot" / "actions" / "demo" / "scripts" / "send-order.sh"
+    script.write_text(EDITED_SCRIPT)
+    lines = records(hub)
+    lines[0]["content_hash"] = snapshot_hash(folder / "snapshot")
+    (folder / "records.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+
+    resumed = decide_gate(hub, marker, "approve", gate="send-order__ask")
+
+    assert resumed.exit_code == 1, resumed.output
+    assert "no longer holds demo/send-order as pinned" in plain(resumed.stderr)
+    assert not marker.exists()
+
+
+def test_refuses_resume_when_policy_gates_edited(hub: Path, marker: Path) -> None:
+    run_scenario(hub, marker, "staging")
+    gates = hub / ".agent-runs" / "workflows" / RUN / "snapshot" / "policy_gates.json"
+    gates.write_text("{}")
+
+    resumed = decide_gate(hub, marker, "approve", gate="send-order__ask")
+
+    assert resumed.exit_code == 1, resumed.output
+    assert "snapshot no longer matches" in plain(resumed.stderr)
+    assert not marker.exists()
+
+
+CRASH_ONCE = """\
+stdin=$(cat)
+printf '%s\\n' "$stdin" >> "$MARKER"
+if [ ! -e "$MARKER.crashed" ]; then
+  touch "$MARKER.crashed"
+  kill -9 $PPID
+  sleep 5
+fi
+printf '{"order": "o-1", "status": "ON_HOLD"}'
+"""
+
+
+def crash_once(hub: Path, marker: Path, action: str) -> None:
+    """Run order-walk in ``local`` in its own process; ``action``'s first call kills it."""
+    (hub / "actions" / "demo" / "scripts" / f"{action}.sh").write_text(CRASH_ONCE)
+    commit_all(hub, f"{action} crashes once")
+    process = hub_process(
+        hub,
+        marker,
+        *("scenario", "run", "order-walk", "--env", "local", "--input", "ref=T-1"),
+        *("--mode", "regression", "--run-id", RUN),
+    )
+    process.communicate(timeout=60)
+    assert process.returncode == -signal.SIGKILL
+
+
+def test_asks_again_when_write_step_started_and_never_ended(hub: Path, marker: Path) -> None:
+    crash_once(hub, marker, "send-order")
+
+    resumed = run_hub(hub, marker, "workflow", "run", "--resume", RUN)
+    approved = decide_gate(hub, marker, "approve", gate="send-order__ask")
+
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: paused at send-order__ask"
+    # The write ran once before the crash, and again only once a person approved it.
+    assert modes(marker) == ["run", "run", "run", "run"]
+    gates = [line for line in records(hub) if line["event"] == "gate"]
+    assert [gate["node"] for gate in gates] == ["send-order__ask"]
+    assert "may have run" in gates[0]["message"]
+    assert approved.exit_code == 0, approved.output
+    assert plain(approved.stdout).splitlines()[-1] == f"run {RUN}: done"
+
+
+def test_reruns_read_when_read_step_started_and_never_ended(hub: Path, marker: Path) -> None:
+    crash_once(hub, marker, "get-order")
+
+    resumed = run_hub(hub, marker, "workflow", "run", "--resume", RUN)
+
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: done"
+    assert [line for line in records(hub) if line["event"] == "gate"] == []
+    # send-order once, the crashed get-order poll, then the poll again and check-order.
+    assert modes(marker) == ["run", "run", "run", "run"]

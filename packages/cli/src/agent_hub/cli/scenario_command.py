@@ -57,6 +57,7 @@ from agent_hub.cli.scenario_runs import (
     MODES,
     REGRESSION,
     ScenarioStart,
+    load_scenario,
     start,
 )
 from agent_hub.cli.workflow_command import problem_line, typed_input
@@ -170,7 +171,16 @@ def run_command(
         raise typer.BadParameter(hint, param_hint="--run-id")
     texts = given_texts(given or [])
     hub = action_hub()
-    plan, scenario = _scenario(hub, name, prefix=_RUN_PREFIX)
+    # Load problems are reported as for plan; then one read gives the plan that is decided
+    # and the includes the scenario run snapshots.
+    _scenario(hub, name, prefix=_RUN_PREFIX)
+    try:
+        loaded = load_scenario(hub, name)
+    except WorkflowRunError as error:
+        fail(f"{_RUN_PREFIX}: {error}")
+    if loaded is None:
+        fail(f"{_RUN_PREFIX}: no scenario named {shown_path(name)} in {HUB_SCENARIOS}/")
+    plan, scenario, included = loaded
     found = discover_actions(hub)
     effective = load_effective_config_or_exit(hub)
     view = effective_environments(effective.config, effective.local)
@@ -186,7 +196,13 @@ def run_command(
     if planned.denied:
         _refuse_start(planned)
     begin = ScenarioStart(
-        plan=plan, found=scenario, planned=planned, actions=found, inputs=inputs, mode=mode
+        plan=plan,
+        found=scenario,
+        planned=planned,
+        actions=found,
+        inputs=inputs,
+        mode=mode,
+        included=included,
     )
     try:
         code = start(hub, run_id or new_run_id(), begin)

@@ -25,7 +25,7 @@ import getpass
 import os
 import sys
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Final
@@ -222,6 +222,7 @@ def credentials(resolved: ResolvedCall) -> dict[str, str]:
         resolved.environment,
         endpoints=resolved.plan.endpoints,
         roots=resolved.roots,
+        environ=os.environ,
     )
 
 
@@ -231,10 +232,11 @@ def call_credentials(
     *,
     endpoints: Sequence[Endpoint],
     roots: Sequence[str],
+    environ: Mapping[str, str],
 ) -> dict[str, str]:
     """What an action call's process gets on top of its plain environment, for ``hub action
     run`` and a scenario run's steps alike: its env file's variables (read now, through the one
-    loader), ``AWS_PROFILE`` and the declared names from this environment; raises
+    loader), ``AWS_PROFILE`` and the declared names from ``environ``; raises
     ``NodeFailedError`` (``config``) when they cannot be had, before any process."""
     try:
         chosen = credentials_for(environment, endpoints)
@@ -246,7 +248,7 @@ def call_credentials(
         )
     except (CredentialsError, EnvFileLoadError) as error:
         raise NodeFailedError("config", str(error)) from None
-    return action_credentials(chosen, environ=os.environ, env_file_values=values)
+    return action_credentials(chosen, environ=environ, env_file_values=values)
 
 
 def resolve_call(name: str, *, environment: str, given: list[str]) -> ResolvedCall:
