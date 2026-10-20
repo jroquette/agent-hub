@@ -21,7 +21,7 @@ from agent_hub.core.features.golden_path import (
     LINEAR_NOT_LOADED,
     LINEAR_NOT_LOADED_REASON,
 )
-from agent_hub.core.features.ticket_flow import TicketEvidence, ticket_flow
+from agent_hub.core.features.ticket_flow import ticket_evidence, ticket_flow
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.features.ticket_view import FeatureTickets, TrackerProblem
 from agent_hub.core.hub_config.model import Tracker
@@ -76,8 +76,8 @@ def feature_tickets(
         read = NOT_CONNECTED_READ
     parts = feature_parts(folder, read, repos=repos)
     unread = LINEAR_NOT_LOADED if read.failure is None else LINEAR_NOT_CONNECTED
-    evidence = TicketEvidence(
-        rounds=frozenset(name.partition("/")[0].upper() for name in folder.review_rounds),
+    evidence = ticket_evidence(
+        rounds=frozenset(name.upper() for name in folder.review_round_tickets),
         reviews=review_records(folder.reviews, slug=folder.slug),
         evals=parts.evals,
         unread=None if parts.source == "linear" else unread,

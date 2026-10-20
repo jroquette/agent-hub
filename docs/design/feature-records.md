@@ -79,10 +79,10 @@ in fenced code blocks do not count (`agent_hub.core.features.plan_version`).
 Written by `/feature` step 7 once both reviewers pass: `type: review`, `ticket`, `outcome` (`approved` or
 `changes-requested`), `pr`, `reviewed_at`. At most 500 are read (first by name), heads of 8 KiB.
 
-Beside them, `reviews/<ticket>/` holds the review rounds (below, "Agent outputs"). Only their names are listed, never
-their bytes: the first 500 ticket folders by name (not hidden, UTF-8 names, no link followed), and in them the regular
-files named as the review check names a round (`<reviewer>-r<N>.json`), at most 2,000 names in all. Each ticket folder
-opened counts 4 KiB against the feature list's read budget.
+Beside them, `reviews/<ticket>/` holds the review rounds (below, "Agent outputs"). The reader only learns which
+tickets have one, never reading a round: of the first 500 ticket folders by name (not hidden, UTF-8 names, no link
+followed), it reads each folder's entries until the first regular file named as the review check names a round
+(`<reviewer>-r<N>.json`), and stops after 20,000 entries in all.
 
 ### `summaries/<record>.md`
 
@@ -178,7 +178,9 @@ for nothing.
 
 A step with no evidence reads `unrecorded` ("Not recorded") when a later step has some, else `pending` ("Not
 reached"): a ticket Done in Linear with no review record reads Context, Preflight and Review "Not recorded" and Merged
-done. `current` is the first step neither `done` nor `unrecorded` (`merged` when every step is).
+done. `current` is the first step neither `done` nor `unrecorded` (`merged` when there is none). The step bar
+reads "Merged" alone only once Merged is done; otherwise it keeps the position ("Merged · 7/7"). In S1 a ticket's one
+signal is its readiness line, not a field of `flow` (spec amendment A13).
 
 ### Planning
 

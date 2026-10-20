@@ -31,10 +31,10 @@ REVIEWS_FOLDER: Final = "reviews"
 # At most this many ``reviews/*.md`` files are read, by name; their first bytes only.
 MAX_REVIEW_FILES: Final = 500
 REVIEW_HEAD_BYTES: Final = 8_192
-# The review rounds, ``reviews/<ticket>/<reviewer>-r<N>.json``, are listed by name only (P3): in
-# at most this many ticket folders, at most this many names in all.
+# The tickets with a review round, ``reviews/<ticket>/<reviewer>-r<N>.json`` (P3): at most this
+# many ticket folders looked at, at most this many entries read in all of them.
 MAX_ROUND_TICKETS: Final = 500
-MAX_ROUND_NAMES: Final = 2_000
+MAX_ROUND_ENTRIES: Final = 20_000
 
 type ReviewOutcome = Literal["approved", "changes-requested"]
 _OUTCOMES: Final = ("approved", "changes-requested")

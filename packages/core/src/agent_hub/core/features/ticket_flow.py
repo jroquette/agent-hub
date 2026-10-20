@@ -15,8 +15,8 @@ counts for nothing. Same records, same flow, whatever their order: an eval's "la
 partial order of ``feature_evals``, and every other step asks whether any record says so.
 """
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Final, get_args
 
 from agent_hub.core.features.feature_evals import latest_verdict
@@ -25,7 +25,7 @@ from agent_hub.core.features.feature_reviews import (
     approved_tickets,
     names_pull_request,
 )
-from agent_hub.core.features.feature_view import EvalRecord, StepState
+from agent_hub.core.features.feature_view import EvalRecord, StepState, Verdict
 from agent_hub.core.features.ticket_planning import DONE_TYPES
 from agent_hub.core.features.ticket_view import TicketFlow, TicketRow, TicketStep, TicketStepName
 
@@ -36,17 +36,40 @@ _PASSED: Final = ("done", "unrecorded")
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TicketEvidence:
-    """What the feature's records say about its tickets.
+    """What the feature's records say about its tickets (built by ``ticket_evidence``).
 
-    ``rounds`` names (upper case) the tickets with a review round; ``reviews`` and ``evals`` are
-    the feature's review and eval records; ``unread`` is Build's meta when Linear was not read
-    (Merged is then unknown), None when it was.
+    ``rounds`` names (upper case) the tickets with a review round; ``reviews`` are the feature's
+    review records; ``evals`` its readable evals by each ticket name they list (upper case);
+    ``unread`` is Build's meta when Linear was not read (Merged is then unknown), None when it
+    was. ``verdicts`` holds the latest verdict of each set of evals already folded.
     """
 
     rounds: frozenset[str]
     reviews: Sequence[ReviewRecord]
-    evals: Sequence[EvalRecord]
+    evals: Mapping[str, tuple[EvalRecord, ...]]
     unread: str | None
+    verdicts: dict[tuple[EvalRecord, ...], Verdict | None] = field(default_factory=dict)
+
+
+def ticket_evidence(
+    *,
+    rounds: frozenset[str],
+    reviews: Sequence[ReviewRecord],
+    evals: Iterable[EvalRecord],
+    unread: str | None,
+) -> TicketEvidence:
+    """The evidence of a feature's tickets, its evals indexed once by the ticket names they list."""
+    by_ticket: dict[str, list[EvalRecord]] = {}
+    for record in evals:
+        if record.problem is None:
+            for name in dict.fromkeys(ticket.upper() for ticket in record.tickets):
+                by_ticket.setdefault(name, []).append(record)
+    return TicketEvidence(
+        rounds=rounds,
+        reviews=reviews,
+        evals={name: tuple(named) for name, named in by_ticket.items()},
+        unread=unread,
+    )
 
 
 def ticket_flow(row: TicketRow, evidence: TicketEvidence) -> TicketFlow | None:
@@ -55,11 +78,9 @@ def ticket_flow(row: TicketRow, evidence: TicketEvidence) -> TicketFlow | None:
         return None
     names = {name.upper() for name in (row.key, row.id) if name}
     reviews = [r for r in evidence.reviews if r.problem is None and r.ticket.upper() in names]
-    evals = [
-        record
-        for record in evidence.evals
-        if record.problem is None and names.intersection(t.upper() for t in record.tickets)
-    ]
+    evals = tuple(
+        dict.fromkeys(record for name in sorted(names) for record in evidence.evals.get(name, ()))
+    )
     found: dict[TicketStepName, tuple[StepState, str | None]] = {}
     if names & evidence.rounds:
         found["implement"] = ("done", None)
@@ -67,7 +88,7 @@ def ticket_flow(row: TicketRow, evidence: TicketEvidence) -> TicketFlow | None:
         found["review"] = (
             ("done", None) if approved_tickets(reviews) else ("current", "Changes requested")
         )
-    verdict = latest_verdict(evals)
+    verdict = _verdict(evals, evidence.verdicts)
     if verdict is not None:
         found["eval"] = ("blocked" if verdict == "NO-SHIP" else "done", verdict)
     prs = (*(review.pr for review in reviews), *(pr for record in evals for pr in record.prs))
@@ -91,3 +112,12 @@ def ticket_flow(row: TicketRow, evidence: TicketEvidence) -> TicketFlow | None:
         (step.name for step in steps if step.state not in _PASSED), "merged"
     )
     return TicketFlow(steps=steps, current=current)
+
+
+def _verdict(
+    evals: tuple[EvalRecord, ...], folded: dict[tuple[EvalRecord, ...], Verdict | None]
+) -> Verdict | None:
+    """The latest verdict of ``evals``, folded once per set of evals."""
+    if evals not in folded:
+        folded[evals] = latest_verdict(evals)
+    return folded[evals]
