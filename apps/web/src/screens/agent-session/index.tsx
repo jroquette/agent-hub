@@ -498,13 +498,16 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             reviewed={review.reviewed}
             onOpenFile={openFile}
             footer={
-              <BackgroundCard
-                tasks={tasks}
-                since={lastMessageAt(state)}
-                onOpen={() => {
-                  setBackground(true);
-                }}
-              />
+              // The live bar already says what runs in the background: one place, not two.
+              activity?.phase === "background" ? undefined : (
+                <BackgroundCard
+                  tasks={tasks}
+                  since={lastMessageAt(state)}
+                  onOpen={() => {
+                    setBackground(true);
+                  }}
+                />
+              )
             }
             sidePanel={
               backgroundOpen ? (

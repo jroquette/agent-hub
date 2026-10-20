@@ -6,6 +6,7 @@ import { seriousViolations } from "../../testing/axe";
 import { aPage, anAgentSession, renderWithApi } from "../../testing/builders";
 import { RAIL_KEY, SessionRail, railGroups, railName } from "./SessionRail";
 
+const NOW = Date.UTC(2026, 9, 20, 13, 0);
 const at = (minutes: number) => new Date(Date.UTC(2026, 9, 20, 12, minutes)).toISOString();
 const sessions = [
   anAgentSession({ id: "a", title: "Ship the rail", status: "running", updated_at: at(5) }),
@@ -30,16 +31,23 @@ afterEach(() => {
 });
 
 describe("railGroups", () => {
-  it("lists the sessions waiting for you first, then the open ones, then the recent ended ones", () => {
-    expect(railGroups(sessions, "").map((g) => [g.id, g.sessions.map((s) => s.id)])).toEqual([
+  it("pins the sessions waiting for you, then groups the rest by day, newest first", () => {
+    const lastWeek = anAgentSession({
+      id: "w",
+      status: "ended",
+      updated_at: new Date(NOW - 3 * 86_400_000).toISOString(),
+    });
+    expect(
+      railGroups([...sessions, lastWeek], "", NOW).map((g) => [g.id, g.sessions.map((s) => s.id)]),
+    ).toEqual([
       ["needs", ["b"]],
-      ["active", ["d", "a"]],
-      ["recent", ["c"]],
+      ["today", ["d", "a", "c"]],
+      ["week", ["w"]],
     ]);
   });
 
   it("filters by name, project or folder, and drops empty groups", () => {
-    expect(railGroups(sessions, "GUARD").map((g) => g.id)).toEqual(["needs"]);
+    expect(railGroups(sessions, "GUARD", NOW).map((g) => g.id)).toEqual(["needs"]);
   });
 
   it("names a session by its title, else its last prompt on one line", () => {
@@ -70,6 +78,8 @@ describe("SessionRail", () => {
 
     expect(window.localStorage.getItem(RAIL_KEY)).toBe("closed");
     expect(screen.getByRole("button", { name: "Show sessions" })).toBeInTheDocument();
+    // The strip keeps the open sessions only.
     expect(screen.queryByRole("link", { name: /Old spike/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Fix the guard/ })).toBeInTheDocument();
   });
 });

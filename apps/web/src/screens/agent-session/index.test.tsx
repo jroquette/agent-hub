@@ -1687,14 +1687,11 @@ describe("AgentSessionScreen (background-tasks)", () => {
     expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
   });
 
-  it("closes the conversation with a card that opens the drawer", async () => {
+  it("leaves the running task to the live bar: no second card at the conversation's end", async () => {
     renderChat(backgroundRoutes());
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: "1 background command running" }),
-    );
-
-    expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
+    await screen.findByRole("region", { name: "Live activity" });
+    expect(screen.queryByRole("button", { name: "1 background command running" })).toBeNull();
   });
 });
 

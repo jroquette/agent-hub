@@ -164,7 +164,8 @@ function ActivityRunView({
       >
         {running ? (
           <>
-            <Icon name="loader" size="sm" className="as-spin" />
+            {/* The one loop of the chat: the live pulse, as the live bar's. */}
+            <span className="as-live-pulse" aria-hidden />
             <span className="as-activity-now">
               <b>{current.name}</b>
               {toolSummary(current.input) && (
