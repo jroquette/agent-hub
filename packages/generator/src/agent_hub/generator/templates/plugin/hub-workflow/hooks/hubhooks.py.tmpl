@@ -26,7 +26,9 @@ union of three layers, each entry once with the first layer listing it: the hook
 the identity home's hub.local.json, then a hub.json named by $HUB_CONFIG; no layer removes an
 entry. An unusable list in any layer, or a hub.local.json that exists but cannot be used, sets
 blocked_problem, on which the guard asks. The environments are the config's, with a stricter
-access from hub.local.json, then hub.local.json's own.
+access from hub.local.json, then hub.local.json's own. The env files and endpoints the guard's
+env_file and environment_endpoint rules check are every layer's (the hook root's hub.json, the
+config, hub.local.json): each layer only adds to them, so a layer can only tighten the guard.
 A hook never errors the session: run_hook turns any exception into exit 0 and one stderr line
 (the guard: one ask). The guard alone reads the unreadable flag (read_event).
 """
@@ -45,6 +47,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stdlib_reader import (  # noqa: E402
     LOCAL_FILE,
     EffectiveValues,
+    EndpointEntry,
+    EnvFileEntry,
+    EnvironmentTargets,
     GuardSection,
     HubFile,
     InfraSection,
@@ -54,6 +59,7 @@ from stdlib_reader import (  # noqa: E402
     load_hub_file,
     load_local_file,
     load_local_layer,
+    load_local_targets,
 )
 
 HUB_FILE = "hub.json"
@@ -270,7 +276,8 @@ class Config:
     else the first layer's unusable location as "<layer> <location>", else "";
     local_file_problem is local_layer's file_problem alone. environments merge
     the config's with local_layer's; credential_env names every credentials.env variable of the
-    files, each once.
+    files, each once. env_files (each path once, with the first environment naming it) and
+    endpoints are the root file's, the config's, then local_targets' (hub.local.json).
     """
 
     def __init__(
@@ -284,6 +291,7 @@ class Config:
         local_file: LocalFile | None = None,
         local_layer: LocalLayer | None = None,
         config_label: str = HUB_FILE,
+        local_targets: EnvironmentTargets | None = None,
     ):
         hub_file = hub_file if hub_file is not None else HubFile()
         local_layer = local_layer if local_layer is not None else LocalLayer()
@@ -328,6 +336,13 @@ class Config:
         self.environments = _environments(hub_file, local_layer)
         files = (*(root_file.environments if root_file is not None else ()), *hub_file.environments, *local_layer.environments)
         self.credential_env = _union((), tuple(name for entry in files for name in entry.credential_env))
+        local_targets = local_targets if local_targets is not None else EnvironmentTargets()
+        targets = (*((root_file,) if root_file is not None else ()), hub_file, local_targets)
+        first: dict[str, EnvFileEntry] = {}
+        for entry in (entry for layer in targets for entry in layer.env_files):
+            first.setdefault(entry.path, entry)
+        self.env_files: tuple[EnvFileEntry, ...] = tuple(first.values())
+        self.endpoints: tuple[EndpointEntry, ...] = tuple(dict.fromkeys(e for layer in targets for e in layer.endpoints))
 
     @property
     def branch_prefix(self) -> str:
@@ -397,6 +412,7 @@ def load_config(start: object = None) -> Config:
     home = _identity_home(root, hub)
     local_file = load_local_file(home / LOCAL_FILE) if home else LocalFile()
     local_layer = load_local_layer(home / LOCAL_FILE) if home else LocalLayer()
+    local_targets = load_local_targets(home / LOCAL_FILE) if home else EnvironmentTargets()
     env = os.environ.get("HUB_CONFIG")
     named = bool(env) and os.path.isfile(env) and found == Path(env).resolve()
     return Config(
@@ -409,6 +425,7 @@ def load_config(start: object = None) -> Config:
         local_layer=local_layer,
         # Without a hook root, the found file is the only hub.json: $HUB_CONFIG's when it named it.
         config_label=HUB_CONFIG_LAYER if root is None and named else HUB_FILE,
+        local_targets=local_targets,
     )
 
 
