@@ -22,7 +22,7 @@ import { OldestPendingContext } from "./PermissionCard";
 import { backgroundTasks, liveActivity, turnSteps } from "./liveActivity";
 import { FeatureChip } from "../features/FeatureChip";
 import { BackgroundCard, BackgroundChip, BackgroundPanel } from "./BackgroundTasks";
-import { LiveActivityBar, StepsPanel, StepsToggle } from "./LiveActivityBar";
+import { LiveActivityBar, StepsPanel } from "./LiveActivityBar";
 import { readStored, writeStored } from "../../lib/storage";
 import { CostMeter } from "./CostMeter";
 import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
@@ -47,7 +47,6 @@ import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
 import {
   changedFiles,
-  modeLabel,
   pendingPermissions,
   lastMessageAt,
   resumable,
@@ -343,13 +342,19 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   return (
     <div className="as-page">
       <header className="as-header">
-        <div className="as-column ah-stack">
-          <Breadcrumbs items={crumbs} />
-          <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-            <Icon name="square-terminal" size="lg" style={{ color: "var(--text-subtle)" }} />
-            <h1 className="ah-h1" style={{ fontSize: 20 }}>
-              {name ?? "Untitled session"}
-            </h1>
+        <div className="as-toolbar ah-stack">
+          <div className="ah-row ah-small ah-muted as-toolbar-row">
+            <Breadcrumbs items={crumbs} />
+            <span className="ah-grow" />
+            <span className="as-toolbar-where">
+              {session.project} ›{" "}
+              <b className="ah-mono as-workdir-label">{session.workdir_label}</b>
+            </span>
+            <CostMeter meter={state.meter} />
+          </div>
+          <div className="ah-row as-toolbar-row">
+            <Icon name="square-terminal" style={{ color: "var(--text-subtle)" }} />
+            <h1 className="as-title">{name ?? "Untitled session"}</h1>
             {feature && <FeatureChip project={feature.project} slug={feature.slug} />}
             <AgentStatusBadge
               status={status}
@@ -362,13 +367,6 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
               open={backgroundOpen}
               onToggle={() => {
                 setBackground(!backgroundOpen);
-              }}
-            />
-            <StepsToggle
-              steps={steps}
-              open={liveOpen}
-              onToggle={() => {
-                setSteps(!liveOpen);
               }}
             />
             {files.length > 0 && (
@@ -427,17 +425,6 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
               }
             />
           </div>
-          <div className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 12 }}>
-            <span>
-              {session.project} ›{" "}
-              <b className="ah-mono as-workdir-label">{session.workdir_label}</b>
-            </span>
-            <span>
-              {modeLabel(mode)}
-              {model ? ` · ${model}` : ""}
-            </span>
-            <CostMeter meter={state.meter} />
-          </div>
           {actionError && (
             <p className="ah-small as-error" role="alert">
               {actionError}
@@ -446,7 +433,6 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           {transcript.streaming && (
             <ReconnectBanner connected={transcript.health.closedSince === null} />
           )}
-          <TodoList items={state.todos} />
         </div>
       </header>
       {/* The chords answer the oldest pending tool permission: its card names them (AC-234.29). */}
@@ -518,6 +504,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
               else setSteps(!liveOpen);
             }}
           />
+          <TodoList items={state.todos} />
           <Composer
             status={status}
             mode={mode}

@@ -474,7 +474,11 @@ describe("AgentSessionScreen (layout)", () => {
     expect(composer.closest("footer.as-footer")).not.toBeNull();
     expect(conversation).toHaveClass("as-column");
 
-    const list = within(header).getByRole("region", { name: "Todo list" });
+    // The todo list sits with the live bar above the composer, not in the header.
+    expect(within(header).queryByRole("region", { name: "Todo list" })).toBeNull();
+    const footer = composer.closest("footer.as-footer");
+    if (!(footer instanceof HTMLElement)) throw new Error("no chat footer");
+    const list = within(footer).getByRole("region", { name: "Todo list" });
     expect(list.querySelector("details")).not.toHaveAttribute("open");
     expect(within(list).getByText(/0 of 1 done/)).toBeVisible();
   });
@@ -1178,12 +1182,14 @@ describe("AgentSessionScreen (steps-drawer)", () => {
     expect(drawer()).toBeNull();
   });
 
-  it("AC-PG-32.2: the header chip and the bar open Steps, and the open state is remembered", async () => {
+  it("AC-PG-32.2: the live bar opens Steps, and the open state is remembered", async () => {
     renderChat();
-    const chip = await screen.findByRole("button", { name: /^Steps, \d+, turn running$/ });
-    await userEvent.click(chip);
+    const bar = within(await screen.findByRole("region", { name: "Live activity" })).getByRole(
+      "button",
+    );
+    expect(screen.queryByRole("button", { name: /^Steps, \d+, turn running$/ })).toBeNull();
+    await userEvent.click(bar);
     expect(drawer()).toBeInTheDocument();
-    expect(chip).toHaveAttribute("aria-expanded", "true");
     expect(window.localStorage.getItem("ah.chat.steps")).toBe("open");
 
     await userEvent.click(
@@ -1194,8 +1200,9 @@ describe("AgentSessionScreen (steps-drawer)", () => {
     expect(drawer()).toBeNull();
     expect(window.localStorage.getItem("ah.chat.steps")).toBe("closed");
 
-    const bar = within(screen.getByRole("region", { name: "Live activity" })).getByRole("button");
-    await userEvent.click(bar);
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "Live activity" })).getByRole("button"),
+    );
     expect(drawer()).toBeInTheDocument();
     expect(window.localStorage.getItem("ah.chat.steps")).toBe("open");
   });

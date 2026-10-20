@@ -27,9 +27,36 @@
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);
-  padding: var(--space-4) 0 var(--space-3);
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+}
+/*
+ * The full chat's header is a toolbar on the page's gutters, not in the reading column: the chrome
+ * reads as the window, the column as the document. Row 1: where it is and what it cost; row 2: the
+ * session and its actions.
+ */
+.as-toolbar {
+  gap: var(--space-1);
+  padding-inline: var(--space-6);
+}
+.as-toolbar-row {
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.as-toolbar-row > .as-meter {
+  flex: none;
+}
+.as-title {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
 }
 .as-body {
   position: relative;
