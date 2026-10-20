@@ -10,37 +10,57 @@ input's endpoint in ENV, its content hash and draft state), calls the script in 
 with no credential (never for a draft), and prints the policy's decision for origin ``human``;
 exit 1 on a ``deny`` or a call that cannot be resolved. It writes nothing: no run-mode process,
 no event.
+
+``run NAME --env ENV [--input name=value]...`` runs it for a person (origin ``human``): a
+``deny`` exits 1 before any prompt; with no terminal on stdin only ``read`` actions run (a write
+or destroy exits 1, ``write and destroy actions need a terminal or a scenario run``, and is
+recorded as a ``deny`` with ``reason_kind: read_only``); an ``ask`` prompts ``y/N`` and ``n``
+runs nothing. The output is printed as the script gave it. Each decision is a
+``policy.decision`` event, a run is ``action.start`` and ``action.end``, under the session
+``action:<uuid>`` (metadata only). ``--run`` (an investigation's reads) is not here yet: it needs
+a scenario run paused at an investigation (plan task 9.4).
 """
 
+import getpass
 import os
+import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Final
 
 import typer
 
-from agent_hub.cli.action_process import ActionCall, plan_action
+from agent_hub.cli.action_process import ActionCall, plan_action, run_action
+from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.run_children import CHILD_HIDDEN, without
+from agent_hub.cli.run_log import now, open_default_event_store
+from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_config.effective_environments import (
     EffectiveEnvironments,
     SourcedEnvironment,
     effective_environments,
 )
+from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue, dump_json
 from agent_hub.core.scenarios.access_policy import PolicyDecision, decide, find_environment
 from agent_hub.core.scenarios.action_call import ActionCallError, ActionCallPlan, plan_action_call
 from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
 from agent_hub.core.scenarios.action_document import ActionDocument
 from agent_hub.core.scenarios.credentials import CredentialNames
+from agent_hub.core.scenarios.scenario_events import ActionFacts, ScenarioEvents
+from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 
 COMMAND: Final = "action"
 MAX_INPUTS: Final = 64
 MAX_INPUT_BYTES: Final = 64 * 1024
 DRAFT_REASON: Final = "draft action: commit it to run"
+NEEDS_TERMINAL: Final = "write and destroy actions need a terminal or a scenario run"
+_RUN_PREFIX: Final = "hub action run"
 
 action_app = typer.Typer(
     name=COMMAND, no_args_is_help=True, help="List, plan and run the hub's actions."
@@ -121,6 +141,58 @@ def plan_command(name: Name, *, environment: Environment, given: Inputs = None) 
     typer.echo(f"decision: {decision_text(resolved)}")
     if resolved.decision.decision == "deny":
         raise typer.Exit(FAILURE)
+
+
+@action_app.command("run")
+def run_command(name: Name, *, environment: Environment, given: Inputs = None) -> None:
+    """Run one action for a person: reads anywhere declared, writes only on a terminal."""
+    resolved = resolve_call(name, environment=environment, given=given or [])
+    entry, decision = resolved.entry, resolved.decision
+    events = ScenarioEvents(
+        project=hub_project_name(resolved.hub) or resolved.hub.name,
+        run_id=None,
+        workflow=None,
+        session=f"action:{uuid.uuid4()}",
+    )
+    facts = ActionFacts(
+        step=entry.ref,
+        attempt=1,
+        action=entry.ref,
+        content_hash=entry.content_hash,
+        environment=resolved.environment_name,
+        services=resolved.plan.services,
+        effect=entry.document.effect,
+        origin="human",
+        decision=decision.decision,
+    )
+    if decision.decision == "deny":
+        events.policy_decided(facts, reason_kind=decision.reason_kind, at=now())
+        _send(events)
+        fail(
+            f"{_RUN_PREFIX}: {entry.ref} in {resolved.environment_name}: {decision_text(resolved)}"
+        )
+    if entry.document.effect != "read" and not _has_terminal():
+        refused = facts.model_copy(update={"decision": "deny"})
+        events.policy_decided(refused, reason_kind="read_only", at=now())
+        _send(events)
+        fail(f"{_RUN_PREFIX}: {NEEDS_TERMINAL}")
+    events.policy_decided(facts, reason_kind=decision.reason_kind, at=now())
+    if decision.decision == "ask":
+        question = f"run {entry.ref} ({entry.document.effect}) in {resolved.environment_name}?"
+        if not typer.confirm(question, default=False):
+            _send(events)
+            fail(f"{_RUN_PREFIX}: {entry.ref}: not run")
+        facts = facts.model_copy(update={"approver": getpass.getuser()})
+    events.action_started(facts, at=now())
+    try:
+        output = run_action(resolved.call, environ=os.environ, hidden=resolved.hidden)
+    except NodeFailedError as error:
+        events.action_ended(facts, status="failed", failure_kind=error.kind, at=now())
+        _send(events)
+        fail(f"{_RUN_PREFIX}: {entry.ref}: {error.kind}: {error}")
+    events.action_ended(facts, status="ok", failure_kind=None, at=now())
+    _send(events)
+    typer.echo(dump_json(output).decode(), nl=False)
 
 
 def resolve_call(name: str, *, environment: str, given: list[str]) -> ResolvedCall:
@@ -249,3 +321,21 @@ def _exit_on_problems(found: ActionDiscovery) -> None:
         typer.echo(str(problem), err=True)
     if found.problems:
         raise typer.Exit(FAILURE)
+
+
+def _has_terminal() -> bool:
+    try:
+        return sys.stdin.isatty()
+    except ValueError:
+        # A closed stdin is no terminal.
+        return False
+
+
+def _send(events: ScenarioEvents) -> None:
+    """Append the call's events; a store that cannot take them is one stderr line, not a
+    failure of the call."""
+    try:
+        IngestEvents(open_default_event_store()).execute(events.events)
+    except (AgentHubError, OSError) as error:
+        reason = " ".join(str(error).split()) or type(error).__name__
+        typer.echo(f"{_RUN_PREFIX}: event store unavailable: {reason}", err=True)

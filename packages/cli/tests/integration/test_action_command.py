@@ -7,8 +7,14 @@ appends its stdin to the file ``MARKER`` names, so a test sees which mode ran, i
 """
 
 import json
+import os
+import pty
+import re
+import select
 import shutil
 import subprocess
+import sys
+import time
 from importlib.metadata import version
 from pathlib import Path
 
@@ -223,3 +229,166 @@ def content_hash(hub: Path, name: str) -> str:
         .stdout
     )
     return next(item["content_hash"] for item in listed["actions"] if item["name"] == name)
+
+
+def run_in_terminal(hub: Path, marker: Path, *args: str, answer: str) -> tuple[int, str]:
+    """``hub action run`` in a pseudo-terminal: ``answer`` is typed once a ``[y/N]`` prompt
+    shows; the exit code and everything the terminal showed."""
+    environ = {
+        **os.environ,
+        "AGENT_HUB_ROOT": str(hub),
+        "MARKER": str(marker),
+        "AGENT_HUB_DB": str(hub.parent.parent / "events.db"),
+    }
+    main, child = pty.openpty()
+    argv = [sys.executable, "-m", "agent_hub.cli", "action", "run", *args]
+    process = subprocess.Popen(  # noqa: S603 - this interpreter, fixed arguments
+        argv, stdin=child, stdout=child, stderr=child, env=environ, close_fds=True
+    )
+    os.close(child)
+    shown, answered = b"", False
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([main], [], [], 0.2)
+        if ready:
+            try:
+                chunk = os.read(main, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            shown += chunk
+        if not answered and b"[y/N]" in shown:
+            os.write(main, answer.encode() + b"\n")
+            answered = True
+        if process.poll() is not None and not ready:
+            break
+    os.close(main)
+    return process.wait(timeout=30), shown.decode(errors="replace")
+
+
+def test_lists_three_subcommands_when_action_help(hub: Path, marker: Path) -> None:
+    result = run_action_command(hub, marker, "--help")
+
+    assert result.exit_code == 0, result.output
+    for command in ("list", "plan", "run"):
+        # A line of the commands panel: the name, then its help after two or more spaces.
+        assert re.search(rf"^\W+{command}\s{{2,}}\S", result.stdout, re.MULTILINE), command
+
+
+def test_runs_read_when_standalone_without_terminal(hub: Path, marker: Path) -> None:
+    result = run_action_command(
+        hub, marker, "run", "demo/get-order", "--env", "staging", "--input", "target=orders"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"order": "o-1"}
+    assert modes(marker) == ["run"]
+    events = stored(hub)
+    assert [kind for kind, _ in events] == ["policy.decision", "action.start", "action.end"]
+    decided, _, ended = (payload for _, payload in events)
+    assert (decided["decision"], decided["origin"], decided["reason_kind"]) == (
+        "allow",
+        "human",
+        "table",
+    )
+    assert (ended["status"], ended["service"]) == ("ok", ["demo-api/orders"])
+    sessions = {
+        event.session for event in open_event_store(hub.parent.parent / "events.db").read_all()
+    }
+    assert len(sessions) == 1
+    assert next(iter(sessions)).startswith("action:")
+
+
+def test_refuses_write_when_standalone_without_terminal(hub: Path, marker: Path) -> None:
+    result = run_action_command(
+        hub, marker, "run", "demo/send-order", "--env", "local", "--input", "target=api"
+    )
+
+    assert result.exit_code == 1, result.output
+    assert result.stderr == (
+        "hub action run: write and destroy actions need a terminal or a scenario run\n"
+    )
+    assert modes(marker) == []
+    assert stored(hub) == [
+        (
+            "policy.decision",
+            {
+                "attempt": 1,
+                "action": "demo/send-order",
+                "environment": "local",
+                "effect": "write",
+                "origin": "human",
+                "decision": "deny",
+                "reason_kind": "read_only",
+            },
+        )
+    ]
+
+
+def test_prompts_and_runs_nothing_when_standalone_terminal_answers_n(
+    hub: Path, marker: Path
+) -> None:
+    code, shown = run_in_terminal(
+        hub, marker, "demo/send-order", "--env", "staging", "--input", "target=api", answer="n"
+    )
+
+    assert code == 1, shown
+    assert "run demo/send-order (write) in staging? [y/N]" in shown
+    assert modes(marker) == []
+    assert [(kind, payload["decision"]) for kind, payload in stored(hub)] == [
+        ("policy.decision", "ask")
+    ]
+
+
+def test_runs_with_approver_when_standalone_terminal_answers_y(hub: Path, marker: Path) -> None:
+    code, shown = run_in_terminal(
+        hub, marker, "demo/send-order", "--env", "staging", "--input", "target=api", answer="y"
+    )
+
+    assert code == 0, shown
+    assert modes(marker) == ["run"]
+    ended = stored(hub)[-1]
+    assert ended[0] == "action.end"
+    assert ended[1]["approver"]
+
+
+def test_denies_before_prompt_when_standalone_deny(hub: Path, marker: Path) -> None:
+    code, shown = run_in_terminal(
+        hub, marker, "demo/send-order", "--env", "live", "--input", "target=api", answer="y"
+    )
+
+    assert code == 1, shown
+    assert "[y/N]" not in shown
+    assert "live is a production environment: writes and destroys are denied" in shown
+    assert modes(marker) == []
+    assert [(kind, payload["reason_kind"]) for kind, payload in stored(hub)] == [
+        ("policy.decision", "production")
+    ]
+
+
+def test_refuses_draft_when_action_uncommitted(hub: Path, marker: Path) -> None:
+    (hub / "actions" / "demo" / "scripts" / "get-order.sh").write_text(SCRIPT + "# edited\n")
+
+    result = run_action_command(
+        hub, marker, "run", "get-order", "--env", "staging", "--input", "target=api"
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "deny (draft action: commit it to run)" in result.stderr
+    assert modes(marker) == []
+    assert [(kind, payload["reason_kind"]) for kind, payload in stored(hub)] == [
+        ("policy.decision", "draft")
+    ]
+
+
+def test_runs_when_draft_committed(hub: Path, marker: Path) -> None:
+    (hub / "actions" / "demo" / "scripts" / "get-order.sh").write_text(SCRIPT + "# edited\n")
+    git(hub, "commit", "-q", "-am", "edit get-order")
+
+    result = run_action_command(
+        hub, marker, "run", "get-order", "--env", "staging", "--input", "target=api"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert modes(marker) == ["run"]
