@@ -44,7 +44,7 @@ Every node has `id`, `type` and optional `description`, `depends_on`, `trigger_r
 | `halt` | `reason` | ends the run `cancelled`; nodes not yet run never run |
 | `include` | `include` (a workflow name), `with` | replaced at load by that workflow's nodes |
 | `action` | `action` (`<name>` or `<pack>/<name>`), `with`, `capture` (`{<name>: <ref>}`: `$CTX.<name>` downstream, one capture per name), `retry` (none by default), `timeout` (≤ 1h) | one action call, its output one JSON value; outside a scenario run it fails `config` ([scenarios.md](scenarios.md)) |
-| `expect` | the `action` keys, `every` (≥ 5s), `timeout` (≤ 24h), `until_when` (the `when:` grammar; it and `capture` read `$self.output[.path]`) | polls a read action until `until_when` holds (≤ 1000 polls), else `timeout` |
+| `expect` | the `action` keys, `every` (≥ 5s), `timeout` (≤ 24h), `until_when` (the `when:` grammar; it and `capture` read `$self.output[.path]`) | polls a read action until `until_when` holds (≤ 1000 polls a run, retries included), else `timeout` |
 
 - `prompt_file` and `script` are paths inside the pack's `prompts/` and `scripts/` (no `..`, not absolute). `with` maps
   names to values or `{from: <output ref>, if_skipped: <value>}`, read in a prompt as `$WITH.<name>`. `model` is a
