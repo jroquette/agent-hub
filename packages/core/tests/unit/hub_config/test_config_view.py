@@ -214,3 +214,46 @@ def test_names_blocked_label_and_started_state_when_hub_sets_them() -> None:
     }
 
     assert _view(document).tracker.team_set == ("blocked_label", "started_state")
+
+
+def test_lists_team_and_own_environments_with_their_source() -> None:
+    document = a_hub_document()
+    document["environments"] = {"staging": {"access": "write"}}
+    document["repos"][0]["services"] = {
+        "api": {"kind": "api", "endpoints": {"staging": {"url": "https://staging.example.com"}}}
+    }
+    local = LocalConfig.model_validate(
+        {
+            "environments": {"staging": {"access": "read"}, "mine": {"access": "write"}},
+            "repos": [
+                {
+                    "dir": "demo-api",
+                    "services": {"api": {"endpoints": {"mine": {"url": "http://localhost:8000"}}}},
+                }
+            ],
+        }
+    )
+
+    environments = _view(document, local).environments
+
+    assert [(e.name, e.access, e.source) for e in environments.environments] == [
+        ("staging", "read", "hub.local.json"),
+        ("mine", "write", "hub.local.json"),
+    ]
+    assert [(e.environment, e.source) for e in environments.services[0].endpoints] == [
+        ("staging", "hub.json"),
+        ("mine", "hub.local.json"),
+    ]
+
+
+def test_shows_only_team_environments_when_local_one_loosens_access() -> None:
+    document = a_hub_document()
+    document["environments"] = {"staging": {"access": "read"}}
+    local = LocalConfig.model_validate({"environments": {"staging": {"access": "write"}}})
+
+    view = _view(document, local)
+
+    assert [(e.name, e.access) for e in view.environments.environments] == [("staging", "read")]
+    assert view.local_file.problems == (
+        "environments.staging.access: may only tighten hub.json's read",
+    )

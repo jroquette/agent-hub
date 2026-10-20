@@ -17,6 +17,11 @@ from agent_hub.core.hub_config.conventions import (
     fill_pattern,
     pattern_parts,
 )
+from agent_hub.core.hub_config.effective_environments import (
+    EffectiveEnvironments,
+    effective_environments,
+    local_environment_problems,
+)
 from agent_hub.core.hub_config.effective_identity import (
     GitReader,
     IdentityKey,
@@ -159,6 +164,9 @@ class HubConfigView(ViewModel):
     agent_models: tuple[AgentModelView, ...]
     modules: tuple[str, ...]
     platform_version: str
+    # Every declared environment and repo service, the team's and this developer's, each with
+    # the file it comes from (docs/design/environments.md).
+    environments: EffectiveEnvironments
 
 
 def hub_config_view(
@@ -172,6 +180,11 @@ def hub_config_view(
     problems: tuple[str, ...] = ()
     if not isinstance(local, LocalConfig):
         problems = tuple(f"{problem.path}: {problem.message}" for problem in local)
+        local = LocalConfig()
+    across = local_environment_problems(config, local)
+    if across:
+        # The developer's environments break a rule across both files: show the team's only.
+        problems = tuple(f"{problem.path}: {problem.message}" for problem in across)
         local = LocalConfig()
     resolved = resolve_identity(
         local=IdentityValues.of(local.project),
@@ -219,6 +232,7 @@ def hub_config_view(
         ),
         modules=tuple(sorted(config.modules.model_dump(by_alias=True, exclude_none=True))),
         platform_version=config.platform.version,
+        environments=effective_environments(config, local),
     )
 
 

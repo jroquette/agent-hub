@@ -232,6 +232,14 @@
         "title": "AcceptanceEval",
         "type": "object"
       },
+      "Access": {
+        "enum": [
+          "read",
+          "write",
+          "ask"
+        ],
+        "type": "string"
+      },
       "ActivityItem": {
         "additionalProperties": false,
         "description": "A notable event in the activity feed.",
@@ -355,6 +363,178 @@
           "subagent"
         ],
         "type": "string"
+      },
+      "AddEndpoint": {
+        "additionalProperties": false,
+        "description": "A service's endpoint in one environment; the service is added when new.",
+        "properties": {
+          "environment": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Environment",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "op": {
+            "const": "add_endpoint",
+            "title": "Op",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "service": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Service",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "repo",
+          "service",
+          "environment"
+        ],
+        "title": "AddEndpoint",
+        "type": "object"
+      },
+      "AddEnvironment": {
+        "additionalProperties": false,
+        "description": "A new environment, with its credentials by name only.",
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/Access"
+          },
+          "aws_profile": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aws Profile"
+          },
+          "credential_env": {
+            "default": [],
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Credential Env",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "env_file": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env File"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "op": {
+            "const": "add_environment",
+            "title": "Op",
+            "type": "string"
+          },
+          "production": {
+            "default": false,
+            "title": "Production",
+            "type": "boolean"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "name",
+          "access"
+        ],
+        "title": "AddEnvironment",
+        "type": "object"
       },
       "AgentModelView": {
         "additionalProperties": false,
@@ -1534,6 +1714,39 @@
         "title": "CreateAgentSession",
         "type": "object"
       },
+      "Credentials": {
+        "additionalProperties": false,
+        "description": "Where the credentials of an environment come from: names, never values.",
+        "patternProperties": {
+          "^_": {}
+        },
+        "properties": {
+          "aws_profile": {
+            "description": "An AWS profile name.",
+            "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+            "type": "string"
+          },
+          "env": {
+            "default": [],
+            "description": "Names of the environment variables that hold credentials.",
+            "items": {
+              "pattern": "^[A-Z_][A-Z0-9_]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Env",
+            "type": "array"
+          },
+          "env_file": {
+            "description": "A dotenv file, relative to the folder holding the hub and its repos, that only actions read; at most 200 characters, no '..', no leading '/' or '~'.",
+            "maxLength": 200,
+            "pattern": "^[!-.0-}][!-~]*$",
+            "type": "string"
+          }
+        },
+        "title": "Credentials",
+        "type": "object"
+      },
       "Diagnostic": {
         "additionalProperties": false,
         "description": "One informational finding on an item, in one hub-relative line (D5, P6).",
@@ -1740,6 +1953,55 @@
         ],
         "type": "string"
       },
+      "EffectiveEnvironments": {
+        "description": "The union of both files: committed entries first, then the developer's (P-5).",
+        "properties": {
+          "blocked_env": {
+            "items": {
+              "$ref": "#/components/schemas/LayeredEntry"
+            },
+            "title": "Blocked Env",
+            "type": "array"
+          },
+          "blocked_files": {
+            "items": {
+              "$ref": "#/components/schemas/LayeredEntry"
+            },
+            "title": "Blocked Files",
+            "type": "array"
+          },
+          "blocked_words": {
+            "items": {
+              "$ref": "#/components/schemas/LayeredEntry"
+            },
+            "title": "Blocked Words",
+            "type": "array"
+          },
+          "environments": {
+            "items": {
+              "$ref": "#/components/schemas/SourcedEnvironment"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/SourcedService"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "environments",
+          "services",
+          "blocked_words",
+          "blocked_files",
+          "blocked_env"
+        ],
+        "title": "EffectiveEnvironments",
+        "type": "object"
+      },
       "EndReason": {
         "description": "Why a session ended.",
         "enum": [
@@ -1751,6 +2013,79 @@
         ],
         "title": "EndReason",
         "type": "string"
+      },
+      "Endpoint": {
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "url"
+            ]
+          },
+          {
+            "required": [
+              "resource"
+            ]
+          }
+        ],
+        "description": "How a service is reached in one environment: a url, a resource name, or both.",
+        "patternProperties": {
+          "^_": {}
+        },
+        "properties": {
+          "credentials": {
+            "$ref": "#/components/schemas/Credentials",
+            "description": "Names of the credentials to use here; never a value."
+          },
+          "note": {
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+            "type": "string"
+          },
+          "resource": {
+            "description": "A resource name, such as a table or a function.",
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+            "type": "string"
+          },
+          "url": {
+            "description": "scheme://host[:port][/path], at most 200 characters; no user info, query or fragment.",
+            "maxLength": 200,
+            "pattern": "^[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[!\"$->A-~]*)?$",
+            "type": "string"
+          }
+        },
+        "title": "Endpoint",
+        "type": "object"
+      },
+      "EnvironmentEdit": {
+        "discriminator": {
+          "mapping": {
+            "add_endpoint": "#/components/schemas/AddEndpoint",
+            "add_environment": "#/components/schemas/AddEnvironment",
+            "remove_endpoint": "#/components/schemas/RemoveEndpoint",
+            "remove_environment": "#/components/schemas/RemoveEnvironment",
+            "set_environment": "#/components/schemas/SetEnvironment"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AddEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/SetEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/RemoveEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/AddEndpoint"
+          },
+          {
+            "$ref": "#/components/schemas/RemoveEndpoint"
+          }
+        ]
       },
       "EvalRecord": {
         "additionalProperties": false,
@@ -3189,6 +3524,9 @@
           "default_branch": {
             "$ref": "#/components/schemas/SourcedValue"
           },
+          "environments": {
+            "$ref": "#/components/schemas/EffectiveEnvironments"
+          },
           "guard": {
             "$ref": "#/components/schemas/GuardConfigView"
           },
@@ -3264,7 +3602,8 @@
           "model_tiers",
           "agent_models",
           "modules",
-          "platform_version"
+          "platform_version",
+          "environments"
         ],
         "title": "HubConfigView",
         "type": "object"
@@ -3730,6 +4069,25 @@
           "settings"
         ],
         "type": "string"
+      },
+      "LayeredEntry": {
+        "description": "A blocked word, glob or variable name, and the first layer that lists it.",
+        "properties": {
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "layer"
+        ],
+        "title": "LayeredEntry",
+        "type": "object"
       },
       "LayeredList": {
         "additionalProperties": false,
@@ -6678,6 +7036,80 @@
         "title": "Relation",
         "type": "object"
       },
+      "RemoveEndpoint": {
+        "additionalProperties": false,
+        "description": "A service's endpoint in one environment, or the whole service when none is named.",
+        "properties": {
+          "environment": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "op": {
+            "const": "remove_endpoint",
+            "title": "Op",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "service": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "repo",
+          "service"
+        ],
+        "title": "RemoveEndpoint",
+        "type": "object"
+      },
+      "RemoveEnvironment": {
+        "additionalProperties": false,
+        "description": "An environment no endpoint uses any more.",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "op": {
+            "const": "remove_environment",
+            "title": "Op",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "name"
+        ],
+        "title": "RemoveEnvironment",
+        "type": "object"
+      },
       "RepoChanges": {
         "additionalProperties": false,
         "description": "One repository's changes against its base. ``root`` is the folder git ran in, ``branch``\nits checked-out branch (null when detached), ``base`` the ref the branch is compared with\n(``origin/main``…, null when none was found: then nothing is compared and ``files`` is\nempty), ``base_sha`` the commit the branch forked from, ``head_sha`` the branch's last\ncommit. ``truncated`` says commits or files were left out past the bounds.\n\n``source`` is ``worktree`` when git read the checkout as it is now (uncommitted changes\nincluded), ``recorded`` when that folder is gone and the review reads the commits it\nrecorded from the repo's own checkout (``root`` is still the old folder, so the paths match\nthe chat's). ``pull_request`` is the branch's pull request, when one is found.",
@@ -7636,6 +8068,13 @@
         "title": "RunStep",
         "type": "object"
       },
+      "Scope": {
+        "enum": [
+          "team",
+          "local"
+        ],
+        "type": "string"
+      },
       "Screenshot": {
         "additionalProperties": false,
         "description": "A PNG image sent with a message (a screenshot, or an image pasted in the chat),\nbase64-encoded; its decoded size and signature are checked by ``decode_screenshot`` (413,\n422).",
@@ -8590,6 +9029,78 @@
         "title": "SessionSummary",
         "type": "object"
       },
+      "SetEnvironment": {
+        "additionalProperties": false,
+        "description": "A change to an environment: a field left out stays; an empty text removes the key.",
+        "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Access"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "env_file": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env File"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "op": {
+            "const": "set_environment",
+            "title": "Op",
+            "type": "string"
+          },
+          "production": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "name"
+        ],
+        "title": "SetEnvironment",
+        "type": "object"
+      },
       "SettingsView": {
         "additionalProperties": false,
         "description": "Read-only settings of the running ``hub web`` (no ``PATCH`` in Phase 2).",
@@ -9117,6 +9628,137 @@
           "state"
         ],
         "title": "SourceStatus",
+        "type": "object"
+      },
+      "SourcedEndpoint": {
+        "description": "A service's endpoint in one environment, and the file that declares it.",
+        "properties": {
+          "endpoint": {
+            "$ref": "#/components/schemas/Endpoint"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment",
+          "endpoint",
+          "source"
+        ],
+        "title": "SourcedEndpoint",
+        "type": "object"
+      },
+      "SourcedEnvironment": {
+        "description": "An effective environment and its source: the file its effective ``access`` comes from.",
+        "properties": {
+          "access": {
+            "enum": [
+              "read",
+              "write",
+              "ask"
+            ],
+            "title": "Access",
+            "type": "string"
+          },
+          "credentials": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Credentials"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "production": {
+            "title": "Production",
+            "type": "boolean"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "access",
+          "production",
+          "description",
+          "credentials",
+          "source"
+        ],
+        "title": "SourcedEnvironment",
+        "type": "object"
+      },
+      "SourcedService": {
+        "description": "A repo's service with its endpoints from both files, the committed ones first.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/SourcedEndpoint"
+            },
+            "title": "Endpoints",
+            "type": "array"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "name",
+          "kind",
+          "description",
+          "endpoints"
+        ],
+        "title": "SourcedService",
         "type": "object"
       },
       "SourcedValue": {
@@ -14600,6 +15242,71 @@
           }
         },
         "summary": "Get Project Config",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/config/environments": {
+      "post": {
+        "description": "Add, change or remove an environment or a service endpoint, in ``hub.json`` (the team's,\nleft uncommitted) or ``hub.local.json`` (this developer's), as ``hub env`` does.",
+        "operationId": "post_project_environment_edit_api_v1_projects__project__config_environments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubConfigView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Post Project Environment Edit",
         "tags": [
           "projects"
         ]
