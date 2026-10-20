@@ -18,7 +18,10 @@ import {
   Popover,
   ProblemError,
   Skeleton,
+  StepBar,
   Tooltip,
+  goldenStepSummary,
+  shownGoldenSteps,
 } from "../../components";
 import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
@@ -27,7 +30,6 @@ import { readStored, writeStored } from "../../lib/storage";
 import { useRowKeys } from "../../lib/useRowKeys";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { typingIn } from "../../shell/goSequence";
-import { GOLDEN_PATH_ORDER, GoldenPathBar } from "./GoldenPathBar";
 import {
   GROUPS,
   byGroupOrder,
@@ -46,6 +48,7 @@ import { useFeatures, useLiveSessions } from "./queries";
 export { issueId } from "./groups";
 
 type Feature = components["schemas"]["FeatureView"];
+type GoldenStep = components["schemas"]["GoldenStep"];
 
 const FILTERS = ["phase", "repo", "size", "verdict"] as const;
 type FilterKey = (typeof FILTERS)[number];
@@ -63,6 +66,14 @@ const TONE_COLOR: Record<NonNullable<Reason["tone"]>, string> = {
 };
 
 const listOf = (raw: string | null): string[] => (raw ? raw.split(",").filter(Boolean) : []);
+
+/** A step of an old link, before the eight feature steps: Implement and Review are Build, Evaluate is Acceptance. */
+const renamedPhase = (id: string) =>
+  id === "implement" || id === "review" ? "build" : id === "evaluate" ? "acceptance" : id;
+
+/** A `?phase=` as feature steps: an old link's ids renamed, ids that are not a step dropped. */
+const stepsOf = (raw: string | null): string[] =>
+  [...new Set(listOf(raw).map(renamedPhase))].filter((id) => PHASES.some((p) => p.id === id));
 
 function matches(f: Feature, key: FilterKey, values: string[]): boolean {
   switch (key) {
@@ -203,8 +214,16 @@ function AcCell({ f }: { f: Feature }) {
   return <AcBar acs={f.acs} width={96} />;
 }
 
-/** Everything the row's cells show, for keyboard and screen-reader users: the bars are not tab stops. */
-function rowLabel(f: Feature, reason: Reason, name: string | null): string {
+/**
+ * Everything the row's cells show, for keyboard and screen-reader users: the bars are not tab
+ * stops, so the golden path reads its position and the current step's summary.
+ */
+function rowLabel(
+  f: Feature,
+  reason: Reason,
+  name: string | null,
+  steps: readonly GoldenStep[],
+): string {
   const acs =
     f.acs && !f.problem
       ? `ACs ${String(f.acs.passing + f.acs.owner_steps)} of ${String(f.acs.total)}`
@@ -213,13 +232,23 @@ function rowLabel(f: Feature, reason: Reason, name: string | null): string {
   return [
     name ? `${name} (${f.slug})` : f.slug,
     reason.line,
-    `golden path at ${GOLDEN_STEP_LABEL[f.phase]}`,
+    goldenPathLabel(f.phase, steps),
     acs,
     `verdict ${f.verdict ?? "none"}`,
     issues,
   ]
     .filter(Boolean)
     .join(". ");
+}
+
+/** "golden path at Build, step 6 of 8, Build: in progress · 1 of 3 merged". */
+function goldenPathLabel(phase: Feature["phase"], steps: readonly GoldenStep[]): string {
+  const at = steps.findIndex((s) => s.name === phase);
+  const step = steps[at];
+  const where = `golden path at ${GOLDEN_STEP_LABEL[phase]}`;
+  return step
+    ? `${where}, step ${String(at + 1)} of ${String(steps.length)}, ${goldenStepSummary(step)}`
+    : where;
 }
 
 function FeatureRow({
@@ -239,6 +268,7 @@ function FeatureRow({
   const href = featureHref(f) + (reason.doc ? `?doc=${reason.doc}` : "");
   const lineId = `ft-line-${f.project}-${f.slug}`;
   const tags = [...(showProject ? [f.project] : []), ...f.repos.filter((r) => r !== f.project)];
+  const steps = shownGoldenSteps(f.golden_path.steps);
   return (
     // The row is one keyboard stop (Enter opens), as the Sessions inbox rows are.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -249,7 +279,7 @@ function FeatureRow({
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
       data-nav-row=""
-      aria-label={rowLabel(f, reason, name)}
+      aria-label={rowLabel(f, reason, name, steps)}
       onClick={() => {
         onOpen(href);
       }}
@@ -320,7 +350,12 @@ function FeatureRow({
         <span className="ft-col-issues">
           <IssuesCell issues={f.issues} />
         </span>
-        <GoldenPathBar path={f.golden_path} compact />
+        <StepBar
+          name="Golden path"
+          label={GOLDEN_STEP_LABEL[f.golden_path.phase]}
+          current={steps.findIndex((s) => s.name === f.golden_path.phase)}
+          steps={steps.map((s) => ({ state: s.state, summary: goldenStepSummary(s) }))}
+        />
         <AcCell f={f} />
       </div>
     </li>
@@ -376,7 +411,7 @@ function ColumnHeads({ withHints }: { withHints: boolean }) {
         {head("Issues", "The tracker issues of the feature.", "ft-col-issues")}
         {head(
           "Golden path",
-          `One segment per step: ${GOLDEN_PATH_ORDER}. Derived from the record files, the tickets' status read from Linear, and the review and eval records.`,
+          `One segment per step: ${Object.values(GOLDEN_STEP_LABEL).join(" → ")}. Derived from the record files, the tickets' status read from Linear, and the eval records.`,
         )}
         {head(
           "ACs",
@@ -489,7 +524,7 @@ function Group({
   );
 }
 
-/** Features list (spec 17, D23): what is moving (rows that need you carry a warning), what was evaluated, what shipped. */
+/** Features list (spec 17, D23): what is moving (rows that need you carry a warning) and what shipped. */
 export function FeaturesScreen() {
   const [scope] = useScope();
   const features = useFeatures(scope);
@@ -504,10 +539,29 @@ export function FeaturesScreen() {
   const screenRef = useRef<HTMLDivElement>(null);
   useRowKeys(screenRef);
 
+  // The filters read an old `?phase=` as steps from the first render; this only rewrites the URL.
+  const phase = params.get("phase");
+  useEffect(() => {
+    if (phase === null) return;
+    const steps = stepsOf(phase).join(",");
+    if (steps === phase) return;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (steps) next.set("phase", steps);
+        else next.delete("phase");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [phase, setParams]);
+  const valuesOf = (key: FilterKey) =>
+    key === "phase" ? stepsOf(params.get(key)) : listOf(params.get(key));
+
   const all = features.data?.items ?? [];
   const q = params.get("q") ?? "";
   const active = FILTERS.flatMap((key) => {
-    const values = listOf(params.get(key));
+    const values = valuesOf(key);
     return values.length ? [{ key, values }] : [];
   });
   const filtered = q.trim() !== "" || active.length > 0;
@@ -533,7 +587,7 @@ export function FeaturesScreen() {
     );
   };
   const toggleValue = (key: FilterKey, id: string) => {
-    const values = listOf(params.get(key));
+    const values = valuesOf(key);
     const next = values.includes(id) ? values.filter((v) => v !== id) : [...values, id];
     update({ [key]: next.join(",") || null });
   };
@@ -552,7 +606,7 @@ export function FeaturesScreen() {
     ids: readonly { id: string; label: string }[],
     count: (id: string) => number,
   ) => {
-    const chosen = listOf(params.get(key));
+    const chosen = valuesOf(key);
     return ids.map((o) => ({ ...o, count: count(o.id), checked: chosen.includes(o.id) }));
   };
   const repos = [...new Set(all.flatMap((f) => f.repos))].sort();
@@ -581,7 +635,7 @@ export function FeaturesScreen() {
                 </span>
               );
             })}
-            <DerivedLabel how="Grouped from the golden path, derived from the record files, the tickets' status read from Linear, and the review and eval records.">
+            <DerivedLabel how="Grouped from the golden path, derived from the record files, the tickets' status read from Linear, and the eval records.">
               derived
             </DerivedLabel>
           </p>
@@ -695,8 +749,9 @@ export function FeaturesScreen() {
                 <p className="ft-notice" role="note">
                   <Icon name="info" size="sm" />
                   <span>
-                    Ticket status is not read from Linear on this list, so Review and Shipped show
-                    as unknown. A feature&apos;s Tickets tab reads it.
+                    Ticket status is not read from Linear on this list, so Build shows as unknown,
+                    and so does Shipped once Acceptance is done. A feature&apos;s Tickets tab reads
+                    it.
                   </span>
                 </p>
               )}

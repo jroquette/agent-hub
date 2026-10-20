@@ -351,10 +351,10 @@ Features without `eval.md` show "--" in Verdict.
 | `DataTable` | Comfortable density (`row-comfortable` 40 px), two-line cells for name + project/repos |
 | `IssueLink` | First issue + "(+4)" count popover listing the rest from `issues.md` |
 | `StageChip` (size variant) | spike / bounded / architectural, neutral `idle-soft` ground |
-| `GoldenPathStepper` (compact variant) | 8 segments, filled up to the current phase; current phase name + "since" date under it |
+| `StepBar` | 8 segments, one per feature step in its state; the step's name and position under it ("Build · 6/8", "Shipped" alone); see Departures (AGH-327) |
 | `BudgetBar` (progress variant, reused for ACs) | Segments: passing (`done`), owner step (`waiting`, hatched), failing (`failed`), not yet verified (`gray-300`); label "19/21" |
 | `StatusBadge` (verdict variant) | SHIP (`done`), SHIP-WITH-OWNER-STEPS (`waiting`), NO-SHIP (`failed`); "--" when no eval yet |
-| `SegmentedControl` / filter menus | Phase, Verdict, Repo, Size |
+| `SegmentedControl` / filter menus | Step, Verdict, Repo, Size |
 | `Skeleton`, `EmptyState`, `ProblemError`, `AsOfStamp` | States |
 
 ### Data mapping
@@ -376,7 +376,7 @@ Features without `eval.md` show "--" in Verdict.
 - Hover the AC bar: "20 passing by command · 1 owner step (AC-48.21) · 0 failing · 0 not verified".
 - Hover the stepper: phase list with dates ("Plan approved 08 Oct 11:22 by José Henrique Roquette").
 - Default sort: in-progress first by phase (furthest along first), then shipped by ship date desc.
-- Filters in URL: `/features?phase=implement,review&verdict=none`.
+- Filters in URL: `/features?phase=build,acceptance&verdict=none`.
 
 ### States
 
@@ -408,6 +408,33 @@ Validated by the owner in the playground; where Screen 1 says otherwise, this li
   shows under the badge.
 - **AC-268.27 Shipped last.** Given shipped features, then they sort after every feature in progress.
 - **AC-268.28 Tooltips.** Given a tooltip in a table, then it wraps and opens downward where the table would cut it.
+
+### Departures (AGH-327, feature steps on the list)
+
+The golden path is the feature's own eight steps (AGH-325); where Screen 1 or the lists above say otherwise, this list
+wins.
+
+- **AC-1.12 Golden path column.** Given the list, then each row's `StepBar` (shared, `components/StepBar.tsx`) draws
+  one segment per feature step, Spec, UX design, Research, Plan, Tickets, Build, Acceptance and Shipped, in its state
+  (a step the server marks done after one that is not reads blocked), labelled "<Step> · n/8" ("Build · 6/8") and
+  "Shipped" alone once shipped; its tooltip and accessible name ("Golden path: Build. Spec: done; …") give every
+  step's state, meta and reason. The bar is not a tab stop: the row's accessible name reads its position and the
+  current step's summary ("golden path at Build, step 6 of 8, Build: in progress · 1 of 3 merged"); the other steps
+  are in the tooltip and the feature's detail. AC-268.23 reads with these steps ("Build · 6/8", not "Implement · step
+  5 of 8"), and the row's line says only what the bar cannot (meta, reason, verdict), never the position again.
+- **AC-1.12 Step filter.** The Step filter (`?phase=`) offers the eight feature steps. An old link's
+  `?phase=implement` or `review` becomes `build`, and `evaluate` becomes `acceptance`, replacing the URL so the
+  history holds the new one; an id that is not a step is dropped in the same replace. The list filters by the new
+  steps from its first render.
+- **AC-1.15 Groups** (spec amendment A12). The groups are In progress and Shipped: the Evaluated group is gone, and a
+  feature the evaluator says ship for while its tickets are not read as done is listed in In progress (D-9), its line
+  ending "evaluator says ship". What needs you stays inside In progress (AC-374.1): those rows lead it with a warning
+  and the page summary starts with "N need you". A stored collapsed `evaluated` group is ignored and dropped on the
+  next toggle.
+- **AC-268.22 Who acts** reads at Acceptance: a feature whose Acceptance step waits on you ("Waiting on you: sign off
+  N ACs") carries the owner-steps warning. One whose whole-feature eval lists no AC to sign off ("Waiting on owner
+  steps · no ACs listed", spec amendment A10) has no warning: the list has nothing to open for it, and its line names
+  the wait.
 
 ---
 
