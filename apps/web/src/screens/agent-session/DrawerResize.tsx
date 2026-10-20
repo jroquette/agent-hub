@@ -39,6 +39,8 @@ export interface DrawerWidthOptions {
   cssVar?: string;
   /** The handle's accessible name. */
   label?: string;
+  /** The panel's width before the user sets one, for the separator before it is measured. */
+  defaultWidth?: number;
   /** The panel's right edge and its widest width; by default the session page's. */
   bounds?: (handle: Element) => PanelBounds | null;
 }
@@ -58,9 +60,9 @@ export interface DrawerWidth {
     "aria-orientation": "vertical";
     "aria-label": string;
     "aria-valuemin": number;
-    "aria-valuemax": number | undefined;
-    "aria-valuenow": number | undefined;
-    "aria-valuetext": string | undefined;
+    "aria-valuemax": number;
+    "aria-valuenow": number;
+    "aria-valuetext": string;
     tabIndex: 0;
     className: string;
     onPointerDown: (event: PointerEvent<HTMLElement>) => void;
@@ -83,6 +85,7 @@ export function useDrawerWidth(options: DrawerWidthOptions = {}): DrawerWidth {
     cssVar = "--as-panel-w",
     label = "Resize the panel",
     bounds = pageBounds,
+    defaultWidth = DRAWER_MIN,
   } = options;
   const [width, setWidth] = useState<number | null>(() => readWidth(storageKey, DRAWER_MIN));
   const [before, setBefore] = useState<number | null>(null);
@@ -173,7 +176,9 @@ export function useDrawerWidth(options: DrawerWidthOptions = {}): DrawerWidth {
 
   // Without layout (no width measured), the width chosen is the best answer.
   const chosen = width === null || wide ? undefined : Math.round(width);
-  const now = measured && measured.now > 0 ? measured.now : chosen;
+  const now = measured && measured.now > 0 ? measured.now : (chosen ?? defaultWidth);
+  const max =
+    measured && measured.max > 0 ? Math.max(measured.max, now) : Math.max(now, DRAWER_MIN);
   return {
     style: width === null ? undefined : { [cssVar]: `${String(Math.round(width))}px` },
     handle: {
@@ -182,9 +187,9 @@ export function useDrawerWidth(options: DrawerWidthOptions = {}): DrawerWidth {
       "aria-orientation": "vertical",
       "aria-label": label,
       "aria-valuemin": DRAWER_MIN,
-      "aria-valuemax": measured?.max,
+      "aria-valuemax": max,
       "aria-valuenow": now,
-      "aria-valuetext": now === undefined ? undefined : `${String(now)} pixels wide`,
+      "aria-valuetext": `${String(now)} pixels wide`,
       tabIndex: 0,
       className: "as-drawer-handle",
       onPointerDown,

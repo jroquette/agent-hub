@@ -102,6 +102,7 @@ function DiscussToggle() {
         variant={open ? "primary" : "default"}
         icon="message-square"
         aria-pressed={open}
+        data-discuss-toggle
         onClick={() => {
           setOpen(!open);
         }}

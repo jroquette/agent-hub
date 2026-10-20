@@ -309,6 +309,41 @@ describe("AppShell", () => {
 
     expect(await seriousViolations(container)).toEqual([]);
   });
+
+  const discussRoutes = {
+    ...routes,
+    "/api/v1/agent-sessions/capabilities": aCapabilities(),
+    "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
+  };
+
+  it("has no serious or critical a11y violation with the Discuss panel open (a11y)", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    const { container } = renderWithApi(<AppShell />, { path: "/health", routes: discussRoutes });
+    await userEvent.click(screen.getByRole("button", { name: "Discuss" }));
+    await screen.findByRole("complementary", { name: "Discuss with Claude" });
+
+    expect(screen.getByRole("separator", { name: "Resize the Discuss panel" })).toHaveAttribute(
+      "aria-controls",
+      "ah-discuss",
+    );
+    expect(await seriousViolations(container)).toEqual([]);
+    window.localStorage.removeItem("ah.discuss.open");
+  });
+
+  it("closes the Discuss panel on Escape from inside it and gives focus back to Discuss", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    renderWithApi(<AppShell />, { path: "/health", routes: discussRoutes });
+    const toggle = screen.getByRole("button", { name: "Discuss" });
+    await userEvent.click(toggle);
+    const panel = await screen.findByRole("complementary", { name: "Discuss with Claude" });
+    within(panel).getByRole("button", { name: "Close panel" }).focus();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary", { name: "Discuss with Claude" })).toBeNull();
+    expect(toggle).toHaveFocus();
+    window.localStorage.removeItem("ah.discuss.open");
+  });
 });
 
 describe("AppShell scope on a project's Brain or Skills", () => {

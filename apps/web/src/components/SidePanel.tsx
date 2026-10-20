@@ -3,6 +3,7 @@ import "./SidePanel.css";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
 import { IconButton } from "./core";
+import { usePanelDismiss } from "./usePanelDismiss";
 
 export interface SidePanelProps {
   /** The panel's heading; also its accessible name. */
@@ -35,14 +36,10 @@ export function SidePanel({
 }: SidePanelProps) {
   const id = useId();
   const panel = useRef<HTMLElement>(null);
-  const latest = useRef(onClose);
-  useEffect(() => {
-    latest.current = onClose;
-  });
+  usePanelDismiss(panel, onClose);
   const opening = useRef(initialFocus);
 
   useEffect(() => {
-    const before = document.activeElement;
     const node = panel.current;
     const chosen = opening.current ? node?.querySelector<HTMLElement>(opening.current) : null;
     const first =
@@ -51,23 +48,6 @@ export function SidePanel({
         ".ah-side-panel-body input, .ah-side-panel-body select, .ah-side-panel-body textarea, .ah-side-panel-body button",
       );
     (first ?? node)?.focus({ preventScroll: true });
-    return () => {
-      if (before instanceof HTMLElement && before.isConnected)
-        before.focus({ preventScroll: true });
-    };
-  }, []);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
-      // A dialog above the panel (a confirmation) owns Escape.
-      if (document.querySelector("[data-ah-dialog]")) return;
-      latest.current();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
   }, []);
 
   return (

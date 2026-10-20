@@ -1,8 +1,9 @@
 import "./discuss.css";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { AppLink, Banner, Button, EmptyState, Icon, IconButton } from "../components";
+import { usePanelDismiss } from "../components/usePanelDismiss";
 import { ApiProblem } from "../lib/api";
 import { captureScreen } from "../lib/screenCapture";
 import type { MessageFile } from "../lib/messageFile";
@@ -66,6 +67,7 @@ export function useDiscussWidth(): DrawerWidth {
     storageKey: DISCUSS_WIDTH_KEY,
     cssVar: "--discuss-chosen",
     label: "Resize the Discuss panel",
+    defaultWidth: 480,
     bounds: discussBounds,
   });
 }
@@ -75,10 +77,31 @@ export function useDiscussWidth(): DrawerWidth {
  * through the same permission cards as the full chat.
  */
 export function DiscussPanel({ resize }: { resize?: DrawerWidth | undefined }) {
-  const { target, open, setOpen } = useDiscuss();
+  const { open } = useDiscuss();
   if (!open) return null;
+  return <OpenPanel resize={resize} />;
+}
+
+/** Docked beside the page from this width: Escape closes it only from inside it there. */
+const docked = () =>
+  typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches;
+
+function OpenPanel({ resize }: { resize: DrawerWidth | undefined }) {
+  const { target, setOpen } = useDiscuss();
+  const panel = useRef<HTMLElement>(null);
+  usePanelDismiss(
+    panel,
+    () => {
+      setOpen(false);
+    },
+    {
+      fromAnywhere: () => !docked(),
+      fallbackFocus: () => document.querySelector<HTMLElement>("[data-discuss-toggle]"),
+      keepTypedEscape: true,
+    },
+  );
   return (
-    <aside className="ah-discuss" id="ah-discuss" aria-label="Discuss with Claude">
+    <aside ref={panel} className="ah-discuss" id="ah-discuss" aria-label="Discuss with Claude">
       {resize && <div {...resize.handle} aria-controls="ah-discuss" />}
       <header className="ah-discuss-head">
         <Icon name="message-square" size="sm" />
