@@ -3955,7 +3955,12 @@ GATE = "readonly_gate.py"
 SETTINGS_HOOKS = {
     "SessionStart": [("startup|resume|clear|compact", "session_start.py", 20), (None, SENSOR, 5)],
     "PreToolUse": [
-        ("Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch", "guard.py", 10),
+        (
+            "^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent"
+            "|SendMessage)$|^mcp__",
+            "guard.py",
+            10,
+        ),
         ("*", SENSOR, 5),
     ],
     "PostToolUse": [("Edit|Write|MultiEdit", "post_edit.py", 60), ("*", SENSOR, 5)],

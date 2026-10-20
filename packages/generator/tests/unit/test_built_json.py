@@ -1,5 +1,6 @@
 import copy
 import json
+import re
 
 import pytest
 
@@ -96,7 +97,8 @@ HOOK_ROWS = (
     ("SessionStart", "startup|resume|clear|compact", "session_start.py", 20),
     (
         "PreToolUse",
-        "Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch",
+        "^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent"
+        "|SendMessage)$|^mcp__",
         "guard.py",
         10,
     ),
@@ -152,6 +154,53 @@ def test_lists_base_hooks_then_sensor_when_settings_built(demo_config: HubConfig
         expected.setdefault(event, []).append(group)
     assert settings["hooks"] == expected
     assert list(settings["hooks"]) == list(SENSOR_EVENTS)
+
+
+# AGH-293 (Q-6): the guard's matcher is anchored, so only these exact names and MCP tools start
+# guard.py; Claude Code reads a matcher holding a regex character as one unanchored regex.
+# Python's ``re`` and JavaScript read this pattern alike: anchors, one group, alternation.
+GUARDED_TOOLS = (
+    "Bash",
+    "Read",
+    "Grep",
+    "Glob",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "WebFetch",
+    "WebSearch",
+    "Task",
+    "Agent",
+    "SendMessage",
+    "mcp__db__query",
+    "mcp__x",
+)
+UNGUARDED_TOOLS = (
+    "TodoWrite",
+    "BashOutput",
+    "NotebookRead",
+    "TaskOutput",
+    "Skill",
+    "xmcp__y",
+    "Bashx",
+    "ReadX",
+)
+
+
+def test_routes_only_guarded_tools_when_matcher_searched() -> None:
+    (matcher,) = (
+        hook.matcher
+        for hook in HOOK_EVENTS
+        if hook.event == "PreToolUse" and hook.file == "guard.py"
+    )
+    assert matcher is not None
+
+    routed = {
+        name: re.search(matcher, name) is not None for name in GUARDED_TOOLS + UNGUARDED_TOOLS
+    }
+
+    assert routed == {name: name in GUARDED_TOOLS for name in GUARDED_TOOLS + UNGUARDED_TOOLS}
 
 
 def sensor_groups(hooks: object) -> dict[str, list[object]]:
