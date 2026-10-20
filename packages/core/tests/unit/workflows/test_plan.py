@@ -2,6 +2,7 @@
 
 import pytest
 
+import agent_hub.core.workflows.plan as planning
 from agent_hub.core.workflows.document import WorkflowLoadError, parse_workflow
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 
@@ -443,3 +444,99 @@ def test_refuses_stdin_reference_when_unknown_or_not_whole() -> None:
         ("nodes[1].stdin", 'no node has the id "ghost"'),
         ("nodes[2].stdin", "a reference fills the whole stdin, or none is used"),
     ]
+
+
+def action(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    node = {"id": node_id, "type": "action", "action": "send-queue-message"}
+    return node | {"depends_on": list(depends_on)} | keys
+
+
+def expect(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    node = {"id": node_id, "type": "expect", "action": "get-order", "every": "10s"}
+    node |= {"timeout": "1m", "until_when": "$self.output.status == 'ON_HOLD'"}
+    return node | {"depends_on": list(depends_on)} | keys
+
+
+def reads(text: str) -> dict[str, object]:
+    return {"with": {"order": text}}
+
+
+def test_reports_missing_when_run_context_not_captured() -> None:
+    captured = {"capture": {"order_id": "$self.output.order_id"}}
+    group = {"id": "poll", "type": "loop_group", "max_iterations": 2, "until_when": "$CTX.n == 1"}
+    group |= {"nodes": [expect("check", **{"capture": {"n": "$self.output.n"}})]}
+
+    assert problems_of(action("a"), action("b", "a", **reads("$CTX.order_id"))) == [
+        ("nodes[1].with.order", "$CTX.order_id is not captured upstream")
+    ]
+    assert problems_of(action("a", **reads("$CTX.order_id")), expect("b", "a", **captured)) == [
+        ("nodes[0].with.order", "$CTX.order_id is not captured upstream")
+    ]
+    plan = plan_of(
+        expect("a", **captured),
+        action("b", "a", **reads("x $CTX.order_id")),
+        group,
+        action("c", "poll", **reads("$CTX.n")),
+        kind="scenario",
+    )
+    assert plan.captures == {
+        "order_id": planning.Capture("a", "$self.output.order_id"),
+        "n": planning.Capture("poll__check", "$self.output.n"),
+    }
+
+
+def test_reports_twice_when_run_context_captured_twice_on_path() -> None:
+    captured = {"capture": {"order_id": "$self.output.order_id"}}
+
+    assert problems_of(expect("a", **captured), expect("b", "a", **captured)) == [
+        ("nodes[1].capture.order_id", '$CTX.order_id is already captured by "a"')
+    ]
+
+
+@pytest.mark.parametrize(
+    ("node", "key"),
+    [
+        (action("a", **reads("$self.output.id")), "nodes[0].with.order"),
+        (action("a", when="$self.output.id == 'x'"), "nodes[0].when"),
+        (expect("a", when="$self.output.id == 'x'"), "nodes[0].when"),
+        (
+            {
+                "id": "poll",
+                "type": "loop_group",
+                "max_iterations": 2,
+                "until_when": "$self.output.id == 'x'",
+                "nodes": [action("a")],
+            },
+            "nodes[0].until_when",
+        ),
+        (shell("a", stdin="$self.output"), "nodes[0].stdin"),
+    ],
+)
+def test_reports_self_when_run_context_self_outside_until(
+    node: dict[str, object], key: str
+) -> None:
+    assert problems_of(node) == [(key, "$self reads only in an expect's until_when or a capture")]
+
+
+def test_checks_with_refs_when_action_node_texts_read() -> None:
+    problems = problems_of(
+        action("a", **{"with": {"id": "$nope.output", "items": ["x", {"y": "$INPUTS.gone"}]}}),
+        expect("b", until_when="$ghost.output == 'x'"),
+        action("c", capture={"y": "$other.output"}),
+    )
+
+    assert problems == [
+        ("nodes[0].with.id", 'no node has the id "nope"'),
+        ("nodes[0].with.items", 'the input "gone" is not declared'),
+        ("nodes[1].until_when", 'no node has the id "ghost"'),
+        ("nodes[2].capture.y", 'no node has the id "other"'),
+    ]
+    assert plan_of(action("a"), action("b", "a", **reads("$a.output.message_id"))).layers
+
+
+def test_keeps_layers_when_action_nodes_beside_readonly_shell() -> None:
+    plan = plan_of(
+        shell("look", mutates_checkout=False), action("send"), expect("wait"), shell("write")
+    )
+
+    assert plan.layers == (("look", "send", "wait"), ("write",))

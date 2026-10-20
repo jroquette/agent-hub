@@ -18,6 +18,12 @@ it, outer nodes upstream of the group, and ``$LOOP_PREV.<body id>``; ``until_whe
 ``until_bash`` read any body node. ``$<group>.output.<body id>[.path]`` follows that body node's
 ``output_format``. The planned document records body ids as ``<group>__<id>`` (``loops``), and
 ``WorkflowPlan.bodies`` holds each body's layers.
+
+Scenario nodes (``action``, ``expect``): their ``with`` texts, ``until_when`` and ``capture``
+refs are checked as above; a path into their output is not (the action's own ``output_format``
+is not core's to read). ``$self.output`` reads only in an expect's ``until_when`` and in a
+``capture``; ``$CTX.<name>`` needs one node upstream that captures ``<name>``, and no name is
+captured twice. ``WorkflowPlan.captures`` names each capture's node, as recorded.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -35,10 +41,13 @@ from agent_hub.core.workflows.document import (
 from agent_hub.core.workflows.includes import IncludeResolver, expand_includes
 from agent_hub.core.workflows.loops import local_id, record_body
 from agent_hub.core.workflows.nodes import (
+    ActionNode,
     AgentNode,
     ApprovalNode,
+    ExpectNode,
     FromBinding,
     HaltNode,
+    IncludeNode,
     LoopGroupNode,
     LoopNode,
     Node,
@@ -70,6 +79,21 @@ _APPROVAL_FIELDS: Final = frozenset({"decision", "text"})
 _WAIT_FIELDS: Final = frozenset({"at", "text", "choice"})
 # A cycle message names at most this many nodes, then how many more.
 _MAX_CYCLE_NAMES: Final = 10
+# The keys of a scenario node where ``$self.output`` reads.
+_SELF_KEYS: Final = frozenset({"until_when", "capture"})
+_SELF_MESSAGE: Final = "$self reads only in an expect's until_when or a capture"
+
+
+@dataclass(frozen=True)
+class Capture:
+    """A ``capture:`` entry: the node that captures (its id as recorded) and its reference."""
+
+    node: str
+    ref: str
+
+
+# Where a name is captured while planning: the top-level node, and the body node of a group.
+type _Captured = tuple[str, str | None]
 
 
 @dataclass(frozen=True)
@@ -82,6 +106,8 @@ class WorkflowPlan:
     bodies: Mapping[str, tuple[tuple[str, ...], ...]] = field(default_factory=dict)
     # Each node's reference scope when it has one, by recorded id, for its prompt file.
     scopes: Mapping[str, RefScope] = field(default_factory=dict)
+    # Each ``$CTX`` name, by the capture that sets it.
+    captures: Mapping[str, Capture] = field(default_factory=dict)
 
     def all_nodes(self) -> Iterator[Node]:
         """Every node the run may record, in declaration order: a group, then its body."""
@@ -119,8 +145,9 @@ def _plan(document: WorkflowDocument) -> WorkflowPlan:
     layers, leftover = _kahn_layers(nodes)
     if leftover:
         raise WorkflowLoadError([_cycle_problem(nodes, leftover)])
-    graph = _Graph(document, _Upstream(nodes, layers), {node.id: node for node in nodes})
-    problems = [
+    captures, problems = _captures(nodes)
+    graph = _Graph(document, _Upstream(nodes, layers), {node.id: node for node in nodes}, captures)
+    problems += [
         *_reference_problems(graph, nodes),
         *_resume_problems(graph, nodes),
         *_outcome_problems(document),
@@ -218,18 +245,32 @@ class _Graph:
     document: WorkflowDocument
     upstream: _Upstream
     producers: Mapping[str, Node]
+    captures: Mapping[str, _Captured]
 
-    def problems(self, node: Node, text: str) -> Iterator[str]:
-        """What is wrong with the references ``text`` holds, read in ``node``."""
+    def problems(self, node: Node, text: str, *, own: bool = False) -> Iterator[str]:
+        """What is wrong with the references ``text`` holds, read in ``node``; ``own``: a text
+        that may read the node's own output (``$self``)."""
         try:
             refs = find_refs(text)
         except SubstitutionError as error:
             yield str(error)
             return
         for ref in refs:
-            message = self._ref_problem(node, ref)
+            if isinstance(ref, SelfRef):
+                message = None if own else _SELF_MESSAGE
+            elif isinstance(ref, CtxRef):
+                message = self.ctx_problem(node, ref.name)
+            else:
+                message = self._ref_problem(node, ref)
             if message is not None:
                 yield message
+
+    def ctx_problem(self, node: Node, name: str) -> str | None:
+        """Unless one node upstream of ``node`` captures ``name``, why ``$CTX.<name>`` fails."""
+        captured = self.captures.get(name)
+        if captured is not None and self.upstream.contains(captured[0], node.id):
+            return None
+        return f"$CTX.{name} is not captured upstream"
 
     def _ref_problem(self, node: Node, ref: Ref) -> str | None:
         if isinstance(ref, InputRef):
@@ -240,10 +281,8 @@ class _Graph:
             return None if ref.name in names else f"no 'with' value is named {echo(ref.name)}"
         if isinstance(ref, LoopPrevRef):
             return "$LOOP_PREV reads only inside a loop_group body"
-        if isinstance(ref, CtxRef):
-            return f"$CTX.{ref.name} is not captured upstream"
-        if isinstance(ref, SelfRef):
-            return "$self reads only in an expect's until_when or a capture"
+        if isinstance(ref, CtxRef | SelfRef):
+            return None
         return self._node_ref_problem(node, ref)
 
     def _node_ref_problem(self, node: Node, ref: NodeRef) -> str | None:
@@ -268,6 +307,14 @@ class _BodyGraph(_Graph):
 
     outer: _Graph
     group: LoopGroupNode
+
+    def ctx_problem(self, node: Node, name: str) -> str | None:
+        captured = self.captures.get(name)
+        if captured is None or captured[0] != self.group.id or captured[1] is None:
+            return self.outer.ctx_problem(self.group, name)
+        if node is self.group or self.upstream.contains(captured[1], node.id):
+            return None
+        return f"$CTX.{name} is not captured upstream"
 
     def _ref_problem(self, node: Node, ref: Ref) -> str | None:
         if isinstance(ref, LoopPrevRef):
@@ -323,7 +370,7 @@ def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
             continue
         producers = {node.id: node for node in body}
         upstream = _Upstream(body, layers)
-        inside = _BodyGraph(graph.document, upstream, producers, graph, group)
+        inside = _BodyGraph(graph.document, upstream, producers, graph.captures, graph, group)
         yield from _reference_problems(inside, body, (*where, "nodes"))
         yield from _resume_problems(inside, body, (*where, "nodes"))
         yield from _reference_problems(inside, [group], where, until=True)
@@ -356,20 +403,48 @@ def _unordered_gates(
         seen.append(node.id)
 
 
+def _captures(nodes: Sequence[Node]) -> tuple[dict[str, _Captured], list[WorkflowProblem]]:
+    """Where each ``$CTX`` name is captured, a group's body included; a second capture of a
+    name is a problem."""
+    found: dict[str, _Captured] = {}
+    problems: list[WorkflowProblem] = []
+    for index, node in enumerate(nodes):
+        body = node.nodes if isinstance(node, LoopGroupNode) else ()
+        located: list[tuple[Loc, Node, str | None]] = [(("nodes", index), node, None)]
+        located += [(("nodes", index, "nodes", i), child, child.id) for i, child in enumerate(body)]
+        for loc, captor, inner in located:
+            names = captor.capture if isinstance(captor, ActionNode | ExpectNode) else {}
+            for name in names:
+                if name in found:
+                    first = SEPARATOR.join(part for part in found[name] if part is not None)
+                    message = f"$CTX.{name} is already captured by {echo(first)}"
+                    problems.append(WorkflowProblem((*loc, "capture", name), message))
+                else:
+                    found[name] = (node.id, inner)
+    return found, problems
+
+
 def _recorded(document: WorkflowDocument, layers: tuple[tuple[str, ...], ...]) -> WorkflowPlan:
     """The plan, each ``loop_group``'s body recorded as ``<group>__<id>``, every layer split
     where its nodes may not run together (``_split``)."""
     layers = _split(layers, document.nodes)
     groups = [node for node in document.nodes if isinstance(node, LoopGroupNode)]
-    if not groups:
-        return WorkflowPlan(document, layers)
-    recorded = {group.id: record_body(group) for group in groups}
-    nodes = tuple(recorded.get(node.id, node) for node in document.nodes)
-    bodies = {
-        group_id: _split(_kahn_layers(group.nodes)[0], group.nodes)
-        for group_id, group in recorded.items()
+    plan = WorkflowPlan(document, layers)
+    if groups:
+        recorded = {group.id: record_body(group) for group in groups}
+        nodes = tuple(recorded.get(node.id, node) for node in document.nodes)
+        bodies = {
+            group_id: _split(_kahn_layers(group.nodes)[0], group.nodes)
+            for group_id, group in recorded.items()
+        }
+        plan = WorkflowPlan(document.model_copy(update={"nodes": nodes}), layers, bodies)
+    captures = {
+        name: Capture(node.id, ref)
+        for node in plan.all_nodes()
+        if isinstance(node, ActionNode | ExpectNode)
+        for name, ref in node.capture.items()
     }
-    return WorkflowPlan(document.model_copy(update={"nodes": nodes}), layers, bodies)
+    return replace(plan, captures=captures) if captures else plan
 
 
 def _split(
@@ -450,10 +525,15 @@ class _Traits:
 
     @classmethod
     def of(cls, node: Node) -> _Traits:
+        """Every node type is listed: a new one must say what it does to the checkout."""
         parts = node.nodes if isinstance(node, LoopGroupNode) else (node,)
-        executable = [
-            p for p in parts if isinstance(p, AgentNode | ShellNode | ScriptNode | LoopNode)
-        ]
+        executable: list[AgentNode | ShellNode | ScriptNode | LoopNode] = []
+        for part in parts:
+            if isinstance(part, AgentNode | ShellNode | ScriptNode | LoopNode):
+                executable.append(part)
+            elif not isinstance(part, _CHECKOUT_FREE):
+                msg = f"no checkout traits for {part.type} nodes"
+                raise TypeError(msg)
         resumed = frozenset(
             p.context.resume
             for p in executable
@@ -461,6 +541,11 @@ class _Traits:
         )
         reads = any(not p.mutates_checkout for p in executable)
         return cls(reads, any(p.mutates_checkout for p in executable), resumed)
+
+
+# Nodes that neither read nor change the checkout: gates, halts, and actions, which reach the
+# project's systems through their own scripts, never the checkout.
+_CHECKOUT_FREE: Final = (ApprovalNode, WaitNode, HaltNode, IncludeNode, ActionNode, ExpectNode)
 
 
 @dataclass
@@ -491,9 +576,12 @@ def _reference_problems(
         where_node: Loc = prefix if until else (*prefix, index)
         texts = _until_texts(node) if until else _texts(node)
         lists = _until_argv(node) if until else _argv_lists(node)
+        scenario = not until and isinstance(node, ActionNode | ExpectNode)
         for loc, text in texts:
             where: Loc = (*where_node, *loc)
-            yield from (WorkflowProblem(where, message) for message in graph.problems(node, text))
+            own = scenario and loc[0] in _SELF_KEYS
+            messages = graph.problems(node, text, own=own)
+            yield from (WorkflowProblem(where, message) for message in messages)
         for key, argv, offset in lists:
             problems = check_argv([*([""] * offset), *argv])
             refused = {problem.index - offset: problem.error for problem in problems}
@@ -550,8 +638,19 @@ def _texts(node: Node) -> Iterator[tuple[Loc, str]]:
         if node.stdin is not None:
             yield ("stdin",), node.stdin
         yield from ((("env", name), value) for name, value in node.env.items())
+    elif isinstance(node, ActionNode | ExpectNode):
+        yield from _action_texts(node)
     else:
         yield from _gate_texts(node)
+
+
+def _action_texts(node: ActionNode | ExpectNode) -> Iterator[tuple[Loc, str]]:
+    """An action call's ``with`` strings, an expect's ``until_when``, each ``capture`` ref."""
+    for name, value in node.with_.items():
+        yield from ((("with", name), text) for text in _strings(value))
+    if isinstance(node, ExpectNode):
+        yield ("until_when",), node.until_when
+    yield from ((("capture", name), ref) for name, ref in node.capture.items())
 
 
 def _gate_texts(node: Node) -> Iterator[tuple[Loc, str]]:
@@ -600,6 +699,9 @@ def _strings(value: JsonValue) -> Iterator[str]:
 
 
 def _has_path(producer: Node, segments: Sequence[str]) -> bool:
+    if isinstance(producer, ActionNode | ExpectNode):
+        # The action's ``output_format`` is in its own document, read when the scenario is.
+        return True
     if isinstance(producer, ApprovalNode):
         return len(segments) == 1 and segments[0] in _APPROVAL_FIELDS
     if isinstance(producer, WaitNode):
@@ -608,7 +710,10 @@ def _has_path(producer: Node, segments: Sequence[str]) -> bool:
         # The output maps body id → that body node's output.
         body = {node.id: node for node in producer.nodes}
         return segments[0] in body and _has_path(body[segments[0]], segments[1:])
-    schema: object = getattr(producer, "output_format", None)
+    return _schema_has_path(getattr(producer, "output_format", None), segments)
+
+
+def _schema_has_path(schema: object, segments: Sequence[str]) -> bool:
     for segment in segments:
         if not isinstance(schema, Mapping):
             return False
