@@ -3861,6 +3861,73 @@ def test_emits_denied_push_when_server_up(
     assert (envelope.project, envelope.repo) == ("demo", None)
 
 
+SED_TEST_REASON = (
+    "[hub guard] deleting or sed-editing tests from Bash bypasses the assertion guard; use Edit,"
+    " or confirm this is intended"
+)
+AUTO_MODE_SUFFIX = (
+    " (denied in auto mode, which never stops to confirm: take another way, or ask the user to"
+    " switch the session out of auto mode to approve it)"
+)
+
+
+# Claude Code prompts on a hook's ask in every mode, auto included: in auto the guard denies
+# with the same reason instead, and records the deny under the same rule.
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("auto", ("deny", SED_TEST_REASON + AUTO_MODE_SUFFIX)),
+        ("default", ("ask", SED_TEST_REASON)),
+        ("acceptEdits", ("ask", SED_TEST_REASON)),
+        (None, ("ask", SED_TEST_REASON)),
+    ],
+)
+def test_denies_instead_of_asking_when_session_in_auto_mode(
+    mode: str | None,
+    expected: tuple[str, str],
+    workspace: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    event_server: Any,
+    sensor_env: dict[str, str],
+) -> None:
+    hub = workspace / "demo-hub"
+    event = guard_event("Bash", {"command": "sed -i 's/a/b/' tests/unit/test_x.py"}, hub)
+    if mode is not None:
+        event["permission_mode"] = mode
+
+    completed, _ = run_guard_file(run_hook_file, hook_python, hub, event=event, env=sensor_env)
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    output = json.loads(completed.stdout)["hookSpecificOutput"]
+    assert (output["permissionDecision"], output["permissionDecisionReason"]) == expected
+    [body] = event_server.bodies()
+    decision = HookEnvelope.model_validate(body).decision
+    assert decision is not None
+    assert (decision.kind, decision.rule) == (expected[0], "test_bash_edit")
+
+
+def test_keeps_deny_when_session_in_auto_mode(
+    workspace: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    server_down_env: dict[str, str],
+) -> None:
+    hub = workspace / "demo-hub"
+    event = guard_event("Bash", {"command": "git push origin main"}, hub)
+    event["permission_mode"] = "auto"
+
+    completed, _ = run_guard_file(run_hook_file, hook_python, hub, event=event, env=server_down_env)
+
+    output = json.loads(completed.stdout)["hookSpecificOutput"]
+    assert (output["permissionDecision"], output["permissionDecisionReason"]) == (
+        "deny",
+        DENIED_PUSH,
+    )
+
+
 @pytest.mark.serial
 @pytest.mark.parametrize("server", ["slow", "down"])
 def test_keeps_guard_output_when_server_slow_or_down(

@@ -278,6 +278,10 @@ ENV_COMMAND = re.compile(
     r"(?<![\w.-])hub['\"]?[ \t]+env[ \t]+(service[ \t]+(?:add|remove)|add|set|remove)(?![\w-])"
 )
 ENV_COMMAND_REASON = "hub env {} changes the agents' environments (hub.json or hub.local.json); confirm"
+AUTO_MODE_SUFFIX = (
+    " (denied in auto mode, which never stops to confirm: take another way, or ask the user to"
+    " switch the session out of auto mode to approve it)"
+)
 
 
 def _str(value: object) -> str:
@@ -1924,9 +1928,19 @@ def record(data: dict, decision: str, reason: str) -> None:
         pass
 
 
+def in_auto_mode(verdict: tuple[str, str], data: dict) -> tuple[str, str]:
+    """An ``ask`` in a session running Claude Code's ``auto`` mode becomes a ``deny`` with the same
+    reason: a hook's ask forces a prompt in every mode, so the user would be stopped for a call
+    nobody chose to confirm. The agent reads the reason and takes another way instead."""
+    decision, reason = verdict
+    if decision == "ask" and data.get("permission_mode") == "auto":
+        return "deny", reason + AUTO_MODE_SUFFIX
+    return verdict
+
+
 def _print_verdict(data: dict, verdict: tuple[str, str]) -> None:
     """Print the verdict as the hook's output, then record it."""
-    decision, reason = verdict
+    decision, reason = in_auto_mode(verdict, data)
     emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                  "permissionDecisionReason": f"[hub guard] {reason}"}})
     record(data, decision, reason)
