@@ -593,6 +593,15 @@ Expanded row: full Given/When/Then, evidence text, "Last verified by hub-workflo
 | Mark owner step done | Not in the app | n/a | The owner records it in eval.md / features.json through a hub PR (principle 2: the app does not edit the brain) |
 | Start run on an issue of this feature | P4 | Dry-run preview first | Same flow as Run detail "Start run on an issue" |
 
+## Screen 3: New feature
+
+`/features/new`, from the list's "New feature" button. The brief box is the screen: text plus the images, PDFs and
+UTF-8 text files Claude should see (pasted, dropped or attached; the chat's `AttachmentList`, same limits and
+refusals). "Start from an issue (optional)" stays visible; slug and size sit under "More options". "Start with
+Claude" (or Ctrl/⌘+Enter) starts the conversation itself in the project's hub folder, with the attachments on the
+first message (`useStartDiscussion`), and opens the Discuss panel on it; the form gives way to a "Sent to Claude"
+card that links to the feature once its record is written. Full design: `ux-change-new-feature.md`.
+
 ## UX principles applied
 
 | Choice | Principle (brief §7) |
