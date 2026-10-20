@@ -286,3 +286,16 @@ def test_finds_nothing_when_environments_env_file_ignored_and_present(
     assert environments_rule.ENVIRONMENTS_ENV_FILE.reads == frozenset(
         {doctor_finding.Read.ENV_FILES}
     )
+
+
+def test_warns_when_environments_env_file_reached_through_link(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # hub action run follows no link below the hub or repo folder: doctor says so first.
+    findings = env_file_findings(snapshot_of, an_env_file(linked=True))
+
+    assert findings == [
+        an_env_file_warning(
+            "env file demo-api/environment/.env.staging of staging is reached through a link"
+        )
+    ]

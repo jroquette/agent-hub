@@ -43,6 +43,14 @@ class EventType(StrEnum):
     # A scenario run's polls and captures (docs/design/scenarios.md).
     EXPECT_POLL = "expect.poll"
     CONTEXT_CAPTURE = "context.capture"
+    # An action's process, the policy decision before it, and an investigation's findings and
+    # workarounds (docs/design/scenarios.md § Events and bounds).
+    ACTION_START = "action.start"
+    ACTION_END = "action.end"
+    POLICY_DECISION = "policy.decision"
+    FINDING = "finding"
+    WORKAROUND_START = "workaround.start"
+    WORKAROUND_END = "workaround.end"
 
 
 class EventSource(StrEnum):

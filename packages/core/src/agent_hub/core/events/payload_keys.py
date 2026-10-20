@@ -47,6 +47,8 @@ _GATE: Final = frozenset(
         "issue",
         "repo",
         "mode",
+        # Why a gate opened: ``investigation`` for a scenario run's divergence (ADR 0041).
+        "reason",
     }
 )
 _EXECUTOR: Final = frozenset(
@@ -56,6 +58,22 @@ _EXECUTOR: Final = frozenset(
 _PINNED: Final = frozenset({"revision", "content_hash"})
 # How an engine step ended: its failure kind or skip cause, on step.end.
 _STEP_ENDING: Final = frozenset({"failure_kind", "skip_cause"})
+# An action's call: names, its pinned hash and how it was decided; never an arg or an output.
+_ACTION: Final = frozenset(
+    {
+        "action",
+        "content_hash",
+        "environment",
+        "service",
+        "effect",
+        "origin",
+        "decision",
+        "approver",
+        "status",
+        "failure_kind",
+    }
+)
+_WORKAROUND: Final = frozenset({"workaround_id", "option", "steps", "status"})
 _LEARNING: Final = frozenset(
     {
         "text",
@@ -134,6 +152,15 @@ _BY_TYPE: Final[dict[EventType, frozenset[str]]] = {
     # A scenario run's expect poll and captured name; never the output or the value.
     EventType.EXPECT_POLL: frozenset({"poll", "held"}),
     EventType.CONTEXT_CAPTURE: frozenset({"name"}),
+    EventType.ACTION_START: _ACTION,
+    EventType.ACTION_END: _ACTION,
+    EventType.POLICY_DECISION: frozenset(
+        {"action", "node", "environment", "effect", "origin", "decision", "reason_kind"}
+    ),
+    # A finding's id and the step it is about; its title and text stay in the run's record.
+    EventType.FINDING: frozenset({"finding_id", "step"}),
+    EventType.WORKAROUND_START: _WORKAROUND,
+    EventType.WORKAROUND_END: _WORKAROUND,
 }
 
 PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = MappingProxyType(
