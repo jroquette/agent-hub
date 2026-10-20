@@ -151,19 +151,26 @@ def test_reports_error_when_extension_entry_not_checkable(
     assert findings_of(snapshot_of(entries=entries)) == [expected]
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        # The parser's own stack overflows (``MemoryError``).
-        pytest.param("x = " + "-" * 100_000 + "1\n", id="parser-stack"),
-        # The tree is too deep to build (``RecursionError``).
-        pytest.param("x = y" + ".a" * 200_000 + "\n", id="tree-depth"),
-    ],
-)
-def test_reports_error_when_extension_too_complex_to_parse(
-    snapshot_of: SnapshotFactory, source: str
-) -> None:
+def test_reports_error_when_extension_too_complex_to_parse(snapshot_of: SnapshotFactory) -> None:
+    # The parser's own stack overflows (``MemoryError``).
+    source = "x = " + "-" * 100_000 + "1\n"
+
     assert findings_of(with_source(snapshot_of, source)) == [an_error("too complex to parse", None)]
+
+
+def test_reports_error_when_extension_tree_too_deep(
+    snapshot_of: SnapshotFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The tree is too deep to build (``RecursionError``). How deep depends on the interpreter and
+    # the machine (Python 3.14 builds 200,000 levels), so the overflow itself is simulated.
+    def overflow(*_args: object, **_kwargs: object) -> object:
+        raise RecursionError
+
+    monkeypatch.setattr("agent_hub.core.doctor.guard_extension_rule.ast.parse", overflow)
+
+    findings = findings_of(with_source(snapshot_of, "x = y.a\n"))
+
+    assert findings == [an_error("too complex to parse", None)]
 
 
 def test_accepts_any_parameter_names_when_two_positional(snapshot_of: SnapshotFactory) -> None:

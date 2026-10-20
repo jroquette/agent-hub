@@ -120,12 +120,6 @@ class TestSettingsValid:
             pytest.param(
                 MCP, b"\xff{}", "not UTF-8 text: byte 0 cannot be decoded", id="mcp-not-utf8"
             ),
-            pytest.param(
-                MCP,
-                b"[" * 200_000 + b"]" * 200_000,
-                "not valid JSON here: it is nested too deeply",
-                id="mcp-too-deep",
-            ),
         ],
     )
     def test_reports_without_line_when_json_unreadable(
@@ -135,6 +129,21 @@ class TestSettingsValid:
         snapshot = snapshot_of(files={path: content})
 
         assert found(SETTINGS_VALID, snapshot) == [(path, None, message, SYNTAX_FIX)]
+
+    def test_reports_without_line_when_json_nested_too_deeply(
+        self, snapshot_of: SnapshotFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # How deep the parser can go depends on the interpreter and the machine (Python 3.14
+        # reads 200,000 levels), so the overflow itself is simulated.
+        def overflow(*_args: object, **_kwargs: object) -> object:
+            raise RecursionError
+
+        snapshot = snapshot_of(files={MCP: b"[[]]"})
+        monkeypatch.setattr("agent_hub.core.json_form.json.loads", overflow)
+
+        assert found(SETTINGS_VALID, snapshot) == [
+            (MCP, None, "not valid JSON here: it is nested too deeply", SYNTAX_FIX)
+        ]
 
     @pytest.mark.parametrize("path", [SETTINGS, MCP])
     def test_reports_without_line_when_number_over_digit_limit(
