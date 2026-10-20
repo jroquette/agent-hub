@@ -132,14 +132,14 @@ Blocked words are a best-effort text tripwire, not a security boundary: the boun
 agent's machine holds. The guard runs only on Bash, Read, Grep, Glob, Edit, Write, MultiEdit, NotebookEdit, WebFetch
 and the input tools: MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage (matcher `^(…)$|^mcp__`).
 
-1. **`hub run`'s implement step** runs `claude -p` in the app repo's worktree, where the hub's SessionStart brief and
-   guard do not load: no Environments block and no blocked-word guard there (older than this contract; AGH-278).
+1. **`hub run` and repo-cwd agent nodes** run under the hub's hooks through a hooks-only `--settings` file,
+   `.agent-runs/session-settings/<effort>.json`, rebuilt before each session (AGH-278); a guard `ask` is refused there.
 2. **`CLAUDE_ENV_FILE`:** variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` reach Bash only; the guard
    hook sees neither them nor the variable, so they are not scanned. Shell and settings `env` variables are.
 3. **Plugin-cache mode with `$HUB_CONFIG`** has no identity home, so it reads no `hub.local.json`.
-4. Not checked: files a program opens without the command naming them from the
-   cwd (`python sync.py` reading `config/app.json`, `find … -exec cat`, `cd dir && cat file`, `$PWD` or a variable in
-   a path, `git show REV:path`); tool output; obfuscation (`$'\x70rod'`); Grep's search regex and edit contents.
+4. Not checked: files a program opens without the command naming them from the cwd (`python sync.py` reading
+   `config/app.json`, `find … -exec cat`, `cd dir && cat file`, `$PWD` or a variable in a path, `git show REV:path`);
+   tool output; obfuscation (`$'\x70rod'`); Grep's search regex and edit contents.
 5. On the input tools only the blocked-word rule runs: `deny_hosts` (a listed host in an MCP input passes),
    `deny_paths`, `guard.infra` and the secret-file rule do not; a path in an MCP input is text, never opened (AGH-372).
 6. Skill, TodoWrite, ExitPlanMode and AskUserQuestion are not checked (AGH-373).

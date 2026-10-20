@@ -1,9 +1,12 @@
 """The workflow engine's ``NodeRunner``: agent, shell and script nodes as children (ADR 0032).
 
 An ``agent`` or ``loop`` turn is one ``claude -p`` in the hub's main checkout, so the hub's
-settings, hooks and plugin load; the hub's repos are attached with ``--add-dir``. With a ``cwd``
-inside a repo (issue-to-pr's worktree) it runs there as ``hub run``'s session does: the hub and
-the other repos attached, that repo's gates allowed. Its argv is
+settings, hooks and plugin load from the hub; the hub's repos are attached with ``--add-dir``.
+With a ``cwd`` inside a repo (issue-to-pr's worktree) it runs there as ``hub run``'s session
+does: the hub and the other repos attached, that repo's gates allowed, and the hub's hooks given
+through a hooks-only ``--settings`` file (``session_settings``, AGH-278), written again before
+every attempt and every ``--resume``; never when the cwd resolves inside the hub. A hub whose
+hooks cannot be wired fails the node with ``config`` before ``claude`` starts. Its argv is
 ``hub run``'s (``implementing_argv``: permission mode ``dontAsk``, the tracker's tools denied),
 with the node's tier from ``hub.json`` → ``models.tiers`` and its ``limits`` as ``--max-turns`` and
 ``--max-budget-usd``; ``--resume`` continues a session. Its output is the result's text, or, with
@@ -65,6 +68,7 @@ from agent_hub.cli.run_children import (
     untrusted_env,
 )
 from agent_hub.cli.run_steps import SESSION_OUTPUT_LIMIT
+from agent_hub.cli.session_settings import HubHooksError, write_session_settings
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.session_prompt import (
     IMPLEMENTING_TOOLS,
@@ -176,18 +180,28 @@ class WorkflowExecutors:
         others = (r for r in repos if r is not home)
         gated = (home,) if home is not None else repos
         caps = self.session if node.id == IMPLEMENT_STEP else None
+        effort = AGENT_EFFORT if caps is None else caps.effort
+        settings_file = None
+        # A cwd in the resolved hub loads the hub's own settings: a hooks file there (a repo that
+        # is the hub or holds it) would run each hook twice.
+        if home is not None and not cwd.is_relative_to(self.hub.resolve()):
+            try:
+                settings_file = str(write_session_settings(self.hub, effort))
+            except HubHooksError as error:
+                raise NodeFailedError("config", str(error)) from None
         argv = implementing_argv(
             prompt=prompt,
             max_turns=node.limits.max_turns if caps is None else caps.max_turns,
             budget=node.limits.max_cost_usd if caps is None else caps.budget,
             model=self.config.models.model_for(node.model) if caps is None else caps.model,
-            effort=AGENT_EFFORT if caps is None else caps.effort,
+            effort=effort,
             add_dirs=(*folders, *(str(self.hub.parent / repo.dir) for repo in others)),
             tools=(
                 *IMPLEMENTING_TOOLS,
                 *gate_tools(command for repo in gated for command in (repo.check_fast, repo.check)),
             ),
             denied_tools=SESSION_DENIED_TOOLS,
+            settings_file=settings_file,
         )
         if call.resume_session is not None:
             if not SESSION_ID.fullmatch(call.resume_session):

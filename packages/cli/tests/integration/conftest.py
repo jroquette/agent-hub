@@ -1546,6 +1546,43 @@ if any(tool.startswith("mcp__") for tool in allowed):
     sys.exit(0)
 mode = os.environ.get("FAKE_CLAUDE_MODE", "done")
 log("claude", tracker=False, mode=mode)
+if mode == "hooks":
+    # As Claude Code would (AGH-278): read the --settings file, run its SessionStart hooks for
+    # "startup", then its PreToolUse hooks for one Bash call (FAKE_CLAUDE_BASH), each through sh
+    # in this cwd with CLAUDE_PROJECT_DIR set to it and the event on stdin; then answer as
+    # done-no-commit.
+    import re
+    def covers(matcher, value):
+        # Claude Code (2.1.303): only letters, digits, _ and | = exact names; else an
+        # unanchored regex.
+        if matcher in (None, "", "*"):
+            return True
+        if re.fullmatch(r"[A-Za-z0-9_|]+", matcher):
+            return value in matcher.split("|")
+        return re.search(matcher, value) is not None
+    with open(argv[argv.index("--settings") + 1]) as file:
+        settings = json.load(file)
+    cwd = os.getcwd()
+    bash = os.environ.get("FAKE_CLAUDE_BASH", "echo prod")
+    events = (
+        ("SessionStart", "startup", {"source": "startup"}),
+        ("PreToolUse", "Bash", {"tool_name": "Bash", "tool_input": {"command": bash}}),
+    )
+    runs = []
+    for event, value, fields in events:
+        payload = {"session_id": "fake-session", "hook_event_name": event, **fields, "cwd": cwd}
+        for group in settings["hooks"].get(event, []):
+            if not covers(group.get("matcher"), value):
+                continue
+            for entry in group["hooks"]:
+                ran = subprocess.run(
+                    ["/bin/sh", "-c", entry["command"]], cwd=cwd,
+                    env={**os.environ, "CLAUDE_PROJECT_DIR": cwd}, input=json.dumps(payload),
+                    capture_output=True, text=True, timeout=entry.get("timeout", 60),
+                )
+                runs.append({"event": event, "command": entry["command"],
+                             "code": ran.returncode, "stdout": ran.stdout})
+    log("hooks", settings=settings, runs=runs)
 _answer = answer
 def answer(result, **extra):
     # FAKE_CLAUDE_PAD: that many characters first; FAKE_CLAUDE_NUL: a NUL among them.
@@ -1590,7 +1627,7 @@ if mode == "done-untracked":
         file.write("left behind\\n")
 if mode in (
     "done", "done-no-commit", "done-dirty", "done-untracked", "config-helper", "config-remote",
-    "config-benign",
+    "config-benign", "hooks",
 ):
     answer("Done.\\n" + json.dumps(verdict))
 elif mode == "blocked":

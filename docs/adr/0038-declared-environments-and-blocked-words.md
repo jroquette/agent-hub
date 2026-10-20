@@ -79,8 +79,8 @@ Chosen option: 1.
 
 - Good: agents know which environments and services exist and how to reach them, without credentials in any file.
 - Good: a blocked word stops the Bash commands, file-tool paths, WebFetch URLs, listed files' contents, scanned
-  session variables and the inputs of MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage that name it, with the word, layer and surface named in the reason and recorded with
-  `rule: blocked_word`, never the value.
+  session variables and the inputs of MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage that name it, with
+  the word, layer and surface named in the reason and recorded with `rule: blocked_word`, never the value.
 - Good: a developer's own replica and stricter rules live in their own file and never change the team's.
 - Good: "nothing in `hub.local.json` relaxes a guard" still holds: it adds words and tightens access only.
 - Bad: false positives are accepted (a word in a harmless command denies it, `prod2` included); the list is the
@@ -90,11 +90,11 @@ Chosen option: 1.
 - Bad: two more writers of config files that were write-once; `hub env` guards against concurrent edits but a writer
   between its check and its replace can still be overwritten (a narrow window, stated in environments.md).
 - Bad: blind spots: variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` reach Bash but not the guard
-  hook; `hub run`'s implement sessions run without the hub's hooks (an older gap, AGH-278); plugin-cache mode with
-  `$HUB_CONFIG` reads no `hub.local.json`; on MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage only this
-  rule runs (a `deny_hosts` host in their input passes) and their tool names are not scanned; Skill, TodoWrite,
-  ExitPlanMode and AskUserQuestion are not checked, nor files a program opens without the command naming them (`python sync.py` reading `config/app.json`, `find … -exec cat`),
-  tool output, obfuscated names, Grep's search regex and edit contents.
+  hook; plugin-cache mode with `$HUB_CONFIG` reads no `hub.local.json`; on MCP tools (`mcp__*`), WebSearch, Task,
+  Agent and SendMessage only this rule runs (a `deny_hosts` host in their input passes) and their tool names are not
+  scanned; Skill, TodoWrite, ExitPlanMode and AskUserQuestion are not checked, nor files a program opens without the
+  command naming them (`python sync.py` reading `config/app.json`, `find … -exec cat`), tool output, obfuscated names,
+  Grep's search regex and edit contents.
 - Bad: a hub synced by an older release keeps the old matcher, so the input tools stay unchecked there until
   `hub sync` (doctor's `settings.weakening` reports it).
 - Bad: blocked words are a best-effort text tripwire, not a security boundary; the boundary is which credentials the
