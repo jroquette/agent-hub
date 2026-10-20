@@ -9,7 +9,7 @@ from hypothesis import strategies as st
 from agent_hub.core.features.feature_reviews import ReviewOutcome, ReviewRecord
 from agent_hub.core.features.feature_view import EvalRecord, Verdict
 from agent_hub.core.features.golden_path import LINEAR_NOT_CONNECTED
-from agent_hub.core.features.ticket_flow import TicketEvidence, ticket_flow
+from agent_hub.core.features.ticket_flow import TicketEvidence, ticket_evidence, ticket_flow
 from agent_hub.core.features.ticket_view import TicketFlow, TicketRow
 from agent_hub.core.testing.read_model_builders import a_ticket_row, an_eval_record
 from agent_hub.core.tracker.tracker_reader import IssueState
@@ -69,7 +69,7 @@ def _flow(
 ) -> TicketFlow:
     flow = ticket_flow(
         _row() if row is None else row,
-        TicketEvidence(rounds=rounds, reviews=reviews, evals=evals, unread=unread),
+        ticket_evidence(rounds=rounds, reviews=reviews, evals=evals, unread=unread),
     )
     assert flow is not None
     return flow
@@ -213,7 +213,7 @@ def test_names_current_step_when_first_not_done_after_evidence() -> None:
 
 
 def test_gives_no_flow_when_ticket_is_an_epic() -> None:
-    evidence = TicketEvidence(rounds=frozenset(), reviews=(), evals=(), unread=None)
+    evidence = ticket_evidence(rounds=frozenset(), reviews=(), evals=(), unread=None)
 
     assert ticket_flow(_row(children=("DEM-9",)), evidence) is None
 
@@ -245,7 +245,7 @@ def _evidence(draw: st.DrawFn) -> tuple[TicketRow, TicketEvidence]:
     )
     rounds = frozenset(draw(st.lists(st.sampled_from(_NAMES), max_size=2)))
     unread = draw(st.sampled_from((None, LINEAR_NOT_CONNECTED)))
-    evidence = TicketEvidence(rounds=rounds, reviews=reviews, evals=evals, unread=unread)
+    evidence = ticket_evidence(rounds=rounds, reviews=reviews, evals=evals, unread=unread)
     return _row(state=None if unread else state), evidence
 
 
@@ -272,10 +272,11 @@ def test_same_flow_when_read_order_shuffled_property(
     drawn: tuple[TicketRow, TicketEvidence], pick: Random
 ) -> None:
     row, evidence = drawn
-    reviews, evals = list(evidence.reviews), list(evidence.evals)
+    reviews = list(evidence.reviews)
+    evals = list(dict.fromkeys(e for named in evidence.evals.values() for e in named))
     pick.shuffle(reviews)
     pick.shuffle(evals)
-    shuffled = TicketEvidence(
+    shuffled = ticket_evidence(
         rounds=evidence.rounds, reviews=tuple(reviews), evals=tuple(evals), unread=evidence.unread
     )
 
