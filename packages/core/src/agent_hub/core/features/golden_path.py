@@ -226,7 +226,7 @@ def _document(facts: _Facts, *, file: str, later: tuple[str, ...]) -> _Own:
 
 def _spec(facts: _Facts) -> _Own:
     own = _document(facts, file=SPEC_FILE, later=(RESEARCH_FILE, PLAN_FILE))
-    if own.holds or BRIEF_FILE not in facts.inputs.files:
+    if own.holds or own.skippable or BRIEF_FILE not in facts.inputs.files:
         return own
     return replace(own, meta="Brief only · spec not written")
 
