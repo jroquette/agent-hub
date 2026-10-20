@@ -15,6 +15,7 @@ from agent_hub.core.features.feature_view import (
     AmendmentView,
     GoldenPath,
     GoldenStep,
+    OwnerWaitView,
     PlanView,
     TicketsSource,
     Verdict,
@@ -33,6 +34,7 @@ from agent_hub.core.features.ticket_planning import ticket_board
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.features.ticket_view import TicketRow
 from agent_hub.core.testing.read_model_builders import (
+    READ_TIME,
     a_ticket_row,
     a_ticket_snapshot,
     an_issue_summary,
@@ -323,6 +325,44 @@ def test_asks_for_new_evaluation_in_acceptance_when_waiting_acs_reopened(
 
     assert (acceptance.state, acceptance.meta) == ("current", meta)
     assert not acceptance.meta.startswith("Waiting on you")
+
+
+# two-level-flows A15: no "Waiting on you" while no sign-off can be recorded after the eval;
+# an undated acceptance eval asks for a new evaluation even when ACs are reopened too.
+def test_asks_for_new_evaluation_in_acceptance_when_acceptance_eval_undated() -> None:
+    gate = EvalGate(
+        evals=2,
+        covered=6,
+        owner_steps=2,
+        reopened=1,
+        undated=True,
+        acceptance="SHIP-WITH-OWNER-STEPS",
+    )
+
+    acceptance = _step(golden_path(_all_done(coverage=gate)), "acceptance")
+
+    assert (acceptance.state, acceptance.meta) == (
+        "current",
+        "Acceptance eval undated · evaluate again",
+    )
+
+
+# two-level-flows A15 (owner decision 1): a future-dated eval says when a sign-off is possible.
+def test_says_when_signoff_possible_in_acceptance_when_acceptance_eval_dated_in_future() -> None:
+    gate = EvalGate(
+        evals=1,
+        covered=6,
+        owner_steps=2,
+        signable_after="2026-11-21 09:00 UTC",
+        acceptance="SHIP-WITH-OWNER-STEPS",
+    )
+
+    acceptance = _step(golden_path(_all_done(coverage=gate)), "acceptance")
+
+    assert (acceptance.state, acceptance.meta) == (
+        "current",
+        "Sign-off possible after 2026-11-21 09:00 UTC",
+    )
 
 
 def test_never_marks_acceptance_done_when_only_ticket_evals_cover_every_ac() -> None:
@@ -888,3 +928,81 @@ def test_same_answer_when_read_order_shuffled_property(pick: Random, size: int) 
     )
 
     assert first == second
+
+
+_UNDATED_OWNER = RecordHead(
+    name="feature.md",
+    head=b"---\ntype: eval\ndelivery: feature\nverdict: SHIP-WITH-OWNER-STEPS\nacs: all\n---\n",
+    problem=None,
+)
+_TICKET_NO_SHIP = _eval_head("acme-1521", verdict="NO-SHIP", scope="acs: [AC-7.2]", at="2026-10-12")
+
+
+def _owner_wait(*evals: RecordHead, **fields: object) -> OwnerWaitView | None:
+    detail = feature_detail(
+        _folder(*evals, **fields), project="demo", read=_MERGED, now=READ_TIME
+    )
+    assert detail.acceptance_eval is not None
+    return detail.acceptance_eval.owner_wait
+
+
+# two-level-flows A15: the Acceptance wait's state comes from the server's rule (A9-A11).
+def test_serves_sign_off_wait_when_acceptance_eval_leaves_owner_steps() -> None:
+    assert _owner_wait(_WHOLE_OWNER) == OwnerWaitView(
+        state="sign_off", acs=("AC-7.1", "AC-7.2", "AC-7.3")
+    )
+
+
+def test_serves_reopened_wait_when_a_later_eval_says_no_ship() -> None:
+    assert _owner_wait(_WHOLE_OWNER, _TICKET_NO_SHIP) == OwnerWaitView(
+        state="reopened", acs=("AC-7.1", "AC-7.2", "AC-7.3"), reopened=("AC-7.2",)
+    )
+
+
+def test_serves_undated_wait_before_reopened_when_acceptance_eval_undated() -> None:
+    folder = _folder(_UNDATED_OWNER, _TICKET_NO_SHIP)
+    path = feature_parts(folder, _MERGED, now=READ_TIME).golden_path
+
+    assert _owner_wait(_UNDATED_OWNER, _TICKET_NO_SHIP) == OwnerWaitView(
+        state="undated", acs=("AC-7.1", "AC-7.2", "AC-7.3"), reopened=("AC-7.2",)
+    )
+    assert _step(path, "acceptance").meta == "Acceptance eval undated · evaluate again"
+
+
+def test_serves_future_wait_when_acceptance_eval_dated_after_read() -> None:
+    future = _eval_head(
+        "feature", verdict="SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-11-21T09:00:00Z"
+    )
+    path = feature_parts(_folder(future), _MERGED, now=READ_TIME).golden_path
+
+    wait = _owner_wait(future)
+
+    assert wait is not None
+    assert wait.state == "future"
+    assert _step(path, "acceptance").meta == "Sign-off possible after 2026-11-21 09:00 UTC"
+
+
+def test_serves_no_acs_wait_when_feature_lists_no_live_ac() -> None:
+    planned_only = b'{"tickets": [{"key": "T1", "id": "ACME-1520", "order": 1}], "acs": []}'
+
+    assert _owner_wait(_WHOLE_OWNER, features_json=planned_only) == OwnerWaitView(state="no_acs")
+
+
+# two-level-flows A6, A15: any new eval ranks newer than a legacy eval.md, so it is not undated.
+def test_serves_sign_off_wait_when_legacy_eval_ships_with_owner_steps() -> None:
+    legacy = b"# Eval\n\n**Verdict: SHIP-WITH-OWNER-STEPS.** One manual step left.\n"
+
+    wait = _owner_wait(files=(*_folder().files, "eval.md"), eval_head=legacy)
+
+    assert wait is not None
+    assert wait.state == "sign_off"
+
+
+def test_serves_no_wait_when_owner_signed_off_or_found_more_work() -> None:
+    more_work = _eval_head(
+        "owner-signoff", verdict="NO-SHIP", scope="acs: [AC-7.2]", at="2026-10-13", owner=True
+    )
+
+    assert _owner_wait(_WHOLE_OWNER, _SIGNOFF) is None
+    assert _owner_wait(_WHOLE_OWNER, _TICKET_NO_SHIP, more_work) is None
+
