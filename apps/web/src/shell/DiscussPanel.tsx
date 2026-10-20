@@ -8,6 +8,12 @@ import { captureScreen } from "../lib/screenCapture";
 import type { MessageFile } from "../lib/messageFile";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../screens/agent-session/Composer";
 import { DiscussChat } from "../screens/agent-session/DiscussChat";
+import {
+  DRAWER_MIN,
+  useDrawerWidth,
+  type DrawerWidth,
+  type PanelBounds,
+} from "../screens/agent-session/DrawerResize";
 import type { PermissionMode } from "../screens/agent-session/model";
 import { useAgentCapabilities } from "../screens/sessions-list/queries";
 import {
@@ -26,16 +32,54 @@ import {
 import { readScreenText } from "./screenContext";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
+
+/** The width the owner chose for the panel, kept in this browser. */
+export const DISCUSS_WIDTH_KEY = "ah.discuss.width";
+/** Docked from this viewport width; below it the panel lays over the page. */
+const DOCKED_FROM = 1280;
+/** The page keeps at least this much beside a docked panel. */
+const PAGE_MIN = 640;
+const PANEL_MAX = 720;
+/** Beside an overlaid panel, this much of the page stays in view. */
+const OVERLAY_GAP = 96;
+
+/**
+ * The widest the panel may be in a viewport `viewport` wide, beside a sidebar `sidebar` wide: docked,
+ * it leaves the page 640 px and stops at 720; over the page, it leaves 96 px of it in view.
+ */
+export function discussMax(viewport: number, sidebar: number): number {
+  const max =
+    viewport >= DOCKED_FROM
+      ? Math.min(PANEL_MAX, viewport - sidebar - PAGE_MIN)
+      : viewport - OVERLAY_GAP;
+  return Math.max(DRAWER_MIN, max);
+}
+
+const discussBounds = (): PanelBounds => {
+  const sidebar = document.getElementById("main")?.getBoundingClientRect().left ?? 0;
+  return { right: window.innerWidth, max: discussMax(window.innerWidth, sidebar) };
+};
+
+/** The Discuss panel's width: the shell sets it on its frame, so the page makes room for it. */
+export function useDiscussWidth(): DrawerWidth {
+  return useDrawerWidth({
+    storageKey: DISCUSS_WIDTH_KEY,
+    cssVar: "--discuss-chosen",
+    label: "Resize the Discuss panel",
+    bounds: discussBounds,
+  });
+}
 /**
  * The right-hand panel to talk with Claude about what is on screen: one conversation per
  * artifact, a session `hub web` drives in the project's hub folder. Edits Claude proposes ask
  * through the same permission cards as the full chat.
  */
-export function DiscussPanel() {
+export function DiscussPanel({ resize }: { resize?: DrawerWidth | undefined }) {
   const { target, open, setOpen } = useDiscuss();
   if (!open) return null;
   return (
-    <aside className="ah-discuss" aria-label="Discuss with Claude">
+    <aside className="ah-discuss" id="ah-discuss" aria-label="Discuss with Claude">
+      {resize && <div {...resize.handle} aria-controls="ah-discuss" />}
       <header className="ah-discuss-head">
         <Icon name="message-square" size="sm" />
         <div className="ah-discuss-title">
@@ -45,6 +89,15 @@ export function DiscussPanel() {
           </span>
         </div>
         <span className="ah-grow" />
+        {resize && (
+          <IconButton
+            icon="maximize-2"
+            label={resize.wide ? "Narrow panel" : "Widen panel"}
+            aria-pressed={resize.wide}
+            className="ah-discuss-widen"
+            onClick={resize.toggleWide}
+          />
+        )}
         <IconButton
           icon="x"
           label="Close panel"

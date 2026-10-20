@@ -23,7 +23,7 @@ import {
   useDiscussTarget,
 } from "./discuss";
 import type { DiscussReference, DiscussTarget } from "./discuss";
-import { DiscussPanel } from "./DiscussPanel";
+import { DiscussPanel, discussMax } from "./DiscussPanel";
 import { ScreenDiscussFallback, screenDiscussTarget } from "./screenContext";
 
 vi.mock("../lib/screenCapture", () => ({ captureScreen: vi.fn() }));
@@ -385,3 +385,15 @@ function TargetProbe() {
   const { target } = useDiscuss();
   return target ? <span data-testid="probe">{`${target.key} · ${target.title}`}</span> : null;
 }
+
+describe("discussMax (the Discuss panel's widest width)", () => {
+  it("leaves the page 640 px when docked and stops at 720", () => {
+    expect(discussMax(1440, 240)).toBe(560);
+    expect(discussMax(1920, 240)).toBe(720);
+  });
+
+  it("leaves 96 px of the page in view over it, and never goes under 320", () => {
+    expect(discussMax(1100, 240)).toBe(1004);
+    expect(discussMax(360, 0)).toBe(320);
+  });
+});

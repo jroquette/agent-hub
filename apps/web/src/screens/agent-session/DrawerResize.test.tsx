@@ -42,6 +42,7 @@ describe("useDrawerWidth (drawer)", () => {
     render(<Drawer />);
     const handle = screen.getByRole("separator", { name: "Resize the panel" });
     expect(handle).toHaveAttribute("aria-valuenow", "500");
+    expect(handle).toHaveAttribute("aria-valuetext", "500 pixels wide");
 
     handle.focus();
     await userEvent.keyboard("{Home}");
