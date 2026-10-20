@@ -124,7 +124,6 @@ function aConfig(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const ENV_WRITE = "POST /api/v1/projects/demo/config/environments";
 
 function environment(name: string, access: string, source: string, extra = {}) {
   return {
@@ -512,114 +511,15 @@ describe("HubConfigScreen", () => {
     // 1 s budget timed a slow pass out on a busy machine.
     expect(await seriousViolations(container)).toEqual([]);
   });
-  it("lists each environment with what agents may do there and who set it", async () => {
+  it("summarises the environments and links to their page", async () => {
     open("/projects/demo/config", { [CONFIG]: withEnvironments() });
 
     const section = await screen.findByRole("region", { name: /Environments/ });
-    expect(within(section).getAllByText("Agents may change data")).toHaveLength(2);
-    expect(within(section).getAllByText("Agents only read")).toHaveLength(2);
-    expect(within(section).getAllByText("Production").length).toBeGreaterThan(0);
-    expect(within(section).getByText("Tightened by you")).toBeVisible();
-    expect(within(section).getByText("Team: may change data")).toBeVisible();
-    expect(within(section).getByText("demo-live-ro")).toBeVisible();
-    expect(within(section).getByText("DEMO_LIVE_DB_URL")).toBeVisible();
-    expect(
-      within(section).getByRole("button", {
-        name: "Edit endpoint of demo-api › api in local: http://localhost:8000",
-      }),
-    ).toBeVisible();
-    expect(
-      within(section).getByRole("button", { name: "Add endpoint for demo-api › api in live" }),
-    ).toBeVisible();
-  });
-
-  it("explains environments and opens the add flow when none is declared", async () => {
-    const { router } = open();
-
-    const section = await screen.findByRole("region", { name: /Environments/ });
-    expect(within(section).getByText("No environments yet")).toBeVisible();
-    await userEvent.click(within(section).getByRole("button", { name: "Add environment" }));
-
-    expect(router.state.location.pathname).toBe("/projects/demo/environments/new");
-  });
-
-  it("shows a refused access under its field", async () => {
-    open("/projects/demo/config", {
-      [CONFIG]: withEnvironments(),
-      [ENV_WRITE]: aProblem({
-        status: 422,
-        title: "This change was not saved",
-        errors: [
-          {
-            pointer: "environments.live.access",
-            message: "hub.local.json: may only tighten hub.json's read",
-          },
-        ],
-      }),
-    });
-
-    await userEvent.click(await screen.findByRole("button", { name: "Edit: live" }));
-    const dialog = screen.getByRole("dialog", { name: "Edit environment live" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Save for the team" }));
-
-    expect(await within(dialog).findByText("May only tighten hub.json's read")).toBeVisible();
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(
-      "Nothing was saved: fix the fields marked below.",
+    expect(within(section).getByText(/4 environments · 1 service/)).toBeVisible();
+    expect(within(section).getByRole("link", { name: "Open Environments" })).toHaveAttribute(
+      "href",
+      "/projects/demo/environments",
     );
-  });
-
-  it("asks to remove the endpoints of an environment still in use first", async () => {
-    open("/projects/demo/config", { [CONFIG]: withEnvironments() });
-
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Remove environment jane-cloud" }),
-    );
-
-    const dialog = screen.getByRole("dialog", { name: /jane-cloud is still used by 1 endpoint$/ });
-    expect(within(dialog).getByText(/demo-api › api/)).toBeVisible();
-    expect(within(dialog).getByRole("button", { name: "Remove 1 endpoint" })).toBeVisible();
-  });
-
-  it("confirms before going back to the team's looser access", async () => {
-    const { requests } = open("/projects/demo/config", {
-      [CONFIG]: withEnvironments(),
-      [ENV_WRITE]: withEnvironments(),
-    });
-
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Use the team's access for staging" }),
-    );
-    const dialog = screen.getByRole("alertdialog", {
-      name: "Use the team's access for staging?",
-    });
-    expect(within(dialog).getByText(/Your agents may change data in staging again/)).toBeVisible();
-    expect(requests.some((r) => r.method === "POST")).toBe(false);
-    await userEvent.click(within(dialog).getByRole("button", { name: "Use the team's access" }));
-
-    expect(await screen.findByText("staging is back to the team's access")).toBeVisible();
-    const post = requests.find((r) => r.method === "POST");
-    expect(await post?.json()).toEqual({
-      op: "remove_environment",
-      scope: "local",
-      name: "staging",
-    });
-  });
-
-  it("confirms before removing an endpoint", async () => {
-    const { requests } = open("/projects/demo/config", { [CONFIG]: withEnvironments() });
-
-    await userEvent.click(
-      await screen.findByRole("button", {
-        name: /Edit endpoint of demo-api › api in local: http:\/\/localhost:8000/,
-      }),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Remove endpoint" }));
-
-    const dialog = screen.getByRole("alertdialog", {
-      name: "Remove the local endpoint of demo-api › api?",
-    });
-    expect(within(dialog).getByText(/hub.json changes/)).toBeVisible();
-    expect(requests.some((r) => r.method === "POST")).toBe(false);
   });
 
   it("has no serious a11y violations with environments", async () => {

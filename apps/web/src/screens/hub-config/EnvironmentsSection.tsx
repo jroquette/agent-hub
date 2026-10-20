@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useContext, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -8,11 +8,12 @@ import {
   Dialog,
   EmptyState,
   Icon,
+  IconButton,
   PathText,
   StatusBadge,
   Tooltip,
 } from "../../components";
-import { ConfigRow, ConfigSource, Mono, NoneText, Section, useAttach } from "./parts";
+import { AskBlocked, ConfigSource, Mono, NoneText, useAttach } from "./parts";
 import { EndpointDialog } from "./EndpointDialog";
 import type { EndpointTarget } from "./EndpointDialog";
 import { EnvironmentDialog } from "./EnvironmentDialog";
@@ -29,6 +30,7 @@ import {
   isTeams,
   postEnvironmentEdit,
   refusalOf,
+  serviceKind,
   serviceLabel,
 } from "./environments";
 import type { FlowOrigin, HubConfigView, SourcedEnvironment, SourcedService } from "./environments";
@@ -110,7 +112,7 @@ type Removal =
   | { kind: "in-use"; environment: SourcedEnvironment }
   | { kind: "loosen"; environment: SourcedEnvironment };
 
-const ADD_ENVIRONMENT_ID = "ah-env-add-environment";
+export const ADD_ENVIRONMENT_ID = "ah-env-add-environment";
 
 /** After a row goes away its button is gone: focus lands on Add environment, not the page. */
 function focusAddEnvironment() {
@@ -137,6 +139,7 @@ export function EnvironmentsSection({
   const client = useQueryClient();
   const navigate = useNavigate();
   const { attach, isAttached } = useAttach();
+  const blocked = useContext(AskBlocked);
   const environments = view.environments.environments;
   const services = view.environments.services;
   const [editing, setEditing] = useState<SourcedEnvironment | null>(null);
@@ -144,13 +147,6 @@ export function EnvironmentsSection({
   const [removal, setRemoval] = useState<Removal | null>(null);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-
-  const quote = environments
-    .map(
-      (environment) =>
-        `environments.${environment.name}: access ${environment.access}${environment.production ? ", production" : ""} (${environment.source})`,
-    )
-    .join("\n");
 
   const startRemove = (environment: SourcedEnvironment) => {
     setFailure(null);
@@ -201,7 +197,7 @@ export function EnvironmentsSection({
         });
       }
       setRemoval({ kind: "environment", environment });
-      onSaved(`Removed the endpoints of ${environment.name}`, team);
+      onSaved(`Removed the addresses of ${environment.name}`, team);
     } catch (error: unknown) {
       setFailure(refusalOf(error).summary);
     } finally {
@@ -212,22 +208,14 @@ export function EnvironmentsSection({
   const servicesOf = (dir: string): SourcedService[] =>
     services.filter((service) => service.repo === dir);
 
+  const withServices = view.repos.filter((repo) => servicesOf(repo.dir).length > 0);
+  const withoutServices = view.repos.filter((repo) => servicesOf(repo.dir).length === 0);
+  const addService = (repo?: string) => {
+    void navigate(addServicePath(view.project, repo), { state: origin });
+  };
+
   return (
-    <Section
-      id="environments"
-      title="Environments"
-      askName="the environments"
-      icon="server"
-      purpose="Tell agents where your systems run and how to reach them: first the environments, then the services each repo runs there. Agents read it in AGENTS.md and their brief."
-      onAsk={() => {
-        attach({
-          id: "config:section:environments",
-          label: "Environments",
-          source: "hub.json",
-          quote: quote || "No environments declared.",
-        });
-      }}
-    >
+    <div className="ah-env-page">
       {environments.length === 0 ? (
         <EmptyState
           icon="server"
@@ -251,205 +239,216 @@ export function EnvironmentsSection({
         </EmptyState>
       ) : (
         <>
-          <div className="ah-env-subhead" style={{ marginTop: 0 }}>
-            <div>
-              <h3 className="ah-env-subtitle">
-                <span className="ah-env-step">1</span> Environments
-              </h3>
-              <p className="ah-small ah-muted" style={{ margin: 0 }}>
-                Where your systems run, and what agents may do in each.
-              </p>
+          <section className="ah-env-block" aria-labelledby="ah-env-environments">
+            <div className="ah-env-block-head">
+              <h2 className="ah-h2" id="ah-env-environments">
+                Environments <span className="ah-muted ah-env-count">{environments.length}</span>
+              </h2>
             </div>
-            <Button
-              id={ADD_ENVIRONMENT_ID}
-              icon="plus"
-              onClick={() => {
-                void navigate(addEnvironmentPath(view.project), { state: origin });
-              }}
-            >
-              Add environment
-            </Button>
-          </div>
-          <div className="ah-config-rows">
-            {environments.map((environment) => {
-              const tightened =
-                isTeams(environment) &&
-                isMine(environment) &&
-                environment.team_access !== environment.access;
-              return (
-                <ConfigRow
-                  key={environment.name}
-                  label={environment.name}
-                  labelNode={
-                    <span className="ah-env-name">
-                      <Mono>{environment.name}</Mono>
-                      {environment.production && <ProductionBadge />}
-                    </span>
-                  }
-                  source={<EnvironmentSource environment={environment} />}
-                  ask={{
-                    label: `Ask Claude to change ${environment.name}`,
-                    pressed: isAttached(`environments.${environment.name}`),
-                    onClick: () => {
-                      attach({
-                        id: `config:environments.${environment.name}`,
-                        label: `Environment ${environment.name}`,
-                        source: isMine(environment) ? "hub.local.json" : "hub.json",
-                        quote: `environments.${environment.name}: access ${environment.access}${environment.production ? ", production" : ""}`,
-                      });
-                    },
-                  }}
-                  onEdit={() => {
-                    setEditing(environment);
-                  }}
-                  editLabel="Edit"
-                  actions={
-                    isTeams(environment) && isMine(environment) ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon="undo-2"
-                        aria-label={`Use the team's access for ${environment.name}`}
-                        onClick={() => {
-                          setFailure(null);
-                          setRemoval({ kind: "loosen", environment });
-                        }}
-                      >
-                        Use team&apos;s
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon="x"
-                        aria-label={`Remove environment ${environment.name}`}
-                        onClick={() => {
-                          startRemove(environment);
-                        }}
-                      >
-                        Remove
-                      </Button>
-                    )
-                  }
-                >
-                  <span className="ah-config-cell">
-                    <AccessValue environment={environment} />
-                    {environment.description && (
-                      <span className="ah-small ah-muted">{environment.description}</span>
-                    )}
-                    {tightened && environment.team_access && (
-                      <span className="ah-small ah-muted">
-                        Team: {ACCESS_LOOK[environment.team_access].short}
-                      </span>
-                    )}
-                    <span className="ah-small">
-                      <CredentialLine environment={environment} />
-                    </span>
-                  </span>
-                </ConfigRow>
-              );
-            })}
-          </div>
-
-          <p className="ah-small ah-muted ah-env-honesty">
-            <Icon name="info" /> Scripted actions follow this access strictly. Free commands (aws,
-            psql, curl) follow it as an instruction, plus blocked words: best effort.
-          </p>
-
-          <div className="ah-env-subhead">
-            <div>
-              <h3 className="ah-env-subtitle">
-                <span className="ah-env-step">2</span> Services
-              </h3>
-              <p className="ah-small ah-muted" style={{ margin: 0 }}>
-                What each repo runs (an API, a portal, a database) and its address in each
-                environment. <Icon name="laptop" /> marks the ones set by you.
-              </p>
-            </div>
-            <Button
-              icon="plus"
-              onClick={() => {
-                void navigate(addServicePath(view.project), { state: origin });
-              }}
-            >
-              Add service
-            </Button>
-          </div>
-          {services.length === 0 && (
-            <div className="ah-env-services-empty">
-              <Icon name="server" />
-              <div className="ah-stack" style={{ gap: 4 }}>
-                <strong>No services yet</strong>
-                <span className="ah-small ah-muted">
-                  Add the API, portal or database each repo runs, with its address in{" "}
-                  {environments.map((environment) => environment.name).join(", ")}. Agents then know
-                  where to point instead of guessing hosts.
-                </span>
-              </div>
-              <Button
-                variant="primary"
-                icon="plus"
-                onClick={() => {
-                  void navigate(addServicePath(view.project), { state: origin });
-                }}
-              >
-                Add service
-              </Button>
-            </div>
-          )}
-          {services.length > 0 && (
-            <div className="ah-table-wrap ah-env-matrix-wrap">
-              <table className="ah-table ah-env-matrix">
-                <caption className="ah-env-caption">Endpoints per service and environment</caption>
+            <div className="ah-table-wrap">
+              <table className="ah-table ah-env-table">
+                <caption className="ah-sr">Environments and what agents may do</caption>
+                <colgroup>
+                  <col style={{ width: "22%" }} />
+                  <col style={{ width: "24%" }} />
+                  <col />
+                  <col style={{ width: 140 }} />
+                  <col style={{ width: 200 }} />
+                </colgroup>
                 <thead>
                   <tr>
-                    <th scope="col">Service</th>
-                    {environments.map((environment) => (
-                      <th key={environment.name} scope="col">
-                        <span className="ah-env-name">
-                          {environment.name}
-                          {environment.production && <ProductionBadge />}
-                        </span>
-                      </th>
-                    ))}
+                    <th scope="col">Environment</th>
+                    <th scope="col">What agents may do</th>
+                    <th scope="col">Secrets</th>
+                    <th scope="col">Set by</th>
+                    <th scope="col">
+                      <span className="ah-sr">Actions</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {view.repos.map((repo) => {
-                    const own = servicesOf(repo.dir);
+                  {environments.map((environment) => {
+                    const tightened =
+                      isTeams(environment) &&
+                      isMine(environment) &&
+                      environment.team_access !== environment.access;
+                    const askId = `environments.${environment.name}`;
                     return (
+                      <tr key={environment.name}>
+                        <th scope="row">
+                          <span className="ah-stack" style={{ gap: 2 }}>
+                            <span className="ah-env-name">
+                              <Mono>{environment.name}</Mono>
+                              {environment.production && <ProductionBadge />}
+                            </span>
+                            {environment.description && (
+                              <span className="ah-small ah-muted">{environment.description}</span>
+                            )}
+                          </span>
+                        </th>
+                        <td>
+                          <span className="ah-stack" style={{ gap: 2 }}>
+                            <AccessValue environment={environment} />
+                            {tightened && environment.team_access && (
+                              <span className="ah-small ah-muted">
+                                Team: {ACCESS_LOOK[environment.team_access].short}
+                              </span>
+                            )}
+                          </span>
+                        </td>
+                        <td>
+                          <CredentialLine environment={environment} />
+                        </td>
+                        <td>
+                          <EnvironmentSource environment={environment} />
+                        </td>
+                        <td>
+                          <span className="ah-env-actions">
+                            <IconButton
+                              icon={isAttached(askId) ? "check" : "message-square"}
+                              size="sm"
+                              variant="ghost"
+                              disabled={blocked !== null}
+                              label={
+                                blocked !== null
+                                  ? `Ask Claude to change ${environment.name} (unavailable: ${blocked})`
+                                  : `Ask Claude to change ${environment.name}`
+                              }
+                              onClick={() => {
+                                attach({
+                                  id: `config:${askId}`,
+                                  label: `Environment ${environment.name}`,
+                                  source: isMine(environment) ? "hub.local.json" : "hub.json",
+                                  quote: `environments.${environment.name}: access ${environment.access}${environment.production ? ", production" : ""}`,
+                                });
+                              }}
+                            />
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              icon="pencil"
+                              aria-label={`Edit: ${environment.name}`}
+                              onClick={() => {
+                                setEditing(environment);
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            {isTeams(environment) && isMine(environment) ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                icon="undo-2"
+                                aria-label={`Use the team's access for ${environment.name}`}
+                                onClick={() => {
+                                  setFailure(null);
+                                  setRemoval({ kind: "loosen", environment });
+                                }}
+                              >
+                                Use team&apos;s
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                icon="x"
+                                aria-label={`Remove environment ${environment.name}`}
+                                onClick={() => {
+                                  startRemove(environment);
+                                }}
+                              >
+                                Remove
+                              </Button>
+                            )}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="ah-small ah-muted ah-env-honesty">
+              <Icon name="info" /> agent-hub&apos;s own scripted actions follow this access
+              strictly. Commands an agent types itself (aws, psql, curl) are told to follow it, but
+              cannot always be blocked.
+            </p>
+          </section>
+
+          <section className="ah-env-block" aria-labelledby="ah-env-services">
+            <div className="ah-env-block-head">
+              <h2 className="ah-h2" id="ah-env-services">
+                Services <span className="ah-muted ah-env-count">{services.length}</span>
+              </h2>
+              {services.length > 0 && (
+                <Button
+                  icon="plus"
+                  onClick={() => {
+                    addService();
+                  }}
+                >
+                  Add service
+                </Button>
+              )}
+            </div>
+            {services.length === 0 ? (
+              <EmptyState
+                icon="server"
+                title="No services yet"
+                action={
+                  <Button
+                    variant="primary"
+                    icon="plus"
+                    onClick={() => {
+                      addService();
+                    }}
+                  >
+                    Add service
+                  </Button>
+                }
+              >
+                Add the API, portal or database each repo runs, with its address in{" "}
+                {environments.map((environment) => environment.name).join(", ")}. Agents then know
+                where to point instead of guessing hosts.
+              </EmptyState>
+            ) : (
+              <div className="ah-table-wrap ah-env-matrix-wrap">
+                <table className="ah-table ah-env-matrix">
+                  <caption className="ah-sr">Addresses per service and environment</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Service</th>
+                      {environments.map((environment) => (
+                        <th key={environment.name} scope="col">
+                          <span className="ah-env-name">
+                            {environment.name}
+                            {environment.production && <ProductionBadge />}
+                          </span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {withServices.map((repo) => (
                       <Fragment key={repo.dir}>
                         <tr className="ah-env-repo">
                           <th scope="rowgroup" colSpan={environments.length + 1}>
                             <span className="ah-env-name">
                               <Icon name="book" />
                               {repo.dir}
-                              {own.length === 0 && (
-                                <>
-                                  <span className="ah-muted">· No services yet</span>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    icon="plus"
-                                    aria-label={`Add a service to ${repo.dir}`}
-                                    onClick={() => {
-                                      void navigate(addServicePath(view.project, repo.dir), {
-                                        state: origin,
-                                      });
-                                    }}
-                                  >
-                                    Add service
-                                  </Button>
-                                </>
-                              )}
                             </span>
                           </th>
                         </tr>
-                        {own.map((service) => (
+                        {servicesOf(repo.dir).map((service) => (
                           <tr key={service.name}>
                             <th scope="row" className="ah-env-service">
                               <Mono>{service.name}</Mono>
-                              {service.kind && <span className="ah-muted"> · {service.kind}</span>}
+                              {service.kind && (
+                                <span className="ah-muted">
+                                  {" "}
+                                  · {serviceKind(service.kind)?.label ?? service.kind}
+                                </span>
+                              )}
                             </th>
                             {environments.map((environment) => {
                               const found = service.endpoints.find(
@@ -464,7 +463,7 @@ export function EnvironmentsSection({
                                       variant="ghost"
                                       icon="plus"
                                       className="ah-env-add"
-                                      aria-label={`Add endpoint for ${where} in ${environment.name}`}
+                                      aria-label={`Add address for ${where} in ${environment.name}`}
                                       onClick={() => {
                                         setEndpoint({
                                           repo: repo.dir,
@@ -473,7 +472,7 @@ export function EnvironmentsSection({
                                         });
                                       }}
                                     >
-                                      Add
+                                      Add address
                                     </Button>
                                   </td>
                                 );
@@ -484,7 +483,7 @@ export function EnvironmentsSection({
                                   <button
                                     type="button"
                                     className="ah-env-cell"
-                                    aria-label={`Edit endpoint of ${where} in ${environment.name}: ${shown}${found.source === LOCAL_FILE ? " · set by you" : ""}${note ? ` · note: ${note}` : ""}`}
+                                    aria-label={`Edit the address of ${where} in ${environment.name}: ${shown}${found.source === LOCAL_FILE ? " · set by you" : ""}${note ? ` · note: ${note}` : ""}`}
                                     onClick={() => {
                                       setEndpoint({
                                         repo: repo.dir,
@@ -508,12 +507,32 @@ export function EnvironmentsSection({
                           </tr>
                         ))}
                       </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {services.length > 0 && withoutServices.length > 0 && (
+              <p className="ah-small ah-muted ah-env-without">
+                No services yet in{" "}
+                {withoutServices.map((repo, position) => (
+                  <Fragment key={repo.dir}>
+                    {position > 0 && " · "}
+                    <button
+                      type="button"
+                      className="ah-link-button"
+                      aria-label={`Add a service to ${repo.dir}`}
+                      onClick={() => {
+                        addService(repo.dir);
+                      }}
+                    >
+                      {repo.dir}
+                    </button>
+                  </Fragment>
+                ))}
+              </p>
+            )}
+          </section>
         </>
       )}
 
@@ -592,7 +611,7 @@ export function EnvironmentsSection({
       )}
       {removal?.kind === "in-use" && (
         <Dialog
-          title={`${removal.environment.name} is still used by ${count(endpointsIn(view.environments, removal.environment.name).length, "endpoint")}`}
+          title={`${removal.environment.name} is still used by ${count(endpointsIn(view.environments, removal.environment.name).length, "address")}`}
           size="sm"
           pending={pending}
           onClose={() => {
@@ -617,7 +636,7 @@ export function EnvironmentsSection({
               >
                 {pending
                   ? "Removing…"
-                  : `Remove ${count(endpointsIn(view.environments, removal.environment.name).length, "endpoint")}`}
+                  : `Remove ${count(endpointsIn(view.environments, removal.environment.name).length, "address")}`}
               </Button>
             </>
           }
@@ -639,6 +658,6 @@ export function EnvironmentsSection({
           )}
         </Dialog>
       )}
-    </Section>
+    </div>
   );
 }

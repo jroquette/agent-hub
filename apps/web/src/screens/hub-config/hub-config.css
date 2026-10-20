@@ -331,18 +331,6 @@
   gap: 6px;
   flex-wrap: wrap;
 }
-.ah-env-subhead {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin: var(--space-5) 0 var(--space-3);
-}
-.ah-env-subtitle {
-  margin: 0 0 2px;
-  font-size: 14px;
-  font-weight: 600;
-}
 .ah-env-caption {
   position: absolute;
   width: 1px;
@@ -422,39 +410,11 @@
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
 }
-.ah-env-step {
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  margin-right: 4px;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 600;
-  vertical-align: 1px;
-}
 .ah-env-honesty {
   display: flex;
   align-items: center;
   gap: 6px;
   margin: var(--space-2) 0 0;
-}
-.ah-env-services-empty {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px dashed var(--border-control);
-  border-radius: var(--radius-lg);
-}
-.ah-env-services-empty > .ah-icon {
-  flex-shrink: 0;
-  color: var(--text-subtle);
-}
-.ah-env-services-empty > .ah-stack {
-  flex: 1;
 }
 .ah-env-details > summary {
   cursor: pointer;
@@ -736,4 +696,74 @@ button.ah-setup-step-button:focus-visible {
   border-radius: var(--radius-sm);
   background: var(--surface);
   font-size: 12px;
+}
+
+/* ---------- Environments page ---------- */
+.ah-env-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.ah-env-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.ah-env-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ah-env-block-head .ah-h2 {
+  margin: 0;
+}
+.ah-env-count {
+  font-weight: 400;
+}
+.ah-env-table {
+  table-layout: fixed;
+}
+.ah-env-table th[scope="row"],
+.ah-env-table td {
+  height: auto;
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+  vertical-align: top;
+  white-space: normal;
+  text-align: left;
+  font-weight: 400;
+  color: var(--text);
+}
+.ah-env-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+.ah-env-without {
+  margin: 0;
+}
+.ah-link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.ah-link-button:hover {
+  text-decoration: underline;
+}
+.ah-link-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Hub config's Environments row: a count and the way to the page. */
+.ah-env-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
 }

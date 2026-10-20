@@ -61,10 +61,6 @@ export interface FlowOrigin {
   returnLabel: string;
 }
 
-export function hubConfigOrigin(project: string): FlowOrigin {
-  return { returnTo: environmentsHome(project), returnLabel: "Hub configuration" };
-}
-
 /** The origin a flow was handed, when it is one of this project's pages; else the Environments
  * page. */
 export function flowOrigin(state: unknown, project: string): FlowOrigin {

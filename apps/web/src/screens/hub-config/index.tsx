@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Navigate, useLocation, useParams, useSearchParams } from "react-router";
+import { Link, Navigate, useLocation, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import { Banner, Button, Icon, ProblemError, Skeleton, Tooltip } from "../../components";
@@ -14,8 +14,7 @@ import { useAgentCapabilities } from "../sessions-list/queries";
 import { sessionControlUnavailable } from "../sessions-list/control";
 import type { DiscussReference, DiscussStarter } from "../../shell/discuss";
 import { KnowledgeProjectIndex } from "../knowledge-index";
-import { EnvironmentsSection } from "./EnvironmentsSection";
-import { hubConfigOrigin } from "./environments";
+import { count, environmentsPage } from "./environments";
 import { SavedToast, UncommittedNotice, useSaveNotices } from "./notices";
 import { LocalSettingsDialog } from "./LocalSettingsDialog";
 import { AskBlocked, ConfigRow, ConfigSource, Mono, NoneText, Section, useAttach } from "./parts";
@@ -478,15 +477,7 @@ function BlockedRow({
   );
 }
 
-function ConfigBody({
-  view,
-  onSaved,
-  onEnvironmentSaved,
-}: {
-  view: HubConfigView;
-  onSaved: () => void;
-  onEnvironmentSaved: (message: string, team: boolean) => void;
-}) {
+function ConfigBody({ view, onSaved }: { view: HubConfigView; onSaved: () => void }) {
   const [params, setParams] = useSearchParams();
   const openRepo = params.get("repo");
   const { attach, isAttached } = useAttach();
@@ -685,11 +676,39 @@ function ConfigBody({
             </div>
           </Section>
 
-          <EnvironmentsSection
-            view={view}
-            onSaved={onEnvironmentSaved}
-            origin={hubConfigOrigin(view.project)}
-          />
+          <Section
+            id="environments"
+            title="Environments"
+            askName="the environments"
+            icon="server"
+            purpose="Where your systems run, what agents may do in each, and where each repo's services live. They have their own page."
+            onAsk={askSection(
+              "environments",
+              "Environments",
+              view.environments.environments
+                .map(
+                  (environment) =>
+                    `environments.${environment.name}: access ${environment.access}${environment.production ? ", production" : ""}`,
+                )
+                .join("\n") || "No environments declared.",
+            )}
+          >
+            <div className="ah-env-summary">
+              <span>
+                {view.environments.environments.length === 0 ? (
+                  <NoneText>No environments yet</NoneText>
+                ) : (
+                  <>
+                    {count(view.environments.environments.length, "environment")} ·{" "}
+                    {count(view.environments.services.length, "service")}
+                  </>
+                )}
+              </span>
+              <Link className="ah-btn ah-btn-sm" to={environmentsPage(view.project)}>
+                Open Environments
+              </Link>
+            </div>
+          </Section>
 
           <Section
             id="tracker"
@@ -854,7 +873,6 @@ export function HubConfigScreen() {
   const onSaved = () => {
     notices.onSaved("Saved your settings");
   };
-  const onEnvironmentSaved = notices.onSaved;
   useDiscussTarget({
     key: `config:${project}`,
     project,
@@ -914,7 +932,7 @@ export function HubConfigScreen() {
     body = (
       <>
         <WhereValuesComeFrom hubRepo={view.hub_repo} localSet={localSet} />
-        <ConfigBody view={view} onSaved={onSaved} onEnvironmentSaved={onEnvironmentSaved} />
+        <ConfigBody view={view} onSaved={onSaved} />
       </>
     );
   }

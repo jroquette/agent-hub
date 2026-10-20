@@ -112,8 +112,8 @@ export function EndpointDialog({
         onClose();
         onSaved(
           remove
-            ? `Removed the ${environment} endpoint of ${label}`
-            : `${editing ? "Saved" : "Added"} the ${environment} endpoint of ${label}`,
+            ? `Removed the ${environment} address of ${label}`
+            : `${editing ? "Saved" : "Added"} the ${environment} address of ${label}`,
           team,
         );
       })
@@ -126,8 +126,8 @@ export function EndpointDialog({
   if (confirming)
     return (
       <ConfirmDialog
-        title={`Remove the ${environment} endpoint of ${serviceLabel(repo, serviceName)}?`}
-        confirmLabel={pending ? "Removing…" : "Remove endpoint"}
+        title={`Remove the ${environment} address of ${serviceLabel(repo, serviceName)}?`}
+        confirmLabel={pending ? "Removing…" : "Remove address"}
         pending={pending}
         consequences={[
           `Agents stop seeing where ${serviceLabel(repo, serviceName)} runs in ${environment}.`,
@@ -149,7 +149,7 @@ export function EndpointDialog({
     );
 
   const title = fixed
-    ? `Edit endpoint · ${serviceLabel(repo, serviceName)} · ${environment}`
+    ? `Address of ${serviceLabel(repo, serviceName)} in ${environment}`
     : "Add address";
 
   return (
@@ -173,7 +173,7 @@ export function EndpointDialog({
                 setConfirming(true);
               }}
             >
-              Remove endpoint
+              Remove address
             </Button>
           )}
           <Button disabled={pending} onClick={onClose}>
