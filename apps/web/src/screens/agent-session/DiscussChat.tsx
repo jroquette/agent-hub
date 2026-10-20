@@ -3,10 +3,12 @@ import "./agent-session.css";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { Skeleton } from "../../components";
+import { ProblemError, Skeleton } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { CostMeter } from "./CostMeter";
+import { liveActivity, turnSteps } from "./liveActivity";
+import { LiveActivityBar, StepsPanel } from "./LiveActivityBar";
 import { OldestPendingContext } from "./PermissionCard";
 import {
   isTerminal,
@@ -65,6 +67,7 @@ export function DiscussChatView({
   const commands = useAgentSessionCommands(agentSessionId);
   const slashOptions = useSlashOptions(snapshot.data?.project, transcript.state.slashCommands);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const [stepsOpen, setStepsOpen] = useState(false);
   const follow = useStickToBottom(scroller);
   const session = snapshot.data;
   const { state } = transcript;
@@ -76,10 +79,21 @@ export function DiscussChatView({
   }, [gone, onGone]);
   if (gone) return null;
   if (problem) {
+    const known = problem instanceof ApiProblem ? problem : null;
     return (
-      <p className="ah-small as-error" role="alert" style={{ padding: 12 }}>
-        {problem.title}
-      </p>
+      <div style={{ padding: 12 }}>
+        <ProblemError
+          compact
+          title="Could not load this conversation"
+          detail={known?.detail ?? (problem instanceof Error ? problem.message : undefined)}
+          status={known?.status}
+          type={known?.type}
+          onRetry={() => {
+            void snapshot.refetch();
+            transcript.retry();
+          }}
+        />
+      </div>
     );
   }
   if (!session || (transcript.loading && state.lastSeq === 0)) {
@@ -91,6 +105,8 @@ export function DiscussChatView({
   }
 
   const status = state.status ?? session.status;
+  const activity = liveActivity(state);
+  const steps = turnSteps(state);
   const ended = isTerminal(status);
   const endReason = state.endReason ?? session.end_reason;
   const pending = pendingPermissions(state).filter(
@@ -112,17 +128,34 @@ export function DiscussChatView({
       {transcript.streaming && (
         <ReconnectBanner connected={transcript.health.closedSince === null} />
       )}
-      <TodoList items={state.todos} />
       <OldestPendingContext.Provider value={pending[0]}>
         <Transcript
           state={state}
           onAnswerPermission={ended ? undefined : commands.answer}
           scrollerRef={setScroller}
           follow={follow}
+          sidePanel={
+            stepsOpen && steps.end !== null ? (
+              <StepsPanel
+                steps={steps}
+                onClose={() => {
+                  setStepsOpen(false);
+                }}
+              />
+            ) : undefined
+          }
         />
       </OldestPendingContext.Provider>
       <footer className="as-footer">
         <div className="as-column">
+          <LiveActivityBar
+            activity={activity}
+            open={stepsOpen}
+            onToggle={() => {
+              setStepsOpen(!stepsOpen);
+            }}
+          />
+          <TodoList items={state.todos} />
           <Composer
             status={status}
             mode={state.mode ?? session.mode}
