@@ -572,6 +572,73 @@ def test_refolds_only_changed_session_when_store_grows(
     assert changed.last_activity_at == NOW - timedelta(minutes=1)
 
 
+def _quiet_start(at: datetime) -> Event:
+    # A session start leaves no tool call open, so the session's status follows the clock.
+    return an_event(session="s-quiet", type="session.start", timestamp=at)
+
+
+def test_reuses_session_fold_when_clock_moves_within_its_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folded: list[str] = []
+    fold = event_read_models.fold_session_with_problems
+
+    def counting_fold(events: Sequence[StoredEvent], **options: Any) -> FoldedSession:
+        folded.append(events[0].event.session)
+        return fold(events, **options)
+
+    monkeypatch.setattr(event_read_models, "fold_session_with_problems", counting_fold)
+    store = InMemoryEventStore()
+    store.append([_quiet_start(NOW - timedelta(minutes=10))])
+    service, clock = _service(store, NOW)
+    before = service.get_session("s-quiet")
+    folded.clear()
+
+    for seconds in (1, 2, 60, 300):
+        clock.now = NOW + timedelta(seconds=seconds)
+        assert service.get_session("s-quiet") == before
+
+    assert folded == []
+    assert before.status == SessionStatus.IDLE
+
+
+def test_refolds_session_when_clock_crosses_its_end_threshold() -> None:
+    quiet = InMemoryEventStore()
+    quiet.append([_quiet_start(NOW - timedelta(minutes=10))])
+    service, clock = _service(quiet, NOW)
+    assert service.get_session("s-quiet").status == SessionStatus.IDLE
+
+    clock.now = NOW + timedelta(minutes=20)
+    ended = service.get_session("s-quiet")
+
+    assert ended.status == SessionStatus.ENDED
+    assert ended.end_inferred
+
+
+def test_reuses_tile_fields_when_clock_moves_long_after_last_event(
+    store: InMemoryEventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every session's last event is more than the failing notice's window before ``later``.
+    later = SCENARIO_START + timedelta(hours=6)
+    service, clock = _service(store, later)
+    calls: list[str] = []
+    real = event_read_models.tile_fields
+
+    def counting(session: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(session.id)
+        return real(session, *args, **kwargs)
+
+    monkeypatch.setattr(event_read_models, "tile_fields", counting)
+    first = service.list_sessions(SessionFilter())
+    calls.clear()
+
+    clock.now = later + timedelta(seconds=5)
+    again = service.list_sessions(SessionFilter())
+
+    assert calls == []
+    assert again == first
+
+
 def test_pages_search_without_repeats_when_session_ids_at_cap() -> None:
     store = InMemoryEventStore()
     ids = [f"{index}" + "s" * (MAX_ID_CHARS - 1) for index in range(5)]
