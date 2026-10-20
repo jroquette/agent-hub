@@ -547,6 +547,12 @@ describe("reduceTranscript (init-commands)", () => {
     ).toEqual(["/compact", "/review", "/feature"]);
   });
 
+  it("lists the subagents last, as /agent-name", () => {
+    expect(
+      init({ slash_commands: ["compact"], skills: ["fix"], agents: ["research", 7, "Explore"] }),
+    ).toEqual(["/compact", "/fix", "/agent-research", "/agent-Explore"]);
+  });
+
   it("drops what is not a string, empty or over 100 characters", () => {
     const at = "a".repeat(100);
     const over = "b".repeat(101);

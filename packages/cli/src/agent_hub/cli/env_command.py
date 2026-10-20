@@ -89,6 +89,15 @@ Local = Annotated[
 Description = Annotated[
     str | None, typer.Option("--description", help="At most 80 characters, plain text.")
 ]
+EnvFile = Annotated[
+    str | None,
+    typer.Option(
+        "--env-file",
+        metavar="PATH",
+        help="A dotenv file relative to the folder holding the hub and its repos; only actions"
+        " read it.",
+    ),
+]
 Repo = Annotated[str, typer.Argument(metavar="REPO", help="The repo's dir in hub.json.")]
 Service = Annotated[str, typer.Argument(metavar="SERVICE", help="The service's name.")]
 
@@ -156,6 +165,7 @@ def add_command(
         list[str] | None,
         typer.Option("--credential-env", help="A variable name holding a credential; repeatable."),
     ] = None,
+    env_file: EnvFile = None,
     local: Local = False,
 ) -> None:
     """Declare a new environment."""
@@ -169,6 +179,8 @@ def add_command(
         credentials["aws_profile"] = aws_profile
     if credential_env:
         credentials["env"] = list(credential_env)
+    if env_file is not None:
+        credentials["env_file"] = env_file
     if credentials:
         entry["credentials"] = credentials
 
@@ -199,6 +211,7 @@ def set_command(
         typer.Option("--production/--no-production", help="Set or clear the production flag."),
     ] = None,
     description: Description = None,
+    env_file: EnvFile = None,
     local: Local = False,
 ) -> None:
     """Change an environment; with --local on a hub.json one, only a stricter access."""
@@ -209,9 +222,13 @@ def set_command(
         changes["production"] = True if production else None
     if description is not None:
         changes["description"] = description
-    if not changes:
+    credentials: dict[str, JsonValue | None] = {}
+    if env_file is not None:
+        credentials["env_file"] = env_file
+    if not changes and not credentials:
         context.fail(
-            "nothing to change: give --access, --production/--no-production or --description"
+            "nothing to change: give --access, --production/--no-production, --description"
+            " or --env-file"
         )
 
     def edit(document: Document, files: _Files) -> Document | EditRefusal:
@@ -221,6 +238,7 @@ def set_command(
             changes,
             file=_file(is_local=local),
             may_create=local and name in files.config.environments,
+            credentials=credentials,
         )
 
     _write(edit, is_local=local, action=f"updated environment {name}", environment=name)

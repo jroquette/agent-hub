@@ -147,7 +147,9 @@ def test_passes_session_flags_to_implement_node_when_given(
         "--model",
         "opus",
     ]
-    assert argv[argv.index("--settings") + 1] == '{"effortLevel": "high"}'
+    settings = argv[argv.index("--settings") + 1]
+    assert settings.endswith("/.agent-runs/session-settings/high.json")
+    assert json.loads(Path(settings).read_text())["effortLevel"] == "high"
     picked = records(run_workspace.workspace.hub)[0]
     assert (picked["budget"], picked["max_turns"], picked["model"]) == (1.5, 7, "opus")
 

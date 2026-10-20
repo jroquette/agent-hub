@@ -86,6 +86,33 @@ def test_lists_hub_repo_and_worktree_when_layout_present() -> None:
     assert listing.view().warnings == ()
 
 
+def test_gives_repo_and_worktree_hub_plugins_when_hub_has_them() -> None:
+    plugins = f"{HUB}/plugin"
+    tree = FakeTree(
+        _layout(
+            **{
+                plugins: ["hub-workflow", "notes", "escape"],
+                f"{plugins}/hub-workflow": [".claude-plugin", "skills"],
+                f"{plugins}/notes": ["skills"],
+                f"{plugins}/escape": [".claude-plugin"],
+            }
+        ),
+        links={f"{plugins}/escape": "/etc"},
+    )
+
+    listing = _list(tree)
+
+    assert [entry.plugin_dirs for entry in listing.entries] == [
+        (),
+        (f"{plugins}/hub-workflow",),
+        (f"{plugins}/hub-workflow",),
+    ]
+
+
+def test_gives_no_plugins_when_hub_has_none() -> None:
+    assert [entry.plugin_dirs for entry in _list(FakeTree(_layout())).entries] == [(), (), ()]
+
+
 def test_drops_worktree_when_symlink_leaves_root() -> None:
     tree = FakeTree(
         _layout(**{WORKTREES: ["agh-7-collector", "escape"]}),

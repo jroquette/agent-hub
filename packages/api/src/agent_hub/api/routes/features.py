@@ -12,6 +12,7 @@ from agent_hub.api.dependencies import (
     OwnerSignOffDep,
 )
 from agent_hub.api.feature_names import FeatureName, FeatureNameBody, FeatureNamesView
+from agent_hub.api.owner_signoff_files import OwnerSignOffBody
 from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES, ProjectParam
 from agent_hub.core.features.feature_view import EvalRecord, FeatureDetail, FeatureView
 from agent_hub.core.features.ticket_view import FeatureTickets
@@ -46,13 +47,22 @@ def get_feature_tickets(
 
 @router.post("/features/{project}/{slug}/owner-signoff", status_code=201)
 def sign_off_owner_steps(
-    project: NamePath, slug: NamePath, sign_off: OwnerSignOffDep
+    project: NamePath,
+    slug: NamePath,
+    *,
+    sign_off: OwnerSignOffDep,
+    body: OwnerSignOffBody | None = None,
 ) -> EvalRecord:
-    """The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over
-    the ACs the Acceptance step waits on; 409 with a one-line reason, writing nothing, when none
-    waits or the feature lists no AC, when one of them has a NO-SHIP as its latest eval, when the
-    acceptance eval is undated or future-dated, or when not every eval was read."""
-    return sign_off(project, slug)
+    """The owner settles the owner steps. Without a body: writes an ``owner-signoff`` SHIP eval
+    over the ACs the Acceptance step waits on; 409 with a one-line reason, writing nothing, when
+    none waits or the feature lists no AC, when one of them has a NO-SHIP as its latest eval, when
+    the acceptance eval is undated or future-dated, or when not every eval was read. With
+    ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes a SHIP
+    over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words. A ``delivery``
+    naming the acceptance eval follows the no-body rule for its ACs and refusals."""
+    if body is None:
+        return sign_off(project, slug)
+    return sign_off(project, slug, delivery=body.delivery, decision=body.decision, note=body.note)
 
 
 @router.post("/features/{project}/{slug}/acs/{ac}/check-runs")

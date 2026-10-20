@@ -244,3 +244,38 @@ def test_rejects_free_text_when_break_or_bidi_given(
     assert getattr(model.model_validate({**base, key: "a stack - plain"}), key) == (
         "a stack - plain"
     )
+
+
+def test_loads_env_file_when_path_relative() -> None:
+    # AC-350.43: a dotenv file relative to the workspace, on an environment or an endpoint.
+    environment = Environment.model_validate(
+        {"access": "write", "credentials": {"env_file": "demo-api/environment/.env.test"}}
+    )
+    endpoint = Endpoint.model_validate(
+        {"url": "https://api.example.com", "credentials": {"env_file": ".env.demo"}}
+    )
+
+    assert environment.credentials is not None
+    assert environment.credentials.env_file == "demo-api/environment/.env.test"
+    assert endpoint.credentials is not None
+    assert endpoint.credentials.env_file == ".env.demo"
+    assert Environment.model_validate({"access": "read"}).credentials is None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("/etc/x", id="absolute"),
+        pytest.param("../x", id="parent"),
+        pytest.param("demo-api/../../x", id="inner_parent"),
+        pytest.param("~/x", id="home"),
+        pytest.param("a" * 201, id="201_chars"),
+        pytest.param(AWS_KEY, id="aws_key"),
+    ],
+)
+def test_rejects_env_file_when_path_unsafe(path: str) -> None:
+    # AC-350.43: one problem each, at its path, the value not echoed.
+    messages = error_messages(Environment, {"access": "write", "credentials": {"env_file": path}})
+
+    assert [loc for loc, _ in messages] == [("credentials", "env_file")]
+    assert all(path not in message for _, message in messages)

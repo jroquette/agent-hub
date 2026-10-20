@@ -16,6 +16,7 @@ import {
   type AgentTranscript,
 } from "./queries";
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
+import { useSlashOptions } from "./SlashMenu";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
 import { pendingPermissions, resumable } from "./model";
@@ -58,6 +59,7 @@ export function DiscussChatView({
   const snapshot = useAgentSession(agentSessionId);
   const capabilities = useCapabilities();
   const commands = useAgentSessionCommands(agentSessionId);
+  const slashOptions = useSlashOptions(snapshot.data?.project, transcript.state.slashCommands);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const follow = useStickToBottom(scroller);
   const session = snapshot.data;
@@ -123,7 +125,7 @@ export function DiscussChatView({
             onSettings={commands.settings}
             onSending={follow.pin}
             maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
-            commands={state.slashCommands}
+            commands={slashOptions}
             draftId={agentSessionId}
             focusOnOpen={pending.length === 0}
             resumable={resumable(session, endReason)}

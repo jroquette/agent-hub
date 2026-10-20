@@ -378,7 +378,7 @@ class TestDryRun:
             "https://linear.app/demo/issue/DEM-1",
             json.dumps(RUN_DESCRIPTION)[1:-1],
             " --output-format json --max-turns 40 --max-budget-usd 3 --model sonnet ",
-            """ --settings '{"effortLevel": "medium"}' """,
+            f" --settings {hub}/.agent-runs/session-settings/medium.json ",
             f" --add-dir {hub} {web} --permission-mode dontAsk --allowedTools Read Edit ",
             " --disallowedTools mcp__Linear mcp__claude_ai_Linear mcp__Linear__",
             " 'Bash(make:*)' 'Bash(ls:*)' ",
@@ -409,6 +409,7 @@ class TestDryRun:
         assert RUN_ID.fullmatch(comment.group(1))
         assert len(lines) == 8
         assert run_workspace.calls("claude") == []
+        assert not os.path.exists(f"{hub}/.agent-runs/session-settings")
 
     @pytest.mark.parametrize(
         ("models", "options", "model"),
@@ -2628,7 +2629,8 @@ def every_text(run_workspace: Any, result: Result) -> str:
     texts = [result.stdout, result.stderr]
     texts += [path.read_text() for path in sorted(run_workspace.logs.glob("*.jsonl"))]
     for folder in (workspace.hub / ".agent-runs", workspace.hub / "brain" / "_inbox" / "runs"):
-        texts += [path.read_text() for path in sorted(folder.glob("*"))]
+        # Every file, the session settings folder's included (AGH-278).
+        texts += [path.read_text() for path in sorted(folder.rglob("*")) if path.is_file()]
     return "\n".join(texts)
 
 
@@ -3320,3 +3322,162 @@ class TestEvents:
         assert "not-a-folder" in lines[0]
         assert len(run_workspace.calls("gh")) >= 1
         assert (workspace.hub / ".agent-runs").is_dir()
+
+
+@pytest.fixture
+def hooks_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake ``claude`` runs the hooks of its ``--settings`` file; the sensor posts nowhere."""
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "hooks")
+    monkeypatch.setenv("AGENT_HUB_WEB_URL", "http://127.0.0.1:9")
+
+
+def set_blocked_words(hub: Any, words: list[str]) -> None:
+    document = json.loads((hub / "hub.json").read_text())
+    document.setdefault("guard", {})["blocked_words"] = words
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+
+
+def hook_run(run_workspace: Any, script: str) -> dict[str, Any]:
+    """The fake session's one run of the hub hook ``script``, checked to be the hub's own copy."""
+    workspace = run_workspace.workspace
+    (call,) = run_workspace.calls("claude")
+    assert call["argv"].count("--settings") == 1
+    assert call["cwd"] == str(worktree_of(workspace))
+    (hooks,) = run_workspace.calls("hooks")
+    assert set(hooks["settings"]) == {"effortLevel", "hooks"}
+    assert hooks["cwd"] == str(worktree_of(workspace))
+    (found,) = [run for run in hooks["runs"] if run["command"].endswith(f'{script}"')]
+    assert found["command"].startswith(f'python3 "{os.path.realpath(workspace.hub)}/')
+    return found
+
+
+def hook_decision(run: dict[str, Any]) -> tuple[str, str]:
+    output = json.loads(run["stdout"])["hookSpecificOutput"]
+    return output["permissionDecision"], output["permissionDecisionReason"]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestHubHooks:
+    """AGH-278: the implementing session runs in the worktree under the hub's hooks."""
+
+    @pytest.mark.parametrize("live_run", [True, False], ids=["live", "dry"])
+    def test_refuses_run_without_claude_when_settings_folder_is_a_link(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+        live_run: bool,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (workspace.hub / ".agent-runs").mkdir(exist_ok=True)
+        (workspace.hub / ".agent-runs" / "session-settings").symlink_to(elsewhere)
+        flags = ("--live",) if live_run else ()
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api", *flags)
+
+        assert result.exit_code == 1, result.output
+        (line,) = result.stderr.splitlines()
+        assert line.startswith("hub run: cannot wire the hub's hooks: cannot write "), line
+        assert "session-settings" in line
+        assert list(elsewhere.iterdir()) == []
+        assert run_workspace.calls("claude") == []
+        assert run_tracker.calls == []
+        assert not worktree_of(workspace).exists()
+
+    @pytest.mark.usefixtures("hooks_mode")
+    def test_denies_blocked_word_when_live_session_runs_hub_guard(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        set_blocked_words(workspace.hub, ["prod"])
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        decision, reason = hook_decision(hook_run(run_workspace, "guard.py"))
+        assert decision == "deny"
+        assert "prod" in reason
+
+    @pytest.mark.usefixtures("hooks_mode")
+    def test_denies_push_to_main_when_live_session_runs_hub_guard(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_BASH", "git push origin main")
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        decision, reason = hook_decision(hook_run(run_workspace, "guard.py"))
+        assert decision == "deny"
+        assert "pushing to main" in reason
+
+    @pytest.mark.usefixtures("hooks_mode")
+    def test_gives_hub_brief_when_live_session_runs_session_start_hook(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        with (workspace.hub / "brain" / "now.md").open("a") as now:
+            now.write("AGH-278 brief marker\n")
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        run = hook_run(run_workspace, "session_start.py")
+        assert run["code"] == 0
+        brief = json.loads(run["stdout"])["hookSpecificOutput"]["additionalContext"]
+        assert brief.startswith("# Brief (fallback: hub brief no uv)")
+        assert "AGH-278 brief marker" in brief
+
+    @pytest.mark.parametrize("live_run", [True, False], ids=["live", "dry"])
+    @pytest.mark.parametrize(
+        "missing", [".claude/settings.json", "plugin/hub-workflow/hooks/guard.py"]
+    )
+    def test_refuses_run_without_claude_when_hub_hooks_missing(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        missing: str,
+        live_run: bool,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        (workspace.hub / missing).unlink()
+        flags = ("--live",) if live_run else ()
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api", *flags)
+
+        assert result.exit_code == 1, result.output
+        (line,) = result.stderr.splitlines()
+        assert line.startswith("hub run: cannot wire the hub's hooks: "), line
+        assert missing in line
+        assert run_workspace.calls("claude") == []
+        assert run_tracker.calls == []
+        assert not worktree_of(workspace).exists()

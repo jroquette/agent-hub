@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
@@ -16,21 +16,29 @@ import {
   ProblemError,
   SegmentedControl,
   StatusBadge,
+  Time,
   Tooltip,
   type Status,
 } from "../../components";
-import { ApiProblem, apiCommand, apiKey, useApi } from "../../lib/api";
+import { ApiProblem, apiCommand, apiKey, apiPost, useApi } from "../../lib/api";
 import { brainRoute } from "../../lib/brainLinks";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtDateTime } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
+import { readStored, writeStored } from "../../lib/storage";
 import { useDiscuss, type DiscussReference } from "../../shell/discuss";
 import { NoteView } from "../brain/NoteView";
 import { VERDICT_STATUS } from "../features/parts";
 import { agentSessionHref } from "../sessions-list/control";
+import { splitTitle } from "./PlanningView";
+import { passOf } from "./CriteriaTab";
+import { AcList } from "./TicketsTab";
 import { useCreateAgentSession, useHubSessionStart } from "../sessions-list/queries";
 
 type EvalRecord = components["schemas"]["EvalRecord"];
+type TicketRow = components["schemas"]["TicketRow"];
+type AcRow = components["schemas"]["AcRow"];
+type OwnerDecision = NonNullable<components["schemas"]["OwnerSignOffBody"]["decision"]>;
 type AgentSessionStatus = components["schemas"]["AgentSessionStatus"];
 
 function Scope({ acs }: { acs: EvalRecord["acs"] }) {
@@ -109,6 +117,83 @@ export function pickEval(
     return dated.reduce((a, b) => ((b.evaluated_at ?? "") > (a.evaluated_at ?? "") ? b : a));
   }
   return evals.at(-1);
+}
+
+/** Whether two evals name some AC or ticket in common (`all` names every AC). */
+function overlaps(a: EvalRecord, b: EvalRecord): boolean {
+  if (a.acs === "all" || b.acs === "all") return true;
+  const acs = b.acs;
+  return a.acs.some((ac) => acs.includes(ac)) || a.tickets.some((t) => b.tickets.includes(t));
+}
+
+/** An eval the owner wrote from the app: a sign-off (SHIP) or "more work needed" (NO-SHIP). */
+const isOwnerDecision = (e: EvalRecord) =>
+  e.provenance === "owner" && (e.verdict === "SHIP" || e.verdict === "NO-SHIP") && !e.problem;
+
+/**
+ * The SHIP-WITH-OWNER-STEPS evals the owner settled afterwards, each with the owner's eval that
+ * settled it: a sign-off (SHIP, the steps are done) or a "more work needed" (NO-SHIP). The files
+ * stay as written (evals are never edited); the first owner decision after an eval that names
+ * some of its ACs or tickets settles it, so it reads as handled, not as waiting forever.
+ */
+export function settledOwnerSteps(evals: readonly EvalRecord[]): Map<string, EvalRecord> {
+  const time = (e: EvalRecord) => (e.evaluated_at ? Date.parse(e.evaluated_at) : Number.NaN);
+  const decisions = evals.filter((e) => isOwnerDecision(e) && !Number.isNaN(time(e)));
+  const settled = new Map<string, EvalRecord>();
+  for (const e of evals) {
+    if (e.verdict !== "SHIP-WITH-OWNER-STEPS" || e.problem) continue;
+    const at = time(e);
+    // An undated eval is older than any owner decision: the decision is always dated.
+    const by = decisions
+      .filter((s) => (Number.isNaN(at) || time(s) > at) && overlaps(e, s))
+      .sort((a, b) => time(a) - time(b))[0];
+    if (by) settled.set(e.path, by);
+  }
+  return settled;
+}
+
+/** The verdict of an eval as it reads now: settled owner steps, or a run a newer one replaced. */
+function VerdictBadge({
+  record,
+  settledBy,
+  supersededBy,
+}: {
+  record: EvalRecord;
+  settledBy?: EvalRecord | undefined;
+  /** The newer run of the same scope that decides its ACs now. */
+  supersededBy?: string | undefined;
+}) {
+  if (!record.verdict) return null;
+  if (settledBy) {
+    const done = settledBy.verdict === "SHIP";
+    return (
+      <Tooltip
+        label={
+          done
+            ? `The eval said ${record.verdict}; you signed the owner steps off in ${settledBy.delivery}.`
+            : `The eval said ${record.verdict}; you found more work is needed (${settledBy.delivery}). Evaluate again once it is done.`
+        }
+      >
+        <span className="ah-row" style={{ gap: 6 }}>
+          <StatusBadge status={done ? "done" : "failed"} label={done ? "SHIP" : "NO-SHIP"} />
+          <span className="ah-small ah-muted">
+            {done ? "owner steps signed off" : "you found more work"}
+          </span>
+        </span>
+      </Tooltip>
+    );
+  }
+  if (supersededBy && record.verdict === "SHIP-WITH-OWNER-STEPS") {
+    return (
+      <Tooltip label={`${supersededBy} evaluated this scope again and decides its ACs now.`}>
+        <span className="ah-row" style={{ gap: 6 }}>
+          <StatusBadge status="idle" label={record.verdict} />
+          <span className="ah-small ah-muted">replaced by {supersededBy}</span>
+        </span>
+      </Tooltip>
+    );
+  }
+  return <StatusBadge status={VERDICT_STATUS[record.verdict]} label={record.verdict} />;
 }
 
 /** One eval as a Discuss reference: its verdict and the scope it evaluated. */
@@ -486,6 +571,170 @@ export function OwnerSignOff({
   );
 }
 
+/* ---------- The owner's decision on one eval ---------- */
+
+const DECISION: Record<OwnerDecision, { action: string; title: string; detail: string }> = {
+  done: {
+    action: "Mark owner steps done",
+    title: "Mark the owner steps done",
+    detail: "Writes an owner sign-off eval (SHIP) over its waiting ACs. This eval is kept.",
+  },
+  more_work: {
+    action: "Needs more work",
+    title: "Record that more work is needed",
+    detail:
+      "Writes an owner eval (NO-SHIP) over its waiting ACs: they stay open until the next eval.",
+  },
+};
+
+/**
+ * The latest eval of a scope waits on owner steps no one settled: a "Waiting on you" callout
+ * under its row (principle 2), where the owner says the steps are done or that more work is
+ * needed, with an optional note. The same banner as the page's owner sign-off.
+ */
+function OwnerStepsCallout({
+  project,
+  slug,
+  record,
+  scope,
+  label,
+  ownerAcs,
+  onShow,
+}: {
+  project: string;
+  slug: string;
+  record: EvalRecord;
+  /** The ticket (or the whole feature) the eval is listed under. */
+  scope: string;
+  /** How the eval reads in the table ("Eval 1"). */
+  label: string;
+  /** The eval's ACs that are manual owner steps, to name them. */
+  ownerAcs: readonly string[];
+  onShow: (delivery: string) => void;
+}) {
+  const client = useQueryClient();
+  const formId = useId();
+  const [decision, setDecision] = useState<OwnerDecision | null>(null);
+  const [note, setNote] = useState("");
+  const path = { path: { project, slug } };
+  const settle = useMutation<EvalRecord, ApiProblem, OwnerDecision>({
+    mutationFn: (chosen) =>
+      apiPost(
+        "/api/v1/features/{project}/{slug}/owner-signoff",
+        { delivery: record.delivery, decision: chosen, note: note.trim() || null },
+        path,
+      ),
+    onSuccess: (written) => {
+      onShow(written.delivery);
+      setDecision(null);
+      for (const key of [
+        apiKey("/api/v1/features"),
+        apiKey("/api/v1/features/{project}/{slug}", path),
+        apiKey("/api/v1/features/{project}/{slug}/tickets", path),
+      ]) {
+        void client.invalidateQueries({ queryKey: key });
+      }
+    },
+  });
+  const choose = (chosen: OwnerDecision) => (
+    <Button
+      size="sm"
+      variant={chosen === "done" ? "primary" : "default"}
+      icon={chosen === "done" ? "check" : "rotate-ccw"}
+      onClick={() => {
+        setDecision(chosen);
+      }}
+    >
+      {DECISION[chosen].action}
+    </Button>
+  );
+  const action = decision ? (
+    <span className="ah-row" style={{ gap: 8, alignSelf: "flex-end" }}>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          setDecision(null);
+        }}
+      >
+        Cancel
+      </Button>
+      <Button
+        size="sm"
+        variant="primary"
+        type="submit"
+        form={formId}
+        icon={decision === "done" ? "check" : "rotate-ccw"}
+        disabled={settle.isPending}
+      >
+        {settle.isPending ? "Saving…" : DECISION[decision].action}
+      </Button>
+    </span>
+  ) : (
+    <span className="ah-row" style={{ gap: 8 }}>
+      {choose("more_work")}
+      {choose("done")}
+    </span>
+  );
+  return (
+    <Banner tone="warning" boxed icon="hand" action={action}>
+      {decision ? (
+        <form
+          id={formId}
+          className="ah-eval-decision ah-stack"
+          aria-label={`${DECISION[decision].title}: ${scope} · ${label}`}
+          onSubmit={(event) => {
+            event.preventDefault();
+            settle.mutate(decision);
+          }}
+        >
+          <span className="ah-stack" style={{ gap: 2 }}>
+            <b>{DECISION[decision].title}</b>
+            <span className="ah-small ah-muted">{DECISION[decision].detail}</span>
+          </span>
+          <label className="ah-stack ah-small" style={{ gap: 4 }}>
+            <span>Note (optional)</span>
+            <textarea
+              className="ah-input ah-eval-note"
+              rows={2}
+              maxLength={2000}
+              value={note}
+              placeholder={decision === "done" ? "What you did" : "What is still left to do"}
+              onChange={(event) => {
+                setNote(event.target.value);
+              }}
+            />
+          </label>
+          {settle.error && (
+            <ProblemError
+              compact
+              title="Could not record your decision"
+              detail={settle.error.detail ?? settle.error.title}
+              status={settle.error.status || undefined}
+            />
+          )}
+        </form>
+      ) : (
+        <span className="ah-stack" style={{ gap: 2 }}>
+          <span>
+            <b>Waiting on you</b>
+            <span className="ah-muted">
+              {" "}
+              · {scope} {label} passed with owner steps. Did you do them?
+            </span>
+          </span>
+          {ownerAcs.length > 0 && (
+            <span className="ah-small ah-muted">
+              Owner step{ownerAcs.length === 1 ? "" : "s"}:{" "}
+              <span className="ah-mono">{ownerAcs.join(", ")}</span>
+            </span>
+          )}
+        </span>
+      )}
+    </Banner>
+  );
+}
+
 /* ---------- The selected eval ---------- */
 
 /** A frontmatter time as the app writes times; a bare date (no time) stays as it is. */
@@ -497,11 +746,14 @@ function EvalCard({
   project,
   record,
   named,
+  settledBy,
 }: {
   project: string;
   record: EvalRecord;
   /** Name the delivery: there are several evals to tell apart. */
   named: boolean;
+  /** The owner's sign-off that settled this eval's owner steps, if any. */
+  settledBy?: EvalRecord | undefined;
 }) {
   const { addReference, references } = useDiscuss();
   const { tz } = usePreferences();
@@ -513,9 +765,7 @@ function EvalCard({
       aria-label={`Eval ${record.delivery}`}
     >
       <div className="ah-row ah-wrap" style={{ gap: 10 }}>
-        {record.verdict && (
-          <StatusBadge status={VERDICT_STATUS[record.verdict]} label={record.verdict} />
-        )}
+        <VerdictBadge record={record} settledBy={settledBy} />
         {named && <b className="ah-mono">{deliveryLabel(record)}</b>}
         <span className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 6 }}>
           {[
@@ -584,6 +834,109 @@ export interface EvalTabProps {
   /** The delivery shown below the list (`pickEval`). */
   selected: EvalRecord | undefined;
   onSelect: (delivery: string) => void;
+  /** The feature's tickets as the Tickets tab reads them: each group's title. */
+  ticketRows?: readonly TicketRow[] | undefined;
+  /** The feature's ACs, for each AC's text and status in an eval's AC list. */
+  acRows?: readonly AcRow[] | undefined;
+}
+
+/** What a table row shows besides the eval itself. */
+interface RowFacts {
+  /** "Eval 3", "Owner sign-off". */
+  label: string;
+  /** The newest agent eval of its scope, when there are several. */
+  current: boolean;
+  /** The label of the newer eval of its scope that decides its ACs now. */
+  supersededBy: string | undefined;
+}
+
+/** Whether the evals list is folded, kept on this machine. */
+const LIST_KEY = "agent-hub:eval-list-open";
+
+function readListOpen(): boolean {
+  return readStored(LIST_KEY) !== "false";
+}
+
+function writeListOpen(open: boolean) {
+  writeStored(LIST_KEY, String(open));
+}
+
+/** The AC ids an eval names, `all` read as every AC of the feature. */
+function evalAcs(e: EvalRecord, allAcs: readonly string[]): readonly string[] {
+  return e.acs === "all" ? allAcs : e.acs;
+}
+
+/**
+ * One scope's evals as the table reads them: each one's label, the agent evals newest first, the
+ * newest of them, and that one when it waits on owner steps no owner decision settled yet.
+ */
+function groupFacts(evals: readonly EvalRecord[], settled: ReadonlyMap<string, EvalRecord>) {
+  const runs = evals.filter((e) => e.provenance !== "owner");
+  const current = runs[0];
+  const waits =
+    current?.verdict === "SHIP-WITH-OWNER-STEPS" && !current.problem && !settled.has(current.path);
+  return { labels: runLabels(evals), runs, current, waiting: waits ? current : undefined };
+}
+
+/** The evals that wait on the owner: the newest of each scope, owner steps not settled. */
+export function ownerStepsWaiting(
+  evals: readonly EvalRecord[],
+  tickets: readonly string[],
+  epics: readonly string[],
+): { scope: string; record: EvalRecord; label: string }[] {
+  const settled = settledOwnerSteps(evals);
+  return evalHistory(evals, tickets, epics).flatMap((group) => {
+    const { labels, waiting } = groupFacts(group.evals, settled);
+    return waiting
+      ? [
+          {
+            scope: group.scope,
+            record: waiting,
+            label: labels.get(waiting.path) ?? waiting.delivery,
+          },
+        ]
+      : [];
+  });
+}
+
+/** How a row names its eval: "Eval 3" for an agent's eval, the owner's decisions by what they are. */
+export function runLabels(evals: readonly EvalRecord[]): Map<string, string> {
+  const labels = new Map<string, string>();
+  let run = 0;
+  for (const e of [...evals].reverse()) {
+    if (e.legacy) labels.set(e.path, fileName(e.path));
+    else if (e.provenance === "owner") {
+      labels.set(e.path, e.verdict === "NO-SHIP" ? "Owner: more work" : "Owner sign-off");
+    } else labels.set(e.path, `Eval ${String((run += 1))}`);
+  }
+  return labels;
+}
+
+/** A group's title: the ticket's title (without its epic tag), or the whole feature's name. */
+function groupTitle(scope: string, rows: readonly TicketRow[]): string | null {
+  if (scope === FEATURE_SCOPE) return null;
+  const ids = scope.split(", ");
+  const found = ids.length === 1 ? rows.find((r) => r.id === ids[0] || r.ref === ids[0]) : null;
+  return found?.title ? splitTitle(found.title).text : null;
+}
+
+/** When an eval ran: the date and time, with how long ago under it; a bare date as it is. */
+function EvaluatedCell({ value }: { value: string | null }) {
+  const now = useNow(60_000);
+  if (!value) return <span className="ah-subtle">—</span>;
+  if (!value.includes("T") || Number.isNaN(Date.parse(value))) {
+    return <span className="ah-small ah-num">{value}</span>;
+  }
+  return (
+    <span className="ah-eval-when">
+      <span className="ah-small">
+        <Time iso={value} absolute />
+      </span>
+      <span className="ah-small ah-subtle">
+        {fmtAgo(Math.max(0, now - Date.parse(value)) / 1000)}
+      </span>
+    </span>
+  );
 }
 
 /**
@@ -598,8 +951,21 @@ export function EvalTab({
   evals,
   selected,
   onSelect,
+  ticketRows = [],
+  acRows = [],
 }: EvalTabProps) {
-  const { tz } = usePreferences();
+  const [listOpen, setListOpen] = useState(readListOpen);
+  const history = evalHistory(evals, tickets, epics);
+  const selectedScope = history.find((g) => g.evals.some((e) => e.path === selected?.path))?.scope;
+  // A group the owner opened or closed stays so; any other is open when it holds the selected
+  // eval (one shown from elsewhere too: a finished run, the sign-off) or is the only one.
+  const [folded, setFolded] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const isOpen = (scope: string) =>
+    folded.get(scope) ?? (history.length === 1 || scope === selectedScope);
+  const toggleList = () => {
+    writeListOpen(!listOpen);
+    setListOpen(!listOpen);
+  };
   const strip = (
     <EvalRunStrip
       project={project}
@@ -611,12 +977,24 @@ export function EvalTab({
       epics={epics}
       caption={
         evals.length > 0 && (
-          <Tooltip label="Newest first per scope. The latest eval that names an AC decides it.">
-            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-            <span className="ah-small ah-muted" tabIndex={0}>
-              {evals.length} eval{evals.length === 1 ? "" : "s"} · newest first
-            </span>
-          </Tooltip>
+          <span className="ah-row" style={{ gap: 8 }}>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={listOpen ? "chevron-down" : "chevron-right"}
+              aria-expanded={listOpen}
+              aria-controls="eval-list"
+              onClick={toggleList}
+            >
+              {listOpen ? "Hide list" : "Show list"}
+            </Button>
+            <Tooltip label="Newest first per scope. The latest eval that names an AC decides it.">
+              {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+              <span className="ah-small ah-muted" tabIndex={0}>
+                {evals.length} eval{evals.length === 1 ? "" : "s"} · newest first
+              </span>
+            </Tooltip>
+          </span>
         )
       }
     />
@@ -635,44 +1013,75 @@ export function EvalTab({
       </div>
     );
   }
-  const history = evalHistory(evals, tickets, epics);
-  const columns: { label: string; width?: number; cell: (e: EvalRecord) => ReactNode }[] = [
+  const settled = settledOwnerSteps(evals);
+  const acById = new Map(acRows.map((ac) => [ac.id, ac]));
+  const acPasses = Object.fromEntries(acRows.map((ac) => [ac.id, ac.passes]));
+  const allAcs = acRows.map((ac) => ac.id);
+  const toggleGroup = (scope: string) => {
+    setFolded((current) => new Map(current).set(scope, !isOpen(scope)));
+  };
+  const columns: {
+    label: string;
+    width?: number;
+    cell: (e: EvalRecord, row: RowFacts) => ReactNode;
+  }[] = [
     {
       label: "Eval",
-      cell: (e) => (
-        <button
-          type="button"
-          className="ah-btn ah-btn-sm ah-btn-ghost ah-mono"
-          style={{ fontWeight: 500 }}
-          aria-label={`${e.delivery}, ${e.verdict ?? "no verdict"}`}
-          aria-current={selected?.path === e.path ? "true" : undefined}
-          title={`brain/${e.path}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            onSelect(e.delivery);
-          }}
-        >
-          {deliveryLabel(e)}
-        </button>
+      cell: (e, row) => (
+        <span className="ah-row ah-eval-child" style={{ gap: 6, flexWrap: "nowrap" }}>
+          <button
+            type="button"
+            className="ah-btn ah-btn-sm ah-btn-ghost"
+            style={{ fontWeight: 500 }}
+            aria-label={`${e.delivery}, ${e.verdict ?? "no verdict"}`}
+            aria-current={selected?.path === e.path ? "true" : undefined}
+            title={`brain/${e.path}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect(e.delivery);
+            }}
+          >
+            {row.label}
+          </button>
+          {row.current && <span className="ah-fm-chip">latest</span>}
+        </span>
       ),
     },
     {
       label: "Verdict",
-      cell: (e) =>
+      width: 300,
+      cell: (e, row) =>
         e.problem ? (
           <span className="ah-small" style={{ color: "var(--failed)" }}>
             Unreadable: {e.problem}
           </span>
         ) : e.verdict ? (
-          <StatusBadge status={VERDICT_STATUS[e.verdict]} label={e.verdict} />
+          <VerdictBadge
+            record={e}
+            settledBy={settled.get(e.path)}
+            supersededBy={row.supersededBy}
+          />
         ) : (
           <span className="ah-subtle">—</span>
         ),
     },
-    { label: "ACs", width: 90, cell: (e) => <Scope acs={e.acs} /> },
+    {
+      label: "ACs",
+      width: 150,
+      cell: (e) =>
+        e.acs === "all" && allAcs.length === 0 ? (
+          <Scope acs={e.acs} />
+        ) : (
+          <AcList
+            ids={evalAcs(e, allAcs)}
+            acPasses={acRows.length > 0 ? acPasses : undefined}
+            acRows={acById}
+          />
+        ),
+    },
     {
       label: "Ran by",
-      width: 170,
+      width: 140,
       cell: (e) => {
         const who = ranBy(e.provenance);
         return who ? (
@@ -686,63 +1095,126 @@ export function EvalTab({
     },
     {
       label: "Evaluated",
-      width: 170,
-      cell: (e) =>
-        e.evaluated_at ? (
-          <span className="ah-small">{evaluatedText(e.evaluated_at, tz)}</span>
-        ) : (
-          <span className="ah-subtle">—</span>
-        ),
+      width: 150,
+      cell: (e) => <EvaluatedCell value={e.evaluated_at} />,
     },
   ];
   return (
     <div className="ah-stack" style={{ gap: 12 }}>
       {strip}
-      <div className="ah-table-wrap">
-        <table className="ah-table" aria-label="Evals">
-          <thead>
-            <tr>
-              {columns.map((c) => (
-                <th key={c.label} scope="col" style={c.width ? { width: c.width } : undefined}>
-                  {c.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-
-          {history.map((group) => (
-            <tbody key={group.scope}>
-              {history.length > 1 && (
-                <tr className="ah-eval-group">
-                  <th scope="colgroup" colSpan={columns.length}>
-                    {group.scope === FEATURE_SCOPE ? featureName(epics) : group.scope}
-                    <span className="ah-subtle">
-                      {" "}
-                      · {group.evals.length} eval{group.evals.length === 1 ? "" : "s"}
-                    </span>
+      {listOpen && (
+        <div className="ah-table-wrap" id="eval-list">
+          <table className="ah-table ah-eval-table" aria-label="Evals">
+            <thead>
+              <tr>
+                {columns.map((c) => (
+                  <th key={c.label} scope="col" style={c.width ? { width: c.width } : undefined}>
+                    {c.label}
                   </th>
-                </tr>
-              )}
-              {group.evals.map((e) => (
-                <tr
-                  key={e.path}
-                  aria-selected={selected?.path === e.path}
-                  onClick={() => {
-                    onSelect(e.delivery);
-                  }}
-                >
-                  {columns.map((c) => (
-                    <td key={c.label} style={{ whiteSpace: "normal" }}>
-                      {c.cell(e)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          ))}
-        </table>
-      </div>
-      {selected && <EvalCard project={project} record={selected} named />}
+                ))}
+              </tr>
+            </thead>
+
+            {history.map((group) => {
+              const { labels, runs, current, waiting } = groupFacts(group.evals, settled);
+              const latest = group.evals[0];
+              const open = isOpen(group.scope);
+              const title = groupTitle(group.scope, ticketRows);
+              const name = group.scope === FEATURE_SCOPE ? featureName(epics) : group.scope;
+              const facts = (e: EvalRecord): RowFacts => ({
+                label: labels.get(e.path) ?? e.delivery,
+                current: e === current && runs.length > 1,
+                supersededBy:
+                  e.provenance !== "owner" && current && e !== current
+                    ? labels.get(current.path)
+                    : undefined,
+              });
+              const summary = current ?? latest;
+              const summaryFacts: RowFacts = { label: "", current: false, supersededBy: undefined };
+              return (
+                <tbody key={group.scope} className="ah-eval-tbody">
+                  <tr
+                    className="ah-eval-group"
+                    data-open={open || undefined}
+                    onClick={() => {
+                      toggleGroup(group.scope);
+                    }}
+                  >
+                    <th scope="rowgroup">
+                      <button
+                        type="button"
+                        className="ah-eval-group-toggle"
+                        aria-expanded={open}
+                        aria-label={`${name}${title ? ` ${title}` : ""} · ${String(group.evals.length)} eval${group.evals.length === 1 ? "" : "s"}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleGroup(group.scope);
+                        }}
+                      >
+                        <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
+                        <span className="ah-mono ah-eval-group-id">{name}</span>
+                        {title && <span className="ah-eval-group-title">{title}</span>}
+                        <span className="ah-subtle ah-nowrap">
+                          · {group.evals.length} eval{group.evals.length === 1 ? "" : "s"}
+                        </span>
+                      </button>
+                    </th>
+                    {summary &&
+                      columns.slice(1).map((c) => (
+                        <td key={c.label} style={{ whiteSpace: "normal" }}>
+                          {c.cell(summary, summaryFacts)}
+                        </td>
+                      ))}
+                  </tr>
+                  {waiting && (
+                    <tr className="ah-eval-owner-row">
+                      <td colSpan={columns.length}>
+                        <OwnerStepsCallout
+                          project={project}
+                          slug={slug}
+                          record={waiting}
+                          scope={group.scope === FEATURE_SCOPE ? "The whole feature" : group.scope}
+                          label={labels.get(waiting.path) ?? waiting.delivery}
+                          ownerAcs={evalAcs(waiting, allAcs).filter((id) => {
+                            const ac = acById.get(id);
+                            return ac ? passOf(ac) === "owner" : false;
+                          })}
+                          onShow={onSelect}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  {open &&
+                    group.evals.map((e) => (
+                      <tr
+                        key={e.path}
+                        className="ah-eval-run"
+                        aria-selected={selected?.path === e.path}
+                        onClick={() => {
+                          onSelect(e.delivery);
+                        }}
+                      >
+                        {columns.map((c) => (
+                          <td key={c.label} style={{ whiteSpace: "normal" }}>
+                            {c.cell(e, facts(e))}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                </tbody>
+              );
+            })}
+          </table>
+        </div>
+      )}
+      {selected && (
+        <EvalCard
+          project={project}
+          record={selected}
+          named
+          settledBy={settled.get(selected.path)}
+        />
+      )}
     </div>
   );
 }

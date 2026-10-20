@@ -160,6 +160,23 @@ describe("CopyButton", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Copied");
   });
 
+  it("shows the icon alone when compact, its label as the tooltip, with the same feedback", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<CopyButton text="/w/api/a.py" label="Copy file path" compact />);
+
+    const button = screen.getByRole("button", { name: "Copy file path" });
+    expect(button).toHaveAttribute("title", "Copy file path");
+    expect(button).not.toHaveTextContent("Copy");
+    fireEvent.click(button);
+
+    expect(await screen.findByRole("button", { name: "Copied" })).toHaveAttribute(
+      "title",
+      "Copied",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Copied");
+  });
+
   it("says Copy failed when the browser has no clipboard (plain http)", async () => {
     vi.stubGlobal("navigator", {});
     render(<CopyButton text="hub web" label="Copy command" />);

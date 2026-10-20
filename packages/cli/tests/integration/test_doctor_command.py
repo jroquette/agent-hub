@@ -2070,7 +2070,8 @@ def test_exits_zero_when_production_environment_warns(
         "info environments.production hub.json: production environment: live (access read,"
         f" hub.json) {PRODUCTION_FIX}",
         "warning environments.production hub.local.json: production environment: jane-cloud"
-        f" (access write, hub.local.json) {PRODUCTION_FIX}",
+        " (access write, hub.local.json); actions: writes and destroys are denied there"
+        f" {PRODUCTION_FIX}",
         "0 errors, 1 warning, 1 info",
     ]
 

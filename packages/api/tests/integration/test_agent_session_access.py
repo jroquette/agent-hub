@@ -38,6 +38,7 @@ from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.agent_sessions.records import LogRecordPage, StreamItem
+from agent_hub.core.agent_sessions.repo_changes import RepoCommitDiff, SessionRepoChanges
 from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.read_model_builders import (
     AGENT_SESSION_ID,
@@ -67,6 +68,7 @@ BODIES: dict[tuple[str, str], object] = {
 QUERIES: dict[str, dict[str, str]] = {
     "/workdirs": {"project": "demo"},
     "/resumable": {"project": "demo", "workdir_id": WORKDIR_ID},
+    "/{agent_session_id}/repo-changes/commit": {"path": "/hubs/api/a.py", "sha": "abc1234"},
 }
 PREFIX = "/api/v1/agent-sessions"
 ROUTES = sorted((method, path.removeprefix(PREFIX)) for method, path in AGENT_SESSION_PATHS)
@@ -78,6 +80,7 @@ def _url(path: str) -> str:
     filled = (
         path.replace("{agent_session_id}", AGENT_SESSION_ID)
         .replace("{request_id}", "req-1")
+        .replace("{task_id}", "task-1")
         .replace("{cloud_id}", "cse_01synthetic")
     )
     return f"{PREFIX}{filled}"
@@ -109,7 +112,9 @@ def _control() -> Mock:
     control.delete.return_value = None
     control.events.return_value = LogRecordPage(items=(), next_after=None)
     control.send.return_value = MessageAccepted(seq=5)
-    for method in ("interrupt", "answer", "change_settings", "close"):
+    control.repo_changes.return_value = SessionRepoChanges()
+    control.repo_commit_diff.return_value = RepoCommitDiff(sha="a" * 40, path="/hubs/api/a.py")
+    for method in ("interrupt", "stop_task", "answer", "change_settings", "close"):
         getattr(control, method).return_value = session
     return control
 

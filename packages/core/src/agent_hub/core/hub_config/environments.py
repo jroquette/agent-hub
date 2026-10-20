@@ -123,12 +123,28 @@ WordFileGlob = Annotated[
 EnvVarPattern = Annotated[str, Field(pattern=rf"^{_ENV_VAR_NAME}\*?$")]
 
 
+# A dotenv file relative to the workspace (the folder holding the hub and its repos): printable
+# ASCII without space, never starting with ``/`` or ``~``, no ``..`` segment, no secret shape.
+# Only the action runner reads it (docs/design/scenarios.md § Credentials).
+MAX_ENV_FILE_CHARS: Final = 200
+EnvFilePath = Annotated[
+    str,
+    Field(pattern=r"^[!-.0-}][!-~]*$", max_length=MAX_ENV_FILE_CHARS),
+    AfterValidator(_no_parent_segment),
+    NoSecret,
+]
+
+
 class Credentials(ConfigObject):
     """Where the credentials of an environment come from: names, never values."""
 
     aws_profile: AwsProfile | None = absent_by_default(description="An AWS profile name.")
     env: Annotated[tuple[EnvVarName, ...], Field(max_length=MAX_CREDENTIAL_ENV)] = Field(
         default=(), description="Names of the environment variables that hold credentials."
+    )
+    env_file: EnvFilePath | None = absent_by_default(
+        description="A dotenv file, relative to the folder holding the hub and its repos, that"
+        " only actions read; at most 200 characters, no '..', no leading '/' or '~'."
     )
 
 

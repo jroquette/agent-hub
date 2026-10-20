@@ -42,6 +42,20 @@ def test_keeps_default_setting_sources_when_options_built() -> None:
     assert options.hooks is None
 
 
+def test_loads_no_plugin_when_spec_names_none() -> None:
+    options = sdk_options(_spec(), can_use_tool=_can_use_tool, cli_path=CLI, environ={})
+
+    assert options.plugins == []
+
+
+def test_loads_hub_plugins_when_spec_names_them() -> None:
+    spec = _spec(plugin_dirs=("/hubs/demo-hub/plugin/hub-workflow",))
+
+    options = sdk_options(spec, can_use_tool=_can_use_tool, cli_path=CLI, environ={})
+
+    assert options.plugins == [{"type": "local", "path": "/hubs/demo-hub/plugin/hub-workflow"}]
+
+
 @pytest.mark.parametrize("mode", ["default", "acceptEdits", "plan"])
 def test_passes_mode_always_when_options_built(mode: PermissionMode) -> None:
     options = sdk_options(_spec(mode=mode), can_use_tool=_can_use_tool, cli_path=CLI, environ={})

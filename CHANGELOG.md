@@ -22,15 +22,29 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   exactly the ACs it waits on (a legacy `eval.md` too); it is refused, writing nothing, when one of those ACs has a
   NO-SHIP as its latest eval (named), when the eval is undated or future-dated, or when not every eval was read. With
   no AC listed it keeps waiting until the owner writes the sign-off by hand. The API's `phase` values change to
-  match; ADR 0042 records the two levels.
+  match; ADR 0043 records the two levels.
 
 ### Fixed
 
 - `hub web` Feature detail: the golden path's Review and Shipped steps read "Partial" once some tickets are
   reviewed or Done in Linear, instead of "Not reached" next to a partial Evaluate (AGH-322).
+- `hub web` chat: it opens at its latest message when nothing waits for you, and on the pending card when that card
+  sits inside an activity group, instead of near the top (AGH-379).
+- Starting a stacked ticket from the Tickets tab creates the blocker's repo's worktree from the blocker's pull request
+  branch even when the ticket's own work is in another repo of the hub: the session is given
+  `./hub worktree <id> --stack-on <PR url>` instead of being asked to read the branch (AGH-381).
 - The guard decides a long quote- or dot-dense Bash command (`echo 'a'a'a…`) in time linear in its length (AGH-302):
   before, its secret-file rule took quadratic time, so a command near or over the blocked-words 1 MiB cap ran past
   the 10 s hook timeout and Claude Code went on with no verdict (no "too large" ask).
+- `hub run`'s implementing session and every workflow agent node whose `cwd` is a repo now run under the hub's hooks
+  (guard, SessionStart brief, Stop gate, post-edit, event sensor), through a hooks-only `--settings` file,
+  `<hub>/.agent-runs/session-settings/<effort>.json`, rebuilt from the hub's `.claude/settings.json` before each
+  session (AGH-278). A hub whose `.claude/settings.json` or one of its hook scripts is missing is refused: `hub run`
+  exits 1 before reading the issue, dry or live, and such a workflow node fails with kind `config`. The Stop gate now
+  runs the repo's `check_fast` inside the session (at most 3 blocks), and a guard `ask` is refused there.
+- While blocked words, or a problem with the blocked-word list, are in effect, the guard asks on a tool call whose
+  hook input it cannot read (not a JSON object, or nested too deep for the parser) instead of letting it through
+  unchecked (AGH-293).
 
 ### Added
 
@@ -56,6 +70,49 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   points to it; `/summarize`, `/handoff`, `/feature` and `/deliver` cite it. To make room for rule 6, workflow step 3
   and the outside-content brain rule are each shortened to one line, with the same meaning. `hub sync` adds the skill
   and its link after you bump `platform.version`.
+- `hub worktree --base BRANCH` starts the worktrees from `origin/BRANCH`, and `--stack-on PR_URL` starts only the
+  pull request's repo from its head branch (an open pull request of a `hub.json` repo, read with `gh`), the other
+  repos from their default branch: a task stacked on a blocker still in review (AGH-381).
+- `hub web` Features (AGH-374): an In progress feature that needs you (a warning, or a live session waiting on you)
+  leads its group and opens the feature; the sidebar badges Features with how many need you.
+- `hub web` Feature detail (AGH-376): each ticket shows the AC meter and a last PR column (from its review record);
+  the tickets table drops Scope; the ticket flow card has a status line and two fact rows; an AC opens in the
+  Criteria tab and previews its text on hover; evals fold by ticket as a tree aligned with the table, an eval that
+  waits on owner steps gets a Waiting on you callout, and the owner settles one eval's owner steps (SHIP or
+  NO-SHIP, with a note; `POST …/owner-signoff` takes the eval); an owner-steps eval signed off since reads as SHIP.
+- A ticket blocked only by one in review with a pull request reads "Can start on X's branch" and starts, after a
+  confirmation, a session stacked on that branch; a session is attributed to the issue its first prompt names
+  (AGH-381).
+- `hub web` session review (AGH-377): the changed files split into Code, Reviews & specs, Learnings and Scratch tabs,
+  markdown opens rendered, only code asks for viewed marks and counts in the totals; the drawer shows whole file
+  names, cut in the middle, and its file list resizes. The Code tab reads each repository the session worked in
+  with git (the branch against the branch it was started from, every changed file, each file's commits and a
+  commit's diff, worktrees the session's calls name), lays out review threads as a conversation, and lists each
+  repository's pull request and where it stands. The review is recorded on the session (migration 0007), so it is
+  kept after the worktree is gone. New routes: `GET /agent-sessions/{id}/repo-changes` and
+  `GET /agent-sessions/{id}/repo-changes/commit`.
+- `hub web` chat (AGH-379): a record's open questions are answered by picking an option, as in the chat; URLs, pull
+  requests, tickets and review files Claude names become links; the slash menu lists the hub's skills and agents
+  (and the session's subagents as `/agent-<name>`) anywhere in the message, with aligned descriptions and a hub
+  item's page one click away; a session in a repo or worktree loads the hub's plugins. The requirements analyst
+  writes 2 to 4 options under a question whose answer is a choice.
+- `hub web` sessions (AGH-380): background agents and commands still running after a turn ends show in the header
+  ("Background · N agents"), the live bar, a Background drawer and a closing card, and a task can be stopped
+  (`POST /agent-sessions/{id}/tasks/{task_id}/stop`); an idle session waiting on one is not timed out. A session on a
+  ticket is named by the ticket (its title once read) and links its feature.
+- `hub web` Toolkit and shell (AGH-382): Workflows become a Toolkit tab (`/workflows` redirects); the Toolkit has kind
+  tabs, a filter toolbar and a Your drafts card; the sidebar Portfolio is the project overview when a project is in
+  scope; Hub config shows one view of the values agents use, with who set each (you, the team, built-in) and
+  Change for me.
+
+### Changed
+
+- `hub web --sessions-max 0` (`AGENT_HUB_SESSIONS_MAX=0`) sets no limit on live agent sessions: none is ended or
+  refused for the limit. `make playground` starts its conductor that way, instead of 16 sessions (AGH-383,
+  ADR 0042).
+- Generated hubs: `/feature` tells each implementer to change files with the Edit or Write tool, never by a shell
+  script, so the session's review shows each change (AGH-378). `hub sync` brings it after you bump
+  `platform.version`.
 
 ## [0.17.0] - 2026-10-19
 

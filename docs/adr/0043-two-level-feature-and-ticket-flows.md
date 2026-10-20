@@ -1,4 +1,4 @@
-# 0042. Two-level feature and ticket flows, ticket records, and plan change requests the owner decides
+# 0043. Two-level feature and ticket flows, ticket records, and plan change requests the owner decides
 
 - Status: proposed
 - Date: 2026-10-19

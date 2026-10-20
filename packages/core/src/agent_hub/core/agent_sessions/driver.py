@@ -73,8 +73,9 @@ class DriverModel(BaseModel):
 class StartSpec(DriverModel):
     """What one session starts with: a resolved working directory (never a free path from the
     browser), the mode, an optional model, an optional session to resume (and fork), an
-    optional session id to give the new session (P13), and variables added to the child's
-    environment (``AGENT_HUB_WEB_URL``; never the access token, L5)."""
+    optional session id to give the new session (P13), variables added to the child's
+    environment (``AGENT_HUB_WEB_URL``; never the access token, L5), and the hub's plugin
+    folders a session outside the hub loads (resolved by the workdir listing)."""
 
     cwd: str = Field(min_length=1)
     mode: PermissionMode
@@ -83,6 +84,7 @@ class StartSpec(DriverModel):
     fork: bool = False
     session_id: str | None = None
     environment_extra: Mapping[str, str] = Field(default_factory=dict)
+    plugin_dirs: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _fork_needs_resume(self) -> StartSpec:
@@ -105,12 +107,14 @@ class DriverImage(DriverModel):
 
 
 class InitEvent(DriverModel):
-    """The session started its first turn: Claude's ``session_id``, the model, slash commands."""
+    """The session started its first turn: Claude's ``session_id``, the model, slash commands
+    and the subagents it can call (each offered in the composer as ``/agent-<name>``)."""
 
     kind: Literal["init"] = "init"
     session_id: str
     model: str | None = None
     slash_commands: tuple[str, ...] = ()
+    agents: tuple[str, ...] = ()
 
 
 class TextDelta(DriverModel):
@@ -173,6 +177,26 @@ class Todos(DriverModel):
 
     kind: Literal["todos"] = "todos"
     items: tuple[TodoItem, ...]
+
+
+# Where a task (a subagent, often in the background) stands: ``running`` once started, then one
+# of the ends.
+type TaskStatus = Literal["running", "completed", "failed", "stopped"]
+
+
+class TaskEvent(DriverModel):
+    """A task Claude started (a subagent, a background command) started or ended. A background
+    task runs on after the turn that started it ends, so this is what says the session is still
+    at work while it reads as idle. ``tool_use_id`` is the call that started it, when known."""
+
+    kind: Literal["task"] = "task"
+    task_id: str
+    status: TaskStatus
+    description: str | None = None
+    tool_use_id: str | None = None
+    # What runs it, as the CLI names it (``local_bash``, ``local_agent``, ``remote_agent``...);
+    # on a start only.
+    task_type: str | None = None
 
 
 class PermissionSuggestion(DriverModel):
@@ -239,6 +263,7 @@ type DriverEvent = Annotated[
     | ToolCall
     | ToolResult
     | Todos
+    | TaskEvent
     | PermissionRequest
     | TurnResult
     | DriverError
@@ -308,6 +333,11 @@ class SessionDriver(Protocol):
 
     async def interrupt(self, handle: DriverHandle) -> None:
         """End the running turn; its ``TurnResult`` follows. No-op between turns."""
+        ...
+
+    async def stop_task(self, handle: DriverHandle, task_id: str) -> None:
+        """Stop a running task (a background agent or command); its ``TaskEvent`` with
+        ``stopped`` follows. The turn, if one runs, goes on."""
         ...
 
     async def answer_permission(

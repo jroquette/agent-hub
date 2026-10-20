@@ -38,6 +38,7 @@ from claude_agent_sdk import (
 )
 
 from agent_hub.claude_sessions.capabilities import CapabilityCache, Runner, bounded_runner, detect
+from agent_hub.claude_sessions.invocations import SessionNames, cli_prompt
 from agent_hub.claude_sessions.message_mapping import EventMapper
 from agent_hub.claude_sessions.options import MAX_BUFFER_BYTES, claude_path, sdk_options
 from agent_hub.claude_sessions.permission_bridge import INTERRUPTED, PermissionBridge
@@ -83,6 +84,7 @@ class _Session:
     closing: bool = False
     closed: asyncio.Event = field(default_factory=asyncio.Event)
     exited: bool = False
+    names: SessionNames = field(default_factory=SessionNames)
 
     def emit(self, event: DriverEvent) -> None:
         """Queue ``event`` (nothing after ``Exited``) and count the turns still open."""
@@ -180,7 +182,9 @@ class ClaudeSdkSessionDriver:
             with suppress(Exception):
                 await client.disconnect()
             raise SessionsUnavailableError(NOT_STARTED) from failed
-        session = _Session(client=client, bridge=bridge, queue=queue)
+        session = _Session(
+            client=client, bridge=bridge, queue=queue, names=SessionNames.from_server_info(info)
+        )
         pid = None if info is None else info.get("pid")
         session.pid = pid if isinstance(pid, int) and pid > 0 else None
         handle = DriverHandle(f"claude-{uuid.uuid4().hex}")
@@ -195,6 +199,7 @@ class ClaudeSdkSessionDriver:
         turn."""
         session = self._open(handle)
         session.turns += 1
+        text = cli_prompt(text, session.names)
         try:
             if images:
                 await session.client.query(_single(_user_message(text, images)))
@@ -211,6 +216,10 @@ class ClaudeSdkSessionDriver:
             return
         await session.client.interrupt()
         session.bridge.deny_all(INTERRUPTED)
+
+    async def stop_task(self, handle: DriverHandle, task_id: str) -> None:
+        """Ask the CLI to stop the task; its end arrives as a task message."""
+        await self._open(handle).client.stop_task(task_id)
 
     async def answer_permission(
         self, handle: DriverHandle, request_id: str, answer: DriverAnswer

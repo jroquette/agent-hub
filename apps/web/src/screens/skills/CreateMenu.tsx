@@ -5,7 +5,8 @@ import type { KeyboardEvent } from "react";
 import { useNavigate } from "react-router";
 
 import { Button, Icon } from "../../components";
-import { KINDS, KIND_SUMMARY } from "./filters";
+import { KINDS, KIND_SUMMARY, WORKFLOWS_SUMMARY } from "./filters";
+import { newWorkflowRoute } from "./routes";
 import { KIND_ICON, KIND_NAME } from "./SkillCard";
 import { newDraftRoute } from "./Studio";
 
@@ -84,6 +85,23 @@ export function CreateMenu({ project }: { project: string }) {
               </span>
             </button>
           ))}
+          <button
+            type="button"
+            role="menuitem"
+            className="ah-create-option"
+            onClick={() => {
+              setOpen(false);
+              void navigate(newWorkflowRoute(project));
+            }}
+          >
+            <span className="ah-kind-badge" data-kind="workflow" aria-hidden="true">
+              <Icon name="workflow" size="sm" />
+            </span>
+            <span className="ah-create-option-text">
+              <span className="ah-create-option-name">New workflow</span>
+              <span className="ah-create-option-line">{WORKFLOWS_SUMMARY}</span>
+            </span>
+          </button>
         </div>
       )}
     </div>
