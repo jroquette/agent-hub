@@ -24,7 +24,7 @@ type Scope = "local" | "team";
 const STEPS = ["Kind", "Name", "Access", "Who it is for", "Connection", "Review"] as const;
 const DESCRIPTION_MAX = 80;
 
-/** `/projects/:project/config/environments/new`: add an environment, one question at a time. */
+/** `/projects/:project/environments/new`: add an environment, one question at a time. */
 export function AddEnvironmentScreen() {
   const { project = "" } = useParams();
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });

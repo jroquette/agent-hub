@@ -64,10 +64,10 @@ export const appRoutes: RouteObject[] = [
           { path: "projects/:project/brain/*", element: <BrainScreen /> },
           { path: "projects/:project/config", element: <HubConfigScreen /> },
           {
-            path: "projects/:project/config/environments/new",
+            path: "projects/:project/environments/new",
             element: <AddEnvironmentScreen />,
           },
-          { path: "projects/:project/config/services/new", element: <AddServiceScreen /> },
+          { path: "projects/:project/environments/services/new", element: <AddServiceScreen /> },
           { path: "config", element: <HubConfigPickerScreen /> },
           { path: "projects/:project/environments", element: <EnvironmentsScreen /> },
           { path: "environments", element: <EnvironmentsPickerScreen /> },

@@ -43,10 +43,10 @@ export function environmentsHome(project: string): string {
   return `/projects/${encodeURIComponent(project)}/config#environments`;
 }
 export function addEnvironmentPath(project: string): string {
-  return `/projects/${encodeURIComponent(project)}/config/environments/new`;
+  return `/projects/${encodeURIComponent(project)}/environments/new`;
 }
 export function addServicePath(project: string, repo?: string): string {
-  const path = `/projects/${encodeURIComponent(project)}/config/services/new`;
+  const path = `/projects/${encodeURIComponent(project)}/environments/services/new`;
   return repo ? `${path}?repo=${encodeURIComponent(repo)}` : path;
 }
 

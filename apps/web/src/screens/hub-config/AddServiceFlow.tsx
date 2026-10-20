@@ -24,7 +24,7 @@ import "./hub-config.css";
 
 const STEPS = ["What runs", "Repo and name", "Addresses", "Review"] as const;
 
-/** `/projects/:project/config/services/new`: add a repo's service, one question at a time. */
+/** `/projects/:project/environments/services/new`: add a repo's service, one question at a time. */
 export function AddServiceScreen() {
   const { project = "" } = useParams();
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });

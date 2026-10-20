@@ -51,16 +51,16 @@ const TWO_ENVIRONMENTS = [
 function openEnvironment(routes: ApiRoutes = { [CONFIG]: aConfig() }) {
   return renderWithApi(<AddEnvironmentScreen />, {
     routes,
-    path: "/projects/demo/config/environments/new",
-    route: "projects/:project/config/environments/new",
+    path: "/projects/demo/environments/new",
+    route: "projects/:project/environments/new",
   });
 }
 
 function openService(routes: ApiRoutes = { [CONFIG]: aConfig(TWO_ENVIRONMENTS) }) {
   return renderWithApi(<AddServiceScreen />, {
     routes,
-    path: "/projects/demo/config/services/new",
-    route: "projects/:project/config/services/new",
+    path: "/projects/demo/environments/services/new",
+    route: "projects/:project/environments/services/new",
   });
 }
 
@@ -197,7 +197,7 @@ describe("AddServiceScreen", () => {
     expect(await screen.findByText("Add an environment first")).toBeVisible();
     expect(screen.getByRole("link", { name: "Add environment" })).toHaveAttribute(
       "href",
-      "/projects/demo/config/environments/new",
+      "/projects/demo/environments/new",
     );
   });
 

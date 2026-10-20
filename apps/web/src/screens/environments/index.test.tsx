@@ -66,7 +66,7 @@ describe("EnvironmentsScreen", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Add environment" }));
 
-    expect(router.state.location.pathname).toBe("/projects/demo/config/environments/new");
+    expect(router.state.location.pathname).toBe("/projects/demo/environments/new");
     expect(router.state.location.state).toEqual({
       returnTo: "/projects/demo/environments",
       returnLabel: "Environments",

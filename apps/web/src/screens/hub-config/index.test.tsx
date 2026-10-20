@@ -540,7 +540,7 @@ describe("HubConfigScreen", () => {
     expect(within(section).getByText("No environments yet")).toBeVisible();
     await userEvent.click(within(section).getByRole("button", { name: "Add environment" }));
 
-    expect(router.state.location.pathname).toBe("/projects/demo/config/environments/new");
+    expect(router.state.location.pathname).toBe("/projects/demo/environments/new");
   });
 
   it("shows a refused access under its field", async () => {
