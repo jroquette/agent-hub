@@ -234,7 +234,9 @@ describe("FeaturesScreen", () => {
 
     await screen.findByRole("link", { name: "unread" });
     expect(within(rowOf("unread")).getByText("Build · step 1 of 1")).toBeInTheDocument();
-    expect(screen.getByRole("note")).toHaveTextContent("not read from Linear on this list");
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Ticket status is not read from Linear on this list, so Build shows as unknown.",
+    );
   });
 
   it("names every cell in the row's accessible name and moves with j and k (keyboard)", async () => {
