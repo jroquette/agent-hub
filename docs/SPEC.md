@@ -239,7 +239,7 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `guard.readable_env_files`, `guard.secret_env_files` | Env file names (`.env.<suffix>`, never `.env` itself, a path or a key file) the guard stops treating as secret, on top of its fixed list (`.env.example`, …), or always treats as secret, even when that list or `readable_env_files` names one; a name in both is a schema error. A `hub.json` named by `$HUB_CONFIG` can add secret names but never release one; `hub doctor`'s `secrets.config` shows both lists as infos | The guard's fixed list | AGH-210 |
 | `environments` | The project's environments, keyed by a name it chooses: `access` (required: `read`, `write`, or `ask` the user before any write; `write` covers data, never a deploy), `production` (a flag, not a policy), `description` and `credentials` (an AWS profile name and variable names, never values); secret-looking values are rejected. `AGENTS.md` lists them (from `hub.json` only; run `./hub sync`), the SessionStart brief shows both files', and `hub env` lists and edits them; `hub sync`, `hub setup` and `hub env` name each production environment whatever doctor's settings, and doctor's `environments.production` (an ordinary rule, which can be disabled or retuned) warns for `write` or `ask` and informs for `read`. An undeclared environment is out of bounds for the agent by instruction; like `access`, that is rendered for the agent, not enforced by the guard (Blocked words, below; [design/environments.md](design/environments.md), [ADR 0038](adr/0038-declared-environments-and-blocked-words.md)) | No section in `AGENTS.md` or the brief; the hub renders as before | AGH-277 |
 | `repos[].services` | The services a repo runs, keyed by name: `kind` (informational), `description` and `endpoints` per declared environment, each a `url` (no user info, query or fragment) or a `resource`, with a `note` and credential references; `AGENTS.md` lists the service names, the brief and `hub env show` the endpoints | No services | AGH-277 |
-| `guard.blocked_words` | Words the guard denies in a Bash command, a file-tool path, a WebFetch URL, a listed file's contents or a scanned session variable (Blocked words, below): at most 200, `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2 to 64 characters, matched literally; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | No blocked-word rule | AGH-277 |
+| `guard.blocked_words` | Words the guard denies in a Bash command, a file-tool path, a WebFetch URL, a listed file's contents, a scanned session variable or the input of MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage (Blocked words, below): at most 200, `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2 to 64 characters, matched literally; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | No blocked-word rule | AGH-277 |
 | `guard.blocked_words_files` | Globs of files whose contents the guard checks for a blocked word, besides every `.env*` file: at most 100, each at most 200 printable ASCII characters, no leading `/`, `..` segment or space; a glob without `/` matches the last path component, one with `/` a trailing run of segments; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | `.env*` files only | AGH-277 |
 | `guard.blocked_words_env` | Variable names whose values in the session the guard also checks, besides its fixed list and every `credentials.env` name: at most 50, `^[A-Z_][A-Z0-9_]{0,63}$`, a trailing `*` matching a prefix; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | The fixed list and the `credentials.env` names | AGH-277 |
 | `tracker.states.started`, `tracker.states.review` | The workflow state names: `hub start` moves an issue to `started` on a fresh start, or on a resume while it is unstarted; `review` is reserved for the review step and read by nothing yet; not settable in `hub.local.json` | `In Progress`, `In Review` | AGH-62 |
@@ -347,25 +347,29 @@ names above, of `STAGE`, `SLS_STAGE`, `ENV`, `ENVIRONMENT`, `APP_ENV`, `NODE_ENV
 `FLASK_ENV`, `DATABASE_URL`, `PGHOST`, `PGSERVICE`, `PGDATABASE`, `MYSQL_HOST`, `REDIS_URL`, `MONGODB_URI`,
 `AWS_ENDPOINT_URL`, of every declared `credentials.env` name and of every `guard.blocked_words_env` name, where a match
 denies every Bash call of the session; the path fields of every file tool (`file_path`, `notebook_path`, `path`,
-Grep's `glob`, Glob's `pattern`, WebFetch's `url`); and the contents of `.env*` files and of files a
-`guard.blocked_words_files` glob matches, read through Read, Grep (a directory is walked) and every Bash token that
-names one (glob tokens expanded; not `ls`, `test`, `[` or `stat`). The rule runs first on every surface: its deny is
-final and wins over any declared `access` and any `guard.infra.allow` match, and `prod_markers` still applies beside
-it. It never opens a file the secret-file rule treats as secret; that file keeps the secret-file reason unless its
-path or the command text holds a word. Scans are bounded (1 MiB per command or file, 64 files and 4 MiB per call,
-300 ms); over a bound, on a file that is not regular, on an unusable list in any layer, while an existing
-`hub.local.json` is unusable and on a hook event it cannot read as a JSON object, the guard asks. The lists are the
-union of `hub.json`, `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` (the hooks only); no layer removes an
-entry. A reason names the word, its first layer and the surface, never the command, a value or a line, and the
-recorded event carries `rule: blocked_word`.
+Grep's `glob`, Glob's `pattern`, WebFetch's `url`); every key and string value of the input of MCP tools (`mcp__*`),
+WebSearch, Task, Agent and SendMessage (the tool name is not scanned; only this rule runs on them); and the contents
+of `.env*` files and of files a `guard.blocked_words_files` glob matches, read through Read, Grep (a directory is
+walked) and every Bash token that names one (glob tokens expanded; not `ls`, `test`, `[` or `stat`). The rule runs
+first on every surface: its deny is final and wins over any declared `access` and any `guard.infra.allow` match, and
+`prod_markers` still applies beside it. It never opens a file the secret-file rule treats as secret; that file keeps
+the secret-file reason unless its path or the command text holds a word. Scans are bounded (1 MiB per command or file,
+64 files and 4 MiB per call, 1 MiB and 50,000 values per tool input, 300 ms); over a bound, on a file that is not
+regular, on an unusable list in any layer, while an existing `hub.local.json` is unusable and on a hook event it
+cannot read as a JSON object, the guard asks. The lists are the union of `hub.json`, `hub.local.json` and a `hub.json`
+named by `$HUB_CONFIG` (the hooks only); no layer removes an entry. A reason names the word, its first layer and the
+surface, never the command, a value or a line, and the recorded event carries `rule: blocked_word`.
 **`access` is not enforced by the guard in v1**: the guard cannot tell a read from a write in `psql`, `curl`, `aws` or
 an SDK script, so `access` is an instruction rendered for the agent, and the only hard blocks are blocked words and the
 existing `guard.infra`, `deny_hosts` and `deny_paths`. Blocked words are a best-effort text tripwire, not a security
 boundary: the boundary is which credentials the agent's machine holds. The guard runs only on Bash, Read, Grep, Glob,
-Edit, Write, MultiEdit, NotebookEdit and WebFetch. Accepted limits: false positives; MCP tools, WebSearch and subagent
-(Task) prompts are not checked; nor are files a program opens without the command naming them (`python sync.py`
-reading `config/app.json`, `find … -exec cat`), tool output, obfuscation past the three views, Grep's search regex and
-edit contents; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen.
+Edit, Write, MultiEdit, NotebookEdit, WebFetch, WebSearch, Task, Agent and SendMessage and MCP tools (matcher
+`^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent|SendMessage)$|^mcp__`).
+Accepted limits: false positives; the other guard rules do not reach the input tools (a `deny_hosts` host in their
+input passes); Skill, TodoWrite, ExitPlanMode and AskUserQuestion and tool names are not checked; nor are files a
+program opens without the command naming them (`python sync.py` reading `config/app.json`, `find … -exec cat`), tool
+output, obfuscation past the three views, Grep's search regex and edit contents; a recorded guard event carries the
+input tools' input whole; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen.
 
 ### Scenarios and actions (AGH-350)
 
