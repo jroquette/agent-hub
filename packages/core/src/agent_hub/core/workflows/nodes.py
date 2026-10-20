@@ -358,10 +358,11 @@ class HaltNode(_Node):
 
 
 def _until(value: str) -> str:
-    # A whole reference is read at run time; anything else is an instant with its offset.
+    # A whole reference is read at run time; anything else is an instant with its offset. The
+    # scenario grammar is accepted here: planning refuses ``$CTX`` outside a scenario.
     if value.startswith("$"):
         try:
-            parse_ref(value)
+            parse_ref(value, scenario=True)
         except SubstitutionError as error:
             raise ValueError(str(error)) from None
         return value

@@ -605,13 +605,31 @@ def _reference_problems(
                 else:
                     messages = graph.problems(node, element)
                     yield from (WorkflowProblem(where, message) for message in messages)
-        stdin = node.stdin if isinstance(node, ShellNode | ScriptNode) else None
-        if stdin is not None and _has_ref(stdin) and not _is_whole_ref(stdin):
-            message = "a reference fills the whole stdin, or none is used"
-            yield WorkflowProblem((*where_node, "stdin"), message)
-        if isinstance(node, ShellNode) and node.is_hub_step and node.cwd and _has_ref(node.cwd):
-            message = "a hub step node's cwd takes no reference"
-            yield WorkflowProblem((*where_node, "cwd"), message)
+        yield from (
+            WorkflowProblem((*where_node, key), message)
+            for key, message in _whole_text_problems(node, scenario=graph.scenario)
+        )
+
+
+def _whole_text_problems(node: Node, *, scenario: bool) -> Iterator[tuple[str, str]]:
+    """A ``stdin`` with part of a reference, a wait's ``until`` that is not one, a hub step
+    node's ``cwd`` with any."""
+    stdin = node.stdin if isinstance(node, ShellNode | ScriptNode) else None
+    if stdin is not None and _has_ref(stdin) and not _is_whole_ref(stdin):
+        yield "stdin", "a reference fills the whole stdin, or none is used"
+    if (problem := _until_problem(node, scenario=scenario)) is not None:
+        yield "until", problem
+    if isinstance(node, ShellNode) and node.is_hub_step and node.cwd and _has_ref(node.cwd):
+        yield "cwd", "a hub step node's cwd takes no reference"
+
+
+def _until_problem(node: Node, *, scenario: bool) -> str | None:
+    """A wait's ``until`` that is a reference only in the scenario grammar, outside a scenario."""
+    if not isinstance(node, WaitNode) or node.until is None or not node.until.startswith("$"):
+        return None
+    if _is_whole_ref(node.until, scenario=scenario):
+        return None
+    return "a wait's until is an instant or one whole reference ($CTX: scenarios)"
 
 
 def _until_texts(node: Node) -> Iterator[tuple[Loc, str]]:
@@ -631,9 +649,9 @@ def _has_ref(text: str) -> bool:
         return True
 
 
-def _is_whole_ref(text: str) -> bool:
+def _is_whole_ref(text: str, *, scenario: bool = False) -> bool:
     try:
-        parse_ref(text)
+        parse_ref(text, scenario=scenario)
     except SubstitutionError:
         return False
     return True
