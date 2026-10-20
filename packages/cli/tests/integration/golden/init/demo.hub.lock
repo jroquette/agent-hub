@@ -299,7 +299,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "eeebb4d108b4258734d7a347882e5276ed9f1af37348209e0a4204b88a0e4b21"
+      "sha256": "0d908e171f5a19788d94a32029345a03748cbb618417eb0633d9d4bfd354df88"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
@@ -309,7 +309,7 @@
     "plugin/hub-workflow/hooks/hubhooks.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "dc77ffeb3db457182f8bcee6494fd187209333093a4431be8c33d8fb03fb68c0"
+      "sha256": "9f7e55c04f7d59b19028888caee1ba63481e023db83df80098cdd3c75a5af0d5"
     },
     "plugin/hub-workflow/hooks/post_edit.py": {
       "executable": true,
@@ -344,7 +344,7 @@
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "4e278ff11eba82a7f6713422c02df926353ca64f6b55c1a562ba1806fec26175"
+      "sha256": "1caee26163437b62edfd38a867f45527f41cce53779dac3fe4ae6534d70d31e6"
     },
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,
