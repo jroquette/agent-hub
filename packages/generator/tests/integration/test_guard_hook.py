@@ -5527,15 +5527,16 @@ def test_denies_grep_glob_when_env_file_under_root(decide: Decide, env_file_hub:
     ws = env_file_hub.parent
     api = ws / "demo-api"
     denied = [
-        (tool_call("Grep", pattern="DB"), api),
-        (tool_call("Grep", pattern="DB", path="environment"), api),
-        (tool_call("Grep", pattern="DB", path="demo-api"), ws),
-        (tool_call("Grep", pattern="DB", path=str(api), glob="*.test"), ws),
-        (tool_call("Grep", pattern="DB", path="environment/.env.test"), api),
-        (tool_call("Glob", pattern="**/*"), api),
-        (tool_call("Glob", pattern="environment/.env*"), api),
-        (tool_call("Glob", pattern="*", path=str(api / "environment")), ws),
-        (tool_call("Glob", pattern="demo-api/**/.env.*"), ws),
+        # E-5: a Grep of demo-api with no glob is denied for the env file it holds, .env.live
+        (tool_call("Grep", pattern="DB"), api, "live"),
+        (tool_call("Grep", pattern="DB", path="environment"), api, "staging"),
+        (tool_call("Grep", pattern="DB", path="demo-api"), ws, "live"),
+        (tool_call("Grep", pattern="DB", path=str(api), glob="*.test"), ws, "staging"),
+        (tool_call("Grep", pattern="DB", path="environment/.env.test"), api, "staging"),
+        (tool_call("Glob", pattern="**/*"), api, "staging"),
+        (tool_call("Glob", pattern="environment/.env*"), api, "staging"),
+        (tool_call("Glob", pattern="*", path=str(api / "environment")), ws, "staging"),
+        (tool_call("Glob", pattern="demo-api/**/.env.*"), ws, "staging"),
     ]
     passed = [
         (tool_call("Grep", pattern="DB", path="src"), api),
@@ -5544,11 +5545,12 @@ def test_denies_grep_glob_when_env_file_under_root(decide: Decide, env_file_hub:
         (tool_call("Glob", pattern="*.md"), api),
     ]
 
-    verdicts = decide([(at(event, cwd), None) for event, cwd in (*denied, *passed)])
+    calls = [(event, cwd) for event, cwd, _ in denied] + passed
+    verdicts = decide([(at(event, cwd), None) for event, cwd in calls])
 
-    assert verdicts == [env_file_denial(event["tool_name"]) for event, _ in denied] + [None] * len(
-        passed
-    )
+    assert verdicts == [
+        env_file_denial(event["tool_name"], environment) for event, _, environment in denied
+    ] + [None] * len(passed)
 
 
 def test_denies_bash_when_env_file_named(decide: Decide, env_file_hub: Path) -> None:
