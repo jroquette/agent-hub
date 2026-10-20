@@ -482,13 +482,13 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 **Blocked words.** `guard.blocked_words` lists words agents must not reach (e.g. `prod`, `production`). The guard
 denies, before any other rule, a Bash command that names one (as written, with backslash-newlines joined, or with its
 quotes removed), a scanned session variable whose value holds one (the infra selectors, the usual stage and connection
-names, each declared `credentials.env` and the names in `guard.blocked_words_env`), a file tool's path, and the
-contents of a `.env*` file or a `guard.blocked_words_files` match that a Read, a Grep or a Bash command names. A word
+names, each declared `credentials.env` and the names in `guard.blocked_words_env`), a file tool's path, every key and string of the input of MCP tools (`mcp__*`),
+WebSearch, Task, Agent and SendMessage, and the contents of a `.env*` file or a `guard.blocked_words_files` match that a Read, a Grep or a Bash command names. A word
 matches ignoring ASCII case with no letter beside it: `prod` matches `my-prod-db` and `PROD`, not `product`. The
 lists of `hub.json`, `hub.local.json` and a `$HUB_CONFIG` file add up; no layer removes a word. When the words cannot
-be checked (a list that cannot be used, a command or file over 1 MiB, too many files, the 300 ms budget spent), the
-guard asks. It is a best-effort tripwire, not a security boundary: an environment's `access` is not enforced, and
-files a program opens on its own, MCP tools, tool output and obfuscated text are not checked. The contract and its
+be checked (a list that cannot be used, a command or file over 1 MiB, too many files, a tool input over 1 MiB or 50,000
+values, an event it cannot read, the 300 ms budget spent), the guard asks. It is a best-effort tripwire, not a security boundary: an environment's `access` is not enforced, and
+files a program opens on its own, tool names, Skill arguments, tool output and obfuscated text are not checked. The contract and its
 limits: [environments](docs/design/environments.md).
 
 **Infra commands.** Set `guard.infra` in `hub.json` (even `{}`) and the guard classifies commands that run `aws`,
