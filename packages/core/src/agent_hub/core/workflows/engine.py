@@ -34,13 +34,22 @@ the group's id) end it, with an output mapping each body id to its output; past
 ``max_iterations`` it fails ``max_iterations``. A group is never retried. Without
 ``fresh_context``, a body agent resumes its own session of the iteration before, unless it sets
 ``context: fresh``.
+
+An ``action`` node is one runner call with its ``with`` values as ``NodeCall.inputs``; its output
+must be one JSON value (else ``output_contract``). An ``expect`` node polls its action every
+``every`` (``Clock.sleep``) until ``until_when`` holds over ``$self.output``, at most
+``MAX_EXPECT_POLLS`` times in a run (its attempts together), then fails ``timeout`` (detail
+``expect_timeout: …``) once its window has passed. Each poll and each ``capture:`` value goes to
+``EnginePorts.trace``; without an explicit ``retry`` neither node is retried.
 """
 
+import dataclasses
 import json
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Final
 
 from agent_hub.core.errors import AgentHubError
@@ -69,9 +78,11 @@ from agent_hub.core.workflows.loops import (
     until_met,
 )
 from agent_hub.core.workflows.nodes import (
+    ActionNode,
     AgentNode,
     ApprovalNode,
     ExecutableNode,
+    ExpectNode,
     FromBinding,
     GateNode,
     HaltNode,
@@ -82,17 +93,21 @@ from agent_hub.core.workflows.nodes import (
     ScriptNode,
     ShellNode,
     WaitNode,
+    duration_seconds,
 )
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import (
     CheckoutProbe,
     Clock,
+    ContextCapture,
+    ExpectPoll,
     GateRequest,
     NodeCall,
     NodeRunner,
     OutputValidator,
     RunEnd,
     RunRecorder,
+    RunTrace,
     SkipCause,
     StepEnd,
     StepStart,
@@ -119,10 +134,14 @@ from agent_hub.core.workflows.substitution import (
     resolve,
 )
 
+# The nodes the runner runs from their own keys (argv, prompt), not an action call.
+type _CommandNode = AgentNode | ShellNode | ScriptNode | LoopNode
 # The most attempts that run at once in a run.
 MAX_PARALLEL: Final = 4
 # The most threads one layer starts; they wait for the run's permits.
 MAX_LAYER_THREADS: Final = 64
+# The most polls of one ``expect`` attempt, whatever its window.
+MAX_EXPECT_POLLS: Final = 1000
 
 
 class WorkflowEngineError(AgentHubError):
@@ -141,6 +160,8 @@ class EnginePorts:
     # Called when a concurrent layer is interrupted: stops the children its nodes run.
     interrupt: Callable[[], None] | None = None
     gates: GateAnswers = NoAnswers()
+    # A scenario run's polls and captures; ``None`` when no one keeps them.
+    trace: RunTrace | None = None
 
 
 def run_workflow(
@@ -201,6 +222,9 @@ class _Run:
         }
         self.loop_prevs: dict[str, dict[str, NodeResult]] = {}
         self.lock = threading.Lock()
+        self.trace_lock = threading.Lock()
+        # Each expect node's polls in this run, all its attempts together.
+        self.polls: dict[str, int] = dict(prior.polls)
         # Concurrent nodes record through one lock, as they end; at most ``max_parallel``
         # attempts run at once across the run, nested group layers included.
         self.recorder: RunRecorder = _LockedRecorder(ports.recorder)
@@ -259,13 +283,16 @@ class _Run:
         document = self.plan.document
         outcome = authored_outcome(document.returns, document.outcome_field, self.ends)
         self.ports.recorder.run_ended(RunEnd(status, self.ports.clock.now(), outcome, reason))
-        state = RunState({**self.prior.nodes, **self.results}, self.attempts, self.sessions)
+        nodes = {**self.prior.nodes, **self.results}
+        state = RunState(nodes, self.attempts, self.sessions, polls=dict(self.polls))
         return RunReport(status, outcome, reason, state)
 
     def _pause(self, node: str, gate: OpenGate) -> RunReport:
         """The report of a run stopped on an open gate: no end is recorded."""
         nodes = {**self.prior.nodes, **self.results}
-        state = RunState(nodes, self.attempts, self.sessions, {node: gate}, dict(self.held))
+        state = RunState(
+            nodes, self.attempts, self.sessions, {node: gate}, dict(self.held), dict(self.polls)
+        )
         return RunReport("paused", None, node, state)
 
     def _end(self, node: Node, end: NodeEnd) -> None:
@@ -292,6 +319,10 @@ class _Run:
             self._gate(node)
         elif isinstance(node, AgentNode | ShellNode | ScriptNode):
             self._complete(node, self._retrying(node, lambda: self._execute_once(node)))
+        elif isinstance(node, ActionNode):
+            self._complete(node, self._retrying(node, lambda: self._action_once(node)))
+        elif isinstance(node, ExpectNode):
+            self._complete(node, self._retrying(node, lambda: self._expect_once(node)))
 
     def _stopped_by_when(self, node: Node, expr: str) -> bool:
         """Skip or fail ``node`` by its ``when:``; whether it stopped the node."""
@@ -411,7 +442,92 @@ class _Run:
         self._record_failure(node, attempt, failure)
         self._end(node, NodeEnd(NodeResult("failed"), failure_kind=failure.kind))
 
-    def _execute_once(self, node: ExecutableNode) -> Turn:
+    def _action_once(self, node: ActionNode) -> Turn:
+        """One action call: the runner runs it; its output is one JSON value (the action's
+        ``output_format`` is the runner's to check)."""
+
+        def run(attempt: int) -> tuple[Turn, bool]:
+            reply = self.ports.runner.run(self._action_call(node, attempt))
+            output = _json_value(reply.text)
+            self._capture(node, attempt, output)
+            return Turn(output, reply.text, None), True
+
+        return self._step(node, run)[0]
+
+    def _expect_once(self, node: ExpectNode) -> Turn:
+        """Polls of one attempt, ``every`` apart, until ``until_when`` holds over the output;
+        past the window, or once the node's polls in this run reach ``MAX_EXPECT_POLLS`` (its
+        attempts together), the node fails ``timeout``."""
+        every = timedelta(seconds=duration_seconds(node.every))
+
+        def run(attempt: int) -> tuple[Turn, bool]:
+            clock = self.ports.clock
+            deadline = clock.now() + timedelta(seconds=duration_seconds(node.timeout))
+            poll = 0
+            while self._take_poll(node):
+                poll += 1
+                reply = self.ports.runner.run(self._action_call(node, attempt, poll))
+                output = _json_value(reply.text)
+                held = self._holds(node, output)
+                self._traced(ExpectPoll(node.id, attempt, poll, held, clock.now(), output))
+                if held:
+                    self._capture(node, attempt, output)
+                    return Turn(output, reply.text, None), True
+                if clock.now() + every > deadline or self.polls[node.id] >= MAX_EXPECT_POLLS:
+                    break
+                clock.sleep(every, self.stopped)
+                self._check_stop()
+            detail = f"expect_timeout: until_when did not hold in {node.timeout} ({poll} polls)"
+            raise NodeFailedError("timeout", detail)
+
+        return self._step(node, run)[0]
+
+    def _take_poll(self, node: ExpectNode) -> bool:
+        """Count one more poll of ``node``, unless its run-wide budget is spent."""
+        with self.lock:
+            done = self.polls.get(node.id, 0)
+            if done >= MAX_EXPECT_POLLS:
+                return False
+            self.polls[node.id] = done + 1
+            return True
+
+    def _holds(self, node: ExpectNode, output: JsonValue) -> bool:
+        when = evaluate_when(node.until_when, self._own_context(node, output))
+        if isinstance(when, WhenFail):
+            raise NodeFailedError("config", str(when.error))
+        if isinstance(when, WhenSkip):
+            raise NodeFailedError("config", when.detail)
+        return when.holds
+
+    def _capture(self, node: ActionNode | ExpectNode, attempt: int, output: JsonValue) -> None:
+        """Each ``capture:`` value read from ``output``, traced; one that cannot be read fails
+        the attempt ``config``."""
+        context = self._own_context(node, output)
+        for name, ref in node.capture.items():
+            value = resolve(parse_ref(ref, scenario=True), context, ref)
+            self._traced(ContextCapture(node.id, attempt, name, self.ports.clock.now(), value))
+
+    def _own_context(self, node: Node, output: JsonValue) -> RefContext:
+        context = self._context(node)
+        own = NodeResult("completed", output)
+        return dataclasses.replace(context, self_output=own, scenario=True)
+
+    def _traced(self, item: ExpectPoll | ContextCapture) -> None:
+        trace = self.ports.trace
+        if trace is None:
+            return
+        with self.trace_lock:
+            if isinstance(item, ExpectPoll):
+                trace.expect_polled(item)
+            else:
+                trace.context_captured(item)
+
+    def _action_call(self, node: ActionNode | ExpectNode, attempt: int, poll: int = 0) -> NodeCall:
+        context = self._context(node)
+        inputs = {name: _action_value(value, context) for name, value in node.with_.items()}
+        return NodeCall(node, attempt, context, inputs=inputs, poll=poll)
+
+    def _execute_once(self, node: _CommandNode) -> Turn:
         resume = self._resumed_session(node)
 
         def run(attempt: int) -> tuple[Turn, bool]:
@@ -490,7 +606,7 @@ class _Run:
 
     def _checkout_status(self, node: ExecutableNode) -> str | None:
         """The checkout's status for a read-only node (``mutates_checkout: false``), else None."""
-        if node.mutates_checkout:
+        if isinstance(node, ActionNode | ExpectNode) or node.mutates_checkout:
             return None
         if self.ports.checkout is None:
             raise NodeFailedError("config", "no checkout probe to check mutates_checkout: false")
@@ -546,7 +662,7 @@ class _Run:
             with self.lock:
                 self.sessions[node.id] = turn.session
 
-    def _resumed_session(self, node: ExecutableNode) -> str | None:
+    def _resumed_session(self, node: _CommandNode) -> str | None:
         if not isinstance(node, AgentNode | LoopNode):
             return None
         if not isinstance(node.context, str):
@@ -559,7 +675,7 @@ class _Run:
         return self.sessions.get(node.id)
 
     def _call(
-        self, node: ExecutableNode, attempt: int, *, iteration: int, resume: str | None
+        self, node: _CommandNode, attempt: int, *, iteration: int, resume: str | None
     ) -> NodeCall:
         context = self._node_context(node)
         cwd = render(node.cwd, context) if node.cwd is not None else None
@@ -589,9 +705,34 @@ class _Run:
         """What ``node`` reads: ``$LOOP_PREV`` inside a group (its body or its channels)."""
         group = self.owner.get(node.id, node)
         with self.lock:
-            return RefContext(self.inputs, dict(self.results), self.loop_prevs.get(group.id))
+            results = dict(self.results)
+            loop_prev = self.loop_prevs.get(group.id)
+        scenario = self.plan.document.kind == "scenario"
+        return RefContext(
+            self.inputs, results, loop_prev, ctx=self._captured(results), scenario=scenario
+        )
 
-    def _node_context(self, node: ExecutableNode) -> RefContext:
+    def _captured(self, results: Mapping[str, NodeResult]) -> dict[str, NodeResult]:
+        """Each ``$CTX`` name whose node has ended, read again from that node's result: a
+        resumed run recomputes it from the results it reuses. A skipped node's reads as empty,
+        a failed one's fails the reader."""
+        ctx: dict[str, NodeResult] = {}
+        for name, capture in self.plan.captures.items():
+            result = results.get(capture.node)
+            if result is None or result.state != "completed":
+                if result is not None:
+                    ctx[name] = NodeResult(result.state)
+                continue
+            own = RefContext(self.inputs, results, self_output=result)
+            try:
+                ctx[name] = NodeResult(
+                    "completed", resolve(parse_ref(capture.ref, scenario=True), own, capture.ref)
+                )
+            except SubstitutionError:
+                ctx[name] = NodeResult("failed")
+        return ctx
+
+    def _node_context(self, node: _CommandNode) -> RefContext:
         """The context of an attempt: an agent's ``with`` values resolved (``$WITH``)."""
         context = self._context(node)
         if not isinstance(node, AgentNode | LoopNode):
@@ -730,14 +871,11 @@ class _Run:
         except Exception as error:  # noqa: BLE001 - a port's unexpected error ends the group
             raise NodeFailedError("unknown", type(error).__name__) from None
 
-    def _output(self, node: ExecutableNode, text: str) -> JsonValue:
+    def _output(self, node: _CommandNode, text: str) -> JsonValue:
         """The text, or the one JSON value it holds checked against ``output_format``."""
         if node.output_format is None:
             return text
-        try:
-            value: JsonValue = json.loads(text, parse_constant=_refuse_constant)
-        except ValueError, RecursionError:
-            raise NodeFailedError("output_contract", "the output is not one JSON value") from None
+        value = _json_value(text)
         self.ports.outputs.check(node.output_format, value)
         return value
 
@@ -787,6 +925,30 @@ def _may_halt(node: Node) -> bool:
 def _refuse_constant(name: str) -> JsonValue:
     msg = f"{name} is not a JSON number"
     raise ValueError(msg)
+
+
+def _json_value(text: str) -> JsonValue:
+    """The one JSON value ``text`` holds, else ``output_contract``."""
+    try:
+        value: JsonValue = json.loads(text, parse_constant=_refuse_constant)
+    except ValueError, RecursionError:
+        raise NodeFailedError("output_contract", "the output is not one JSON value") from None
+    return value
+
+
+def _action_value(value: JsonValue, context: RefContext) -> JsonValue:
+    """A ``with`` value for an action: a whole reference's value as is, other text rendered."""
+    if isinstance(value, str):
+        try:
+            ref = parse_ref(value, scenario=context.scenario)
+        except SubstitutionError:
+            return render(value, context)
+        return resolve(ref, context, value)
+    if isinstance(value, list):
+        return [_action_value(item, context) for item in value]
+    if isinstance(value, dict):
+        return {key: _action_value(item, context) for key, item in value.items()}
+    return value
 
 
 def _rendered(value: JsonValue, context: RefContext) -> JsonValue:

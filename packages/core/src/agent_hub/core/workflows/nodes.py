@@ -46,7 +46,16 @@ def _not_blank(value: str) -> str:
     return value
 
 
+# The engine's own gate ids: a policy ask before a step, an investigation after a divergence.
+RESERVED_SUFFIXES: Final = ("__ask", "__investigation")
+# ``$self.output`` reads the node's own output: no scenario node may be named ``self``.
+SELF_ID: Final = "self"
+
+
 def _node_id(value: str) -> str:
+    if value.endswith(RESERVED_SUFFIXES):
+        msg = "an id ending __ask or __investigation is reserved for the engine's gates"
+        raise ValueError(msg)
     if "__" in value:
         msg = "an id never contains '__' (kept for include namespacing)"
         raise ValueError(msg)
@@ -101,6 +110,33 @@ def _within_a_week(value: str) -> str:
     return value
 
 
+# Scenario bounds (docs/design/scenarios.md § Events and bounds).
+MIN_EXPECT_EVERY_SECONDS: Final = 5
+MAX_EXPECT_TIMEOUT_SECONDS: Final = 24 * 3600
+MAX_ACTION_TIMEOUT_SECONDS: Final = 3600
+
+
+def _at_least_five_seconds(value: str) -> str:
+    if duration_seconds(value) < MIN_EXPECT_EVERY_SECONDS:
+        msg = f"must be at least {MIN_EXPECT_EVERY_SECONDS}s"
+        raise ValueError(msg)
+    return value
+
+
+def _within_a_day(value: str) -> str:
+    if duration_seconds(value) > MAX_EXPECT_TIMEOUT_SECONDS:
+        msg = "must be at most 24h"
+        raise ValueError(msg)
+    return value
+
+
+def _within_an_hour(value: str) -> str:
+    if duration_seconds(value) > MAX_ACTION_TIMEOUT_SECONDS:
+        msg = "must be at most 1h"
+        raise ValueError(msg)
+    return value
+
+
 def read_only[Key, Value](value: Mapping[Key, Value]) -> Mapping[Key, Value]:
     """A read-only copy of ``value``: a frozen document's mappings cannot be changed either."""
     return MappingProxyType(dict(value))
@@ -137,6 +173,9 @@ Duration = Annotated[
     StrictStr, Field(pattern=r"^[1-9][0-9]*(s|m|h|d)$"), AfterValidator(_within_a_week)
 ]
 PackPath = Annotated[Text, AfterValidator(_pack_path)]
+ActionTimeout = Annotated[Duration, AfterValidator(_within_an_hour)]
+ExpectEvery = Annotated[Duration, AfterValidator(_at_least_five_seconds)]
+ExpectTimeout = Annotated[Duration, AfterValidator(_within_a_day)]
 Argv = Annotated[tuple[Text, ...], Field(min_length=1)]
 OutputRef = Annotated[StrictStr, AfterValidator(_output_ref)]
 PositiveNumber = Annotated[float, BeforeValidator(_json_number), AfterValidator(_positive_finite)]
@@ -319,10 +358,11 @@ class HaltNode(_Node):
 
 
 def _until(value: str) -> str:
-    # A whole reference is read at run time; anything else is an instant with its offset.
+    # A whole reference is read at run time; anything else is an instant with its offset. The
+    # scenario grammar is accepted here: planning refuses ``$CTX`` outside a scenario.
     if value.startswith("$"):
         try:
-            parse_ref(value)
+            parse_ref(value, scenario=True)
         except SubstitutionError as error:
             raise ValueError(str(error)) from None
         return value
@@ -373,10 +413,64 @@ class IncludeNode(_Node):
     )
 
 
-type ExecutableNode = AgentNode | ShellNode | ScriptNode | LoopNode
+# ``<name>``, an action of the scenario's pack, or ``<pack>/<name>``.
+ActionRef = Annotated[
+    StrictStr, Field(pattern=r"^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$")
+]
+
+
+def _whole_ref(value: str) -> str:
+    try:
+        parse_ref(value, scenario=True)
+    except SubstitutionError as error:
+        raise ValueError(str(error)) from None
+    return value
+
+
+WholeRef = Annotated[StrictStr, AfterValidator(_whole_ref)]
+
+
+class _ActionKeys(_Node):
+    """An action call (docs/design/scenarios.md): ``with`` fills the action's inputs, ``capture``
+    names values of its output for ``$CTX``. Its output format is the action's own."""
+
+    action: ActionRef
+    with_: Annotated[Mapping[VariableName, JsonValue], *READ_ONLY] = Field(
+        default_factory=empty, alias="with"
+    )
+    capture: Annotated[Mapping[VariableName, WholeRef], *READ_ONLY] = Field(default_factory=empty)
+    retry: Retry | None = None
+
+
+class ActionNode(_ActionKeys):
+    """Runs one action once, through the engine's runner."""
+
+    type: Literal["action"]
+    timeout: ActionTimeout | None = None
+
+
+class ExpectNode(_ActionKeys):
+    """Runs a read action every ``every`` until ``until_when`` holds over its output
+    (``$self.output``), or fails ``timeout`` once ``timeout`` has passed."""
+
+    type: Literal["expect"]
+    every: ExpectEvery
+    timeout: ExpectTimeout
+    until_when: Text
+
+
+type ExecutableNode = AgentNode | ShellNode | ScriptNode | LoopNode | ActionNode | ExpectNode
 type GateNode = ApprovalNode | WaitNode
 BodyNode = Annotated[
-    AgentNode | ShellNode | ScriptNode | LoopNode | ApprovalNode | HaltNode | WaitNode,
+    AgentNode
+    | ShellNode
+    | ScriptNode
+    | LoopNode
+    | ApprovalNode
+    | HaltNode
+    | WaitNode
+    | ActionNode
+    | ExpectNode,
     Field(discriminator="type"),
 ]
 
@@ -410,7 +504,9 @@ Node = Annotated[
     | HaltNode
     | WaitNode
     | IncludeNode
-    | LoopGroupNode,
+    | LoopGroupNode
+    | ActionNode
+    | ExpectNode,
     Field(discriminator="type"),
 ]
 

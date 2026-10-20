@@ -45,13 +45,15 @@ class HeldGroup:
 @dataclass(frozen=True)
 class RunState:
     """What a run leaves for its resume: each node's result, its attempts, agent sessions and
-    the gates it paused on, with the groups paused around one."""
+    the gates it paused on, with the groups paused around one, and each expect node's polls
+    (its budget spans the run's resumes)."""
 
     nodes: Mapping[str, NodeResult] = field(default_factory=dict)
     attempts: Mapping[str, int] = field(default_factory=dict)
     sessions: Mapping[str, str] = field(default_factory=dict)
     gates: Mapping[str, OpenGate] = field(default_factory=dict)
     groups: Mapping[str, HeldGroup] = field(default_factory=dict)
+    polls: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -125,7 +125,7 @@ type _Token = _Join | _RefToken | _OpToken | _Literal
 def evaluate_when(expr: str, context: RefContext) -> WhenResult:
     """Parse ``expr`` whole, then evaluate it lazily against ``context``."""
     try:
-        condition = parse_condition(expr)
+        condition = parse_condition(expr, scenario=context.scenario)
     except ConditionParseError as error:
         return WhenSkip(str(error))
     try:
@@ -138,9 +138,10 @@ def evaluate_when(expr: str, context: RefContext) -> WhenResult:
         return WhenSkip(str(error))
 
 
-def parse_condition(expr: str) -> Condition:
-    """Return the parsed ``expr``, or raise ``ConditionParseError``."""
-    tokens = _tokens(expr)
+def parse_condition(expr: str, *, scenario: bool = False) -> Condition:
+    """Return the parsed ``expr``, or raise ``ConditionParseError``; ``scenario``: its
+    references in the scenario grammar (``$CTX``, ``$self``)."""
+    tokens = _tokens(expr, scenario=scenario)
     clauses: list[tuple[Atom, ...]] = []
     atoms: list[Atom] = []
     index = 0
@@ -167,26 +168,26 @@ def _atom(tokens: list[_Token], expr: str) -> Atom:
     raise ConditionParseError(f"{echo(expr)}: each atom is <reference> <operator> <literal>")
 
 
-def _tokens(expr: str) -> list[_Token]:
+def _tokens(expr: str, *, scenario: bool) -> list[_Token]:
     tokens: list[_Token] = []
     index = 0
     while index < len(expr):
         if expr[index].isspace():
             index += 1
             continue
-        token, index = _token(expr, index)
+        token, index = _token(expr, index, scenario=scenario)
         tokens.append(token)
     return tokens
 
 
-def _token(expr: str, index: int) -> tuple[_Token, int]:
+def _token(expr: str, index: int, *, scenario: bool) -> tuple[_Token, int]:
     if expr.startswith(("&&", "||"), index):
         return _Join(expr[index : index + 2]), index + 2
     if expr[index] == "'":
         return _quoted(expr, index)
     if ref := _REF.match(expr, index):
         try:
-            parsed = parse_ref(ref[0])
+            parsed = parse_ref(ref[0], scenario=scenario)
         except SubstitutionError as error:
             raise ConditionParseError(f"{echo(expr)}: bad reference {echo(ref[0])}") from error
         if isinstance(parsed, WithRef):

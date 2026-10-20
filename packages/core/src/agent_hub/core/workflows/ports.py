@@ -38,7 +38,10 @@ class NodeCall:
     ``resume_session`` is the session to continue: ``context.resume``'s, or a loop's previous
     iteration's without ``fresh_context``. ``iteration`` counts a loop's turns from 1, else 0.
     ``scope`` is how a text written in the node's own workflow reads here: the runner renders a
-    ``prompt_file`` with ``scope.render(template, context)``.
+    ``prompt_file`` with ``scope.render(template, context)``. An ``action`` or ``expect`` node's
+    call carries its ``with`` values in ``inputs`` (a whole reference keeps its value's type,
+    other text is rendered); ``poll`` counts an expect's polls from 1, else 0. The runner runs
+    the action and replies its output as JSON text.
     """
 
     node: ExecutableNode
@@ -53,6 +56,8 @@ class NodeCall:
     scope: RefScope = field(default_factory=RefScope)
     # A shell or script node's rendered ``stdin``.
     stdin: str | None = None
+    inputs: Mapping[str, JsonValue] = field(default_factory=dict)
+    poll: int = 0
 
 
 @dataclass(frozen=True)
@@ -163,6 +168,40 @@ class GateRequest:
     choices: tuple[str, ...] = ()
     text: str = ""
     due: datetime | None = None
+
+
+@dataclass(frozen=True)
+class ExpectPoll:
+    """One poll of an ``expect`` node's attempt (from 1) and whether ``until_when`` held.
+
+    ``output`` belongs to the run's record only, never to events (ADR 0019).
+    """
+
+    node: str
+    attempt: int
+    poll: int
+    held: bool
+    at: datetime
+    output: JsonValue = None
+
+
+@dataclass(frozen=True)
+class ContextCapture:
+    """A ``capture:`` value set by a node's attempt; ``value`` stays in the run's record."""
+
+    node: str
+    attempt: int
+    name: str
+    at: datetime
+    value: JsonValue = None
+
+
+class RunTrace(Protocol):
+    """Receives a scenario run's polls and captures (``expect.poll``, ``context.capture``)."""
+
+    def expect_polled(self, poll: ExpectPoll) -> None: ...
+
+    def context_captured(self, capture: ContextCapture) -> None: ...
 
 
 class RunRecorder(Protocol):
