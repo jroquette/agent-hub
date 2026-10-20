@@ -13,7 +13,8 @@ The record folders ``evals/`` and ``reviews/`` are opened the same way, relative
 folder: in each, the ``.md`` names not hidden are read in name order, at most ``MAX_EVAL_FILES``
 and ``MAX_REVIEW_FILES``, as the first ``EVAL_HEAD_BYTES`` / ``REVIEW_HEAD_BYTES``. A link, a
 folder or another non-regular file is listed with its problem, never read; the files left out by
-the cap, and the names that are not UTF-8, are counted in ``evals_skipped`` / ``reviews_skipped``.
+the cap, and the names that are not UTF-8, are counted in ``evals_skipped`` (for ``reviews/``
+they are left out uncounted).
 A linked or missing record folder reads as empty: at most ``MAX_EVAL_FILES`` and
 ``MAX_REVIEW_FILES`` names are kept while listing (the smallest by name), the rest only counted.
 The folder's own ``ux-*.md`` designs are read the same way, at most ``MAX_UX_FILES``, as their
@@ -167,7 +168,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
         evals, evals_skipped = _heads(
             folder, EVALS_FOLDER, cap=MAX_EVAL_FILES, size=EVAL_HEAD_BYTES, meter=meter
         )
-        reviews, reviews_skipped = _heads(
+        reviews, _ = _heads(
             folder, REVIEWS_FOLDER, cap=MAX_REVIEW_FILES, size=REVIEW_HEAD_BYTES, meter=meter
         )
         ux_designs, ux_skipped = _ux_heads(folder, meter)
@@ -184,7 +185,6 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
         evals=evals,
         reviews=reviews,
         evals_skipped=evals_skipped,
-        reviews_skipped=reviews_skipped,
         plan=plan if isinstance(plan, bytes) and not too_large else None,
         plan_too_large=too_large,
         ux_designs=ux_designs,

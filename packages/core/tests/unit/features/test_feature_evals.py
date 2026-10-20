@@ -392,7 +392,6 @@ def folder_of(tree: dict[str, bytes]) -> FeatureFolder:
         evals=heads("evals"),
         reviews=heads("reviews"),
         evals_skipped=1,
-        reviews_skipped=1,
     )
 
 
@@ -411,7 +410,7 @@ def test_ignores_json_outputs_when_legacy_and_outputs_mixed() -> None:
     )
     assert review_records(mixed.reviews, slug=SLUG) == review_records(legacy.reviews, slug=SLUG)
     assert feature_detail(mixed, project="demo") == feature_detail(legacy, project="demo")
-    assert (mixed.evals_skipped, mixed.reviews_skipped) == (1, 1)
+    assert mixed.evals_skipped == 1
 
 
 def test_takes_final_verdict_when_addendum_reverses_first_legacy() -> None:

@@ -109,7 +109,7 @@ class FeatureFolder:
     record's bytes, a one-line problem when it could not be read, or None when absent;
     ``spec_head`` and ``eval_head`` are the first ``HEAD_BYTES`` of ``spec.md`` and ``eval.md``.
     ``evals`` and ``reviews`` hold the heads of ``evals/*.md`` and ``reviews/*.md`` sorted by
-    name; ``evals_skipped`` and ``reviews_skipped`` count the files left unread over the cap.
+    name; ``evals_skipped`` counts the eval files left unread over the cap.
     ``plan`` holds ``plan.md`` whole, None when absent or larger than ``MAX_PLAN_BYTES``
     (``plan_too_large`` then says so). ``ux_designs`` holds the heads of the folder's own
     ``ux-*.md`` sorted by name; ``ux_skipped`` counts those left unread over ``MAX_UX_FILES``.
@@ -123,7 +123,6 @@ class FeatureFolder:
     evals: tuple[RecordHead, ...] = ()
     reviews: tuple[RecordHead, ...] = ()
     evals_skipped: int = 0
-    reviews_skipped: int = 0
     plan: bytes | None = None
     plan_too_large: bool = False
     ux_designs: tuple[RecordHead, ...] = ()

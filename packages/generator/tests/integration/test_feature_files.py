@@ -175,7 +175,7 @@ def test_reads_eval_heads_when_evals_folder_present_evals(tmp_path: Path) -> Non
         RecordHead(name="acme-1520.md", head=b"x" * EVAL_HEAD_BYTES, problem=None),
         RecordHead(name="acme-1521.md", head=b"---\nverdict: NO-SHIP\n---\n", problem=None),
     )
-    assert (read.evals_skipped, read.reviews, read.reviews_skipped) == (0, (), 0)
+    assert (read.evals_skipped, read.reviews) == (0, ())
     assert read.files == ()
 
 
@@ -234,7 +234,7 @@ def test_reads_nothing_when_evals_folder_is_link(tmp_path: Path) -> None:
 
     [read] = read_feature_folders(tmp_path)
 
-    assert (read.evals, read.evals_skipped, read.reviews, read.reviews_skipped) == ((), 0, (), 0)
+    assert (read.evals, read.evals_skipped, read.reviews) == ((), 0, ())
 
 
 def test_reads_review_heads_when_reviews_present_reviews(
@@ -253,7 +253,6 @@ def test_reads_review_heads_when_reviews_present_reviews(
         RecordHead(name="acme-1520.md", head=b"y" * REVIEW_HEAD_BYTES, problem=None),
         RecordHead(name="acme-1521.md", head=b"---\noutcome: approved\n---\n", problem=None),
     )
-    assert read.reviews_skipped == 1
     assert MAX_REVIEW_FILES == 500
 
 
@@ -453,7 +452,6 @@ def test_reads_first_names_only_when_reviews_over_cap(
     [read] = read_feature_folders(tmp_path)
 
     assert [head.name for head in read.reviews] == ["dem-0.md", "dem-1.md"]
-    assert read.reviews_skipped == 4
     assert [name for name in reads.opened if name.startswith("dem-")] == ["dem-0.md", "dem-1.md"]
 
 
@@ -500,4 +498,4 @@ def test_reads_same_folder_when_outputs_added(
     assert legacy is not None
     assert [head.name for head in legacy.evals] == ["dem-1.md", "dem-2.md"]
     assert [head.name for head in legacy.reviews] == ["DEM-1.md"]
-    assert (legacy.evals_skipped, legacy.reviews_skipped) == (1, 1)
+    assert legacy.evals_skipped == 1

@@ -224,12 +224,7 @@ def test_keeps_eval_and_review_heads_when_folder_built() -> None:
     head = RecordHead(name="acme-1520.md", head=b"---\ntype: eval\n---\n", problem=None)
     folder = FeatureFolder(slug="demo", files=(), evals=(head,), evals_skipped=2)
 
-    assert (folder.evals, folder.reviews, folder.evals_skipped, folder.reviews_skipped) == (
-        (head,),
-        (),
-        2,
-        0,
-    )
+    assert (folder.evals, folder.reviews, folder.evals_skipped) == ((head,), (), 2)
 
 
 def a_summary(issue_id: str, *, state_type: str = "started") -> IssueSummary:
