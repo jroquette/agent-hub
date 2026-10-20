@@ -5835,6 +5835,12 @@ def test_denies_bash_glob_when_env_file_name_matched_after_cd(
         "cd demo-api/environment; cat .env.*",
         "cd demo-api/environment && cat .ENV.T?ST",
         "cd demo-api && cat environment/.env.[st]est",
+        # quality round 3: a cd that is not the first word of its part still moves the call
+        "if cd demo-api/environment; then cat .env.t*; fi",
+        "echo $(cd demo-api/environment && cat .env.t*)",
+        "bash -c 'cd demo-api/environment && cat .env.t*'",
+        "builtin cd demo-api/environment && cat .env.t*",
+        "for d in demo-api/environment; do cd $d; cat .env.t*; done",
     ]
     passed = [
         "cd demo-api/environment && cat *.test",
@@ -5857,6 +5863,12 @@ def test_denies_bash_glob_when_mixed_case_env_file_matched_after_cd(
         "cd demo-api/environment && cat Sta*",
         "cd demo-api/environment && cat sTAGING.e?v",
         "pushd demo-api/environment && cat *ing.env",
+        # quality round 3: a cd that is not the first word of its part still moves the call
+        "if cd demo-api/environment; then cat Sta*; fi",
+        "echo $(cd demo-api/environment && cat Sta*)",
+        "bash -c 'cd demo-api/environment && cat Sta*'",
+        "builtin cd demo-api/environment && cat Sta*",
+        "for d in demo-api/environment; do cd $d; cat Sta*; done",
     ]
     passed = ["cat Sta*", *GLOBS_NOT_NAMING_ENV_FILES]
 
