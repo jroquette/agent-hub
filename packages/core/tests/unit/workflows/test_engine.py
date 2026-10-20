@@ -1275,3 +1275,15 @@ def test_renders_text_when_run_context_tokens_in_plain_workflow() -> None:
 
     assert [call.argv for call in runner.calls] == [("echo", "cost $CTX"), ("echo", "ten")]
     assert run.report.status == "done"
+
+
+def test_counts_polls_across_attempts_when_expect_node_retried() -> None:
+    # One hour every 5s is 721 polls an attempt; the retry gets only what is left of 1000.
+    node = expect("wait", every="5s", timeout="1h", retry={"max_attempts": 2})
+    runner = ScriptedRunner({"wait": pending(2200)})
+
+    run = Run(plan_of(node), runner)
+
+    assert len(runner.calls) == engine_module.MAX_EXPECT_POLLS
+    assert {call.attempt for call in runner.calls} == {1, 2}
+    assert run.status_of("wait") == ("failed", None, None, "timeout")
