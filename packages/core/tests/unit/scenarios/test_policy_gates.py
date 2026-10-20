@@ -104,3 +104,16 @@ def test_keeps_document_when_no_ask() -> None:
 def test_refuses_ask_when_policy_gates_name_no_step() -> None:
     with pytest.raises(PolicyGateError, match="no step missing"):
         with_policy_gates(a_scenario(GET, SEND), {"missing": ASK})
+
+
+def test_says_step_may_have_run_when_policy_gates_ask_again() -> None:
+    again = PolicyAsk(action="demo/send-order", effect="write", environment="local", again=True)
+
+    gated = with_policy_gates(a_scenario(GET, SEND), {"send": again})
+
+    gate = gated.nodes[1]
+    assert isinstance(gate, ApprovalNode)
+    assert gate.message == (
+        "policy ask: step send runs demo/send-order (write) in local; an earlier attempt"
+        " started and never ended, so it may have run: approve to run it again"
+    )
