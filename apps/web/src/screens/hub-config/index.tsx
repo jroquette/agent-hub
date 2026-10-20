@@ -6,6 +6,7 @@ import type { components } from "../../api/schema";
 import {
   Banner,
   Button,
+  CopyButton,
   Icon,
   ProblemError,
   Skeleton,
@@ -22,16 +23,9 @@ import { useAgentCapabilities } from "../sessions-list/queries";
 import { sessionControlUnavailable } from "../sessions-list/control";
 import type { DiscussReference, DiscussStarter } from "../../shell/discuss";
 import { KnowledgeProjectIndex } from "../knowledge-index";
+import { EnvironmentsSection } from "./EnvironmentsSection";
 import { LocalSettingsDialog } from "./LocalSettingsDialog";
-import {
-  AskBlocked,
-  ConfigRow,
-  ConfigSource,
-  Mono,
-  NoneText,
-  Section,
-  useAttach,
-} from "./parts";
+import { AskBlocked, ConfigRow, ConfigSource, Mono, NoneText, Section, useAttach } from "./parts";
 import type { RowAsk, Source } from "./parts";
 export { ConfigSource } from "./parts";
 import "./hub-config.css";
@@ -40,7 +34,6 @@ type HubConfigView = components["schemas"]["HubConfigView"];
 type SourcedValue = components["schemas"]["SourcedValue"];
 type RepoConfigView = components["schemas"]["RepoConfigView"];
 type LayeredList = components["schemas"]["LayeredList"];
-
 
 /** Where the sidebar's Hub config goes: the project in scope, else a project picker. */
 export const CONFIG_PICKER = "/config";
@@ -288,8 +281,9 @@ function WhereValuesComeFrom({ hubRepo, localSet }: { hubRepo: string; localSet:
         ))}
       </ol>
       <p className="ah-small ah-muted ah-config-note">
-        You can set your author name and email, branch prefix and tracker transport, and add blocked
-        words. Everything else is the team&apos;s. {mineCount(localSet)}
+        You can set your author name and email, branch prefix and tracker transport, add blocked
+        words, and add your own environments and endpoints. Everything else is the team&apos;s.{" "}
+        {mineCount(localSet)}
       </p>
     </section>
   );
@@ -301,6 +295,7 @@ const SECTIONS = [
   { id: "repositories", label: "Repositories" },
   { id: "who-commits", label: "Who commits" },
   { id: "guard", label: "Guard" },
+  { id: "environments", label: "Environments" },
   { id: "tracker", label: "Tracker" },
   { id: "models", label: "Models" },
 ];
@@ -490,7 +485,15 @@ function BlockedRow({
   );
 }
 
-function ConfigBody({ view, onSaved }: { view: HubConfigView; onSaved: () => void }) {
+function ConfigBody({
+  view,
+  onSaved,
+  onEnvironmentSaved,
+}: {
+  view: HubConfigView;
+  onSaved: () => void;
+  onEnvironmentSaved: (message: string, team: boolean) => void;
+}) {
   const [params, setParams] = useSearchParams();
   const openRepo = params.get("repo");
   const { attach, isAttached } = useAttach();
@@ -689,6 +692,8 @@ function ConfigBody({ view, onSaved }: { view: HubConfigView; onSaved: () => voi
             </div>
           </Section>
 
+          <EnvironmentsSection view={view} onSaved={onEnvironmentSaved} />
+
           <Section
             id="tracker"
             title="Tracker"
@@ -844,11 +849,13 @@ export function HubConfigScreen() {
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });
   const { setOpen, addReference } = useDiscuss();
   const [editing, setEditing] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  // hub.json was changed from this page and is not committed yet: the person syncs and opens a PR.
+  const [teamChanged, setTeamChanged] = useState(false);
   useEffect(() => {
-    if (!saved) return;
+    if (saved === null) return;
     const timer = setTimeout(() => {
-      setSaved(false);
+      setSaved(null);
     }, 4000);
     return () => {
       clearTimeout(timer);
@@ -858,7 +865,11 @@ export function HubConfigScreen() {
   const unavailable = sessionControlUnavailable(capabilities.error, capabilities.data);
   const blocked = unavailable ? `${unavailable.title}. ${unavailable.detail}` : null;
   const onSaved = () => {
-    setSaved(true);
+    setSaved("Saved your settings");
+  };
+  const onEnvironmentSaved = (message: string, team: boolean) => {
+    setSaved(message);
+    if (team) setTeamChanged(true);
   };
   useDiscussTarget({
     key: `config:${project}`,
@@ -880,7 +891,13 @@ export function HubConfigScreen() {
       ).length +
       view.guard.blocked_words.local.length +
       view.guard.blocked_words_files.local.length +
-      view.guard.blocked_words_env.local.length
+      view.guard.blocked_words_env.local.length +
+      view.environments.environments.filter((e) => e.source === "hub.local.json").length +
+      view.environments.services.reduce(
+        (count, service) =>
+          count + service.endpoints.filter((e) => e.source === "hub.local.json").length,
+        0,
+      )
     : 0;
 
   let body: ReactNode;
@@ -909,7 +926,7 @@ export function HubConfigScreen() {
     body = (
       <>
         <WhereValuesComeFrom hubRepo={view.hub_repo} localSet={localSet} />
-        <ConfigBody view={view} onSaved={onSaved} />
+        <ConfigBody view={view} onSaved={onSaved} onEnvironmentSaved={onEnvironmentSaved} />
       </>
     );
   }
@@ -980,6 +997,39 @@ export function HubConfigScreen() {
             {view.local_file.problems.join("; ")}
           </Banner>
         )}
+        {teamChanged && (
+          <Banner
+            tone="info"
+            onDismiss={() => {
+              setTeamChanged(false);
+            }}
+            action={
+              <span className="ah-row" style={{ gap: 8 }}>
+                <CopyButton text="./hub sync" label="Copy ./hub sync" />
+                <Button
+                  size="sm"
+                  icon="message-square"
+                  disabled={blocked !== null}
+                  onClick={() => {
+                    addReference({
+                      id: "config:hub.json-environments",
+                      label: "Uncommitted hub.json",
+                      source: "hub.json",
+                      quote:
+                        "hub.json has environment changes made from hub web that are not committed. Run ./hub sync, show me the diff, and open a hub PR after I agree.",
+                    });
+                    setOpen(true);
+                  }}
+                >
+                  Ask Claude to open the hub PR
+                </Button>
+              </span>
+            }
+          >
+            hub.json has changes that are not committed. Run ./hub sync to update AGENTS.md, then
+            review the diff and open a hub PR.
+          </Banner>
+        )}
         {body}
         {editing && view && (
           <LocalSettingsDialog
@@ -991,9 +1041,9 @@ export function HubConfigScreen() {
             onSaved={onSaved}
           />
         )}
-        {saved && (
+        {saved !== null && (
           <div className="ah-config-toast">
-            <Toast>Saved your settings</Toast>
+            <Toast>{saved}</Toast>
           </div>
         )}
       </div>

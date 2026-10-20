@@ -113,8 +113,69 @@ function aConfig(overrides: Record<string, unknown> = {}) {
     agent_models: [],
     modules: ["cloud"],
     platform_version: "0.2.0",
+    environments: {
+      environments: [],
+      services: [],
+      blocked_words: [],
+      blocked_files: [],
+      blocked_env: [],
+    },
     ...overrides,
   };
+}
+
+const ENV_WRITE = "POST /api/v1/projects/demo/config/environments";
+
+function environment(name: string, access: string, source: string, extra = {}) {
+  return {
+    name,
+    access,
+    production: false,
+    description: null,
+    credentials: null,
+    source,
+    team_access: source === "hub.json" ? access : null,
+    ...extra,
+  };
+}
+
+function withEnvironments() {
+  return aConfig({
+    environments: {
+      environments: [
+        environment("local", "write", "hub.json", { description: "docker compose stack" }),
+        environment("live", "read", "hub.json", {
+          production: true,
+          credentials: { aws_profile: "demo-live-ro", env: ["DEMO_LIVE_DB_URL"] },
+        }),
+        environment("staging", "read", "hub.local.json", { team_access: "write" }),
+        environment("jane-cloud", "write", "hub.local.json"),
+      ],
+      services: [
+        {
+          repo: "demo-api",
+          name: "api",
+          kind: "api",
+          description: null,
+          endpoints: [
+            {
+              environment: "local",
+              endpoint: { url: "http://localhost:8000" },
+              source: "hub.json",
+            },
+            {
+              environment: "jane-cloud",
+              endpoint: { url: "https://api.jane.example.com" },
+              source: "hub.local.json",
+            },
+          ],
+        },
+      ],
+      blocked_words: [],
+      blocked_files: [],
+      blocked_env: [],
+    },
+  });
 }
 
 function References() {
@@ -449,6 +510,127 @@ describe("HubConfigScreen", () => {
 
     // One axe pass once the screen has loaded, as the other screens' checks: inside waitFor its
     // 1 s budget timed a slow pass out on a busy machine.
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+  it("lists each environment with what agents may do there and who set it", async () => {
+    open("/projects/demo/config", { [CONFIG]: withEnvironments() });
+
+    const section = await screen.findByRole("region", { name: /Environments/ });
+    expect(within(section).getAllByText("Agents may change data")).toHaveLength(2);
+    expect(within(section).getAllByText("Agents only read")).toHaveLength(2);
+    expect(within(section).getAllByText("Production").length).toBeGreaterThan(0);
+    expect(within(section).getByText("Tightened by you")).toBeVisible();
+    expect(within(section).getByText("Team: may change data")).toBeVisible();
+    expect(within(section).getByText("demo-live-ro")).toBeVisible();
+    expect(within(section).getByText("DEMO_LIVE_DB_URL")).toBeVisible();
+    expect(
+      within(section).getByRole("button", {
+        name: "Edit endpoint of demo-api › api in local: http://localhost:8000",
+      }),
+    ).toBeVisible();
+    expect(
+      within(section).getByRole("button", { name: "Add endpoint for demo-api › api in live" }),
+    ).toBeVisible();
+  });
+
+  it("explains environments and offers to add one when none is declared", async () => {
+    open();
+
+    const section = await screen.findByRole("region", { name: /Environments/ });
+    expect(within(section).getByText("No environments yet")).toBeVisible();
+    expect(within(section).getByRole("button", { name: "Add environment" })).toBeVisible();
+  });
+
+  it("adds a team environment and says hub.json is not committed", async () => {
+    const { requests } = open("/projects/demo/config", {
+      [CONFIG]: aConfig(),
+      [ENV_WRITE]: withEnvironments(),
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add environment" }));
+    const dialog = screen.getByRole("dialog", { name: "Add environment" });
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Name" }), "staging");
+    await userEvent.click(within(dialog).getByRole("radio", { name: "The whole team" }));
+    await userEvent.click(within(dialog).getByRole("radio", { name: "Ask first" }));
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: "AWS profile name" }),
+      "demo-staging",
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Add environment for the team" }),
+    );
+
+    expect(await screen.findByText("Added staging for the team")).toBeVisible();
+    expect(screen.getByText(/hub.json has changes that are not committed/)).toBeVisible();
+    const post = requests.find((r) => r.method === "POST" && r.url.endsWith("/environments"));
+    expect(await post?.json()).toMatchObject({
+      op: "add_environment",
+      scope: "team",
+      name: "staging",
+      access: "ask",
+      aws_profile: "demo-staging",
+    });
+  });
+
+  it("refuses a variable line with a value before sending it", async () => {
+    const { requests } = open();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add environment" }));
+    const dialog = screen.getByRole("dialog", { name: "Add environment" });
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Name" }), "mine");
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: "Variable names" }),
+      "DB_URL=postgres://x",
+    );
+
+    expect(
+      within(dialog).getByText("Line 1: only the name. Remove = and what follows."),
+    ).toBeVisible();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Add environment for me" }));
+    expect(requests.some((r) => r.method === "POST")).toBe(false);
+  });
+
+  it("shows a refused access under its field", async () => {
+    open("/projects/demo/config", {
+      [CONFIG]: withEnvironments(),
+      [ENV_WRITE]: aProblem({
+        status: 422,
+        title: "This change was not saved",
+        errors: [
+          {
+            pointer: "environments.live.access",
+            message: "hub.local.json: may only tighten hub.json's read",
+          },
+        ],
+      }),
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit: live" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit environment live" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save for the team" }));
+
+    expect(await within(dialog).findByText("May only tighten hub.json's read")).toBeVisible();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Nothing was saved: fix the fields marked below.",
+    );
+  });
+
+  it("asks to remove the endpoints of an environment still in use first", async () => {
+    open("/projects/demo/config", { [CONFIG]: withEnvironments() });
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Remove environment jane-cloud" }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: /jane-cloud is still used by 1 endpoints/ });
+    expect(within(dialog).getByText(/demo-api › api/)).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Remove 1 endpoints" })).toBeVisible();
+  });
+
+  it("has no serious a11y violations with environments", async () => {
+    const { container } = open("/projects/demo/config", { [CONFIG]: withEnvironments() });
+    await screen.findByRole("region", { name: /Environments/ });
+
     expect(await seriousViolations(container)).toEqual([]);
   });
 });

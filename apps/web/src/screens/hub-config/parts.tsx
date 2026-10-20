@@ -63,6 +63,8 @@ export interface RowAsk {
 
 export interface RowProps {
   label: string;
+  /** Shown in place of ``label`` (a name with a badge); ``label`` stays the accessible text. */
+  labelNode?: ReactNode;
   children: ReactNode;
   source?: ReactNode;
   /** Point Claude at this row: shown on hover and focus, and kept once attached. */
@@ -74,6 +76,7 @@ export interface RowProps {
 
 export function ConfigRow({
   label,
+  labelNode,
   children,
   source,
   ask,
@@ -83,7 +86,7 @@ export function ConfigRow({
   const blocked = useContext(AskBlocked);
   return (
     <div className="ah-config-row">
-      <div className="ah-config-label">{label}</div>
+      <div className="ah-config-label">{labelNode ?? label}</div>
       <div className="ah-config-value">{children}</div>
       <div className="ah-config-src">{source}</div>
       <div className="ah-config-act">
@@ -175,4 +178,3 @@ export function useAttach() {
     isAttached: (id: string) => attached.has(`config:${id}`),
   };
 }
-

@@ -316,3 +316,138 @@
   bottom: var(--space-6);
   z-index: 50;
 }
+
+/* ---------- Environments ---------- */
+.ah-env-toolbar {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.ah-env-toolbar > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.ah-env-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.ah-env-access,
+.ah-env-credentials {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ah-env-remove {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+}
+.ah-config-row:hover .ah-env-remove,
+.ah-config-row:focus-within .ah-env-remove {
+  opacity: 1;
+}
+.ah-config-row:has(.ah-env-remove) .ah-config-value {
+  position: relative;
+  padding-right: 32px;
+}
+.ah-env-subhead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: var(--space-5) 0 var(--space-3);
+}
+.ah-env-subtitle {
+  margin: 0 0 2px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ah-env-caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.ah-env-matrix-wrap {
+  max-width: 100%;
+}
+.ah-env-matrix th[scope="row"],
+.ah-env-matrix thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+  font-weight: 400;
+  color: var(--text);
+}
+.ah-env-matrix thead th:first-child {
+  z-index: calc(var(--z-sticky) + 1);
+  background: var(--surface-sunken);
+  color: var(--text-subtle);
+}
+.ah-env-service {
+  padding-left: var(--space-5) !important;
+  text-align: left;
+}
+.ah-env-repo th {
+  position: static;
+  height: 32px;
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-weight: 500;
+}
+.ah-env-add {
+  opacity: 0.55;
+}
+tr:hover .ah-env-add,
+.ah-env-add:focus-visible {
+  opacity: 1;
+}
+.ah-env-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 6px;
+  margin: 0 -6px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.ah-env-cell:hover {
+  background: var(--surface-hover);
+}
+.ah-env-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.ah-env-cell .ah-icon {
+  color: var(--text-subtle);
+  flex-shrink: 0;
+}
+.ah-env-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.ah-env-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}

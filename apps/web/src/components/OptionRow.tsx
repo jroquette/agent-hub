@@ -10,7 +10,8 @@ export const RECOMMENDED_MARK = /\s*\(recommended\)\s*$/i;
 /**
  * One choice of a question: a radio or checkbox row with its label and, below it, its description.
  * A label ending in "(Recommended)", or `recommended`, shows the Recommended tag. `children` go
- * under the description (the free-text box of an "Other" row). Wrap the rows in `.ah-options`.
+ * under the description (the free-text box of an "Other" row). `disabled` greys the row out and
+ * turns its input off; say why in its description. Wrap the rows in `.ah-options`.
  */
 export function OptionRow({
   type,
@@ -20,6 +21,7 @@ export function OptionRow({
   checked,
   onToggle,
   recommended = false,
+  disabled = false,
   children,
 }: {
   type: "radio" | "checkbox";
@@ -29,18 +31,22 @@ export function OptionRow({
   checked: boolean;
   onToggle: () => void;
   recommended?: boolean;
+  disabled?: boolean;
   children?: ReactNode;
 }) {
   const labelId = useId();
   const descriptionId = useId();
   const tagged = recommended || RECOMMENDED_MARK.test(label);
   return (
-    <label className={cx("ah-option", checked && "ah-option-checked")}>
+    <label
+      className={cx("ah-option", checked && "ah-option-checked", disabled && "ah-option-disabled")}
+    >
       <input
         type={type}
         name={name}
         className="ah-check"
         checked={checked}
+        disabled={disabled}
         aria-labelledby={labelId}
         aria-describedby={description ? descriptionId : undefined}
         onChange={onToggle}
