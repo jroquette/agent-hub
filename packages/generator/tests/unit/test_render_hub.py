@@ -4975,6 +4975,8 @@ RENDERING_MODULES = frozenset(
         "workflow_outputs.py",
         # Pure: it parses bytes it is given; workflow_discovery reads the files.
         "workflow_yaml.py",
+        # No I/O of its own: it names the scenarios root, workflow_discovery reads it.
+        "scenario_discovery.py",
     }
 )
 
