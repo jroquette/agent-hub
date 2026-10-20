@@ -7,13 +7,18 @@ import pytest
 
 from agent_hub.core.features.feature_evals import eval_coverage, eval_records
 from agent_hub.core.features.feature_record import record_from_bytes
-from agent_hub.core.features.feature_status import FeatureFolder, RecordHead
+from agent_hub.core.features.feature_status import FeatureFolder, RecordHead, feature_parts
+from agent_hub.core.features.feature_view import GoldenStep
 from agent_hub.core.features.owner_signoff import (
     OwnerSignOffError,
     SignOffOwnerSteps,
     signoff_name,
 )
+from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.testing.read_model_builders import an_issue_summary
+from agent_hub.core.testing.tracker_reader_fakes import SNAPSHOT_TIME
+from agent_hub.core.tracker.tracker_reader import IssueState, TicketSnapshot
 
 SLUG = "demo-feature"
 HUB = "/hubs/demo"
@@ -61,8 +66,80 @@ class Writer:
 
 def a_sign_off(*evals: RecordHead) -> tuple[SignOffOwnerSteps, Writer]:
     folder = FeatureFolder(slug=SLUG, files=("features.json",), features_json=RECORD, evals=evals)
+    return a_sign_off_of(folder)
+
+
+def a_sign_off_of(folder: FeatureFolder) -> tuple[SignOffOwnerSteps, Writer]:
     writer = Writer()
     return SignOffOwnerSteps(Hubs(), Folders(folder), writer, clock=lambda: NOW), writer
+
+
+# A feature whose two tickets are merged: only its Acceptance step can still wait.
+PLANNED = json.dumps(
+    {
+        "tickets": [
+            {"key": "T1", "id": "ACME-1520", "order": 1},
+            {"key": "T2", "id": "ACME-1521", "order": 2},
+        ],
+        "acs": [
+            {"id": "AC-7.1", "description": "d", "passes": True, "ticket": "T1"},
+            {"id": "AC-7.2", "description": "d", "passes": False, "ticket": "T2"},
+            {"id": "AC-7.3", "description": "d", "passes": False, "verification": "manual"},
+        ],
+    }
+).encode()
+DONE = IssueState(name="Done", type="completed")
+MERGED = SnapshotRead(
+    snapshot=TicketSnapshot(
+        summaries=tuple(
+            an_issue_summary(id=issue, state=DONE, blocks=(), blocked_by=())
+            for issue in ("ACME-1520", "ACME-1521")
+        ),
+        missing=(),
+        external=(),
+    ),
+    source="linear",
+    stale=False,
+    as_of=SNAPSHOT_TIME,
+    failure=None,
+    detail=None,
+    http_status=None,
+)
+
+
+def a_head(name: str, verdict: str, *, scope: str, at: str) -> RecordHead:
+    head = f"---\ntype: eval\nverdict: {verdict}\n{scope}\nevaluated_at: {at}\n---\n"
+    return RecordHead(name=f"{name}.md", head=head.encode(), problem=None)
+
+
+def a_planned_folder(*evals: RecordHead, eval_head: bytes | None = None) -> FeatureFolder:
+    files = ("spec.md", "plan.md", "issues.md", "features.json")
+    return FeatureFolder(
+        slug=SLUG,
+        files=(*files, "eval.md") if eval_head else files,
+        features_json=PLANNED,
+        evals=evals,
+        eval_head=eval_head,
+    )
+
+
+def acceptance_of(folder: FeatureFolder) -> GoldenStep:
+    steps = feature_parts(folder, MERGED).golden_path.steps
+    return next(step for step in steps if step.name == "acceptance")
+
+
+def signed(folder: FeatureFolder, writer: Writer) -> FeatureFolder:
+    notes = tuple(
+        RecordHead(name=name, head=text.encode(), problem=None)
+        for name, text in writer.written.items()
+    )
+    return FeatureFolder(
+        slug=folder.slug,
+        files=folder.files,
+        features_json=folder.features_json,
+        evals=(*folder.evals, *notes),
+        eval_head=folder.eval_head,
+    )
 
 
 def test_writes_ship_eval_when_owner_steps_wait() -> None:
@@ -90,11 +167,57 @@ def test_refuses_when_no_owner_steps_wait() -> None:
     assert writer.written == {}
 
 
-def test_refuses_when_an_ac_is_not_shipped() -> None:
-    sign_off, _ = a_sign_off(an_eval("abc-1.md", "NO-SHIP"))
+def test_refuses_when_whole_feature_eval_says_no_ship() -> None:
+    sign_off, writer = a_sign_off(an_eval("abc-1.md", "NO-SHIP"))
 
-    with pytest.raises(OwnerSignOffError, match="not covered"):
+    with pytest.raises(OwnerSignOffError, match="no AC waits"):
         sign_off("demo", SLUG)
+    assert writer.written == {}
+
+
+# two-level-flows A3 (AGH-325 Q1): the writer signs off exactly what the Acceptance step counts.
+def test_signs_off_counted_owner_steps_when_ticket_ship_follows_whole_feature_eval() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    ticket = a_head("acme-1520", "SHIP", scope="acs: [AC-7.1, AC-7.2, AC-7.3]", at="2026-10-11")
+    folder = a_planned_folder(whole, ticket)
+    waiting = acceptance_of(folder)
+    sign_off, writer = a_sign_off_of(folder)
+
+    written = sign_off("demo", SLUG)
+
+    assert waiting.meta == "Waiting on you: 3 owner steps"
+    assert written.acs == ("AC-7.1", "AC-7.2", "AC-7.3")
+    assert "the owner steps listed in feature are done" in writer.written["owner-signoff.md"]
+    after = acceptance_of(signed(folder, writer))
+    assert (after.state, after.meta) == ("done", "Owner steps signed off")
+
+
+# two-level-flows A6: a legacy eval.md without scope is whole-feature, failing ACs and all.
+def test_signs_off_every_ac_when_legacy_eval_without_scope_ships_with_owner_steps() -> None:
+    legacy = b"# Eval\n\n**Verdict: SHIP-WITH-OWNER-STEPS.** One manual step left.\n"
+    folder = a_planned_folder(eval_head=legacy)
+    waiting = acceptance_of(folder)
+    sign_off, writer = a_sign_off_of(folder)
+
+    written = sign_off("demo", SLUG)
+
+    assert waiting.meta == "Waiting on you: 3 owner steps"
+    assert written.acs == ("AC-7.1", "AC-7.2", "AC-7.3")
+    assert acceptance_of(signed(folder, writer)).state == "done"
+
+
+# two-level-flows A3 (AGH-325 Q2): with no AC to list, the app has nothing to sign off.
+def test_refuses_when_features_json_lists_no_live_ac() -> None:
+    record = json.dumps({"acs": []}).encode()
+    whole = an_eval("feature.md", "SHIP-WITH-OWNER-STEPS")
+    folder = FeatureFolder(
+        slug=SLUG, files=("features.json",), features_json=record, evals=(whole,)
+    )
+    sign_off, writer = a_sign_off_of(folder)
+
+    with pytest.raises(OwnerSignOffError, match="lists no AC to sign off"):
+        sign_off("demo", SLUG)
+    assert writer.written == {}
 
 
 def test_raises_not_found_when_feature_unknown() -> None:
