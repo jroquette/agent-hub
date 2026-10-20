@@ -14,6 +14,9 @@ and reads 0, so a group that loops in a fixture ends through ``until_when``. An 
 ``wait`` takes its answer from its stub (``{decision, text}``, ``{text}``, ``{choice}``, or ``{}``
 to end a timed wait); with no stub, or a list that ran out, it pauses the run (``paused``), as a
 real run waits for a person.
+
+A scenario's ``expect`` takes one stub per poll (a list, in order; a single stub answers every
+poll), the clock moving only by ``every``; ``captures`` and ``polls`` say what its trace saw.
 """
 
 import json
@@ -41,6 +44,8 @@ from agent_hub.core.workflows.nodes import (
 )
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import (
+    ContextCapture,
+    ExpectPoll,
     GateRequest,
     NodeCall,
     NodeReply,
@@ -114,6 +119,9 @@ class DryRunReport:
     unused: tuple[str, ...]
     steps: tuple[StepEnd, ...]
     outcome: JsonValue
+    # Each capture as (node, name, value), in order, and how many expect polls ran.
+    captures: tuple[tuple[str, str, JsonValue], ...] = ()
+    polls: int = 0
 
 
 def dry_run(
@@ -138,6 +146,7 @@ def dry_run(
         _StillCheckout(),
         max_parallel=1,
         gates=runner,
+        trace=recorder,
     )
     report = run_workflow(plan, inputs, ports)
     order = [node.id for node in plan.all_nodes()]
@@ -151,15 +160,20 @@ def dry_run(
         unused=tuple(sorted(set(stubs) - set(runner.calls))),
         steps=tuple(recorder.ends),
         outcome=None if returns in runner.tolerated else report.outcome,
+        captures=tuple((c.node, c.name, c.value) for c in recorder.captures),
+        polls=recorder.polls,
     )
 
 
 def skeleton_stub(node: Node) -> dict[str, JsonValue]:
     """A stub that completes ``node``: a placeholder output that fits its ``output_format`` (a
     loop's ``until_field`` set), a loop's ``until`` text, a gate's first decision or option (a
-    ``TODO`` text, or ``{}``), else ``TODO``."""
+    ``TODO`` text, or ``{}``), an action's ``{}``, else ``TODO``."""
     if isinstance(node, ApprovalNode):
         return {"decision": node.decisions[0].id}
+    if isinstance(node, ActionNode | ExpectNode):
+        # Its output is JSON in the action's own format, which core does not read.
+        return {"output": {}}
     if isinstance(node, WaitNode):
         if node.options is not None:
             return {"choice": node.options[0].id}
@@ -322,6 +336,14 @@ class _StillClock:
 class _MemoryRecorder:
     starts: list[StepStart] = field(default_factory=list)
     ends: list[StepEnd] = field(default_factory=list)
+    captures: list[ContextCapture] = field(default_factory=list)
+    polls: int = 0
+
+    def expect_polled(self, poll: ExpectPoll) -> None:
+        self.polls += 1
+
+    def context_captured(self, capture: ContextCapture) -> None:
+        self.captures.append(capture)
 
     def step_started(self, start: StepStart) -> None:
         self.starts.append(start)
