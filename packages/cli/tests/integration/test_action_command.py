@@ -272,9 +272,11 @@ def test_lists_three_subcommands_when_action_help(hub: Path, marker: Path) -> No
     result = run_action_command(hub, marker, "--help")
 
     assert result.exit_code == 0, result.output
+    # Rich colours the panel when CI forces a terminal; match the words only.
+    help_text = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
     for command in ("list", "plan", "run"):
         # A line of the commands panel: the name, then its help after two or more spaces.
-        assert re.search(rf"^\W+{command}\s{{2,}}\S", result.stdout, re.MULTILINE), command
+        assert re.search(rf"^\W+{command}\s{{2,}}\S", help_text, re.MULTILINE), command
 
 
 def test_runs_read_when_standalone_without_terminal(hub: Path, marker: Path) -> None:
