@@ -10,7 +10,6 @@ import {
   EmptyState,
   GoldenPathStepper,
   Icon,
-  IssueLink,
   ProblemError,
   SegmentedControl,
   Skeleton,
@@ -20,7 +19,6 @@ import {
 import { brainRoute } from "../../lib/brainLinks";
 import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
-import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
 import {
   DiscussButton,
@@ -37,7 +35,6 @@ import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
 import { EvalTab, OwnerSignOff, ownerStepsWaiting, pickEval } from "./EvalTab";
 import { RecordSummary, summaryRequest } from "./RecordSummary";
-import { StateBadge } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
 import { useFeature, useFeatureSession, useFeatureTickets } from "./queries";
 
@@ -46,7 +43,6 @@ type AgentSession = components["schemas"]["AgentSession"];
 type AcRow = components["schemas"]["AcRow"];
 
 export { acReference, allCommands } from "./CriteriaTab";
-type TicketRow = components["schemas"]["TicketRow"];
 
 type RecordName = components["schemas"]["FeatureRecordName"];
 type PlanView = components["schemas"]["PlanView"];
@@ -235,32 +231,6 @@ function PlanVersionLine({ plan }: { plan: PlanView }) {
         </Fragment>
       ))}
     </p>
-  );
-}
-
-/**
- * The feature's tickets as header chips: each id links to Linear, with its title on hover and its
- * status in Linear once the tickets route answered (its cached answer); until then the ids alone.
- */
-function TicketChips({ ids, rows }: { ids: readonly string[]; rows: readonly TicketRow[] }) {
-  if (ids.length === 0) return null;
-  return (
-    <span
-      className="ah-row ah-wrap"
-      style={{ gap: 12 }}
-      role="group"
-      aria-label="Tickets of this feature"
-    >
-      {ids.map((id) => {
-        const row = rows.find((r) => r.id === id || r.ref === id);
-        return (
-          <span key={id} className="ah-row" style={{ gap: 6 }}>
-            <IssueLink id={id} title={row?.title} href={linearHref(row?.url)} />
-            {row?.state && <StateBadge row={row} />}
-          </span>
-        );
-      })}
-    </span>
   );
 }
 
@@ -573,14 +543,8 @@ export function FeatureDetailScreen() {
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
           {owner && <FeatureSessionChip session={owner} />}
-          <TicketChips ids={issueIds} rows={tickets.data?.tickets ?? []} />
           {detail.acs && (
-            <>
-              {issueIds.length > 0 && (
-                <span style={{ width: 1, height: 16, background: "var(--border)" }} />
-              )}
-              <AcBar acs={detail.acs} width={180} ownerIds={owners.map((ac) => ac.id)} />
-            </>
+            <AcBar acs={detail.acs} width={180} ownerIds={owners.map((ac) => ac.id)} />
           )}
         </div>
       </div>

@@ -175,14 +175,14 @@ describe("ticketIds", () => {
 });
 
 describe("FeatureDetailScreen", () => {
-  it("shows the header with verdict, issues and the AC bar", async () => {
+  it("shows the header with verdict and the AC bar, without the ticket ids", async () => {
     open();
 
     expect(
       await screen.findByRole("heading", { level: 1, name: "layered-memory" }),
     ).toBeInTheDocument();
     expect(screen.getAllByText("SHIP-WITH-OWNER-STEPS").length).toBeGreaterThan(0);
-    expect(screen.getByText("AGH-49")).toBeInTheDocument();
+    expect(screen.queryByText("AGH-49")).toBeNull();
     expect(screen.getByText("11/13").parentElement).toHaveTextContent("11/13 · 1 owner step");
   });
 
@@ -879,18 +879,12 @@ describe("FeatureDetailScreen", () => {
       expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
     });
 
-    it("shows each header chip with its Linear status and title on hover, and no PR placeholder (tickets)", async () => {
+    it("keeps the ticket chips out of the header, and no PR placeholder (tickets)", async () => {
       open({ [TICKETS]: tickets }, "/features/agent-hub/layered-memory?doc=tickets");
 
       await screen.findByRole("table", { name: "Tickets" });
 
-      const header = screen.getByRole("group", { name: "Tickets of this feature" });
-      const link = within(header).getByRole("link", { name: /AGH-48/ });
-      expect(link).toHaveAttribute("href", "https://linear.app/demo/issue/AGH-48");
-      expect(link).toHaveAttribute("title", "AGH-48 · Load the memory layers · opens in Linear");
-      expect(header).not.toHaveTextContent("Load the memory layers");
-      expect(within(header).queryByRole("link", { name: /AGH-49/ })).toBeNull();
-      expect(within(header).getAllByText("In Progress")).toHaveLength(2);
+      expect(screen.queryByRole("group", { name: "Tickets of this feature" })).toBeNull();
       expect(screen.queryByText("PR —")).toBeNull();
     });
 
@@ -913,16 +907,6 @@ describe("FeatureDetailScreen", () => {
       expect(router.state.location.search).toBe("?doc=tickets");
       await userEvent.click(screen.getByRole("button", { name: "Open the eval of evaluate" }));
       expect(screen.getByRole("tab", { name: "Eval" })).toHaveAttribute("aria-selected", "true");
-    });
-
-    it("shows the ticket ids in the header until the tickets load (tickets)", async () => {
-      open();
-
-      await screen.findByRole("heading", { level: 1, name: "layered-memory" });
-
-      const header = screen.getByRole("group", { name: "Tickets of this feature" });
-      expect(header).toHaveTextContent("AGH-48AGH-49");
-      expect(within(header).queryByRole("link")).toBeNull();
     });
 
     it("refetches the tickets route on Refresh (notice)", async () => {
