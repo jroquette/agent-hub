@@ -92,18 +92,24 @@ describe("byGroupOrder", () => {
   it("leads with a waiting session, your turn, a broken record, NO-SHIP, owner steps, then the rest", () => {
     const owner = aFeature({
       slug: "a-owner",
-      phase: "evaluate",
+      phase: "acceptance",
       verdict: "SHIP-WITH-OWNER-STEPS",
       golden_path: aGoldenPath({
-        phase: "evaluate",
-        steps: [aGoldenStep({ name: "evaluate", state: "partial", meta: "waiting: owner steps" })],
+        phase: "acceptance",
+        steps: [
+          aGoldenStep({
+            name: "acceptance",
+            state: "current",
+            meta: "Waiting on you: sign off 2 ACs",
+          }),
+        ],
       }),
     });
     const noShip = aFeature({ slug: "b-no-ship", verdict: "NO-SHIP" });
     const broken = aFeature({ slug: "c-broken", phase: "spec", problem: "features.json is empty" });
     const turn = aFeature({ slug: "d-turn", issues: ["AGH-2"] });
     const session = aFeature({ slug: "e-session", phase: "spec", issues: ["AGH-1"] });
-    const plain = aFeature({ slug: "f-plain", phase: "evaluate" });
+    const plain = aFeature({ slug: "f-plain", phase: "acceptance" });
     const tiles = [
       aLiveTile({ id: "s-1", group: "waiting", label: aSessionLabel({ issue: "AGH-1" }) }),
       aLiveTile({ id: "s-2", group: "idle", label: aSessionLabel({ issue: "AGH-2" }) }),

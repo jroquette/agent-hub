@@ -785,3 +785,39 @@ def test_records_rule_when_environment_endpoint_asks(
         {"by": "guard", "kind": "ask", "rule": "environment_endpoint"}
     ]
     HookEnvelope.model_validate(bodies[0])
+
+
+# AC-293.6 (D-record): an input tool's deny and ask are recorded with ``rule: blocked_word``.
+def test_records_blocked_word_rule_when_guard_decides_input_tool(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    event_server: Any,
+    sensor_env: dict[str, str],
+) -> None:
+    (hub / "hub.json").write_text(json.dumps(builders.an_environments_document()), encoding="utf-8")
+    events = [
+        hook_input("PreToolUse", hub) | {"tool_name": "mcp__db__query", "tool_input": tool_input}
+        for tool_input in ({"host": "db.prod.example.com"}, {"k": "x" * 1_048_576})
+    ]
+
+    runs = [
+        run_hook_file(
+            hook_python,
+            hub / HOOKS / "guard.py",
+            stdin=json.dumps(event).encode(),
+            cwd=hub,
+            env=sensor_env,
+        )
+        for event in events
+    ]
+
+    assert [(run.returncode, run.stderr) for run in runs] == [(0, b""), (0, b"")]
+    bodies = event_server.bodies()
+    assert [body["decision"] for body in bodies] == [
+        {"by": "guard", "kind": "deny", "rule": "blocked_word"},
+        {"by": "guard", "kind": "ask", "rule": "blocked_word"},
+    ]
+    for body in bodies:
+        HookEnvelope.model_validate(body)

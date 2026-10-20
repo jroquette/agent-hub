@@ -9,45 +9,40 @@ describe("GoldenPathBar", () => {
   it("shows the phase with its meta and one segment per step (golden)", () => {
     const { container } = render(<GoldenPathBar path={aGoldenPath()} />);
 
-    expect(screen.getByText("Implement")).toBeInTheDocument();
-    // The ACs column counts the ACs, so the row's meta keeps only the tickets.
-    expect(screen.getByText("1/3 tickets")).toBeInTheDocument();
-    expect(screen.getByText("1/3 tickets").parentElement).not.toHaveTextContent("40/66 ACs");
+    expect(screen.getByText("Build")).toBeInTheDocument();
+    expect(screen.getByText("1 of 3 merged · 1 in progress")).toBeInTheDocument();
     expect(screen.getByRole("img")).toHaveAttribute("tabindex", "0");
-    expect(screen.getByText("Implement").parentElement).toHaveTextContent(
-      "Implement · step 5 of 8",
-    );
+    expect(screen.getByText("Build").parentElement).toHaveTextContent("Build · step 6 of 8");
     expect(
       [...container.querySelectorAll("[data-state]")].map((el) => el.getAttribute("data-state")),
-    ).toEqual(["done", "done", "done", "done", "current", "pending", "partial", "pending"]);
+    ).toEqual(["done", "skipped", "done", "done", "done", "current", "partial", "pending"]);
   });
 
   it("names partial, blocked and unknown steps with their reason (golden)", () => {
     render(
       <GoldenPathBar
         path={aGoldenPath({
-          phase: "implement",
+          phase: "build",
           steps: [
-            aGoldenStep({ name: "implement", state: "current", meta: "1/17 tickets · 3/36 ACs" }),
             aGoldenStep({
-              name: "review",
+              name: "build",
               state: "unknown",
               meta: "Linear not connected",
               reason: "Linear is not connected for hub web",
               progress: null,
             }),
             aGoldenStep({
-              name: "evaluate",
+              name: "acceptance",
               state: "partial",
-              meta: "partial: covers 3 of 36 ACs",
-              reason: "Implement is not done",
+              meta: "Ticket evals cover 3 of 36 ACs",
+              reason: "Build is unknown",
               progress: { done: 3, total: 36 },
             }),
             aGoldenStep({
               name: "shipped",
               state: "blocked",
               meta: null,
-              reason: "Review is unknown",
+              reason: "Build is unknown",
               progress: null,
             }),
           ],
@@ -56,25 +51,25 @@ describe("GoldenPathBar", () => {
     );
 
     const bar = screen.getByRole("img");
-    expect(bar).toHaveAccessibleName(/^Golden path: Implement\./);
+    expect(bar).toHaveAccessibleName(/^Golden path: Build\./);
     expect(bar).toHaveAccessibleName(
-      /Review: unknown · Linear not connected \(Linear is not connected for hub web\)/,
+      /Build: unknown · Linear not connected \(Linear is not connected for hub web\)/,
     );
     expect(bar).toHaveAccessibleName(
-      /Evaluate: partial · partial: covers 3 of 36 ACs \(Implement is not done\)/,
+      /Acceptance: partial · Ticket evals cover 3 of 36 ACs \(Build is unknown\)/,
     );
-    expect(bar).toHaveAccessibleName(/Shipped: blocked \(Review is unknown\)/);
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Shipped: blocked (Review is unknown)");
+    expect(bar).toHaveAccessibleName(/Shipped: blocked \(Build is unknown\)/);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Shipped: blocked (Build is unknown)");
   });
 
   it("never shows a segment done after a gate that is not done (golden)", () => {
     const { container } = render(
       <GoldenPathBar
         path={aGoldenPath({
-          phase: "implement",
+          phase: "build",
           steps: [
-            aGoldenStep({ name: "implement", state: "current" }),
-            aGoldenStep({ name: "evaluate", state: "done", meta: null, reason: null }),
+            aGoldenStep({ name: "build", state: "current" }),
+            aGoldenStep({ name: "acceptance", state: "done", meta: null, reason: null }),
           ],
         })}
       />,
@@ -98,10 +93,16 @@ describe("GoldenPathBar", () => {
     expect(screen.getByText("Shipped")).toBeInTheDocument();
   });
 
-  it("flags a feature held at Evaluate by owner steps as waiting for you", () => {
+  it("flags a feature held at Acceptance by owner steps as waiting for you", () => {
     const path = aGoldenPath({
-      phase: "evaluate",
-      steps: [aGoldenStep({ name: "evaluate", state: "current", meta: "waiting: owner steps" })],
+      phase: "acceptance",
+      steps: [
+        aGoldenStep({
+          name: "acceptance",
+          state: "current",
+          meta: "Waiting on you: sign off 2 ACs",
+        }),
+      ],
     });
     render(<GoldenPathBar path={path} />);
 

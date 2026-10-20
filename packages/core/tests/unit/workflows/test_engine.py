@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+import agent_hub.core.testing.workflow_fakes as workflow_fakes
+import agent_hub.core.workflows.nodes as workflow_nodes
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.testing.workflow_fakes import (
     AnswerBook,
@@ -1120,3 +1122,193 @@ def test_renders_stdin_when_shell_node_reads_upstream_output() -> None:
         "read": '{"delivery":"b","ok":true}',
         "fixed": "literal\x00text",
     }
+
+
+def action(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    node = {"id": node_id, "type": "action", "action": "send-queue-message"}
+    return node | {"depends_on": list(depends_on)} | keys
+
+
+def test_runs_action_with_rendered_inputs_when_action_node_visited() -> None:
+    sent = {"ref": "$INPUTS.issue", "note": "for $INPUTS.issue", "count": "$INPUTS.count"}
+    sent |= {"fixed": 3, "items": ["$INPUTS.issue", {"at": "$INPUTS.count"}]}
+    plan = plan_of(
+        action("send", **{"with": sent}),
+        action("check", "send", **{"with": {"id": "$send.output.message_id"}}),
+        inputs=INPUTS | {"count": {"type": "integer", "default": 2}},
+    )
+    runner = ScriptedRunner({"send": ['{"message_id": "m-1"}'], "check": ["[1, 2]"]})
+
+    run = Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    send, check = runner.calls
+    assert send.inputs == {
+        "ref": "AGH-1",
+        "note": "for AGH-1",
+        "count": 2,
+        "fixed": 3,
+        "items": ["AGH-1", {"at": 2}],
+    }
+    assert check.inputs == {"id": "m-1"}
+    assert run.recorder.end_of("send").output == {"message_id": "m-1"}
+    assert run.recorder.end_of("check").output == [1, 2]
+    assert run.report.status == "done"
+
+
+@pytest.mark.parametrize("text", ["not json", "", '{"a": 1} trailing', "NaN"])
+def test_fails_output_contract_when_action_output_not_json(text: str) -> None:
+    runner = ScriptedRunner({"send": [text, '{"a": 1}']})
+
+    run = Run(plan_of(action("send")), runner)
+
+    assert run.status_of("send") == ("failed", None, None, "output_contract")
+    assert runner.ran() == ["send"]
+    assert run.report.status == "failed"
+
+
+def expect(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    node = {"id": node_id, "type": "expect", "action": "get-order", "every": "10s"}
+    node |= {"timeout": "1m", "until_when": "$self.output.status == 'ON_HOLD'"}
+    return node | {"depends_on": list(depends_on)} | keys
+
+
+@dataclasses.dataclass
+class Traced:
+    """A run of ``plan`` whose trace (polls and captures) is kept."""
+
+    report: RunReport
+    recorder: ListRecorder
+    clock: FakeClock
+    trace: workflow_fakes.ListTrace
+
+
+def traced(plan: WorkflowPlan, runner: ScriptedRunner, *, prior: RunState | None = None) -> Traced:
+    recorder, clock, trace = ListRecorder(), FakeClock(), workflow_fakes.ListTrace()
+    ports = EnginePorts(runner, recorder, clock, KeysOutputs(), lambda: 0.5, trace=trace)
+    return Traced(run_workflow(plan, {}, ports, prior=prior), recorder, clock, trace)
+
+
+def pending(count: int) -> list[str]:
+    return ['{"status": "PENDING"}'] * count
+
+
+def test_ends_ok_after_three_polls_when_expect_node_holds() -> None:
+    held = '{"status": "ON_HOLD", "order_id": "o-7"}'
+    plan = plan_of(expect("wait", capture={"order_id": "$self.output.order_id"}))
+    runner = ScriptedRunner({"wait": [*pending(2), held]})
+
+    run = traced(plan, runner)
+    trace = run.trace
+
+    assert [call.poll for call in runner.calls] == [1, 2, 3]
+    assert {call.attempt for call in runner.calls} == {1}
+    assert [(poll.poll, poll.held) for poll in trace.polls] == [(1, False), (2, False), (3, True)]
+    assert [(c.node, c.name, c.value) for c in trace.captures] == [("wait", "order_id", "o-7")]
+    assert run.clock.sleeps == [timedelta(seconds=10)] * 2
+    assert run.recorder.end_of("wait").output == {"status": "ON_HOLD", "order_id": "o-7"}
+    assert run.report.status == "done"
+
+
+def test_fails_timeout_when_expect_node_never_holds() -> None:
+    runner = ScriptedRunner({"wait": pending(20)})
+
+    run = traced(plan_of(expect("wait", capture={"id": "$self.output.status"})), runner)
+
+    # Polls at 0s, 10s, ... 60s: the window is one minute; no implicit retry.
+    assert len(runner.calls) == 7
+    end = run.recorder.end_of("wait")
+    assert (end.status, end.failure_kind) == ("failed", "timeout")
+    assert end.detail.startswith("expect_timeout: ")
+    assert run.trace.captures == []
+    assert run.report.status == "failed"
+
+
+def test_stops_at_max_polls_when_expect_node_timeout_long() -> None:
+    runner = ScriptedRunner({"wait": pending(1001)})
+
+    run = Run(plan_of(expect("wait", every="5s", timeout="24h")), runner)
+
+    assert len(runner.calls) == engine_module.MAX_EXPECT_POLLS
+    assert run.status_of("wait") == ("failed", None, None, "timeout")
+
+
+def test_states_scenario_limits_when_constants_read() -> None:
+    assert workflow_nodes.MIN_EXPECT_EVERY_SECONDS == 5
+    assert workflow_nodes.MAX_EXPECT_TIMEOUT_SECONDS == 24 * 3600
+    assert workflow_nodes.MAX_ACTION_TIMEOUT_SECONDS == 3600
+    assert engine_module.MAX_EXPECT_POLLS == 1000
+
+
+def test_resolves_ctx_after_resume_when_run_context_from_prior() -> None:
+    plan = plan_of(
+        expect("wait", capture={"order_id": "$self.output.order_id"}),
+        action("use", "wait", **{"with": {"id": "$CTX.order_id", "note": "order $CTX.order_id"}}),
+        kind="scenario",
+    )
+    held = '{"status": "ON_HOLD", "order_id": "o-7"}'
+    first = ScriptedRunner({"wait": [held], "use": [fails()]})
+
+    failed = traced(plan, first)
+    second = ScriptedRunner({"use": ["{}"]})
+    resumed = traced(plan, second, prior=failed.report.state)
+
+    assert failed.report.status == "failed"
+    assert [call.inputs for call in first.calls if call.node.id == "use"] == [
+        {"id": "o-7", "note": "order o-7"}
+    ]
+    assert [call.inputs for call in second.calls] == [{"id": "o-7", "note": "order o-7"}]
+    assert resumed.recorder.end_of("wait").skip_cause == "prior_success"
+    assert resumed.trace.polls == []
+    [use] = [start for start in resumed.recorder.starts if start.node == "use"]
+    assert use.attempt == 2
+    assert resumed.report.status == "done"
+
+
+def test_renders_text_when_run_context_tokens_in_plain_workflow() -> None:
+    plan = plan_of(
+        shell("self", command=["echo", "cost $CTX"]),
+        shell("b", "self", command=["echo", "$self.output"]),
+    )
+    runner = ScriptedRunner({"self": ["ten"]})
+
+    run = Run(plan, runner)
+
+    assert [call.argv for call in runner.calls] == [("echo", "cost $CTX"), ("echo", "ten")]
+    assert run.report.status == "done"
+
+
+def test_counts_polls_across_attempts_when_expect_node_retried() -> None:
+    # One hour every 5s is 721 polls an attempt; the retry gets only what is left of 1000.
+    node = expect("wait", every="5s", timeout="1h", retry={"max_attempts": 2})
+    runner = ScriptedRunner({"wait": pending(2200)})
+
+    run = Run(plan_of(node), runner)
+
+    assert len(runner.calls) == engine_module.MAX_EXPECT_POLLS
+    assert {call.attempt for call in runner.calls} == {1, 2}
+    assert run.status_of("wait") == ("failed", None, None, "timeout")
+
+
+def test_waits_until_ctx_when_run_context_wait_in_scenario() -> None:
+    source = action("source", capture={"deadline": "$self.output.at"})
+    wait = {"id": "hold", "type": "wait", "until": "$CTX.deadline", "depends_on": ["source"]}
+    runner = ScriptedRunner({"source": ['{"at": "2026-10-16T09:00:00+00:00"}']})
+
+    run = Run(plan_of(source, wait, kind="scenario"), runner)
+
+    assert run.report.status == "paused"
+    assert [gate.due.isoformat() for gate in run.recorder.gates if gate.due] == [
+        "2026-10-16T09:00:00+00:00"
+    ]
+
+
+def test_keeps_poll_budget_when_expect_node_resumed() -> None:
+    plan = plan_of(expect("wait", every="5s", timeout="24h"))
+    first = Run(plan, ScriptedRunner({"wait": pending(1001)}))
+    again = ScriptedRunner({"wait": pending(10)})
+
+    resumed = Run(plan, again, prior=first.report.state)
+
+    assert first.report.status == "failed"
+    assert again.calls == []
+    assert resumed.status_of("wait") == ("failed", None, None, "timeout")

@@ -17,12 +17,12 @@ one example action (`effect: read`) and scenario; `hub sync` never adds them and
 
 ### Kind and node keys
 
-- `kind`: `workflow` (the default, so today's documents are unchanged) or `scenario`. A scenario holds only `action`,
-  `expect`, `approval`, `wait`, `loop_group` and `include` nodes; any other type is a load error naming the node.
-- `action` node: the common keys, `action` (`<name>` in the same pack, or `<pack>/<name>`), `with`, `capture`, `retry`,
-  `timeout`. `expect` node: the same, plus `every` and `timeout` (both required) and `until_when` (the `when:` grammar).
-- `capture: {<name>: <ref>}` gives `$CTX.<name>` to downstream nodes; a name not captured upstream, or captured twice on
-  one path, is a load error. `$self.output[.path]` is the node's own output, legal only in `until_when` and `capture`.
+- `kind`: `workflow` (default: documents load as before) or `scenario`. A scenario holds only `action`, `expect`,
+  `approval`, `wait`, `loop_group` and `include` nodes; any other type (an included one too) fails the load, naming it.
+- `action` node: the common keys, `action` (`<name>` in its pack, or `<pack>/<name>`), `with`, `capture`, `retry`,
+  `timeout`; one JSON value out. `expect`: the same, plus `every`, `timeout` (both required), `until_when`.
+- `capture: {<name>: <ref>}` gives `$CTX.<name>` to downstream nodes; a name not captured upstream, or by two nodes, is
+  a load error, as is `$CTX` in a capture. `$self.output[.path]` (own output) reads only in `until_when` and `capture`.
 - A process workflow may declare `environment: <name>` (`hub workflow run --env` overrides it); its `shell` and `script`
   nodes then take `effect` (default `write`). Ids ending `__ask` or `__investigation`, and `self`, are reserved.
 
@@ -120,8 +120,8 @@ Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), e
 `decision`, `reason_kind`), `expect.poll` (`poll` count, `held` bool), `context.capture` (`name`), `finding`
 (`finding_id`, `step`), `workaround.start`/`workaround.end` (`workaround_id`, `option` id, `steps` count, `status`);
 `gate.request` gains `reason`. Args, outputs, captures, findings, chat stay in the run record (`.agent-runs/`). Bounds:
-`expect` `every` ≥ 5 s, `timeout` ≤ 24 h, ≤ 1000 polls; action stdout ≤ 512 KiB; plan mode ≤ 60 s; ≤ 64 `--input` values
-of ≤ 64 KiB; a proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; API record reads ≤ 8 MiB.
+`expect` `every` ≥ 5 s, `timeout` ≤ 24 h, ≤ 1000 polls (retries, resumes too); action stdout ≤ 512 KiB; plan mode ≤ 60 s;
+≤ 64 `--input` values of ≤ 64 KiB; a proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; API record reads ≤ 8 MiB.
 
 ### Known limits
 

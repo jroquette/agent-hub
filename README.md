@@ -11,7 +11,7 @@
   <a href="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white">
   <!-- Static badge: bump with each release tag (scripts/check_release.py keeps the package versions in lockstep; follow-up: automate). -->
-  <img alt="Version 0.17.0" src="https://img.shields.io/badge/version-0.17.0-blue">
+  <img alt="Version 0.18.0" src="https://img.shields.io/badge/version-0.18.0-blue">
   <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange">
 </p>
 
@@ -139,14 +139,14 @@ hub's `README.md`, **Join this hub**); the steps below create a new hub.
 little longer.
 
 ```bash
-uvx --from 'git+https://github.com/jroquette/agent-hub@v0.17.0#subdirectory=packages/agent-hub' hub --version
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.18.0#subdirectory=packages/agent-hub' hub --version
 ```
 
-You should see `0.17.0`.
+You should see `0.18.0`.
 
 > [!TIP]
 > To have `hub` on your `PATH`, install it once with
-> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.17.0#subdirectory=packages/agent-hub'`.
+> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.18.0#subdirectory=packages/agent-hub'`.
 > Generated hubs never need this: their `./hub` shim runs the release pinned in `hub.json`.
 
 **2. Create an empty folder for the hub.** It should be a sibling of the project's repos.
@@ -161,7 +161,7 @@ mkdir -p demo-hub && cd demo-hub && git init
 from your git `user.name` and `user.email` unless you pass `--author-name` and `--author-email`.
 
 ```bash
-uvx --from 'git+https://github.com/jroquette/agent-hub@v0.17.0#subdirectory=packages/agent-hub' \
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.18.0#subdirectory=packages/agent-hub' \
   hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
@@ -482,13 +482,13 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 **Blocked words.** `guard.blocked_words` lists words agents must not reach (e.g. `prod`, `production`). The guard
 denies, before any other rule, a Bash command that names one (as written, with backslash-newlines joined, or with its
 quotes removed), a scanned session variable whose value holds one (the infra selectors, the usual stage and connection
-names, each declared `credentials.env` and the names in `guard.blocked_words_env`), a file tool's path, and the
-contents of a `.env*` file or a `guard.blocked_words_files` match that a Read, a Grep or a Bash command names. A word
+names, each declared `credentials.env` and the names in `guard.blocked_words_env`), a file tool's path, every key and string of the input of MCP tools (`mcp__*`),
+WebSearch, Task, Agent and SendMessage, and the contents of a `.env*` file or a `guard.blocked_words_files` match that a Read, a Grep or a Bash command names. A word
 matches ignoring ASCII case with no letter beside it: `prod` matches `my-prod-db` and `PROD`, not `product`. The
 lists of `hub.json`, `hub.local.json` and a `$HUB_CONFIG` file add up; no layer removes a word. When the words cannot
-be checked (a list that cannot be used, a command or file over 1 MiB, too many files, the 300 ms budget spent), the
-guard asks. It is a best-effort tripwire, not a security boundary: an environment's `access` is not enforced, and
-files a program opens on its own, MCP tools, tool output and obfuscated text are not checked. The contract and its
+be checked (a list that cannot be used, a command or file over 1 MiB, too many files, a tool input over 1 MiB or 50,000
+values, an event it cannot read, the 300 ms budget spent), the guard asks. It is a best-effort tripwire, not a security boundary: an environment's `access` is not enforced, and
+files a program opens on its own, tool names, Skill arguments, tool output and obfuscated text are not checked. The contract and its
 limits: [environments](docs/design/environments.md).
 
 **Infra commands.** Set `guard.infra` in `hub.json` (even `{}`) and the guard classifies commands that run `aws`,
@@ -770,7 +770,7 @@ Example (synthetic project):
 {
   "$schema": "./hub.schema.json",
   "schema_version": 1,
-  "platform": { "version": "0.17.0" },         // the release ./hub runs
+  "platform": { "version": "0.18.0" },         // the release ./hub runs
   "project": {
     "name": "demo",
     "hub_repo": "acme/demo-hub",
