@@ -182,7 +182,7 @@ def test_keeps_service_kind_when_endpoint_replaced(tmp_path: Path) -> None:
     }
 
 
-def test_splits_service_addresses_by_environment_file(tmp_path: Path) -> None:
+def test_writes_addresses_to_their_files_when_environments_span_both(tmp_path: Path) -> None:
     hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
     (hub / "hub.local.json").write_text(json.dumps({"environments": {"mine": {"access": "write"}}}))
 
