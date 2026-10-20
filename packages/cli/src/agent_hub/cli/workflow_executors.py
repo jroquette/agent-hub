@@ -5,8 +5,8 @@ settings, hooks and plugin load from the hub; the hub's repos are attached with 
 With a ``cwd`` inside a repo (issue-to-pr's worktree) it runs there as ``hub run``'s session
 does: the hub and the other repos attached, that repo's gates allowed, and the hub's hooks given
 through a hooks-only ``--settings`` file (``session_settings``, AGH-278), written again before
-every attempt and every ``--resume``; never when the cwd resolves inside the hub. A hub whose hooks cannot be wired fails the node with
-``config`` before ``claude`` starts. Its argv is
+every attempt and every ``--resume``; never when the cwd resolves inside the hub. A hub whose
+hooks cannot be wired fails the node with ``config`` before ``claude`` starts. Its argv is
 ``hub run``'s (``implementing_argv``: permission mode ``dontAsk``, the tracker's tools denied),
 with the node's tier from ``hub.json`` → ``models.tiers`` and its ``limits`` as ``--max-turns`` and
 ``--max-budget-usd``; ``--resume`` continues a session. Its output is the result's text, or, with
