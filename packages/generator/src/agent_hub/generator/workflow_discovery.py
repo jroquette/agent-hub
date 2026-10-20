@@ -14,7 +14,9 @@ core's document model. A problem belongs to one file (or one folder) and never s
 hub ``workflows/`` that is a link (not scanned), a linked pack folder, a workflow file directly
 under a root, a file whose real path leaves its pack, one that is not a regular file, one that
 does not load, a ``name`` that is not the stem, a name already taken (naming the claiming file
-relative to its root, so no absolute path reaches a message).
+relative to its root, so no absolute path reaches a message), a ``kind: scenario`` document (it
+belongs in ``scenarios/``: ``scenario_discovery`` reads that root with ``scan_root``, refusing
+any other kind).
 
 ``pack_resolver`` resolves the workflows a workflow includes, by name, among those of its own pack
 (the hub's choice, or a pack-mate the hub overrides): a node's ``prompt_file`` and ``script`` are
@@ -57,6 +59,7 @@ MAX_ROOT_WORKFLOWS: Final = 200
 
 type WorkflowOrigin = Literal["hub", "builtin"]
 type PackFolder = Literal["prompts", "scripts"]
+type DocumentKind = Literal["workflow", "scenario"]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -106,12 +109,7 @@ def discover_workflows(
 ) -> WorkflowDiscovery:
     """The hub's workflows over the built-ins; a missing root reads as empty."""
     problems: list[WorkflowProblem] = []
-    hub = _Root(origin="hub", problems=problems)
-    folder = hub_root / HUB_WORKFLOWS
-    if folder.is_symlink():
-        problems.append(_problem("hub", folder, "the workflows folder is a link; it is not read"))
-    else:
-        hub.scan(folder)
+    hub = scan_root(hub_root / HUB_WORKFLOWS, kind="workflow", problems=problems)
     builtin = _Root(origin="builtin", problems=problems)
     builtin.scan(builtin_root)
     shadowed = builtin.found.keys() & hub.claimed.keys()
@@ -121,6 +119,18 @@ def discover_workflows(
         overridden=tuple(builtin.found[name] for name in sorted(shadowed)),
         problems=tuple(problems),
     )
+
+
+def scan_root(folder: Path, *, kind: DocumentKind, problems: list[WorkflowProblem]) -> _Root:
+    """The hub root ``folder`` scanned for documents of ``kind`` (a link is not read)."""
+    root = _Root(origin="hub", problems=problems, kind=kind)
+    if folder.is_symlink():
+        problems.append(
+            _problem("hub", folder, f"the {folder.name} folder is a link; it is not read")
+        )
+    else:
+        root.scan(folder)
+    return root
 
 
 def pack_documents(discovery: WorkflowDiscovery, pack_root: Path) -> dict[str, WorkflowMapping]:
@@ -182,6 +192,8 @@ class _Root:
 
     origin: WorkflowOrigin
     problems: list[WorkflowProblem]
+    # The documents this root holds; a document of the other kind is a problem.
+    kind: DocumentKind = "workflow"
     claimed: dict[str, Path] = field(default_factory=dict)
     found: dict[str, DiscoveredWorkflow] = field(default_factory=dict)
     read: int = 0
@@ -228,6 +240,9 @@ class _Root:
             reason = f"name {declared!r} is not the file name {name!r}"
             self._problem(path, reason, line=loaded.lines.get(("name",)))
             return
+        if (kind_problem := self._kind_problem(loaded.document)) is not None:
+            self._problem(path, kind_problem, line=loaded.lines.get(("kind",)))
+            return
         self.found[name] = DiscoveredWorkflow(
             name=name,
             pack=pack_root.name,
@@ -237,6 +252,14 @@ class _Root:
             document=loaded.document,
             lines=loaded.lines,
         )
+
+    def _kind_problem(self, document: WorkflowMapping) -> str | None:
+        is_scenario = document.get("kind") == "scenario"
+        if self.kind == "scenario" and not is_scenario:
+            return "a document in scenarios/ declares kind: scenario"
+        if self.kind == "workflow" and is_scenario:
+            return "kind: scenario belongs in scenarios/<pack>/, not workflows/"
+        return None
 
     def _problem(self, path: Path, reason: str, *, line: int | None = None) -> None:
         self.problems.append(_problem(self.origin, path, reason, line=line))

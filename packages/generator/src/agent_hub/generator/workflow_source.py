@@ -46,7 +46,11 @@ class DiscoveredWorkflowSource:
         self.discovery = WorkflowDiscovery(workflows=(), overridden=(), problems=())
 
     def workflow_files(self) -> Iterator[WorkflowFile | LoadProblem]:
-        self.discovery = discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
+        return self.files_of(discover_workflows(self.root, builtin_root=self.builtin_root))
+
+    def files_of(self, discovery: WorkflowDiscovery) -> Iterator[WorkflowFile | LoadProblem]:
+        """Each file ``discovery`` read, as ``workflow_files`` yields it."""
+        self.discovery = discovery
         for problem in discovery.problems:
             # A folder's problem (a linked workflows/, an unreadable pack, the file budget)
             # bears on every name; a file's only on its own.
@@ -69,8 +73,8 @@ class DiscoveredWorkflowSource:
         """Each entry of the hub's ``workflows/`` and the built-ins, packs included, by the path
         ``WorkflowFile.file`` shows."""
         return (
-            *_stats(self.root / HUB_WORKFLOWS, self._shown, depth=2),
-            *_stats(self.builtin_root, self._shown, depth=2),
+            *stats(self.root / HUB_WORKFLOWS, self._shown, depth=2),
+            *stats(self.builtin_root, self._shown, depth=2),
         )
 
     def _shown(self, path: Path) -> str:
@@ -81,7 +85,8 @@ class DiscoveredWorkflowSource:
         return str(path)
 
 
-def _stats(folder: Path, shown: Callable[[Path], str], *, depth: int) -> Iterator[SourceStat]:
+def stats(folder: Path, shown: Callable[[Path], str], *, depth: int) -> Iterator[SourceStat]:
+    """Each entry under ``folder`` (``depth`` levels), stat-only, by its shown path."""
     try:
         with os.scandir(folder) as listing:
             entries = sorted(listing, key=lambda entry: entry.name)
@@ -95,4 +100,4 @@ def _stats(folder: Path, shown: Callable[[Path], str], *, depth: int) -> Iterato
             continue
         yield (shown(Path(entry.path)), stat.st_size, stat.st_mtime_ns)
         if depth > 1 and entry.is_dir(follow_symlinks=False):
-            yield from _stats(Path(entry.path), shown, depth=depth - 1)
+            yield from stats(Path(entry.path), shown, depth=depth - 1)
