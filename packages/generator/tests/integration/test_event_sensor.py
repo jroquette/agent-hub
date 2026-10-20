@@ -698,3 +698,52 @@ def test_records_blocked_word_rule_when_guard_asks_on_unreadable_event(
         ({"by": "guard", "kind": "ask", "rule": "blocked_word"}, {})
     ]
     HookEnvelope.model_validate(bodies[0])
+
+
+# AGH-354 (AC-350.44): an env_file deny is recorded with ``rule: env_file``, and no body holds the
+# env file's contents.
+def test_records_rule_when_env_file_denies(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    event_server: Any,
+    sensor_env: dict[str, str],
+) -> None:
+    document = builders.an_environments_document()
+    document["environments"]["staging"]["credentials"]["env_file"] = "demo-api/.env.staging"
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    api = hub.parent / "demo-api"
+    value = "x-" + "secret" + "-y"
+    (api / ".env.staging").write_text(f"DEMO_DB_URL={value}\n", encoding="utf-8")
+    events = [
+        hook_input("PreToolUse", api) | {"tool_name": "Read", "tool_input": {"file_path": path}}
+        for path in (".env.staging", str(api / ".env.staging"))
+    ]
+
+    runs = [
+        run_hook_file(
+            hook_python,
+            hub / HOOKS / "guard.py",
+            stdin=json.dumps(event).encode(),
+            cwd=api,
+            env=sensor_env,
+        )
+        for event in events
+    ]
+
+    assert [(run.returncode, run.stderr) for run in runs] == [(0, b""), (0, b"")]
+    assert [json.loads(run.stdout)["hookSpecificOutput"] for run in runs] == [
+        {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[hub guard] env file: Read names the env file of staging",
+        }
+    ] * 2
+    bodies = event_server.bodies()
+    assert [body["decision"] for body in bodies] == [
+        {"by": "guard", "kind": "deny", "rule": "env_file"}
+    ] * 2
+    assert value not in json.dumps(bodies)
+    for body in bodies:
+        HookEnvelope.model_validate(body)
