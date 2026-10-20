@@ -1691,6 +1691,14 @@ ENV_FILE_PATH_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_
                        "NotebookEdit": "notebook_path"}
 # A file name as a whole word: no file-name character just before or after it.
 ENV_FILE_WORD = r"(?<![A-Za-z0-9_.-])(?:{})(?![A-Za-z0-9_.-])"
+# A Bash call's parts in order (a single `&` splits too), and the words that move to another
+# folder: a glob after one may name an env file there, so it is matched by name.
+ENV_FILE_PART = re.compile(r"&&|\|\||[;|&\n]")
+ENV_FILE_MOVES = frozenset(("cd", "pushd", "popd"))
+# What a glob segment holds besides its wildcards and bracket expressions: it names a file only
+# with a letter, digit, `_` or `-` there (so `*`, `.*` and `*.*` never do).
+GLOB_WILDCARDS = re.compile(r"\[[^\]]*\]|[*?]")
+NAME_CHARACTER = re.compile(r"[A-Za-z0-9_-]")
 GLOB_CHARS = "*?[{"
 
 
@@ -1741,9 +1749,12 @@ class _EnvFiles:
 
     def globbed(self, token: str) -> str | None:
         """The environment of the first env file whose name a glob token's last segment matches,
-        ignoring case, from any folder (a `cd` earlier in the call may have moved there); a
-        leading `*`, `?` or `[` never matches a leading `.`, as in bash."""
+        ignoring case, from any folder (for a token after a `cd`); a leading `*`, `?` or `[`
+        never matches a leading `.`, as in bash, and a segment with no name character besides
+        its wildcards (`*`, `.*`, `*.*`) matches nothing."""
         pattern = token.rstrip("/").rsplit("/", 1)[-1].lower()
+        if not NAME_CHARACTER.search(GLOB_WILDCARDS.sub("", pattern)):
+            return None
         for name, environment in self.by_name.items():
             if name and (pattern.startswith(".") or not name.startswith(".")) and fnmatchcase(name, pattern):
                 return environment
@@ -1806,20 +1817,28 @@ def _env_file_glob(env_files: _EnvFiles, ti: dict, cwd: str) -> str | None:
 
 def _env_file_bash(env_files: _EnvFiles, cmd: str, scan: _BlockedScan) -> str | None:
     """A Bash command naming an env file: its name as a whole word in a view of the command, a glob
-    token whose last segment matches its name, else a token (braces and globs expanded, from the
-    event's cwd) whose real path is one."""
+    token after a cd, pushd or popd whose last segment matches its name, else a token (braces and
+    globs expanded, from the event's cwd) whose real path is one."""
     for view in _command_views(cmd):
         environment = env_files.named(view)
         if environment:
             return environment
-    for seg in _segments(cmd.replace("\\\n", "")):
+    joined = cmd.replace("\\\n", "")
+    moved = False
+    for part in ENV_FILE_PART.split(joined):
+        words = part.replace("(", " ").replace("{", " ").split()
+        if moved:
+            for tok in (word for token in _tokens(part) for word in _braces(token)):
+                scan.tick()
+                environment = env_files.globbed(tok) if any(c in tok for c in "*?[") else None
+                if environment:
+                    return environment
+        moved = moved or bool(words and words[0] in ENV_FILE_MOVES)
+    for seg in _segments(joined):
         for tok in (word for token in _tokens(seg) for word in _braces(token)):
             scan.tick()
             path = scan.resolve(tok)
             globbed = any(c in tok for c in "*?[")
-            environment = env_files.globbed(tok) if globbed else None
-            if environment:
-                return environment
             matches = _expanded(scan, path) if globbed else [(path, None)]
             for match, _real in matches:
                 scan.tick()
