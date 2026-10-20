@@ -5,9 +5,10 @@
 reads the file, and plan mode never does. The path is relative to the workspace (the folder
 holding the hub and its repos) and must lie, by its real path, inside the hub or one of the
 repos ``hub.json`` declares (``roots``, workspace-relative), never elsewhere in the workspace.
-It is then opened from the root's folder one component at a time, each with ``O_NOFOLLOW``
-and ``dir_fd``, so no link on the way is followed, even one swapped in after the real path was
-checked; the last open never blocks (a FIFO is refused, not waited on). The file must be a
+The root's folder (the hub's or the repo's) is opened by its real path, links allowed there;
+below it the file is opened one component at a time, each with ``O_NOFOLLOW`` and ``dir_fd``, so
+a link below the root is refused ("reached through a link"), even one swapped in after the real
+path was checked; the last open never blocks (a FIFO is refused, not waited on). The file must be a
 regular file of at most ``MAX_ENV_FILE_BYTES``; it is read once into memory and parsed by
 core's dotenv grammar. Any problem refuses the action before its process starts with
 ``environment <env>: env file <path> is <reason>``: the path as configured and a reason,
@@ -78,7 +79,8 @@ def _root_of(workspace: str, relative: str, real: str, *, roots: Sequence[str]) 
 def _open_file(
     workspace: str, root: str, relative: str, *, refused: Callable[[str], EnvFileLoadError]
 ) -> int:
-    """A descriptor of the file, opened from ``root``'s folder component by component."""
+    """A descriptor of the file: ``root``'s folder opened by its path (a link to it is
+    followed), then each component below it without following a link."""
     parts = PurePosixPath(relative).parts[len(PurePosixPath(root).parts) :]
     try:
         folder = os.open(os.path.join(workspace, root), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
