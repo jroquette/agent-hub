@@ -131,6 +131,9 @@ _BY_TYPE: Final[dict[EventType, frozenset[str]]] = {
     EventType.SESSION_SUMMARY: frozenset({"text", "lines"}),
     # The short title Claude Code gives a session, or the one the user set (80 chars, ADR 0035).
     EventType.SESSION_TITLE: frozenset({"text", "origin"}),
+    # A scenario run's expect poll and captured name; never the output or the value.
+    EventType.EXPECT_POLL: frozenset({"poll", "held"}),
+    EventType.CONTEXT_CAPTURE: frozenset({"name"}),
 }
 
 PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = MappingProxyType(
