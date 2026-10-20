@@ -414,9 +414,9 @@ const ownerCase = aGoldenPath({
     }),
     aGoldenStep({
       name: "shipped",
-      state: "unknown",
-      meta: "Linear not connected",
-      reason: "Ticket status from Linear not loaded yet; open the Tickets tab.",
+      state: "pending",
+      meta: null,
+      reason: "Build is not done",
       progress: null,
     }),
   ],
@@ -435,7 +435,7 @@ describe("GoldenPathStepper", () => {
       "done",
       "current",
       "partial",
-      "unknown",
+      "pending",
     ]);
     // Only the step in focus (the first not done) shows its meta; the rest is on demand.
     const metaOf = (li: HTMLElement | undefined) =>
@@ -443,13 +443,11 @@ describe("GoldenPathStepper", () => {
     expect(metaOf(steps[0])).toEqual(["Done"]);
     expect(metaOf(steps[5])).toEqual(["In progress", "1 of 17 merged · 16 in progress"]);
     expect(metaOf(steps[6])).toEqual(["Partial"]);
-    expect(metaOf(steps[7])).toEqual(["Unknown"]);
+    expect(metaOf(steps[7])).toEqual(["Not reached"]);
     // Every step's meta and reason stay in its description (and tooltip).
     expect(
       screen.getByText("Shipped", { selector: ".ah-golden-name" }),
-    ).toHaveAccessibleDescription(
-      "Shipped: unknown · Linear not connected (Ticket status from Linear not loaded yet; open the Tickets tab.)",
-    );
+    ).toHaveAccessibleDescription("Shipped: not reached (Build is not done)");
     expect(
       screen.getByText("Acceptance", { selector: ".ah-golden-name" }),
     ).toHaveAccessibleDescription(
@@ -536,6 +534,16 @@ describe("GoldenPathStepper", () => {
       ]),
     ).toBeNull();
     expect(ownerWaitStep([aGoldenStep({ meta: "Waiting on you: 2 owner steps" })])).toBeNull();
+    // No AC to sign off: the step waits, but there is nothing for the sign-off to write.
+    expect(
+      ownerWaitStep([
+        aGoldenStep({
+          name: "acceptance",
+          state: "current",
+          meta: "Waiting on owner steps · no ACs listed",
+        }),
+      ]),
+    ).toBeNull();
   });
 
   it("never shows a step done after a gate that is not done (golden)", () => {

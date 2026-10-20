@@ -890,7 +890,7 @@ export function goldenStepSummary(step: GoldenStep): string {
  */
 export function ownerWaitStep(steps: readonly GoldenStep[]): GoldenStep | null {
   const step = steps.find((s) => s.name === "acceptance");
-  return step && step.state !== "done" && step.meta?.startsWith("Waiting on you") ? step : null;
+  return step?.meta?.startsWith("Waiting on you") ? step : null;
 }
 
 /** The one short line the step in focus shows under its state. */
