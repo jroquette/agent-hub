@@ -137,6 +137,7 @@ class HubFilesReadModels:
         read_git: Callable[[str], GitReader] | None = None,
     ) -> None:
         self._reader = reader
+        self._clock = clock
         self._read_git = read_git
         self._skills = SkillReads(reader, usage, capture=capture)
         self._snapshots = ticket_snapshots
@@ -225,7 +226,9 @@ class HubFilesReadModels:
         """Feature folders of every scoped project."""
         return _page(
             tuple(
-                feature_view(folder, project=found.name, read=self._cached(found, folder))
+                feature_view(
+                    folder, project=found.name, now=self._clock(), read=self._cached(found, folder)
+                )
                 for found in self._scoped(scope)
                 for folder in self._reader.feature_folders(found.path)
             )
@@ -234,7 +237,9 @@ class HubFilesReadModels:
     def get_feature(self, project: str, slug: str) -> FeatureDetail:
         """One feature with its acceptance criteria; an unknown project is an unknown feature."""
         found, folder = self._feature(project, slug)
-        return feature_detail(folder, project=found.name, read=self._cached(found, folder))
+        return feature_detail(
+            folder, project=found.name, now=self._clock(), read=self._cached(found, folder)
+        )
 
     def feature_tickets(self, project: str, slug: str) -> FeatureTickets:
         """One feature's tickets, planning and golden path: the only read that may call the
@@ -245,7 +250,9 @@ class HubFilesReadModels:
         if self._snapshots is not None:
             read = self._snapshots.fetch(_ticket_request(found, folder))
         repos = {repo.dir: repo.github for repo in found.config.repos}
-        return feature_tickets(folder, read, project=found.name, tracker=tracker, repos=repos)
+        return feature_tickets(
+            folder, read, project=found.name, tracker=tracker, now=self._clock(), repos=repos
+        )
 
     def doctor_findings(self, scope: Scope) -> Page[FindingView]:
         """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order.

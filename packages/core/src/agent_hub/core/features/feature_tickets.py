@@ -11,6 +11,7 @@ connected for hub web, whatever the read says. Each row carries its ticket flow
 """
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Final
 
 from agent_hub.core.errors import TrackerFailure
@@ -68,13 +69,14 @@ def feature_tickets(
     *,
     project: str,
     tracker: Tracker,
+    now: datetime,
     repos: Mapping[str, str] | None = None,
 ) -> FeatureTickets:
     """The feature's tickets as ``read`` serves them, for the hub whose tracker is ``tracker``;
     ``repos`` maps each hub repo's ``dir`` to its GitHub ``owner/name`` (pull request links)."""
     if tracker.transport == "mcp":
         read = NOT_CONNECTED_READ
-    parts = feature_parts(folder, read, repos=repos)
+    parts = feature_parts(folder, read, now=now, repos=repos)
     unread = LINEAR_NOT_LOADED if read.failure is None else LINEAR_NOT_CONNECTED
     evidence = ticket_evidence(
         rounds=frozenset(name.upper() for name in folder.review_round_tickets),

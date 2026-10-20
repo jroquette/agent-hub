@@ -17,7 +17,7 @@ from agent_hub.core.features.owner_signoff import (
 )
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
-from agent_hub.core.testing.read_model_builders import an_issue_summary
+from agent_hub.core.testing.read_model_builders import READ_TIME, an_issue_summary
 from agent_hub.core.testing.tracker_reader_fakes import SNAPSHOT_TIME
 from agent_hub.core.tracker.tracker_reader import IssueState, TicketSnapshot
 
@@ -125,7 +125,7 @@ def a_planned_folder(*evals: RecordHead, eval_head: bytes | None = None) -> Feat
 
 
 def acceptance_of(folder: FeatureFolder) -> GoldenStep:
-    steps = feature_parts(folder, MERGED).golden_path.steps
+    steps = feature_parts(folder, MERGED, now=READ_TIME).golden_path.steps
     return next(step for step in steps if step.name == "acceptance")
 
 

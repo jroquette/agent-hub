@@ -15,15 +15,18 @@ only: its ``problem`` says why and its criteria are unknown.
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final, Literal, cast
 
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_evals import (
+    OwnerWait,
     acceptance_eval,
     eval_coverage,
     eval_records,
     legacy_verdict_line,
     owner_wait,
+    signoff_block,
 )
 from agent_hub.core.features.feature_record import (
     RECORD_FILE,
@@ -46,6 +49,8 @@ from agent_hub.core.features.feature_view import (
     FeatureRecordName,
     FeatureView,
     GoldenPath,
+    OwnerWaitState,
+    OwnerWaitView,
     PlanView,
     TicketsSource,
     Verdict,
@@ -139,13 +144,15 @@ class FeatureFolder:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class FeatureParts:
     """What the feature views share: the parsed ``record`` (its one-line problem, or None when
-    absent), every eval, the ticket ``board``, the ``golden_path`` and the tickets' ``source``."""
+    absent), every eval, the ticket ``board``, the ``golden_path``, the tickets' ``source`` and
+    what the acceptance eval waits on from the owner (``owner_wait``)."""
 
     record: FeatureRecordFile | str | None
     evals: tuple[EvalRecord, ...]
     board: TicketBoard
     golden_path: GoldenPath
     source: TicketsSource
+    owner_wait: OwnerWaitView | None
 
 
 def ticket_ids(folder: FeatureFolder) -> tuple[str, ...]:
@@ -190,12 +197,14 @@ def feature_parts(
     folder: FeatureFolder,
     read: SnapshotRead | None = None,
     *,
+    now: datetime,
     repos: Mapping[str, str] | None = None,
 ) -> FeatureParts:
     """The feature's evals, ticket board and golden path, over ``read``'s snapshot when it holds
-    one (else the plan; ``read`` None is a hub web with no tracker reader: not connected).
-    ``repos`` maps each hub repo's ``dir`` to its GitHub ``owner/name``, to link each ticket's
-    pull request from its review record."""
+    one (else the plan; ``read`` None is a hub web with no tracker reader: not connected), read
+    at ``now`` (an acceptance eval dated after it cannot be signed off yet, A15). ``repos`` maps
+    each hub repo's ``dir`` to its GitHub ``owner/name``, to link each ticket's pull request from
+    its review record."""
     record = _record(folder.features_json)
     parsed = record if isinstance(record, FeatureRecordFile) else None
     acs = () if parsed is None else parsed.acs
@@ -216,11 +225,14 @@ def feature_parts(
     )
     source: TicketsSource = "plan" if snapshot is None else "linear"
     waiting = owner_wait(evals, acs, tickets=tickets)
+    block = None if waiting is None else signoff_block(waiting.acceptance, now=now)
     gate = EvalGate(
         evals=len(evals),
         covered=len(coverage.covered),
         owner_steps=None if waiting is None else len(waiting.acs),
         reopened=0 if waiting is None else len(waiting.reopened),
+        undated=block == "undated",
+        signable_after=(f"{block:%Y-%m-%d %H:%M} UTC" if isinstance(block, datetime) else None),
         skipped=folder.evals_skipped,
         acceptance=None if accepted is None else accepted.verdict,
     )
@@ -238,24 +250,53 @@ def feature_parts(
             not_loaded=read is not None and snapshot is None and read.failure is None,
         )
     )
-    return FeatureParts(record=record, evals=evals, board=board, golden_path=path, source=source)
+    return FeatureParts(
+        record=record,
+        evals=evals,
+        board=board,
+        golden_path=path,
+        source=source,
+        owner_wait=_owner_wait_view(waiting, block),
+    )
+
+
+def _owner_wait_view(
+    waiting: OwnerWait | None, block: Literal["undated"] | datetime | None
+) -> OwnerWaitView | None:
+    """The Acceptance wait in the order the sign-off refuses (A9-A11, A15): no AC to sign off,
+    then no sign-off able to follow the eval, then reopened ACs; None when nothing waits or an
+    owner decision newer than the eval already settled it (A11)."""
+    if waiting is None or waiting.settled:
+        return None
+    state: OwnerWaitState
+    if not waiting.acs:
+        state = "no_acs"
+    elif block == "undated":
+        state = "undated"
+    elif block is not None:
+        state = "future"
+    elif waiting.reopened:
+        state = "reopened"
+    else:
+        state = "sign_off"
+    return OwnerWaitView(state=state, acs=waiting.acs, reopened=waiting.reopened)
 
 
 def feature_view(
-    folder: FeatureFolder, *, project: str, read: SnapshotRead | None = None
+    folder: FeatureFolder, *, project: str, now: datetime, read: SnapshotRead | None = None
 ) -> FeatureView:
     """The feature as the Features list shows it (``read``: the warm snapshot, as the detail)."""
-    detail = feature_detail(folder, project=project, read=read)
+    detail = feature_detail(folder, project=project, now=now, read=read)
     return FeatureView.model_validate(detail.model_dump(include=set(FeatureView.model_fields)))
 
 
 def feature_detail(
-    folder: FeatureFolder, *, project: str, read: SnapshotRead | None = None
+    folder: FeatureFolder, *, project: str, now: datetime, read: SnapshotRead | None = None
 ) -> FeatureDetail:
     """The feature with its acceptance criteria rows and every eval; ``read`` is what the
     snapshot cache holds for its tickets (never a tracker read), None when hub web has none."""
     front = _frontmatter(folder.spec_head)
-    parts = feature_parts(folder, read)
+    parts = feature_parts(folder, read, now=now)
     record = parts.record
     rows = () if not isinstance(record, FeatureRecordFile) else tuple(_row(ac) for ac in record.acs)
     accepted = acceptance_eval(parts.evals)
@@ -288,7 +329,9 @@ def feature_detail(
         acceptance_eval=(
             None
             if accepted is None or accepted.verdict is None
-            else AcceptanceEval(delivery=accepted.delivery, verdict=accepted.verdict)
+            else AcceptanceEval(
+                delivery=accepted.delivery, verdict=accepted.verdict, owner_wait=parts.owner_wait
+            )
         ),
     )
 
