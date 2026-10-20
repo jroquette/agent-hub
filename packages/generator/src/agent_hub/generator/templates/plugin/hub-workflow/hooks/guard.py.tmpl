@@ -1186,6 +1186,10 @@ BLOCKED_UNCHECKED_REASON = "blocked words not checked: {}; confirm this call"
 BLOCKED_CONFIG_CAUSE = "{} cannot be used (fix it: docs/design/environments.md)"
 BLOCKED_TEXT_CAP = 1 << 20  # characters of a command the rule scans; a longer one asks (AM-7)
 BLOCKED_TOO_LARGE = "the command is over 1 MiB (too large)"
+BLOCKED_INPUT_CHARS = 1 << 20  # characters of an input tool's keys and strings; more asks
+BLOCKED_INPUT_NODES = 50_000  # objects, arrays, keys and scalars of an input tool's input; more asks
+BLOCKED_INPUT_TOO_LARGE = "the tool input is over 1 MiB (too large)"
+BLOCKED_INPUT_TOO_MANY = "the tool input has over 50000 values (too many values)"
 BLOCKED_SCAN_BUDGET = 0.3  # seconds for the command's views, the session variables and the files together
 BLOCKED_OUT_OF_TIME = "out of time (300 ms)"
 BLOCKED_UNREADABLE = "the tool input could not be read (not a JSON object)"
@@ -1287,7 +1291,8 @@ BLOCKED_TOOL_PATH_FIELDS = {"Grep": ("glob",), "Glob": ("pattern",), "WebFetch":
 
 
 class BlockedScanUnchecked(Exception):
-    """A listed file the rule cannot read within D-limits; the message is the ask's cause."""
+    """A listed file the rule cannot read within D-limits, or a tool input over D-bounds; the
+    message is the ask's cause."""
 
 
 class BlockedSecretFile(Exception):
@@ -1535,16 +1540,26 @@ def _file_tool_found(scan: _BlockedScan, tool: str, ti: dict) -> tuple[str, str]
 def _input_found(scan: _BlockedScan, tool: str, ti: dict) -> tuple[str, str] | None:
     """(word, where) for a word in any key or string value of an input tool's input, walked in
     document order (an object's key, then its value) with a stack of iterators: no recursion and
-    no copy of a container. Numbers, booleans and null are not scanned; the tool name is not."""
+    no copy of a container. Numbers, booleans and null are counted, not scanned; the tool name is
+    not scanned. Bounds (D-bounds): BLOCKED_INPUT_NODES values (each object, array, key and
+    scalar, the root included) and BLOCKED_INPUT_CHARS characters of keys and strings; over one,
+    BlockedScanUnchecked. The first hit or the first bound crossed ends the walk."""
     end = object()
     stack: list = [iter((ti,))]
+    nodes = chars = 0
     while stack:
         value = next(stack[-1], end)
         if value is end:
             stack.pop()
             continue
+        nodes += 1
+        if nodes > BLOCKED_INPUT_NODES:
+            raise BlockedScanUnchecked(BLOCKED_INPUT_TOO_MANY)
         scan.tick()
         if isinstance(value, str):
+            chars += len(value)
+            if chars > BLOCKED_INPUT_CHARS:
+                raise BlockedScanUnchecked(BLOCKED_INPUT_TOO_LARGE)
             word = scan.hit(value)
             if word:
                 return word, f"the input of `{_infra_value(tool)}`"
