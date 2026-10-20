@@ -1,6 +1,7 @@
 import "./agent-session.css";
 
 import {
+  useContext,
   memo,
   useCallback,
   useEffect,
@@ -20,6 +21,7 @@ import { MessageMeta } from "./MessageMeta";
 import { RequestCard, type PermissionAnswer } from "./PermissionCard";
 import { OpenReviewFileContext, ReviewBubble } from "./ReviewDiff";
 import { parseReview } from "./review";
+import { ChatRefsContext } from "./chatRefs";
 import { runFilesOf } from "./RunFilesCard";
 import { StoredCopyLabel } from "./SessionStatus";
 import { ActivityPanel, ActivityRun, ThinkingBlock, type ActivityStep } from "./ActivityRun";
@@ -56,6 +58,8 @@ export interface TranscriptProps {
   sidePanel?: ReactNode;
   /** A run line opened the activity drawer: the page closes its own. */
   onActivityOpen?: (() => void) | undefined;
+  /** The conversation's last line, after every entry (the background tasks' card). */
+  footer?: ReactNode;
 }
 
 /** The first render shows the latest entries only, from the oldest pending card at the latest;
@@ -143,9 +147,13 @@ type AssistantEntry = Extract<TranscriptEntry, { kind: "assistant" }>;
 /** Claude's text; the parse is memoised by text, so only a changed bubble parses again. A code
  * block still streaming stays plain; it is highlighted once its fence closes or the text ends. */
 function AssistantText({ entry }: { entry: AssistantEntry }) {
+  // Tickets, pull requests, URLs and the review's files become links (the session page's finder).
+  const refs = useContext(ChatRefsContext) ?? undefined;
   const body = useMemo(
-    () => <Markdown source={entry.text} streaming={entry.streaming} className="as-md" />,
-    [entry.text, entry.streaming],
+    () => (
+      <Markdown source={entry.text} streaming={entry.streaming} className="as-md" refs={refs} />
+    ),
+    [entry.text, entry.streaming, refs],
   );
   return (
     <article
@@ -283,6 +291,7 @@ export function Transcript({
   reviewed,
   onOpenFile,
   sidePanel,
+  footer,
   onActivityOpen,
 }: TranscriptProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -347,8 +356,10 @@ export function Transcript({
     );
     if (!element || !card) return;
     release();
-    // `.as-scroll` is positioned, so the card's offset is from the scroller's top.
-    element.scrollTop = Math.max(0, card.offsetTop - OPEN_MARGIN_PX);
+    // Measured against the scroller, not by offsetTop: the settled entry around the card is
+    // contained (content-visibility), which makes it the card's offsetParent in the browser.
+    const offset = card.getBoundingClientRect().top - element.getBoundingClientRect().top;
+    element.scrollTop = Math.max(0, element.scrollTop + offset - OPEN_MARGIN_PX);
   }, [oldestPending, release]);
 
   // The earlier entries, a frame after the first render; what was in view stays in view (the
@@ -366,12 +377,19 @@ export function Transcript({
       cancelAnimationFrame(frame);
     };
   }, [start]);
+  // A chat that follows the bottom stays there: the position read a frame earlier may predate the
+  // stick-to-bottom hook's first write, and restoring it would land near the top and detach.
+  const following = follow?.atBottom ?? false;
   useLayoutEffect(() => {
     const element = scroller.current;
     const was = before.current;
     before.current = null;
     if (start !== 0 || !element || !was) return;
-    element.scrollTop = was.top + element.scrollHeight - was.height;
+    element.scrollTop = following
+      ? element.scrollHeight
+      : was.top + element.scrollHeight - was.height;
+    // Only the moment the earlier entries arrive; following is read, not watched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [start]);
 
   // Entries that arrived while the reader was away from the bottom (AC-234.19).
@@ -480,6 +498,7 @@ export function Transcript({
               </div>
             ))}
           </div>
+          {footer && <div className="as-column as-transcript-footer">{footer}</div>}
           {/* One live region stays mounted while the session lives, so its text changes are announced. */}
           {state.status !== "ended" && state.status !== "failed" && (
             <p

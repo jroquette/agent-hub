@@ -85,7 +85,7 @@ is refused (`terminal`, or `log-full` naming Resume); a command while an interru
 
 | Limit | Default | Range |
 | --- | --- | --- |
-| live sessions (`--sessions-max`) | 4 | 1-16 |
+| live sessions (`--sessions-max`) | 4 | 0-16 (0: no limit) |
 | idle seconds (`--session-idle-seconds`) | 1800 | 1-86400 |
 | permission answer seconds (`--permission-timeout-seconds`) | 600 | 1-86400 |
 | log records (`--session-log-records`) / bytes (`--session-log-bytes`) | 50000 / 32 MiB | 100-1000000 / 64 KiB-1 GiB |
@@ -95,7 +95,35 @@ is refused (`terminal`, or `log-full` naming Resume); a command while an interru
 
 At the live-sessions limit, a start or a reopen first ends the local session idle the longest (no request open)
 `idle_timeout`, `by: server`; a message reopens it in place. Only when every live session is running, waiting on a
-request or a cloud one is the start refused (429 `limit`).
+request or a cloud one is the start refused (429 `limit`). With `--sessions-max 0` (the playground's conductor) no
+session is ended or refused for the limit.
+
+**No live-session limit (AGH-383, [ADR 0042](../adr/0042-no-live-session-limit-in-the-playground.md))**
+
+**Session limits (core)**
+
+- **AC-383.1** Given `SessionLimits`, when `sessions_max` is 0, then it is accepted and means no limit on live
+  sessions.
+- **AC-383.2** Given `sessions_max` 1 to 16, when the limits are built, then they are accepted as before; -1 and 17
+  are refused.
+- **AC-383.3** Given no limit (`sessions_max` 0) and an idle session beside running ones, when another session starts,
+  then none is ended for the limit: the idle one stays idle and the running ones keep running.
+- **AC-383.4** Given no limit and 17 running sessions (more than the 16 ceiling), when another session starts, then it
+  is not refused and starts idle.
+- **AC-383.5** Given a limit of 2 with both sessions running, when a third starts, then it is refused
+  (`LiveLimitError`, limit 2), and starts once one closes (unchanged behavior).
+
+**hub web (cli)**
+
+- **AC-383.6** Given `hub web --sessions-max 0`, when it starts, then it serves with no session limit (`sessions_max`
+  0); its help says "Live agent sessions; 0: no limit."
+- **AC-383.7** Given `AGENT_HUB_SESSIONS_MAX=0`, when `hub web` starts, then it serves with no session limit.
+- **AC-383.8** Given `--sessions-max -1` or `17`, when `hub web` starts, then it refuses the value.
+
+**make playground**
+
+- **AC-383.9** Given `make playground`, when it starts the conductor, then it passes `AGENT_HUB_SESSIONS_MAX=0` (with
+  `AGENT_HUB_SESSION_IDLE_SECONDS=86400`).
 
 ### Links
 
@@ -263,6 +291,298 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   threads.
 - **AC-265.18** Given a review comment in the chat, then it reads as one (file, lines, the comment) with a link that
   opens its file in the review.
+
+### Session review: changed files and pull requests (AGH-377)
+
+**Review drawer (Changed files)**
+
+**Kinds of file**
+
+- **AC-377.1** Given a session that changed code, a plan under `~/.claude/plans/`, a brain note and a file in a
+  temporary folder, when the review drawer opens, then the changed files are split into tabs `Code`, `Plans`,
+  `Learnings` and `Scratch` (each with its count), the code first and Claude's scratch last, and the Code tab lists
+  only the code.
+- **AC-377.2** Given a markdown file in the review, when it is opened, then it opens rendered with its frontmatter
+  apart (labelled "Frontmatter"), and the diff is one click away (`Each change`).
+- **AC-377.3** Given a diff was shown for a code file in the drawer, when the next file is a markdown file, then it
+  opens rendered (`Preview` pressed), not as a diff.
+- **AC-377.4** Given a card in the conversation asks for a file of another kind (a plan), when the drawer opens on it,
+  then the drawer is on that file's tab (`Plans` selected) with the file open.
+- **AC-377.5** Given a feature's records under `brain/features/` (spec, plan, research, evals, the workflow's spec and
+  quality reviews), when the drawer opens, then they have their own tab named `Reviews & specs`, out of the Code tab
+  and its review count, and the brain's other notes (decisions, inbox…) are in `Learnings`.
+- **AC-377.6** Given the Code tab is shown and git compared the repositories, when the tab's note reads, then it says
+  "What the pull request has, whoever changed it (<branch> against <base> · <n> commits)."
+
+**Viewed marks**
+
+- **AC-377.7** Given a session with code and Claude's plans, learnings and scratch, when the drawer lists them, then
+  only the code has a `Viewed` checkbox and an "N of M viewed" progress; Claude's files have none, in the list or the
+  open file.
+
+**Names, root line and the file list**
+
+- **AC-377.8** Given files in a worktree (`<repo>/.claude/worktrees/<name>/…`), when the list shows its root, then the
+  root line shows the repo and the worktree's name in bold, the rest of the path after it, the whole path on hover,
+  and a `Copy folder path` button.
+- **AC-377.9** Given a session whose folder label is `<repo>` and files under it, when the root line shows, then the
+  label is in bold followed by the rest of the path.
+- **AC-377.10** Given files outside a worktree and the session's folder, when the root line shows, then it shows the
+  full root with the home folder as `~`.
+- **AC-377.11** Given a long file or folder name in the list, when it does not fit, then it stays on one line, cut in
+  the middle, the file keeping its extension (a folder its last name), and its whole name shows on hover.
+- **AC-377.12** Given a file is open, when its header shows, then it shows its whole path (wrapping, not cut) and a
+  `Copy file path` button copies the full path.
+- **AC-377.13** Given `CopyButton` in its compact form, when it shows, then it shows the icon alone with its label as
+  the tooltip, and the same "Copied"/"Copy failed" feedback, announced.
+- **AC-377.14** Given the drawer is wide enough for the list beside the open file, when the list's edge is focused and
+  → / ← / Home are pressed, then the list widens, narrows, resets to its default, and the width is kept in this
+  browser.
+- **AC-377.15** Given any drawer width, when the list is resized, then the open file never gets under 360px and the
+  list never over 60% of the drawer; when the drawer narrows, the open file gets its room back.
+
+**Files read from git (the pull request)**
+
+- **AC-377.16** Given git read the session's repository, when the Code tab lists files, then it lists every file git
+  says the branch changes against the base it forked from (committed or not, untracked included, deleted with `D`),
+  whoever changed them, then the session's other files.
+- **AC-377.17** Given a file git read, when it opens, then it opens on `Final result`, git's diff "Against <base>:
+  every commit and uncommitted change, as the pull request shows it", with Claude's changes still under `Each change
+  (n)`.
+- **AC-377.18** Given a file git read, when `Commits (n)` is chosen, then it lists "Uncommitted changes" first (when
+  there are), then the commits that touched the file newest first, each with its short sha, subject and lines.
+- **AC-377.19** Given a comment on git's diff of a file, when it is sent, then it anchors to the file's final diff
+  (change 0) with the file's real line numbers.
+- **AC-377.20** Given a file the session changed that git lists nowhere, when it opens, then it says the file ends as
+  it is on the base; a file with no diff to show reads as binary or too big.
+- **AC-377.21** Given a commit row in a file's Commits view, when it is pressed, then it opens on what that commit
+  changed in the file, read from git (`repo-changes/commit`), and opening it again does not read it again.
+
+**Repositories and pull requests**
+
+- **AC-377.22** Given git read a repository, when the Code tab shows, then it lists the repository with its branch,
+  its base and how many commits (`dem-1 → origin/main · 0 commits`), a link to its pull request (`PR #7`, opens in a
+  new tab) and where it stands; the list shows on the Code tab only.
+- **AC-377.23** Given a repository's pull request and its state, when the state is read, then it says "In sync with
+  the pull request", "N file(s) changed since the pull request", "Commits not in the pull request yet", "N files not
+  committed", "Pull request merged", "Pull request closed", "Worktree removed: its recorded commits" or "No pull
+  request yet".
+
+**Totals**
+
+- **AC-377.24** Given a session that changed code and Claude's brain notes, feature records or scratch, when the
+  drawer's header totals the change, then it counts the code alone ("1 code file · +1−0"), and says "No code changes"
+  when there is no code.
+
+**Header chip and sessions list**
+
+- **AC-377.25** Given code and Claude's own files changed, when the header chip reads, then its files and lines are
+  the code alone and only the code waits for review ("Review changes: 1 file, 1 lines added, 0 removed, 1 to review").
+- **AC-377.26** Given a session's changed files in the sessions list, when it counts what to review, then Claude's
+  plans and scratch are neither counted nor waiting for review.
+
+**The turn's files card**
+
+- **AC-377.27** Given a turn that only edits files an earlier turn created, when its files card shows, then it says
+  "Edited N file(s)", not created.
+- **AC-377.28** Given a turn that changed code, a plan and scratch, when its files card shows, then the code comes
+  first labelled as what "goes in the pull request", then Claude's plans, learnings and scratch under their own
+  labels, the scratch "not for review" (no review dot).
+
+**Review threads**
+
+- **AC-377.29** Given a review thread with your comment, Claude's answer and a reply being sent, when it shows, then
+  it reads like a GitHub conversation: a header with its lines and "N comments", each comment with its avatar, author
+  ("You" / "Claude" with an `Agent` badge) and "commented" (first), "replied" or "sending…"/"writing…", and a footer
+  with `Reply…` and `Resolve`.
+- **AC-377.30** Given an open thread, when `Resolve` is pressed, then it folds to its header "Resolved conversation on
+  <lines>", `Show` opens it again (read-only, no reply), and `Reopen` brings back `Resolve`.
+
+**API: repo-changes (`GET /api/v1/agent-sessions/{id}/repo-changes`, `…/repo-changes/commit`)**
+
+- **AC-377.31** Given a session that changed files in a repository's worktree (not the hub), when repo-changes is
+  read, then each repository the session worked in is read by git once (its own repo first), the hub never is, and a
+  repository git cannot read is named in `warnings`.
+- **AC-377.32** Given a checkout on a branch with commits, staged, unstaged and untracked changes, when git reads it,
+  then every file that differs from the fork point is listed with its status, lines, final diff, its commits and
+  whether it is uncommitted, and each file's fingerprint changes when its diff does.
+- **AC-377.33** Given a session whose calls name a listed worktree (a command run there, a subagent sent there) but
+  whose file tools changed nothing there, when repo-changes is read, then that worktree is read; a repo's main
+  checkout named in passing is not, nor a text that only starts like a worktree path.
+- **AC-377.34** Given a worktree started from another branch, when git reads it, then its base is the branch it was
+  started from (its reflog's `Created from`, else an upstream that is not its own pushed copy), the remote's default
+  only without either, and nothing without any base.
+- **AC-377.35** Given a commit diff is asked, when the file is in one of the session's repositories, then git shows
+  what the commit (7–40 hex digits) changed in the file and its name before a rename; an empty diff when the commit
+  did not touch it.
+- **AC-377.36** Given a commit diff is asked, when the file is outside the session's repositories or git does not know
+  the commit, then the answer is not found.
+- **AC-377.37** Given a commit diff is asked with a ref (`HEAD`, `origin/main`), an option (`--output=x`), fewer than
+  7 or more than 40 hex digits, a relative path or no path, when the route reads it, then it answers 400 and never
+  calls the session control; given the adapter is called with an option-like sha, then it refuses.
+- **AC-377.38** Given repo-changes is read, when git read a repository, then the session records it in
+  `review_targets` (repo, folder, branch, base, fork and head commits, pull request number and URL), kept by the
+  store.
+- **AC-377.39** Given a recorded worktree that is gone, when repo-changes is read, then it is read from its recorded
+  commits in the repo's own checkout (else `origin/<branch>`), named under the old folder, its source `recorded`;
+  unless the session now works on that repo elsewhere, then it is left out. Recorded commits git no longer has, or
+  that read as options, cannot be read.
+- **AC-377.40** Given a branch, when its pull request is read, then it comes from `gh pr list --head <branch>`, asked
+  at most once a minute; when GitHub does not answer, the recorded pull request shows (state `UNKNOWN`); a branch that
+  reads as an option names no pull request.
+- **AC-377.41** Given migration 0007 (after 0006), when the database is upgraded and downgraded, then `agent_sessions`
+  gains `review_targets` (`[]` for existing rows) and loses it again, rows kept.
+- **AC-377.42** Given the OpenAPI document, when it is built, then the two repo-changes routes are listed with the
+  agent-session paths and are behind the same access check as the others.
+
+### Chat: opening, answers, links and the slash menu (AGH-379)
+
+**Chat (agent session)**
+
+**Where the chat opens**
+
+- **AC-379.1** Given a chat that follows the bottom and has nothing waiting for you, when the earlier entries load a
+  frame after the first render, then the chat stays at its latest message and is not detached (the position read
+  before the stick-to-bottom hook's first write is not restored).
+- **AC-379.2** Given a pending card inside an activity group (a settled, contained entry that becomes the card's
+  offsetParent), when the chat opens, then it opens on that card, measured against the scroller, not near the top.
+
+**Links in Claude's replies**
+
+- **AC-379.3** Given Claude's reply names a bare URL at the end of a sentence, when it renders, then the URL is a link
+  without the sentence's full stop.
+- **AC-379.4** Given Claude's reply names `owner/repo#n`, or `repo#n` for a repo of the project, when it renders, then
+  each is a link to that pull request on GitHub; `repo#n` for a repo outside the project stays text.
+- **AC-379.5** Given Claude's reply names a ticket of the project's tracker teams, when Linear's workspace is known,
+  then the ticket links to it in Linear; else it opens its feature's page here; a ticket of another team, or one no
+  feature names without Linear, stays text.
+- **AC-379.6** Given Claude's reply names a file of the session's review by its full path, or by a tail that names one
+  file only, when it is clicked, then the file opens in the review drawer; a path that is not a file of the review
+  stays text.
+- **AC-379.7** Given a reply with nothing to link (a fraction, `and/or`), when it renders, then it is left as text.
+- **AC-379.8** Given Markdown with a refs finder, when the text names a ref in prose, in a whole code span, or inside
+  an existing link, then prose and the whole code span become links and the existing link is kept as it is; an action
+  ref renders as a button that opens it in the page.
+- **AC-379.9** Given a session whose project tracks team `AGH` and whose Linear workspace is known, when Claude's
+  reply names `AGH-7` and your own message names it too, then only Claude's mention is a link (to
+  `https://linear.app/<workspace>/issue/AGH-7`).
+
+**Slash menu**
+
+- **AC-379.10** Given the CLI's init lists subagents, when the `/` menu opens, then they follow the slash commands and
+  skills, each once, as `/agent-<name>`.
+- **AC-379.11** Given the CLI's init names `agents`, when the driver maps it, then the init event carries those
+  agents.
+- **AC-379.12** Given a `/word` at the caret, when it starts the text or follows a space, then the `/` menu opens on
+  it; past the start only when something matches, so a path such as `see /tmp/x` keeps its Enter and sends; picking a
+  command inserts it in place.
+- **AC-379.13** Given the project's hub catalog, when the menu lists options, then the hub's skills a user may call
+  show as `/name` and its agents as `/agent-name` (hooks and model-only skills left out), tagged "hub" ("…, from the
+  hub"), first; the session's own commands the hub does not offer follow (a plugin-prefixed copy of a hub item is not
+  listed twice).
+- **AC-379.14** Given a session in a repo or a worktree, when the workdirs are listed, then each such workdir carries
+  the hub's plugin folders (those holding `.claude-plugin/`, real path inside the hub); the hub's own workdir carries
+  none.
+- **AC-379.15** Given a workdir with the hub's plugins, when a session starts there or is reopened by a message, then
+  the CLI is started with those plugins (`plugins: [{type: "local", path}]`); with none, no plugin is passed.
+- **AC-379.16** Given the session knows a command or agent only by its plugin name, when a message uses the short name
+  (`/fix`, `/agent-researcher`), then it reaches the CLI as `/hub-workflow:fix` and `@agent-hub-workflow:researcher`;
+  a name the session knows as is, an ambiguous or unknown name, and `/agent-` not at the start or after a space are
+  left as typed (an unknown `/agent-x` still becomes `@agent-x`).
+- **AC-379.17** Given the CLI's `initialize` answer, when its names are read, then `commands` and `agents` are taken
+  by `name` and anything missing or malformed is ignored.
+- **AC-379.18** Given a hub item in the open menu, when its open icon is clicked or Ctrl/Cmd+Enter is pressed on the
+  active option, then its skill or agent page opens in a new tab and nothing is inserted.
+- **AC-379.19** Given the menu's options, when they render, then the command column keeps one width and the
+  description takes the rest, cut with an ellipsis. (CSS only.)
+
+**Feature detail (record approval)**
+
+- **AC-379.20** Given a spec whose open question lists options under it, when it is opened, then its answer is a
+  choice of those options, the one marked `(recommended)` tagged Recommended and picked by default, and picking
+  another sends it as the answer (`- Q1 (Cache): On disk`).
+- **AC-379.21** Given an open question without options, when it is opened, then the choices are Take the
+  recommendation (picked when the record recommends one) or Let Claude decide (picked otherwise), and Other, which
+  opens a box for a free answer ("Your own answer to Q…") and focuses it.
+- **AC-379.22** Given an option list in the record, when it is read, then each nested item gives a label, a
+  description and whether it is recommended; a wrapped line continues the last option; the marked option is the
+  recommendation when the prose names none, and the prose wins otherwise.
+- **AC-379.23** Given the chat's option row moved to the shared components, when a chat question card is answered,
+  then it behaves as before (option, Other text, Recommended tag).
+- **AC-379.24** Given the requirements analyst's template, when a hub is rendered, then it asks for one list item per
+  question and, when the answer is a choice, 2 to 4 options as a nested list with the recommended one marked; the
+  rendered goldens and lock hashes match.
+
+### Background agents and session names (AGH-380)
+
+**Sessions engine (core, claude_sessions)**
+
+- **AC-380.1** Given the SDK sends `task_started`, when it is mapped, then it becomes a running task record (task id,
+  description, the calling tool use, the CLI's `task_type`).
+- **AC-380.2** Given a `task_notification` with completed, failed or stopped, or a `task_updated` with killed, when it
+  is mapped, then the task's end is recorded (killed reads stopped); a `task_updated` that is not terminal or names no
+  task, and `task_progress`, map to nothing.
+- **AC-380.3** Given a `task_updated` saying `running` (a finished agent resumed by a message), when it is mapped,
+  then the task runs again.
+- **AC-380.4** Given an idle session with a task running, when the idle limit passes, then the session is not ended;
+  the idle timeout counts from the last task's end.
+- **AC-380.5** Given the live-session limit is reached and the only idle session has a task running, when a new
+  session is started, then that session is not ended to free a slot (the start is refused).
+- **AC-380.6** Given a running task, when it is stopped, then the CLI is asked to stop it (the SDK's `stop_task`); a
+  task not running here is left alone, with no error.
+
+**API**
+
+- **AC-380.7** Given a session, when `POST /agent-sessions/{id}/tasks/{task_id}/stop` is called, then it answers 202
+  with the session and calls the control's stop once; an unknown session answers the 404 problem; without session
+  control it answers not implemented.
+- **AC-380.8** Given the stop route, when it is called without the session cookie, with a wrong cookie or one of
+  another port, without the server's own Origin (missing, foreign, cross-site), with a body that is not JSON, or in
+  container mode with sessions off, then it is refused before any port is called, as the other session write routes
+  are.
+- **AC-380.9** Given a task id that is not 1-64 of `[A-Za-z0-9_-]`, when the stop route is called, then it is refused
+  and no port is called.
+- **AC-380.10** Given the OpenAPI document, when it is built, then the stop route is one of the agent-session paths
+  (18).
+
+**Chat (agent session)**
+
+- **AC-380.11** Given an idle session with background tasks running, when the header shows its status, then it reads
+  "Background · N agents" (and ", N commands" for commands), not Idle.
+- **AC-380.12** Given an idle session with tasks running, when the live bar shows, then it lists them oldest first as
+  working in the background ("Running in the background: 1 command"), its timer from the oldest task's start; once
+  every task ended, or the process exited, the bar is gone.
+- **AC-380.13** Given tasks ran, when the header chip shows, then it reads "Background tasks, N running" (else "N
+  done") and is hidden with none; clicking it, or the live bar between turns, opens the Background drawer.
+- **AC-380.14** Given the Background drawer, when it opens, then it lists the running tasks (agents with their calls
+  so far, commands) and folds the ended ones under Completed with their status; Esc closes it.
+- **AC-380.15** Given a running task in the drawer, when Stop is clicked, then `POST …/tasks/{task_id}/stop` is sent
+  with an empty JSON body and the button waits for the task's end; a failed stop says "Could not stop it"; without a
+  way to stop (cloud, ended) no Stop is offered.
+- **AC-380.16** Given a finished agent resumed by a message, when its task runs again, then it reads as running from
+  that moment.
+- **AC-380.17** Given tasks run, or one ended since the last message, when the conversation ends, then a card after
+  the last entry says it ("2 background tasks done, 2 running", "1 background command running") and opens the drawer;
+  with nothing new it is hidden.
+- **AC-380.18** Given a log without task records, when it holds a background `Agent` call (`run_in_background`) and
+  its subagent's calls, then the agent reads as running until its last call is a SubagentHandback (completed), a
+  TaskStop of its agent id (stopped) or the process restarts (stopped); a SendMessage to it after its end runs it
+  again; a recorded task is counted once.
+- **AC-380.19** Given the stream, when task records arrive, then the chat listens for them (every record kind of the
+  API is streamed, checked at typecheck).
+
+**Session names (sessions list, session detail, chat header)**
+
+- **AC-380.20** Given a session whose label has a ticket, when it is named, then it reads `<ticket>: <what>`: the
+  ticket's title once read, else the hub feature's slug for the ticket, else what the branch or worktree says after
+  the whole ticket id, else Claude's title; without a ticket, the title rule is unchanged.
+- **AC-380.21** Given the sessions list, when a row is on a ticket a feature works on, then it is named by the
+  feature's slug, the feature shows as a label that opens its panel, and the list never reads the feature's tickets
+  (no `/tickets` request); a title already in the cache names it.
+- **AC-380.22** Given the session detail of a session on a ticket, when it opens, then the feature's tickets are read
+  once and the heading reads the ticket's title, with the feature label linking to its panel.
+- **AC-380.23** Given a chat whose observed twin is on a ticket, when it opens, then its header and breadcrumb read
+  the ticket's name from the twin's label (the title once read) and show the feature label.
 
 ## Invariants
 

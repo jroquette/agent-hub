@@ -348,6 +348,23 @@ def test_marks_reviewed_when_completed_or_approved_record() -> None:
     assert [row.reviewed for row in fallback.rows] == [None, None, True]
 
 
+def test_links_pull_request_when_id_or_key_has_one() -> None:
+    planned = (_planned(1), _planned(2), _planned(3))
+    snapshot = a_ticket_snapshot(summaries=(_summary(1), _summary(2)), missing=(), external=())
+    pulls = {
+        "DEM-1": "https://github.com/acme/demo-api/pull/1",
+        "T3": "https://github.com/acme/demo-api/pull/3",
+    }
+
+    board = ticket_board(planned, (), snapshot, pull_requests=pulls)
+
+    assert [row.pr_url for row in board.rows] == [
+        "https://github.com/acme/demo-api/pull/1",
+        None,
+        "https://github.com/acme/demo-api/pull/3",
+    ]
+
+
 def test_lists_acs_and_linear_only_ids_when_record_names_them() -> None:
     acs = (
         RecordAc(id="AC-7.1", description="d", passes=True, ticket="T1"),

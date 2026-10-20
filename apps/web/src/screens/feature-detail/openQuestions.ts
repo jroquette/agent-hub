@@ -9,10 +9,25 @@ export interface OpenQuestion {
   body: string;
   /** What the record assumes or recommends, up to the end of that sentence; else null. */
   recommendation: string | null;
+  /** The answers the record offers, from the item's nested list; none when it lists none. */
+  options: QuestionOption[];
+}
+
+/** One answer a record offers to an open question (a nested list item under the question). */
+export interface QuestionOption {
+  label: string;
+  description: string | null;
+  /** Marked "(recommended)" in the record. */
+  recommended: boolean;
 }
 
 const SECTION = /^##\s+open questions\s*$/i;
 const ITEM = /^[-*]\s+/;
+/** A nested list item under a question: one of its options. */
+const OPTION_ITEM = /^\s+[-*]\s+/;
+/** `**Label** (recommended): description` (the bold, the mark and the description optional). */
+const OPTION_BOLD = /^\*\*(.+?)\*\*\s*(\(recommended\))?\s*(?:[:\u2014\u2013-]\s*)?(.*)$/i;
+const OPTION_MARK = /\s*\(recommended\)/i;
 /** `**Q-1 (title):** …` */
 const BOLD_ID = /^\*\*(Q-?\d+)\s*\(([^)]+)\)\s*[.:]?\*\*\s*/;
 /** `Q1. …` or `**Q1.** …` */
@@ -27,26 +42,75 @@ export function openQuestions(markdown: string): OpenQuestion[] {
   const lines = markdown.split(/\r?\n/);
   const start = lines.findIndex((line) => SECTION.test(line.trim()));
   if (start < 0) return [];
-  const items: string[] = [];
+  const items: { text: string; options: string[] }[] = [];
   let inItem = false;
   for (const line of lines.slice(start + 1)) {
     if (/^#{1,2}\s/.test(line)) break;
+    const last = items[items.length - 1];
     if (ITEM.test(line)) {
-      items.push(line.replace(ITEM, ""));
+      items.push({ text: line.replace(ITEM, ""), options: [] });
       inItem = true;
-    } else if (inItem && /^\s+\S/.test(line)) {
-      items[items.length - 1] = `${items[items.length - 1] ?? ""} ${line.trim()}`;
+    } else if (inItem && last && OPTION_ITEM.test(line)) {
+      last.options.push(line.replace(OPTION_ITEM, ""));
+    } else if (inItem && last && /^\s+\S/.test(line)) {
+      // A wrapped line continues the last option, else the question.
+      const option = last.options.length - 1;
+      if (option >= 0) {
+        last.options[option] = `${last.options[option] ?? ""} ${line.trim()}`;
+      } else {
+        last.text = `${last.text} ${line.trim()}`;
+      }
     } else {
       inItem = false; // A paragraph between items is not part of a question.
     }
   }
   return items
-    .map((item) => item.trim())
-    .filter((item) => !/^none open\b/i.test(item) && !/\(resolved\b/i.test(item))
-    .map(parseItem);
+    .map((item) => ({ ...item, text: item.text.trim() }))
+    .filter(({ text }) => !/^none open\b/i.test(text) && !/\(resolved\b/i.test(text))
+    .map((item, index) => withOptions(parseItem(item.text, index), item.options));
 }
 
-function parseItem(item: string, index: number): OpenQuestion {
+function withOptions(
+  question: Omit<OpenQuestion, "options">,
+  lines: readonly string[],
+): OpenQuestion {
+  const options = lines.map(parseOption).filter((option) => option.label);
+  const recommended = options.find((option) => option.recommended);
+  return {
+    ...question,
+    options,
+    // An option marked recommended is the recommendation when the prose names none.
+    recommendation: question.recommendation ?? recommended?.label ?? null,
+  };
+}
+
+function parseOption(line: string): QuestionOption {
+  const text = line.trim();
+  const bold = OPTION_BOLD.exec(text);
+  if (bold) {
+    const [, label = "", mark, rest = ""] = bold;
+    const restMarked = OPTION_MARK.test(rest);
+    const description = rest
+      .replace(OPTION_MARK, "")
+      .replace(/^[:\u2014\u2013-]\s*/, "")
+      .trim();
+    return {
+      label: label.replace(OPTION_MARK, "").trim(),
+      description: description || null,
+      recommended: Boolean(mark) || OPTION_MARK.test(label) || restMarked,
+    };
+  }
+  const recommended = OPTION_MARK.test(text);
+  const plain = text.replace(OPTION_MARK, "");
+  const split = /\s+[\u2014\u2013]\s+|:\s+/.exec(plain);
+  return {
+    label: (split ? plain.slice(0, split.index) : plain).trim(),
+    description: split ? plain.slice(split.index + split[0].length).trim() || null : null,
+    recommended,
+  };
+}
+
+function parseItem(item: string, index: number): Omit<OpenQuestion, "options"> {
   let rest = item;
   let id: string | undefined;
   let title: string | undefined;

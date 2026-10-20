@@ -232,6 +232,12 @@ function replay(changes: readonly NetInput[]): string | null {
   return text;
 }
 
+/** The text a file ends with when the session wrote it whole (Write first) and then edited it;
+ * null for a file it only edited (its text is not known) or when an edit does not apply. */
+export function writtenText(changes: readonly NetInput[]): string | null {
+  return changes[0]?.name === "Write" ? replay(changes) : null;
+}
+
 /** The chunks as a unified diff, `CONTEXT` lines around each change. */
 function render(path: string, chunks: readonly Chunk[], numbered: boolean): string {
   const out = [`--- a/${path}`, `+++ b/${path}`];

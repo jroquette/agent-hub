@@ -550,9 +550,13 @@ describe("rowTitle", () => {
   it("is a chat's title or Untitled session, and an observed session's identity", () => {
     expect(rowTitle(anAgentSession({ title: "Fix the build" }))).toBe("Fix the build");
     expect(rowTitle(anAgentSession({ title: null }))).toBe("Untitled session");
-    expect(rowTitle(observed({ label: aSessionLabel({ title: "Readable names" }) }))).toBe(
-      "Readable names",
-    );
+    expect(
+      rowTitle(observed({ label: aSessionLabel({ title: "Readable names", issue: null }) })),
+    ).toBe("Readable names");
+    const onTicket = observed({ label: aSessionLabel({ title: "Readable names" }) });
+    expect(rowTitle(onTicket)).toBe("AGH-48: live-tiles");
+    const feature = { project: "agent-hub", slug: "session-names", title: null };
+    expect(rowTitle(onTicket, new Map([["AGH-48", feature]]))).toBe("AGH-48: session-names");
     expect(
       rowTitle(observed({ label: aSessionLabel({ issue: "AGH-9", workflow: "/feature" }) })),
     ).toBe("AGH-9 · /feature");
@@ -599,6 +603,17 @@ describe("the conversation of a chat", () => {
       toReview: 1,
     });
     expect(filesToReview([], {})).toEqual({ total: 0, toReview: 0 });
+    // Claude's plan and scratch are neither counted nor waiting for review.
+    expect(
+      filesToReview(
+        [
+          { path: "/repo/a.ts", last_change_id: "t1" },
+          { path: "/Users/me/.claude/plans/p.md", last_change_id: "t2" },
+          { path: "/tmp/notes.md", last_change_id: "t3" },
+        ],
+        {},
+      ),
+    ).toEqual({ total: 1, toReview: 1 });
   });
 
   it("reads no files when an older hub web sends no changed_files", () => {

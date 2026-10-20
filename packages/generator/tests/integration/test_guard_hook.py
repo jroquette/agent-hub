@@ -4300,6 +4300,89 @@ def test_passes_when_local_file_absent(
     assert (completed.returncode, completed.stdout, completed.stderr) == (0, b"", b"")
 
 
+# AC-293.5: a hook event that is not a JSON object asks while blocked words are in effect.
+UNREADABLE_ASK = "[hub guard] " + UNCHECKED_REASON.format(
+    "the tool input could not be read (not a JSON object)"
+)
+UNREADABLE_STDINS = [b"[]", b'"x"', b"\xff", b'{"tool_name": "mcp__db__query", "tool_input": ']
+EMPTY_STDINS = [b"", b"  ", b"{}"]
+
+
+def asked_once(completed: subprocess.CompletedProcess[bytes]) -> tuple[str, str]:
+    """The single ask the guard printed: exactly one JSON object, exit 0, no stderr."""
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    output = json.loads(completed.stdout)["hookSpecificOutput"]
+    return output["permissionDecision"], output["permissionDecisionReason"]
+
+
+def test_asks_when_event_unreadable(
+    blocked_hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+) -> None:
+    def run(stdin: bytes) -> subprocess.CompletedProcess[bytes]:
+        return run_hook_file(
+            hook_python,
+            blocked_hub / HOOKS / "guard.py",
+            stdin=stdin,
+            cwd=blocked_hub,
+            env={"HOME": str(tmp_path)},
+        )
+
+    unreadable = [run(stdin) for stdin in UNREADABLE_STDINS]
+    empty = [run(stdin) for stdin in EMPTY_STDINS]
+    write_hub_json(blocked_hub, builders.a_hub_document())
+    without = [run(stdin) for stdin in UNREADABLE_STDINS + EMPTY_STDINS]
+
+    assert [asked_once(completed) for completed in unreadable] == [("ask", UNREADABLE_ASK)] * len(
+        UNREADABLE_STDINS
+    )
+    assert [(c.returncode, c.stdout, c.stderr) for c in empty + without] == [(0, b"", b"")] * (
+        len(EMPTY_STDINS) * 2 + len(UNREADABLE_STDINS)
+    )
+    # A blocked-list problem with no usable word (a string, not a list) asks too.
+    problem = builders.a_hub_document()
+    problem["guard"]["blocked_words"] = "prod"
+    write_hub_json(blocked_hub, problem)
+    assert asked_once(run(b"[]")) == ("ask", UNREADABLE_ASK)
+
+
+def test_asks_when_event_nested_too_deep(
+    blocked_hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    deep_nesting: Callable[[str], Any],
+    tmp_path: Path,
+) -> None:
+    nesting = deep_nesting(hook_python)
+    stdin = (
+        '{"tool_name": "mcp__db__query", "cwd": '
+        + json.dumps(str(blocked_hub))
+        + ', "tool_input": {"rows": '
+        + nesting.text
+        + "}}"
+    )
+
+    completed = run_hook_file(
+        nesting.python,
+        blocked_hub / HOOKS / "guard.py",
+        stdin=stdin.encode(),
+        cwd=blocked_hub,
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert b"Traceback" not in completed.stderr
+    assert b"could not check this call" not in completed.stdout
+    if nesting.raises:
+        assert asked_once(completed) == ("ask", UNREADABLE_ASK)
+    else:
+        assert (completed.stdout, completed.stderr) == (b"", b"")
+
+
 def test_asks_when_command_over_cap(decide: Decide) -> None:
     over = "echo " + "x" * (BLOCKED_TEXT_CAP - 4)
     at_cap = "echo prod " + "x" * (BLOCKED_TEXT_CAP - 10)

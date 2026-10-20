@@ -11,8 +11,10 @@ import {
   aFeature,
   aGoldenPath,
   aGoldenStep,
+  aLiveTile,
   aPage,
   aProblem,
+  aSessionLabel,
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
@@ -116,7 +118,7 @@ const waiting = aFeature({
 });
 
 describe("FeaturesScreen", () => {
-  it("groups features into Needs you, In progress and Shipped (groups)", async () => {
+  it("groups features into In progress and Shipped, with the ones that need you inside In progress (groups)", async () => {
     const done = aFeature({
       slug: "shipped-one",
       phase: "shipped",
@@ -126,12 +128,20 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([done, waiting, ...features]) });
 
     await screen.findByRole("link", { name: "layered-memory" });
-    expect(slugsIn(groupOf(/^Needs you · 2$/))).toEqual(["broken-record", "owner-held"]);
-    expect(slugsIn(groupOf(/^In progress · 3$/))).toEqual([
+    expect(screen.queryByRole("button", { name: /^Needs you/ })).not.toBeInTheDocument();
+    expect(slugsIn(groupOf(/^In progress · 5$/))).toEqual([
+      "broken-record",
+      "owner-held",
       "layered-memory",
       "control-plane",
       "tracker-team-cap",
     ]);
+    expect(rowOf("owner-held")).toHaveAttribute("data-tone", "waiting");
+    expect(rowOf("broken-record")).toHaveAttribute("data-tone", "blocked");
+    expect(rowOf("layered-memory")).not.toHaveAttribute("data-tone");
+    expect(groupOf(/^In progress · 5$/)).toHaveTextContent(
+      "1 wait on your steps · 1 record cannot be read",
+    );
     expect(slugsIn(groupOf(/^Shipped · 1$/))).toEqual(["shipped-one"]);
   });
 
@@ -499,6 +509,77 @@ describe("FeaturesScreen", () => {
     );
   });
 
+  it("puts a feature whose session waits on you at the top of In progress and opens the feature, not the chat (session)", async () => {
+    const permission = aLiveTile({
+      id: "s-perm",
+      group: "waiting",
+      status: "waiting",
+      issue: null,
+      label: aSessionLabel({ issue: "AGH-112", branch: "dev/agh-112-team-cap" }),
+      waiting_reason: "Permission prompt",
+      agent_session_id: "a-perm",
+    });
+    const yourTurn = aLiveTile({
+      id: "s-turn",
+      group: "idle",
+      status: "idle",
+      issue: null,
+      label: aSessionLabel({ issue: null, title: "control-plane plan" }),
+      last_action: "Edited plan.md",
+    });
+    const busy = aLiveTile({ id: "s-busy", group: "live", issue: "AGH-49" });
+    const { router } = open({
+      "/api/v1/live-sessions": aPage([permission, yourTurn, busy]),
+    });
+
+    await waitFor(() => {
+      expect(slugsIn(groupOf(/^In progress · 4$/))).toEqual([
+        "tracker-team-cap",
+        "control-plane",
+        "broken-record",
+        "layered-memory",
+      ]);
+    });
+    expect(rowOf("tracker-team-cap")).toHaveTextContent(
+      "A session waits on you · Permission prompt",
+    );
+    expect(rowOf("control-plane")).toHaveTextContent("Your turn in a session · Edited plan.md");
+    expect(rowOf("layered-memory")).not.toHaveAttribute("data-tone");
+    expect(groupOf(/^In progress · 4$/)).toHaveTextContent(
+      "1 session waits on you · 1 your turn in a session",
+    );
+
+    await userEvent.click(rowOf("tracker-team-cap"));
+    expect(router.state.location.pathname).toBe("/features/agent-hub/tracker-team-cap");
+    expect(router.state.location.search).toBe("");
+  });
+
+  it("flags a NO-SHIP row as failed in In progress and counts the rows that need you (needs)", async () => {
+    const noShip = aFeature({
+      slug: "no-ship-one",
+      verdict: "NO-SHIP",
+      verdict_line: "**Verdict: NO-SHIP.** The export drops the last row.",
+    });
+    open({ "/api/v1/features": aPage([noShip, waiting, ...features]) });
+
+    await screen.findByRole("link", { name: "no-ship-one" });
+    expect(rowOf("no-ship-one")).toHaveAttribute("data-tone", "failed");
+    expect(rowOf("no-ship-one")).toHaveTextContent(
+      "Evaluator says no ship: The export drops the last row.",
+    );
+    expect(slugsIn(groupOf(/^In progress · 6$/)).slice(0, 3)).toEqual([
+      "broken-record",
+      "no-ship-one",
+      "owner-held",
+    ]);
+    expect(groupOf(/^In progress · 6$/)).toHaveTextContent(
+      "What needs you first, then furthest along and most ACs passing · 1 wait on your steps · 1 no ship · 1 record cannot be read",
+    );
+    expect(document.querySelector('.ft-summary [data-group="needs"]')).toHaveTextContent(
+      "3 need you",
+    );
+  });
+
   it("tells waiting rows apart by what their eval says is left (needs)", async () => {
     const told = aFeature({
       ...waiting,
@@ -510,7 +591,7 @@ describe("FeaturesScreen", () => {
 
     await screen.findByRole("link", { name: "told" });
     expect(rowOf("told")).toHaveTextContent("Your steps are left · Publish the plugin release.");
-    expect(groupOf(/^Needs you · 1$/)).toHaveTextContent("1 wait on your steps");
+    expect(groupOf(/^In progress · 1$/)).toHaveTextContent("1 wait on your steps");
   });
 });
 

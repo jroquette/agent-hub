@@ -1,5 +1,6 @@
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -13,7 +14,7 @@ from agent_hub.core.brain.brain_note import (
 from agent_hub.core.brain.brain_path import MAX_NOTE_BYTES, BrainPathError
 from agent_hub.core.doctor.snapshot import LockAbsent
 from agent_hub.core.events.event import EventSource
-from agent_hub.core.features.feature_status import FeatureFolder
+from agent_hub.core.features.feature_status import FeatureFolder, RecordHead
 from agent_hub.core.features.feature_tickets import NOT_CONNECTED_NOTICE
 from agent_hub.core.features.ticket_snapshots import SnapshotRequest, TicketSnapshots
 from agent_hub.core.hub_config.doctor_rules import LOCK_DRIFT_RULE, Severity
@@ -537,6 +538,22 @@ def test_asks_mcp_transport_when_hub_uses_it() -> None:
 
     assert (tickets.source, tickets.notice) == ("plan", NOT_CONNECTED_NOTICE)
     assert [request.transport for _, request in snapshots.calls] == ["mcp"]
+
+
+def test_links_ticket_pull_request_when_review_names_hub_repo() -> None:
+    review = b"---\ntype: review\nticket: DEM-1\noutcome: approved\npr: demo-api#12\n---\n"
+    hub = a_ticket_hub()
+    hub.features = (
+        replace(hub.features[0], reviews=(RecordHead(name="dem-1.md", head=review, problem=None),)),
+    )
+    models, _, _ = read_models({DEMO: hub}, DEMO)
+
+    tickets = models.feature_tickets("demo", "ticketed")
+
+    assert [(row.ref, row.pr_url) for row in tickets.tickets] == [
+        ("DEM-1", "https://github.com/acme/demo-api/pull/12"),
+        ("DEM-2", None),
+    ]
 
 
 def test_reads_warm_snapshot_when_features_listed() -> None:

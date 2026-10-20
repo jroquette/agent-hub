@@ -91,9 +91,9 @@ while IFS= read -r -d '' file; do
 done < <(cd "$AH" && git ls-files -z --modified --others --exclude-standard)
 git -C "$CONDUCTOR" log --oneline -1
 echo "plus $changed uncommitted file(s)"
-# The playground's sessions are the developer's own: the most the platform allows live at once (16)
-# and a day before an idle one closes, instead of 4 sessions and 30 minutes.
-(cd "$CONDUCTOR" && AGENT_HUB_SESSIONS_MAX=16 AGENT_HUB_SESSION_IDLE_SECONDS=86400 \
+# The playground's sessions are the developer's own: no limit on how many are live at once (0) and a
+# day before an idle one closes, instead of 4 sessions and 30 minutes.
+(cd "$CONDUCTOR" && AGENT_HUB_SESSIONS_MAX=0 AGENT_HUB_SESSION_IDLE_SECONDS=86400 \
   nohup uv run --locked --all-packages hub web --port 7420 \
   > "$LOGS/agent-hub-conductor.log" 2>&1 &)
 wait_for http://127.0.0.1:7420/

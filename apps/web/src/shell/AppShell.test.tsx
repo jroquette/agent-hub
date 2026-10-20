@@ -10,6 +10,7 @@ import {
   aCapabilities,
   aPage,
   aProjectSummary,
+  aRun,
   aStreamCounts,
   aWorkdir,
   renderWithApi,
@@ -42,6 +43,27 @@ describe("AppShell", () => {
     expect(screen.getByRole("navigation", { name: "Main" })).toBeInTheDocument();
     expect(screen.getByRole("banner")).toBeInTheDocument();
     expect(screen.getByRole("main")).toBeInTheDocument();
+  });
+
+  it("shows Workflow runs in the sidebar only once a workflow has run", async () => {
+    const { unmount } = renderWithApi(<AppShell />, {
+      routes: { ...routes, "/api/v1/workflow-runs": aPage([]) },
+    });
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    await waitFor(() => {
+      expect(within(nav).getByRole("link", { name: "Sessions" })).toBeInTheDocument();
+    });
+    expect(within(nav).queryByRole("link", { name: "Workflow runs" })).toBeNull();
+    unmount();
+
+    renderWithApi(<AppShell />, {
+      routes: { ...routes, "/api/v1/workflow-runs": aPage([aRun()]) },
+    });
+
+    expect(await screen.findByRole("link", { name: "Workflow runs" })).toHaveAttribute(
+      "href",
+      "/runs",
+    );
   });
 
   it("shows the stream's counts as badges when they arrive", () => {

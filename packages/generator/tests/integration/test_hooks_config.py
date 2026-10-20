@@ -491,6 +491,7 @@ import hubhooks
 def boom():
     raise RuntimeError("forced")
 hubhooks.read_input = boom
+hubhooks.read_event = boom
 sys.argv = [hook]
 runpy.run_path(hook, run_name="__main__")
 """
@@ -578,6 +579,109 @@ def test_asks_when_guard_crashes(
 
     completed = run_crashing(
         hub / HOOKS / "guard.py", python=hook_python, cwd=elsewhere, tmp_path=tmp_path
+    )
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (
+        0,
+        GUARD_CRASH_OUTPUT,
+        b"",
+    )
+
+
+# argv: a JSON list of stdins as latin-1 text. For each, a fresh stdin for read_input(), then
+# another for read_event(); a case whose read raises OSError, then a closed stdin (ValueError).
+# Prints both results per case.
+READ_EVENT = """\
+import io, json
+from hubhooks import read_event, read_input
+class Broken:
+    class buffer:
+        @staticmethod
+        def read():
+            raise OSError("forced")
+def stdin(raw):
+    return io.TextIOWrapper(io.BytesIO(raw))
+found = []
+for text in json.loads(sys.argv[1]):
+    raw = text.encode("latin-1")
+    sys.stdin = stdin(raw)
+    plain = read_input()
+    sys.stdin = stdin(raw)
+    found.append([plain, list(read_event())])
+sys.stdin = Broken()
+plain = read_input()
+sys.stdin = Broken()
+found.append([plain, list(read_event())])
+closed = stdin(b"{}")
+closed.close()
+sys.stdin = closed
+found.append([read_input(), list(read_event())])
+print(json.dumps(found))
+"""
+
+
+def test_flags_unreadable_stdin_when_event_read(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    event = bash_event("git status", elsewhere)
+    cases = [
+        b"",
+        b"  \n",
+        b"{}",
+        b"[]",
+        b'"x"',
+        b"\xff",
+        b'{"tool_name": "mcp__db__query", "tool_input": ',
+        json.dumps(event).encode(),
+    ]
+
+    found = run_python(
+        hook_python,
+        READ_EVENT,
+        path=hub / HOOKS,
+        args=[json.dumps([raw.decode("latin-1") for raw in cases])],
+        cwd=elsewhere,
+    )
+
+    assert found == [
+        [{}, [{}, False]],
+        [{}, [{}, False]],
+        [{}, [{}, False]],
+        [{}, [{}, True]],
+        [{}, [{}, True]],
+        [{}, [{}, True]],
+        [{}, [{}, True]],
+        [event, [event, False]],
+        [{}, [{}, True]],
+        [{}, [{}, True]],
+    ]
+
+
+# The crash launcher with ``load_config`` raising instead: on an unreadable event the guard reaches
+# it in its unreadable branch, and the crash still asks.
+LOAD_CRASH_LAUNCHER = CRASH_LAUNCHER.replace(
+    "hubhooks.read_input = boom\nhubhooks.read_event = boom\n",
+    "hubhooks.load_config = lambda *args: boom()\n",
+)
+
+
+def test_asks_when_config_load_crashes_on_unreadable_event(
+    hub: Path, *, hook_python: str, elsewhere: Path, tmp_path: Path
+) -> None:
+    write_hub_json(hub, builders.an_environments_document())
+    launcher = tmp_path / "support" / "load_crash_launcher.py"
+    launcher.parent.mkdir(exist_ok=True)
+    launcher.write_text(LOAD_CRASH_LAUNCHER, encoding="utf-8")
+    assert "hubhooks.load_config = lambda" in LOAD_CRASH_LAUNCHER
+
+    completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, a fixed launcher
+        [hook_python, str(launcher), str(hub / HOOKS / "guard.py")],
+        input=b"[]",
+        capture_output=True,
+        check=False,
+        cwd=elsewhere,
+        env={"PATH": os.environ.get("PATH", os.defpath)} | scratch_env(tmp_path),
+        timeout=60,
     )
 
     assert (completed.returncode, completed.stdout, completed.stderr) == (

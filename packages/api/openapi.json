@@ -516,6 +516,15 @@
             "title": "Project",
             "type": "string"
           },
+          "review_targets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ReviewTarget"
+            },
+            "maxItems": 8,
+            "title": "Review Targets",
+            "type": "array"
+          },
           "status": {
             "$ref": "#/components/schemas/AgentSessionStatus"
           },
@@ -3196,6 +3205,14 @@
             "title": "Model Tiers",
             "type": "object"
           },
+          "model_tiers_set": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Model Tiers Set",
+            "type": "array"
+          },
           "modules": {
             "items": {
               "type": "string"
@@ -5145,6 +5162,48 @@
         "title": "Outcome",
         "type": "string"
       },
+      "OwnerSignOffBody": {
+        "additionalProperties": false,
+        "description": "``POST .../owner-signoff``: the eval to settle, the owner's decision and an optional note.",
+        "properties": {
+          "decision": {
+            "default": "done",
+            "enum": [
+              "done",
+              "more_work"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "delivery": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "OwnerSignOffBody",
+        "type": "object"
+      },
       "Page_ActivityItem_": {
         "additionalProperties": false,
         "properties": {
@@ -6534,6 +6593,7 @@
           "tool.call",
           "tool.result",
           "todos",
+          "task",
           "permission.request",
           "result",
           "error",
@@ -6593,6 +6653,171 @@
           "name"
         ],
         "title": "Relation",
+        "type": "object"
+      },
+      "RepoChanges": {
+        "additionalProperties": false,
+        "description": "One repository's changes against its base. ``root`` is the folder git ran in, ``branch``\nits checked-out branch (null when detached), ``base`` the ref the branch is compared with\n(``origin/main``…, null when none was found: then nothing is compared and ``files`` is\nempty), ``base_sha`` the commit the branch forked from, ``head_sha`` the branch's last\ncommit. ``truncated`` says commits or files were left out past the bounds.\n\n``source`` is ``worktree`` when git read the checkout as it is now (uncommitted changes\nincluded), ``recorded`` when that folder is gone and the review reads the commits it\nrecorded from the repo's own checkout (``root`` is still the old folder, so the paths match\nthe chat's). ``pull_request`` is the branch's pull request, when one is found.",
+        "properties": {
+          "base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "base_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Sha"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "commits": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RepoCommit"
+            },
+            "title": "Commits",
+            "type": "array"
+          },
+          "files": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RepoFileChange"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "pull_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RepoPullRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/RepoSource",
+            "default": "worktree"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "root",
+          "label"
+        ],
+        "title": "RepoChanges",
+        "type": "object"
+      },
+      "RepoCommit": {
+        "additionalProperties": false,
+        "description": "A commit of the branch since its base, newest first.",
+        "properties": {
+          "author": {
+            "title": "Author",
+            "type": "string"
+          },
+          "authored_at": {
+            "title": "Authored At",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha",
+          "subject",
+          "authored_at",
+          "author"
+        ],
+        "title": "RepoCommit",
+        "type": "object"
+      },
+      "RepoCommitDiff": {
+        "additionalProperties": false,
+        "description": "``GET /agent-sessions/{id}/repo-changes/commit``: what one commit changed in one file, as a\nunified diff with the file's line numbers. ``diff`` is null for a binary file or one past\n``REPO_DIFF_MAX_BYTES``, empty when the commit did not touch the file.",
+        "properties": {
+          "binary": {
+            "default": false,
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha",
+          "path"
+        ],
+        "title": "RepoCommitDiff",
         "type": "object"
       },
       "RepoConfigView": {
@@ -6669,6 +6894,161 @@
         ],
         "title": "RepoConfigView",
         "type": "object"
+      },
+      "RepoFileChange": {
+        "additionalProperties": false,
+        "description": "A file that differs from the base: committed on the branch, staged, unstaged or\nuntracked. ``path`` is absolute (the repository's folder joined with git's path), as Claude's\nfile tools name it; ``old_path`` the name before a rename. ``diff`` is the unified diff from\nthe base to the working tree, with the file's line numbers; null for a binary file or one\npast ``REPO_DIFF_MAX_BYTES``. ``fingerprint`` changes whenever the diff does (a review mark\nis kept against it). ``commits`` are the branch's commits that touched it, newest first;\n``uncommitted`` says the working tree differs from ``HEAD`` too.",
+        "properties": {
+          "added": {
+            "minimum": 0.0,
+            "title": "Added",
+            "type": "integer"
+          },
+          "binary": {
+            "default": false,
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "commits": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RepoFileCommit"
+            },
+            "title": "Commits",
+            "type": "array"
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "old_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Path"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "removed": {
+            "minimum": 0.0,
+            "title": "Removed",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RepoFileStatus"
+          },
+          "uncommitted": {
+            "default": false,
+            "title": "Uncommitted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "status",
+          "added",
+          "removed",
+          "fingerprint"
+        ],
+        "title": "RepoFileChange",
+        "type": "object"
+      },
+      "RepoFileCommit": {
+        "additionalProperties": false,
+        "description": "A commit that touched a file, and the lines it added and removed there.",
+        "properties": {
+          "added": {
+            "minimum": 0.0,
+            "title": "Added",
+            "type": "integer"
+          },
+          "removed": {
+            "minimum": 0.0,
+            "title": "Removed",
+            "type": "integer"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha",
+          "added",
+          "removed"
+        ],
+        "title": "RepoFileCommit",
+        "type": "object"
+      },
+      "RepoFileStatus": {
+        "enum": [
+          "added",
+          "modified",
+          "deleted",
+          "renamed"
+        ],
+        "type": "string"
+      },
+      "RepoPullRequest": {
+        "additionalProperties": false,
+        "description": "The branch's pull request on GitHub: its number, link, state (``OPEN``, ``MERGED``,\n``CLOSED``) and the commit it is at.",
+        "properties": {
+          "head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "url",
+          "state"
+        ],
+        "title": "RepoPullRequest",
+        "type": "object"
+      },
+      "RepoSource": {
+        "enum": [
+          "worktree",
+          "recorded"
+        ],
+        "type": "string"
       },
       "RepoView": {
         "additionalProperties": false,
@@ -6819,6 +7199,103 @@
           "items"
         ],
         "title": "ResumableList",
+        "type": "object"
+      },
+      "ReviewTarget": {
+        "additionalProperties": false,
+        "description": "What a session's review read in one repository, kept so the review outlives the folder:\nthe hub repo (``repo``, its ``hub.json`` name) and the checkout it read (``root``, a worktree\nthat may be removed later), its branch, the ``base`` it was compared with and the commit it\nforked from (``base_sha``), the last commit read (``head_sha``) and the branch's pull request\nonce one is found. With these the review reads the branch's commits from the repo's own\ncheckout once the worktree is gone.",
+        "properties": {
+          "base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "base_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Sha"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "root"
+        ],
+        "title": "ReviewTarget",
         "type": "object"
       },
       "RunAccepted": {
@@ -7934,6 +8411,30 @@
         "title": "SessionProblems",
         "type": "object"
       },
+      "SessionRepoChanges": {
+        "additionalProperties": false,
+        "description": "``GET /agent-sessions/{id}/repo-changes``: each repository the session worked in, and the\nones that could not be read (``warnings``, named by folder label).",
+        "properties": {
+          "repos": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RepoChanges"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "title": "SessionRepoChanges",
+        "type": "object"
+      },
       "SessionSegment": {
         "additionalProperties": false,
         "description": "One stretch of a session; a later event after an end reopens it as a new segment.",
@@ -9007,7 +9508,7 @@
       },
       "TicketRow": {
         "additionalProperties": false,
-        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).\n``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent\nissue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.",
+        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).\n``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent\nissue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.\n``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.",
         "properties": {
           "acs": {
             "items": {
@@ -9103,6 +9604,17 @@
               }
             ],
             "title": "Parent"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
           },
           "priority": {
             "anyOf": [
@@ -9462,6 +9974,14 @@
           "started_state": {
             "title": "Started State",
             "type": "string"
+          },
+          "team_set": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Team Set",
+            "type": "array"
           },
           "teams": {
             "items": {
@@ -11599,6 +12119,155 @@
         ]
       }
     },
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes": {
+      "get": {
+        "description": "What the repositories the session worked in change against their base branch, as git\nreads them: the pull request's files, whoever changed them.",
+        "operationId": "get_agent_session_repo_changes_api_v1_agent_sessions__agent_session_id__repo_changes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRepoChanges"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Agent Session Repo Changes",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes/commit": {
+      "get": {
+        "description": "What one commit changed in one file of the session's repositories (``path`` absolute,\n``old_path`` its name before a rename).",
+        "operationId": "get_agent_session_repo_commit_diff_api_v1_agent_sessions__agent_session_id__repo_changes_commit_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^/",
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sha",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{7,40}$",
+              "title": "Sha",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "old_path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "pattern": "^/",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Old Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoCommitDiff"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Agent Session Repo Commit Diff",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
     "/api/v1/agent-sessions/{agent_session_id}/settings": {
       "post": {
         "description": "Change the permission mode or the model.",
@@ -11746,6 +12415,72 @@
           }
         },
         "summary": "Stream Agent Session",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/tasks/{task_id}/stop": {
+      "post": {
+        "description": "Stop a background task (an agent or a command); its end follows on the stream.",
+        "operationId": "stop_agent_session_task_api_v1_agent_sessions__agent_session_id__tasks__task_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Stop Agent Session Task",
         "tags": [
           "agent-sessions"
         ]
@@ -12582,7 +13317,7 @@
     },
     "/api/v1/features/{project}/{slug}/owner-signoff": {
       "post": {
-        "description": "The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over\nthe ACs that waited on them (409 when no AC waits, or one is not covered by a SHIP).",
+        "description": "The owner settles the owner steps: without a body, writes an ``owner-signoff`` SHIP eval\nover every AC that waited on them (409 when no AC waits, or one is not covered by a SHIP).\nWith ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes\na SHIP over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words.",
         "operationId": "sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post",
         "parameters": [
           {
@@ -12608,6 +13343,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/OwnerSignOffBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "content": {

@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
+  aFeature,
+  aFeatureTickets,
   aPage,
   aProblem,
   aSession,
+  aSessionLabel,
+  aTicketRow,
   aSessionCost,
   aSessionFile,
   aSessionProblem,
@@ -82,7 +86,7 @@ describe("SessionDetailScreen", () => {
   it("renders the header, summary and merged rows of an ended session", async () => {
     renderDetail(routes());
 
-    expect(await screen.findByRole("heading", { name: "AGH-48 · /feature" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "AGH-48: live-tiles" })).toBeInTheDocument();
     expect(screen.getByText("Done")).toBeInTheDocument();
     expect(await screen.findByText("Ran make check-fast: passed")).toBeInTheDocument();
     expect(await screen.findByText("make check-fast")).toBeInTheDocument();
@@ -373,5 +377,36 @@ describe("SessionDetailScreen what-went-wrong", () => {
 
     expect(requests.some((request) => request.url.endsWith("/problems"))).toBe(false);
     expect(screen.queryByRole("region", { name: "What went wrong" })).not.toBeInTheDocument();
+  });
+});
+
+describe("SessionDetailScreen (session-name)", () => {
+  it("names a session on a ticket by the ticket's title once read, with its feature linked", async () => {
+    const onTicket = aSession({
+      status: "ended",
+      outcome: "done",
+      ended_at: at(900),
+      project: "agent-hub",
+      label: aSessionLabel({ issue: "AGH-202", branch: "dev/agh-202-summaries" }),
+    });
+    const view = renderDetail(
+      routes({
+        [BASE]: onTicket,
+        "/api/v1/features": aPage([aFeature({ issues: ["AGH-202"] })]),
+        "/api/v1/features/agent-hub/control-plane/tickets": aFeatureTickets({
+          tickets: [aTicketRow()],
+        }),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "AGH-202: Serve the ticket summaries" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /control-plane/ })).toHaveAttribute(
+      "href",
+      "/features/agent-hub/control-plane",
+    );
+    const tickets = view.requests.filter((r) => r.url.endsWith("/control-plane/tickets"));
+    expect(tickets).toHaveLength(1);
   });
 });

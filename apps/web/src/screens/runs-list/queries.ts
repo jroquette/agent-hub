@@ -22,3 +22,8 @@ export interface RunFilters {
 export function useRuns(filters: RunFilters, limit: number) {
   return useApi("/api/v1/workflow-runs", { query: { ...filters, limit } });
 }
+
+/** Whether any workflow run exists, of any project: the sidebar shows Workflow runs only then. */
+export function useHasWorkflowRuns(): boolean {
+  return (useApi("/api/v1/workflow-runs", { query: { limit: 1 } }).data?.items.length ?? 0) > 0;
+}

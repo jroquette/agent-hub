@@ -10,6 +10,7 @@ import {
   aSession,
   aTicketPlan,
   aTicketRow,
+  anAcRow,
   renderWithApi,
   type ApiRoutes,
   type FeatureTickets,
@@ -21,6 +22,7 @@ function show(
   extra: {
     error?: ApiProblem | null;
     acPasses?: Record<string, boolean>;
+    acRows?: ReturnType<typeof anAcRow>[];
     routes?: ApiRoutes;
   } = {},
 ) {
@@ -33,6 +35,7 @@ function show(
       error={extra.error ?? null}
       onRefresh={onRefresh}
       acPasses={extra.acPasses}
+      acRows={extra.acRows}
     />,
     { routes: { "/api/v1/sessions": aPage([]), ...extra.routes } },
   );
@@ -99,7 +102,10 @@ describe("TicketsTab", () => {
       "href",
       "#ticket-AGH-201",
     );
-    expect(ready.getByRole("link", { name: "AC-200.4" })).toHaveAttribute("href", "/?ac=AC-200.4");
+    expect(ready.getByRole("link", { name: "AC-200.4" })).toHaveAttribute(
+      "href",
+      "/?doc=acs&ac=AC-200.4",
+    );
     expect(ready.getByText("Can start now")).toBeInTheDocument();
 
     const waiting = within(rowOf("AGH-203"));
@@ -290,19 +296,76 @@ describe("TicketsTab", () => {
     );
   });
 
-  it("folds a long AC list into how many pass (tickets)", () => {
+  it("describes each AC id with what must be true and marks an owner step (tickets)", () => {
     const data = aFeatureTickets();
-    const row = { ...nth(data.tickets, 0), acs: ["AC-1", "AC-2", "AC-3", "AC-4"] };
-    show(aFeatureTickets({ tickets: [row] }), {
-      acPasses: { "AC-1": true, "AC-2": true, "AC-3": true, "AC-4": false },
+    show(aFeatureTickets({ tickets: [{ ...nth(data.tickets, 0), acs: ["AC-1", "AC-2"] }] }), {
+      acPasses: { "AC-1": true, "AC-2": false },
+      acRows: [
+        anAcRow({
+          id: "AC-1",
+          description: "Given a ticket, when its ACs are listed, then each shows its text",
+        }),
+        anAcRow({
+          id: "AC-2",
+          description: "The owner checks the PDF",
+          passes: false,
+          manual: true,
+        }),
+      ],
     });
 
     const table = within(screen.getByRole("table", { name: "Tickets" }));
-    expect(table.getByText("3/4 passing")).toBeInTheDocument();
-    expect(screen.getByText("3/4 ACs passing")).toBeInTheDocument();
+    const gwt = table.getByRole("link", { name: /^AC-1\s*Passes$/, hidden: true });
+    expect(gwt).toHaveAttribute("href", "/?doc=acs&ac=AC-1");
+    expect(gwt).toHaveAccessibleDescription("each shows its text");
+    expect(gwt).not.toHaveAttribute("title");
+    expect(
+      table.getByRole("link", { name: /^AC-2\s*Owner step$/, hidden: true }),
+    ).toHaveAccessibleDescription("The owner checks the PDF");
   });
 
-  it("shows the title's scope in its own column, apart from the words (tickets)", () => {
+  it("shows the same AC meter whatever the number of ACs, ids folded under it (tickets)", () => {
+    const data = aFeatureTickets();
+    const many = { ...nth(data.tickets, 0), acs: ["AC-1", "AC-2", "AC-3", "AC-4"] };
+    const one = { ...nth(data.tickets, 1), acs: ["AC-8"] };
+    show(aFeatureTickets({ tickets: [many, one] }), {
+      acPasses: { "AC-1": true, "AC-2": true, "AC-3": true, "AC-4": false, "AC-8": true },
+    });
+
+    const table = within(screen.getByRole("table", { name: "Tickets" }));
+    expect(table.getByText("3/4 ACs passing")).toBeInTheDocument();
+    expect(table.getByText("1/1 ACs passing")).toBeInTheDocument();
+    expect(table.getByRole("link", { name: /^AC-8\s*Passes$/, hidden: true })).toHaveAttribute(
+      "href",
+      "/?doc=acs&ac=AC-8",
+    );
+    expect(
+      table.getByRole("link", { name: /^AC-4\s*Not passing$/, hidden: true }),
+    ).toBeInTheDocument();
+  });
+
+  it("links each ticket's pull request, else says there is none (tickets)", () => {
+    const data = aFeatureTickets();
+    const withPr = { ...nth(data.tickets, 0), pr_url: "https://github.com/acme/demo-api/pull/69" };
+    const unsafe = { ...nth(data.tickets, 1), pr_url: "https://evil.example/acme/demo-api/pull/7" };
+    show(aFeatureTickets({ tickets: [withPr, unsafe, nth(data.tickets, 2)] }));
+
+    const table = within(screen.getByRole("table", { name: "Tickets" }));
+    const link = table.getByRole("link", {
+      name: `PR #69 of ${withPr.ref} (opens GitHub in a new tab)`,
+    });
+    expect(link).toHaveAttribute("href", "https://github.com/acme/demo-api/pull/69");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(table.getByText("PR #7")).toHaveAttribute(
+      "title",
+      "Link not shown: only GitHub pull request links are opened",
+    );
+    const cells = within(rowOf(nth(data.tickets, 2).ref)).getAllByRole("cell");
+    expect(cells.at(-1)).toHaveTextContent(/^—$/);
+    expect(within(rowOf(withPr.ref)).getAllByRole("cell").at(-1)).toContainElement(link);
+  });
+
+  it("shows the title's words without its conventional prefix, and no Scope column (tickets)", () => {
     const data = aFeatureTickets();
     show({
       ...data,
@@ -311,9 +374,9 @@ describe("TicketsTab", () => {
       ),
     });
 
+    expect(screen.queryByRole("columnheader", { name: "Scope" })).not.toBeInTheDocument();
     const cells = within(rowOf("AGH-201")).getAllByRole("cell");
-    expect(nth(cells, 1)).toHaveTextContent(/^brand-api$/);
-    expect(nth(cells, 2)).toHaveTextContent(/^add the bank details$/);
+    expect(nth(cells, 1)).toHaveTextContent(/^add the bank details$/);
   });
 
   it("links the sessions that worked on each ticket, asked by its issue (sessions)", async () => {
