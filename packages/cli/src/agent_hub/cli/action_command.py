@@ -47,7 +47,12 @@ from agent_hub.core.hub_config.effective_environments import (
 )
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue, dump_json
-from agent_hub.core.scenarios.access_policy import PolicyDecision, decide, find_environment
+from agent_hub.core.scenarios.access_policy import (
+    Effect,
+    PolicyDecision,
+    decide,
+    find_environment,
+)
 from agent_hub.core.scenarios.action_call import ActionCallError, ActionCallPlan, plan_action_call
 from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
 from agent_hub.core.scenarios.action_document import ActionDocument
@@ -115,7 +120,7 @@ class ResolvedCall:
 @action_app.command("list")
 def list_command(*, as_json: AsJson = False) -> None:
     """List every action with its pack, effect, inputs and draft state."""
-    found = discover_actions(_hub())
+    found = discover_actions(action_hub())
     if as_json:
         actions: list[JsonValue] = [_listed(entry) for entry in found.actions]
         typer.echo(dump_json({"actions": actions}).decode(), nl=False)
@@ -233,8 +238,8 @@ def credentials(resolved: ResolvedCall) -> dict[str, str]:
 def resolve_call(name: str, *, environment: str, given: list[str]) -> ResolvedCall:
     """The call of action ``name`` in ``environment`` with ``given`` inputs, decided for origin
     ``human``; exit 2 on a malformed ``--input``, 1 on anything that cannot be resolved."""
-    values = _given_texts(given)
-    hub = _hub()
+    values = given_texts(given)
+    hub = action_hub()
     found = discover_actions(hub)
     try:
         entry = resolve_action(found.actions, name)
@@ -267,27 +272,40 @@ def resolve_call(name: str, *, environment: str, given: list[str]) -> ResolvedCa
 
 def decision_text(resolved: ResolvedCall) -> str:
     """``allow``, ``ask``, or ``deny (<why, in plain words>)``."""
-    decision = resolved.decision
+    environment = resolved.environment
+    reason = deny_reason(
+        resolved.decision,
+        effect=resolved.entry.document.effect,
+        environment=resolved.environment_name,
+        access=environment.access if environment is not None else None,
+    )
+    return resolved.decision.decision if reason is None else f"deny ({reason})"
+
+
+def deny_reason(
+    decision: PolicyDecision, *, effect: Effect, environment: str, access: str | None
+) -> str | None:
+    """Why ``decision`` denies, in plain words; ``None`` when it does not."""
     if decision.decision != "deny":
-        return decision.decision
-    effect, name = resolved.entry.document.effect, resolved.environment_name
+        return None
     reasons = {
         "draft": DRAFT_REASON,
-        "undeclared": f"environment {name} is not declared",
-        "production": f"{name} is a production environment: writes and destroys are denied",
-        "table": f"access {resolved.environment.access if resolved.environment else ''}"
-        f" in {name} does not allow {effect}",
-        "read_only": "write and destroy actions need a terminal or a scenario run",
+        "undeclared": f"environment {environment} is not declared",
+        "production": f"{environment} is a production environment: writes and destroys are denied",
+        "table": f"access {access or ''} in {environment} does not allow {effect}",
+        "read_only": NEEDS_TERMINAL,
     }
-    return f"deny ({reasons.get(decision.reason_kind, decision.reason_kind)})"
+    return reasons.get(decision.reason_kind, decision.reason_kind)
 
 
-def _hub() -> Path:
+def action_hub() -> Path:
+    """The hub's main checkout: where actions are read and their drafts told apart."""
     root = hub_root_or_exit(os.environ, command=COMMAND)
     return hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
 
 
-def _given_texts(given: list[str]) -> dict[str, str]:
+def given_texts(given: list[str]) -> dict[str, str]:
+    """``NAME=VALUE`` pairs as texts, at most ``MAX_INPUTS`` of ``MAX_INPUT_BYTES``; else exit 2."""
     if len(given) > MAX_INPUTS:
         raise typer.BadParameter(f"at most {MAX_INPUTS} inputs", param_hint="--input")
     values: dict[str, str] = {}

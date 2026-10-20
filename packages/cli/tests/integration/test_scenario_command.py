@@ -201,3 +201,181 @@ def test_prints_no_scenarios_when_empty_hub(tmp_path: Path, marker: Path) -> Non
     result = run_hub(root, marker, "scenario", "list")
 
     assert (result.exit_code, plain(result.stdout)) == (0, "no scenarios yet\n")
+
+
+def modes(marker: Path) -> list[str]:
+    if not marker.exists():
+        return []
+    return [json.loads(line)["mode"] for line in marker.read_text().splitlines()]
+
+
+def plan_hub(hub: Path, marker: Path, environment: str, *args: str) -> Result:
+    return run_hub(
+        hub,
+        marker,
+        "scenario",
+        "plan",
+        "order-walk",
+        "--env",
+        environment,
+        "--input",
+        "ref=T-1",
+        *args,
+    )
+
+
+def content_hash(hub: Path, name: str) -> str:
+    listed = json.loads(run_hub(hub, Path("/dev/null"), "action", "list", "--json").stdout)
+    return next(
+        item["content_hash"] for item in listed["actions"] if item["action"] == f"demo/{name}"
+    )
+
+
+ENV_FILE = "demo-api/environment/.env.local"
+ENV_SECRET = "x-" + "secret" + "-y"
+
+
+def test_prints_every_column_when_plan_on_write_environment(
+    hub: Path, marker: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = json.loads((hub / "hub.json").read_text())
+    document["environments"]["local"]["credentials"] = {"env_file": ENV_FILE}
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+    env_file = hub.parent / ENV_FILE
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(f"DEMO_TOKEN={ENV_SECRET}\n")
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "agent_hub.cli.action_command.load_env_file",
+        lambda *args, **kwargs: opened.append("action_command") or {},
+    )
+    monkeypatch.setattr(
+        "agent_hub.cli.env_files_loader.load_env_file",
+        lambda *args, **kwargs: opened.append("env_files_loader") or {},
+    )
+    send, get = content_hash(hub, "send-order"), content_hash(hub, "get-order")
+
+    result = plan_hub(hub, marker, "local")
+
+    assert (result.exit_code, plain(result.stderr)) == (0, ""), result.output
+    assert plain(result.stdout).splitlines() == [
+        "scenario: order-walk (environment local, access write)",
+        "send-order  action  demo/send-order  write  allow",
+        "  args: target=api, ref=T-1, count=1",
+        "  endpoints: target → demo-api/api http://localhost:8000",
+        f"  content hash: {send}",
+        "  draft: no",
+        "  plan: would act",
+        "order-held  expect  demo/get-order  read  allow",
+        "  args: target=api, ref=T-1, count=1",
+        "  endpoints: target → demo-api/api http://localhost:8000",
+        "  polls: every 10s, timeout 5m",
+        f"  content hash: {get}",
+        "  draft: no",
+        "  plan: would act",
+        "check-order  action  demo/get-order  read  allow",
+        "  args: target=api, ref=<$CTX.order_id from order-held>, count=1",
+        "  endpoints: target → demo-api/api http://localhost:8000",
+        f"  content hash: {get}",
+        "  draft: no",
+        "  plan: runs with values known at run time",
+    ]
+    # Only plan-mode calls, for the two steps whose args are known; no credential, no event,
+    # no run folder, and the env file never read.
+    assert modes(marker) == ["plan", "plan"]
+    assert ENV_SECRET not in marker.read_text()
+    assert opened == []
+    assert not (hub.parent.parent / "events.db").exists()
+    assert not (hub / ".agent-runs").exists()
+
+
+def test_prints_same_data_when_plan_json(hub: Path, marker: Path) -> None:
+    result = plan_hub(hub, marker, "local", "--json")
+
+    assert (result.exit_code, plain(result.stderr)) == (0, ""), result.output
+    planned = json.loads(plain(result.stdout))
+    assert {key: planned[key] for key in ("scenario", "environment", "access", "production")} == {
+        "scenario": "order-walk",
+        "environment": "local",
+        "access": "write",
+        "production": False,
+    }
+    assert (planned["denied"], planned["problems"]) == (False, [])
+    send, held, check = planned["rows"]
+    assert send == {
+        "step": "send-order",
+        "type": "action",
+        "action": "demo/send-order",
+        "effect": "write",
+        "args": {"target": "api", "ref": "T-1", "count": "1"},
+        "endpoints": {
+            "target": {"service": "demo-api/api", "url": "http://localhost:8000", "resource": None}
+        },
+        "every": None,
+        "timeout": None,
+        "content_hash": content_hash(hub, "send-order"),
+        "draft": False,
+        "decision": "allow",
+        "reason_kind": "table",
+        "reason": None,
+        "plan": "would act",
+    }
+    assert (held["every"], held["timeout"], held["plan"]) == ("10s", "5m", "would act")
+    assert check["args"]["ref"] == "<$CTX.order_id from order-held>"
+    assert check["plan"] == "runs with values known at run time"
+    assert modes(marker) == ["plan", "plan"]
+
+
+def test_exits_one_when_deny_refuses_start_plan(hub: Path, marker: Path) -> None:
+    result = plan_hub(hub, marker, "live")
+
+    assert result.exit_code == 1, result.output
+    lines = plain(result.stdout).splitlines()
+    assert lines[0] == "scenario: order-walk (environment live, access read, production)"
+    assert lines[1] == (
+        "send-order  action  demo/send-order  write"
+        "  deny (live is a production environment: writes and destroys are denied)"
+    )
+    assert "order-held  expect  demo/get-order  read  allow" in lines
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario plan: order-walk cannot start in live: a step is denied"
+    ]
+    assert "run" not in modes(marker)
+
+
+def test_names_service_and_environment_when_service_input_has_no_endpoint(
+    hub: Path, marker: Path
+) -> None:
+    scenario = hub / "scenarios" / "demo" / "order-walk.yaml"
+    scenario.write_text(
+        SCENARIO.replace(
+            "with: {target: api, ref: $INPUTS.ref}\n  - id: order-held",
+            "with: {target: orders, ref: $INPUTS.ref}\n  - id: order-held",
+        )
+    )
+
+    result = plan_hub(hub, marker, "local")
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario plan: step send-order: input target: service orders has no endpoint"
+        " in environment local",
+    ]
+    assert "  plan: not planned" in plain(result.stdout).splitlines()
+
+
+def test_exits_one_when_unordered_gates_planned(hub: Path, marker: Path) -> None:
+    scenario = hub / "scenarios" / "demo" / "order-walk.yaml"
+    scenario.write_text(
+        SCENARIO
+        + "  - id: send-again\n    type: action\n    action: send-order\n    with: {target: api}\n"
+    )
+
+    result = plan_hub(hub, marker, "staging")
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stderr).splitlines()[0] == (
+        "hub scenario plan: steps send-order and send-again both need a gate and have no order"
+        " between them: one must depend on the other"
+    )
+    assert "run" not in modes(marker)
