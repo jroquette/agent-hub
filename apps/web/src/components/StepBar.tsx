@@ -26,14 +26,16 @@ const SEGMENT: Record<StepState, CSSProperties> = {
 
 /**
  * A list of steps as one bar: a segment per step in its state, the current step's label with its
- * position ("Build · 6/8"; the last step reads alone), and every step's summary in the tooltip and
- * the accessible name. Not a tab stop: the row that holds it names it.
+ * position ("Build · 6/8"; the last step reads alone once it is done) and its note, and every
+ * step's summary in the tooltip and the accessible name. Not a tab stop: the row that holds it
+ * names it.
  */
 export function StepBar({
   name,
   label,
   current,
   steps,
+  note,
 }: {
   /** What the steps are ("Golden path"), at the head of the accessible name. */
   name: string;
@@ -41,6 +43,8 @@ export function StepBar({
   /** The index of the current step in `steps`. */
   current: number;
   steps: readonly { state: StepState; summary: string }[];
+  /** What the current step's state or meta says, after its position ("Changes requested"). */
+  note?: string | null | undefined;
 }) {
   const summaries = steps.map((step) => step.summary);
   return (
@@ -76,12 +80,13 @@ export function StepBar({
         </span>
         <span className="ah-step-label" aria-hidden="true">
           {label}
-          {current >= 0 && current < steps.length - 1 && (
+          {current >= 0 && !(current === steps.length - 1 && steps[current]?.state === "done") && (
             <span className="ah-subtle">
               {" "}
               · {current + 1}/{steps.length}
             </span>
           )}
+          {note && <span className="ah-subtle"> · {note}</span>}
         </span>
       </span>
     </Tooltip>

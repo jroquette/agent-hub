@@ -39,6 +39,7 @@ export type GoldenStep = Schemas["GoldenStep"];
 export type GoldenPath = Schemas["GoldenPath"];
 export type EvalRecord = Schemas["EvalRecord"];
 export type TicketRow = Schemas["TicketRow"];
+export type TicketFlow = Schemas["TicketFlow"];
 export type TicketPlan = Schemas["TicketPlan"];
 export type FeatureTickets = Schemas["FeatureTickets"];
 export type AgentSession = Schemas["AgentSession"];
@@ -664,6 +665,23 @@ export function aTicketRow(overrides: Partial<TicketRow> = {}): TicketRow {
     reviewed: false,
     parent: null,
     children: [],
+    ...overrides,
+  };
+}
+
+/** A ticket's own steps: implemented (a review round exists), at Review, 4 of 7. */
+export function aTicketFlow(overrides: Partial<TicketFlow> = {}): TicketFlow {
+  return {
+    steps: [
+      { name: "context", state: "unrecorded", meta: null },
+      { name: "preflight", state: "unrecorded", meta: null },
+      { name: "implement", state: "done", meta: null },
+      { name: "review", state: "pending", meta: null },
+      { name: "eval", state: "pending", meta: null },
+      { name: "pr", state: "pending", meta: null },
+      { name: "merged", state: "pending", meta: null },
+    ],
+    current: "review",
     ...overrides,
   };
 }

@@ -4,11 +4,20 @@ import { Fragment, useRef } from "react";
 import type { ReactNode } from "react";
 
 import type { components } from "../../api/schema";
-import { Banner, Icon, StatusBadge, type Status } from "../../components";
+import {
+  Banner,
+  GOLDEN_STATE_TEXT,
+  Icon,
+  StatusBadge,
+  StepBar,
+  type Status,
+} from "../../components";
 import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
 import { githubPullHref, linearHref } from "../../lib/safeHref";
 
 type TicketRow = components["schemas"]["TicketRow"];
+type TicketFlow = components["schemas"]["TicketFlow"];
+type TicketStepName = components["schemas"]["TicketStepName"];
 type TicketPlan = components["schemas"]["TicketPlan"];
 type ExternalBlocker = components["schemas"]["ExternalBlocker"];
 type IssueStateType = components["schemas"]["IssueStateType"];
@@ -458,6 +467,37 @@ export function TicketIdLine({ row }: { row: TicketRow }) {
   );
 }
 
+const TICKET_STEP_LABEL: Record<TicketStepName, string> = {
+  context: "Context",
+  preflight: "Preflight",
+  implement: "Implement",
+  review: "Review",
+  eval: "Eval",
+  pr: "PR",
+  merged: "Merged",
+};
+
+/**
+ * A ticket's seven steps as one bar (two-level-flows AC-1.11), labelled with its current step,
+ * its position and its meta (or "Blocked"), so the state is never told by color alone ("Review ·
+ * 4/7 · Changes requested"); each step's state and meta are in the tooltip and accessible name.
+ */
+export function TicketStepBar({ flow }: { flow: TicketFlow }) {
+  const current = flow.steps.find((step) => step.name === flow.current);
+  return (
+    <StepBar
+      name="Ticket steps"
+      label={TICKET_STEP_LABEL[flow.current]}
+      current={flow.steps.findIndex((step) => step.name === flow.current)}
+      steps={flow.steps.map((step) => ({
+        state: step.state,
+        summary: `${TICKET_STEP_LABEL[step.name]}: ${GOLDEN_STATE_TEXT[step.state].toLowerCase()}${step.meta ? ` · ${step.meta}` : ""}`,
+      }))}
+      note={current?.meta ?? (current?.state === "blocked" ? GOLDEN_STATE_TEXT.blocked : null)}
+    />
+  );
+}
+
 function FlowCard({
   row,
   rows,
@@ -489,6 +529,7 @@ function FlowCard({
   const hasEnd = row.pr_url != null || showReviewed;
   return (
     <li
+      id={ticketAnchor(row.ref)}
       className="ah-flow-card"
       data-node-id={row.ref}
       data-readiness={row.readiness}
@@ -508,14 +549,10 @@ function FlowCard({
           />
         )}
       </div>
-      <a
-        className="ah-flow-card-title"
-        href={`#${ticketAnchor(row.ref)}`}
-        title={row.title ?? undefined}
-        aria-label={row.title ?? row.ref}
-      >
+      <span className="ah-flow-card-title" title={row.title ?? undefined}>
         <span>{row.title ? splitTitle(row.title).text : row.ref}</span>
-      </a>
+      </span>
+      {row.flow && <TicketStepBar flow={row.flow} />}
       <div className="ah-flow-card-foot">
         {(note || action) && (
           <div className="ah-flow-card-status">
@@ -593,6 +630,7 @@ function EpicCard({
   const pct = (n: number) => `${String(total ? (n / total) * 100 : 0)}%`;
   return (
     <section
+      id={ticketAnchor(epic.ref)}
       className="ah-flow-epic"
       data-readiness={epic.readiness}
       aria-label={`Epic ${epic.ref}${epic.title ? ` · ${epic.title}` : ""}`}
@@ -709,14 +747,14 @@ function flowColumns(tickets: readonly TicketRow[], planning: TicketPlan): FlowC
     const allDone = step.every((ref) => byRef.get(ref)?.readiness === "done");
     return {
       key: `step-${String(i + 1)}`,
-      title: `Step ${String(i + 1)}`,
+      title: `Group ${String(i + 1)}`,
       hint: allDone
         ? "done"
         : step.length > 1
           ? "in parallel"
           : i === 0
             ? "first"
-            : `after step ${String(i)}`,
+            : `after group ${String(i)}`,
       kind: allDone ? "done" : "step",
       refs: step,
     };
@@ -966,9 +1004,9 @@ export function PlanningView({ tickets, planning, acPasses, ticketAction }: Plan
             Ticket flow
           </h2>
           <span className="ah-small ah-subtle">
-            Steps run left to right; tickets in one step can run in parallel. Each line goes from a
-            blocker to the ticket it holds back.
-            {epics.length > 0 && " The epic only tracks them, so it is no step."}
+            Groups run left to right; tickets in one group can run in parallel. Each line goes from
+            a blocker to the ticket it holds back.
+            {epics.length > 0 && " The epic only tracks them, so it is in no group."}
           </span>
         </div>
         <div className="ah-row" style={{ gap: 8, alignItems: "flex-start" }}>
@@ -987,7 +1025,7 @@ export function PlanningView({ tickets, planning, acPasses, ticketAction }: Plan
               <RefList refs={cycle} rows={tickets} external={external} separator=" → " />
             </Fragment>
           ))}
-          . These tickets wait on each other and are left out of the steps; break the cycle in the
+          . These tickets wait on each other and are left out of the groups; break the cycle in the
           plan or in Linear.
         </Banner>
       )}

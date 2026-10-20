@@ -18,14 +18,20 @@ they are left out uncounted).
 A linked or missing record folder reads as empty: at most ``MAX_EVAL_FILES`` and
 ``MAX_REVIEW_FILES`` names are kept while listing (the smallest by name), the rest only counted.
 The folder's own ``ux-*.md`` designs are read the same way, at most ``MAX_UX_FILES``, as their
-first ``UX_HEAD_BYTES`` (``ux_skipped`` counts the rest).
+first ``UX_HEAD_BYTES`` (``ux_skipped`` counts the rest). In ``reviews/``, the first
+``MAX_ROUND_TICKETS`` ticket folders by name (not hidden, UTF-8 names, never a link) are opened
+the same way and read only until their first review round: a regular file named as the review
+check names one (``<reviewer>-r<N>.json``), never read; ``MAX_ROUND_ENTRIES`` entries at most in
+all. ``review_round_tickets`` names the folders holding one; only ``read_feature_folder`` (one
+feature, as the tickets view reads it) looks for them, so the listing leaves it empty.
 
 One call reads at most about ``READ_BUDGET_BYTES``: a folder is read only while the bytes read so
 far are under it, so the total goes over by one folder at most (9,019,394 bytes, about 8.6 MiB:
 ``features.json`` 1 MiB + 1, ``plan.md`` 256 KiB + 1, two 64 KiB heads, 200 eval heads of 16 KiB,
 500 review heads of 8 KiB and 50 UX design heads of 4 KiB); each folder past it is listed with
 ``OVER_BUDGET`` as its record problem and files unread.
-``read_feature_folder`` reads the one folder a slug names, as the listing would, and nothing else.
+``read_feature_folder`` reads the one folder a slug names, as the listing would, plus which of its
+``reviews/`` ticket folders hold a review round.
 """
 
 import contextlib
@@ -45,6 +51,8 @@ from agent_hub.core.features.feature_evals import (
 from agent_hub.core.features.feature_record import MAX_RECORD_BYTES
 from agent_hub.core.features.feature_reviews import (
     MAX_REVIEW_FILES,
+    MAX_ROUND_ENTRIES,
+    MAX_ROUND_TICKETS,
     REVIEW_HEAD_BYTES,
     REVIEWS_FOLDER,
 )
@@ -62,6 +70,7 @@ from agent_hub.core.features.feature_status import (
     FeatureFolder,
     RecordHead,
 )
+from agent_hub.core.features.review_output_checks import is_review_round
 from agent_hub.generator.regular_files import read_regular
 
 MAX_FEATURE_FOLDERS: Final = 500
@@ -108,7 +117,7 @@ def read_feature_folder(hub_root: Path, slug: str) -> FeatureFolder | None:
     with _features_folder(hub_root) as folder:
         if folder is None or not _is_folder(folder, slug):
             return None
-        return _read_folder(folder, slug, _Meter())
+        return _read_folder(folder, slug, _Meter(), round_tickets=True)
 
 
 @contextlib.contextmanager
@@ -156,7 +165,9 @@ def _limit(name: str) -> int:
     return HEAD_BYTES if name in {SPEC, EVAL} else 0
 
 
-def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
+def _read_folder(
+    parent: int, slug: str, meter: _Meter, *, round_tickets: bool = False
+) -> FeatureFolder:
     try:
         folder = os.open(slug, _FOLDER_FLAGS, dir_fd=parent)
     except OSError:
@@ -172,6 +183,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
             folder, REVIEWS_FOLDER, cap=MAX_REVIEW_FILES, size=REVIEW_HEAD_BYTES, meter=meter
         )
         ux_designs, ux_skipped = _ux_heads(folder, meter)
+        rounds = _round_tickets(folder) if round_tickets else ()
     finally:
         os.close(folder)
     record, plan = reads[RECORD], reads[PLAN]
@@ -189,6 +201,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
         plan_too_large=too_large,
         ux_designs=ux_designs,
         ux_skipped=ux_skipped,
+        review_round_tickets=rounds,
     )
 
 
@@ -220,6 +233,68 @@ def _ux_heads(folder: int, meter: _Meter) -> tuple[tuple[RecordHead, ...], int]:
     return heads, skipped
 
 
+def _round_tickets(parent: int) -> tuple[str, ...]:
+    """The ticket folders of ``reviews/`` holding a review round, sorted: of the first
+    ``MAX_ROUND_TICKETS`` by name, each read until its first round, ``MAX_ROUND_ENTRIES`` entries
+    in all."""
+    try:
+        reviews = os.open(REVIEWS_FOLDER, _FOLDER_FLAGS, dir_fd=parent)
+    except OSError:
+        return ()
+    found: list[str] = []
+    left = [MAX_ROUND_ENTRIES]
+    try:
+        with os.scandir(reviews) as entries:
+            tickets = heapq.nsmallest(MAX_ROUND_TICKETS, _ticket_folders(entries))
+        for ticket in tickets:
+            if left[0] <= 0:
+                break
+            if _has_round(reviews, ticket, left):
+                found.append(ticket)
+    except OSError:
+        pass
+    finally:
+        os.close(reviews)
+    return tuple(found)
+
+
+def _ticket_folders(entries: Iterable[os.DirEntry[str]]) -> Iterator[str]:
+    """The folders of ``entries`` (never through a link) whose names are UTF-8 and not hidden."""
+    for entry in entries:
+        if entry.name.startswith(".") or not _is_utf8(entry.name):
+            continue
+        if entry.is_dir(follow_symlinks=False):
+            yield entry.name
+
+
+def _has_round(reviews: int, ticket: str, left: list[int]) -> bool:
+    """Whether ``reviews/<ticket>`` holds a regular file named as a review round; each entry read
+    takes one from ``left[0]``, and reading stops when it is spent."""
+    try:
+        folder = os.open(ticket, _FOLDER_FLAGS, dir_fd=reviews)
+    except OSError:
+        return False
+    try:
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                left[0] -= 1
+                if is_review_round(entry.name) and entry.is_file(follow_symlinks=False):
+                    return True
+                if left[0] <= 0:
+                    return False
+    finally:
+        os.close(folder)
+    return False
+
+
+def _is_utf8(name: str) -> bool:
+    try:
+        name.encode()
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _record_names(folder: int, cap: int, *, prefix: str = "") -> tuple[list[str], int]:
     """The first ``cap`` ``.md`` names of ``folder`` not hidden (and starting with ``prefix``),
     sorted, and how many others were left out (over the cap, or not UTF-8). At most ``cap``
@@ -239,11 +314,8 @@ def _notes(entries: Iterable[os.DirEntry[str]], counted: list[int], prefix: str)
         if note.startswith(".") or not note.startswith(prefix) or not note.endswith(NOTE_SUFFIX):
             continue
         counted[0] += 1
-        try:
-            note.encode()
-        except UnicodeEncodeError:
-            continue
-        yield note
+        if _is_utf8(note):
+            yield note
 
 
 def _record_head(folder: int, name: str, *, size: int, meter: _Meter) -> RecordHead:

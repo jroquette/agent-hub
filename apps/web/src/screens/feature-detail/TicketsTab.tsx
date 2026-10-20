@@ -1,8 +1,16 @@
 import { useId, type ReactNode } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
-import { EmptyState, Icon, ProblemError, Skeleton, StatusBadge, Tooltip } from "../../components";
+import {
+  EmptyState,
+  Icon,
+  ProblemError,
+  SegmentedControl,
+  Skeleton,
+  StatusBadge,
+  Tooltip,
+} from "../../components";
 import { useApi, type ApiProblem } from "../../lib/api";
 import { fmtClock, fmtDateTime, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
@@ -17,6 +25,7 @@ import {
   TicketIdLine,
   TicketPrLink,
   TicketRef,
+  TicketStepBar,
   splitTitle,
   ticketAnchor,
   type TicketAction,
@@ -354,6 +363,12 @@ function TicketsTable({
       className: "ah-ticket-title-col",
       cell: (row) => <TitleCell row={row} child={isChild(row)} />,
     },
+    {
+      label: "Stage",
+      width: 130,
+      cell: (row) =>
+        row.flow ? <TicketStepBar flow={row.flow} /> : <span className="ah-subtle">—</span>,
+    },
     { label: "Status", width: 110, nowrap: true, cell: (row) => <StateBadge row={row} /> },
     { label: "Assignee", width: 110, cell: (row) => <Assignee row={row} /> },
     { label: "Blocked by", width: 110, cell: (row) => <Blockers row={row} data={data} /> },
@@ -465,9 +480,10 @@ export interface TicketsTabProps {
 }
 
 /**
- * The Tickets tab (AC-136.28): where the data comes from, the flow of the tickets (what runs in
- * parallel, in which order, and where each one is now), then one row per ticket (Linear link,
- * title, status, assignee, blockers, ACs, the sessions that worked on it, readiness).
+ * The Tickets tab (AC-136.28, two-level-flows AC-1.11): where the data comes from, then one of two
+ * views of the tickets, toggled: the flow (what runs in parallel, in which order, and where each
+ * one is now) or the table, one row per ticket (Linear link, title, its steps, status, assignee,
+ * blockers, ACs, the sessions that worked on it, readiness).
  */
 export function TicketsTab({
   project,
@@ -480,6 +496,20 @@ export function TicketsTab({
   acRows,
 }: TicketsTabProps) {
   const acById = acRows && new Map(acRows.map((ac) => [ac.id, ac]));
+  const [params, setParams] = useSearchParams();
+  // The view is kept in `?tickets=`: `table`, else Flow, the default, with no parameter.
+  const view = params.get("tickets") === "table" ? "table" : "flow";
+  const setView = (next: string) => {
+    setParams(
+      (current) => {
+        const search = new URLSearchParams(current);
+        if (next === "table") search.set("tickets", "table");
+        else search.delete("tickets");
+        return search;
+      },
+      { replace: true },
+    );
+  };
   if (error) {
     return (
       <ProblemError
@@ -510,19 +540,31 @@ export function TicketsTab({
         </div>
       ) : (
         <>
-          <PlanningView
-            tickets={data.tickets}
-            planning={data.planning}
-            acPasses={acPasses}
-            ticketAction={cardAction}
+          <SegmentedControl
+            label="Show the tickets as"
+            options={[
+              { id: "flow", label: "Flow" },
+              { id: "table", label: "Table" },
+            ]}
+            value={view}
+            onChange={setView}
           />
-          <TicketsTable
-            data={data}
-            project={project}
-            acPasses={acPasses}
-            acRows={acById}
-            ticketAction={ticketAction}
-          />
+          {view === "flow" ? (
+            <PlanningView
+              tickets={data.tickets}
+              planning={data.planning}
+              acPasses={acPasses}
+              ticketAction={cardAction}
+            />
+          ) : (
+            <TicketsTable
+              data={data}
+              project={project}
+              acPasses={acPasses}
+              acRows={acById}
+              ticketAction={ticketAction}
+            />
+          )}
         </>
       )}
     </div>

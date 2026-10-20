@@ -286,3 +286,29 @@ def test_keeps_privacy_when_titles_hold_secrets(open_tickets: Any, tickets_kit: 
     assert [blocker["title"] for blocker in blockers] == ["Blocker with [redacted: linear key]"]
     assert plan.json()["tickets"][2]["title"] == "Document [redacted: github token]"
     assert _bytes_under(db_folder, world.hub) == before
+
+
+# two-level-flows AC-1.8: each row carries its ticket flow, from the hub's records.
+def test_carries_ticket_flows_when_rows_have_records(tickets_world: Any, tickets_kit: Any) -> None:
+    feature = tickets_world.hub / "brain" / "features" / tickets_kit.slug
+    (feature / "reviews" / "DEM-1").mkdir(parents=True)
+    (feature / "reviews" / "DEM-1" / "spec-r1.json").write_text("{}", encoding="utf-8")
+    (feature / "reviews" / "DEM-1.md").write_text(
+        "---\ntype: review\nticket: DEM-1\noutcome: changes-requested\n---\n", encoding="utf-8"
+    )
+
+    response = tickets_world.tickets()
+
+    assert response.status_code == 200, response.text
+    flows = {row["ref"]: row["flow"] for row in response.json()["tickets"]}
+    assert [(step["name"], step["state"]) for step in flows["DEM-1"]["steps"]] == [
+        ("context", "unrecorded"),
+        ("preflight", "unrecorded"),
+        ("implement", "done"),
+        ("review", "current"),
+        ("eval", "pending"),
+        ("pr", "pending"),
+        ("merged", "pending"),
+    ]
+    assert flows["DEM-1"]["current"] == "review"
+    assert {step["state"] for step in flows["DEM-2"]["steps"]} == {"pending"}

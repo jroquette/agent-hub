@@ -27,6 +27,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   offers the eight steps and old `?phase=implement`, `review` and `evaluate` links open Build and Acceptance; the
   Evaluated group is gone, so a feature the evaluator says ship for is listed in In progress until it ships
   (AGH-327).
+- `hub web` Feature detail, Tickets tab: Flow and Table are two views of the tickets, toggled ("Flow · Table", kept
+  in `?tickets=`), so Start shows once; each card and row draws the ticket's own steps, Context, Preflight,
+  Implement, Review, Eval, PR and Merged ("Review · 4/7"), from its review rounds, review record, evals and Linear;
+  the flow's columns read "Group 1", "Group 2". The tickets route's rows carry the steps as `flow` (AGH-326).
 
 ## [0.18.0] - 2026-10-20
 
