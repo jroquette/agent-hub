@@ -1120,3 +1120,45 @@ def test_renders_stdin_when_shell_node_reads_upstream_output() -> None:
         "read": '{"delivery":"b","ok":true}',
         "fixed": "literal\x00text",
     }
+
+
+def action(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    node = {"id": node_id, "type": "action", "action": "send-queue-message"}
+    return node | {"depends_on": list(depends_on)} | keys
+
+
+def test_runs_action_with_rendered_inputs_when_action_node_visited() -> None:
+    sent = {"ref": "$INPUTS.issue", "note": "for $INPUTS.issue", "count": "$INPUTS.count"}
+    sent |= {"fixed": 3, "items": ["$INPUTS.issue", {"at": "$INPUTS.count"}]}
+    plan = plan_of(
+        action("send", **{"with": sent}),
+        action("check", "send", **{"with": {"id": "$send.output.message_id"}}),
+        inputs=INPUTS | {"count": {"type": "integer", "default": 2}},
+    )
+    runner = ScriptedRunner({"send": ['{"message_id": "m-1"}'], "check": ["[1, 2]"]})
+
+    run = Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    send, check = runner.calls
+    assert send.inputs == {
+        "ref": "AGH-1",
+        "note": "for AGH-1",
+        "count": 2,
+        "fixed": 3,
+        "items": ["AGH-1", {"at": 2}],
+    }
+    assert check.inputs == {"id": "m-1"}
+    assert run.recorder.end_of("send").output == {"message_id": "m-1"}
+    assert run.recorder.end_of("check").output == [1, 2]
+    assert run.report.status == "done"
+
+
+@pytest.mark.parametrize("text", ["not json", "", '{"a": 1} trailing', "NaN"])
+def test_fails_output_contract_when_action_output_not_json(text: str) -> None:
+    runner = ScriptedRunner({"send": [text, '{"a": 1}']})
+
+    run = Run(plan_of(action("send")), runner)
+
+    assert run.status_of("send") == ("failed", None, None, "output_contract")
+    assert runner.ran() == ["send"]
+    assert run.report.status == "failed"

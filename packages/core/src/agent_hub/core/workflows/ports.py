@@ -38,7 +38,10 @@ class NodeCall:
     ``resume_session`` is the session to continue: ``context.resume``'s, or a loop's previous
     iteration's without ``fresh_context``. ``iteration`` counts a loop's turns from 1, else 0.
     ``scope`` is how a text written in the node's own workflow reads here: the runner renders a
-    ``prompt_file`` with ``scope.render(template, context)``.
+    ``prompt_file`` with ``scope.render(template, context)``. An ``action`` or ``expect`` node's
+    call carries its ``with`` values in ``inputs`` (a whole reference keeps its value's type,
+    other text is rendered); ``poll`` counts an expect's polls from 1, else 0. The runner runs
+    the action and replies its output as JSON text.
     """
 
     node: ExecutableNode
@@ -53,6 +56,8 @@ class NodeCall:
     scope: RefScope = field(default_factory=RefScope)
     # A shell or script node's rendered ``stdin``.
     stdin: str | None = None
+    inputs: Mapping[str, JsonValue] = field(default_factory=dict)
+    poll: int = 0
 
 
 @dataclass(frozen=True)

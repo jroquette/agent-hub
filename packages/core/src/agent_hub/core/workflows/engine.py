@@ -69,9 +69,11 @@ from agent_hub.core.workflows.loops import (
     until_met,
 )
 from agent_hub.core.workflows.nodes import (
+    ActionNode,
     AgentNode,
     ApprovalNode,
     ExecutableNode,
+    ExpectNode,
     FromBinding,
     GateNode,
     HaltNode,
@@ -119,6 +121,8 @@ from agent_hub.core.workflows.substitution import (
     resolve,
 )
 
+# The nodes the runner runs from their own keys (argv, prompt), not an action call.
+type _CommandNode = AgentNode | ShellNode | ScriptNode | LoopNode
 # The most attempts that run at once in a run.
 MAX_PARALLEL: Final = 4
 # The most threads one layer starts; they wait for the run's permits.
@@ -292,6 +296,8 @@ class _Run:
             self._gate(node)
         elif isinstance(node, AgentNode | ShellNode | ScriptNode):
             self._complete(node, self._retrying(node, lambda: self._execute_once(node)))
+        elif isinstance(node, ActionNode):
+            self._complete(node, self._retrying(node, lambda: self._action_once(node)))
 
     def _stopped_by_when(self, node: Node, expr: str) -> bool:
         """Skip or fail ``node`` by its ``when:``; whether it stopped the node."""
@@ -411,7 +417,22 @@ class _Run:
         self._record_failure(node, attempt, failure)
         self._end(node, NodeEnd(NodeResult("failed"), failure_kind=failure.kind))
 
-    def _execute_once(self, node: ExecutableNode) -> Turn:
+    def _action_once(self, node: ActionNode) -> Turn:
+        """One action call: the runner runs it; its output is one JSON value (the action's
+        ``output_format`` is the runner's to check)."""
+
+        def run(attempt: int) -> tuple[Turn, bool]:
+            reply = self.ports.runner.run(self._action_call(node, attempt))
+            return Turn(_json_value(reply.text), reply.text, None), True
+
+        return self._step(node, run)[0]
+
+    def _action_call(self, node: ActionNode | ExpectNode, attempt: int, poll: int = 0) -> NodeCall:
+        context = self._context(node)
+        inputs = {name: _action_value(value, context) for name, value in node.with_.items()}
+        return NodeCall(node, attempt, context, inputs=inputs, poll=poll)
+
+    def _execute_once(self, node: _CommandNode) -> Turn:
         resume = self._resumed_session(node)
 
         def run(attempt: int) -> tuple[Turn, bool]:
@@ -490,7 +511,7 @@ class _Run:
 
     def _checkout_status(self, node: ExecutableNode) -> str | None:
         """The checkout's status for a read-only node (``mutates_checkout: false``), else None."""
-        if node.mutates_checkout:
+        if isinstance(node, ActionNode | ExpectNode) or node.mutates_checkout:
             return None
         if self.ports.checkout is None:
             raise NodeFailedError("config", "no checkout probe to check mutates_checkout: false")
@@ -546,7 +567,7 @@ class _Run:
             with self.lock:
                 self.sessions[node.id] = turn.session
 
-    def _resumed_session(self, node: ExecutableNode) -> str | None:
+    def _resumed_session(self, node: _CommandNode) -> str | None:
         if not isinstance(node, AgentNode | LoopNode):
             return None
         if not isinstance(node.context, str):
@@ -559,7 +580,7 @@ class _Run:
         return self.sessions.get(node.id)
 
     def _call(
-        self, node: ExecutableNode, attempt: int, *, iteration: int, resume: str | None
+        self, node: _CommandNode, attempt: int, *, iteration: int, resume: str | None
     ) -> NodeCall:
         context = self._node_context(node)
         cwd = render(node.cwd, context) if node.cwd is not None else None
@@ -591,7 +612,7 @@ class _Run:
         with self.lock:
             return RefContext(self.inputs, dict(self.results), self.loop_prevs.get(group.id))
 
-    def _node_context(self, node: ExecutableNode) -> RefContext:
+    def _node_context(self, node: _CommandNode) -> RefContext:
         """The context of an attempt: an agent's ``with`` values resolved (``$WITH``)."""
         context = self._context(node)
         if not isinstance(node, AgentNode | LoopNode):
@@ -730,14 +751,11 @@ class _Run:
         except Exception as error:  # noqa: BLE001 - a port's unexpected error ends the group
             raise NodeFailedError("unknown", type(error).__name__) from None
 
-    def _output(self, node: ExecutableNode, text: str) -> JsonValue:
+    def _output(self, node: _CommandNode, text: str) -> JsonValue:
         """The text, or the one JSON value it holds checked against ``output_format``."""
         if node.output_format is None:
             return text
-        try:
-            value: JsonValue = json.loads(text, parse_constant=_refuse_constant)
-        except ValueError, RecursionError:
-            raise NodeFailedError("output_contract", "the output is not one JSON value") from None
+        value = _json_value(text)
         self.ports.outputs.check(node.output_format, value)
         return value
 
@@ -787,6 +805,30 @@ def _may_halt(node: Node) -> bool:
 def _refuse_constant(name: str) -> JsonValue:
     msg = f"{name} is not a JSON number"
     raise ValueError(msg)
+
+
+def _json_value(text: str) -> JsonValue:
+    """The one JSON value ``text`` holds, else ``output_contract``."""
+    try:
+        value: JsonValue = json.loads(text, parse_constant=_refuse_constant)
+    except ValueError, RecursionError:
+        raise NodeFailedError("output_contract", "the output is not one JSON value") from None
+    return value
+
+
+def _action_value(value: JsonValue, context: RefContext) -> JsonValue:
+    """A ``with`` value for an action: a whole reference's value as is, other text rendered."""
+    if isinstance(value, str):
+        try:
+            ref = parse_ref(value)
+        except SubstitutionError:
+            return render(value, context)
+        return resolve(ref, context, value)
+    if isinstance(value, list):
+        return [_action_value(item, context) for item in value]
+    if isinstance(value, dict):
+        return {key: _action_value(item, context) for key, item in value.items()}
+    return value
 
 
 def _rendered(value: JsonValue, context: RefContext) -> JsonValue:

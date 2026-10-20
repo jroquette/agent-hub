@@ -461,7 +461,7 @@ class ExpectNode(_ActionKeys):
     until_when: Text
 
 
-type ExecutableNode = AgentNode | ShellNode | ScriptNode | LoopNode
+type ExecutableNode = AgentNode | ShellNode | ScriptNode | LoopNode | ActionNode | ExpectNode
 type GateNode = ApprovalNode | WaitNode
 BodyNode = Annotated[
     AgentNode

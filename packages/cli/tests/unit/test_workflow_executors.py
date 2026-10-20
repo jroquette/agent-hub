@@ -504,3 +504,24 @@ def test_runs_one_attempt_at_a_time_when_hub_steps_run_in_process(
 
     assert ports.max_parallel == 1
     assert executors(tmp_path, pack, FakeChild()).max_parallel == MAX_PARALLEL
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"id": "send", "type": "action", "action": "send-queue-message"},
+        {"id": "wait", "type": "expect", "action": "get-order", "every": "5s", "timeout": "1m"}
+        | {"until_when": "$self.output.status == 'OK'"},
+    ],
+)
+def test_fails_config_without_child_when_action_node_called(
+    tmp_path: Path, pack: Path, spec: Mapping[str, object]
+) -> None:
+    child = FakeChild()
+
+    with pytest.raises(NodeFailedError) as raised:
+        executors(tmp_path, pack, child).run(call(spec))
+
+    assert raised.value.kind == "config"
+    assert "scenario run" in raised.value.detail
+    assert child.calls == []
