@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -139,6 +139,35 @@ describe("DiscussPanel", () => {
       "href",
       `/agent-sessions/${ID}`,
     );
+  });
+
+  it("sends a file attached to the first message with the new session", async () => {
+    const view = renderPanel();
+    await userEvent.click(screen.getByRole("button", { name: "point" }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    await waitFor(() => {
+      expect(box).toBeEnabled();
+    });
+
+    fireEvent.paste(box, {
+      clipboardData: { files: [new File(["# Brief"], "brief.md", { type: "text/markdown" })] },
+    });
+    await screen.findByText("brief.md");
+    await userEvent.type(box, "Start from this brief.{Enter}");
+
+    const created = await waitFor(() => {
+      const found = view.requests.find(
+        (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+      );
+      expect(found).toBeDefined();
+      return found;
+    });
+    const body = JSON.parse((await created?.clone().text()) ?? "{}") as {
+      files?: { name: string; media_type: string; data: string }[];
+    };
+    expect(body.files).toEqual([
+      { name: "brief.md", media_type: "text/plain", data: btoa("# Brief") },
+    ]);
   });
 
   it("AC-PG-38.3 says in words that a pointed-at row goes in the next message", async () => {

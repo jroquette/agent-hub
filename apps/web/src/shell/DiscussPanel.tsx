@@ -5,7 +5,9 @@ import { useCallback, useState } from "react";
 import { AppLink, Banner, Button, EmptyState, Icon, IconButton } from "../components";
 import { ApiProblem } from "../lib/api";
 import { captureScreen } from "../lib/screenCapture";
-import { rememberScreenshot } from "../lib/screenshotCopy";
+import { fileBody, type MessageFile } from "../lib/messageFile";
+import { screenshotBody } from "../lib/pastedImage";
+import { rememberMessageScreenshots, rememberScreenshot } from "../lib/screenshotCopy";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../screens/agent-session/Composer";
 import { DiscussChat } from "../screens/agent-session/DiscussChat";
 import type { PermissionMode } from "../screens/agent-session/model";
@@ -228,7 +230,12 @@ function StartDiscussion({
         ? `Project ${target.project} has no hub folder to work in.`
         : null;
 
-  const start = async (text: string) => {
+  // The first message may carry images and files of its own, after the screen's capture.
+  const start = async (
+    text: string,
+    pasted: readonly string[] = [],
+    files: readonly MessageFile[] = [],
+  ) => {
     if (!hub) return;
     const screen = target.screen ? await readScreen() : null;
     const session = await create.mutateAsync({
@@ -238,12 +245,20 @@ function StartDiscussion({
       fork: false,
       ...(model && model !== "default" ? { model } : {}),
       ...(screen?.screenshot ? { screenshot: screen.screenshot.body } : {}),
+      ...(pasted.length > 0 ? { screenshots: pasted.map(screenshotBody) } : {}),
+      ...(files.length > 0 ? { files: files.map(fileBody) } : {}),
       prompt: discussPrompt(
         screen ? { ...target, brief: withScreenText(target.brief, screen.text) } : target,
         referencedMessage(references, text),
       ),
     });
     if (screen?.screenshot) rememberScreenshot(session.id, screen.screenshot.dataUrl);
+    // The first prompt is the log's first record: its bubble shows the capture, then the images.
+    if (pasted.length > 0)
+      rememberMessageScreenshots(session.id, 1, [
+        ...(screen?.screenshot ? [screen.screenshot.dataUrl] : []),
+        ...pasted,
+      ]);
     onStarted(session.id);
   };
 
@@ -302,6 +317,8 @@ function StartDiscussion({
             draftId={`discuss.${target.key}`}
             focusOnOpen
             disabledReason={reason}
+            acceptsImages
+            acceptsFiles
           />
           {create.error instanceof ApiProblem && (
             <p className="ah-small as-error" role="alert">
