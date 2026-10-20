@@ -2,7 +2,14 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
-import { DiffText, ToolCallCard, diffLines, resultText } from "./ToolCallCard";
+import {
+  DiffText,
+  ToolCallCard,
+  diffLines,
+  isGrepOutput,
+  parsedJson,
+  resultText,
+} from "./ToolCallCard";
 import type { PermissionView, ToolResultView, ToolView } from "./model";
 
 function aTool(overrides: Partial<ToolView> = {}): ToolView {
@@ -27,7 +34,44 @@ describe("ToolCallCard (transcript)", () => {
     await expand(aTool());
 
     expect(screen.getByRole("button", { name: "Bash make check (Running)" })).toBeInTheDocument();
-    expect(screen.getAllByText("make check").map((node) => node.tagName)).toContain("PRE");
+    expect(screen.getByLabelText("Command")).toHaveTextContent("$ make check");
+    expect(screen.getByRole("button", { name: "Copy command" })).toBeInTheDocument();
+  });
+
+  it("shows a Bash call's description above its command", async () => {
+    await expand(aTool({ input: { command: "ls", description: "List files" } }));
+
+    expect(screen.getByText("List files")).toBeInTheDocument();
+    expect(screen.getByLabelText("Command")).toHaveTextContent("$ ls");
+  });
+
+  it("formats a JSON text reply with the JSON viewer", async () => {
+    await expand(
+      aTool({
+        name: "mcp__linear__get_issue",
+        input: { id: 7 },
+        result: { ...ok, content: '{"id":"TIP-1","done":false}' },
+      }),
+    );
+
+    expect(screen.getByText("· JSON")).toBeInTheDocument();
+    expect(screen.getByText('"TIP-1"')).toHaveClass("ah-json-s");
+  });
+
+  it("tells grep's path and line number apart from the text", async () => {
+    await expand(
+      aTool({ result: { ...ok, content: "a/b.py:9:from x import y\nc.py:14:z = 1\n" } }),
+    );
+
+    expect(screen.getByText("a/b.py")).toHaveClass("as-grep-path");
+    expect(screen.getByText("14")).toHaveClass("as-grep-no");
+    expect(screen.getByText("· 2 lines")).toBeInTheDocument();
+  });
+
+  it("reads No output for an empty result", async () => {
+    await expand(aTool({ result: { ...ok, content: "" } }));
+
+    expect(screen.getByText("No output")).toBeInTheDocument();
   });
 
   it("shows an error result, its truncation and the stored-copy label", async () => {
@@ -204,6 +248,23 @@ describe("ToolCallCard (tool-cards) long output", () => {
 
     expect(pre.textContent).toHaveLength(10_001);
     expect(pre).toHaveFocus();
+  });
+});
+
+describe("parsedJson", () => {
+  it("parses a JSON object or array and gives up on anything else", () => {
+    expect(parsedJson(' {"a": 1} ')).toEqual({ a: 1 });
+    expect(parsedJson("[1]")).toEqual([1]);
+    expect(parsedJson("{not json")).toBeUndefined();
+    expect(parsedJson("42")).toBeUndefined();
+  });
+});
+
+describe("isGrepOutput", () => {
+  it("needs most non-empty lines to read as path:line", () => {
+    expect(isGrepOutput(["a.py:1:x", "b.py-2-y", "--", ""])).toBe(true);
+    expect(isGrepOutput(["a.py:1:x", "plain", "text"])).toBe(false);
+    expect(isGrepOutput([""])).toBe(false);
   });
 });
 

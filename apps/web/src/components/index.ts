@@ -15,3 +15,4 @@ export * from "./SessionLabel";
 export * from "./SidePanel";
 export * from "./status";
 export * from "./trace";
+export * from "./useHighlight";
