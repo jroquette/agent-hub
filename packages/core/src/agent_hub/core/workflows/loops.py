@@ -79,7 +79,8 @@ def next_session(node: LoopNode, turn: Turn) -> str | None:
 class _Recorded(Rewrite):
     """A body's ids, and references to them, as the run records them."""
 
-    def __init__(self, group: LoopGroupNode) -> None:
+    def __init__(self, group: LoopGroupNode, *, scenario: bool) -> None:
+        self.scenario = scenario
         self.prefix = f"{group.id}{SEPARATOR}"
         self.body = frozenset(node.id for node in group.nodes)
 
@@ -95,9 +96,10 @@ class _Recorded(Rewrite):
         return self.prefix + target if target in self.body else target
 
 
-def record_body(group: LoopGroupNode) -> LoopGroupNode:
-    """``group`` with its body ids recorded as ``<group>__<id>``, references included."""
-    recorded = _Recorded(group)
+def record_body(group: LoopGroupNode, *, scenario: bool = False) -> LoopGroupNode:
+    """``group`` with its body ids recorded as ``<group>__<id>``, references included (in the
+    scenario grammar for a scenario)."""
+    recorded = _Recorded(group, scenario=scenario)
     update: dict[str, object] = {
         "nodes": tuple(
             map_node(node, recorded).model_copy(update={"id": recorded.prefix + node.id})

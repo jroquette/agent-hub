@@ -444,7 +444,8 @@ def _recorded(document: WorkflowDocument, layers: tuple[tuple[str, ...], ...]) -
     groups = [node for node in document.nodes if isinstance(node, LoopGroupNode)]
     plan = WorkflowPlan(document, layers)
     if groups:
-        recorded = {group.id: record_body(group) for group in groups}
+        scenario = document.kind == "scenario"
+        recorded = {group.id: record_body(group, scenario=scenario) for group in groups}
         nodes = tuple(recorded.get(node.id, node) for node in document.nodes)
         bodies = {
             group_id: _split(_kahn_layers(group.nodes)[0], group.nodes)
