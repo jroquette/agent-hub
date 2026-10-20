@@ -65,13 +65,13 @@ gate-needing steps that do not depend on each other are a plan error naming both
   differing sets are a plan problem) may name `env_file`: a dotenv file relative to the workspace holding the hub and
   its repos (`demo-api/.env.staging`), ≤ 200 characters, no `..`, `~`, leading `/` or secret shape, in `hub.json` or
   `hub.local.json` (own environments), set by `hub env add|set --env-file`; AGENTS.md and the brief never show it.
-- One loader, shared by `hub action run` and the engine's action executor, reads it when an action starts: inside the
-  workspace by real path, a regular file, ≤ 64 KiB and 200 variables, `NAME=value` lines (`#` comments, optional
-  `export `, quotes, no interpolation). It injects **every** variable, plus `AWS_PROFILE` from `aws_profile` and the
-  `credentials.env` names from the developer's environment, into that action's process only. A file that is missing,
-  unreadable, too large, not regular, outside the workspace or not dotenv fails the action before its process starts:
-  `environment <env>: env file <path> is <reason>`, a broken line named by number, never a value. Plan mode never
-  reads it. Every injected value (≥ 4 characters) is redacted from the action's output as `<credential NAME>`.
+- One loader, shared by `hub action run` and the engine's action executor, reads it when an action starts: in the hub
+  or a declared repo by real path, reached through no link, a regular file, ≤ 64 KiB and 200 variables, `NAME=value`
+  lines (`#` comments, optional `export `, quotes, no interpolation). It injects **every** variable, `AWS_PROFILE` from
+  `aws_profile` and the `credentials.env` names from the developer's environment into that action's process only. A
+  file missing, unreadable, too large, not regular, outside the hub and its repos, behind a link or not dotenv fails
+  the action before its process starts: `environment <env>: env file <path> is <reason>`, a broken line by number,
+  never a value. Plan mode never reads it. Injected values (≥ 4 characters) become `<credential NAME>` in its output.
 - Declared `credentials.env` names and an `AWS_PROFILE` naming a declared profile are removed from every agent session
   (hub web's driven sessions included), shell, script and `until_bash` environment.
 - The guard denies, in every session, a file tool on a declared env file (by real path: a symlink or `..` is caught),
