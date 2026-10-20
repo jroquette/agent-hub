@@ -281,3 +281,16 @@ def test_same_flow_when_read_order_shuffled_property(
     )
 
     assert ticket_flow(row, evidence) == ticket_flow(row, shuffled)
+
+
+# AGH-326 review R5: the verdict cache is no part of the evidence's value.
+def test_compares_equal_when_only_the_verdict_cache_differs() -> None:
+    evals = (_eval(),)
+    folded = ticket_evidence(rounds=frozenset(), reviews=(), evals=evals, unread=None)
+    fresh = ticket_evidence(rounds=frozenset(), reviews=(), evals=evals, unread=None)
+
+    flow = ticket_flow(_row(), folded)
+
+    assert flow is not None
+    assert _step(flow, "eval") == ("done", "SHIP")
+    assert folded == fresh

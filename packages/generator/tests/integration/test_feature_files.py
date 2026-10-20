@@ -567,7 +567,8 @@ def test_lists_round_tickets_when_ticket_folders_hold_rounds(
     os.close(os.open(odd + b"/spec-r1.json", os.O_CREAT | os.O_WRONLY))
     reads = Reads(monkeypatch)
 
-    [read] = read_feature_folders(tmp_path)
+    read = read_feature_folder(tmp_path, "demo-feature")
+    assert read is not None
 
     assert read.review_round_tickets == ("AGH-1",)
     assert "spec-r1.json" not in reads.opened
@@ -583,7 +584,8 @@ def test_stops_at_first_round_when_ticket_folder_holds_several(
         (folder / "reviews" / "AGH-1" / name).write_bytes(b"{}")
     scans = Scans(monkeypatch)
 
-    [read] = read_feature_folders(tmp_path)
+    read = read_feature_folder(tmp_path, "demo-feature")
+    assert read is not None
 
     assert read.review_round_tickets == ("AGH-1",)
     assert scans.entries["AGH-1"] == 1
@@ -601,7 +603,8 @@ def test_stops_reading_entries_when_ticket_folders_over_entry_cap(
     monkeypatch.setattr("agent_hub.generator.feature_files.MAX_ROUND_ENTRIES", 4)
     scans = Scans(monkeypatch)
 
-    [read] = read_feature_folders(tmp_path)
+    read = read_feature_folder(tmp_path, "demo-feature")
+    assert read is not None
 
     assert read.review_round_tickets == ()
     assert (scans.entries.get("AGH-1"), scans.entries.get("AGH-2")) == (3, 1)
@@ -618,7 +621,25 @@ def test_opens_first_ticket_folders_only_when_tickets_over_cap(
     monkeypatch.setattr("agent_hub.generator.feature_files.MAX_ROUND_TICKETS", 2)
     reads = Reads(monkeypatch)
 
-    [read] = read_feature_folders(tmp_path)
+    read = read_feature_folder(tmp_path, "demo-feature")
+    assert read is not None
 
     assert read.review_round_tickets == ("AGH-1", "AGH-2")
     assert [name for name in reads.opened if name.startswith("AGH-")] == ["AGH-1", "AGH-2"]
+
+
+# AGH-326 review R1: the Features list never opens a ticket folder of reviews/; only one
+# feature's read (the tickets view) looks for its round tickets.
+def test_opens_no_ticket_folder_when_feature_folders_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    features = features_of(tmp_path)
+    for slug in ("alpha", "beta"):
+        (a_feature(features, slug, {}) / "reviews" / "AGH-1").mkdir(parents=True)
+        (features / slug / "reviews" / "AGH-1" / "spec-r1.json").write_bytes(b"{}")
+    scans = Scans(monkeypatch)
+
+    alpha, beta = read_feature_folders(tmp_path)
+
+    assert (alpha.review_round_tickets, beta.review_round_tickets) == ((), ())
+    assert "AGH-1" not in scans.entries
