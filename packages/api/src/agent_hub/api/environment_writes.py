@@ -1,12 +1,21 @@
 """``POST /projects/{project}/config/environments``: the Hub config screen's environment edits.
 
-The screen does what ``hub env`` does (docs/design/environments.md § ``hub env``): add, change or
-remove an environment, add or remove a service's endpoint, in the team's ``hub.json`` or in
-this developer's ``hub.local.json``. Core's ``environment_edits`` makes the change and the
-result is checked as a read checks it (each file, then the rules across both) before anything
-is written, so the screen cannot save a file every command would refuse. A file changed since it
-was read is refused, never overwritten. Neither file is committed (ADR 0040): a ``hub.json``
-change waits for the owner's hub pull request and ``./hub sync``.
+The screen does what ``hub env`` does (docs/design/environments.md § ``hub env``): add, change,
+rename or remove an environment, add, change, rename or remove a service and its endpoints, in
+the team's ``hub.json`` or in this developer's ``hub.local.json``. Core's ``environment_edits``
+makes the change and the result is checked as a read checks it (each file, then the rules across
+both) before anything is written, so the screen cannot save a file every command would refuse. A
+file changed since it was read is refused, never overwritten. Neither file is committed (ADR
+0040): a ``hub.json`` change waits for the owner's hub pull request and ``./hub sync``.
+
+A ``batch`` makes its edits in order on both documents in memory, each in its own scope's file,
+then checks the results once and writes both files or neither; a refused edit is named by its
+place (``op 2: ...``). A single edit is a batch of one.
+
+A team rename (an environment, or a service) also renames the old name in this developer's
+``hub.local.json`` in the same write when it holds it (a tightening, or a service's endpoints),
+so the local file keeps meaning what it did. Other developers' local files are not touched:
+their tightening or endpoints under the old name stop applying until they rename them too.
 
 The CLI's writer (``agent_hub.cli.env_files``) is not importable from here (ADR 0017: ``cli``
 is a composition root of its own), so the write mirrors it and ``local_settings``: the same
@@ -29,9 +38,14 @@ from agent_hub.core.hub_config.environment_edits import (
     EditRefusal,
     add_endpoint,
     add_environment,
+    environment_names,
     remove_endpoint,
     remove_environment,
+    rename_environment,
+    repo_dirs,
+    service_names,
     set_environment,
+    set_service,
     shown_name,
 )
 from agent_hub.core.hub_config.local_config import (
@@ -51,6 +65,7 @@ INVALID_TITLE: Final = "This change was not saved"
 CHANGED_MESSAGE: Final = "{file} changed since the page read it; reload and try again"
 _MAX_TEXT = 200
 _MAX_NAMES = 10
+_MAX_BATCH = 100
 
 type Scope = Literal["team", "local"]
 type Access = Literal["read", "write", "ask"]
@@ -87,6 +102,17 @@ class SetEnvironment(_Edit):
     production: bool | None = None
     description: Text | None = None
     env_file: Text | None = None
+    aws_profile: Text | None = None
+    # Replaces ``credentials.env``; an empty list removes it.
+    credential_env: tuple[Name, ...] | None = Field(default=None, max_length=_MAX_NAMES)
+
+
+class RenameEnvironment(_Edit):
+    """A new name for an environment; its endpoints in the same file follow it."""
+
+    op: Literal["rename_environment"]
+    name: Name
+    new_name: Name
 
 
 class RemoveEnvironment(_Edit):
@@ -120,6 +146,17 @@ class RemoveEndpoint(_Edit):
     environment: Name | None = None
 
 
+class SetService(_Edit):
+    """A change to a service: a field left out stays; an empty text removes the key."""
+
+    op: Literal["set_service"]
+    repo: Name
+    service: Name
+    kind: Text | None = None
+    description: Text | None = None
+    new_name: Name | None = None
+
+
 class ServiceAddress(BaseModel):
     """Where a service is reached in one environment: a URL (holds ``://``) or a resource name."""
 
@@ -143,11 +180,42 @@ class AddService(BaseModel):
     repo: Name
     service: Name
     kind: Text | None = None
+    description: Text | None = None
     addresses: tuple[ServiceAddress, ...] = Field(min_length=1, max_length=50)
 
 
+type SingleEdit = Annotated[
+    AddEnvironment
+    | SetEnvironment
+    | RenameEnvironment
+    | RemoveEnvironment
+    | AddEndpoint
+    | RemoveEndpoint
+    | AddService
+    | SetService,
+    Field(discriminator="op"),
+]
+
+
+class EditBatch(BaseModel):
+    """Edits made in order and written together: both files or neither."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    op: Literal["batch"]
+    ops: tuple[SingleEdit, ...] = Field(min_length=1, max_length=_MAX_BATCH)
+
+
 type EnvironmentEdit = Annotated[
-    AddEnvironment | SetEnvironment | RemoveEnvironment | AddEndpoint | RemoveEndpoint | AddService,
+    AddEnvironment
+    | SetEnvironment
+    | RenameEnvironment
+    | RemoveEnvironment
+    | AddEndpoint
+    | RemoveEndpoint
+    | AddService
+    | SetService
+    | EditBatch,
     Field(discriminator="op"),
 ]
 
@@ -171,20 +239,45 @@ class _Files:
         _check_across(self.config, self.local)
 
 
+class _Documents:
+    """Both documents as the edits so far left them, and whether each was changed."""
+
+    def __init__(self, files: _Files) -> None:
+        self.hub: Document = files.hub_document
+        self.local: Document = files.local_document
+        self.hub_changed = False
+        self.local_changed = False
+
+    def get(self, *, is_local: bool) -> Document:
+        return self.local if is_local else self.hub
+
+    def other(self, *, is_local: bool) -> Document:
+        return self.hub if is_local else self.local
+
+    def put(self, document: Document, *, is_local: bool) -> None:
+        if is_local:
+            self.local, self.local_changed = document, True
+        else:
+            self.hub, self.hub_changed = document, True
+
+
 def write_environment_edit(hub_path: str, edit: EnvironmentEdit) -> None:
     """Make ``edit`` in the file its scope names (an ``AddService``: in the file of each
-    address's environment); ``HubInvalidError`` (422) when refused."""
+    address's environment; an ``EditBatch``: each of its edits in turn, written together);
+    ``HubInvalidError`` (422) when refused."""
     files = _Files(hub_path)
-    if isinstance(edit, AddService):
-        hub_document, local_document = _add_service(edit, files)
-    else:
-        is_local = edit.scope == "local"
-        document = files.local_document if is_local else files.hub_document
-        edited = _apply(edit, document, files, is_local=is_local)
-        if isinstance(edited, EditRefusal):
-            raise _invalid("$", edited.message)
-        hub_document, local_document = (None, edited) if is_local else (edited, None)
-    _write(files, hub_document=hub_document, local_document=local_document)
+    documents = _Documents(files)
+    ops = edit.ops if isinstance(edit, EditBatch) else (edit,)
+    for index, op in enumerate(ops):
+        refusal = _apply(op, documents)
+        if refusal is not None:
+            lead = f"op {index + 1}: " if isinstance(edit, EditBatch) else ""
+            raise _invalid("$", f"{lead}{refusal.message}")
+    _write(
+        files,
+        hub_document=documents.hub if documents.hub_changed else None,
+        local_document=documents.local if documents.local_changed else None,
+    )
 
 
 def _write(
@@ -220,31 +313,68 @@ def _write(
             _replace(path, content)
 
 
-def _add_service(edit: AddService, files: _Files) -> tuple[Document | None, Document | None]:
-    """Both documents with the service's addresses, each in its environment's file; ``None``
-    for a file no address goes to."""
+def _apply(edit: SingleEdit, documents: _Documents) -> EditRefusal | None:
+    """Make ``edit`` on ``documents``; the refusal when it is refused, else ``None``."""
+    if isinstance(edit, AddService):
+        return _add_service(edit, documents)
+    is_local = edit.scope == "local"
+    if isinstance(edit, RenameEnvironment):
+        return _rename_environment(edit, documents, is_local=is_local)
+    if isinstance(edit, SetService):
+        return _set_service(edit, documents, is_local=is_local)
+    edited = _edited(edit, documents, is_local=is_local)
+    if isinstance(edited, EditRefusal):
+        return edited
+    documents.put(edited, is_local=is_local)
+    return None
+
+
+def _edited(
+    edit: AddEnvironment | SetEnvironment | RemoveEnvironment | AddEndpoint | RemoveEndpoint,
+    documents: _Documents,
+    *,
+    is_local: bool,
+) -> Document | EditRefusal:
+    document = documents.get(is_local=is_local)
+    file = LOCAL_FILE if is_local else HUB_FILE
+    match edit:
+        case AddEnvironment():
+            return _add_environment(edit, documents, file=file, is_local=is_local)
+        case SetEnvironment():
+            return _set_environment(edit, documents, file=file, is_local=is_local)
+        case RemoveEnvironment():
+            return _remove_environment(edit, documents, file=file, is_local=is_local)
+        case AddEndpoint():
+            return _add_endpoint(edit, documents, file=file, is_local=is_local)
+        case RemoveEndpoint():
+            return remove_endpoint(
+                document,
+                repo=edit.repo,
+                service=edit.service,
+                environment=edit.environment,
+                file=file,
+            )
+
+
+def _add_service(edit: AddService, documents: _Documents) -> EditRefusal | None:
+    """The service's addresses, each in its environment's file."""
     service = edit.service.strip()
     kind = (edit.kind or "").strip() or None
-    team = [item for item in edit.addresses if item.environment in files.config.environments]
+    description = (edit.description or "").strip() or None
+    team_environments = environment_names(documents.hub)
+    team = [item for item in edit.addresses if item.environment in team_environments]
     own = [item for item in edit.addresses if item not in team]
+    local_environments = environment_names(documents.local)
     for item in own:
-        if item.environment not in files.local.environments:
-            raise _invalid("$", f"no environment {shown_name(item.environment)}")
-    committed = any(
-        repo.dir == edit.repo and service in repo.services for repo in files.config.repos
-    )
-    # The kind goes with the service's first declaration: hub.json's when it gets an address.
-    team_kind = None if committed else kind
-    own_kind = None if committed or team else kind
-    documents: list[Document | None] = []
-    for items, document, is_local, item_kind in (
-        (team, files.hub_document, False, team_kind),
-        (own, files.local_document, True, own_kind),
-    ):
-        if not items:
-            documents.append(None)
-            continue
-        edited: Document = document
+        if item.environment not in local_environments:
+            return EditRefusal(f"no environment {shown_name(item.environment)}")
+    committed = service in service_names(documents.hub, edit.repo)
+    # The kind and description go with the service's first declaration: hub.json's when it gets
+    # an address.
+    team_first = not committed
+    own_first = not committed and not team
+    for items, is_local, first in ((team, False, team_first), (own, True, own_first)):
+        edited = documents.get(is_local=is_local)
         for item in items:
             result = add_endpoint(
                 edited,
@@ -252,16 +382,18 @@ def _add_service(edit: AddService, files: _Files) -> tuple[Document | None, Docu
                 service=service,
                 environment=item.environment,
                 endpoint=_endpoint(item),
-                kind=item_kind,
+                kind=kind if first else None,
+                description=description if first else None,
                 file=LOCAL_FILE if is_local else HUB_FILE,
                 creates_repo=is_local,
-                known_repos=[repo.dir for repo in files.config.repos],
+                known_repos=repo_dirs(documents.hub),
             )
             if isinstance(result, EditRefusal):
-                raise _invalid("$", result.message)
+                return result
             edited = result
-        documents.append(edited)
-    return documents[0], documents[1]
+        if items:
+            documents.put(edited, is_local=is_local)
+    return None
 
 
 def _endpoint(item: ServiceAddress) -> Document:
@@ -272,34 +404,8 @@ def _endpoint(item: ServiceAddress) -> Document:
     return endpoint
 
 
-def _apply(
-    edit: EnvironmentEdit, document: Document, files: _Files, *, is_local: bool
-) -> Document | EditRefusal:
-    file = LOCAL_FILE if is_local else HUB_FILE
-    match edit:
-        case AddEnvironment():
-            return _add_environment(edit, document, files, file=file, is_local=is_local)
-        case SetEnvironment():
-            return _set_environment(edit, document, files, file=file, is_local=is_local)
-        case RemoveEnvironment():
-            return _remove_environment(edit, document, files, file=file, is_local=is_local)
-        case AddEndpoint():
-            return _add_endpoint(edit, document, files, file=file, is_local=is_local)
-        case RemoveEndpoint():
-            return remove_endpoint(
-                document,
-                repo=edit.repo,
-                service=edit.service,
-                environment=edit.environment,
-                file=file,
-            )
-        case AddService():
-            # Written to both files by ``_add_service``, never through one scope.
-            return EditRefusal("a new service is added through add_service")
-
-
 def _add_environment(
-    edit: AddEnvironment, document: Document, files: _Files, *, file: str, is_local: bool
+    edit: AddEnvironment, documents: _Documents, *, file: str, is_local: bool
 ) -> Document | EditRefusal:
     entry: Document = {"access": edit.access}
     if edit.production:
@@ -309,9 +415,9 @@ def _add_environment(
     credentials = _credentials(edit)
     if credentials:
         entry["credentials"] = credentials
-    other = files.config.environments if is_local else files.local.environments
+    other = environment_names(documents.other(is_local=is_local))
     return add_environment(
-        document,
+        documents.get(is_local=is_local),
         edit.name.strip(),
         entry,
         declared=dict.fromkeys(other, HUB_FILE if is_local else LOCAL_FILE),
@@ -333,7 +439,7 @@ def _credentials(edit: AddEnvironment) -> Document:
 
 
 def _set_environment(
-    edit: SetEnvironment, document: Document, files: _Files, *, file: str, is_local: bool
+    edit: SetEnvironment, documents: _Documents, *, file: str, is_local: bool
 ) -> Document | EditRefusal:
     changes: dict[str, JsonValue | None] = {}
     if edit.access is not None:
@@ -345,32 +451,120 @@ def _set_environment(
     credentials: dict[str, JsonValue | None] = {}
     if edit.env_file is not None:
         credentials["env_file"] = edit.env_file.strip() or None
+    if edit.aws_profile is not None:
+        credentials["aws_profile"] = edit.aws_profile.strip() or None
+    if edit.credential_env is not None:
+        names = list(dict.fromkeys(name.strip() for name in edit.credential_env if name.strip()))
+        credentials["env"] = cast("JsonValue", names) or None
+    tightens = is_local and edit.name in environment_names(documents.hub)
+    if tightens and (set(changes) - {"access"} or credentials):
+        return EditRefusal(
+            f"{HUB_FILE} declares {shown_name(edit.name)}; {LOCAL_FILE} may only tighten its access"
+        )
     return set_environment(
-        document,
+        documents.get(is_local=is_local),
         edit.name,
         changes,
         file=file,
-        may_create=is_local and edit.name in files.config.environments,
+        may_create=tightens,
         credentials=credentials,
     )
 
 
+def _rename_environment(
+    edit: RenameEnvironment, documents: _Documents, *, is_local: bool
+) -> EditRefusal | None:
+    """Rename in the edit's file; a team rename also renames this developer's tightening (and
+    any endpoint under the old name) in ``hub.local.json``."""
+    new_name = edit.new_name.strip()
+    team_names = environment_names(documents.hub)
+    if is_local and edit.name in team_names:
+        return EditRefusal(f"{HUB_FILE} declares {edit.name}; rename it there")
+    other = environment_names(documents.other(is_local=is_local))
+    if not is_local:
+        # This developer's tightening of the old name is renamed with it, so it is no other name.
+        other = [name for name in other if name != edit.name]
+    edited = rename_environment(
+        documents.get(is_local=is_local),
+        edit.name,
+        new_name,
+        declared=other,
+        file=LOCAL_FILE if is_local else HUB_FILE,
+    )
+    if isinstance(edited, EditRefusal):
+        return edited
+    if not is_local and edit.name in environment_names(documents.local):
+        local = rename_environment(
+            documents.local, edit.name, new_name, declared=(), file=LOCAL_FILE
+        )
+        if isinstance(local, EditRefusal):
+            return local
+        documents.put(local, is_local=True)
+    documents.put(edited, is_local=is_local)
+    return None
+
+
 def _remove_environment(
-    edit: RemoveEnvironment, document: Document, files: _Files, *, file: str, is_local: bool
+    edit: RemoveEnvironment, documents: _Documents, *, file: str, is_local: bool
 ) -> Document | EditRefusal:
-    edited = remove_environment(document, edit.name, file=file)
+    edited = remove_environment(documents.get(is_local=is_local), edit.name, file=file)
     if (
         not isinstance(edited, EditRefusal)
         and not is_local
-        and edit.name in files.local.environments
+        and edit.name in environment_names(documents.local)
     ):
         # Removed from hub.json, the local tightening would become an environment of its own.
         return EditRefusal(f"{LOCAL_FILE} still holds {edit.name}; remove your own setting first")
     return edited
 
 
+def _set_service(edit: SetService, documents: _Documents, *, is_local: bool) -> EditRefusal | None:
+    """Change the service in the edit's file; a team rename also renames this developer's
+    endpoints for it in ``hub.local.json``."""
+    service = edit.service
+    new_name = None if edit.new_name is None else edit.new_name.strip()
+    changes: dict[str, JsonValue | None] = {}
+    if edit.kind is not None:
+        changes["kind"] = edit.kind.strip() or None
+    if edit.description is not None:
+        changes["description"] = edit.description.strip() or None
+    committed = service in service_names(documents.hub, edit.repo)
+    if is_local and committed and (changes or new_name is not None):
+        return EditRefusal(
+            f"{HUB_FILE} declares {shown_name(service)}; {LOCAL_FILE} may only add its endpoints"
+        )
+    other = service_names(documents.other(is_local=is_local), edit.repo)
+    renames_local = not is_local and new_name is not None and service in other
+    edited = set_service(
+        documents.get(is_local=is_local),
+        repo=edit.repo,
+        service=service,
+        changes=changes,
+        new_name=new_name,
+        taken=[name for name in other if name != service],
+        file=LOCAL_FILE if is_local else HUB_FILE,
+    )
+    if isinstance(edited, EditRefusal):
+        return edited
+    if renames_local:
+        local = set_service(
+            documents.local,
+            repo=edit.repo,
+            service=service,
+            changes={},
+            new_name=new_name,
+            taken=(),
+            file=LOCAL_FILE,
+        )
+        if isinstance(local, EditRefusal):
+            return local
+        documents.put(local, is_local=True)
+    documents.put(edited, is_local=is_local)
+    return None
+
+
 def _add_endpoint(
-    edit: AddEndpoint, document: Document, files: _Files, *, file: str, is_local: bool
+    edit: AddEndpoint, documents: _Documents, *, file: str, is_local: bool
 ) -> Document | EditRefusal:
     url = (edit.url or "").strip()
     resource = (edit.resource or "").strip()
@@ -379,6 +573,7 @@ def _add_endpoint(
     endpoint: Document = {"url": url} if url else {"resource": resource}
     if edit.note and edit.note.strip():
         endpoint["note"] = edit.note.strip()
+    document = documents.get(is_local=is_local)
     if edit.replace:
         removed = remove_endpoint(
             document,
@@ -399,7 +594,7 @@ def _add_endpoint(
         kind=(edit.kind or "").strip() or None,
         file=file,
         creates_repo=is_local,
-        known_repos=[repo.dir for repo in files.config.repos],
+        known_repos=repo_dirs(documents.hub),
     )
 
 

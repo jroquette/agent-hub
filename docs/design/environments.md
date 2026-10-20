@@ -52,6 +52,13 @@ add to the team's. Every other `guard` key stays set only in `hub.json`. The eff
 entries first. An environment's **source** is the file its effective `access` comes from (`hub.local.json` when it
 tightens); the brief, `hub env list`, doctor and setup show it.
 
+**Renames** (hub web): renaming a `hub.json` environment also moves every endpoint `hub.json` keys by it, and renaming
+a `hub.json` service keeps its place in its repo. When this developer's `hub.local.json` holds the old name (a
+tightening, or that service's endpoints), the same write renames it there too, both files or neither; other
+developers' `hub.local.json` are not touched, and their entries under the old name stop applying until they rename
+them (the screen warns). A local rename of a `hub.json` name is refused, and `hub.local.json` may only add endpoints to
+a committed service, never change its `kind`, `description` or name.
+
 ### What agents see
 
 - **`AGENTS.md`** renders `hub.json` only: with `environments`, an `## Environments and services` section of fixed

@@ -246,3 +246,231 @@ def test_writes_neither_file_when_one_address_is_invalid(tmp_path: Path) -> None
         )
 
     assert ((hub / "hub.json").read_bytes(), (hub / "hub.local.json").read_bytes()) == before
+
+
+def _team_and_local(tmp_path: Path) -> Path:
+    document = a_hub_document()
+    document["environments"] = {"staging": {"access": "write"}, "live": {"access": "read"}}
+    document["repos"][0]["services"] = {
+        "api": {"kind": "api", "endpoints": {"staging": {"url": "https://staging.example.com"}}}
+    }
+    (tmp_path / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+    local = {
+        "environments": {"staging": {"access": "read"}, "mine": {"access": "write"}},
+        "repos": [
+            {"dir": "demo-api", "services": {"api": {"endpoints": {"mine": {"resource": "t"}}}}}
+        ],
+    }
+    (tmp_path / "hub.local.json").write_text(json.dumps(local, indent=2) + "\n")
+    return tmp_path
+
+
+def test_renames_local_tightening_too_when_team_environment_renamed(tmp_path: Path) -> None:
+    hub = _team_and_local(tmp_path)
+
+    _edit(hub, op="rename_environment", scope="team", name="staging", new_name="qa")
+
+    team = _read(hub / "hub.json")
+    assert list(team["environments"]) == ["qa", "live"]
+    assert list(team["repos"][0]["services"]["api"]["endpoints"]) == ["qa"]
+    assert list(_read(hub / "hub.local.json")["environments"]) == ["qa", "mine"]
+
+
+def test_renames_own_environment_and_endpoints_when_scope_is_local(tmp_path: Path) -> None:
+    hub = _team_and_local(tmp_path)
+    before = (hub / "hub.json").read_bytes()
+
+    _edit(hub, op="rename_environment", scope="local", name="mine", new_name="sandbox")
+
+    local = _read(hub / "hub.local.json")
+    assert list(local["environments"]) == ["staging", "sandbox"]
+    assert local["repos"][0]["services"]["api"]["endpoints"] == {"sandbox": {"resource": "t"}}
+    assert (hub / "hub.json").read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("rename", "message"),
+    [
+        (("team", "staging", "Mine"), "environment mine is already declared"),
+        (("local", "mine", "LIVE"), "environment live is already declared"),
+        (("local", "staging", "qa"), "hub.json declares staging; rename it there"),
+        (("team", "qa", "uat"), "no environment qa in hub.json"),
+    ],
+)
+def test_refuses_environment_rename_when_name_taken_or_not_its_file(
+    tmp_path: Path, rename: tuple[str, str, str], message: str
+) -> None:
+    hub = _team_and_local(tmp_path)
+    scope, name, new_name = rename
+
+    with pytest.raises(HubInvalidError) as raised:
+        _edit(hub, op="rename_environment", scope=scope, name=name, new_name=new_name)
+
+    assert raised.value.problems[0].message == message
+
+
+def test_renames_local_endpoints_too_when_team_service_renamed(tmp_path: Path) -> None:
+    hub = _team_and_local(tmp_path)
+
+    _edit(
+        hub,
+        op="set_service",
+        scope="team",
+        repo="demo-api",
+        service="api",
+        new_name="gateway",
+        kind="",
+        description="the public API",
+    )
+
+    assert _read(hub / "hub.json")["repos"][0]["services"] == {
+        "gateway": {
+            "description": "the public API",
+            "endpoints": {"staging": {"url": "https://staging.example.com"}},
+        }
+    }
+    assert list(_read(hub / "hub.local.json")["repos"][0]["services"]) == ["gateway"]
+
+
+def test_refuses_local_service_change_when_team_declares_it(tmp_path: Path) -> None:
+    hub = _team_and_local(tmp_path)
+
+    with pytest.raises(HubInvalidError) as raised:
+        _edit(hub, op="set_service", scope="local", repo="demo-api", service="api", kind="lambda")
+
+    assert raised.value.problems[0].message == (
+        "hub.json declares api; hub.local.json may only add its endpoints"
+    )
+
+
+def test_keeps_description_with_kind_when_service_added(tmp_path: Path) -> None:
+    hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
+
+    _edit(
+        hub,
+        op="add_service",
+        repo="demo-api",
+        service="api",
+        kind="api",
+        description="the public API",
+        addresses=[{"environment": "staging", "address": "https://staging.example.com"}],
+    )
+
+    assert _read(hub / "hub.json")["repos"][0]["services"]["api"] == {
+        "kind": "api",
+        "description": "the public API",
+        "endpoints": {"staging": {"url": "https://staging.example.com"}},
+    }
+
+
+def test_writes_every_op_together_when_batch_is_valid(tmp_path: Path) -> None:
+    hub = _hub(tmp_path)
+
+    _edit(
+        hub,
+        op="batch",
+        ops=[
+            {"op": "add_environment", "scope": "team", "name": "staging", "access": "ask"},
+            {"op": "add_environment", "scope": "local", "name": "mine", "access": "write"},
+            {
+                "op": "add_service",
+                "repo": "demo-api",
+                "service": "api",
+                "addresses": [
+                    {"environment": "staging", "address": "https://staging.example.com"},
+                    {"environment": "mine", "address": "http://localhost:8000"},
+                ],
+            },
+            {"op": "rename_environment", "scope": "team", "name": "staging", "new_name": "qa"},
+        ],
+    )
+
+    assert _read(hub / "hub.json")["repos"][0]["services"] == {
+        "api": {"endpoints": {"qa": {"url": "https://staging.example.com"}}}
+    }
+    assert _read(hub / "hub.local.json")["environments"] == {"mine": {"access": "write"}}
+
+
+def test_writes_neither_file_and_names_op_when_batch_op_refused(tmp_path: Path) -> None:
+    hub = _team_and_local(tmp_path)
+    before = ((hub / "hub.json").read_bytes(), (hub / "hub.local.json").read_bytes())
+
+    with pytest.raises(HubInvalidError) as raised:
+        _edit(
+            hub,
+            op="batch",
+            ops=[
+                {"op": "add_environment", "scope": "team", "name": "uat", "access": "ask"},
+                {"op": "remove_environment", "scope": "team", "name": "qa"},
+            ],
+        )
+
+    assert raised.value.problems[0].message == "op 2: no environment qa in hub.json"
+    assert ((hub / "hub.json").read_bytes(), (hub / "hub.local.json").read_bytes()) == before
+
+
+def test_writes_neither_file_when_batch_result_is_invalid(tmp_path: Path) -> None:
+    hub = _team_and_local(tmp_path)
+    before = ((hub / "hub.json").read_bytes(), (hub / "hub.local.json").read_bytes())
+
+    with pytest.raises(HubInvalidError):
+        _edit(
+            hub,
+            op="batch",
+            ops=[
+                {"op": "rename_environment", "scope": "local", "name": "mine", "new_name": "ok"},
+                {"op": "set_environment", "scope": "local", "name": "staging", "access": "write"},
+            ],
+        )
+    with pytest.raises(HubInvalidError):
+        _edit(
+            hub,
+            op="batch",
+            ops=[
+                {"op": "rename_environment", "scope": "local", "name": "mine", "new_name": "ok"},
+                {"op": "rename_environment", "scope": "team", "name": "live", "new_name": "a b"},
+            ],
+        )
+
+    assert ((hub / "hub.json").read_bytes(), (hub / "hub.local.json").read_bytes()) == before
+
+
+def test_sets_and_removes_credentials_when_environment_changed(tmp_path: Path) -> None:
+    hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
+
+    _edit(
+        hub,
+        op="set_environment",
+        scope="team",
+        name="staging",
+        aws_profile="demo-staging",
+        credential_env=["DEMO_DB_URL", "DEMO_DB_URL"],
+    )
+    set_credentials = _read(hub / "hub.json")["environments"]["staging"]
+    _edit(hub, op="set_environment", scope="team", name="staging", credential_env=[])
+    profile_only = _read(hub / "hub.json")["environments"]["staging"]
+    _edit(hub, op="set_environment", scope="team", name="staging", aws_profile="")
+
+    assert set_credentials == {
+        "access": "ask",
+        "credentials": {"aws_profile": "demo-staging", "env": ["DEMO_DB_URL"]},
+    }
+    assert profile_only == {"access": "ask", "credentials": {"aws_profile": "demo-staging"}}
+    assert _read(hub / "hub.json")["environments"]["staging"] == {"access": "ask"}
+
+
+@pytest.mark.parametrize(
+    "change", [{"aws_profile": "mine"}, {"credential_env": ["MY_URL"]}, {"description": "x"}]
+)
+def test_refuses_local_change_when_not_access_of_team_environment(
+    tmp_path: Path, change: dict[str, Any]
+) -> None:
+    hub = _hub(tmp_path, environments={"staging": {"access": "write"}})
+
+    with pytest.raises(HubInvalidError) as raised:
+        _edit(hub, op="set_environment", scope="local", name="staging", **change)
+
+    assert raised.value.problems[0].message == (
+        "hub.json declares staging; hub.local.json may only tighten its access"
+    )
+    assert not (hub / "hub.local.json").exists()

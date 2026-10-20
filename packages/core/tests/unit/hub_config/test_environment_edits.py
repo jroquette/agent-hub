@@ -7,7 +7,9 @@ from agent_hub.core.hub_config.environment_edits import (
     add_environment,
     remove_endpoint,
     remove_environment,
+    rename_environment,
     set_environment,
+    set_service,
 )
 from agent_hub.core.testing.builders import a_local_environments_document, an_environments_document
 
@@ -276,3 +278,78 @@ def test_refuses_local_repo_when_hub_json_lacks_it() -> None:
     )
 
     assert refused == EditRefusal("no repo <name> in hub.json")
+
+
+def test_renames_environment_and_its_endpoints_in_place_when_name_free() -> None:
+    document = _w()
+    before = copy.deepcopy(document)
+
+    edited = rename_environment(document, "staging", "qa", declared=(), file="hub.json")
+
+    assert isinstance(edited, dict)
+    assert list(edited["environments"]) == ["local", "qa", "live"]
+    assert edited["environments"]["qa"] == before["environments"]["staging"]
+    services = edited["repos"][0]["services"]
+    assert list(services["api"]["endpoints"]) == ["local", "qa", "live"]
+    assert services["orders"]["endpoints"] == {"qa": {"resource": "demo-orders-staging"}}
+    assert document == before
+
+
+def test_renames_environment_when_only_case_changes() -> None:
+    edited = rename_environment(_w(), "live", "Live", declared=("live",), file="hub.json")
+
+    assert isinstance(edited, dict)
+    assert list(edited["environments"]) == ["local", "staging", "Live"]
+
+
+def test_refuses_rename_when_new_name_taken_absent_or_comment() -> None:
+    def rename(name: str, new_name: str, declared: tuple[str, ...] = ()) -> object:
+        return rename_environment(_w(), name, new_name, declared=declared, file="hub.json")
+
+    assert rename("staging", "LIVE") == EditRefusal("environment live is already declared")
+    assert rename("staging", "jane-cloud", ("jane-cloud",)) == EditRefusal(
+        "environment jane-cloud is already declared"
+    )
+    assert rename("qa", "uat") == EditRefusal("no environment qa in hub.json")
+    assert rename("staging", "_qa") == EditRefusal(
+        "_qa: a name starting with _ is a comment key; choose another name"
+    )
+
+
+def test_sets_service_fields_and_renames_it_in_place_when_name_free() -> None:
+    edited = set_service(
+        _w(),
+        repo="demo-api",
+        service="api",
+        changes={"kind": None, "description": "the public API"},
+        new_name="gateway",
+        taken=(),
+        file="hub.json",
+    )
+
+    assert isinstance(edited, dict)
+    services = edited["repos"][0]["services"]
+    assert list(services) == ["gateway", "orders"]
+    assert services["gateway"]["description"] == "the public API"
+    assert "kind" not in services["gateway"]
+    assert list(services["gateway"]["endpoints"]) == ["local", "staging", "live"]
+
+
+def test_refuses_set_service_when_name_taken_or_service_absent() -> None:
+    def change(service: str, new_name: str | None, taken: tuple[str, ...] = ()) -> object:
+        return set_service(
+            _w(),
+            repo="demo-api",
+            service=service,
+            changes={},
+            new_name=new_name,
+            taken=taken,
+            file="hub.json",
+        )
+
+    assert change("api", "orders") == EditRefusal("demo-api already has a service orders")
+    assert change("api", "cache", ("cache",)) == EditRefusal("demo-api already has a service cache")
+    assert change("cache", None) == EditRefusal("no service cache on demo-api in hub.json")
+    assert change("api", "_x") == EditRefusal(
+        "_x: a name starting with _ is a comment key; choose another name"
+    )

@@ -1871,6 +1871,8 @@ export interface components {
     AddService: {
       /** Addresses */
       addresses: components["schemas"]["ServiceAddress"][];
+      /** Description */
+      description?: string | null;
       /** Kind */
       kind?: string | null;
       /**
@@ -2477,6 +2479,19 @@ export interface components {
     /** @enum {string} */
     EdgeSource: "plan" | "linear" | "both";
     /**
+     * EditBatch
+     * @description Edits made in order and written together: both files or neither.
+     */
+    EditBatch: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "batch";
+      /** Ops */
+      ops: components["schemas"]["SingleEdit"][];
+    };
+    /**
      * EffectiveEnvironments
      * @description The union of both files: committed entries first, then the developer's (P-5).
      */
@@ -2546,10 +2561,13 @@ export interface components {
     EnvironmentEdit:
       | components["schemas"]["AddEnvironment"]
       | components["schemas"]["SetEnvironment"]
+      | components["schemas"]["RenameEnvironment"]
       | components["schemas"]["RemoveEnvironment"]
       | components["schemas"]["AddEndpoint"]
       | components["schemas"]["RemoveEndpoint"]
-      | components["schemas"]["AddService"];
+      | components["schemas"]["AddService"]
+      | components["schemas"]["SetService"]
+      | components["schemas"]["EditBatch"];
     /**
      * EvalRecord
      * @description One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.
@@ -4290,6 +4308,22 @@ export interface components {
       scope: components["schemas"]["Scope"];
     };
     /**
+     * RenameEnvironment
+     * @description A new name for an environment; its endpoints in the same file follow it.
+     */
+    RenameEnvironment: {
+      /** Name */
+      name: string;
+      /** New Name */
+      new_name: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "rename_environment";
+      scope: components["schemas"]["Scope"];
+    };
+    /**
      * RepoChanges
      * @description One repository's changes against its base. ``root`` is the folder git ran in, ``branch``
      *     its checked-out branch (null when detached), ``base`` the ref the branch is compared with
@@ -4997,6 +5031,10 @@ export interface components {
      */
     SetEnvironment: {
       access?: components["schemas"]["Access"] | null;
+      /** Aws Profile */
+      aws_profile?: string | null;
+      /** Credential Env */
+      credential_env?: string[] | null;
       /** Description */
       description?: string | null;
       /** Env File */
@@ -5011,6 +5049,28 @@ export interface components {
       /** Production */
       production?: boolean | null;
       scope: components["schemas"]["Scope"];
+    };
+    /**
+     * SetService
+     * @description A change to a service: a field left out stays; an empty text removes the key.
+     */
+    SetService: {
+      /** Description */
+      description?: string | null;
+      /** Kind */
+      kind?: string | null;
+      /** New Name */
+      new_name?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "set_service";
+      /** Repo */
+      repo: string;
+      scope: components["schemas"]["Scope"];
+      /** Service */
+      service: string;
     };
     /**
      * SettingsView
@@ -5046,6 +5106,15 @@ export interface components {
      * @enum {string}
      */
     Severity: "error" | "warning" | "info";
+    SingleEdit:
+      | components["schemas"]["AddEnvironment"]
+      | components["schemas"]["SetEnvironment"]
+      | components["schemas"]["RenameEnvironment"]
+      | components["schemas"]["RemoveEnvironment"]
+      | components["schemas"]["AddEndpoint"]
+      | components["schemas"]["RemoveEndpoint"]
+      | components["schemas"]["AddService"]
+      | components["schemas"]["SetService"];
     /**
      * SkillCatalog
      * @description A project's skills, agents and hooks in stable order (kind, name, source).

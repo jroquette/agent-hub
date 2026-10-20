@@ -554,6 +554,18 @@
             "title": "Addresses",
             "type": "array"
           },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
           "kind": {
             "anyOf": [
               {
@@ -2042,6 +2054,32 @@
         ],
         "type": "string"
       },
+      "EditBatch": {
+        "additionalProperties": false,
+        "description": "Edits made in order and written together: both files or neither.",
+        "properties": {
+          "op": {
+            "const": "batch",
+            "title": "Op",
+            "type": "string"
+          },
+          "ops": {
+            "items": {
+              "$ref": "#/components/schemas/SingleEdit"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Ops",
+            "type": "array"
+          }
+        },
+        "required": [
+          "op",
+          "ops"
+        ],
+        "title": "EditBatch",
+        "type": "object"
+      },
       "EffectiveEnvironments": {
         "description": "The union of both files: committed entries first, then the developer's (P-5).",
         "properties": {
@@ -2221,9 +2259,12 @@
             "add_endpoint": "#/components/schemas/AddEndpoint",
             "add_environment": "#/components/schemas/AddEnvironment",
             "add_service": "#/components/schemas/AddService",
+            "batch": "#/components/schemas/EditBatch",
             "remove_endpoint": "#/components/schemas/RemoveEndpoint",
             "remove_environment": "#/components/schemas/RemoveEnvironment",
-            "set_environment": "#/components/schemas/SetEnvironment"
+            "rename_environment": "#/components/schemas/RenameEnvironment",
+            "set_environment": "#/components/schemas/SetEnvironment",
+            "set_service": "#/components/schemas/SetService"
           },
           "propertyName": "op"
         },
@@ -2233,6 +2274,9 @@
           },
           {
             "$ref": "#/components/schemas/SetEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/RenameEnvironment"
           },
           {
             "$ref": "#/components/schemas/RemoveEnvironment"
@@ -2245,6 +2289,12 @@
           },
           {
             "$ref": "#/components/schemas/AddService"
+          },
+          {
+            "$ref": "#/components/schemas/SetService"
+          },
+          {
+            "$ref": "#/components/schemas/EditBatch"
           }
         ]
       },
@@ -7303,6 +7353,40 @@
         "title": "RemoveEnvironment",
         "type": "object"
       },
+      "RenameEnvironment": {
+        "additionalProperties": false,
+        "description": "A new name for an environment; its endpoints in the same file follow it.",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "new_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "New Name",
+            "type": "string"
+          },
+          "op": {
+            "const": "rename_environment",
+            "title": "Op",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "name",
+          "new_name"
+        ],
+        "title": "RenameEnvironment",
+        "type": "object"
+      },
       "RepoChanges": {
         "additionalProperties": false,
         "description": "One repository's changes against its base. ``root`` is the folder git ran in, ``branch``\nits checked-out branch (null when detached), ``base`` the ref the branch is compared with\n(``origin/main``…, null when none was found: then nothing is compared and ``files`` is\nempty), ``base_sha`` the commit the branch forked from, ``head_sha`` the branch's last\ncommit. ``truncated`` says commits or files were left out past the bounds.\n\n``source`` is ``worktree`` when git read the checkout as it is now (uncommitted changes\nincluded), ``recorded`` when that folder is gone and the review reads the commits it\nrecorded from the repo's own checkout (``root`` is still the old folder, so the paths match\nthe chat's). ``pull_request`` is the branch's pull request, when one is found.",
@@ -9288,6 +9372,35 @@
               }
             ]
           },
+          "aws_profile": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aws Profile"
+          },
+          "credential_env": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Env"
+          },
           "description": {
             "anyOf": [
               {
@@ -9344,6 +9457,77 @@
           "name"
         ],
         "title": "SetEnvironment",
+        "type": "object"
+      },
+      "SetService": {
+        "additionalProperties": false,
+        "description": "A change to a service: a field left out stays; an empty text removes the key.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "new_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Name"
+          },
+          "op": {
+            "const": "set_service",
+            "title": "Op",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "service": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "repo",
+          "service"
+        ],
+        "title": "SetService",
         "type": "object"
       },
       "SettingsView": {
@@ -9416,6 +9600,47 @@
         ],
         "title": "Severity",
         "type": "string"
+      },
+      "SingleEdit": {
+        "discriminator": {
+          "mapping": {
+            "add_endpoint": "#/components/schemas/AddEndpoint",
+            "add_environment": "#/components/schemas/AddEnvironment",
+            "add_service": "#/components/schemas/AddService",
+            "remove_endpoint": "#/components/schemas/RemoveEndpoint",
+            "remove_environment": "#/components/schemas/RemoveEnvironment",
+            "rename_environment": "#/components/schemas/RenameEnvironment",
+            "set_environment": "#/components/schemas/SetEnvironment",
+            "set_service": "#/components/schemas/SetService"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AddEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/SetEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/RenameEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/RemoveEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/AddEndpoint"
+          },
+          {
+            "$ref": "#/components/schemas/RemoveEndpoint"
+          },
+          {
+            "$ref": "#/components/schemas/AddService"
+          },
+          {
+            "$ref": "#/components/schemas/SetService"
+          }
+        ]
       },
       "SkillCatalog": {
         "additionalProperties": false,
