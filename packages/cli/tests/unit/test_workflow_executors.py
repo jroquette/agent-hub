@@ -450,6 +450,25 @@ def test_gives_effort_only_settings_when_agent_runs_in_hub(tmp_path: Path, pack:
     assert not (tmp_path / "hub" / ".agent-runs").exists()
 
 
+@pytest.mark.parametrize("cwd", [None, "."], ids=["none", "dot"])
+def test_gives_effort_only_settings_when_repo_dir_links_to_hub(
+    tmp_path: Path, pack: Path, cwd: str | None
+) -> None:
+    # A repo that resolves to the hub: the hub's own settings load, so no hooks file (each
+    # hook would run twice).
+    hub_hooks(tmp_path / "hub")
+    (tmp_path / "demo-api").symlink_to(tmp_path / "hub")
+    child = FakeChild([claude_result("ok")])
+    spec = {**AGENT, "model": "medium"}
+
+    executors(tmp_path, pack, child).run(call(spec, prompt="Go.", cwd=cwd))
+
+    argv = child.calls[0]["argv"]
+    assert argv.count("--settings") == 1
+    assert json.loads(argv[argv.index("--settings") + 1]) == {"effortLevel": "medium"}
+    assert not (tmp_path / "hub" / ".agent-runs").exists()
+
+
 def test_gives_hub_hooks_settings_file_when_agent_runs_in_repo(tmp_path: Path, pack: Path) -> None:
     worktree = tmp_path / "demo-api" / ".claude" / "worktrees" / "dem-1"
     worktree.mkdir(parents=True)
