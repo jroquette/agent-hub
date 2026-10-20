@@ -73,6 +73,30 @@ describe("reasonOf", () => {
     expect(reasonOf(shipped, wait)).toMatchObject({ group: "shipped", needs: null });
   });
 
+  it("does not count owner steps with no AC listed as needing you: the row names the wait (A10)", () => {
+    const unlisted = aFeature({
+      phase: "acceptance",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      golden_path: aGoldenPath({
+        phase: "acceptance",
+        steps: [
+          aGoldenStep({
+            name: "acceptance",
+            state: "current",
+            meta: "Waiting on owner steps · no ACs listed",
+            reason: "the whole-feature eval leaves owner steps and lists no AC to sign off",
+            progress: null,
+          }),
+        ],
+      }),
+    });
+
+    const reason = reasonOf(unlisted);
+
+    expect(reason).toMatchObject({ group: "progress", needs: null });
+    expect(reason.line).toMatch(/^Acceptance · Waiting on owner steps · no ACs listed · /);
+  });
+
   it("names a permission prompt when the waiting session gives no reason", () => {
     const wait = {
       tile: aLiveTile({ group: "waiting", waiting_reason: null }),
