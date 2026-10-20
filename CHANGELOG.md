@@ -17,8 +17,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   Plan, Tickets, Build, Acceptance and Shipped, instead of Implement, Review and Evaluate (AGH-325). A brief alone
   keeps Spec in progress; UX design is done when every `ux-*.md` is approved; Plan shows the plan's version; Build
   counts the tickets merged; Acceptance moves only on a whole-feature eval (`acs: all`), reading "Not recorded" with
-  the ACs the ticket evals cover until one exists, so a feature with only ticket evals no longer reads Shipped. The
-  API's `phase` values change to match; ADR 0042 records the two levels.
+  the ACs the ticket evals cover until one exists, so a feature with only ticket evals no longer reads Shipped. A
+  SHIP-WITH-OWNER-STEPS one waits until the owner signs off, and the sign-off covers exactly the ACs it waits on (a
+  legacy `eval.md` too); with no AC listed it keeps waiting. The API's `phase` values change to match; ADR 0042
+  records the two levels.
 
 ### Fixed
 
