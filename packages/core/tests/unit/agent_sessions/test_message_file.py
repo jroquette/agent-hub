@@ -75,7 +75,7 @@ def test_raises_too_large_when_decoded_size_one_byte_over_cap() -> None:
     )
 
 
-def test_repr_never_shows_data() -> None:
+def test_hides_data_when_repr_called() -> None:
     message_file = _file(b"secret text")
 
     assert message_file.data not in repr(message_file)
