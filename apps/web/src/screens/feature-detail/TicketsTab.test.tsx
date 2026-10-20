@@ -1,5 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
@@ -39,6 +40,8 @@ function show(
       onRefresh={onRefresh}
       acPasses={extra.acPasses}
       acRows={extra.acRows}
+      evals={[]}
+      opener={createRef()}
     />,
     {
       routes: { "/api/v1/sessions": aPage([]), ...extra.routes },
@@ -552,6 +555,100 @@ describe("TicketsTab", () => {
     );
 
     expect(screen.getByText("No tickets for this feature yet.")).toBeInTheDocument();
+  });
+
+  // AGH-330 (reviews/AGH-326.md): keys and names of the two views.
+  it("toggles Flow and Table with v, focus kept on the same ticket, never from a text field (keys)", async () => {
+    const data = aFeatureTickets();
+    const flowing = data.tickets.map((t) => ({ ...t, flow: aTicketFlow() }));
+    const { router } = show({ ...data, tickets: flowing }, { path: "/?doc=tickets" });
+
+    screen.getByRole("link", { name: "Serve the ticket summaries" }).focus();
+    await userEvent.keyboard("v");
+
+    expect(router.state.location.search).toBe("?doc=tickets&tickets=table");
+    expect(router.state.historyAction).toBe("REPLACE");
+    expect(rowOf("AGH-202")).toHaveFocus();
+    await userEvent.keyboard("v");
+    expect(screen.getByRole("link", { name: "Serve the ticket summaries" })).toHaveFocus();
+
+    const field = document.createElement("input");
+    document.body.append(field);
+    field.focus();
+    await userEvent.keyboard("v");
+    expect(router.state.location.search).toBe("?doc=tickets");
+    field.remove();
+  });
+
+  it("names each card and row with its id, title and step line (names)", () => {
+    const data = aFeatureTickets();
+    const review = aTicketFlow({
+      steps: aTicketFlow().steps.map((step) =>
+        step.name === "review" ? { ...step, state: "current", meta: "Changes requested" } : step,
+      ),
+    });
+    show({ ...data, tickets: data.tickets.map((t) => ({ ...t, flow: review })) }, { path: "/" });
+
+    expect(
+      screen.getByRole("listitem", {
+        name: "AGH-202 · Serve the ticket summaries · Review · 4/7 · Changes requested",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the step bar out of the tab order: one tab stop per card (keys)", async () => {
+    const data = aFeatureTickets();
+    show(
+      { ...data, tickets: data.tickets.map((t) => ({ ...t, flow: aTicketFlow() })) },
+      { path: "/" },
+    );
+
+    const card = screen.getByRole("listitem", { name: /^AGH-202 · / });
+    const bar = within(card).getByRole("img", { name: /^Ticket steps/ });
+    expect(bar.closest("[tabindex]")).toBeNull();
+    expect(bar.querySelector("[tabindex], a, button")).toBeNull();
+  });
+
+  it("explains the epic's empty Stage cell in a focusable tooltip (names)", () => {
+    const epic = aTicketRow({
+      ref: "AGH-9",
+      key: "T0",
+      id: "AGH-9",
+      readiness: "epic",
+      blocked_by: [],
+      children: ["AGH-202"],
+    });
+    const data = aFeatureTickets();
+    show({
+      ...data,
+      tickets: [...data.tickets, epic],
+      planning: { ...data.planning, epics: ["AGH-9"] },
+    });
+
+    const stage = nth(within(rowOf("AGH-9")).getAllByRole("cell"), 2);
+    const dash = within(stage).getByText("—");
+    expect(dash).toHaveAttribute("tabindex", "0");
+    expect(dash).toHaveAccessibleDescription(
+      "An epic has no steps of its own; each of its tickets has seven.",
+    );
+  });
+
+  it("marks the columns hidden first: Assignee and Sessions at 1280, all but four when docked (columns)", () => {
+    show(aFeatureTickets());
+
+    const headers = screen.getAllByRole("columnheader");
+    expect(headers.map((th) => th.dataset.hide ?? "")).toEqual([
+      "",
+      "",
+      "",
+      "docked",
+      "laptop",
+      "docked",
+      "docked",
+      "laptop",
+      "",
+      "docked",
+    ]);
   });
 
   it("has no serious axe violation in the Flow view (a11y)", async () => {

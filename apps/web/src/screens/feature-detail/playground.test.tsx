@@ -125,27 +125,46 @@ beforeEach(() => {
 });
 
 describe("owner sign-off on the feature page", () => {
-  it("AC-PG-10.2 shows Could not sign off the owner steps with the 409 reason, in the banner above the tabs", async () => {
+  it("AC-PG-10.2 shows Could not record your decision with the 409 reason, in the Acceptance prompt", async () => {
     const reason = "No AC waits on owner steps covered by a SHIP eval.";
-    const view = open({
-      [`POST ${API}/owner-signoff`]: aProblem({
-        status: 409,
-        title: "Conflict",
-        detail: reason,
-      }),
+    const whole = anEvalRecord({
+      delivery: "feature",
+      path: "features/layered-memory/evals/feature.md",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      tickets: [],
+      acs: "all",
     });
+    const view = open(
+      {
+        [API]: {
+          ...detail,
+          evals: [whole],
+          acceptance_eval: {
+            delivery: "feature",
+            verdict: "SHIP-WITH-OWNER-STEPS",
+            owner_wait: { state: "sign_off", acs: ["AC-48.2"], reopened: [] },
+          },
+        },
+        [`POST ${API}/owner-signoff`]: aProblem({
+          status: 409,
+          title: "Conflict",
+          detail: reason,
+        }),
+      },
+      `${PAGE}?doc=eval&eval=feature`,
+    );
 
-    const banner = await screen.findByRole("region", { name: "Owner steps" });
-    // AC-PG-31.2: the sign-off lives in the one "Waiting on you" banner, before the tabs.
-    expect(banner).toHaveTextContent("Waiting on you");
-    const tabs = screen.getByRole("tablist", { name: "Feature record" });
-    expect(banner.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // AC-PG-31.2 (AGH-330): the decision lives in the one prompt, on the Eval tab; the banner
+    // above the tabs only points to it.
+    const callout = (await screen.findByText("Waiting on you · Acceptance: sign off 1 AC")).closest(
+      '[role="status"]',
+    );
+    if (!(callout instanceof HTMLElement)) throw new Error("no callout");
+    await userEvent.click(within(callout).getByRole("button", { name: "Mark owner steps done" }));
+    await userEvent.click(within(callout).getByRole("button", { name: "Mark owner steps done" }));
 
-    await userEvent.click(within(banner).getByRole("button", { name: "Mark owner steps done" }));
-    await userEvent.click(within(banner).getByRole("button", { name: "Yes, I did them" }));
-
-    const alert = await within(banner).findByRole("alert");
-    expect(alert).toHaveTextContent("Could not sign off the owner steps");
+    const alert = await within(callout).findByRole("alert");
+    expect(alert).toHaveTextContent("Could not record your decision");
     expect(alert).toHaveTextContent(reason);
     expect(
       view.requests.filter(
