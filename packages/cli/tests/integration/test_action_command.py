@@ -544,3 +544,19 @@ def test_fails_plainly_when_env_file_folder_is_a_link(hub: Path, marker: Path) -
     )
     assert modes(marker) == []
     assert ENV_SECRET not in result.output
+
+
+def test_runs_nothing_when_standalone_terminal_ends_input_at_prompt(
+    hub: Path, marker: Path
+) -> None:
+    # Ctrl-D at the start of a line ends the terminal's input: the prompt reads end of file.
+    code, shown = run_in_terminal(
+        hub, marker, "demo/send-order", "--env", "staging", "--input", "target=api", answer="\x04"
+    )
+
+    assert code == 1, shown
+    assert "hub action run: demo/send-order: not run" in shown
+    assert modes(marker) == []
+    assert [(kind, payload["decision"]) for kind, payload in stored(hub)] == [
+        ("policy.decision", "ask")
+    ]
