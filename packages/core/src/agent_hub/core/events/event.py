@@ -40,6 +40,9 @@ class EventType(StrEnum):
     RUN_END = "run.end"
     SESSION_SUMMARY = "session.summary"
     SESSION_TITLE = "session.title"
+    # A scenario run's polls and captures (docs/design/scenarios.md).
+    EXPECT_POLL = "expect.poll"
+    CONTEXT_CAPTURE = "context.capture"
 
 
 class EventSource(StrEnum):

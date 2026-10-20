@@ -2392,7 +2392,9 @@ export interface components {
       | "step.end"
       | "run.end"
       | "session.summary"
-      | "session.title";
+      | "session.title"
+      | "expect.poll"
+      | "context.capture";
     /**
      * ExternalBlocker
      * @description A blocker outside the feature's tickets, with its status when Linear returned it.
