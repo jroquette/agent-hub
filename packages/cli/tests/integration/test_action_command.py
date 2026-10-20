@@ -454,7 +454,8 @@ def refuse_open(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
     real_open = os.open
 
     def refusing(file: Any, *args: Any, **kwargs: Any) -> int:
-        if os.fspath(file) == str(path):
+        # The loader opens the file by its name in its folder (``dir_fd``).
+        if os.fspath(file) in (str(path), path.name):
             raise PermissionError(13, "Permission denied")
         return real_open(file, *args, **kwargs)
 
@@ -519,3 +520,27 @@ def test_runs_when_env_file_in_hub(hub: Path, marker: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert modes(marker) == ["run"]
+
+
+def test_fails_plainly_when_env_file_folder_is_a_link(hub: Path, marker: Path) -> None:
+    # Real path in the repo, but reached through a linked folder: a link could be swapped
+    # between the check and the read, so no link is followed on the way to the file.
+    real = hub.parent / "demo-api" / "real-env"
+    real.mkdir(parents=True)
+    (hub.parent / "demo-api" / "environment").symlink_to(real)
+    (real / ".env.staging").write_text(f"DEMO_DB_URL={ENV_SECRET}\n")
+    document = json.loads((hub / "hub.json").read_text())
+    document["environments"]["staging"]["credentials"] = {"env_file": ENV_FILE}
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+
+    result = run_action_command(
+        hub, marker, "run", "demo/get-order", "--env", "staging", "--input", "target=api"
+    )
+
+    assert result.exit_code == 1, result.output
+    assert result.stderr == (
+        f"hub action run: demo/get-order: config: environment staging: env file {ENV_FILE}"
+        " is reached through a link\n"
+    )
+    assert modes(marker) == []
+    assert ENV_SECRET not in result.output

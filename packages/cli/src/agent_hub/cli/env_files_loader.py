@@ -5,10 +5,12 @@
 reads the file, and plan mode never does. The path is relative to the workspace (the folder
 holding the hub and its repos) and must lie, by its real path, inside the hub or one of the
 repos ``hub.json`` declares (``roots``, workspace-relative), never elsewhere in the workspace.
-The file is opened without following a last link, never blocking (a FIFO is refused, not
-waited on), must be a regular file of at most ``MAX_ENV_FILE_BYTES``, is read once into memory
-and parsed by core's dotenv grammar. Any problem refuses the action before its process starts
-with ``environment <env>: env file <path> is <reason>``: the path as configured and a reason,
+It is then opened from the root's folder one component at a time, each with ``O_NOFOLLOW``
+and ``dir_fd``, so no link on the way is followed, even one swapped in after the real path was
+checked; the last open never blocks (a FIFO is refused, not waited on). The file must be a
+regular file of at most ``MAX_ENV_FILE_BYTES``; it is read once into memory and parsed by
+core's dotenv grammar. Any problem refuses the action before its process starts with
+``environment <env>: env file <path> is <reason>``: the path as configured and a reason,
 never a value.
 """
 
@@ -23,6 +25,8 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.scenarios.env_file import MAX_ENV_FILE_BYTES, EnvFileError, parse_env_file
 
 _FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+_FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+LINK_REASON: Final = "reached through a link"
 
 
 class EnvFileLoadError(AgentHubError):
@@ -44,9 +48,10 @@ def load_env_file(
     real = os.path.realpath(os.path.join(root, relative))
     if os.path.commonpath([root, real]) != root:
         raise refused("outside the workspace")
-    if _root_of(root, relative, real, roots=roots) is None:
+    found = _root_of(root, relative, real, roots=roots)
+    if found is None:
         raise refused("outside the hub and its repos")
-    content = _read(real, refused)
+    content = _read(_open_file(root, found, relative, refused=refused), refused)
     try:
         return parse_env_file(content)
     except EnvFileError as error:
@@ -70,15 +75,50 @@ def _root_of(workspace: str, relative: str, real: str, *, roots: Sequence[str]) 
     return found
 
 
-def _read(path: str, refused: Callable[[str], EnvFileLoadError]) -> bytes:
+def _open_file(
+    workspace: str, root: str, relative: str, *, refused: Callable[[str], EnvFileLoadError]
+) -> int:
+    """A descriptor of the file, opened from ``root``'s folder component by component."""
+    parts = PurePosixPath(relative).parts[len(PurePosixPath(root).parts) :]
     try:
-        descriptor = os.open(path, _FLAGS)
-    except FileNotFoundError, NotADirectoryError:
-        raise refused("missing") from None
+        folder = os.open(os.path.join(workspace, root), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     except OSError as error:
-        # ELOOP: a link swapped in after the real path was taken.
-        reason = "not a regular file" if error.errno == errno.ELOOP else "unreadable"
-        raise refused(reason) from None
+        raise refused(_reason(error)) from None
+    try:
+        for part in parts[:-1]:
+            try:
+                inner = os.open(part, _FOLDER_FLAGS, dir_fd=folder)
+            except OSError as error:
+                raise refused(_reason(error, part=part, folder=folder)) from None
+            os.close(folder)
+            folder = inner
+        try:
+            return os.open(parts[-1], _FLAGS, dir_fd=folder)
+        except OSError as error:
+            raise refused(_reason(error, part=parts[-1], folder=folder)) from None
+    finally:
+        os.close(folder)
+
+
+def _reason(error: OSError, *, part: str | None = None, folder: int | None = None) -> str:
+    """Why ``part`` (in ``folder``) could not be opened, in plain words."""
+    if error.errno == errno.ELOOP or (
+        error.errno == errno.ENOTDIR and part is not None and _is_link(part, folder)
+    ):
+        return LINK_REASON
+    if isinstance(error, FileNotFoundError | NotADirectoryError):
+        return "missing"
+    return "unreadable"
+
+
+def _is_link(part: str, folder: int | None) -> bool:
+    try:
+        return stat.S_ISLNK(os.lstat(part, dir_fd=folder).st_mode)
+    except OSError:
+        return False
+
+
+def _read(descriptor: int, refused: Callable[[str], EnvFileLoadError]) -> bytes:
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise refused("not a regular file")
