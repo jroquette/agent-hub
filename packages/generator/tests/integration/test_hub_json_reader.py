@@ -2232,3 +2232,105 @@ def test_names_no_guard_problem_when_guard_absent(
 
     assert hub_guard["problem"] == ""
     assert layer == NO_LOCAL_LAYER
+
+
+# AGH-354 (P-13, P-25): the env files and endpoints each environment declares, from both files,
+# read leniently: an env file path or an endpoint the model would refuse is dropped, the rest kept.
+# argv: hub.json path, hub.local.json path. Prints what the reader gives of each.
+TARGETS_READ = """
+import dataclasses, json
+import stdlib_reader as reader
+hub_file = reader.load_hub_file(sys.argv[1])
+local = reader.load_local_targets(sys.argv[2])
+print(json.dumps({
+    "hub": {"env_files": [dataclasses.asdict(e) for e in hub_file.env_files],
+            "endpoints": [dataclasses.asdict(e) for e in hub_file.endpoints]},
+    "local": dataclasses.asdict(local),
+}))
+"""
+SECRET_SHAPED_PATH = "demo-api/" + "AK" + "IA" + "B" * 16
+
+
+def an_env_files_document() -> dict[str, Any]:
+    """``W`` with an env file on ``staging``, one on the ``api`` endpoint in ``live``, and entries
+    the model refuses beside them (an unsafe path, an endpoint with neither url nor resource)."""
+    document = builders.an_environments_document()
+    document["environments"]["staging"]["credentials"]["env_file"] = (
+        "demo-api/environment/.env.test"
+    )
+    document["environments"]["local"]["credentials"] = {"env_file": "/etc/x"}
+    document["environments"]["bad name"] = {
+        "access": "read",
+        "credentials": {"env_file": "demo-api/.env.bad"},
+    }
+    services = document["repos"][0]["services"]
+    services["api"]["endpoints"]["live"]["credentials"] = {"env_file": "demo-api/.env.live"}
+    services["orders"]["endpoints"]["local"] = {"note": "no url, no resource"}
+    services["orders"]["endpoints"]["live"] = {"url": "ftp://user@x.example.com"}
+    return document
+
+
+def test_reads_env_files_and_endpoints_when_environments_declare_them(
+    tmp_path: Path, *, hook_python: str, reader_file: Path, run_python: Callable[..., Any]
+) -> None:
+    hub_json = write_hub_file(tmp_path, an_env_files_document())
+    local = builders.a_local_environments_document()
+    local["environments"]["jane-cloud"]["credentials"]["env_file"] = "demo-api/.env.jane"
+    local["environments"]["odd"] = {"credentials": {"env_file": "../x"}}
+    local["environments"]["other"] = {"credentials": {"env_file": SECRET_SHAPED_PATH}}
+    endpoint = local["repos"][0]["services"]["api"]["endpoints"]["jane-cloud"]
+    endpoint["credentials"] = {"env_file": "demo-api/.env.jane-api"}
+    local["repos"][0]["services"]["orders"] = {
+        "endpoints": {"jane-cloud": {"resource": "demo-orders-jane"}, "x": {"url": "not a url"}}
+    }
+    local_json = write_local_file(tmp_path, local)
+
+    found = run_python(
+        hook_python,
+        TARGETS_READ,
+        path=reader_file.parent,
+        args=[str(hub_json), str(local_json)],
+        timeout=10,
+    )
+
+    assert found["hub"] == {
+        "env_files": [
+            {"path": "demo-api/environment/.env.test", "environment": "staging"},
+            {"path": "demo-api/.env.live", "environment": "live"},
+        ],
+        "endpoints": [
+            {"environment": "local", "host": "localhost", "resource": ""},
+            {"environment": "staging", "host": "api.staging.example.com", "resource": ""},
+            {"environment": "live", "host": "api.example.com", "resource": ""},
+            {"environment": "staging", "host": "", "resource": "demo-orders-staging"},
+        ],
+    }
+    assert found["local"] == {
+        "env_files": [
+            {"path": "demo-api/.env.jane", "environment": "jane-cloud"},
+            {"path": "demo-api/.env.jane-api", "environment": "jane-cloud"},
+        ],
+        "endpoints": [
+            {"environment": "jane-cloud", "host": "api.jane.example.com", "resource": ""},
+            {"environment": "jane-cloud", "host": "", "resource": "demo-orders-jane"},
+        ],
+    }
+
+
+def test_reads_no_env_files_when_local_file_absent(
+    tmp_path: Path, *, hook_python: str, reader_file: Path, run_python: Callable[..., Any]
+) -> None:
+    hub_json = write_hub_file(tmp_path, a_hub_document())
+
+    found = run_python(
+        hook_python,
+        TARGETS_READ,
+        path=reader_file.parent,
+        args=[str(hub_json), str(tmp_path / LOCAL_FILE)],
+        timeout=10,
+    )
+
+    assert found == {
+        "hub": {"env_files": [], "endpoints": []},
+        "local": {"env_files": [], "endpoints": []},
+    }
