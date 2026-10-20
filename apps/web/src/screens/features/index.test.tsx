@@ -496,12 +496,20 @@ describe("FeaturesScreen", () => {
     }
   });
 
-  it("has no serious a11y violations (a11y)", async () => {
-    const { container } = open();
-    await screen.findByRole("link", { name: "layered-memory" });
+  it.each(["light", "dark"])(
+    "has no serious a11y violations in the %s theme (a11y)",
+    async (theme) => {
+      document.documentElement.dataset.theme = theme;
+      try {
+        const { container } = open();
+        await screen.findByRole("link", { name: "layered-memory" });
 
-    expect(await seriousViolations(container)).toEqual([]);
-  });
+        expect(await seriousViolations(container)).toEqual([]);
+      } finally {
+        delete document.documentElement.dataset.theme;
+      }
+    },
+  );
 
   it("shows a feature's nickname with its slug, and renames it inline (names)", async () => {
     const saved: unknown[] = [];
