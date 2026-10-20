@@ -146,6 +146,9 @@ class HubFilesReadModels:
         self._hubs = ListHubs(
             registry, reader, running_version=running_version, has_drift=self._has_drift
         )
+        # Where each project's hub is, without its lock state: a path read never runs the
+        # doctor, which reads the hub's whole tree whenever its cache is stale.
+        self._hub_folders = ListHubs(registry, reader, running_version=running_version)
         self._register = RegisterHub(
             registry, reader, running_version=running_version, has_drift=self._has_drift
         )
@@ -358,8 +361,9 @@ class HubFilesReadModels:
         )
 
     def project_hubs(self) -> Iterator[tuple[str, str]]:
-        """Each project and its hub folder (``ProjectHubs``, the workflow reads)."""
-        return ((found.name, found.path) for found in self._projects())
+        """Each project and its hub folder (``ProjectHubs``, the workflow reads); never runs
+        the doctor."""
+        return ((found.name, found.path) for found in self._projects(self._hub_folders))
 
     def _feature(self, project: str, slug: str) -> tuple[_Project, FeatureFolder]:
         missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
@@ -385,9 +389,9 @@ class HubFilesReadModels:
             for finding in self._doctor.findings(hub_path)
         )
 
-    def _projects(self) -> Iterator[_Project]:
+    def _projects(self, hubs: ListHubs | None = None) -> Iterator[_Project]:
         seen: set[str] = set()
-        for read in self._hubs():
+        for read in (hubs or self._hubs)():
             config = read.document.config
             if config is not None and config.project.name not in seen:
                 seen.add(config.project.name)
