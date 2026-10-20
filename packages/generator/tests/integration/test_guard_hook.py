@@ -4849,6 +4849,78 @@ def test_reads_blocked_word_rule_when_input_tool_decided(
     assert rules == ["blocked_word"] * 7
 
 
+def test_asks_when_input_over_budget_or_cap(decide: Decide) -> None:
+    mcp = "mcp__db__query"
+    # an object, its key, an array and its scalars: one over the cap of values
+    assert 1 + 1 + 1 + (INPUT_VALUES_CAP - 2) == INPUT_VALUES_CAP + 1
+
+    spent = decide([(tool_call(mcp, q="x"), None)], seams={"BLOCKED_SCAN_BUDGET": -1})
+    verdicts = decide(
+        [
+            (tool_call(mcp, k="x" * INPUT_CHARS_CAP), None),
+            (tool_call(mcp, k="x" * (INPUT_CHARS_CAP - 1)), None),
+            (tool_call(mcp, v=[0] * (INPUT_VALUES_CAP - 2)), None),
+            (tool_call(mcp, v=[0] * (INPUT_VALUES_CAP - 3)), None),
+            (tool_call(mcp, a="prod", b="x" * (2 << 20)), None),
+        ]
+    )
+
+    assert spent == [unchecked("out of time (300 ms)")]
+    assert verdicts == [
+        unchecked(INPUT_TOO_LARGE),
+        None,
+        unchecked(INPUT_TOO_MANY),
+        None,
+        blocked_word("prod", input_where(mcp)),
+    ]
+
+
+# argv: hub. Builds a tool input nested 100,000 lists deep in Python (no JSON parse, so every
+# interpreter gets the same input) and prints decide's verdict on it.
+DECIDE_DEEP = """
+import json
+from pathlib import Path
+import guard
+from hubhooks import load_config
+rows = []
+for _ in range(100_000):
+    rows = [rows]
+event = {"tool_name": "mcp__db__query", "tool_input": {"rows": rows}}
+print(json.dumps(guard.decide(event, load_config(Path(sys.argv[1])), None)))
+"""
+
+
+def test_asks_too_many_values_when_input_nested_deep(
+    blocked_hub: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    verdict = run_python(
+        hook_python,
+        DECIDE_DEEP,
+        path=blocked_hub / HOOKS,
+        args=[str(blocked_hub)],
+        cwd=tmp_path,
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert tuple(verdict) == unchecked(INPUT_TOO_MANY)
+
+
+CONSTANTS_INPUT = """
+import json
+import guard
+print(json.dumps([guard.BLOCKED_INPUT_CHARS, guard.BLOCKED_INPUT_NODES]))
+"""
+
+
+def test_states_input_limits_when_constants_read(
+    blocked_hub: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    limits = run_python(hook_python, CONSTANTS_INPUT, path=blocked_hub / HOOKS)
+
+    assert limits == [1_048_576, 50_000]
+    assert (INPUT_CHARS_CAP, INPUT_VALUES_CAP) == (1 << 20, 50_000)
+
+
 # AC-277.14: (path from ws, its text, the word, the layer listing the word); Lc is written.
 LISTED_FILES: tuple[tuple[str, str, str, str], ...] = (
     ("demo-api/.env.example", "AWS_PROFILE=prod\n", "prod", "hub.json"),
