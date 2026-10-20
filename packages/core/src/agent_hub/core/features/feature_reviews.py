@@ -31,6 +31,10 @@ REVIEWS_FOLDER: Final = "reviews"
 # At most this many ``reviews/*.md`` files are read, by name; their first bytes only.
 MAX_REVIEW_FILES: Final = 500
 REVIEW_HEAD_BYTES: Final = 8_192
+# The tickets with a review round, ``reviews/<ticket>/<reviewer>-r<N>.json`` (P3): at most this
+# many ticket folders looked at, at most this many entries read in all of them.
+MAX_ROUND_TICKETS: Final = 500
+MAX_ROUND_ENTRIES: Final = 20_000
 
 type ReviewOutcome = Literal["approved", "changes-requested"]
 _OUTCOMES: Final = ("approved", "changes-requested")
@@ -86,6 +90,14 @@ def review_pull_requests(
         if url is not None:
             urls[record.ticket.upper()] = url
     return urls
+
+
+def names_pull_request(pr: str | None) -> bool:
+    """Whether ``pr`` names a pull request: ``<repo>#<number>`` or a GitHub pull request URL
+    (``#pending`` names none)."""
+    return pr is not None and (
+        _PR_URL.fullmatch(pr) is not None or _PR_REF.fullmatch(pr) is not None
+    )
 
 
 def _pull_request_url(pr: str | None, github: Mapping[str, str]) -> str | None:

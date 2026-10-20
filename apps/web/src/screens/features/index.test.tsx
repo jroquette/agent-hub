@@ -336,7 +336,11 @@ describe("FeaturesScreen", () => {
     const shipped = aFeature({
       slug: "shipped-one",
       phase: "shipped",
-      golden_path: aGoldenPath({ phase: "shipped" }),
+      // A shipped feature has every step done (the phase is the first step not done).
+      golden_path: aGoldenPath({
+        phase: "shipped",
+        steps: aGoldenPath().steps.map((step) => ({ ...step, state: "done", reason: null })),
+      }),
     });
     open({ "/api/v1/features": aPage([shipped, ...features]) });
 

@@ -258,9 +258,6 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-a.ah-flow-card-title:hover > span:last-child {
-  text-decoration: underline;
-}
 .ah-flow-card-foot {
   display: flex;
   flex-direction: column;

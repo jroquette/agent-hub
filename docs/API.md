@@ -242,7 +242,11 @@ always answers 200 with a `FeatureTickets`:
   id, else the plan key), `key`, `id`, `title`, `state` (`name`, `type`), `assignee`, `url` (only under
   `https://linear.app/`), `priority`, `estimate`, `repo`, `order`, the `acs` it covers, `blocked_by` edges tagged
   `plan`, `linear` or `both`, `blocks`, `readiness` (`can_start`, `waiting`, `done`, `canceled`, `in_cycle`,
-  `unknown`), `waiting_on` and `reviewed`. Without Linear the statuses are `null`.
+  `unknown`), `waiting_on` and `reviewed`. Without Linear the statuses are `null`. Each row but an epic carries its
+  `flow` (two-level-flows AC-1.8): `steps`, the seven ticket steps `context`, `preflight`, `implement`, `review`,
+  `eval`, `pr` and `merged` in that order, each with a `state` (the golden path's states) and a `meta` or `null`, and
+  `current`, the first step neither `done` nor `unrecorded` (`merged` when there is none). How each step is read is
+  in [design/feature-records.md](design/feature-records.md) "Ticket flow"; an epic's `flow` is `null`.
 - `planning`: `layers` (tickets that can run in parallel, in turn), `can_start`, the recommended `order`, `waiting`,
   `cycles`, `external_blockers` (with their Linear status), `critical_path` and `warnings`.
 - `golden_path`: the same steps the feature list and detail carry, recomputed with this read.

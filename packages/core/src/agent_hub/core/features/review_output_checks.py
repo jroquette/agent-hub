@@ -48,6 +48,12 @@ def review_cross_problems(
     yield from _id_problems(document)
 
 
+def is_review_round(file_name: str) -> bool:
+    """Whether ``file_name`` is a review round's, ``<reviewer>-r<N>.json``: the rule a review is
+    checked by, so the feature folder reader lists the rounds by the same one (AGH-326)."""
+    return _named(file_name) is not None
+
+
 def _named(file_name: str) -> _FileName | None:
     stem = file_name.removesuffix(_JSON_SUFFIX)
     found = RERUN_PATTERN.search(stem)
