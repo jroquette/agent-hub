@@ -868,3 +868,45 @@ button.ah-setup-step-button:focus-visible {
 .ah-setup-address[data-removed] input {
   text-decoration: line-through;
 }
+
+/* ---------- Find services with Claude ---------- */
+.ah-discover-card {
+  max-width: 760px;
+}
+.ah-review-table th[scope="row"] {
+  vertical-align: top;
+}
+.ah-review-table tr[data-status="declared"] > * {
+  color: var(--text-muted);
+}
+.ah-review-check {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+.ah-review-missing {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.ah-review-missing > .ah-icon {
+  margin-top: 2px;
+  color: var(--waiting);
+}
+/* The action bar stays in view while the person picks rows. */
+.ah-review-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+}

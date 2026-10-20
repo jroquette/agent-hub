@@ -12,6 +12,7 @@ import {
 } from "../../components";
 import { AskBlocked, ConfigSource, Mono, NoneText, useAttach } from "./parts";
 import { ServicePanel } from "./ServicePanel";
+import { discoverPath } from "../environments/discovery";
 import { useEnvironmentRemoval } from "./EnvironmentRemoval";
 import {
   ACCESS_LOOK,
@@ -97,6 +98,33 @@ export function EnvironmentSource({ environment }: { environment: SourcedEnviron
       source={isMine(environment) ? "local" : "team"}
       where={`${environment.source} → environments.${environment.name}`}
     />
+  );
+}
+
+/** Opens "Find services with Claude"; off, with the reason, when sessions cannot start. */
+function FindWithClaude({
+  project,
+  blocked,
+  primary = false,
+}: {
+  project: string;
+  blocked: string | null;
+  primary?: boolean;
+}) {
+  const navigate = useNavigate();
+  return (
+    <Tooltip label={blocked ?? undefined}>
+      <Button
+        variant={primary ? "primary" : "default"}
+        icon="folder-search"
+        disabled={blocked !== null}
+        onClick={() => {
+          void navigate(discoverPath(project));
+        }}
+      >
+        Find services with Claude
+      </Button>
+    </Tooltip>
   );
 }
 
@@ -338,23 +366,9 @@ export function EnvironmentsSection({
                 Services <span className="ah-muted ah-env-count">{services.length}</span>
               </h2>
               {services.length > 0 && (
-                <Button
-                  icon="plus"
-                  onClick={() => {
-                    addService();
-                  }}
-                >
-                  Add service
-                </Button>
-              )}
-            </div>
-            {services.length === 0 ? (
-              <EmptyState
-                icon="server"
-                title="No services yet"
-                action={
+                <span className="ah-row" style={{ gap: 8 }}>
+                  <FindWithClaude project={view.project} blocked={blocked} />
                   <Button
-                    variant="primary"
                     icon="plus"
                     onClick={() => {
                       addService();
@@ -362,6 +376,25 @@ export function EnvironmentsSection({
                   >
                     Add service
                   </Button>
+                </span>
+              )}
+            </div>
+            {services.length === 0 ? (
+              <EmptyState
+                icon="server"
+                title="No services yet"
+                action={
+                  <span className="ah-row" style={{ gap: 8 }}>
+                    <FindWithClaude project={view.project} blocked={blocked} primary />
+                    <Button
+                      icon="plus"
+                      onClick={() => {
+                        addService();
+                      }}
+                    >
+                      Add service by hand
+                    </Button>
+                  </span>
                 }
               >
                 Add the API, portal or database each repo runs, with its address in{" "}

@@ -8,6 +8,7 @@ import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { useDiscuss, useDiscussTarget } from "../../shell/discuss";
 import type { DiscussStarter } from "../../shell/discuss";
 import { ADD_ENVIRONMENT_ID, EnvironmentsSection } from "../hub-config/EnvironmentsSection";
+import { discoverPath, reviewPath } from "./discovery";
 import { addEnvironmentPath, environmentsPage } from "../hub-config/environments";
 import { SavedToast, UncommittedNotice, useSaveNotices } from "../hub-config/notices";
 import { AskBlocked } from "../hub-config/parts";
@@ -158,6 +159,7 @@ export function EnvironmentsScreen() {
             {view.local_file.problems.join("; ")}
           </Banner>
         )}
+        <OpenDiscovery project={project} />
         {notices.teamChanged && (
           <UncommittedNotice blocked={blocked} onDismiss={notices.dismissTeamChanged} />
         )}
@@ -182,5 +184,59 @@ export function EnvironmentsPickerScreen() {
       href={environmentsPage}
       columns={[]}
     />
+  );
+}
+
+/** The newest search still open: running, or finished and waiting for a review. */
+function OpenDiscovery({ project }: { project: string }) {
+  const navigate = useNavigate();
+  const found = useApi(
+    "/api/v1/projects/{project}/environment-discoveries",
+    { path: { project } },
+    {
+      refetchInterval: (query) => (query.state.data?.items[0]?.state === "running" ? 5_000 : false),
+    },
+  );
+  const latest = found.data?.items[0];
+  if (!latest || latest.state === "failed" || latest.state === "stopped") return null;
+  if (latest.state === "running")
+    return (
+      <Banner
+        tone="info"
+        icon="folder-search"
+        action={
+          <Button
+            size="sm"
+            onClick={() => {
+              void navigate(discoverPath(project, latest.id));
+            }}
+          >
+            Open progress
+          </Button>
+        }
+      >
+        Claude is reading the repos for services.
+      </Banner>
+    );
+  const items =
+    (latest.proposal?.environments.length ?? 0) + (latest.proposal?.services.length ?? 0);
+  return (
+    <Banner
+      tone="info"
+      icon="folder-search"
+      action={
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            void navigate(reviewPath(project, latest.id));
+          }}
+        >
+          Review {items === 1 ? "1 proposal" : `${String(items)} proposals`}
+        </Button>
+      }
+    >
+      Claude found {items === 1 ? "1 item" : `${String(items)} items`} in the repos.
+    </Banner>
   );
 }
