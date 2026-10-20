@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+import agent_hub.core.testing.workflow_fakes as workflow_fakes
+import agent_hub.core.workflows.nodes as workflow_nodes
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.testing.workflow_fakes import (
     AnswerBook,
@@ -1162,3 +1164,76 @@ def test_fails_output_contract_when_action_output_not_json(text: str) -> None:
     assert run.status_of("send") == ("failed", None, None, "output_contract")
     assert runner.ran() == ["send"]
     assert run.report.status == "failed"
+
+
+def expect(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    node = {"id": node_id, "type": "expect", "action": "get-order", "every": "10s"}
+    node |= {"timeout": "1m", "until_when": "$self.output.status == 'ON_HOLD'"}
+    return node | {"depends_on": list(depends_on)} | keys
+
+
+@dataclasses.dataclass
+class Traced:
+    """A run of ``plan`` whose trace (polls and captures) is kept."""
+
+    report: RunReport
+    recorder: ListRecorder
+    clock: FakeClock
+    trace: workflow_fakes.ListTrace
+
+
+def traced(plan: WorkflowPlan, runner: ScriptedRunner, *, prior: RunState | None = None) -> Traced:
+    recorder, clock, trace = ListRecorder(), FakeClock(), workflow_fakes.ListTrace()
+    ports = EnginePorts(runner, recorder, clock, KeysOutputs(), lambda: 0.5, trace=trace)
+    return Traced(run_workflow(plan, {}, ports, prior=prior), recorder, clock, trace)
+
+
+def pending(count: int) -> list[str]:
+    return ['{"status": "PENDING"}'] * count
+
+
+def test_ends_ok_after_three_polls_when_expect_node_holds() -> None:
+    held = '{"status": "ON_HOLD", "order_id": "o-7"}'
+    plan = plan_of(expect("wait", capture={"order_id": "$self.output.order_id"}))
+    runner = ScriptedRunner({"wait": [*pending(2), held]})
+
+    run = traced(plan, runner)
+    trace = run.trace
+
+    assert [call.poll for call in runner.calls] == [1, 2, 3]
+    assert {call.attempt for call in runner.calls} == {1}
+    assert [(poll.poll, poll.held) for poll in trace.polls] == [(1, False), (2, False), (3, True)]
+    assert [(c.node, c.name, c.value) for c in trace.captures] == [("wait", "order_id", "o-7")]
+    assert run.clock.sleeps == [timedelta(seconds=10)] * 2
+    assert run.recorder.end_of("wait").output == {"status": "ON_HOLD", "order_id": "o-7"}
+    assert run.report.status == "done"
+
+
+def test_fails_timeout_when_expect_node_never_holds() -> None:
+    runner = ScriptedRunner({"wait": pending(20)})
+
+    run = traced(plan_of(expect("wait", capture={"id": "$self.output.status"})), runner)
+
+    # Polls at 0s, 10s, ... 60s: the window is one minute; no implicit retry.
+    assert len(runner.calls) == 7
+    end = run.recorder.end_of("wait")
+    assert (end.status, end.failure_kind) == ("failed", "timeout")
+    assert end.detail.startswith("expect_timeout: ")
+    assert run.trace.captures == []
+    assert run.report.status == "failed"
+
+
+def test_stops_at_max_polls_when_expect_node_timeout_long() -> None:
+    runner = ScriptedRunner({"wait": pending(1001)})
+
+    run = Run(plan_of(expect("wait", every="5s", timeout="24h")), runner)
+
+    assert len(runner.calls) == engine_module.MAX_EXPECT_POLLS
+    assert run.status_of("wait") == ("failed", None, None, "timeout")
+
+
+def test_states_scenario_limits_when_constants_read() -> None:
+    assert workflow_nodes.MIN_EXPECT_EVERY_SECONDS == 5
+    assert workflow_nodes.MAX_EXPECT_TIMEOUT_SECONDS == 24 * 3600
+    assert workflow_nodes.MAX_ACTION_TIMEOUT_SECONDS == 3600
+    assert engine_module.MAX_EXPECT_POLLS == 1000

@@ -34,6 +34,13 @@ the group's id) end it, with an output mapping each body id to its output; past
 ``max_iterations`` it fails ``max_iterations``. A group is never retried. Without
 ``fresh_context``, a body agent resumes its own session of the iteration before, unless it sets
 ``context: fresh``.
+
+An ``action`` node is one runner call with its ``with`` values as ``NodeCall.inputs``; its output
+must be one JSON value (else ``output_contract``). An ``expect`` node polls its action every
+``every`` (``Clock.sleep``) until ``until_when`` holds over ``$self.output``, at most
+``MAX_EXPECT_POLLS`` times, then fails ``timeout`` (detail ``expect_timeout: …``) once its window
+has passed. Each poll and each ``capture:`` value goes to ``EnginePorts.trace``; without an
+explicit ``retry`` neither node is retried.
 """
 
 import json
@@ -41,6 +48,7 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Final
 
 from agent_hub.core.errors import AgentHubError
@@ -84,17 +92,21 @@ from agent_hub.core.workflows.nodes import (
     ScriptNode,
     ShellNode,
     WaitNode,
+    duration_seconds,
 )
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import (
     CheckoutProbe,
     Clock,
+    ContextCapture,
+    ExpectPoll,
     GateRequest,
     NodeCall,
     NodeRunner,
     OutputValidator,
     RunEnd,
     RunRecorder,
+    RunTrace,
     SkipCause,
     StepEnd,
     StepStart,
@@ -127,6 +139,8 @@ type _CommandNode = AgentNode | ShellNode | ScriptNode | LoopNode
 MAX_PARALLEL: Final = 4
 # The most threads one layer starts; they wait for the run's permits.
 MAX_LAYER_THREADS: Final = 64
+# The most polls of one ``expect`` attempt, whatever its window.
+MAX_EXPECT_POLLS: Final = 1000
 
 
 class WorkflowEngineError(AgentHubError):
@@ -145,6 +159,8 @@ class EnginePorts:
     # Called when a concurrent layer is interrupted: stops the children its nodes run.
     interrupt: Callable[[], None] | None = None
     gates: GateAnswers = NoAnswers()
+    # A scenario run's polls and captures; ``None`` when no one keeps them.
+    trace: RunTrace | None = None
 
 
 def run_workflow(
@@ -205,6 +221,7 @@ class _Run:
         }
         self.loop_prevs: dict[str, dict[str, NodeResult]] = {}
         self.lock = threading.Lock()
+        self.trace_lock = threading.Lock()
         # Concurrent nodes record through one lock, as they end; at most ``max_parallel``
         # attempts run at once across the run, nested group layers included.
         self.recorder: RunRecorder = _LockedRecorder(ports.recorder)
@@ -298,6 +315,8 @@ class _Run:
             self._complete(node, self._retrying(node, lambda: self._execute_once(node)))
         elif isinstance(node, ActionNode):
             self._complete(node, self._retrying(node, lambda: self._action_once(node)))
+        elif isinstance(node, ExpectNode):
+            self._complete(node, self._retrying(node, lambda: self._expect_once(node)))
 
     def _stopped_by_when(self, node: Node, expr: str) -> bool:
         """Skip or fail ``node`` by its ``when:``; whether it stopped the node."""
@@ -423,9 +442,67 @@ class _Run:
 
         def run(attempt: int) -> tuple[Turn, bool]:
             reply = self.ports.runner.run(self._action_call(node, attempt))
-            return Turn(_json_value(reply.text), reply.text, None), True
+            output = _json_value(reply.text)
+            self._capture(node, attempt, output)
+            return Turn(output, reply.text, None), True
 
         return self._step(node, run)[0]
+
+    def _expect_once(self, node: ExpectNode) -> Turn:
+        """Polls of one attempt, ``every`` apart, until ``until_when`` holds over the output;
+        past the window (or ``MAX_EXPECT_POLLS``) the node fails ``timeout``."""
+        every = timedelta(seconds=duration_seconds(node.every))
+
+        def run(attempt: int) -> tuple[Turn, bool]:
+            clock = self.ports.clock
+            deadline = clock.now() + timedelta(seconds=duration_seconds(node.timeout))
+            for poll in range(1, MAX_EXPECT_POLLS + 1):
+                reply = self.ports.runner.run(self._action_call(node, attempt, poll))
+                output = _json_value(reply.text)
+                held = self._holds(node, output)
+                self._traced(ExpectPoll(node.id, attempt, poll, held, clock.now(), output))
+                if held:
+                    self._capture(node, attempt, output)
+                    return Turn(output, reply.text, None), True
+                if poll == MAX_EXPECT_POLLS or clock.now() + every > deadline:
+                    break
+                clock.sleep(every, self.stopped)
+                self._check_stop()
+            detail = f"expect_timeout: until_when did not hold in {node.timeout} ({poll} polls)"
+            raise NodeFailedError("timeout", detail)
+
+        return self._step(node, run)[0]
+
+    def _holds(self, node: ExpectNode, output: JsonValue) -> bool:
+        when = evaluate_when(node.until_when, self._own_context(node, output))
+        if isinstance(when, WhenFail):
+            raise NodeFailedError("config", str(when.error))
+        if isinstance(when, WhenSkip):
+            raise NodeFailedError("config", when.detail)
+        return when.holds
+
+    def _capture(self, node: ActionNode | ExpectNode, attempt: int, output: JsonValue) -> None:
+        """Each ``capture:`` value read from ``output``, traced; one that cannot be read fails
+        the attempt ``config``."""
+        context = self._own_context(node, output)
+        for name, ref in node.capture.items():
+            value = resolve(parse_ref(ref), context, ref)
+            self._traced(ContextCapture(node.id, attempt, name, self.ports.clock.now(), value))
+
+    def _own_context(self, node: Node, output: JsonValue) -> RefContext:
+        context = self._context(node)
+        own = NodeResult("completed", output)
+        return RefContext(context.inputs, context.nodes, context.loop_prev, self_output=own)
+
+    def _traced(self, item: ExpectPoll | ContextCapture) -> None:
+        trace = self.ports.trace
+        if trace is None:
+            return
+        with self.trace_lock:
+            if isinstance(item, ExpectPoll):
+                trace.expect_polled(item)
+            else:
+                trace.context_captured(item)
 
     def _action_call(self, node: ActionNode | ExpectNode, attempt: int, poll: int = 0) -> NodeCall:
         context = self._context(node)
