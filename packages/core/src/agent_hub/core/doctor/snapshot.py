@@ -99,7 +99,8 @@ class EnvFileFacts:
     ``path`` is as declared, relative to the workspace; ``environment`` and ``source`` are the
     first environment that declares it and its file. ``holder`` is the hub's or a declared repo's
     dir holding it, ``None`` for none; ``ignored`` is whether git ignores it there, ``None`` when
-    there is no holder or git could not answer.
+    there is no holder or git could not answer. ``linked`` is whether a link lies on its path
+    below the hub's or repo's folder it names (``hub action run`` follows none there).
     """
 
     path: str
@@ -108,6 +109,7 @@ class EnvFileFacts:
     exists: bool
     holder: str | None
     ignored: bool | None
+    linked: bool = False
 
 
 # What ``hub.lock`` holds: the lock, no lock, something that is no file, or its problems.
