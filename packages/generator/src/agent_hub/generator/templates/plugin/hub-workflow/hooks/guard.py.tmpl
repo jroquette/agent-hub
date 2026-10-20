@@ -1695,6 +1695,8 @@ ENV_FILE_WORD = r"(?<![A-Za-z0-9_.-])(?:{})(?![A-Za-z0-9_.-])"
 # folder: a glob after one may name an env file there, so it is matched by name.
 ENV_FILE_PART = re.compile(r"&&|\|\||[;|&\n]")
 ENV_FILE_MOVES = frozenset(("cd", "pushd", "popd"))
+# What may wrap such a word: quotes, `$(`, `(`, `{`, backticks (`echo $(cd x`, `bash -c 'cd x`).
+ENV_FILE_WORD_EDGES = "'\"$(){}`"
 # What a glob segment holds besides its wildcards and bracket expressions: it names a file only
 # with a letter, digit, `_` or `-` there (so `*`, `.*` and `*.*` never do).
 GLOB_WILDCARDS = re.compile(r"\[[^\]]*\]|[*?]")
@@ -1821,7 +1823,10 @@ def _env_file_glob(env_files: _EnvFiles, ti: dict, cwd: str) -> str | None:
 def _env_file_bash(env_files: _EnvFiles, cmd: str, scan: _BlockedScan) -> str | None:
     """A Bash command naming an env file: its name as a whole word in a view of the command, a glob
     token after a cd, pushd or popd whose last segment matches its name, else a token (braces and
-    globs expanded, from the event's cwd) whose real path is one."""
+    globs expanded, from the event's cwd) whose real path is one. A call is moved from the first
+    part after one holding any such word (not only its first: `if cd`, `$(cd`, `bash -c 'cd`,
+    `builtin cd`, `do cd`); parts are split on the raw text, so a `cd` inside a quoted string can
+    cause a rare, safe over-deny."""
     for view in _command_views(cmd):
         environment = env_files.named(view)
         if environment:
@@ -1829,14 +1834,13 @@ def _env_file_bash(env_files: _EnvFiles, cmd: str, scan: _BlockedScan) -> str | 
     joined = cmd.replace("\\\n", "")
     moved = False
     for part in ENV_FILE_PART.split(joined):
-        words = part.replace("(", " ").replace("{", " ").split()
         if moved:
             for tok in (word for token in _tokens(part) for word in _braces(token)):
                 scan.tick()
                 environment = env_files.globbed(tok) if any(c in tok for c in "*?[") else None
                 if environment:
                     return environment
-        moved = moved or bool(words and words[0] in ENV_FILE_MOVES)
+        moved = moved or any(word.strip(ENV_FILE_WORD_EDGES) in ENV_FILE_MOVES for word in part.split())
     for seg in _segments(joined):
         for tok in (word for token in _tokens(seg) for word in _braces(token)):
             scan.tick()
