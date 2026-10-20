@@ -49,19 +49,24 @@ Chosen option: 1.
 - **The guard.** A blocked word (case-insensitive, bounded by anything that is not an ASCII letter, digits included,
   so `prod` matches `my-prod-db` and `prod2` but not `product`) denies a Bash command (three views of its text: raw,
   backslash-newlines joined, quotes and backslashes removed), every Bash call while a scanned session variable holds
-  one, a file tool whose path holds one, and a read of a `.env*` or listed file whose contents hold one. The scanned
-  variables are values only, of a fixed set of selector and connection names, every declared `credentials.env` name
-  and every `guard.blocked_words_env` name (a trailing `*` is a prefix).
+  one, a file tool whose path holds one, every key and string value of the input of the input tools: MCP tools
+  (`mcp__*`), WebSearch, Task, Agent and SendMessage (walked in document order; the tool name is not scanned; on these
+  tools this is the only guard rule, and the project extension does not run), and a read of a `.env*` or listed file
+  whose contents hold one. The scanned variables are values only, of a fixed set of selector and connection names,
+  every declared `credentials.env` name and every `guard.blocked_words_env` name (a trailing `*` is a prefix). The
+  guard's `PreToolUse` matcher names exactly these tools:
+  `^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent|SendMessage)$|^mcp__`.
 - **One rule order.** The blocked-word rule runs first on every surface and wins over any declared access and over a
   `guard.infra.allow` match; a deny is final, so the project extension does not run. It never opens a file the
   secret-file rule treats as secret: that file keeps the secret-file reason, unless its path or the command text holds
   a word.
-- **Bounds.** 1 MiB per command text or file, 64 files and 4 MiB per call, 300 ms for the views, the variables and the
-  files together; over a bound, or on a file that is not regular, the guard asks.
+- **Bounds.** 1 MiB per command text or file, 64 files and 4 MiB per call, 1 MiB of keys and strings and 50,000 values
+  per tool input, 300 ms for the views, the variables, the files and the tool input together; over a bound, on a file
+  that is not regular, or on a hook event that is not a JSON object, the guard asks.
 - **Layers.** The CLI, doctor and the brief union `hub.json` and `hub.local.json`; the hooks also add a `hub.json`
   named by `$HUB_CONFIG` (a hooks-only layer, since no command reads it). No layer removes an entry.
 - **Unusable `hub.local.json`** (not JSON, not an object, not a regular file, over 64 KiB) makes the guard ask on
-  every Bash and file-tool call until it is fixed, since the developer's own words would otherwise stop applying
+  every call the guard checks until it is fixed, since the developer's own words would otherwise stop applying
   silently. An absent file changes nothing. (ADR 0016 had the hooks ignore such a file.)
 - `access` is not enforced by the guard: it cannot tell a read from a write in `psql`, `curl`, `aws` or an SDK script.
   It is rendered as an instruction; `write` covers data, never a deploy, and production deploys stay forbidden by the
@@ -73,8 +78,8 @@ Chosen option: 1.
 ### Consequences
 
 - Good: agents know which environments and services exist and how to reach them, without credentials in any file.
-- Good: a blocked word stops the Bash commands, file-tool paths, WebFetch URLs, listed files' contents and scanned
-  session variables that name it, with the word, layer and surface named in the reason and recorded with
+- Good: a blocked word stops the Bash commands, file-tool paths, WebFetch URLs, listed files' contents, scanned
+  session variables and the inputs of MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage that name it, with the word, layer and surface named in the reason and recorded with
   `rule: blocked_word`, never the value.
 - Good: a developer's own replica and stricter rules live in their own file and never change the team's.
 - Good: "nothing in `hub.local.json` relaxes a guard" still holds: it adds words and tightens access only.
@@ -86,14 +91,19 @@ Chosen option: 1.
   between its check and its replace can still be overwritten (a narrow window, stated in environments.md).
 - Bad: blind spots: variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` reach Bash but not the guard
   hook; `hub run`'s implement sessions run without the hub's hooks (an older gap, AGH-278); plugin-cache mode with
-  `$HUB_CONFIG` reads no `hub.local.json`; MCP tools, WebSearch and subagent (Task) prompts are not checked, nor files
-  a program opens without the command naming them (`python sync.py` reading `config/app.json`, `find … -exec cat`),
+  `$HUB_CONFIG` reads no `hub.local.json`; on MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage only this
+  rule runs (a `deny_hosts` host in their input passes) and their tool names are not scanned; Skill, TodoWrite,
+  ExitPlanMode and AskUserQuestion are not checked, nor files a program opens without the command naming them (`python sync.py` reading `config/app.json`, `find … -exec cat`),
   tool output, obfuscated names, Grep's search regex and edit contents.
+- Bad: a hub synced by an older release keeps the old matcher, so the input tools stay unchecked there until
+  `hub sync` (doctor's `settings.weakening` reports it).
 - Bad: blocked words are a best-effort text tripwire, not a security boundary; the boundary is which credentials the
   agent's machine holds.
 
 ## More Information
 
+- AGH-293 (amendment while proposed): blocked words in the inputs of MCP tools (`mcp__*`), WebSearch, Task, Agent and
+  SendMessage, and the unreadable-event ask.
 - AGH-277 (spec, plan and tickets).
 - Contract: [docs/design/environments.md](../design/environments.md); keys in
   [project-config.md](../design/project-config.md) and [developer-identity.md](../design/developer-identity.md).
