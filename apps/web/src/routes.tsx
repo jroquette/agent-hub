@@ -6,7 +6,9 @@ import { AgentSessionScreen } from "./screens/agent-session";
 import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
+import { NewFeatureScreen } from "./screens/features/NewFeature";
 import { HealthScreen } from "./screens/health";
+import { EnvironmentsPickerScreen, EnvironmentsScreen } from "./screens/environments";
 import { HubConfigPickerScreen, HubConfigScreen } from "./screens/hub-config";
 import { AddEnvironmentScreen } from "./screens/hub-config/AddEnvironmentFlow";
 import { AddServiceScreen } from "./screens/hub-config/AddServiceFlow";
@@ -67,6 +69,8 @@ export const appRoutes: RouteObject[] = [
           },
           { path: "projects/:project/config/services/new", element: <AddServiceScreen /> },
           { path: "config", element: <HubConfigPickerScreen /> },
+          { path: "projects/:project/environments", element: <EnvironmentsScreen /> },
+          { path: "environments", element: <EnvironmentsPickerScreen /> },
           { path: "projects/:project/skills", element: <SkillsScreen /> },
           { path: "projects/:project/skills/new/:kind", element: <NewDraftScreen /> },
           { path: "projects/:project/skills/drafts/:draftId", element: <StudioScreen /> },
@@ -92,6 +96,7 @@ export const appRoutes: RouteObject[] = [
           { path: "knowledge/skills", element: <SkillsPickerScreen /> },
           { path: "knowledge/:section", element: <KnowledgePhase3Screen /> },
           { path: "features", element: <FeaturesScreen /> },
+          { path: "features/new", element: <NewFeatureScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
           // Older links: Workflows moved into the Toolkit.
           { path: "workflows", element: <WorkflowsScreen /> },
