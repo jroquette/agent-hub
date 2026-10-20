@@ -2,7 +2,9 @@
 
 Reference grammar, one token at each ``$``:
 
-- ``$INPUTS.<name>`` and ``$WITH.<name>``, ``<name>`` matching ``[a-z][a-z0-9_]*``; no path.
+- ``$INPUTS.<name>``, ``$WITH.<name>`` and ``$CTX.<name>`` (a scenario run's captured value),
+  ``<name>`` matching ``[a-z][a-z0-9_]*``; no path.
+- ``$self.output``, the node's own output, then a path as below (``until_when`` and ``capture``).
 - ``$<id>.output`` and ``$LOOP_PREV.<id>.output``, ``<id>`` matching ``[a-z][a-z0-9_-]*`` (so
   ``-`` and the include namespace ``__`` belong to it), then a path of ``.<segment>``, a segment
   being ``[A-Za-z0-9_]+``; an all-digit segment indexes an array (``.0``).
@@ -10,14 +12,15 @@ Reference grammar, one token at each ``$``:
 
 A path stops at the first character that cannot continue it: the dot ending the sentence
 ``$plan.output.summary.`` stays text, and ``$plan.output-x`` is the reference then ``-x``. A ``$``
-that starts none of these (``$1``, ``${HOME}``, ``$plan.outputs``) stays text. ``INPUTS``, ``WITH``
-and ``LOOP_PREV`` followed by anything but a valid token, and ``[`` or ``?.`` right after a
+that starts none of these (``$1``, ``${HOME}``, ``$plan.outputs``) stays text. ``INPUTS``, ``WITH``,
+``LOOP_PREV`` and ``CTX`` followed by anything but a valid token, and ``[`` or ``?.`` right after a
 reference, are ``malformed`` errors, never text.
 
 Values render as canonical text (``canonical_text``), in one left-to-right pass: inserted text is
 never scanned again. A skipped producer, an absent key or item, and ``$LOOP_PREV`` before a first
-iteration read as empty text; a failed producer, a node with no result, an unknown input or
-``with`` name, a path through a scalar, and a NaN or infinity are errors. In argv a reference
+iteration read as empty text; a failed producer, a node with no result, an unknown input,
+``with`` or ``$CTX`` name, ``$self`` with no own output, a path through a scalar, and a NaN or
+infinity are errors. In argv a reference
 must be a whole element, never the program nor a ``-c`` script (``check_argv``).
 """
 
@@ -36,6 +39,8 @@ type SubstitutionErrorCode = Literal[
     "malformed",
     "unknown_input",
     "unknown_with",
+    "unknown_ctx",
+    "not_self",
     "unknown_node",
     "producer_failed",
     "bad_path",
@@ -56,10 +61,12 @@ _TOKEN = re.compile(
     rf"\$(?:(?P<dollar>\$)"
     rf"|INPUTS\.(?P<input>{_NAME})(?![A-Za-z0-9_.])"
     rf"|WITH\.(?P<with>{_NAME})(?![A-Za-z0-9_.])"
+    rf"|CTX\.(?P<ctx>{_NAME})(?![A-Za-z0-9_.])"
+    rf"|self\.output(?P<self_path>{_PATH})(?![A-Za-z0-9_]|{_FOREIGN})"
     rf"|LOOP_PREV\.(?P<prev>{_ID})\.output(?P<prev_path>{_PATH})(?![A-Za-z0-9_]|{_FOREIGN})"
     rf"|(?P<node>{_ID})\.output(?P<path>{_PATH})(?![A-Za-z0-9_]|{_FOREIGN}))"
 )
-_RESERVED = re.compile(r"\$(?:INPUTS|WITH|LOOP_PREV)(?![A-Za-z0-9_])")
+_RESERVED = re.compile(r"\$(?:INPUTS|WITH|LOOP_PREV|CTX)(?![A-Za-z0-9_])")
 _BAD_SUFFIX = re.compile(rf"\$(?:LOOP_PREV\.)?{_ID}\.output{_PATH}{_FOREIGN}")
 _LEADING_ZERO = re.compile(r"0[0-9]+")
 # A short-option cluster (``-e``, ``+ec``); one holding ``c`` is a script flag. No ``*`` around
@@ -89,7 +96,21 @@ class LoopPrevRef:
     path: tuple[str, ...]
 
 
-type Ref = InputRef | WithRef | NodeRef | LoopPrevRef
+@dataclass(frozen=True)
+class CtxRef:
+    """``$CTX.<name>``: the value a scenario node captured (``capture:``)."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class SelfRef:
+    """``$self.output[.path]``: the node's own output, in ``until_when`` and ``capture``."""
+
+    path: tuple[str, ...]
+
+
+type Ref = InputRef | WithRef | NodeRef | LoopPrevRef | CtxRef | SelfRef
 
 
 @dataclass(frozen=True)
@@ -102,12 +123,18 @@ class NodeResult:
 
 @dataclass(frozen=True)
 class RefContext:
-    """What references resolve against; ``loop_prev`` is ``None`` outside a ``loop_group`` body."""
+    """What references resolve against; ``loop_prev`` is ``None`` outside a ``loop_group`` body.
+
+    ``ctx`` holds each captured name as its capturing node's result (its value as output), and
+    ``self_output`` the node's own result while its ``until_when`` and ``capture`` are read.
+    """
 
     inputs: Mapping[str, JsonValue]
     nodes: Mapping[str, NodeResult]
     loop_prev: Mapping[str, NodeResult] | None = None
     with_values: Mapping[str, JsonValue] = field(default_factory=dict)
+    ctx: Mapping[str, NodeResult] = field(default_factory=dict)
+    self_output: NodeResult | None = None
 
 
 class SubstitutionError(AgentHubError):
@@ -286,6 +313,19 @@ def resolve(ref: Ref, context: RefContext, text: str) -> JsonValue:
             if node not in context.nodes:
                 raise SubstitutionError("unknown_node", text, f"node {echo(node)} has no result")
             return _read(context.nodes[node], path, text)
+        case CtxRef() | SelfRef():
+            return _run_context(ref, context, text)
+
+
+def _run_context(ref: CtxRef | SelfRef, context: RefContext, text: str) -> JsonValue:
+    """A scenario's ``$CTX.<name>`` or ``$self.output[.path]``."""
+    if isinstance(ref, SelfRef):
+        if context.self_output is None:
+            raise SubstitutionError("not_self", text, "$self reads only in until_when, capture")
+        return _read(context.self_output, ref.path, text)
+    if ref.name not in context.ctx:
+        raise SubstitutionError("unknown_ctx", text, f"nothing captured {echo(ref.name)}")
+    return _read(context.ctx[ref.name], (), text)
 
 
 def _named(
@@ -345,6 +385,10 @@ def _ref_of(match: re.Match[str]) -> Ref:
         return InputRef(match["input"])
     if match["with"]:
         return WithRef(match["with"])
+    if match["ctx"]:
+        return CtxRef(match["ctx"])
+    if match["self_path"] is not None:
+        return SelfRef(_segments(match["self_path"], match[0]))
     if match["prev"]:
         return LoopPrevRef(match["prev"], _segments(match["prev_path"], match[0]))
     return NodeRef(match["node"], _segments(match["path"], match[0]))
