@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner, Result
 
+from agent_hub.cli import workflow_command
 from agent_hub.cli.main import app
 from agent_hub.core.testing.builders import an_environments_document
 
@@ -231,3 +232,33 @@ def test_hides_escaped_credential_when_credential_injection_output_parsed(
     assert json.loads(result.stdout) == {"seen": "<credential DEMO_QUOTED>"}
     assert QUOTED_SECRET not in result.output
     assert stored_anywhere(QUOTED_SECRET, hub / ".agent-runs", tmp_path / "events.db") == []
+
+
+HUB_STEP_WORKFLOW = """\
+version: 1
+name: step-creds
+revision: 1
+nodes:
+  - id: step
+    type: shell
+    command: [hub, step, verdict]
+"""
+
+
+def test_hides_credentials_from_hub_step_when_credential_injection_workflow_runs(
+    tmp_path: Path, credentials_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = a_credentials_hub(tmp_path)
+    (hub / "workflows" / "demo" / "step-creds.yaml").write_text(HUB_STEP_WORKFLOW)
+    shell = os.path.realpath(shutil.which("sh") or "/bin/sh")
+    # The hub this node runs, played by a shell that writes its environment.
+    program = (shell, "-c", 'env > "$DUMP/hubstep.env"', "hub")
+    monkeypatch.setattr(workflow_command, "own_hub_program", lambda: program)
+
+    result = run_hub(hub, "workflow", "run", "step-creds", "--live", env=credentials_env)
+
+    assert result.exit_code == 0, result.output
+    seen = variables(tmp_path / "dump" / "hubstep.env")
+    assert "DEMO_DB_URL" not in seen
+    assert "AWS_PROFILE" not in seen
+    assert seen["DUMP"] == str(tmp_path / "dump")
