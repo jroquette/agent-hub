@@ -257,7 +257,10 @@ otherwise, this list wins. Each item is an acceptance criterion.
   NO-SHIP (more work) eval over that eval's waiting ACs with the note under "Owner's note", without needing the whole
   feature covered; it refuses an eval that is unknown, not SHIP-WITH-OWNER-STEPS or already settled, `more_work`
   without an eval, and answers 422 for an unknown decision or key; with no body it signs off every waiting AC as
-  before.
+  before. A `delivery` naming the acceptance eval follows two-level-flows A9 and A11 instead: it covers exactly what
+  Acceptance waits on, with A9's refusals (a waiting AC whose latest eval is NO-SHIP, an undated or future-dated
+  acceptance eval, evals left unread), except that `more_work` is not refused over ACs an agent's eval reopened, and
+  either decision is refused, writing nothing, once an owner decision newer than the acceptance eval settled it.
 - **AC-376.15** Given an owner decision after the latest owner-steps eval, then no callout asks again: more work reads
   "you found more work" on the eval and "Owner: more work" on the owner's row, a sign-off reads "Owner sign-off".
 - **AC-376.16** Given evals waiting on owner steps, when the feature page opens, then its Waiting on you banner names

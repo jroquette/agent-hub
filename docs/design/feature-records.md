@@ -144,7 +144,12 @@ non-withdrawn AC is an owner step (a legacy `eval.md` without scope too, failing
 `provenance: owner` names it (ticket evals never do); the sign-off lists exactly those. The sign-off is refused,
 writing nothing, with a one-line reason: when any of those ACs has a NO-SHIP as its latest eval (it names them: fix
 or re-evaluate first), when it would not rank newer than the acceptance eval (one with no `evaluated_at`, or one in
-the future), and when the folder holds more evals than were read. With no AC to list (no `features.json`, or every
+the future), and when the folder holds more evals than were read. A sign-off that names the acceptance eval as its
+`delivery` (AGH-384's per-eval decision) follows the same rule (A11): "done" and "more work" cover exactly those ACs,
+"more work" is not refused over ACs an agent's eval reopened, and either is refused, writing nothing, once an owner
+decision newer than the acceptance eval settled it (its SHIP signed them off, or its NO-SHIP is still the latest eval
+of one). While waiting ACs have a NO-SHIP as their latest eval, the step reads "n ACs reopened · evaluate again"
+instead of a sign-off prompt. With no AC to list (no `features.json`, or every
 AC withdrawn), the step is not done, "Waiting on owner steps · no ACs listed", until a later owner SHIP of any scope
 exists; the app cannot write that one, so the owner writes it by hand. Without a Linear snapshot, ticket states are
 unknown: Build and Shipped are `unknown` with "Linear not connected" (or "Linear not loaded yet" when a key is set but
