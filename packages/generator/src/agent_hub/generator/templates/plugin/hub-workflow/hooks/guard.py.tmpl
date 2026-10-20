@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import bisect
 import glob
+import itertools
 import json
 import os
 import re
@@ -1531,6 +1532,29 @@ def _file_tool_found(scan: _BlockedScan, tool: str, ti: dict) -> tuple[str, str]
     return scan.files(found)
 
 
+def _input_found(scan: _BlockedScan, tool: str, ti: dict) -> tuple[str, str] | None:
+    """(word, where) for a word in any key or string value of an input tool's input, walked in
+    document order (an object's key, then its value) with a stack of iterators: no recursion and
+    no copy of a container. Numbers, booleans and null are not scanned; the tool name is not."""
+    end = object()
+    stack: list = [iter((ti,))]
+    while stack:
+        value = next(stack[-1], end)
+        if value is end:
+            stack.pop()
+            continue
+        scan.tick()
+        if isinstance(value, str):
+            word = scan.hit(value)
+            if word:
+                return word, f"the input of `{_infra_value(tool)}`"
+        elif isinstance(value, dict):
+            stack.append(itertools.chain.from_iterable(value.items()))
+        elif isinstance(value, list):
+            stack.append(iter(value))
+    return None
+
+
 def _brace_list(word: str) -> tuple[int, int] | None:
     """(start, end) of word's first simple brace list (`{a,b}`: a `{`, no `{` or `}` inside, a
     comma, a `}`), by index scans that never look back, or None."""
@@ -1634,8 +1658,9 @@ def _bash_found(scan: _BlockedScan, cmd: str, environ: dict) -> tuple[str, str] 
 
 def check_blocked(tool: str, ti: dict, cfg: Config, environ: dict | None = None, *, cwd: str | None = None) -> Verdict:
     """The blocked-word rule, before every other rule: a deny for a word in a Bash command (three
-    views), in a scanned session variable (Bash only), in a file tool's path fields, or in the
-    contents of a listed file a Read, a Grep or a Bash token reads (D-files); an ask when it
+    views), in a scanned session variable (Bash only), in a file tool's path fields, in the
+    contents of a listed file a Read, a Grep or a Bash token reads (D-files), or in any key or
+    string of an input tool's input; an ask when it
     cannot check (the command or a file is too large, too many files, a file not regular, the
     budget spent, or a layer's blocked list cannot be used); else None."""
     if not cfg.blocked_words and not cfg.blocked_problem:
@@ -1647,6 +1672,8 @@ def check_blocked(tool: str, ti: dict, cfg: Config, environ: dict | None = None,
         try:
             if tool == "Bash":
                 found = _bash_found(scan, _str(ti.get("command")), environ or {})
+            elif _input_tool(tool):
+                found = _input_found(scan, tool, ti)
             else:
                 found = _file_tool_found(scan, tool, ti)
         except BlockedScanBudgetSpent:
@@ -1668,6 +1695,16 @@ def check_blocked(tool: str, ti: dict, cfg: Config, environ: dict | None = None,
 
 
 FILE_TOOLS = ("Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch")
+INPUT_TOOLS = ("WebSearch", "Task", "Agent", "SendMessage")  # and every MCP tool: only blocked words
+MCP_PREFIX = "mcp__"
+EXTENSION_TOOLS = ("Bash",) + FILE_TOOLS  # the tools every rule and the project extension see
+
+
+def _input_tool(tool: str) -> bool:
+    """Whether tool is an input tool (D-tools): INPUT_TOOLS by exact name, or an MCP tool."""
+    return tool in INPUT_TOOLS or tool.startswith(MCP_PREFIX)
+
+
 EXTENSION_TIMEOUT = 3  # seconds, inside the guard's own 10 s hook timeout (spec Q-5)
 RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_guard_runner.py")
 STRICTNESS = {None: 0, "ask": 1, "deny": 2}
@@ -1683,10 +1720,12 @@ def decide(data: dict, cfg: Config, environ: dict | None = None) -> Verdict:
     tool, ti = _str(data.get("tool_name")), data.get("tool_input")
     if not isinstance(ti, dict):
         ti = {}
-    if tool != "Bash" and tool not in FILE_TOOLS:
+    if tool not in EXTENSION_TOOLS and not _input_tool(tool):
         return None
     blocked = check_blocked(tool, ti, cfg, environ, cwd=_str(data.get("cwd")) or None)
     if blocked and blocked[0] == "deny":
+        return blocked
+    if _input_tool(tool):  # D-tools: the blocked-word rule is the only rule on an input tool
         return blocked
     if tool == "Bash":
         return tighten(blocked, check_bash(_str(ti.get("command")), cfg))
