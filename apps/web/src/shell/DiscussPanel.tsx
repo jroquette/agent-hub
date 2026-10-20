@@ -5,18 +5,11 @@ import { useCallback, useState } from "react";
 import { AppLink, Banner, Button, EmptyState, Icon, IconButton } from "../components";
 import { ApiProblem } from "../lib/api";
 import { captureScreen } from "../lib/screenCapture";
-import { fileBody, type MessageFile } from "../lib/messageFile";
-import { screenshotBody } from "../lib/pastedImage";
-import { rememberMessageScreenshots, rememberScreenshot } from "../lib/screenshotCopy";
+import type { MessageFile } from "../lib/messageFile";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../screens/agent-session/Composer";
 import { DiscussChat } from "../screens/agent-session/DiscussChat";
 import type { PermissionMode } from "../screens/agent-session/model";
-import { sessionControlUnavailable } from "../screens/sessions-list/control";
-import {
-  useAgentCapabilities,
-  useCreateAgentSession,
-  useWorkdirs,
-} from "../screens/sessions-list/queries";
+import { useAgentCapabilities } from "../screens/sessions-list/queries";
 import {
   discussPrompt,
   referencedMessage,
@@ -24,28 +17,15 @@ import {
   type DiscussReference,
   type DiscussTarget,
 } from "./discuss";
+import {
+  readDiscussSession,
+  rememberDiscussSession,
+  useStartDiscussion,
+  type ScreenCapture,
+} from "./discussSession";
 import { readScreenText } from "./screenContext";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
-const storageKey = (target: DiscussTarget) => `ah.discuss.session.${target.key}`;
-
-function readStored(target: DiscussTarget): string | null {
-  try {
-    return window.localStorage.getItem(storageKey(target));
-  } catch {
-    return null;
-  }
-}
-
-function writeStored(target: DiscussTarget, id: string | null) {
-  try {
-    if (id === null) window.localStorage.removeItem(storageKey(target));
-    else window.localStorage.setItem(storageKey(target), id);
-  } catch {
-    // Without storage the conversation is only forgotten on reload.
-  }
-}
-
 /**
  * The right-hand panel to talk with Claude about what is on screen: one conversation per
  * artifact, a session `hub web` drives in the project's hub folder. Edits Claude proposes ask
@@ -120,9 +100,9 @@ function ReferenceChips({
 
 function DiscussBody({ target }: { target: DiscussTarget }) {
   const { references, removeReference, clearReferences } = useDiscuss();
-  const [sessionId, setSessionId] = useState<string | null>(() => readStored(target));
+  const [sessionId, setSessionId] = useState<string | null>(() => readDiscussSession(target));
   const forget = useCallback(() => {
-    writeStored(target, null);
+    rememberDiscussSession(target, null);
     setSessionId(null);
   }, [target]);
 
@@ -153,7 +133,7 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
           target={target}
           references={references}
           onStarted={(id) => {
-            writeStored(target, id);
+            rememberDiscussSession(target, id);
             setSessionId(id);
             clearReferences();
           }}
@@ -165,7 +145,7 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
 
 interface ScreenRead {
   text: string;
-  screenshot: { dataUrl: string; body: { media_type: "image/png"; data: string } } | null;
+  screenshot: ScreenCapture | null;
 }
 
 /** What the screen shows when the conversation starts: its main column's text and a screenshot. */
@@ -205,11 +185,13 @@ function StartDiscussion({
   onStarted: (id: string) => void;
 }) {
   const capabilities = useAgentCapabilities();
-  const unavailable = sessionControlUnavailable(capabilities.error, capabilities.data);
-  const canDrive = capabilities.data !== undefined && unavailable === null;
-  const workdirs = useWorkdirs(target.project, canDrive);
-  const hub = workdirs.data?.items.find((w) => w.kind === "hub") ?? null;
-  const create = useCreateAgentSession();
+  const {
+    unavailable,
+    reason,
+    pending,
+    error,
+    start: startSession,
+  } = useStartDiscussion(target.project);
   const [mode, setMode] = useState<PermissionMode>("default");
   const [model, setModel] = useState<string | null>(null);
 
@@ -222,44 +204,26 @@ function StartDiscussion({
       </div>
     );
   }
-  const reason = !canDrive
-    ? "Checking whether this machine can drive Claude…"
-    : workdirs.isPending
-      ? "Looking for the hub folder…"
-      : hub === null
-        ? `Project ${target.project} has no hub folder to work in.`
-        : null;
-
   // The first message may carry images and files of its own, after the screen's capture.
   const start = async (
     text: string,
-    pasted: readonly string[] = [],
+    images: readonly string[] = [],
     files: readonly MessageFile[] = [],
   ) => {
-    if (!hub) return;
     const screen = target.screen ? await readScreen() : null;
-    const session = await create.mutateAsync({
-      project: target.project,
-      workdir_id: hub.workdir_id,
-      mode,
-      fork: false,
-      ...(model && model !== "default" ? { model } : {}),
-      ...(screen?.screenshot ? { screenshot: screen.screenshot.body } : {}),
-      ...(pasted.length > 0 ? { screenshots: pasted.map(screenshotBody) } : {}),
-      ...(files.length > 0 ? { files: files.map(fileBody) } : {}),
+    const id = await startSession({
+      target,
       prompt: discussPrompt(
         screen ? { ...target, brief: withScreenText(target.brief, screen.text) } : target,
         referencedMessage(references, text),
       ),
+      images,
+      files,
+      capture: screen?.screenshot,
+      mode,
+      model,
     });
-    if (screen?.screenshot) rememberScreenshot(session.id, screen.screenshot.dataUrl);
-    // The first prompt is the log's first record: its bubble shows the capture, then the images.
-    if (pasted.length > 0)
-      rememberMessageScreenshots(session.id, 1, [
-        ...(screen?.screenshot ? [screen.screenshot.dataUrl] : []),
-        ...pasted,
-      ]);
-    onStarted(session.id);
+    if (id) onStarted(id);
   };
 
   return (
@@ -287,7 +251,7 @@ function StartDiscussion({
               key={starter.label}
               size="sm"
               icon="message-square"
-              disabled={reason !== null || create.isPending}
+              disabled={reason !== null || pending}
               onClick={() => {
                 // A failure shows below the composer (create.error); nothing else to do here.
                 start(starter.message).catch(() => undefined);
@@ -320,9 +284,9 @@ function StartDiscussion({
             acceptsImages
             acceptsFiles
           />
-          {create.error instanceof ApiProblem && (
+          {error instanceof ApiProblem && (
             <p className="ah-small as-error" role="alert">
-              {create.error.detail ?? create.error.title}
+              {error.detail ?? error.title}
             </p>
           )}
         </div>
