@@ -108,11 +108,30 @@ def plan_action(
 
 
 def redacted(text: str, credentials: Mapping[str, str]) -> str:
-    """``text`` with each value of ``credentials`` of at least ``MIN_REDACTED_CHARS`` replaced
-    by ``<credential NAME>``, the longest first (so a value holding another goes whole)."""
-    for value, name in _by_length(credentials):
-        text = text.replace(value, f"<credential {name}>")
-    return text
+    """``text`` with every occurrence of each value of ``credentials`` of at least
+    ``MIN_REDACTED_CHARS`` replaced by ``<credential NAME>``. All matches are found first and
+    overlapping ones merged into one span, named after the match that starts it (the longer at
+    a tie), so two overlapping values never leave a piece of either behind."""
+    spans: list[tuple[int, int, str]] = []
+    for name, value in credentials.items():
+        if len(value) < MIN_REDACTED_CHARS:
+            continue
+        start = text.find(value)
+        while start != -1:
+            spans.append((start, start + len(value), name))
+            start = text.find(value, start + 1)
+    merged: list[tuple[int, int, str]] = []
+    for start, end, name in sorted(spans, key=lambda span: (span[0], -span[1])):
+        if merged and start < merged[-1][1]:
+            first_start, first_end, first_name = merged[-1]
+            merged[-1] = (first_start, max(first_end, end), first_name)
+        else:
+            merged.append((start, end, name))
+    shown, cursor = [], 0
+    for start, end, name in merged:
+        shown.append(f"{text[cursor:start]}<credential {name}>")
+        cursor = end
+    return "".join(shown) + text[cursor:]
 
 
 def redacted_value(value: JsonValue, credentials: Mapping[str, str]) -> JsonValue:
@@ -132,13 +151,6 @@ def redacted_value(value: JsonValue, credentials: Mapping[str, str]) -> JsonValu
     text = json.dumps(value)
     hidden = redacted(text, credentials)
     return value if hidden == text else hidden
-
-
-def _by_length(credentials: Mapping[str, str]) -> list[tuple[str, str]]:
-    """``(value, name)`` of each value long enough to redact, the longest first."""
-    pairs = [(value, name) for name, value in credentials.items()]
-    eligible = [pair for pair in pairs if len(pair[0]) >= MIN_REDACTED_CHARS]
-    return sorted(eligible, key=lambda pair: -len(pair[0]))
 
 
 def _spawn(
