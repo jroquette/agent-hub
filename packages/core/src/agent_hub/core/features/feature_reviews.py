@@ -3,11 +3,12 @@
 ``/feature`` step 7 writes one per ticket once both reviewers pass: frontmatter ``type: review``,
 ``ticket``, ``outcome`` (``approved`` or ``changes-requested``), ``pr`` and ``reviewed_at``. A
 ticket with an ``approved`` record counts as reviewed; a malformed record carries its ``problem``
-and counts for nothing.
+and counts for nothing. ``pr`` names the ticket's pull request as ``<repo>#<number>`` (the
+repo's ``dir`` or its GitHub name) or as its GitHub URL; ``#pending`` names none yet.
 """
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, cast
 
@@ -35,6 +36,10 @@ type ReviewOutcome = Literal["approved", "changes-requested"]
 _OUTCOMES: Final = ("approved", "changes-requested")
 _TICKET: Final = re.compile(KEY_PATTERN)
 _PR: Final = re.compile(r"[A-Za-z0-9._/#:-]{1,200}")
+_PR_REF: Final = re.compile(r"(?P<repo>[A-Za-z0-9._-]{1,100})#(?P<number>[1-9][0-9]{0,8})")
+_PR_URL: Final = re.compile(
+    r"https://github\.com/[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}/pull/[1-9][0-9]{0,8}"
+)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -62,6 +67,37 @@ def approved_tickets(records: Iterable[ReviewRecord]) -> frozenset[str]:
         for record in records
         if record.problem is None and record.outcome == "approved"
     )
+
+
+def review_pull_requests(
+    records: Iterable[ReviewRecord], repos: Mapping[str, str]
+) -> dict[str, str]:
+    """Each reviewed ticket's pull request URL, by ticket (upper case, as named).
+
+    ``repos`` maps each hub repo's ``dir`` to its GitHub ``owner/name``. A ``<repo>#<number>``
+    whose repo is no hub repo (by dir or name, any case), a placeholder such as ``#pending`` and a
+    malformed record give no URL; a later record of the same ticket wins.
+    """
+    github = {name.lower(): full for dir_name, full in repos.items() for name in (dir_name, full)}
+    github.update({full.rpartition("/")[2].lower(): full for full in repos.values()})
+    urls: dict[str, str] = {}
+    for record in records:
+        url = None if record.problem is not None else _pull_request_url(record.pr, github)
+        if url is not None:
+            urls[record.ticket.upper()] = url
+    return urls
+
+
+def _pull_request_url(pr: str | None, github: Mapping[str, str]) -> str | None:
+    if pr is None:
+        return None
+    if _PR_URL.fullmatch(pr) is not None:
+        return pr
+    match = _PR_REF.fullmatch(pr)
+    if match is None:
+        return None
+    full = github.get(match["repo"].lower())
+    return None if full is None else f"https://github.com/{full}/pull/{match['number']}"
 
 
 def _review(head: RecordHead, *, slug: str) -> ReviewRecord:

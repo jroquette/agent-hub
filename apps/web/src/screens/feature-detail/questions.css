@@ -76,10 +76,18 @@
   max-width: 110ch;
   color: var(--text-muted);
 }
-.ah-aq-recommendation {
-  margin: 0;
+.ah-aq-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   max-width: 110ch;
-  color: var(--text);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.ah-aq-choices legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
 }
 .ah-aq-input {
   width: 100%;

@@ -9,6 +9,10 @@ from claude_agent_sdk import (
     ResultMessage,
     StreamEvent,
     SystemMessage,
+    TaskNotificationMessage,
+    TaskProgressMessage,
+    TaskStartedMessage,
+    TaskUpdatedMessage,
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
@@ -21,6 +25,7 @@ from agent_hub.core.agent_sessions.driver import (
     ABORTED_TERMINAL_REASON,
     DriverError,
     InitEvent,
+    TaskEvent,
     TextDelta,
     Thinking,
     TodoItem,
@@ -84,6 +89,20 @@ def test_maps_init_once_when_cli_repeats_it_each_turn() -> None:
         InitEvent(session_id=SESSION, model="claude-stub-model", slash_commands=("review",))
     ]
     assert again == []
+
+
+def test_maps_init_agents_when_cli_lists_them() -> None:
+    message = _init()
+    message.data["agents"] = ["general-purpose", "research"]
+
+    [event] = EventMapper().to_events(message)
+
+    assert event == InitEvent(
+        session_id=SESSION,
+        model="claude-stub-model",
+        slash_commands=("review",),
+        agents=("general-purpose", "research"),
+    )
 
 
 def test_numbers_deltas_and_blocks_when_text_streams() -> None:
@@ -330,3 +349,97 @@ def test_attaches_no_diff_when_result_failed_or_several() -> None:
             isinstance(event, ToolResult) and event.diff is None
             for event in EventMapper().to_events(message)
         )
+
+
+def _started() -> TaskStartedMessage:
+    data = {"subtype": "task_started", "task_id": "task-1", "description": "Review the change"}
+    return TaskStartedMessage(
+        subtype="task_started",
+        data=data,
+        task_id="task-1",
+        description="Review the change",
+        uuid="u1",
+        session_id=SESSION,
+        tool_use_id="toolu_9",
+        task_type="local_agent",
+    )
+
+
+def test_maps_running_task_when_task_started() -> None:
+    assert EventMapper().to_events(_started()) == [
+        TaskEvent(
+            task_id="task-1",
+            status="running",
+            description="Review the change",
+            tool_use_id="toolu_9",
+            task_type="local_agent",
+        )
+    ]
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "stopped"])
+def test_maps_task_end_when_task_notification_received(status: Any) -> None:
+    message = TaskNotificationMessage(
+        subtype="task_notification",
+        data={},
+        task_id="task-1",
+        status=status,
+        output_file="out.txt",
+        summary="Done",
+        uuid="u2",
+        session_id=SESSION,
+        tool_use_id="toolu_9",
+    )
+
+    assert EventMapper().to_events(message) == [
+        TaskEvent(task_id="task-1", status=status, tool_use_id="toolu_9")
+    ]
+
+
+def test_maps_killed_as_stopped_when_task_updated_terminal() -> None:
+    message = TaskUpdatedMessage(
+        subtype="task_updated",
+        data={},
+        task_id="task-1",
+        patch={"status": "killed"},
+        status="killed",
+    )
+
+    assert EventMapper().to_events(message) == [TaskEvent(task_id="task-1", status="stopped")]
+
+
+@pytest.mark.parametrize(
+    ("task_id", "status"), [("task-1", "pending"), ("task-1", None), ("", "completed")]
+)
+def test_maps_nothing_when_task_updated_not_terminal_or_unnamed(task_id: str, status: Any) -> None:
+    message = TaskUpdatedMessage(
+        subtype="task_updated", data={}, task_id=task_id, patch={}, status=status
+    )
+
+    assert EventMapper().to_events(message) == []
+
+
+def test_maps_running_again_when_task_updated_running() -> None:
+    message = TaskUpdatedMessage(
+        subtype="task_updated",
+        data={},
+        task_id="task-1",
+        patch={"status": "running"},
+        status="running",
+    )
+
+    assert EventMapper().to_events(message) == [TaskEvent(task_id="task-1", status="running")]
+
+
+def test_maps_nothing_when_task_progress_received() -> None:
+    message = TaskProgressMessage(
+        subtype="task_progress",
+        data={},
+        task_id="task-1",
+        description="Review the change",
+        usage={"total_tokens": 10, "tool_uses": 1, "duration_ms": 5},
+        uuid="u3",
+        session_id=SESSION,
+    )
+
+    assert EventMapper().to_events(message) == []

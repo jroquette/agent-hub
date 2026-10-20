@@ -244,7 +244,8 @@ class HubFilesReadModels:
         read = NOT_CONNECTED_READ
         if self._snapshots is not None:
             read = self._snapshots.fetch(_ticket_request(found, folder))
-        return feature_tickets(folder, read, project=found.name, tracker=tracker)
+        repos = {repo.dir: repo.github for repo in found.config.repos}
+        return feature_tickets(folder, read, project=found.name, tracker=tracker, repos=repos)
 
     def doctor_findings(self, scope: Scope) -> Page[FindingView]:
         """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order.

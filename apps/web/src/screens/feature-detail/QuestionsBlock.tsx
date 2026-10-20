@@ -1,6 +1,6 @@
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 
-import { Button, Icon, Markdown, type IconName } from "../../components";
+import { Button, Icon, Markdown, OptionRow, type IconName } from "../../components";
 import { useApi } from "../../lib/api";
 import { useBrainNote } from "../brain/queries";
 import {
@@ -20,6 +20,9 @@ const COUNT_FROM = 0.8;
 const PLACEHOLDER_CHARS = 80;
 /** Up to this many questions start open; more start folded (progressive disclosure). */
 const OPEN_UP_TO = 3;
+/** The radio values of the blank answer (the recommendation or Claude's call) and of "Other". */
+const DEFAULT_CHOICE = "\u0000default";
+const OTHER_CHOICE = "\u0000other";
 
 const OUTCOME: Record<Outcome, { icon: IconName; label: string }> = {
   answered: { icon: "pencil", label: "Answered" },
@@ -47,9 +50,11 @@ function oneLine(text: string): string {
 }
 
 /**
- * The record's open questions above its Approve bar: each one folds open to its prose, what the
- * record recommends and a box for the owner's answer; a blank answer takes the recommendation,
- * and each row says which outcome it will send. Once sent, the rows read back what went.
+ * The record's open questions above its Approve bar: each one folds open to its prose and its
+ * answers as choices, as Claude's questions in the chat: the options the record lists (the
+ * recommended one tagged), "Take the recommendation" or "Let Claude decide" when none is marked,
+ * and "Other" with a box for the owner's own answer. The default choice sends a blank answer, and
+ * each row says which outcome it will send. Once sent, the rows read back what went.
  */
 export function OpenQuestions({
   questions,
@@ -146,9 +151,29 @@ function Question({
   disabled: boolean;
   sent: boolean;
 }) {
-  const fieldId = useId();
-  const recommendationId = useId();
+  const choiceName = useId();
   const counterId = useId();
+  const field = useRef<HTMLTextAreaElement>(null);
+  const [writing, setWriting] = useState(false);
+  const recommendedOption = question.options.find((option) => option.recommended);
+  const trimmed = answer.trim();
+  const pickedOption = question.options.find(
+    (option) => option !== recommendedOption && option.label === trimmed,
+  );
+  // A blank answer is the recommendation (or Claude's call); an option's label picks that option;
+  // any other text is the owner's own answer.
+  const choice =
+    writing || (trimmed && !pickedOption) ? OTHER_CHOICE : (pickedOption?.label ?? DEFAULT_CHOICE);
+  const choose = (next: string) => {
+    if (next === OTHER_CHOICE) {
+      if (pickedOption) onAnswer("");
+      setWriting(true);
+      requestAnimationFrame(() => field.current?.focus());
+      return;
+    }
+    setWriting(false);
+    onAnswer(next === DEFAULT_CHOICE ? "" : next);
+  };
   const showCount = answer.length >= MAX_ANSWER_CHARS * COUNT_FROM;
   const outcome = outcomeOf(question, { [question.id]: answer });
   const { icon, label } = OUTCOME[outcome];
@@ -197,66 +222,86 @@ function Question({
       </summary>
       <div className="ah-aq-body">
         {question.body && <Markdown source={question.body} className="ah-aq-prose ah-small" />}
-        <p id={recommendationId} className="ah-aq-recommendation ah-small">
-          {question.recommendation ? (
-            <>
-              <span className="ah-muted">Recommended in the spec: </span>
-              <q>{withCode(question.recommendation)}</q>
-            </>
-          ) : (
-            <span className="ah-muted">
-              No recommendation in the spec. Left blank, Claude decides from its research.
-            </span>
-          )}
-        </p>
         {changed && (
           <p className="ah-row ah-small ah-muted" style={{ gap: "var(--space-2)", margin: 0 }}>
             <Icon name="triangle-alert" size="sm" />
             This question changed after you wrote the answer.
           </p>
         )}
-        <label htmlFor={fieldId} className="ah-small">
-          Your answer to {question.id}
-        </label>
-        <textarea
-          id={fieldId}
-          className="ah-input ah-aq-input"
-          rows={3}
-          maxLength={MAX_ANSWER_CHARS}
-          value={answer}
-          disabled={disabled}
-          placeholder={
-            question.recommendation
-              ? `Blank: ${clipLine(question.recommendation.replaceAll("`", ""), PLACEHOLDER_CHARS)}`
-              : "Blank: Claude decides"
-          }
-          aria-describedby={showCount ? `${recommendationId} ${counterId}` : recommendationId}
-          onChange={(event) => {
-            onAnswer(event.target.value);
-          }}
-        />
-        <div className="ah-row" style={{ gap: 8 }}>
-          {answer.trim() && (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={disabled}
-              onClick={(event) => {
-                onAnswer("");
-                const field = event.currentTarget.closest(".ah-aq-body")?.querySelector("textarea");
-                field?.focus();
+        <fieldset className="ah-aq-choices" disabled={disabled}>
+          <legend className="ah-small">Your answer to {question.id}</legend>
+          <div className="ah-options">
+            {!recommendedOption && (
+              <OptionRow
+                type="radio"
+                name={choiceName}
+                label={question.recommendation ? "Take the recommendation" : "Let Claude decide"}
+                recommended={Boolean(question.recommendation)}
+                description={
+                  question.recommendation
+                    ? withCode(question.recommendation)
+                    : "No recommendation in the spec: Claude decides from its research."
+                }
+                checked={choice === DEFAULT_CHOICE}
+                onToggle={() => {
+                  choose(DEFAULT_CHOICE);
+                }}
+              />
+            )}
+            {question.options.map((option) => (
+              <OptionRow
+                key={option.label}
+                type="radio"
+                name={choiceName}
+                label={option.label}
+                recommended={option.recommended}
+                description={option.description ? withCode(option.description) : null}
+                checked={choice === (option === recommendedOption ? DEFAULT_CHOICE : option.label)}
+                onToggle={() => {
+                  choose(option === recommendedOption ? DEFAULT_CHOICE : option.label);
+                }}
+              />
+            ))}
+            <OptionRow
+              type="radio"
+              name={choiceName}
+              label="Other"
+              description={choice === OTHER_CHOICE ? null : "Write your own answer"}
+              checked={choice === OTHER_CHOICE}
+              onToggle={() => {
+                choose(OTHER_CHOICE);
               }}
             >
-              Clear answer
-            </Button>
-          )}
-          <span className="ah-grow" />
-          {showCount && (
-            <span id={counterId} className="ah-small ah-subtle ah-num">
-              {answer.length.toLocaleString("en-US")} / {MAX_ANSWER_CHARS.toLocaleString("en-US")}
-            </span>
-          )}
-        </div>
+              {choice === OTHER_CHOICE && (
+                <>
+                  <textarea
+                    ref={field}
+                    className="ah-input ah-aq-input"
+                    rows={3}
+                    maxLength={MAX_ANSWER_CHARS}
+                    value={answer}
+                    aria-label={`Your own answer to ${question.id}`}
+                    placeholder={
+                      question.recommendation
+                        ? `Blank: ${clipLine(question.recommendation.replaceAll("`", ""), PLACEHOLDER_CHARS)}`
+                        : "Blank: Claude decides"
+                    }
+                    aria-describedby={showCount ? counterId : undefined}
+                    onChange={(event) => {
+                      onAnswer(event.target.value);
+                    }}
+                  />
+                  {showCount && (
+                    <span id={counterId} className="ah-small ah-subtle ah-num">
+                      {answer.length.toLocaleString("en-US")} /{" "}
+                      {MAX_ANSWER_CHARS.toLocaleString("en-US")}
+                    </span>
+                  )}
+                </>
+              )}
+            </OptionRow>
+          </div>
+        </fieldset>
       </div>
     </details>
   );

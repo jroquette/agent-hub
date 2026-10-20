@@ -16,6 +16,9 @@ in it, so a path, ``..`` or an id of another project never reaches the driver.
   folder, or a ``.claude/settings.json``, that a session would start in. A refused hub lists
   nothing. Each refusal is named in ``warnings``.
 - Each workdir lists the names of its ``.claude/skills/*/`` folders (at most 200).
+- A repo or worktree session also loads the hub's plugins: each ``<hub>/plugin/<name>/`` folder
+  holding a ``.claude-plugin/`` folder, whose real path stays inside the hub (at most 20, by
+  name). The hub's own sessions load them through its ``.claude/`` links instead.
 - ``workdir_id`` is the first 16 hex digits of SHA-256 over ``kind\\0realpath``: opaque, and
   stable while the folder stays where it is.
 
@@ -35,6 +38,9 @@ from agent_hub.core.agent_sessions.errors import InvalidWorkdirError
 
 MAX_WORKTREES: Final = 200
 MAX_SKILLS: Final = 200
+MAX_PLUGINS: Final = 20
+PLUGIN_FOLDER: Final = "plugin"
+PLUGIN_MANIFEST_FOLDER: Final = ".claude-plugin"
 _ID_DIGITS: Final = 16
 
 _SHARED_WRITE: Final = stat_module.S_IWGRP | stat_module.S_IWOTH
@@ -64,6 +70,7 @@ class ResolvedWorkdir(BaseModel):
 
     workdir: Workdir
     path: str
+    plugin_dirs: tuple[str, ...] = ()
 
 
 class WorkdirListing(BaseModel):
@@ -113,7 +120,27 @@ def list_workdirs(
     for repo in repo_dirs:
         if repo in siblings:
             _add_repo(walk, repo, parent=parent)
-    return WorkdirListing(entries=tuple(walk.entries), warnings=tuple(walk.warnings))
+    plugins = _hub_plugins(walk, hub_real)
+    entries = tuple(
+        entry
+        if entry.workdir.kind == "hub" or not plugins
+        else entry.model_copy(update={"plugin_dirs": plugins})
+        for entry in walk.entries
+    )
+    return WorkdirListing(entries=entries, warnings=tuple(walk.warnings))
+
+
+def _hub_plugins(walk: _Walk, hub_real: str) -> tuple[str, ...]:
+    """The real paths of the hub's plugin folders (those holding ``.claude-plugin/``)."""
+    root = os.path.join(hub_real, PLUGIN_FOLDER)
+    found: list[str] = []
+    for name in sorted(walk.names(root, PLUGIN_FOLDER))[:MAX_PLUGINS]:
+        real = walk.realpath(os.path.join(root, name))
+        if not _inside(real, hub_real):
+            continue
+        if PLUGIN_MANIFEST_FOLDER in walk.names(real, f"{PLUGIN_FOLDER}/{name}"):
+            found.append(real)
+    return tuple(found)
 
 
 def _add_repo(walk: _Walk, repo: str, *, parent: str) -> None:

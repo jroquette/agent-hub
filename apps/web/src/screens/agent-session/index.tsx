@@ -19,7 +19,9 @@ import { sessionControlUnavailable } from "../sessions-list/control";
 import { StartSessionDialog } from "../sessions-list/StartSessionDialog";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "./Composer";
 import { OldestPendingContext } from "./PermissionCard";
-import { liveActivity, turnSteps } from "./liveActivity";
+import { backgroundTasks, liveActivity, turnSteps } from "./liveActivity";
+import { FeatureChip } from "../features/FeatureChip";
+import { BackgroundCard, BackgroundChip, BackgroundPanel } from "./BackgroundTasks";
 import { LiveActivityBar, StepsPanel, StepsToggle } from "./LiveActivityBar";
 import { readStored, writeStored } from "../../lib/storage";
 import { CostMeter } from "./CostMeter";
@@ -27,13 +29,18 @@ import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
 import { useResolvedThreads } from "./ReviewDiff";
 import { reviewThreads } from "./review";
 import { SessionMenu } from "./SessionMenu";
+import { useSlashOptions } from "./SlashMenu";
 import {
   isTerminal,
   useAgentSession,
   useAgentSessionCommands,
+  useSessionAbout,
   useAgentTranscript,
   useCapabilities,
+  useRepoChanges,
 } from "./queries";
+import { repoSummary, withRepoChanges } from "./repoChanges";
+import { ChatRefsContext, useChatRefs } from "./chatRefs";
 import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
@@ -41,7 +48,9 @@ import {
   changedFiles,
   modeLabel,
   pendingPermissions,
+  lastMessageAt,
   resumable,
+  runningTasks,
   type TranscriptState,
 } from "./model";
 import { useStickToBottom } from "./useStickToBottom";
@@ -151,11 +160,13 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const screenshotUrl = useScreenshot(agentSessionId);
   const messageScreenshots = useMessageScreenshots(agentSessionId);
   const commands = useAgentSessionCommands(agentSessionId);
+  const slashOptions = useSlashOptions(snapshot.data?.project, transcript.state.slashCommands);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [forking, setForking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [backgroundOpen, setBackgroundOpen] = useState(false);
   // The Steps drawer opens as it was last left, in this browser.
   const [liveOpen, setLiveOpen] = useState(() => readStored(STEPS_OPEN_KEY) === "open");
   const composer = useRef<HTMLTextAreaElement | null>(null);
@@ -172,10 +183,21 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const closeFiles = useCallback(() => {
     setFilesOpen(false);
   }, []);
-  // One drawer at a time: opening one closes the other.
+  // One drawer at a time: opening one closes the others.
   const closePanels = useCallback(() => {
     setFilesOpen(false);
     setLiveOpen(false);
+    setBackgroundOpen(false);
+  }, []);
+  const setBackground = useCallback((open: boolean) => {
+    setBackgroundOpen(open);
+    if (open) {
+      setFilesOpen(false);
+      setLiveOpen(false);
+    }
+  }, []);
+  const closeBackground = useCallback(() => {
+    setBackgroundOpen(false);
   }, []);
   const setSteps = useCallback((open: boolean) => {
     writeStored(STEPS_OPEN_KEY, open ? "open" : "closed");
@@ -185,6 +207,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setStepsFocus(true);
       setFilesOpen(false);
+      setBackgroundOpen(false);
     } else {
       // Focus goes back to what opened it, else to the composer.
       (stepsTrigger.current ?? composer.current)?.focus({ preventScroll: true });
@@ -200,6 +223,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const openFile = useCallback((path: string | null) => {
     setFilePick((before) => ({ path, nonce: before.nonce + 1 }));
     setLiveOpen(false);
+    setBackgroundOpen(false);
     setFilesOpen(true);
   }, []);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
@@ -215,17 +239,25 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
 
   const problem = snapshot.error ?? transcript.error;
   const session = snapshot.data;
+  const { name, feature } = useSessionAbout(session);
   const { state } = transcript;
   const { tools, permissions } = state;
   // Only the calls and their permissions change the list, not every streamed text delta.
-  const files = useMemo(() => changedFiles({ tools, permissions }), [tools, permissions]);
+  const ownFiles = useMemo(() => changedFiles({ tools, permissions }), [tools, permissions]);
+  // Git's view of the session's repositories, read again as Claude changes files and turns end.
+  const repoVersion = `${state.status ?? ""}|${ownFiles.map((file) => file.lastChangeId).join(",")}`;
+  const repoChanges = useRepoChanges(agentSessionId, repoVersion);
+  const repos = repoChanges.data?.repos;
+  const files = useMemo(() => withRepoChanges(ownFiles, repos), [ownFiles, repos]);
+  const filePaths = useMemo(() => files.map((file) => file.path), [files]);
+  const refs = useChatRefs(session?.project ?? null, filePaths, openFile);
   const threads = useMemo(
     () => reviewThreads(state.entries, state.sending),
     [state.entries, state.sending],
   );
   const crumbs = [
     { label: "Sessions", href: "/sessions" },
-    { label: session?.title ?? `Agent session ${short(agentSessionId)}` },
+    { label: name ?? `Agent session ${short(agentSessionId)}` },
   ];
 
   if (problem) {
@@ -274,6 +306,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const status = state.status ?? session.status;
   const activity = liveActivity(state);
   const steps = turnSteps(state);
+  const tasks = backgroundTasks(state);
   const ended = isTerminal(status);
   const mode = state.mode ?? session.mode;
   const model = state.model ?? session.model ?? null;
@@ -307,10 +340,22 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           <div className="ah-row ah-wrap" style={{ gap: 12 }}>
             <Icon name="square-terminal" size="lg" style={{ color: "var(--text-subtle)" }} />
             <h1 className="ah-h1" style={{ fontSize: 20 }}>
-              {session.title ?? "Untitled session"}
+              {name ?? "Untitled session"}
             </h1>
-            <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
+            {feature && <FeatureChip project={feature.project} slug={feature.slug} />}
+            <AgentStatusBadge
+              status={status}
+              endReason={state.endReason ?? session.end_reason}
+              background={runningTasks(state)}
+            />
             <span className="ah-grow" />
+            <BackgroundChip
+              tasks={tasks}
+              open={backgroundOpen}
+              onToggle={() => {
+                setBackground(!backgroundOpen);
+              }}
+            />
             <StepsToggle
               steps={steps}
               open={liveOpen}
@@ -376,7 +421,8 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           </div>
           <div className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 12 }}>
             <span>
-              {session.project} › <b className="ah-mono">{session.workdir_label}</b>
+              {session.project} ›{" "}
+              <b className="ah-mono as-workdir-label">{session.workdir_label}</b>
             </span>
             <span>
               {modeLabel(mode)}
@@ -397,49 +443,71 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
       </header>
       {/* The chords answer the oldest pending tool permission: its card names them (AC-234.29). */}
       <OldestPendingContext.Provider value={pending[0]}>
-        <Transcript
-          state={state}
-          onAnswerPermission={ended ? undefined : commands.answer}
-          scrollerRef={setScroller}
-          follow={follow}
-          screenshotUrl={screenshotUrl}
-          messageScreenshots={messageScreenshots}
-          onActivityOpen={closePanels}
-          files={files}
-          reviewed={review.reviewed}
-          onOpenFile={openFile}
-          sidePanel={
-            liveOpen && steps.end !== null ? (
-              <StepsPanel steps={steps} onClose={closeLive} focusOnOpen={stepsFocus} />
-            ) : filesOpen ? (
-              <FilesPanel
-                files={files}
-                sessionId={agentSessionId}
-                onClose={closeFiles}
-                review={review}
-                initialPath={filePick.path}
-                pickNonce={filePick.nonce}
-                comments={{
-                  threads,
-                  resolved: resolvedThreads,
-                  // A comment is a message to this session's Claude: it answers in the chat too.
-                  onComment:
-                    cloud || (ended && !canResume)
-                      ? undefined
-                      : (text) => transcript.send(text, (message) => commands.send(message)),
+        <ChatRefsContext.Provider value={refs}>
+          <Transcript
+            state={state}
+            onAnswerPermission={ended ? undefined : commands.answer}
+            scrollerRef={setScroller}
+            follow={follow}
+            screenshotUrl={screenshotUrl}
+            messageScreenshots={messageScreenshots}
+            onActivityOpen={closePanels}
+            files={files}
+            reviewed={review.reviewed}
+            onOpenFile={openFile}
+            footer={
+              <BackgroundCard
+                tasks={tasks}
+                since={lastMessageAt(state)}
+                onOpen={() => {
+                  setBackground(true);
                 }}
               />
-            ) : undefined
-          }
-        />
+            }
+            sidePanel={
+              backgroundOpen ? (
+                <BackgroundPanel
+                  tasks={tasks}
+                  onClose={closeBackground}
+                  onStop={cloud || ended ? undefined : commands.stopTask}
+                />
+              ) : liveOpen && steps.end !== null ? (
+                <StepsPanel steps={steps} onClose={closeLive} focusOnOpen={stepsFocus} />
+              ) : filesOpen ? (
+                <FilesPanel
+                  files={files}
+                  sessionId={agentSessionId}
+                  onClose={closeFiles}
+                  workdirLabel={session.workdir_label}
+                  repoNote={repoSummary(repos)}
+                  repos={repos}
+                  review={review}
+                  initialPath={filePick.path}
+                  pickNonce={filePick.nonce}
+                  comments={{
+                    threads,
+                    resolved: resolvedThreads,
+                    // A comment is a message to this session's Claude: it answers in the chat too.
+                    onComment:
+                      cloud || (ended && !canResume)
+                        ? undefined
+                        : (text) => transcript.send(text, (message) => commands.send(message)),
+                  }}
+                />
+              ) : undefined
+            }
+          />
+        </ChatRefsContext.Provider>
       </OldestPendingContext.Provider>
       <footer className="as-footer">
         <div className="as-column">
           <LiveActivityBar
             activity={activity}
-            open={liveOpen}
+            open={activity?.phase === "background" ? backgroundOpen : liveOpen}
             onToggle={() => {
-              setSteps(!liveOpen);
+              // Between turns the bar is about the background tasks: it opens their drawer.
+              if (activity?.phase === "background") setBackground(!backgroundOpen);
+              else setSteps(!liveOpen);
             }}
           />
           <Composer
@@ -455,7 +523,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             onSettings={commands.settings}
             onSending={follow.pin}
             maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
-            commands={state.slashCommands}
+            commands={slashOptions}
             draftId={agentSessionId}
             focusOnOpen={pending.length === 0}
             lastPrompt={lastPrompt(state)}

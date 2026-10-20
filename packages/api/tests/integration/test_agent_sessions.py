@@ -51,6 +51,7 @@ from agent_hub.core.agent_sessions.errors import (
     UnknownResumeError,
 )
 from agent_hub.core.agent_sessions.limits import SessionLimits
+from agent_hub.core.agent_sessions.repo_changes import RepoChanges, SessionRepoChanges
 from agent_hub.core.agent_sessions.screenshot import MAX_SCREENSHOT_BYTES
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL
 from agent_hub.core.testing.builders import a_png_bytes
@@ -134,6 +135,56 @@ def test_refuses_limit_when_events_page_limit_out_of_range(recorded_app: Any, li
     assert recorded_app.control.calls == []
 
 
+def test_answers_repo_changes_of_the_session_when_read(recorded_app: Any) -> None:
+    recorded_app.control.repo_changes_answer = SessionRepoChanges(
+        repos=(RepoChanges(root="/hubs/api", label="api", branch="dem-1", base="origin/main"),),
+        warnings=("web could not be read by git",),
+    )
+
+    response = recorded_app.client.get(f"{ONE}/repo-changes")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [(repo["label"], repo["base"]) for repo in body["repos"]] == [("api", "origin/main")]
+    assert body["warnings"] == ["web could not be read by git"]
+    assert recorded_app.control.calls == [("repo_changes", (AGENT_SESSION_ID,))]
+
+
+def test_passes_file_and_commit_when_commit_diff_read(recorded_app: Any) -> None:
+    response = recorded_app.client.get(
+        f"{ONE}/repo-changes/commit",
+        params={"path": "/hubs/api/a.py", "sha": "abc1234", "old_path": "/hubs/api/b.py"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["diff"] == "--- a/x\n+++ b/x"
+    assert recorded_app.control.calls == [
+        ("repo_commit_diff", (AGENT_SESSION_ID, "/hubs/api/a.py", "abc1234", "/hubs/api/b.py"))
+    ]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"path": "/hubs/api/a.py", "sha": "HEAD"},
+        {"path": "/hubs/api/a.py", "sha": "--output=x"},
+        {"path": "/hubs/api/a.py", "sha": "abc123"},
+        {"path": "/hubs/api/a.py", "sha": "a" * 41},
+        {"path": "/hubs/api/a.py", "sha": "origin/main"},
+        {"path": "-/hubs/api/a.py", "sha": "abc1234"},
+        {"path": "a.py", "sha": "abc1234"},
+        {"sha": "abc1234"},
+    ],
+)
+def test_refuses_commit_diff_when_file_or_commit_malformed(
+    recorded_app: Any, params: dict[str, str]
+) -> None:
+    response = recorded_app.client.get(f"{ONE}/repo-changes/commit", params=params)
+
+    assert response.status_code == 400, response.text
+    assert recorded_app.control.calls == []
+
+
 def test_answers_204_without_body_when_delete_called(recorded_app: Any) -> None:
     response = recorded_app.client.delete(ONE)
 
@@ -145,10 +196,12 @@ def test_answers_204_without_body_when_delete_called(recorded_app: Any) -> None:
     ("method", "path", "body"),
     [
         ("get", ONE, None),
+        ("get", f"{ONE}/repo-changes", None),
         ("delete", ONE, None),
         ("get", f"{ONE}/events", None),
         ("post", f"{ONE}/messages", {"text": "hi"}),
         ("post", f"{ONE}/interrupt", {}),
+        ("post", f"{ONE}/tasks/task-1/stop", {}),
         ("post", f"{ONE}/settings", {"mode": "plan"}),
         ("post", f"{ONE}/close", {}),
     ],
@@ -159,8 +212,10 @@ def test_answers_404_problem_when_session_not_found(
     port_method = {
         ONE: "snapshot" if method == "get" else "delete",
         f"{ONE}/events": "events",
+        f"{ONE}/repo-changes": "repo_changes",
         f"{ONE}/messages": "send",
         f"{ONE}/interrupt": "interrupt",
+        f"{ONE}/tasks/task-1/stop": "stop_task",
         f"{ONE}/settings": "change_settings",
         f"{ONE}/close": "close",
     }[path]

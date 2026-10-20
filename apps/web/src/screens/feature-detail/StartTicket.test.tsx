@@ -15,6 +15,7 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
+import { stackedOn } from "./PlanningView";
 import { canStartTicket, ticketPrompt } from "./StartTicket";
 import { TicketsTab } from "./TicketsTab";
 
@@ -45,6 +46,25 @@ const waiting = aTicketRow({
   waiting_on: ["T2"],
 });
 
+const PR = "https://github.com/acme/api/pull/12";
+const inReview = aTicketRow({
+  ...ready,
+  readiness: "in_progress",
+  reviewed: true,
+  pr_url: PR,
+});
+const stacked = aTicketRow({
+  ref: "T3",
+  key: "T3",
+  id: "AGH-3",
+  readiness: "waiting",
+  blocked_by: [
+    { ref: "T1", source: "plan" },
+    { ref: "T2", source: "plan" },
+  ],
+  waiting_on: ["T2"],
+});
+
 function rowOf(ref: string): HTMLElement {
   const row = document.getElementById(`ticket-${ref}`);
   if (!row) throw new Error(`no row ${ref}`);
@@ -53,10 +73,123 @@ function rowOf(ref: string): HTMLElement {
 
 describe("StartTicket", () => {
   it("offers Start only on a created ticket that can start now", () => {
-    expect(canStartTicket(ready)).toBe(true);
-    expect(canStartTicket(waiting)).toBe(false);
-    expect(canStartTicket(done)).toBe(false);
-    expect(canStartTicket({ ...ready, id: null })).toBe(false);
+    const rows = [done, ready, waiting];
+    expect(canStartTicket(ready, rows)).toBe(true);
+    expect(canStartTicket(waiting, rows)).toBe(false);
+    expect(canStartTicket(done, rows)).toBe(false);
+    expect(canStartTicket({ ...ready, id: null }, rows)).toBe(false);
+  });
+
+  it("offers Start on a ticket whose only blocker left is in review with a pull request", () => {
+    const rows = [done, inReview, stacked];
+
+    expect(stackedOn(stacked, rows)?.id).toBe("AGH-2");
+    expect(canStartTicket(stacked, rows)).toBe(true);
+    // No pull request yet: nothing to build on.
+    expect(canStartTicket(stacked, [done, { ...inReview, pr_url: null }, stacked])).toBe(false);
+    // Waiting on two tickets: one branch cannot hold both.
+    expect(canStartTicket({ ...stacked, waiting_on: ["T2", "T9"] }, rows)).toBe(false);
+  });
+
+  it("tells /feature to build on the blocker's branch and stack its pull request", () => {
+    const prompt = ticketPrompt("agent-hub", "claims", { ...stacked, id: "AGH-3" }, [
+      done,
+      inReview,
+      stacked,
+    ]);
+
+    expect(prompt).toContain("Its blockers are done: AGH-1.");
+    expect(prompt).toContain(`Its blocker AGH-2 is not merged yet: it is in review in ${PR}.`);
+    // AGH-381: the command names the pull request; hub worktree reads its repo and branch, so the
+    // blocker's repo starts from its branch even when the ticket's own work is in another repo.
+    expect(prompt).toContain(
+      `\`./hub worktree agh-3 --stack-on ${PR}\`, with no --only and no --base`,
+    );
+    expect(prompt).not.toContain("gh pr view");
+    expect(prompt).not.toContain("--base <");
+    expect(prompt).toContain("Open this ticket's pull request against AGH-2's branch");
+  });
+
+  it("reads as startable on the blocker's branch and confirms the risk before starting", async () => {
+    const created = anAgentSession({ id: anId(8, "0192a5e6"), status: "running" });
+    const view = renderWithApi(
+      <TicketsTab
+        project="agent-hub"
+        slug="claims"
+        data={aFeatureTickets({
+          tickets: [done, inReview, stacked],
+          planning: aTicketPlan({
+            layers: [["T1"], ["T2"], ["T3"]],
+            can_start: [],
+            waiting: ["T3"],
+          }),
+        })}
+        onRefresh={() => undefined}
+      />,
+      { routes: { ...driving, [`POST ${AGENT}`]: created } },
+    );
+
+    const row = within(rowOf("T3"));
+    expect(row.getByText(/Can start on/)).toHaveTextContent("Can start on T2's branch");
+    expect(row.getByText("AGH-2 is in review, not merged")).toBeInTheDocument();
+    expect(row.queryByText(/Waiting on/)).toBe(null);
+    const start = await row.findByRole("button", {
+      name: "Start AGH-3 on AGH-2's branch (AGH-2 is in review, not merged)",
+    });
+    expect(start).toHaveTextContent("Start");
+    await waitFor(() => {
+      expect(start).toBeEnabled();
+    });
+    await userEvent.click(start);
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Start AGH-3 on AGH-2's branch?",
+    });
+    expect(dialog).toHaveTextContent(
+      "AGH-2 is in review and not merged: its code may still change.",
+    );
+    expect(view.requests.some((r) => r.method === "POST")).toBe(false);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start AGH-3" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${created.id}`);
+    });
+  });
+
+  it("offers the stacked Start as a default button and starts nothing when the dialog is cancelled", async () => {
+    const view = renderWithApi(
+      <TicketsTab
+        project="agent-hub"
+        slug="claims"
+        data={aFeatureTickets({
+          tickets: [done, inReview, stacked],
+          planning: aTicketPlan({
+            layers: [["T1"], ["T2"], ["T3"]],
+            can_start: [],
+            waiting: ["T3"],
+          }),
+        })}
+        onRefresh={() => undefined}
+      />,
+      { routes: driving },
+    );
+
+    const start = await within(rowOf("T3")).findByRole("button", {
+      name: "Start AGH-3 on AGH-2's branch (AGH-2 is in review, not merged)",
+    });
+    expect(start).not.toHaveClass("ah-btn-primary");
+    await waitFor(() => {
+      expect(start).toBeEnabled();
+    });
+    await userEvent.click(start);
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Start AGH-3 on AGH-2's branch?",
+    });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("alertdialog")).toBe(null);
+    expect(view.requests.some((r) => r.method === "POST")).toBe(false);
+    expect(view.router.state.location.pathname).toBe("/");
   });
 
   it("asks /feature to work this one ticket from its workspace step, with its context", () => {
@@ -136,7 +269,7 @@ describe("StartTicket", () => {
       },
     );
 
-    const link = await card().findByRole("link", { name: /Waiting/ });
+    const link = await card().findByRole("link", { name: /^Newest session: Waiting, started / });
     expect(link).toHaveAttribute("href", "/sessions/sess-2");
     expect(card().queryByRole("button", { name: "Start AGH-2" })).toBe(null);
   });

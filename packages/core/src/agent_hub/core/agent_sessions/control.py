@@ -43,7 +43,7 @@ import asyncio
 import contextlib
 import uuid
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import partial
@@ -53,6 +53,7 @@ from pydantic import JsonValue
 
 from agent_hub.core.agent_sessions import record_text, subscription
 from agent_hub.core.agent_sessions.agent_session import (
+    MAX_REVIEW_TARGETS,
     AgentSession,
     AgentSessionList,
     AgentSessionStatus,
@@ -62,6 +63,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     OpenPermission,
     PermissionDecision,
     ResumableList,
+    ReviewTarget,
     SendMessage,
     SessionSettings,
     WorkdirList,
@@ -79,6 +81,7 @@ from agent_hub.core.agent_sessions.driver import (
     PermissionRequest,
     SessionDriver,
     StartSpec,
+    TaskEvent,
     TextDelta,
     ToolCall,
     ToolResult,
@@ -123,6 +126,17 @@ from agent_hub.core.agent_sessions.records import (
     StreamPosition,
     UserMessageBody,
 )
+from agent_hub.core.agent_sessions.repo_changes import (
+    MAX_REPOS,
+    RepoChanges,
+    RepoChangesError,
+    RepoChangesReader,
+    RepoCommitDiff,
+    RepoPullRequest,
+    SessionRepoChanges,
+    relative_to_root,
+    repo_roots,
+)
 from agent_hub.core.agent_sessions.screenshot import decode_screenshot
 from agent_hub.core.agent_sessions.session_state import (
     Answer,
@@ -138,7 +152,8 @@ from agent_hub.core.agent_sessions.session_state import (
     start_state,
 )
 from agent_hub.core.agent_sessions.store import AgentSessionFields, AgentSessionStore
-from agent_hub.core.agent_sessions.workdirs import WorkdirListing
+from agent_hub.core.agent_sessions.workdirs import ResolvedWorkdir, WorkdirListing
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.sessions.session import TokenUsage
 
 # The workdirs of a project, listed now (``api/workdir_listing.py`` over the hub registry); it
@@ -153,6 +168,27 @@ DRAIN_SECONDS: Final = 1.0
 # Records the server writes while a session ends, and the driver's last ones: they use the
 # log's headroom (E12).
 _RESERVED_KINDS: Final = frozenset({"result", "exited"})
+# How long a branch's pull request, as GitHub named it, is reused before asking again.
+PR_CHECK_SECONDS: Final = 60
+
+
+# The tool calls ``repo_changes`` reads for the worktrees a session names, a page at a time.
+CALL_KINDS: Final[frozenset[RecordKind]] = frozenset({"tool.call"})
+MAX_CALLS_READ: Final = 5000
+CALLS_PAGE: Final = 500
+
+
+def _strings(value: object) -> str:
+    """Every string inside a call's input, one per line (a command, a prompt, a path)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return "\n".join(_strings(item) for item in value.values())
+    if isinstance(value, list):
+        return "\n".join(_strings(item) for item in value)
+    return ""
+
+
 # How many records a reopened session's log is read in at a time, to count its budget.
 _BUDGET_PAGE: Final = 1000
 _STOPPING: Final = "hub web is stopping"
@@ -270,6 +306,16 @@ class AgentSessionCommands(Protocol):
         """One session, with its open permission request while live (E10)."""
         ...
 
+    async def repo_changes(self, agent_session_id: str) -> SessionRepoChanges:
+        """What the session's repositories change against their base branch."""
+        ...
+
+    async def repo_commit_diff(
+        self, agent_session_id: str, *, path: str, sha: str, old_path: str | None = None
+    ) -> RepoCommitDiff:
+        """What one commit changed in one file of the session's repositories."""
+        ...
+
     async def delete(self, agent_session_id: str) -> None:
         """Remove an ended session and its log (L4); a live one raises."""
         ...
@@ -293,6 +339,10 @@ class AgentSessionCommands(Protocol):
 
     async def interrupt(self, agent_session_id: str) -> AgentSession:
         """Interrupt the running turn; its result follows on the stream."""
+        ...
+
+    async def stop_task(self, agent_session_id: str, task_id: str) -> AgentSession:
+        """Stop a running background task; its end follows on the stream."""
         ...
 
     async def answer(
@@ -336,6 +386,7 @@ class AgentSessionControl:
         new_claude_session_id: Callable[[], str] = _uuid4,
         observed_sessions: ObservedSessionLookup | None = None,
         session_title: Callable[[str, str], str | None] | None = None,
+        repo_changes: RepoChangesReader | None = None,
     ) -> None:
         self._driver = driver
         self._store = store
@@ -347,6 +398,9 @@ class AgentSessionControl:
         self._new_claude_session_id = new_claude_session_id
         self._observed_sessions = observed_sessions
         self._session_title = session_title
+        self._repo_changes = repo_changes
+        # Each branch's pull request as GitHub last named it, and when: (root, branch) -> ...
+        self._pull_requests: dict[tuple[str, str], tuple[datetime, RepoPullRequest | None]] = {}
         self._live: dict[str, LiveSession] = {}
         # Per CLI process: what its reported running cost adds to (see ``_session_cost``).
         self._cost_bases: weakref.WeakKeyDictionary[LiveSession, Decimal] = (
@@ -390,6 +444,197 @@ class AgentSessionControl:
     async def snapshot(self, agent_session_id: str) -> AgentSession:
         """One session, with its open permission request while live (E10)."""
         return (await self._with_twins([await self._session(agent_session_id)]))[0]
+
+    async def repo_changes(self, agent_session_id: str) -> SessionRepoChanges:
+        """Each listed repo or worktree the session started in, changed a file in or named, as
+        git reads it against its base branch (``repo_changes``), with its pull request; and each
+        repository it recorded before (``review_targets``) whose folder is gone, read from the
+        commits it recorded. Empty without a reader, or when the session's project is gone. A
+        repository git cannot read is named in ``warnings``. What was read is recorded on the
+        session, so the review outlives the folders."""
+        session = await self._session(agent_session_id)
+        reader = self._repo_changes
+        if reader is None:
+            return SessionRepoChanges()
+        try:
+            listing = await self._listing(session.project)
+        except Exception:  # noqa: BLE001 -- an unknown project reads as no repository
+            return SessionRepoChanges()
+        roots = await self._review_roots(session, listing)
+        warnings: list[str] = []
+        repos: list[tuple[RepoChanges, str | None]] = []
+        for root in roots:
+            try:
+                read = await asyncio.to_thread(reader.read, root.path, label=root.workdir.label)
+                repos.append((read, root.workdir.repo))
+            except RepoChangesError:
+                warnings.append(f"{root.workdir.label} could not be read by git")
+        repos += await self._read_recorded(
+            reader, session=session, listing=listing, roots=roots, warnings=warnings
+        )
+        found = [
+            (await self._with_pull_request(reader, session, read), repo) for read, repo in repos
+        ]
+        await self._record_targets(session, found)
+        return SessionRepoChanges(repos=tuple(read for read, _ in found), warnings=tuple(warnings))
+
+    async def _review_roots(
+        self, session: AgentSession, listing: WorkdirListing
+    ) -> list[ResolvedWorkdir]:
+        """The folders read as they are now: ``repo_roots``, then each recorded one still listed."""
+        mentions = await asyncio.to_thread(self._call_inputs, session.id)
+        roots = list(
+            repo_roots(
+                listing,
+                workdir_id=session.workdir_id,
+                paths=(file.path for file in session.changed_files),
+                mentions=mentions,
+            )
+        )
+        recorded = {target.root for target in session.review_targets}
+        for entry in listing.entries:
+            if entry.path in recorded and entry.workdir.kind != "hub" and entry not in roots:
+                roots.append(entry)
+        return roots[:MAX_REPOS]
+
+    async def _read_recorded(
+        self,
+        reader: RepoChangesReader,
+        *,
+        session: AgentSession,
+        listing: WorkdirListing,
+        roots: Sequence[ResolvedWorkdir],
+        warnings: list[str],
+    ) -> list[tuple[RepoChanges, str | None]]:
+        """Each recorded folder that is gone, from its commits in its repo's own checkout;
+        unless the session works on that repo elsewhere now (it moved to a new worktree: that one
+        is the change)."""
+        read_roots = {root.path for root in roots}
+        live_repos = {root.workdir.repo for root in roots}
+        checkouts = {
+            entry.workdir.repo: entry.path
+            for entry in listing.entries
+            if entry.workdir.kind == "repo" and entry.workdir.repo
+        }
+        found: list[tuple[RepoChanges, str | None]] = []
+        for target in session.review_targets:
+            gone = target.root not in read_roots and target.repo not in live_repos
+            if not (gone and target.repo and target.base_sha and target.head_sha):
+                continue
+            repo_root = checkouts.get(target.repo)
+            try:
+                if repo_root is None:
+                    raise RepoChangesError(target.label)
+                read = await asyncio.to_thread(
+                    partial(
+                        reader.read_recorded,
+                        repo_root,
+                        label=target.label,
+                        root=target.root,
+                        branch=target.branch,
+                        base=target.base,
+                        base_sha=target.base_sha,
+                        head_sha=target.head_sha,
+                    )
+                )
+                found.append((read, target.repo))
+            except RepoChangesError:
+                warnings.append(f"{target.label}: its folder is gone and its commits are not here")
+        return found
+
+    async def _with_pull_request(
+        self, reader: RepoChangesReader, session: AgentSession, read: RepoChanges
+    ) -> RepoChanges:
+        """``read`` with its branch's pull request: asked of GitHub at most once a minute per
+        branch, else the one the session recorded."""
+        if not read.branch:
+            return read
+        key = (read.root, read.branch)
+        now = self._clock()
+        cached = self._pull_requests.get(key)
+        if cached is not None and (now - cached[0]).total_seconds() < PR_CHECK_SECONDS:
+            pull = cached[1]
+        else:
+            branch = read.branch
+            pull = await asyncio.to_thread(lambda: reader.pull_request(read.root, branch=branch))
+            self._pull_requests[key] = (now, pull)
+        if pull is None:
+            recorded = next(
+                (t for t in session.review_targets if t.root == read.root and t.pr_url), None
+            )
+            if recorded is not None and recorded.pr_number is not None and recorded.pr_url:
+                pull = RepoPullRequest(
+                    number=recorded.pr_number, url=recorded.pr_url, state="UNKNOWN"
+                )
+        return read if pull is None else read.model_copy(update={"pull_request": pull})
+
+    async def _record_targets(
+        self, session: AgentSession, found: Sequence[tuple[RepoChanges, str | None]]
+    ) -> None:
+        """Keep what was read on the session (the targets of folders not read this time stay)."""
+        targets = {target.root: target for target in session.review_targets}
+        for read, repo in found:
+            if read.base_sha is None:
+                continue
+            pull = read.pull_request
+            targets[read.root] = ReviewTarget(
+                repo=repo,
+                label=read.label,
+                root=read.root,
+                branch=read.branch,
+                base=read.base,
+                base_sha=read.base_sha,
+                head_sha=read.head_sha,
+                pr_number=pull.number if pull else None,
+                pr_url=pull.url if pull else None,
+            )
+        recorded = tuple(targets.values())[-MAX_REVIEW_TARGETS:]
+        if recorded != session.review_targets:
+            await asyncio.to_thread(lambda: self._store.update(session.id, review_targets=recorded))
+
+    def _call_inputs(self, agent_session_id: str) -> list[str]:
+        """The text of every tool call's input in the session's log, oldest first (at most
+        ``MAX_CALLS_READ`` calls): where its shell commands ran and where it sent subagents."""
+        texts: list[str] = []
+        after = 0
+        while len(texts) < MAX_CALLS_READ:
+            page = self._store.records(
+                agent_session_id, after=after, limit=CALLS_PAGE, kinds=CALL_KINDS
+            )
+            texts.extend(_strings(record.body.get("input")) for record in page)
+            if len(page) < CALLS_PAGE:
+                break
+            after = page[-1].seq
+        return texts[:MAX_CALLS_READ]
+
+    async def repo_commit_diff(
+        self, agent_session_id: str, *, path: str, sha: str, old_path: str | None = None
+    ) -> RepoCommitDiff:
+        """What commit ``sha`` changed in the file at ``path`` (and ``old_path``, its name before
+        a rename), read by git in the session's repository that holds it (``repo_changes``'s
+        repositories, plus the listed one holding ``path``). ``EntityNotFoundError`` when no
+        such repository holds the file, or git knows no such commit."""
+        session = await self._session(agent_session_id)
+        reader = self._repo_changes
+        missing = EntityNotFoundError(entity="commit", entity_id=sha)
+        if reader is None:
+            raise missing
+        try:
+            listing = await self._listing(session.project)
+        except Exception as error:  # noqa: BLE001 -- an unknown project holds no file
+            raise missing from error
+        roots = repo_roots(listing, workdir_id=session.workdir_id, paths=(path,))
+        root = next((one for one in roots if relative_to_root(one.path, path) is not None), None)
+        if root is None:
+            raise missing
+        paths = [relative_to_root(root.path, one) for one in (path, old_path) if one]
+        try:
+            diff = await asyncio.to_thread(
+                reader.commit_diff, root.path, sha=sha, paths=[one for one in paths if one]
+            )
+        except RepoChangesError as error:
+            raise missing from error
+        return diff.model_copy(update={"path": path})
 
     async def _session(self, agent_session_id: str) -> AgentSession:
         """The live view of a session, else its stored record (no twin lookup)."""
@@ -468,6 +713,7 @@ class AgentSessionControl:
                 fork=request.fork,
                 session_id=minted,
                 environment_extra=self._environment_extra,
+                plugin_dirs=resolved.plugin_dirs,
             )
             live = await self._start(session, spec, state)
             try:
@@ -537,6 +783,16 @@ class AgentSessionControl:
             await self._sync(live)
             await self._driver.send(live.handle, message.text, images=images)
         return MessageAccepted(seq=seq)
+
+    async def stop_task(self, agent_session_id: str, task_id: str) -> AgentSession:
+        """Stop a running task (a background agent or command): the CLI ends it and its
+        ``task`` record with ``stopped`` follows. A task not running (it just ended, or never
+        ran here) is left alone, so a stop that crosses its end is not an error."""
+        live = await self._commandable(agent_session_id)
+        async with live.commands:
+            if task_id in live.tasks:
+                await self._driver.stop_task(live.handle, task_id)
+            return live.view()
 
     async def interrupt(self, agent_session_id: str) -> AgentSession:
         """Interrupt the running turn: open requests are denied ``by: closed``, then the
@@ -643,7 +899,7 @@ class AgentSessionControl:
                 if expired(open_request.view, now):
                     await self._time_out(live, request_id)
             idle_since = live.idle_since
-            idle = live.state.status == AgentSessionStatus.IDLE
+            idle = live.state.status == AgentSessionStatus.IDLE and not live.tasks
             if idle and idle_since is not None and now - idle_since >= self._limits.idle:
                 await asyncio.shield(self._ending(live, EndReason.IDLE_TIMEOUT, by="timeout"))
         if purge:
@@ -679,7 +935,8 @@ class AgentSessionControl:
         capabilities = await self._driver.capabilities()
         if not capabilities.available:
             raise SessionsUnavailableError(capabilities.reason or "sessions cannot start here")
-        if len(self._live) >= self._limits.sessions_max:
+        limit = self._limits.sessions_max
+        if limit and len(self._live) >= limit:
             await self._free_slot()
 
     async def _free_slot(self) -> None:
@@ -693,6 +950,7 @@ class AgentSessionControl:
             and live.session.kind == "local"
             and live.state.status == AgentSessionStatus.IDLE
             and not live.requests
+            and not live.tasks
             and live.idle_since is not None
         ]
         if not waiting:
@@ -813,6 +1071,7 @@ class AgentSessionControl:
                 resume=claude_session_id,
                 session_id=None,
                 environment_extra=self._environment_extra,
+                plugin_dirs=resolved.plugin_dirs,
             )
             state = start_state(with_prompt=False)
             live = await self._start(reopened, spec, state)
@@ -1053,6 +1312,7 @@ class AgentSessionControl:
             await self._emit(live, "error", {"message": message}, by="server")
 
     async def _on_event(self, live: LiveSession, event: DriverEvent) -> None:
+        self._track_task(live, event)
         match event:
             case TextDelta(block=block, text=text):
                 async with live.emit_lock:
@@ -1072,6 +1332,18 @@ class AgentSessionControl:
                 await self._emit(live, "error", _event_body(event), by="driver")
             case _:
                 await self._emit(live, event.kind, _event_body(event), by="driver")
+
+    def _track_task(self, live: LiveSession, event: DriverEvent) -> None:
+        """Keep the session's running tasks (its record is logged as any other event). The idle
+        timeout counts from the last task's end, since the session was at work until then."""
+        if not isinstance(event, TaskEvent):
+            return
+        if event.status == "running":
+            live.tasks.add(event.task_id)
+        elif event.task_id in live.tasks:
+            live.tasks.discard(event.task_id)
+            if not live.tasks and live.idle_since is not None:
+                live.idle_since = self._clock()
 
     async def _on_init(self, live: LiveSession, event: InitEvent) -> None:
         await self._emit(live, "init", _event_body(event), by="driver")

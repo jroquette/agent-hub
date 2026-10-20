@@ -178,3 +178,39 @@ def test_answers_default_tiers_when_models_unset() -> None:
 
     assert view.model_tiers == {"small": "haiku", "medium": "sonnet", "large": "opus"}
     assert view.agent_models == ()
+
+
+# The screen marks a tier the team names apart from a built-in one.
+def test_names_team_tiers_when_models_set() -> None:
+    assert _view(a_models_document()).model_tiers_set == ("medium", "large")
+
+
+def test_names_no_team_tier_when_models_unset() -> None:
+    assert _view(a_hub_document()).model_tiers_set == ()
+
+
+# The screen marks the tracker labels and states the team sets apart from built-in ones.
+def test_names_team_tracker_keys_when_hub_sets_some() -> None:
+    document = a_hub_document()
+    document["tracker"] = {
+        **document["tracker"],
+        "ready_label": "go",
+        "states": {"review": "Review"},
+    }
+
+    assert _view(document).tracker.team_set == ("ready_label", "review_state")
+
+
+def test_names_no_team_tracker_key_when_hub_sets_none() -> None:
+    assert _view(a_hub_document()).tracker.team_set == ()
+
+
+def test_names_blocked_label_and_started_state_when_hub_sets_them() -> None:
+    document = a_hub_document()
+    document["tracker"] = {
+        **document["tracker"],
+        "blocked_label": "stuck",
+        "states": {"started": "Doing"},
+    }
+
+    assert _view(document).tracker.team_set == ("blocked_label", "started_state")

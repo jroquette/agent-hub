@@ -95,7 +95,7 @@ describe("PlanningView", () => {
         .map((li) => li.getAttribute("aria-label")),
     ).toEqual(["T1 · Ticket T1", "T2 · Ticket T2", "T4 · Ticket T4"]);
     expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).toHaveTextContent(
-      "critical path",
+      "Critical path",
     );
     expect(screen.getByRole("link", { name: "Ticket T1" })).toHaveAttribute(
       "href",
@@ -181,7 +181,8 @@ describe("PlanningView", () => {
     const card = screen.getByRole("listitem", { name: "T1 · Ticket T1" });
     expect(card).toHaveAttribute("data-readiness", "in_progress");
     expect(card).toHaveTextContent("In Review");
-    expect(card).toHaveTextContent("In progress");
+    // The badge says the status; the card does not repeat it as readiness.
+    expect(card).not.toHaveTextContent("In progress");
     expect(card).not.toHaveTextContent("Can start now");
     expect(screen.getByRole("list", { name: "Tickets by readiness" })).toHaveTextContent(
       "1 in progress",
@@ -274,7 +275,147 @@ describe("PlanningView", () => {
     expect(edge("T2→T3")).not.toHaveAttribute("data-critical");
     expect(edge("T3→T5")).toHaveAttribute("data-early", "true");
     // A blocker drawn as an edge is not repeated in words on the card.
-    expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).not.toHaveTextContent("after");
+    expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).not.toHaveTextContent(
+      /after/i,
+    );
+  });
+
+  it("says on a card only what its readiness adds to the Linear status (card)", () => {
+    const cards = [
+      aTicketRow({
+        ref: "R1",
+        key: "R1",
+        id: "AGH-1",
+        title: "Reviewed one",
+        readiness: "waiting",
+        waiting_on: [],
+        reviewed: true,
+        state: { name: "Todo", type: "unstarted" },
+      }),
+      aTicketRow({
+        ref: "R2",
+        key: "R2",
+        id: "AGH-2",
+        title: "Early one",
+        readiness: "in_progress",
+        waiting_on: ["AGH-9"],
+        blocked_by: [{ ref: "AGH-9", source: "linear" }],
+        state: { name: "In Progress", type: "started" },
+      }),
+      aTicketRow({
+        ref: "R3",
+        key: "R3",
+        id: "AGH-3",
+        title: "Done one",
+        readiness: "done",
+        state: { name: "Done", type: "completed" },
+      }),
+      aTicketRow({
+        ref: "R4",
+        key: "R4",
+        id: null,
+        url: null,
+        title: "Planned one",
+        readiness: "can_start",
+        state: null,
+      }),
+    ];
+    render(
+      <PlanningView
+        tickets={cards}
+        planning={aTicketPlan({
+          layers: [["R1", "R2", "R3", "R4"]],
+          can_start: ["R4"],
+          order: ["R1", "R2", "R3", "R4"],
+          waiting: [],
+          critical_path: [],
+        })}
+      />,
+    );
+
+    const card = (name: string) => screen.getByRole("listitem", { name: new RegExp(name) });
+    expect(card("Reviewed one")).toHaveTextContent("Reviewed");
+    expect(card("Early one")).toHaveTextContent("Started before AGH-9 was done");
+    expect(card("Early one")).not.toHaveTextContent(/After AGH-9/);
+    expect(card("Done one").querySelector(".ah-flow-card-status")).toBeNull();
+    expect(card("Planned one")).toHaveTextContent("Not created");
+    expect(card("Planned one")).toHaveTextContent("Can start now");
+  });
+
+  it("links the ticket's pull request in the card's progress row (card)", () => {
+    const row = aTicketRow({
+      ref: "R1",
+      key: "R1",
+      id: "AGH-1",
+      title: "Reviewed one",
+      readiness: "in_progress",
+      waiting_on: [],
+      blocked_by: [],
+      pr_url: "https://github.com/acme/demo-api/pull/69",
+    });
+    render(
+      <PlanningView
+        tickets={[row]}
+        planning={aTicketPlan({
+          layers: [["R1"]],
+          can_start: [],
+          order: ["R1"],
+          waiting: [],
+          critical_path: [],
+        })}
+      />,
+    );
+
+    const card = screen.getByRole("listitem", { name: "R1 · Reviewed one" });
+    const link = within(card).getByRole("link", {
+      name: "PR #69 of AGH-1 (opens GitHub in a new tab)",
+    });
+    expect(link).toHaveAttribute("href", "https://github.com/acme/demo-api/pull/69");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveTextContent("PR #69");
+    expect(link.closest(".ah-flow-card-facts")).not.toBeNull();
+  });
+
+  it("reads a ticket whose only blocker is in review as startable on its branch (card)", () => {
+    const blocker = aTicketRow({
+      ref: "T2",
+      key: "T2",
+      id: "AGH-2",
+      title: "Blocker",
+      readiness: "in_progress",
+      waiting_on: [],
+      blocked_by: [],
+      pr_url: "https://github.com/acme/demo-api/pull/12",
+    });
+    const stacked = aTicketRow({
+      ref: "T3",
+      key: "T3",
+      id: "AGH-3",
+      title: "Stacked",
+      readiness: "waiting",
+      state: { name: "Todo", type: "unstarted" },
+      blocked_by: [{ ref: "T2", source: "plan" }],
+      waiting_on: ["T2"],
+    });
+    render(
+      <PlanningView
+        tickets={[blocker, stacked]}
+        planning={aTicketPlan({
+          layers: [["T2"], ["T3"]],
+          can_start: [],
+          order: ["T2", "T3"],
+          waiting: ["T3"],
+          critical_path: [],
+        })}
+      />,
+    );
+
+    const card = screen.getByRole("listitem", { name: "T3 · Stacked" });
+    expect(card).toHaveTextContent("Can start on T2's branch");
+    expect(card).not.toHaveTextContent("Waiting on");
+    expect(screen.getByLabelText("Legend")).toHaveTextContent(
+      "Can start on a blocker's branch: its only blocker is in review",
+    );
   });
 
   it("splits a conventional title into its type, scope and words (title)", () => {

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { aLogRecord } from "../../testing/builders";
 import { elapsed, liveActivity, turnSteps } from "./liveActivity";
 import {
+  runningTasks,
+  sessionTasks,
   initialTranscript,
   reduceTranscript,
   type StreamItem,
@@ -67,6 +69,138 @@ describe("liveActivity", () => {
   it("reads waiting for you while a permission is open", () => {
     const state = run([message, { type: "status", status: { status: "waiting_permission" } }]);
     expect(liveActivity(state)?.phase).toBe("waiting");
+  });
+});
+
+describe("background agents", () => {
+  const idle: StreamItem = { type: "status", status: { status: "idle" } };
+  const task = (seq: number, id: string, status: string, extra: object = {}) =>
+    record("task", { seq, body: { task_id: id, status, ...extra } });
+  const launched = [
+    message,
+    running,
+    call(2, "a", "Agent", { subagent_type: "reviewer", description: "quality review" }),
+    task(3, "t1", "running", { description: "quality review", tool_use_id: "a" }),
+    record("tool.result", { seq: 4, body: { tool_use_id: "a", content: "launched" } }),
+    task(5, "t2", "running", { description: "spec review" }),
+    record("result", { seq: 6, body: { subtype: "success" } }),
+    idle,
+  ];
+
+  it("reads an idle session with agents still running as working in the background", () => {
+    const activity = liveActivity(run(launched));
+    expect(activity?.phase).toBe("background");
+    expect(activity?.calls.map((c) => c.label)).toEqual([
+      "spec review",
+      "reviewer · quality review",
+    ]);
+    expect(activity?.turnStartedAt).toBe(activity?.calls[1]?.startedAt);
+  });
+
+  it("is null again once every background agent ended", () => {
+    const state = run([...launched, task(7, "t1", "completed"), task(8, "t2", "stopped")]);
+    expect(liveActivity(state)).toBeNull();
+  });
+
+  it("runs a finished agent again when it is resumed", () => {
+    const state = run([
+      ...launched,
+      task(7, "t1", "completed"),
+      task(8, "t2", "completed"),
+      task(9, "t1", "running"),
+    ]);
+    expect(liveActivity(state)?.calls.map((c) => c.label)).toEqual(["reviewer · quality review"]);
+    expect(state.tasks.t1?.endedAt).toBeNull();
+  });
+
+  it("forgets the agents when the process exits", () => {
+    const state = run([...launched, record("exited", { seq: 7, body: { code: 0 } })]);
+    expect(liveActivity(state)).toBeNull();
+  });
+});
+
+describe("background agents in a log without task records", () => {
+  const idle: StreamItem = { type: "status", status: { status: "idle" } };
+  const launch = (seq: number, id: string, description: string) => [
+    call(seq, id, "Agent", { description, subagent_type: "evaluator", run_in_background: true }),
+    record("tool.result", {
+      seq: seq + 1,
+      body: {
+        tool_use_id: id,
+        content: [
+          {
+            type: "text",
+            text: `Async agent launched successfully.\nagentId: ag${id} (internal ID)`,
+          },
+        ],
+      },
+    }),
+  ];
+  const turn = [message, running];
+  const ended = record("result", { seq: 90, body: { subtype: "success" } });
+
+  it("reads a launched agent as running until its handback, with its calls", () => {
+    const working = run([
+      ...turn,
+      ...launch(2, "e", "Re-evaluate DEM-63"),
+      ended,
+      idle,
+      call(91, "b1", "Bash", { command: "make check" }, "e"),
+    ]);
+    const activity = liveActivity(working);
+    expect(activity?.phase).toBe("background");
+    expect(activity?.calls.map((c) => c.label)).toEqual(["evaluator · Re-evaluate DEM-63"]);
+    expect(runningTasks(working).map((t) => t.id)).toEqual(["age"]);
+
+    const done = run([
+      ...turn,
+      ...launch(2, "e", "Re-evaluate DEM-63"),
+      ended,
+      idle,
+      call(91, "h", "SubagentHandback", { message: "SHIP" }, "e"),
+    ]);
+    expect(liveActivity(done)).toBeNull();
+    expect(sessionTasks(done)[0]?.status).toBe("completed");
+  });
+
+  it("reads a TaskStop of its agent id as stopped, and a SendMessage after the end as running", () => {
+    const stopped = run([
+      ...turn,
+      ...launch(2, "e", "Review"),
+      call(4, "s", "TaskStop", { task_id: "age" }),
+      ended,
+      idle,
+    ]);
+    expect(sessionTasks(stopped)[0]?.status).toBe("stopped");
+
+    const resumed = run([
+      ...turn,
+      ...launch(2, "e", "Review"),
+      call(4, "h", "SubagentHandback", {}, "e"),
+      call(5, "m", "SendMessage", { to: "age", message: "fix S6-1" }),
+      ended,
+      idle,
+    ]);
+    expect(runningTasks(resumed)).toHaveLength(1);
+  });
+
+  it("reads an agent of a process that restarted as stopped, and a recorded task only once", () => {
+    const restarted = run([
+      ...turn,
+      ...launch(2, "e", "Review"),
+      ended,
+      record("exited", { seq: 91, body: { code: 0 } }),
+    ]);
+    expect(sessionTasks(restarted)[0]?.status).toBe("stopped");
+
+    const recorded = run([
+      ...turn,
+      ...launch(2, "e", "Review"),
+      record("task", { seq: 4, body: { task_id: "age", status: "running", tool_use_id: "e" } }),
+      ended,
+      idle,
+    ]);
+    expect(sessionTasks(recorded)).toHaveLength(1);
   });
 });
 

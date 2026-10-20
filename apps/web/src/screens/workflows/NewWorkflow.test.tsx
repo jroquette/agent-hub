@@ -93,7 +93,7 @@ describe("NewWorkflowScreen", () => {
     expect(loaded.closest("[role=status]")).not.toBeNull();
     expect(screen.getByRole("link", { name: "See its steps" })).toHaveAttribute(
       "href",
-      "/workflows/agent-hub/fix-test",
+      "/projects/agent-hub/skills/workflows/fix-test",
     );
     expect(screen.queryByText(/Claude has your request in the panel/)).toBeNull();
     expect(requests.some((r) => new URL(r.url).searchParams.get("project") === "agent-hub")).toBe(

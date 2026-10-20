@@ -5,6 +5,7 @@ import type { components } from "../../api/schema";
 import {
   AsOfStamp,
   Banner,
+  Button,
   DerivedLabel,
   EmptyState,
   GoldenPathStepper,
@@ -29,7 +30,7 @@ import { QuestionsLink } from "./QuestionsBlock";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
-import { EvalTab, OwnerSignOff, pickEval } from "./EvalTab";
+import { EvalTab, OwnerSignOff, ownerStepsWaiting, pickEval } from "./EvalTab";
 import { RecordSummary, summaryRequest } from "./RecordSummary";
 import { StateBadge } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
@@ -424,6 +425,11 @@ export function FeatureDetailScreen() {
   const owners = detail.ac_rows.filter((ac) => passOf(ac) === "owner");
   const waitReason = ownerWait(detail.golden_path.steps);
   const issueIds = ticketIds(detail.issues);
+  const waitingEvals = ownerStepsWaiting(
+    detail.evals,
+    issueIds,
+    tickets.data?.planning.epics ?? [],
+  );
   const setTab = (id: string) => {
     setParams(
       (current) => {
@@ -461,6 +467,7 @@ export function FeatureDetailScreen() {
         onRefresh={() => void tickets.refetch()}
         refreshing={tickets.isFetching}
         acPasses={Object.fromEntries(detail.ac_rows.map((ac) => [ac.id, ac.passes]))}
+        acRows={detail.ac_rows}
       />
     );
   } else if (tab === "eval") {
@@ -471,6 +478,8 @@ export function FeatureDetailScreen() {
         tickets={issueIds}
         epics={tickets.data?.planning.epics ?? []}
         evals={detail.evals}
+        ticketRows={tickets.data?.tickets}
+        acRows={detail.ac_rows}
         selected={selectedEval}
         onSelect={(delivery) => {
           setParams(
@@ -555,7 +564,43 @@ export function FeatureDetailScreen() {
           selectLabel={(step) => `Open the ${TAB_LABEL[STEP_TAB[step]] ?? step} of ${step}`}
         />
       </section>
-      {waitReason ? (
+      {waitingEvals.length > 0 ? (
+        <Banner
+          tone="warning"
+          boxed
+          icon="hand"
+          action={
+            tab !== "eval" && (
+              <Button
+                size="sm"
+                variant="primary"
+                icon="arrow-right"
+                onClick={() => {
+                  setParams(
+                    (current) => {
+                      const next = new URLSearchParams(current);
+                      next.set("doc", "eval");
+                      next.set("eval", waitingEvals[0]?.record.delivery ?? "");
+                      return next;
+                    },
+                    { replace: true },
+                  );
+                }}
+              >
+                Review owner steps
+              </Button>
+            )
+          }
+        >
+          <b>Waiting on you</b>
+          <span className="ah-muted">
+            {" "}
+            · {waitingEvals.length === 1 ? "1 eval" : `${String(waitingEvals.length)} evals`} passed
+            with owner steps: {waitingEvals.map((w) => `${w.scope} · ${w.label}`).join(", ")}.
+            {tab === "eval" && " Settle each one below."}
+          </span>
+        </Banner>
+      ) : waitReason ? (
         <OwnerSignOff
           project={detail.project}
           slug={detail.slug}

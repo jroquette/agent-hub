@@ -12,9 +12,11 @@ import {
   useApi,
   type ApiProblem,
 } from "../../lib/api";
+import { ticketName, type TicketInfo } from "../../components";
 import { screenshotBody } from "../../lib/pastedImage";
 import { rememberMessageScreenshots } from "../../lib/screenshotCopy";
 import { useEventStream, type StreamHandlers, type StreamHealth } from "../../lib/sse";
+import { useTicketLookup, useTicketTitles } from "../features/queries";
 import {
   applySnapshot,
   initialTranscript,
@@ -43,27 +45,30 @@ const SESSION = "/api/v1/agent-sessions/{agent_session_id}" as const;
 /** The API's largest log page (plan "Inputs, bounds and budget": `limit` 1-500). */
 export const LOG_PAGE = 500;
 
-/** Every record kind the stream names as `record.<kind>` (`RecordKind`). */
-export const RECORD_KINDS: readonly RecordKind[] = [
-  "init",
-  "text",
-  "thinking",
-  "tool.call",
-  "tool.result",
-  "todos",
-  "permission.request",
-  "result",
-  "error",
-  "exited",
-  "user.message",
-  "permission.decision",
-  "interrupt",
-  "settings",
-  "close",
-  "log.truncated",
-  "cloud.start",
-  "cloud.followup",
-];
+/** Every record kind the stream names as `record.<kind>` (`RecordKind`): a key per kind, so a
+ * kind the API adds fails the typecheck until the stream listens for it. */
+const STREAMED: Record<RecordKind, true> = {
+  init: true,
+  text: true,
+  thinking: true,
+  "tool.call": true,
+  "tool.result": true,
+  todos: true,
+  task: true,
+  "permission.request": true,
+  result: true,
+  error: true,
+  exited: true,
+  "user.message": true,
+  "permission.decision": true,
+  interrupt: true,
+  settings: true,
+  close: true,
+  "log.truncated": true,
+  "cloud.start": true,
+  "cloud.followup": true,
+};
+export const RECORD_KINDS = Object.keys(STREAMED) as readonly RecordKind[];
 
 const TERMINAL: readonly AgentSessionStatus[] = ["ended", "failed"];
 /** Whether a session can do nothing more (its stream would only replay). */
@@ -77,6 +82,74 @@ export const sessionKey = (id: string) => apiKey(SESSION, sessionParams(id));
 /** `GET /agent-sessions/{id}`: the snapshot (status, mode, model, the open request). */
 export function useAgentSession(id: string) {
   return useApi(SESSION, sessionParams(id), { retry: false });
+}
+
+/**
+ * `GET /agent-sessions/{id}/repo-changes`: what the session's repositories change against their
+ * base branch, as git reads them. Read again whenever `version` changes (a file tool ran, a turn
+ * ended), since a commit or a shell command changes it without the chat knowing.
+ */
+export function useRepoChanges(id: string, version: string) {
+  const query = useApi(
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes",
+    sessionParams(id),
+    { retry: false, staleTime: 5_000, refetchOnWindowFocus: true },
+  );
+  const { refetch } = query;
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    void refetch();
+  }, [version, refetch]);
+  return query;
+}
+
+/** `GET /agent-sessions/{id}/repo-changes/commit`: what one commit changed in one file. A commit
+ * never changes, so it is read once. */
+export function useRepoCommitDiff(
+  id: string,
+  { path, oldPath, sha }: { path: string; oldPath: string | null; sha: string },
+) {
+  return useApi(
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes/commit",
+    {
+      path: { agent_session_id: id },
+      query: { path, sha, ...(oldPath ? { old_path: oldPath } : {}) },
+    },
+    { retry: false, staleTime: Infinity },
+  );
+}
+
+/** What a session is about: its name and, when it is on a ticket a hub feature works on, that
+ * feature. */
+export interface SessionAbout {
+  name: string | null;
+  feature: TicketInfo | null;
+}
+
+/**
+ * The session's name: a session on a ticket reads as its commits do (`ACME-12: Export orders as
+ * CSV`, from its observed twin's label and the hub's features), else Claude Code's title. It reads
+ * the feature's tickets once, so the name says what the ticket is about.
+ */
+export function useSessionAbout(session: AgentSession | undefined): SessionAbout {
+  const observed = session?.observed_session_id ?? null;
+  const twin = useApi(
+    "/api/v1/sessions/{session_id}",
+    { path: { session_id: observed ?? "" } },
+    { enabled: observed !== null, staleTime: 30_000, retry: false },
+  );
+  const tickets = useTicketLookup(session?.project ?? null);
+  const label = twin.data?.label;
+  const feature = label?.issue ? tickets.get(label.issue.toUpperCase()) : undefined;
+  useTicketTitles(feature);
+  return {
+    name: ticketName(label, tickets) ?? session?.title ?? null,
+    feature: feature ?? null,
+  };
 }
 
 /** What this machine can drive (the model aliases the composer offers). */
@@ -374,6 +447,8 @@ export interface AgentSessionCommands {
   /** Posts a message, with the PNG data URLs of the images pasted in it. */
   send: (text: string, screenshots?: readonly string[]) => Promise<MessageAccepted>;
   interrupt: () => Promise<unknown>;
+  /** Stops a running background task (an agent or a command). */
+  stopTask: (taskId: string) => Promise<unknown>;
   settings: (change: SettingsBody) => Promise<unknown>;
   answer: (requestId: string, answer: PermissionAnswer) => Promise<unknown>;
   close: () => Promise<unknown>;
@@ -403,6 +478,10 @@ export function useAgentSessionCommands(id: string): AgentSessionCommands {
         ),
       interrupt: () =>
         apiPost("/api/v1/agent-sessions/{agent_session_id}/interrupt", NO_BODY, params).then(keep),
+      stopTask: (taskId) =>
+        apiPost("/api/v1/agent-sessions/{agent_session_id}/tasks/{task_id}/stop", NO_BODY, {
+          path: { agent_session_id: id, task_id: taskId },
+        }).then(keep),
       settings: (change) =>
         apiPost("/api/v1/agent-sessions/{agent_session_id}/settings", change, params).then(keep),
       answer: (requestId, answer) =>

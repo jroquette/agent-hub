@@ -25,7 +25,6 @@ describe("Sidebar", () => {
       "Portfolio",
       "Sessions",
       "Workflow runs",
-      "Workflows",
       "Features",
       "Learnings",
       "Brain",
@@ -40,6 +39,15 @@ describe("Sidebar", () => {
     expect(within(nav).queryByText("Live sessions")).not.toBeInTheDocument();
   });
 
+  it("hides Workflow runs until a workflow has run, and lists no Workflows", () => {
+    renderSidebar("/", { showRuns: false });
+
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    expect(within(nav).queryByRole("link", { name: "Workflow runs" })).toBeNull();
+    expect(within(nav).queryByRole("link", { name: "Workflows" })).toBeNull();
+    expect(within(nav).getByRole("link", { name: "Sessions" })).toBeInTheDocument();
+  });
+
   it("has no P3 tag and hides Metrics, Bench and Tracker queue", () => {
     const { container } = renderSidebar();
 
@@ -48,6 +56,35 @@ describe("Sidebar", () => {
     for (const hidden of ["Metrics", "Bench", "Tracker queue"]) {
       expect(screen.queryByText(hidden)).not.toBeInTheDocument();
     }
+  });
+
+  it("turns Portfolio into the overview of the project in scope", () => {
+    renderSidebar("/sessions?scope=agent-hub");
+
+    expect(screen.queryByRole("link", { name: "Portfolio" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Overview · agent-hub" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub",
+    );
+  });
+
+  it("marks the overview as the page only on the project's own overview", () => {
+    const { unmount } = renderSidebar("/projects/other%20hub?scope=agent-hub");
+    const overview = screen.getByRole("link", { name: "Overview · other hub" });
+    expect(overview).toHaveAttribute("href", "/projects/other%20hub");
+    expect(overview).toHaveAttribute("aria-current", "page");
+    unmount();
+
+    renderSidebar("/projects/agent-hub/brain/now.md");
+    expect(screen.getByRole("link", { name: "Overview · agent-hub" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("keeps Portfolio at the root when All projects is in scope", () => {
+    renderSidebar("/sessions");
+
+    expect(screen.getByRole("link", { name: "Portfolio" })).toHaveAttribute("href", "/");
   });
 
   it("shows Brain under Knowledge for the project in scope", () => {
@@ -142,6 +179,11 @@ describe("Sidebar", () => {
     expect(screen.getByRole("link", { name: "Sessions, 3 live" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Learnings, 4 to triage" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Health, 1 doctor error" })).toBeInTheDocument();
+  });
+
+  it("badges Features with how many features need you", () => {
+    renderSidebar("/", { counts: { features: 2 } });
+    expect(screen.getByRole("link", { name: "Features, 2 need you" })).toHaveTextContent("2");
   });
 
   it("one-tab: has one Sessions entry carrying the live badge and no Live sessions entry", () => {

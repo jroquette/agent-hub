@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from agent_hub.api.owner_signoff_files import HubEvalWriter, ProjectHubPaths
 from agent_hub.api.rfc9457 import owner_signoff_problem
 from agent_hub.core.features.feature_status import FeatureFolder
@@ -182,6 +184,56 @@ def test_answers_conflict_and_writes_nothing_when_no_owner_steps(
 
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == "no AC waits on owner steps"
+    assert sorted(path.name for path in evals.iterdir()) == ["dem-7.md"]
+
+
+# The owner settles one eval: the body names it and the decision; NO-SHIP for more work.
+def test_answers_created_with_no_ship_when_owner_finds_more_work(
+    tmp_path: Path, wired: Any
+) -> None:
+    evals = _signoff_hub(tmp_path, wired, "SHIP-WITH-OWNER-STEPS")
+
+    response = wired.client.post(
+        "/api/v1/features/demo/demo-feature/owner-signoff",
+        json={"delivery": "dem-7", "decision": "more_work", "note": "The migration is not run."},
+    )
+
+    assert response.status_code == 201, response.text
+    assert (response.json()["verdict"], response.json()["provenance"]) == ("NO-SHIP", "owner")
+    text = (evals / "owner-signoff.md").read_text(encoding="utf-8")
+    assert "verdict: NO-SHIP\n" in text
+    assert "The migration is not run." in text
+
+
+# The owner settles one eval as done: a SHIP owner sign-off carrying the owner's note.
+def test_answers_created_with_ship_when_owner_settles_one_eval(tmp_path: Path, wired: Any) -> None:
+    evals = _signoff_hub(tmp_path, wired, "SHIP-WITH-OWNER-STEPS")
+
+    response = wired.client.post(
+        "/api/v1/features/demo/demo-feature/owner-signoff",
+        json={"delivery": "dem-7", "decision": "done", "note": "Deployed the config by hand."},
+    )
+
+    assert response.status_code == 201, response.text
+    assert (response.json()["verdict"], response.json()["provenance"]) == ("SHIP", "owner")
+    text = (evals / "owner-signoff.md").read_text(encoding="utf-8")
+    assert "verdict: SHIP\n" in text
+    assert "Deployed the config by hand." in text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"delivery": "dem-7", "decision": "maybe"}, {"delivery": "dem-7", "verdict": "SHIP"}],
+    ids=["unknown-decision", "unknown-key"],
+)
+def test_answers_unprocessable_and_writes_nothing_when_signoff_body_invalid(
+    tmp_path: Path, wired: Any, body: dict[str, str]
+) -> None:
+    evals = _signoff_hub(tmp_path, wired, "SHIP-WITH-OWNER-STEPS")
+
+    response = wired.client.post("/api/v1/features/demo/demo-feature/owner-signoff", json=body)
+
+    assert response.status_code == 422, response.text
     assert sorted(path.name for path in evals.iterdir()) == ["dem-7.md"]
 
 

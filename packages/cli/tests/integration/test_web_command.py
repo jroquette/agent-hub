@@ -455,10 +455,30 @@ def test_reads_limit_option_when_option_given(served: ServedApp, tmp_path: Path)
     assert (limits.sessions_max, limits.retention_days) == (16, 1)
 
 
+def test_sets_no_session_limit_when_sessions_max_zero(served: ServedApp, tmp_path: Path) -> None:
+    result = _web(["--port", str(_free_port()), "--sessions-max", "0"], env=_scratch_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert served.app is not None
+    assert served.app.state.settings.limits.sessions_max == 0
+
+
+def test_sets_no_session_limit_when_sessions_max_env_zero(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    env = _scratch_env(tmp_path) | {"AGENT_HUB_SESSIONS_MAX": "0"}
+
+    result = _web(["--port", str(_free_port())], env=env)
+
+    assert result.exit_code == 0, result.output
+    assert served.app is not None
+    assert served.app.state.settings.limits.sessions_max == 0
+
+
 @pytest.mark.parametrize(
     "args",
     [
-        ["--sessions-max", "0"],
+        ["--sessions-max", "-1"],
         ["--sessions-max", "17"],
         ["--session-idle-seconds", "86401"],
         ["--permission-timeout-seconds", "0"],

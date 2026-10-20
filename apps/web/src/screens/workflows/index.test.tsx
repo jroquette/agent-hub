@@ -11,15 +11,22 @@ import {
   aWorkflowSummary,
   anItemVersion,
   anItemVersionPage,
+  aSkillCatalog,
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
 import { WorkflowDetailScreen, WorkflowsScreen } from ".";
+import { SkillsScreen } from "../skills";
 
 const DETAIL = "/api/v1/workflows/agent-hub/feature-flow";
 
+/** The Toolkit of agent-hub on its Workflows tab, where the workflows list lives. */
 function renderList(routes: ApiRoutes = { "/api/v1/workflows": aWorkflowCatalog() }, path = "") {
-  return renderWithApi(<WorkflowsScreen />, { routes, path: `/workflows${path}` });
+  return renderWithApi(<SkillsScreen />, {
+    routes: { "/api/v1/projects/agent-hub/skills": aSkillCatalog(), ...routes },
+    path: `/projects/agent-hub/skills?view=workflows${path}`,
+    route: "projects/:project/skills",
+  });
 }
 
 function renderDetail(reply: ApiRoutes[string] = aWorkflowDetail(), query = "") {
@@ -30,7 +37,7 @@ function renderDetail(reply: ApiRoutes[string] = aWorkflowDetail(), query = "") 
   });
 }
 
-describe("WorkflowsScreen", () => {
+describe("Toolkit › Workflows tab", () => {
   it("lists the hub's workflows before the built-ins, each with its inputs and shape", async () => {
     renderList({
       "/api/v1/workflows": aWorkflowCatalog({
@@ -46,12 +53,14 @@ describe("WorkflowsScreen", () => {
     expect(rows[1]).toHaveTextContent("reviewbuilt-in");
   });
 
-  it("says in one sentence what a workflow is", async () => {
+  it("says in one sentence what a workflow is, and selects its tab", async () => {
     renderList();
 
-    expect(
-      await screen.findByText(/A workflow is a job the hub does by itself/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Jobs the hub runs from start to finish/)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Workflows/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("lists the files that do not load with their line and key", async () => {
@@ -63,8 +72,8 @@ describe("WorkflowsScreen", () => {
     expect(problems).toHaveTextContent("depends on unknown node 'plan'");
   });
 
-  it("asks the API for the project in scope", async () => {
-    const { requests } = renderList(undefined, "?scope=agent-hub");
+  it("asks the API for the project of the Toolkit", async () => {
+    const { requests } = renderList();
 
     await screen.findByRole("list", { name: "Workflows" });
     expect(requests.some((r) => r.url.includes("project=agent-hub"))).toBe(true);
@@ -76,7 +85,9 @@ describe("WorkflowsScreen", () => {
 
     await user.click(await screen.findByRole("link", { name: /^feature-flow/ }));
 
-    expect(router.state.location.pathname).toBe("/workflows/agent-hub/feature-flow");
+    expect(router.state.location.pathname).toBe(
+      "/projects/agent-hub/skills/workflows/feature-flow",
+    );
   });
 
   it("says how to add one when no workflow and no problem exist", async () => {
@@ -97,6 +108,47 @@ describe("WorkflowsScreen", () => {
 
     await screen.findByRole("table", { name: "Files that do not load" });
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("WorkflowsScreen", () => {
+  it("sends /workflows to the Toolkit picker with All projects in scope", () => {
+    const { router } = renderWithApi(<WorkflowsScreen />, { path: "/workflows" });
+
+    expect(router.state.location.pathname).toBe("/knowledge/skills");
+  });
+
+  it("sends /workflows to the Workflows tab of the project in scope's Toolkit", () => {
+    const { router } = renderWithApi(<WorkflowsScreen />, {
+      path: "/workflows?scope=agent-hub",
+      route: "/workflows",
+    });
+
+    expect(router.state.location.pathname).toBe("/projects/agent-hub/skills");
+    expect(router.state.location.search).toBe("?view=workflows");
+  });
+});
+
+describe("WorkflowDetailScreen in the Toolkit", () => {
+  it("places the workflow under its project's Toolkit and Workflows tab", async () => {
+    renderWithApi(<WorkflowDetailScreen />, {
+      routes: { [DETAIL]: aWorkflowDetail() },
+      path: "/projects/agent-hub/skills/workflows/feature-flow",
+      route: "projects/:project/skills/workflows/:name",
+    });
+
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(
+      within(crumbs)
+        .getAllByRole("link")
+        .map((link) => [link.textContent, link.getAttribute("href")]),
+    ).toEqual([
+      ["Portfolio", "/"],
+      ["agent-hub", "/projects/agent-hub"],
+      ["Toolkit", "/projects/agent-hub/skills"],
+      ["Workflows", "/projects/agent-hub/skills?view=workflows"],
+    ]);
+    expect(within(crumbs).getByText("feature-flow")).toHaveAttribute("aria-current", "page");
   });
 });
 

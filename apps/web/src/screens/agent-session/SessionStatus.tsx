@@ -1,5 +1,5 @@
 import { Banner, StatusBadge, type Status } from "../../components";
-import type { AgentSessionStatus, EndReason } from "./model";
+import { tasksInWords, type AgentSessionStatus, type EndReason, type TaskView } from "./model";
 
 /** How each agent-session status reads: icon and text, never colour alone. */
 export const AGENT_STATUS: Record<AgentSessionStatus, { status: Status; label: string }> = {
@@ -21,10 +21,14 @@ const END_REASON: Record<EndReason, string> = {
 export interface AgentStatusBadgeProps {
   status: AgentSessionStatus;
   endReason?: EndReason | null | undefined;
+  /** The background tasks still running: an idle session waiting on them is at work. */
+  background?: TaskView[];
 }
 
 /** The status indicator of an agent session (D10), with why it ended when it did. */
-export function AgentStatusBadge({ status, endReason }: AgentStatusBadgeProps) {
+export function AgentStatusBadge({ status, endReason, background = [] }: AgentStatusBadgeProps) {
+  if (status === "idle" && background.length > 0)
+    return <StatusBadge status="running" label={`Background · ${tasksInWords(background)}`} />;
   const look = AGENT_STATUS[status];
   const reason = status === "ended" && endReason ? ` · ${END_REASON[endReason]}` : "";
   return <StatusBadge status={look.status} label={`${look.label}${reason}`} />;
