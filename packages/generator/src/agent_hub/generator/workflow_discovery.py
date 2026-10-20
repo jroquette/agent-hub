@@ -256,7 +256,7 @@ class _Root:
     def _kind_problem(self, document: WorkflowMapping) -> str | None:
         is_scenario = document.get("kind") == "scenario"
         if self.kind == "scenario" and not is_scenario:
-            return "a document in scenarios/ declares kind: scenario"
+            return "a document in scenarios/ must declare kind: scenario"
         if self.kind == "workflow" and is_scenario:
             return "kind: scenario belongs in scenarios/<pack>/, not workflows/"
         return None
