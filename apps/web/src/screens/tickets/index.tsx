@@ -17,6 +17,7 @@ import { fmtAgo, fmtMoney } from "../../lib/format";
 import { useScope } from "../../lib/scope";
 import { useRowKeys } from "../../lib/useRowKeys";
 import { useTicketLookup } from "../features/queries";
+import { StartTicketControl } from "./StartTicket";
 import { GROUPS, KINDS, matchesQuery, ticketsOf, type GroupId, type TicketRow } from "./model";
 
 /** How many of the newest sessions the list groups (the API's page limit). */
@@ -158,6 +159,7 @@ export function TicketsScreen() {
       <div className="ft-head">
         <div className="ft-title">
           <h1 className="ah-h1">Tickets</h1>
+          <StartTicketControl scope={scope} />
         </div>
         {sessions.isSuccess && all.length > 0 && (
           <p className="ft-summary">

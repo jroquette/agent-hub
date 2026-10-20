@@ -73,6 +73,10 @@ export interface NewSessionDialogProps {
    * and model. A message in its chat resumes it in place (ADR 0036).
    */
   forkOf?: AgentSession | undefined;
+  /** The dialog's title in place of "New session", such as "Start ticket". */
+  title?: string | undefined;
+  /** The prompt the field opens with, such as `/fix ` for a ticket. */
+  initialPrompt?: string | undefined;
 }
 
 /** The folder to preselect: the given one, else the last used for the project, else the first. */
@@ -103,6 +107,8 @@ export function NewSessionDialog({
   initialMode,
   note,
   forkOf,
+  title,
+  initialPrompt,
 }: NewSessionDialogProps) {
   const [picked, setPicked] = useState<string | null>(null);
   // Only an offered mode starts checked: a built app never offers auto (ADR 0036), so a fork of an
@@ -125,7 +131,7 @@ export function NewSessionDialog({
   const [otherModel, setOtherModel] = useState(
     kept !== null && !capabilities.models.includes(kept) ? kept : "",
   );
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(initialPrompt ?? "");
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [firstProject] = useState(project);
   const modeName = useId();
@@ -214,7 +220,7 @@ export function NewSessionDialog({
 
   return (
     <Dialog
-      title={forkOf ? "Fork session" : "New session"}
+      title={forkOf ? "Fork session" : (title ?? "New session")}
       onClose={onCancel}
       pending={pending}
       initialFocus="textarea"
