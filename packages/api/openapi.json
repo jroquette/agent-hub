@@ -12583,7 +12583,7 @@
     },
     "/api/v1/features/{project}/{slug}/owner-signoff": {
       "post": {
-        "description": "The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over\nthe ACs the Acceptance step waits on (409 when none waits, or the feature lists no AC).",
+        "description": "The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over\nthe ACs the Acceptance step waits on; 409 with a one-line reason, writing nothing, when none\nwaits or the feature lists no AC, when one of them has a NO-SHIP as its latest eval, when the\nacceptance eval is undated or future-dated, or when not every eval was read.",
         "operationId": "sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post",
         "parameters": [
           {
