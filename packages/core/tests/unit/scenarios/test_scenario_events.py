@@ -1,5 +1,7 @@
 """A scenario run's events, metadata only (AC-350.26, ADR 0019)."""
 
+import agent_hub.core.events.payload_keys as payload_keys
+import agent_hub.core.scenarios.scenario_events as scenario_events
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.payload_keys import kept_payload
 from agent_hub.core.scenarios.scenario_events import ScenarioEvents
@@ -37,3 +39,66 @@ def test_keeps_only_payload_keys_when_scenario_events_built_for_polls() -> None:
         assert event.workflow == "scenario:walk"
         assert "secret" not in event.model_dump_json()
     assert len({event.source_id for event in events.events}) == 3
+
+
+def test_keeps_only_payload_keys_when_scenario_events_built_for_actions() -> None:
+    run = ScenarioEvents(project="demo", run_id="1a2b3c4d", workflow="scenario:walk")
+    standalone = ScenarioEvents(project="demo", run_id=None, workflow=None, session="action:5e6f")
+    facts = scenario_events.ActionFacts(
+        step="send",
+        attempt=2,
+        action="aws/send",
+        content_hash="sha256:" + "0" * 64,
+        environment="staging",
+        services=("demo-api/orders",),
+        effect="write",
+        origin="human",
+        decision="ask",
+        approver="jane",
+    )
+
+    for events in (run, standalone):
+        events.policy_decided(facts, reason_kind="table", at=START)
+        events.action_started(facts, at=START)
+        events.action_ended(facts, status="failed", failure_kind="output_contract", at=START)
+
+    decided, started, ended = run.events
+    assert [event.type for event in run.events] == [
+        EventType.POLICY_DECISION,
+        EventType.ACTION_START,
+        EventType.ACTION_END,
+    ]
+    shared = {
+        "action": "aws/send",
+        "environment": "staging",
+        "effect": "write",
+        "origin": "human",
+        "decision": "ask",
+    }
+    assert decided.payload == {"run": "1a2b3c4d", "attempt": 2, **shared, "reason_kind": "table"}
+    action = {**shared, "content_hash": "sha256:" + "0" * 64, "service": ["demo-api/orders"]}
+    assert started.payload == {"run": "1a2b3c4d", "attempt": 2, **action, "approver": "jane"}
+    assert ended.payload == {
+        **started.payload,
+        "status": "failed",
+        "failure_kind": "output_contract",
+    }
+    for event in (*run.events, *standalone.events):
+        assert kept_payload(event.type, event.payload) == event.payload
+        assert event.step == "send"
+    assert {event.session for event in standalone.events} == {"action:5e6f"}
+    assert all("run" not in event.payload for event in standalone.events)
+    assert all(event.workflow is None for event in standalone.events)
+    assert len({event.source_id for event in (*run.events, *standalone.events)}) == 6
+
+
+def test_lists_gate_reason_when_payload_keys_read() -> None:
+    keys = payload_keys.PAYLOAD_KEYS
+    common = payload_keys.COMMON_PAYLOAD_KEYS
+    assert "reason" in keys[EventType.GATE_REQUEST]
+    for kind in ("finding", "workaround.start", "workaround.end"):
+        assert EventType(kind) in keys
+    # ``step`` is a key of every type.
+    assert keys[EventType.FINDING] - common == {"finding_id"}
+    workaround = {"workaround_id", "option", "steps", "status"}
+    assert keys[EventType.WORKAROUND_END] - common == workaround

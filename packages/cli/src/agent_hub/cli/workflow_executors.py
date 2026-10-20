@@ -33,9 +33,10 @@ passed to ``--resume`` only when it matches ``SESSION_ID``.
 Environments: an agent gets ``session_env`` (its step is the node id as recorded, its attempt the
 run-wide one), a ``hub step`` node runs this hub's own executable with ``child_env`` (hub step
 narrows it per call), any other command ``untrusted_env`` plus its ``env``, which may not name a
-token. No child gets ``LINEAR_API_KEY``. A failure's kind comes from where it happened: the exit
-code (``kind_for_exit``), a timeout, claude's ``is_error`` field, or a child that cannot start
-(``config``); never from message text.
+token. No child gets ``LINEAR_API_KEY``, nor (``hidden``) the hub's declared credential names
+and an ``AWS_PROFILE`` naming a declared profile: only an action's process gets credentials. A
+failure's kind comes from where it happened: the exit code (``kind_for_exit``), a timeout,
+claude's ``is_error`` field, or a child that cannot start (``config``); never from message text.
 
 The issue-to-pr parent (``hub run``) runs every child as ``hub run`` does: its ``hub step`` nodes
 in process (``hub_steps``), the others in the caller's process group (``in_session`` false), a
@@ -77,6 +78,11 @@ from agent_hub.core.runner.session_prompt import (
     implementing_argv,
 )
 from agent_hub.core.runner.verdict import SessionReply, last_json_line, parse_session_output
+from agent_hub.core.scenarios.credentials import (
+    NO_CREDENTIALS,
+    CredentialNames,
+    hidden_environment,
+)
 from agent_hub.core.workflows.engine import MAX_PARALLEL
 from agent_hub.core.workflows.failures import NodeFailedError, kind_for_exit
 from agent_hub.core.workflows.nodes import (
@@ -126,6 +132,8 @@ class WorkflowExecutors:
     hub_steps: Callable[[Sequence[str], bytes], str] | None = None
     in_session: bool = True
     session: RunOptions | None = None
+    # The hub's declared credential names: no node's child gets them (only an action's does).
+    hidden: CredentialNames = NO_CREDENTIALS
     # The process groups of the children running now: ``stop_children`` kills them.
     running: set[int] = field(default_factory=set)
     # Set by ``stop_children``: no child starts after it, and one starting as it lands is killed.
@@ -168,7 +176,10 @@ class WorkflowExecutors:
 
     def until_exit(self, argv: Sequence[str], call: NodeCall) -> int:
         result = self._spawn(
-            argv, env=untrusted_env(self.environ), cwd=self._cwd(None), timeout=_timeout(call.node)
+            argv,
+            env=untrusted_env(self.environ, hidden=self.hidden),
+            cwd=self._cwd(None),
+            timeout=_timeout(call.node),
         )
         return result.returncode
 
@@ -220,6 +231,7 @@ class WorkflowExecutors:
             run_id=self.run_id,
             attempt=call.attempt,
             step=node.id,
+            hidden=self.hidden,
         )
         result = self._spawn(
             argv,
@@ -259,10 +271,12 @@ class WorkflowExecutors:
         else:
             argv = list(call.argv)
         if isinstance(node, ShellNode) and node.is_hub_step:
-            return [*self.hub_program, *argv[1:]], child_env(self.environ)
+            return [*self.hub_program, *argv[1:]], child_env(
+                hidden_environment(self.environ, self.hidden)
+            )
         if tokens := sorted(set(call.env) & set(SESSION_HIDDEN)):
             raise NodeFailedError("config", f"env may not set {', '.join(tokens)}")
-        return argv, {**untrusted_env(self.environ), **call.env}
+        return argv, {**untrusted_env(self.environ, hidden=self.hidden), **call.env}
 
     def _pack_file(self, folder: PackFolder, relative: str) -> Path:
         try:

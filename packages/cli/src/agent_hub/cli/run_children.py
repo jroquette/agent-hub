@@ -36,6 +36,11 @@ from agent_hub.core.runner.session_prompt import (
     implementing_argv,
     implementing_prompt,
 )
+from agent_hub.core.scenarios.credentials import (
+    NO_CREDENTIALS,
+    CredentialNames,
+    hidden_environment,
+)
 from agent_hub.core.tracker.tracker_client import Issue
 from agent_hub.core.workspace.worktree_name import worktree_branch
 from agent_hub.tracker_linear.mcp_protocol import LINEAR_TOOL_PREFIX, LINEAR_TOOLS
@@ -279,10 +284,15 @@ def push_env(environ: Mapping[str, str]) -> dict[str, str]:
     return env
 
 
-def untrusted_env(environ: Mapping[str, str]) -> dict[str, str]:
+def untrusted_env(
+    environ: Mapping[str, str], *, hidden: CredentialNames = NO_CREDENTIALS
+) -> dict[str, str]:
     """The environment of what may run the session's code (the gate, git's reads of the
-    worktree): no tracker key and no GitHub token."""
-    return git_env(without(environ, SESSION_HIDDEN), optional_locks=True)
+    worktree): no tracker key and no GitHub token; nor, with ``hidden``, the hub's declared
+    credential names and an ``AWS_PROFILE`` naming a declared profile (only an action's
+    process gets those, docs/design/scenarios.md § Credentials)."""
+    visible = hidden_environment(environ, hidden)
+    return git_env(without(visible, SESSION_HIDDEN), optional_locks=True)
 
 
 def session_env(
@@ -293,11 +303,13 @@ def session_env(
     run_id: str,
     attempt: int = 1,
     step: str = IMPLEMENT_STEP,
+    hidden: CredentialNames = NO_CREDENTIALS,
 ) -> dict[str, str]:
     """The implementing session's environment: ``untrusted_env``, its telemetry tags and the
     run variables the hook sensor attributes the session's events with (D6). A workflow's
-    agent node passes its ``step`` (the node id as recorded) and run-wide ``attempt``."""
-    env = untrusted_env(environ)
+    agent node passes its ``step`` (the node id as recorded) and run-wide ``attempt``, and the
+    hub's credential names as ``hidden``."""
+    env = untrusted_env(environ, hidden=hidden)
     env[OTEL_VARIABLE] = f"repo={repo},issue={issue_id},agent_run={run_id}"
     env[RUN_ID_VARIABLE] = run_id
     env[STEP_VARIABLE] = step

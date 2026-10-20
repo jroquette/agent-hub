@@ -1901,7 +1901,13 @@
           "session.summary",
           "session.title",
           "expect.poll",
-          "context.capture"
+          "context.capture",
+          "action.start",
+          "action.end",
+          "policy.decision",
+          "finding",
+          "workaround.start",
+          "workaround.end"
         ],
         "title": "EventType",
         "type": "string"
