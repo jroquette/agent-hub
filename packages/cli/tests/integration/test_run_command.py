@@ -3360,6 +3360,36 @@ def hook_decision(run: dict[str, Any]) -> tuple[str, str]:
 class TestHubHooks:
     """AGH-278: the implementing session runs in the worktree under the hub's hooks."""
 
+    @pytest.mark.parametrize("live_run", [True, False], ids=["live", "dry"])
+    def test_refuses_run_without_claude_when_settings_folder_is_a_link(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+        live_run: bool,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (workspace.hub / ".agent-runs").mkdir(exist_ok=True)
+        (workspace.hub / ".agent-runs" / "session-settings").symlink_to(elsewhere)
+        flags = ("--live",) if live_run else ()
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api", *flags)
+
+        assert result.exit_code == 1, result.output
+        (line,) = result.stderr.splitlines()
+        assert line.startswith("hub run: cannot wire the hub's hooks: cannot write "), line
+        assert "session-settings" in line
+        assert list(elsewhere.iterdir()) == []
+        assert run_workspace.calls("claude") == []
+        assert run_tracker.calls == []
+        assert not worktree_of(workspace).exists()
+
     @pytest.mark.usefixtures("hooks_mode")
     def test_denies_blocked_word_when_live_session_runs_hub_guard(
         self,
