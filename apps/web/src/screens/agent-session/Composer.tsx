@@ -294,7 +294,7 @@ export function Composer({
         id={inputId}
         ref={attachBox}
         className="ah-input as-composer-input"
-        rows={3}
+        rows={1}
         value={text}
         placeholder={
           reason ??

@@ -1112,29 +1112,96 @@
   margin: 0;
 }
 /*
- * The composer floats: a soft card raised over the transcript's faded edge (D-chat-1), the one
- * thing in the chat with a shadow. What goes with the message (references, attachments) sits
- * inside it, above the text.
+ * The composer is one soft capsule, as the chat apps draw it: a filled field with no frame, "+"
+ * on the left, the message in the middle, the mode, the model and Send on the right, on one line
+ * while the message is short. What goes with the message (references, attachments) sits inside
+ * it, above. A narrow chat (the panel) gives the message a line of its own.
  */
 .as-composer {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-2xl);
-  background: var(--surface-overlay);
-  box-shadow: var(--shadow-popover);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-areas:
+    "acc acc acc acc acc"
+    "files files files files files"
+    "plus text set stop send"
+    "err err err err err";
+  align-items: end;
+  column-gap: var(--space-1);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: 28px;
+  background: var(--surface-turn);
   transition:
     border-color 120ms ease,
-    box-shadow 120ms ease;
+    background 120ms ease;
 }
 .as-composer:focus-within {
-  border-color: var(--accent);
-  box-shadow:
-    0 0 0 3px var(--accent-soft),
-    var(--shadow-popover);
+  border-color: var(--border-strong);
+}
+.as-composer > .ah-discuss-refs {
+  grid-area: acc;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+.as-composer > .as-composer-images {
+  grid-area: files;
+  margin: var(--space-1) var(--space-2) var(--space-2);
+}
+.as-composer > .as-composer-input {
+  grid-area: text;
+  align-self: center;
+}
+.as-composer-bar,
+.as-composer-actions {
+  display: contents;
+}
+.as-composer-settings {
+  grid-area: set;
+}
+.as-composer .as-composer-attach {
+  grid-area: plus;
+}
+.as-composer .as-composer-stop {
+  grid-area: stop;
+}
+.as-composer .as-round[type="submit"] {
+  grid-area: send;
+}
+.as-composer > .as-error {
+  grid-area: err;
+  margin: var(--space-1) var(--space-3) 0;
+}
+@container (max-width: 559px) {
+  .as-composer {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "acc acc acc acc"
+      "files files files files"
+      "text text text text"
+      "plus set stop send"
+      "err err err err";
+    row-gap: var(--space-1);
+  }
+  .as-composer > .as-composer-input {
+    padding-inline: var(--space-2) !important;
+  }
+  .as-composer-settings {
+    justify-self: start;
+  }
+}
+/* The mode and the model read as quiet text with a caret, as the model picker of a chat app does;
+ * a mode that runs on its own (edits, auto) keeps its tint as a warning. */
+.as-composer .as-pill:not([data-mode="acceptEdits"], [data-mode="plan"], [data-mode="auto"]) {
+  border-color: transparent;
+  background: transparent;
+}
+.as-composer .as-pill {
+  height: 32px;
+  padding: 0 var(--space-2);
+  font-size: 13px;
+}
+.as-composer .as-pill:hover {
+  background: var(--surface-hover);
 }
 .as-composer-input {
   height: auto;
@@ -1145,8 +1212,8 @@
 }
 /* Inside the composer card the card is the field: the box drops its own frame. */
 .as-composer .as-composer-input {
-  min-height: 44px;
-  padding: 2px 2px;
+  min-height: 24px;
+  padding: 4px var(--space-1);
   border: 0;
   background: transparent;
   font-size: 14px;
@@ -1172,16 +1239,12 @@
   justify-content: space-between;
   gap: var(--space-2);
 }
-.as-composer-settings,
-.as-composer-actions {
+.as-composer-settings {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
-}
-.as-composer-actions {
-  margin-left: auto;
 }
 .as-composer-stop[disabled] {
   display: none;
@@ -1190,20 +1253,33 @@
 .as-composer .as-round,
 .as-composer .as-composer-attach {
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   gap: 0;
   border-radius: var(--radius-full);
 }
 .as-composer .as-composer-attach {
   font-size: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+.as-composer .as-composer-attach:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.as-composer .as-composer-attach .ah-icon {
+  width: 18px;
+  height: 18px;
 }
 /* The keys to send show while the box has focus, under the card, without moving anything. */
 .as-composer-hint {
   position: absolute;
   top: calc(100% + var(--space-1));
-  left: var(--space-4);
+  left: 0;
+  right: 0;
+  text-align: center;
   padding: 0 2px;
   font-size: 12px;
   line-height: 16px;
@@ -3003,6 +3079,8 @@ button.as-bg-head {
   display: flex;
   height: 100%;
   min-height: 0;
+  /* Nothing in the chat scrolls the page: only the transcript and the rail's list scroll. */
+  overflow: hidden;
 }
 .as-chat-layout > .as-page {
   flex: 1 1 auto;
@@ -3013,7 +3091,9 @@ button.as-bg-head {
   display: flex;
   flex-direction: column;
   width: 260px;
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--bg);
 }
@@ -3057,6 +3137,7 @@ button.as-bg-head {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0 var(--space-2) var(--space-4);
 }
 .as-rail-group {
