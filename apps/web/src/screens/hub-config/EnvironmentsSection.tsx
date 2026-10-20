@@ -3,10 +3,11 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 
 import {
   Button,
+  CopyButton,
   EmptyState,
+  FitText,
   Icon,
   IconButton,
-  PathText,
   StatusBadge,
   Tooltip,
 } from "../../components";
@@ -474,7 +475,7 @@ export function EnvironmentsSection({
                               const shown = endpointText(found);
                               const note = endpointValues(found).note;
                               return (
-                                <td key={environment.name}>
+                                <td key={environment.name} className="ah-env-value">
                                   <button
                                     type="button"
                                     className="ah-env-cell"
@@ -483,14 +484,23 @@ export function EnvironmentsSection({
                                       openService(repo.dir, service.name, environment.name);
                                     }}
                                   >
-                                    <span className="ah-mono">
-                                      <PathText path={shown} max={34} />
-                                    </span>
+                                    <FitText
+                                      text={shown}
+                                      tail={Math.min(shown.length, 18)}
+                                      className="ah-mono"
+                                      tooltip
+                                    />
                                     {found.source === LOCAL_FILE && (
                                       <Icon name="laptop" title="Set by you" />
                                     )}
                                     {note && <Icon name="info" title={note} />}
                                   </button>
+                                  <CopyButton
+                                    text={shown}
+                                    label={`Copy the address of ${where} in ${environment.name}`}
+                                    className="ah-env-copy"
+                                    compact
+                                  />
                                 </td>
                               );
                             })}

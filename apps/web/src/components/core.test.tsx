@@ -8,6 +8,7 @@ import {
   AppLink,
   Button,
   CopyButton,
+  FitText,
   IconButton,
   IdChip,
   IssueLink,
@@ -422,5 +423,45 @@ describe("a11y", () => {
     );
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("FitText", () => {
+  const url = "https://admin-api.personal-demo.staging.example.com";
+
+  it("keeps the whole text, its tail in a part that never shrinks, and a native title", () => {
+    const { container } = render(<FitText text={url} tail={13} />);
+
+    expect(container.textContent).toBe(url);
+    expect(container.querySelector(".ah-fit-tail")?.textContent).toBe("example.com");
+    expect(screen.getByTitle(url)).toBeInTheDocument();
+  });
+
+  it("with a tooltip, shows the whole text only once the line is cut", () => {
+    let report: () => void = () => undefined;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          report = callback;
+        }
+        observe = vi.fn();
+        disconnect = vi.fn();
+      },
+    );
+    const { container } = render(<FitText text={url} tail={13} tooltip />);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(screen.queryByTitle(url)).toBeNull();
+
+    const head = container.querySelector(".ah-fit-head");
+    if (!head) throw new Error("no head part");
+    Object.defineProperty(head, "scrollWidth", { value: 300 });
+    Object.defineProperty(head, "clientWidth", { value: 120 });
+    act(() => {
+      report();
+    });
+
+    expect(screen.getByRole("tooltip")).toHaveTextContent(url);
+    vi.unstubAllGlobals();
   });
 });

@@ -370,6 +370,25 @@
 .ah-env-add {
   color: var(--text-subtle);
 }
+/* An address column takes the room the table has left, and an address longer than that is cut in
+   the middle (whole on hover, copy beside it) instead of widening the table. */
+.ah-env-matrix td.ah-env-value {
+  max-width: 0;
+  white-space: nowrap;
+}
+.ah-env-value > .ah-env-cell {
+  vertical-align: middle;
+  max-width: calc(100% - 32px);
+}
+.ah-env-copy {
+  vertical-align: middle;
+  margin-left: 4px;
+  opacity: 0;
+}
+.ah-env-value:hover .ah-env-copy,
+.ah-env-copy:focus-visible {
+  opacity: 1;
+}
 .ah-env-cell {
   display: inline-flex;
   align-items: center;

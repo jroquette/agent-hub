@@ -289,6 +289,26 @@ pre {
   color: var(--text-subtle);
 }
 
+/* One line that fits: cut in the middle, its tail always whole (FitText). */
+.ah-fit {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.ah-fit-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ah-fit-tail {
+  flex: none;
+}
+.ah-fit-wrap {
+  min-width: 0;
+  max-width: 100%;
+}
+
 /* Tooltip & popover */
 .ah-tip-wrap {
   position: relative;
@@ -309,6 +329,7 @@ pre {
   white-space: normal;
   width: max-content;
   max-width: 320px;
+  overflow-wrap: anywhere;
   box-shadow: var(--shadow-popover);
   pointer-events: none;
 }
@@ -318,6 +339,12 @@ pre {
 .ah-table tbody tr:nth-child(-n + 3) .ah-tip {
   bottom: auto;
   top: calc(100% + 6px);
+}
+/* A long value (a URL, a path) in a tooltip: mono, wider, broken anywhere. */
+.ah-tip-mono {
+  max-width: min(560px, 80vw);
+  font-family: var(--font-mono);
+  white-space: normal;
 }
 .ah-tip-wrap:not(:hover):not(:focus-within) > .ah-tip:not(.ah-tip-open) {
   display: none;

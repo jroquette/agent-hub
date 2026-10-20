@@ -1129,15 +1129,16 @@
   align-items: end;
   column-gap: var(--space-1);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-2);
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: 28px;
-  background: var(--surface-turn);
+  background: var(--surface-overlay);
   transition:
     border-color 120ms ease,
     background 120ms ease;
 }
 .as-composer:focus-within {
-  border-color: var(--border-strong);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .as-composer > .ah-discuss-refs {
   grid-area: acc;
@@ -1764,21 +1765,6 @@ body.as-resizing .as-drawer {
   border-radius: inherit;
   background: var(--done);
   transition: width var(--dur-base) var(--ease-out);
-}
-/* One line that fits: cut in the middle, its tail (extension, last folder) always whole. */
-.as-fit {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  white-space: nowrap;
-}
-.as-fit-head {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.as-fit-tail {
-  flex: none;
 }
 /* The files' root on one line: repo, branch icon, worktree in bold, the rest; then copy. */
 .as-files-root {
@@ -2635,7 +2621,7 @@ body.as-resizing .as-drawer {
   height: 8px;
   border-radius: 50%;
   background: var(--live);
-  animation: as-live-pulse 1.4s ease-in-out infinite;
+  animation: as-live-pulse var(--dur-pulse) ease-in-out infinite;
 }
 .as-live-waiting .as-live-pulse {
   background: var(--waiting);
@@ -3101,37 +3087,30 @@ button.as-bg-head {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  height: 40px;
-  padding: 0 var(--space-2) 0 var(--space-4);
+  padding: var(--space-3) var(--space-2) var(--space-2) var(--space-3);
 }
-.as-rail-title {
-  font-size: 13px;
-  font-weight: 600;
+.as-rail-new {
+  flex: 1;
+  justify-content: flex-start;
 }
 .as-rail-filter {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  position: relative;
+  display: block;
   margin: 0 var(--space-3) var(--space-2);
-  padding: 0 var(--space-2);
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+}
+.as-rail-filter > .ah-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--space-2);
+  transform: translateY(-50%);
   color: var(--text-subtle);
+  pointer-events: none;
 }
-.as-rail-filter:focus-within {
-  border-color: var(--accent);
-}
-.as-rail-filter input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
+.as-rail-filter > input {
+  width: 100%;
+  height: 28px;
+  padding-left: 28px;
   font-size: 13px;
-  outline: none;
 }
 .as-rail-scroll {
   flex: 1 1 auto;
@@ -3141,7 +3120,7 @@ button.as-bg-head {
   padding: 0 var(--space-2) var(--space-4);
 }
 .as-rail-group {
-  margin: var(--space-3) var(--space-2) var(--space-1);
+  margin: var(--space-4) var(--space-2) var(--space-1);
   font-size: 12px;
   line-height: 16px;
   font-weight: 500;
@@ -3153,13 +3132,16 @@ button.as-bg-head {
   padding: 0;
   list-style: none;
 }
+/* One line per session, as a chat app's conversation list: status, name, age. */
 .as-rail-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
-  padding: 6px var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-2);
   border-radius: var(--radius-md);
   color: var(--text);
+  font-size: 13px;
   text-decoration: none;
 }
 .as-rail-row:hover {
@@ -3171,51 +3153,66 @@ button.as-bg-head {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
-.as-rail-current,
-.as-rail-current:hover {
-  background: var(--surface-turn);
+/* The session on screen reads as the sidebar's current page does. */
+.as-rail-row[aria-current="page"],
+.as-rail-strip-item[aria-current="page"] {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
-.as-rail-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.as-rail-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  line-height: 20px;
-}
-.as-rail-current .as-rail-name {
+.as-rail-row[aria-current="page"] .as-rail-name {
   font-weight: 600;
 }
-.as-rail-meta {
+.as-rail-ended {
+  color: var(--text-muted);
+}
+.as-rail-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.as-rail-age {
+  flex: none;
   font-size: 12px;
-  line-height: 16px;
   color: var(--text-subtle);
 }
-.as-rail-dot {
+.as-rail-mark {
   flex: none;
-  width: 8px;
-  height: 8px;
-  margin-top: 6px;
-  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
 }
-.as-rail-dot-running {
+.as-rail-live {
   color: var(--live);
 }
-.as-rail-dot-waiting {
+.as-rail-waiting {
   color: var(--waiting);
 }
-.as-rail-dot-idle {
+.as-rail-failed {
+  color: var(--failed);
+}
+.as-rail-idle {
   color: var(--text-subtle);
 }
-.as-rail-dot-failed {
-  color: var(--failed);
+.as-rail-none {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--border-strong);
+}
+.as-rail-all {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: var(--space-3) var(--space-2) 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.as-rail-all:hover {
+  color: var(--text);
 }
 .as-rail-empty {
   margin: var(--space-3) var(--space-2);
@@ -3244,7 +3241,4 @@ button.as-bg-head {
 }
 .as-rail-strip-item:hover {
   background: var(--surface-hover);
-}
-.as-rail-strip-item .as-rail-dot {
-  margin-top: 0;
 }
