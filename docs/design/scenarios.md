@@ -92,8 +92,7 @@ run), and labels its events `workflow: scenario:<name>`.
   fails the scenario run and prints `step <id>: <reason>`. Policy asks and `approval` nodes still pause it.
 - **Interactive** (the default): a divergence of an `action` or `expect` step (not a `config` failure) pauses it at an
   investigation gate, `<step>__investigation` (`human_gate`, reason `investigation`), recorded instead of the run's end;
-  steps that do not depend on it run first. The CLI prints the Scenarios screen link. After 10 investigations the next
-  divergence fails the scenario run as in regression.
+  independent steps run first; the CLI prints the screen's link. Past 10 investigations it fails as in regression.
 
 ### Investigation, answers and workarounds
 
@@ -131,12 +130,13 @@ Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), e
 4. After a divergence, steps that do not depend on it still run in that pass.
 5. Local only: cloud sessions have no `hub.local.json`, no env files and no credentials.
 6. Policy gates (`<step>__ask`) of a process workflow run show in the run's steps but not in its graph.
-7. Credential values shorter than 4 characters are not redacted: they cannot be told apart from ordinary output.
+7. Redaction replaces each injected value of 4 characters or more exactly as written; a shorter one, or an encoded or
+   transformed form (base64 as in a Basic auth header, URL-encoded, escaped in stderr, split across strings), passes.
 
 ## Invariants
 
 - No document key and no flag turns an `ask` into an `allow`; a production write or destroy never runs.
-- Credential values exist only in the action's process; configs, plans, records, events and the UI hold names.
+- Credential values reach only the action's process; everything else holds names; output redaction is exact (limit 7).
 - Agents run read actions only before a pick; a person picks every write. A run runs the action content it pinned.
   "Run" alone means a WorkflowRun; a scenario run is always qualified.
 
