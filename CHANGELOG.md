@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-20
+
 ### Fixed
 
 - `hub web` Feature detail: the golden path's Review and Shipped steps read "Partial" once some tickets are
@@ -766,7 +768,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/jroquette/agent-hub/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/jroquette/agent-hub/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/jroquette/agent-hub/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/jroquette/agent-hub/compare/v0.15.0...v0.16.0
