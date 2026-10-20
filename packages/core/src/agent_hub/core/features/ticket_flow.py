@@ -41,14 +41,17 @@ class TicketEvidence:
     ``rounds`` names (upper case) the tickets with a review round; ``reviews`` are the feature's
     review records; ``evals`` its readable evals by each ticket name they list (upper case);
     ``unread`` is Build's meta when Linear was not read (Merged is then unknown), None when it
-    was. ``verdicts`` holds the latest verdict of each set of evals already folded.
+    was. ``_verdicts`` caches the latest verdict of each set of evals already folded (no part of
+    its value: never compared or shown).
     """
 
     rounds: frozenset[str]
     reviews: Sequence[ReviewRecord]
     evals: Mapping[str, tuple[EvalRecord, ...]]
     unread: str | None
-    verdicts: dict[tuple[EvalRecord, ...], Verdict | None] = field(default_factory=dict)
+    _verdicts: dict[tuple[EvalRecord, ...], Verdict | None] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
 
 def ticket_evidence(
@@ -88,7 +91,7 @@ def ticket_flow(row: TicketRow, evidence: TicketEvidence) -> TicketFlow | None:
         found["review"] = (
             ("done", None) if approved_tickets(reviews) else ("current", "Changes requested")
         )
-    verdict = _verdict(evals, evidence.verdicts)
+    verdict = _verdict(evals, evidence._verdicts)
     if verdict is not None:
         found["eval"] = ("blocked" if verdict == "NO-SHIP" else "done", verdict)
     prs = (*(review.pr for review in reviews), *(pr for record in evals for pr in record.prs))

@@ -22,7 +22,8 @@ first ``UX_HEAD_BYTES`` (``ux_skipped`` counts the rest). In ``reviews/``, the f
 ``MAX_ROUND_TICKETS`` ticket folders by name (not hidden, UTF-8 names, never a link) are opened
 the same way and read only until their first review round: a regular file named as the review
 check names one (``<reviewer>-r<N>.json``), never read; ``MAX_ROUND_ENTRIES`` entries at most in
-all. ``review_round_tickets`` names the folders holding one.
+all. ``review_round_tickets`` names the folders holding one; only ``read_feature_folder`` (one
+feature, as the tickets view reads it) looks for them, so the listing leaves it empty.
 
 One call reads at most about ``READ_BUDGET_BYTES``: a folder is read only while the bytes read so
 far are under it, so the total goes over by one folder at most (9,019,394 bytes, about 8.6 MiB:
@@ -115,7 +116,7 @@ def read_feature_folder(hub_root: Path, slug: str) -> FeatureFolder | None:
     with _features_folder(hub_root) as folder:
         if folder is None or not _is_folder(folder, slug):
             return None
-        return _read_folder(folder, slug, _Meter())
+        return _read_folder(folder, slug, _Meter(), round_tickets=True)
 
 
 @contextlib.contextmanager
@@ -163,7 +164,9 @@ def _limit(name: str) -> int:
     return HEAD_BYTES if name in {SPEC, EVAL} else 0
 
 
-def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
+def _read_folder(
+    parent: int, slug: str, meter: _Meter, *, round_tickets: bool = False
+) -> FeatureFolder:
     try:
         folder = os.open(slug, _FOLDER_FLAGS, dir_fd=parent)
     except OSError:
@@ -179,7 +182,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
             folder, REVIEWS_FOLDER, cap=MAX_REVIEW_FILES, size=REVIEW_HEAD_BYTES, meter=meter
         )
         ux_designs, ux_skipped = _ux_heads(folder, meter)
-        round_tickets = _round_tickets(folder)
+        rounds = _round_tickets(folder) if round_tickets else ()
     finally:
         os.close(folder)
     record, plan = reads[RECORD], reads[PLAN]
@@ -197,7 +200,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
         plan_too_large=too_large,
         ux_designs=ux_designs,
         ux_skipped=ux_skipped,
-        review_round_tickets=round_tickets,
+        review_round_tickets=rounds,
     )
 
 

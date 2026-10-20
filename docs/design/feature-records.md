@@ -79,10 +79,11 @@ in fenced code blocks do not count (`agent_hub.core.features.plan_version`).
 Written by `/feature` step 7 once both reviewers pass: `type: review`, `ticket`, `outcome` (`approved` or
 `changes-requested`), `pr`, `reviewed_at`. At most 500 are read (first by name), heads of 8 KiB.
 
-Beside them, `reviews/<ticket>/` holds the review rounds (below, "Agent outputs"). The reader only learns which
-tickets have one, never reading a round: of the first 500 ticket folders by name (not hidden, UTF-8 names, no link
-followed), it reads each folder's entries until the first regular file named as the review check names a round
-(`<reviewer>-r<N>.json`), and stops after 20,000 entries in all.
+Beside them, `reviews/<ticket>/` holds the review rounds (below, "Agent outputs"). Only the tickets view (one
+feature's read) looks into them, never the Features list, and it only learns which tickets have one, never reading a
+round: of the first 500 ticket folders by name (not hidden, UTF-8 names, no link followed), it reads each folder's
+entries until the first regular file named as the review check names a round (`<reviewer>-r<N>.json`). A budget of
+20,000 entries covers the entries of those ticket folders together; listing `reviews/` itself is not counted.
 
 ### `summaries/<record>.md`
 
