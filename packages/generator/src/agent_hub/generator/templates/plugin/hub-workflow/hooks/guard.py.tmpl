@@ -1775,7 +1775,8 @@ def _env_file_glob(env_files: _EnvFiles, ti: dict, cwd: str) -> str | None:
     first = next((i for i, part in enumerate(parts) if any(c in part for c in GLOB_CHARS)), None)
     if first is None:
         return env_files.at(full)
-    rest = [part for part in parts[first:] if part]
+    # the env files' forms are lowercase (_path_forms), so the pattern is compared lowercased too
+    rest = [part.lower() for part in parts[first:] if part]
     base = "/".join(parts[:first]) or "/"
     return env_files.under(base, lambda rel: _segments_reach(rest, rel.split("/")))
 
